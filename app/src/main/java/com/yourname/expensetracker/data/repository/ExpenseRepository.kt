@@ -65,7 +65,11 @@ class ExpenseRepository @Inject constructor(
     private val categoryUpdateMutex = Mutex()
     // Direct flow without sharing - each collector gets its own subscription
     // This prevents memory leaks from orphaned scopes
-    fun getAllExpenses(): Flow<List<Expense>> = expenseDao.getAllFlow(500)
+    //
+    // A.9: Switched from the bounded getAllFlow(500) to the uncapped variant so
+    // that downstream consumers (analytics, forecasting, cash-flow, financial
+    // weather) receive the complete dataset rather than a silently truncated one.
+    fun getAllExpenses(): Flow<List<Expense>> = expenseDao.getAllFlowUncapped()
 
     fun getExpensesWithCategory(limit: Int = 200): Flow<List<ExpenseWithCategory>> =
         expenseDao.getAllWithCategoryFlow(limit)
@@ -384,7 +388,7 @@ class ExpenseRepository @Inject constructor(
     suspend fun deleteAllExpenses() = expenseDao.deleteAll()
 
     suspend fun createDebugSnapshot(): DebugExpenseSnapshot {
-        return DebugExpenseSnapshot(expenses = expenseDao.getAll(limit = 20_000))
+        return DebugExpenseSnapshot(expenses = expenseDao.getAllUncapped())
     }
 
     suspend fun restoreDebugSnapshot(snapshot: DebugExpenseSnapshot) {
@@ -400,8 +404,15 @@ class ExpenseRepository @Inject constructor(
 
     // === Analytics Methods ===
 
+    /**
+     * Return **all** expenses in the half-open date range without a row cap.
+     *
+     * A.9: Switched from the bounded DAO variant (default LIMIT 2000) to
+     * [ExpenseDao.getExpensesBetweenUncapped] so that analytics, export,
+     * forecasting, and other full-data consumers are never silently truncated.
+     */
     suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense> =
-        expenseDao.getExpensesBetween(startDate, endDate)
+        expenseDao.getExpensesBetweenUncapped(startDate, endDate)
 
     suspend fun getExpensesBetweenPaged(
         startDate: Long,
@@ -423,8 +434,15 @@ class ExpenseRepository @Inject constructor(
     suspend fun getExpensesSince(since: Long): List<Expense> =
         expenseDao.getExpensesSince(since)
 
+    /**
+     * Reactive (Flow) variant of [getExpensesBetween] — returns the complete
+     * dataset for the given date range without a row cap.
+     *
+     * A.9: Switched from the bounded DAO Flow (default LIMIT 2000) to
+     * [ExpenseDao.getExpensesBetweenFlowUncapped].
+     */
     fun getExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>> =
-        expenseDao.getExpensesBetweenFlow(startDate, endDate)
+        expenseDao.getExpensesBetweenFlowUncapped(startDate, endDate)
 
     suspend fun getTotalForPeriod(startMs: Long, endMs: Long): Double =
         expenseDao.getTotalForPeriod(startMs, endMs)

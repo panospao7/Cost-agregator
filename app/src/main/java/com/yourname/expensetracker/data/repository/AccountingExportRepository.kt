@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.export.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import androidx.annotation.VisibleForTesting
 import java.io.File
 import java.io.FileWriter
 import java.text.SimpleDateFormat
@@ -38,6 +39,15 @@ class AccountingExportRepository @Inject constructor(
     private val xeroExporter: XeroCSVExporter,
     private val freshBooksExporter: FreshBooksExporter
 ) {
+    /**
+     * Page size used by the exhaustive-paging loop in [fetchAllForExport].
+     * Visible for testing so that unit tests can verify the paging contract
+     * without having to generate thousands of rows.
+     */
+    internal companion object {
+        const val EXPORT_PAGE_SIZE = 2000
+    }
+
     suspend fun exportExpenses(
         context: Context,
         startDate: Long,
@@ -46,8 +56,10 @@ class AccountingExportRepository @Inject constructor(
         includeReceipts: Boolean = false
     ): ExportResult = withContext(Dispatchers.IO) {
         try {
-            // Get data
-            val expenses = expenseRepository.getExpensesBetween(startDate, endDate)
+            // A.9 Batch 6: fetch via deterministic exhaustive paging so that
+            // exports are never silently truncated and row ordering is stable
+            // (date ASC, id ASC, merchant COLLATE NOCASE ASC).
+            val expenses = fetchAllForExport(startDate, endDate)
             
             if (expenses.isEmpty()) {
                 return@withContext ExportResult(
@@ -102,6 +114,31 @@ class AccountingExportRepository @Inject constructor(
                 errorMessage = e.message ?: "Unknown error during export"
             )
         }
+    }
+
+    /**
+     * Fetches **all** expenses in the date range using deterministic exhaustive
+     * paging via [ExpenseRepository.getExpensesBetweenPagedForDeterministicExport].
+     *
+     * The underlying DAO query orders by `date ASC, id ASC, merchant COLLATE
+     * NOCASE ASC` which gives a stable, deterministic row order suitable for
+     * accounting exports.  Pages of [EXPORT_PAGE_SIZE] are fetched in a loop
+     * until a page returns fewer rows than the page size, guaranteeing that
+     * every matching row is included regardless of dataset size.
+     */
+    @VisibleForTesting
+    internal suspend fun fetchAllForExport(startDate: Long, endDate: Long): List<Expense> {
+        val result = mutableListOf<Expense>()
+        var offset = 0
+        while (true) {
+            val page = expenseRepository.getExpensesBetweenPagedForDeterministicExport(
+                startDate, endDate, EXPORT_PAGE_SIZE, offset
+            )
+            result.addAll(page)
+            if (page.size < EXPORT_PAGE_SIZE) break
+            offset += EXPORT_PAGE_SIZE
+        }
+        return result
     }
 
     private fun generateSimpleReport(

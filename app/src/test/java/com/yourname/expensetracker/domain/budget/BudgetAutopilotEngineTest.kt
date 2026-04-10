@@ -1,15 +1,14 @@
 package com.yourname.expensetracker.domain.budget
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
-import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
@@ -28,7 +27,7 @@ import java.util.Calendar
 class BudgetAutopilotEngineTest {
 
     private lateinit var budgetRepository: BudgetRepository
-    private lateinit var expenseRepository: ExpenseRepository
+    private lateinit var expenseDao: ExpenseDao
     private lateinit var categoryRepository: CategoryRepository
     private lateinit var insightsEngine: InsightsEngine
     private lateinit var spendingPaceCalculator: SpendingPaceCalculator
@@ -43,7 +42,7 @@ class BudgetAutopilotEngineTest {
     @Before
     fun setup() {
         budgetRepository = mockk()
-        expenseRepository = mockk()
+        expenseDao = mockk(relaxed = true)
         categoryRepository = mockk()
         insightsEngine = mockk(relaxed = true)
         spendingPaceCalculator = mockk(relaxed = true)
@@ -59,11 +58,13 @@ class BudgetAutopilotEngineTest {
         )
 
         coEvery { budgetRepository.getActiveBudgets() } returns emptyList()
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        // Default: no spending data for any category
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(any(), any(), any()) } returns emptyList()
+        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns emptyList()
 
         engine = BudgetAutopilotEngine(
             budgetRepository = budgetRepository,
-            expenseRepository = expenseRepository,
+            expenseDao = expenseDao,
             categoryRepository = categoryRepository,
             insightsEngine = insightsEngine,
             spendingPaceCalculator = spendingPaceCalculator,
@@ -78,15 +79,11 @@ class BudgetAutopilotEngineTest {
             budget(id = 1L, categoryId = 1L, amount = 100.0)
         )
 
-        // Three months, two tx each month, total per month = 100.
-        // If averaged per transaction, result would trend toward 50.
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
-            purchase(1L, 50.0, millis(2026, Calendar.JANUARY, 20), 1L),
-            purchase(2L, 50.0, millis(2026, Calendar.JANUARY, 25), 1L),
-            purchase(3L, 40.0, millis(2026, Calendar.FEBRUARY, 20), 1L),
-            purchase(4L, 60.0, millis(2026, Calendar.FEBRUARY, 26), 1L),
-            purchase(5L, 30.0, millis(2026, Calendar.MARCH, 21), 1L),
-            purchase(6L, 70.0, millis(2026, Calendar.MARCH, 27), 1L)
+        // Three months, total per month = 100. Aggregate DAO returns monthly totals directly.
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 100.0, 2),
+            MonthlySpendingTotal("2026-02", 100.0, 2),
+            MonthlySpendingTotal("2026-03", 100.0, 2)
         )
 
         val result = engine.generateRecommendations()
@@ -102,11 +99,11 @@ class BudgetAutopilotEngineTest {
             budget(id = 1L, categoryId = 1L, amount = 200.0)
         )
 
-        // Intentionally out of order input dates; engine should sort chronologically.
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
-            purchase(10L, 300.0, millis(2026, Calendar.MARCH, 5), 1L),
-            purchase(11L, 100.0, millis(2026, Calendar.JANUARY, 5), 1L),
-            purchase(12L, 200.0, millis(2026, Calendar.FEBRUARY, 5), 1L)
+        // DAO returns rows in chronological order (SQL ORDER BY); totals increase.
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 100.0, 1),
+            MonthlySpendingTotal("2026-02", 200.0, 1),
+            MonthlySpendingTotal("2026-03", 300.0, 1)
         )
 
         val result = engine.generateRecommendations()
@@ -122,16 +119,18 @@ class BudgetAutopilotEngineTest {
             budget(id = 2L, categoryId = 2L, amount = 100.0)
         )
 
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
-            // Category 1 wants strong increase -> cap at 115
-            purchase(1L, 300.0, millis(2026, Calendar.JANUARY, 20), 1L),
-            purchase(2L, 300.0, millis(2026, Calendar.FEBRUARY, 20), 1L),
-            purchase(3L, 300.0, millis(2026, Calendar.MARCH, 20), 1L),
+        // Category 1 wants strong increase -> cap at 115
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 300.0, 1),
+            MonthlySpendingTotal("2026-02", 300.0, 1),
+            MonthlySpendingTotal("2026-03", 300.0, 1)
+        )
 
-            // Category 2 wants strong decrease -> cap at 85
-            purchase(4L, 10.0, millis(2026, Calendar.JANUARY, 20), 2L),
-            purchase(5L, 10.0, millis(2026, Calendar.FEBRUARY, 20), 2L),
-            purchase(6L, 10.0, millis(2026, Calendar.MARCH, 20), 2L)
+        // Category 2 wants strong decrease -> cap at 85
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(2L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 10.0, 1),
+            MonthlySpendingTotal("2026-02", 10.0, 1),
+            MonthlySpendingTotal("2026-03", 10.0, 1)
         )
 
         val result = engine.generateRecommendations()
@@ -149,17 +148,19 @@ class BudgetAutopilotEngineTest {
         )
 
         // Category 1: [80,120,80,120] => CV ~0.20 (medium) => *1.08 => 108
-        // Category 2: [50,150,50,150] => CV 0.50 (high) => *1.15 => 115
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
-            purchase(1L, 80.0, millis(2026, Calendar.JANUARY, 20), 1L),
-            purchase(2L, 120.0, millis(2026, Calendar.FEBRUARY, 20), 1L),
-            purchase(3L, 80.0, millis(2026, Calendar.MARCH, 20), 1L),
-            purchase(4L, 120.0, millis(2026, Calendar.APRIL, 1), 1L),
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 80.0, 1),
+            MonthlySpendingTotal("2026-02", 120.0, 1),
+            MonthlySpendingTotal("2026-03", 80.0, 1),
+            MonthlySpendingTotal("2026-04", 120.0, 1)
+        )
 
-            purchase(5L, 50.0, millis(2026, Calendar.JANUARY, 21), 2L),
-            purchase(6L, 150.0, millis(2026, Calendar.FEBRUARY, 21), 2L),
-            purchase(7L, 50.0, millis(2026, Calendar.MARCH, 21), 2L),
-            purchase(8L, 150.0, millis(2026, Calendar.APRIL, 2), 2L)
+        // Category 2: [50,150,50,150] => CV 0.50 (high) => *1.15 => 115
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(2L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 50.0, 1),
+            MonthlySpendingTotal("2026-02", 150.0, 1),
+            MonthlySpendingTotal("2026-03", 50.0, 1),
+            MonthlySpendingTotal("2026-04", 150.0, 1)
         )
 
         val result = engine.generateRecommendations()
@@ -187,7 +188,7 @@ class BudgetAutopilotEngineTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
             budget(id = 1L, categoryId = 1L, amount = 100.0)
         )
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns emptyList()
 
         val rec = engine.generateRecommendations().categoryRecommendations.single()
 
@@ -201,8 +202,10 @@ class BudgetAutopilotEngineTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
             budget(id = 1L, categoryId = 1L, amount = 100.0)
         )
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
-            purchase(1L, 120.0, now - dayMs, 1L)
+        // Single month: the engine receives [120.0], trend = 0 (< 2 months), avg = 120 * safety 1.0 = 120,
+        // then delta-capped to [85, 115]. 120 > 115 so capped to 115.
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-04", 120.0, 1)
         )
 
         val result = engine.generateRecommendations()
@@ -218,10 +221,10 @@ class BudgetAutopilotEngineTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
             budget(id = 1L, categoryId = 1L, amount = 100.0)
         )
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
-            purchase(1L, 100.0, millis(2026, Calendar.JANUARY, 20), 1L),
-            purchase(2L, 100.0, millis(2026, Calendar.FEBRUARY, 20), 1L),
-            purchase(3L, 100.0, millis(2026, Calendar.MARCH, 20), 1L)
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 100.0, 1),
+            MonthlySpendingTotal("2026-02", 100.0, 1),
+            MonthlySpendingTotal("2026-03", 100.0, 1)
         )
 
         val rec = engine.generateRecommendations().categoryRecommendations.single()
@@ -235,10 +238,10 @@ class BudgetAutopilotEngineTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
             budget(id = 1L, categoryId = 1L, amount = 0.0)
         )
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
-            purchase(1L, 100.0, millis(2026, Calendar.JANUARY, 20), 1L),
-            purchase(2L, 200.0, millis(2026, Calendar.FEBRUARY, 20), 1L),
-            purchase(3L, 300.0, millis(2026, Calendar.MARCH, 20), 1L)
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 100.0, 1),
+            MonthlySpendingTotal("2026-02", 200.0, 1),
+            MonthlySpendingTotal("2026-03", 300.0, 1)
         )
 
         val rec = engine.generateRecommendations().categoryRecommendations.single()
@@ -249,6 +252,47 @@ class BudgetAutopilotEngineTest {
         assertTrue(!rec.reason.contains("Infinity"))
     }
 
+    @Test
+    fun `generateRecommendations uses sparse months without gap infill`() = runTest {
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
+            budget(id = 1L, categoryId = 1L, amount = 100.0)
+        )
+        // SQL returns Jan and Mar but not Feb — engine must NOT infill Feb=0.0
+        // historicalSpend = [200.0, 200.0] => avg = 200
+        // trend: firstHalf=[200.0], secondHalf=[200.0] => ratio=1.0 => STABLE
+        // trendAdjustedSpend = 200 * (1 + 0*3) = 200
+        // safetyFactor: CV of [200,200] => stdDev=0, CV=0 => LOW => 1.0
+        // recommended = 200 * 1.0 = 200, capped at [85, 115] => 115
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 200.0, 2),
+            MonthlySpendingTotal("2026-03", 200.0, 2)
+        )
+
+        val rec = engine.generateRecommendations().categoryRecommendations.single()
+
+        // Sparse history: 2 months, avg=200 > 100+15=115 => capped at +15%
+        assertApproxEquals(115.0, rec.recommendedBudget, 0.01)
+        assertEquals(BudgetTrend.STABLE, rec.trend)
+    }
+
+    @Test
+    fun `generateRecommendations for overall budget uses non-category DAO method`() = runTest {
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
+            budget(id = 1L, categoryId = null, amount = 100.0)
+        )
+        // Overall budget (categoryId=null) uses getMonthlySpendingTotalsBetween
+        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 100.0, 3),
+            MonthlySpendingTotal("2026-02", 100.0, 3),
+            MonthlySpendingTotal("2026-03", 100.0, 3)
+        )
+
+        val rec = engine.generateRecommendations().categoryRecommendations.single()
+
+        assertEquals(BudgetTrend.STABLE, rec.trend)
+        assertApproxEquals(100.0, rec.recommendedBudget, 0.01)
+    }
+
     private fun budget(id: Long, categoryId: Long?, amount: Double): Budget {
         return Budget(
             id = id,
@@ -256,18 +300,6 @@ class BudgetAutopilotEngineTest {
             amount = amount,
             period = BudgetPeriod.MONTHLY,
             startDate = now - 60 * dayMs
-        )
-    }
-
-    private fun purchase(id: Long, amount: Double, date: Long, categoryId: Long): Expense {
-        return Expense(
-            id = id,
-            amount = amount,
-            merchant = "M$id",
-            transactionType = TransactionType.PURCHASE,
-            date = date,
-            categoryId = categoryId,
-            isNotMine = false
         )
     }
 

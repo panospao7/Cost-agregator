@@ -3,8 +3,8 @@ its cruc# Execution Playbook — ExpenseTracker Refactoring
 > **Project:** ExpenseTracker (Android/Kotlin/Clean Architecture)
 > **Branch:** `master-refactor`
 > **Current Phase:** Phase 1 — Universal Epics
-> **Active Epic:** A.9 — Hidden Data Truncation / DAO Default Limits
-> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 COMPLETE — A.8 COMPLETE — A.9 next
+> **Active Epic:** A.10 — Transaction Type Blindness
+> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 COMPLETE — A.8 COMPLETE — A.9 COMPLETE — A.10 next
 
 ---
 
@@ -420,13 +420,17 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
   - [x] Registry updated (`[RESOLVED BY A.8]`)
   - [x] Batch reports + deep-analysis mirrors updated
   - [ ] Committed
-- [ ] **A.9:** Hidden Data Truncation / DAO Default Limits
+- [x] **A.9:** Hidden Data Truncation / DAO Default Limits
+  - [x] Plan created (`PLAN-A9-hidden-data-truncation.md`)
+  - [x] All batches implemented
+  - [x] Review: **PASS** (final gate approved with documented environmental/full-lane timeout waiver)
+  - [x] Registry updated (`[RESOLVED BY A.9]`)
+  - [x] Batch reports + deep-analysis mirrors updated
+  - [ ] Committed
 - [ ] **A.10:** Transaction Type Blindness
 
 ### Phase 1 Todo Roadmap (Strict Priority)
-1. **A.9 — Hidden Data Truncation / DAO Default Limits**
-   - Priority rationale: critical data correctness issue with large blast radius; defer until concurrency and time-contract foundations are stable
-2. **A.10 — Transaction Type Blindness**
+1. **A.10 — Transaction Type Blindness**
    - Priority rationale: high-severity aggregation correctness pass that should land after A.9 query contract cleanup to avoid rework
 
 ### Phase 2: Pipeline Fixes
@@ -523,5 +527,5 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
 
 ---
 
-*Last Updated: 2026-04-10*
-*Next Action: Commit A.8 closeout, then begin A.9 planning*
+*Last Updated: 2026-04-11*
+*Next Action: Commit A.9 closeout, then begin A.10 planning*

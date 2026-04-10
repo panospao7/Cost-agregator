@@ -5,8 +5,7 @@ import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.carbon.CarbonFootprintCalculator
-import io.mockk.every
-import kotlinx.coroutines.flow.flowOf
+import io.mockk.coEvery
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -24,9 +23,8 @@ class CarbonFootprintTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `category footprint calculates correctly`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(expense(merchant = "Local Bakery", amount = 100.0))
-        )
 
         val report = calculator.calculateCarbonFootprint(startDate = 0L, endDate = dayMs)
 
@@ -35,9 +33,8 @@ class CarbonFootprintTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `merchant footprint uses specific factors`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(expense(merchant = "ZARA", amount = 100.0))
-        )
 
         val report = calculator.calculateCarbonFootprint(startDate = 0L, endDate = dayMs)
 
@@ -47,9 +44,8 @@ class CarbonFootprintTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `offset calculation returns deterministic cost`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(expense(merchant = "Local Bakery", amount = 100.0))
-        )
 
         val report = calculator.calculateCarbonFootprint(startDate = 0L, endDate = dayMs)
 
@@ -60,7 +56,7 @@ class CarbonFootprintTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `empty dataset returns zero footprint`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(emptyList())
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns emptyList()
 
         val report = calculator.calculateCarbonFootprint(startDate = 0L, endDate = dayMs)
 
@@ -71,7 +67,7 @@ class CarbonFootprintTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `shared expenses use effectiveAmount`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(
                 expense(
                     merchant = "Local Bakery",
@@ -80,7 +76,6 @@ class CarbonFootprintTest : AnalyticsEngineTestBase() {
                     myShareAmount = 40.0
                 )
             )
-        )
 
         val report = calculator.calculateCarbonFootprint(startDate = 0L, endDate = dayMs)
 
@@ -90,18 +85,35 @@ class CarbonFootprintTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `category breakdown sums to total`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(
                 expense(merchant = "SHELL", amount = 10.0),     // 23.0
                 expense(merchant = "ZARA", amount = 20.0),      // 11.0
                 expense(merchant = "Local Bakery", amount = 40.0) // 10.0
             )
-        )
 
         val report = calculator.calculateCarbonFootprint(startDate = 0L, endDate = dayMs)
         val sum = report.categoryBreakdown.sumOf { it.emissionsKg }
 
         assertApproxEquals(report.totalEmissionsKg, sum, 0.0001)
+    }
+
+    /**
+     * A.9 Batch 7 regression: carbon reporting must use the uncapped
+     * DAO query so datasets larger than the old 2000-row default are
+     * not silently truncated.
+     */
+    @Test
+    fun `A9 regression - all rows included beyond old 2000 limit`() = runTest {
+        val bigList = (1..2500).map {
+            expense(merchant = "SHELL", amount = 1.0)
+        }
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns bigList
+
+        val report = calculator.calculateCarbonFootprint(startDate = 0L, endDate = dayMs)
+
+        // 2500 × €1 × 2.3 (SHELL) = 5750.0
+        assertApproxEquals(5750.0, report.totalEmissionsKg, 0.1)
     }
 
     private fun expense(

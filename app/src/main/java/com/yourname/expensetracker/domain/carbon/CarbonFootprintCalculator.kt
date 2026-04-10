@@ -4,8 +4,6 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.UiText
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 import java.time.Instant
 import java.time.ZoneId
 import javax.inject.Inject
@@ -116,11 +114,11 @@ class CarbonFootprintCalculator @Inject constructor(
         startDate: Long = System.currentTimeMillis() - (30L * 24 * 60 * 60 * 1000),
         endDate: Long = System.currentTimeMillis()
     ): CarbonFootprintReport {
-        val expensesFlow = expenseDao.getExpensesBetweenFlow(startDate, endDate)
-        val expenses = mutableListOf<Expense>()
-        expensesFlow.collect { expenseList ->
-            expenses.addAll(expenseList.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE })
-        }
+        // A.9 Batch 7: one-shot uncapped read so carbon reporting is never
+        // silently truncated at the old LIMIT 2000 default and avoids live
+        // Flow collection for a point-in-time report.
+        val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+            .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE }
         
         val categoryEmissions = mutableMapOf<String, Double>()
         val merchantEmissions = mutableMapOf<String, Double>()

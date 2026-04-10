@@ -109,6 +109,42 @@ interface ExpenseDao {
     @Deprecated("Use getAllFlow(limit) or getPage(limit, offset) to prevent OOM", ReplaceWith("getAllFlow(500)"))
     @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit")
     suspend fun getAll(limit: Int = 2000): List<Expense>
+
+    // ── Uncapped full-data queries (A.9) ────────────────────────────────────
+    // These variants intentionally omit LIMIT so that callers with full-data
+    // semantics (analytics, export, forecasting, budget) receive the complete
+    // dataset.  Use only through repository methods that need completeness;
+    // UI/display paths should continue using the bounded variants above.
+
+    /**
+     * Return **all** expenses ordered by date descending with no row cap.
+     * Intended for repository-level exhaustive reads that must not silently
+     * truncate (e.g., analytics, forecasting, cash-flow).
+     */
+    @Query("SELECT * FROM expenses ORDER BY date DESC")
+    fun getAllFlowUncapped(): Flow<List<Expense>>
+
+    /**
+     * Suspend variant: return **all** expenses with no row cap.
+     * Used by [ExpenseRepository] internal paging / snapshot helpers.
+     */
+    @Query("SELECT * FROM expenses ORDER BY date DESC")
+    suspend fun getAllUncapped(): List<Expense>
+
+    /**
+     * Return all expenses in a half-open date range **without** a row cap.
+     * Preserves the same `isNotMine = 0` ownership filter and
+     * `date DESC, id DESC` ordering as the bounded [getExpensesBetween].
+     */
+    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC, id DESC")
+    suspend fun getExpensesBetweenUncapped(startDate: Long, endDate: Long): List<Expense>
+
+    /**
+     * Reactive (Flow) variant of [getExpensesBetweenUncapped].
+     * Preserves the same ownership filter and ordering as [getExpensesBetweenFlow].
+     */
+    @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
+    fun getExpensesBetweenFlowUncapped(startDate: Long, endDate: Long): Flow<List<Expense>>
     
     @Query("SELECT * FROM expenses WHERE date >= :since AND isNotMine = 0 ORDER BY date DESC")
     suspend fun getExpensesSince(since: Long): List<Expense>
@@ -740,6 +776,253 @@ interface ExpenseDao {
         AND isNotMine = 0
     """)
     suspend fun getTotalSpentBetween(startDate: Long, endDate: Long): Double?
+
+    /**
+     * Sum effective-amount over a half-open date range with nullable category
+     * equality semantics.  Intentionally does **not** narrow by transaction
+     * type — that responsibility belongs to A.10.
+     *
+     * Category matching:
+     *  - :categoryId IS NULL  → matches only rows where categoryId IS NULL
+     *  - :categoryId non-null → matches rows where categoryId = :categoryId
+     *
+     * Used by [SharedBudgetManager] to replace uncapped row scans (A.9 Batch 4).
+     */
+    @Query("""
+        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses
+        WHERE date >= :startDate AND date < :endDate
+          AND isNotMine = 0
+          AND ((:categoryId IS NULL AND categoryId IS NULL) OR categoryId = :categoryId)
+    """)
+    suspend fun getEffectiveSpentBetweenForCategory(
+        startDate: Long,
+        endDate: Long,
+        categoryId: Long?
+    ): Double
+
+    // ── Aggregate helpers for A.9 downstream batches ────────────────────────
+    // Later batches (budget, forecasting, shared-budget, tax, multi-currency)
+    // will migrate from capped row reads to these aggregate SQL queries.
+
+    /**
+     * Total effective spend grouped by currency for a half-open date range.
+     * Consumers that only need per-currency totals (multi-currency, tax,
+     * shared-budget) should prefer this over fetching all rows.
+     */
+    @Query("""
+        SELECT UPPER(currency) AS currency,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE transactionType = 'PURCHASE'
+          AND date >= :startDate AND date < :endDate
+          AND isNotMine = 0
+        GROUP BY UPPER(currency)
+        ORDER BY total DESC
+    """)
+    suspend fun getTotalSpentBetweenByCurrency(startDate: Long, endDate: Long): List<CurrencyTotal>
+
+    // ── A.9 Batch 5 — Grouped multi-currency aggregate helpers ────────────
+    // These queries group by (dimension + UPPER(currency)) so that
+    // MultiCurrencyRepository can convert per-currency sub-totals for each
+    // category/merchant/month without an uncapped row scan.
+    //
+    // PURCHASE-filtered variants are retained for callers (analytics, budget)
+    // that intentionally need PURCHASE-only semantics.
+    // Type-agnostic variants (prefixed with "getAll...") are used by
+    // MultiCurrencyRepository to preserve pre-A.10 semantics.
+
+    /**
+     * Effective spend grouped by categoryId + currency for a half-open date range.
+     * Each row represents one (categoryId, currency) bucket.
+     * **PURCHASE-only** — used by analytics / budget consumers.
+     */
+    @Query("""
+        SELECT categoryId,
+               UPPER(currency) AS currency,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE transactionType = 'PURCHASE'
+          AND date >= :startDate AND date < :endDate
+          AND isNotMine = 0
+        GROUP BY categoryId, UPPER(currency)
+        ORDER BY total DESC
+    """)
+    suspend fun getCategoryTotalsBetweenByCurrency(startDate: Long, endDate: Long): List<CategoryCurrencyTotal>
+
+    /**
+     * Effective spend grouped by merchant + currency for a half-open date range.
+     * Each row represents one (merchant, currency) bucket.
+     * Uses MIN(merchant) to pick a display name per merchantKey grouping,
+     * consistent with [getMerchantTotalsBetween].
+     * **PURCHASE-only** — used by analytics / budget consumers.
+     */
+    @Query("""
+        SELECT MIN(merchant) AS merchant,
+               UPPER(currency) AS currency,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE transactionType = 'PURCHASE'
+          AND date >= :startDate AND date < :endDate
+          AND isNotMine = 0
+          AND merchantKey IS NOT NULL
+        GROUP BY merchantKey, UPPER(currency)
+        ORDER BY total DESC
+    """)
+    suspend fun getMerchantTotalsBetweenByCurrency(startDate: Long, endDate: Long): List<MerchantCurrencyTotal>
+
+    /**
+     * Effective spend grouped by monthKey + currency for a half-open date range.
+     * Each row represents one (month, currency) bucket.
+     * **PURCHASE-only** — used by analytics / budget consumers.
+     */
+    @Query("""
+        SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
+               UPPER(currency) AS currency,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE transactionType = 'PURCHASE'
+          AND date >= :startDate AND date < :endDate
+          AND isNotMine = 0
+        GROUP BY monthKey, UPPER(currency)
+        ORDER BY monthKey ASC, total DESC
+    """)
+    suspend fun getMonthlyTotalsBetweenByCurrency(startDate: Long, endDate: Long): List<MonthlyCurrencyTotal>
+
+    // ── A.9 Batch 5 — Type-agnostic aggregate helpers for MultiCurrencyRepository ──
+    // These variants intentionally do NOT filter by transactionType, preserving
+    // pre-A.10 semantics where MultiCurrencyRepository was type-agnostic.
+
+    /**
+     * Total effective spend grouped by currency for a half-open date range.
+     * **Type-agnostic** — includes all transaction types (PURCHASE, DEPOSIT,
+     * TRANSFER, UNKNOWN, etc.) to match the pre-A.10 contract of
+     * [MultiCurrencyRepository].
+     */
+    @Query("""
+        SELECT UPPER(currency) AS currency,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE date >= :startDate AND date < :endDate
+          AND isNotMine = 0
+        GROUP BY UPPER(currency)
+        ORDER BY total DESC
+    """)
+    suspend fun getAllSpentBetweenByCurrency(startDate: Long, endDate: Long): List<CurrencyTotal>
+
+    /**
+     * Effective spend grouped by categoryId + currency for a half-open date range.
+     * **Type-agnostic** — preserves pre-A.10 semantics.  Includes rows with
+     * NULL categoryId so that uncategorized expenses are not silently dropped.
+     */
+    @Query("""
+        SELECT categoryId,
+               UPPER(currency) AS currency,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE date >= :startDate AND date < :endDate
+          AND isNotMine = 0
+        GROUP BY categoryId, UPPER(currency)
+        ORDER BY total DESC
+    """)
+    suspend fun getAllCategoryTotalsBetweenByCurrency(startDate: Long, endDate: Long): List<CategoryCurrencyTotal>
+
+    /**
+     * Effective spend grouped by raw merchant name + currency for a half-open date range.
+     * **Type-agnostic** — preserves pre-A.10 semantics.
+     * Groups by the raw `merchant` column (not `merchantKey`) so that different
+     * display labels are never merged into a single bucket, matching the pre-A.9
+     * row-scan grouping behaviour where each distinct `expense.merchant` string
+     * was its own key in the result map.
+     */
+    @Query("""
+        SELECT merchant AS merchant,
+               UPPER(currency) AS currency,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE date >= :startDate AND date < :endDate
+          AND isNotMine = 0
+        GROUP BY merchant, UPPER(currency)
+        ORDER BY total DESC
+    """)
+    suspend fun getAllMerchantTotalsBetweenByCurrency(startDate: Long, endDate: Long): List<MerchantCurrencyTotal>
+
+    /**
+     * Effective spend grouped by monthKey + currency for a half-open date range.
+     * **Type-agnostic** — preserves pre-A.10 semantics.
+     */
+    @Query("""
+        SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
+               UPPER(currency) AS currency,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE date >= :startDate AND date < :endDate
+          AND isNotMine = 0
+        GROUP BY monthKey, UPPER(currency)
+        ORDER BY monthKey ASC, total DESC
+    """)
+    suspend fun getAllMonthlyTotalsBetweenByCurrency(startDate: Long, endDate: Long): List<MonthlyCurrencyTotal>
+
+    /**
+     * Monthly effective-amount totals across the full history (no date param).
+     * Useful for forecasting/autopilot engines that need complete monthly
+     * aggregates without fetching raw rows.
+     */
+    @Query("""
+        SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE transactionType = 'PURCHASE'
+          AND isNotMine = 0
+        GROUP BY monthKey
+        ORDER BY monthKey ASC
+    """)
+    suspend fun getMonthlySpendingTotals(): List<MonthlySpendingTotal>
+
+    /**
+     * Monthly effective-amount totals for a half-open date range, no category filter.
+     * Used by [BudgetForecastingEngine] for budgets without a categoryId.
+     * Replaces capped [getExpensesByTypeBetween] row reads with aggregate SQL (A.9).
+     */
+    @Query("""
+        SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE transactionType = 'PURCHASE'
+          AND date >= :startDate AND date < :endDate
+          AND isNotMine = 0
+        GROUP BY monthKey
+        ORDER BY monthKey ASC
+    """)
+    suspend fun getMonthlySpendingTotalsBetween(startDate: Long, endDate: Long): List<MonthlySpendingTotal>
+
+    /**
+     * Monthly effective-amount totals for a specific category in a half-open date range.
+     * Used by [BudgetForecastingEngine] for category-specific budgets.
+     * Replaces raw row reads from [getExpensesByCategory] with aggregate SQL (A.9).
+     */
+    @Query("""
+        SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE transactionType = 'PURCHASE'
+          AND categoryId = :categoryId
+          AND date >= :startDate AND date < :endDate
+          AND isNotMine = 0
+        GROUP BY monthKey
+        ORDER BY monthKey ASC
+    """)
+    suspend fun getMonthlySpendingTotalsByCategoryBetween(categoryId: Long, startDate: Long, endDate: Long): List<MonthlySpendingTotal>
 
     @Query("""
         SELECT merchantKey as merchantKey, MIN(merchant) as merchant,
@@ -1405,5 +1688,59 @@ data class BusinessProjectTotal(
     val businessProject: String,
     val total: Double,
     val count: Int
+)
+
+// === A.9 Aggregate Query Results ===
+
+/** Per-currency spending total for a date range. */
+data class CurrencyTotal(
+    val currency: String,
+    val total: Double,
+    val txCount: Int
+)
+
+/** Monthly aggregate spending total (no date-range constraint). */
+data class MonthlySpendingTotal(
+    val monthKey: String,
+    val total: Double,
+    val txCount: Int
+)
+
+// === A.9 Batch 5 — Grouped multi-currency aggregate DTOs ===
+
+/**
+ * Category + currency grouped total.
+ * Used by [MultiCurrencyRepository] to avoid uncapped row scans when
+ * computing per-category totals across multiple currencies.
+ */
+data class CategoryCurrencyTotal(
+    val categoryId: Long?,
+    val currency: String,
+    val total: Double,
+    val txCount: Int
+)
+
+/**
+ * Merchant + currency grouped total.
+ * Used by [MultiCurrencyRepository] to avoid uncapped row scans when
+ * computing per-merchant totals across multiple currencies.
+ */
+data class MerchantCurrencyTotal(
+    val merchant: String,
+    val currency: String,
+    val total: Double,
+    val txCount: Int
+)
+
+/**
+ * Month + currency grouped total.
+ * Used by [MultiCurrencyRepository] to avoid uncapped row scans when
+ * computing per-month totals across multiple currencies.
+ */
+data class MonthlyCurrencyTotal(
+    val monthKey: String,
+    val currency: String,
+    val total: Double,
+    val txCount: Int
 )
 

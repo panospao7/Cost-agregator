@@ -5,6 +5,7 @@ import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.CategoryTotalResult
 import com.yourname.expensetracker.data.database.dao.DailyTotal
+import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.dao.MonthlyTotal
 import com.yourname.expensetracker.data.database.dao.WeeklyTotal
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -307,7 +308,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             purchase(2, "2026-03-11", 3, 20.0, merchant = "ZARA"),
             purchase(3, "2026-03-12", 1, 40.0, merchant = "Local Bakery")
         )
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(expenses)
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns expenses
 
         val calculator = CarbonFootprintCalculator(expenseDao)
         val report = calculator.calculateCarbonFootprint(ms(2026, 3, 1), ms(2026, 4, 1))
@@ -440,6 +441,15 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         coEvery { expenseDao.getExpensesBetween(any(), any()) } returns history
         coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 200.0
 
+        // A.9 Batch 3: BudgetForecastingEngine now uses aggregate SQL for
+        // historical spending data instead of fetching raw expense rows.
+        // Mock the monthly spending totals that the engine now queries.
+        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns listOf(
+            MonthlySpendingTotal(monthKey = "2026-01", total = 300.0, txCount = 1),
+            MonthlySpendingTotal(monthKey = "2026-02", total = 350.0, txCount = 1),
+            MonthlySpendingTotal(monthKey = "2026-03", total = 400.0, txCount = 1)
+        )
+
         val engine = BudgetForecastingEngine(
             expenseDao = expenseDao,
             budgetRepository = mockk(relaxed = true),
@@ -466,6 +476,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         every { timeProvider.now() } returns ms(2026, 3, 30)
         mockAnalyticsDaoByRange(emptyList())
         every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(emptyList())
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(emptyList())
 
         val insights = insightsEngine.generateInsights(categories, emptyList())
         val advancedStats = advancedEngine.getStatisticalInsights(
@@ -676,13 +687,18 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                 }
 
         coEvery { expenseDao.getExpensesBetween(any(), any()) } answers { inRange(firstArg(), secondArg()) }
+        // A.9: ExpenseRepository.getExpensesBetween() now delegates to the uncapped DAO variant
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } answers { inRange(firstArg(), secondArg()) }
         coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), TransactionType.PURCHASE.name) } answers {
             purchasesMine(firstArg(), secondArg())
         }
         every { expenseDao.getExpensesBetweenFlow(any(), any()) } answers { flowOf(inRange(firstArg(), secondArg())) }
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } answers { flowOf(inRange(firstArg(), secondArg())) }
         every { expenseDao.getExpensesByTypeBetweenFlow(any(), any(), TransactionType.PURCHASE.name) } answers {
             flowOf(purchasesMine(firstArg(), secondArg()))
         }
+        // A.9: ExpenseRepository.getAllExpenses() now delegates to getAllFlowUncapped()
+        every { expenseDao.getAllFlowUncapped() } answers { flowOf(expenses) }
 
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } answers {
             purchasesMine(firstArg(), secondArg()).sumOf { it.effectiveAmount }

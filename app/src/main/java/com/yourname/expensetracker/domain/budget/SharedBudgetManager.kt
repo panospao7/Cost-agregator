@@ -5,8 +5,6 @@ import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,6 +21,15 @@ class SharedBudgetManager @Inject constructor(
     
     /**
      * Calculate spending for a shared budget.
+     *
+     * A.9 Batch 4 fix: uses [ExpenseDao.getEffectiveSpentBetweenForCategory]
+     * — an exact aggregate SQL helper that sums EFFECTIVE_AMOUNT_SQL over the
+     * half-open date range with `isNotMine = 0` and nullable-category equality
+     * semantics.  This replaces the prior uncapped row scan + in-memory filter,
+     * pushing the work entirely into SQLite.
+     *
+     * The aggregate intentionally does **not** narrow by transaction type;
+     * that responsibility belongs to A.10.
      */
     suspend fun getSharedBudgetProgress(
         budgetId: Long,
@@ -31,19 +38,14 @@ class SharedBudgetManager @Inject constructor(
         val budget = budgetRepository.getById(budgetId) ?: throw IllegalArgumentException("Budget not found")
         val now = timeProvider.now()
         val startOfMonth = getStartOfMonth(now)
-        
-        // Get all expenses for this budget's category by members
-        val expenses = expenseDao.getExpensesBetween(startOfMonth, now)
-            .filter { expense ->
-                expense.categoryId == budget.categoryId &&
-                // Would need memberId field on expense in real implementation
-                true
-            }
-        
-        var totalSpent = 0.0
-        for (expense in expenses) {
-            totalSpent += expense.effectiveAmount
-        }
+
+        // A.9 Batch 4: exact aggregate — no row scan, no LIMIT,
+        // nullable-category equality, all transaction types.
+        val totalSpent = expenseDao.getEffectiveSpentBetweenForCategory(
+            startDate = startOfMonth,
+            endDate = now,
+            categoryId = budget.categoryId
+        )
         
         val remaining = budget.amount - totalSpent
         val percentUsed = if (budget.amount > 0) (totalSpent / budget.amount) * 100 else 0.0

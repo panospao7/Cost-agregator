@@ -7,9 +7,8 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
+import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -18,6 +17,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import java.util.Calendar
@@ -25,9 +25,16 @@ import java.util.TimeZone
 
 /**
  * PHASE 6 TEST: Budget Rollover
- * 
+ *
  * Tests budget rollover logic where unspent amounts carry over to next period.
  * Tests the "Compounding Rollover" implementation (LOG-002 BUG-2 FIX).
+ *
+ * A.9 Batch 2: Tests use a real [BudgetCalculator] with fixed UTC timestamps
+ * and aggregate-query mocks (getTotalSpentFlow, getTotalForPeriod,
+ * getCategorySpentInPeriod) instead of a mocked calculator + row-level reads.
+ * This eliminates the OOM/hang caused by the relaxed-mock returning
+ * `PeriodRange(0,0)` from `calculatePeriodWindowForTime`, which made the
+ * rollover while-loop in `getBudgetStatuses()` spin indefinitely.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class BudgetRolloverTest {
@@ -35,22 +42,27 @@ class BudgetRolloverTest {
     private val budgetDao = mockk<BudgetDao>(relaxed = true)
     private val categoryDao = mockk<CategoryDao>(relaxed = true)
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
-    private val budgetCalculator = mockk<BudgetCalculator>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
-    
+
+    /** Real calculator — required so rollover window iteration terminates correctly. */
+    private lateinit var budgetCalculator: BudgetCalculator
     private lateinit var budgetRepository: BudgetRepository
+
+    // Fixed "now" = 2026-04-10 00:00 UTC (matches today's date in env)
+    private val NOW = makeUtcMs(2026, 4, 10)
 
     @Before
     fun setup() {
-        // Mock time to be consistent
-        every { timeProvider.now() } returns System.currentTimeMillis()
-        
-        // Default budget calculator behavior
-        every { 
-            budgetCalculator.calculatePeriodRange(any(), any()) 
-        } returns createMockPeriodRange()
-        
+        every { timeProvider.now() } returns NOW
+
+        budgetCalculator = BudgetCalculator(timeProvider)
+
+        // A.9: Default aggregate mocks — invalidation trigger + aggregate queries
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
+        coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
+
         budgetRepository = BudgetRepository(
             budgetDao,
             categoryDao,
@@ -62,200 +74,251 @@ class BudgetRolloverTest {
         )
     }
 
+    @After
+    fun tearDown() {
+        clearAllMocks()
+    }
+
+    // ============================================================================
+    // Non-rollover baseline
+    // ============================================================================
+
     @Test
     fun `budget without rollover does not carry over unspent amount`() = runTest {
-        val budget = createBudget(rollover = false, amount = 1000.0)
-        val expenses = listOf(createExpense(600.0))
-        
+        val start = makeUtcMs(2026, 4, 1)
+        val budget = createBudget(rollover = false, amount = 1000.0, startDate = start)
+
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(expenses)
-        
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(600.0)
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 600.0
+
         val statuses = budgetRepository.getBudgetStatuses().first()
-        
+
         assertThat(statuses).hasSize(1)
         assertThat(statuses[0].remainingAmount).isEqualTo(400.0) // 1000 - 600
         assertThat(statuses[0].budget.amount).isEqualTo(1000.0) // No rollover
     }
 
+    // ============================================================================
+    // Rollover — basic behavior
+    // ============================================================================
+
     @Test
     fun `budget with rollover carries over unspent amount`() = runTest {
-        val budget = createBudget(rollover = true, amount = 1000.0)
-        val previousPeriodExpenses = listOf(createExpense(600.0)) // Spent 600 of 1000
-        val currentPeriodExpenses = emptyList<Expense>()
-        
+        // Anchor 2 months ago → 2 completed periods before the active one
+        val start = makeUtcMs(2026, 2, 10)
+        val budget = createBudget(rollover = true, amount = 1000.0, startDate = start)
+
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
-            previousPeriodExpenses + currentPeriodExpenses
-        )
-        
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
+
         val statuses = budgetRepository.getBudgetStatuses().first()
-        
-        // With rollover, the effective budget should be 1000 + (1000 - 600) = 1400
+
         assertThat(statuses).hasSize(1)
         assertThat(statuses[0].budget.rollover).isTrue()
-    }
-
-    @Test
-    fun `rollover accumulates over multiple periods`() = runTest {
-        val budget = createBudget(rollover = true, amount = 1000.0)
-        
-        // Period 1: Spent 800 (saved 200)
-        // Period 2: Spent 900 (saved 100)  
-        // Period 3: Current period
-        // Total rollover = 200 + 100 = 300
-        // Effective budget = 1000 + 300 = 1300
-        
-        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
-        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
-            listOf(createExpense(800.0), createExpense(900.0))
-        )
-        
-        val statuses = budgetRepository.getBudgetStatuses().first()
-        
-        assertThat(statuses[0].budget.rollover).isTrue()
-        // Should show accumulated surplus in effective limit
-    }
-
-    @Test
-    fun `rollover never goes negative`() = runTest {
-        val budget = createBudget(rollover = true, amount = 1000.0)
-        
-        // If overspent in previous period, rollover should be 0 (not negative)
-        val overspentExpenses = listOf(createExpense(1200.0)) // Spent 1200 of 1000
-        
-        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
-        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(overspentExpenses)
-        
-        val statuses = budgetRepository.getBudgetStatuses().first()
-        
-        // Current budget should still be 1000 (not reduced by overspend)
+        // With zero spend in all periods, surplus compounds: effective limit > base
         assertThat(statuses[0].budget.amount).isAtLeast(1000.0)
     }
 
     @Test
-    fun `compounding rollover adds previous surpluses correctly`() = runTest {
-        // Test LOG-002: Compounding Rollover - BUG-2 FIX
-        val budget = createBudget(rollover = true, amount = 1000.0)
-        
-        // Simulate multiple periods of saving
-        // Period 1: Spent 500, saved 500
-        // Period 2: Spent 600, saved 400 (total saved: 900)
-        // Period 3: Current
-        // Effective limit should be 1000 + 900 = 1900
-        
+    fun `rollover accumulates over multiple periods`() = runTest {
+        // Anchor 3 months ago: 3 completed monthly windows before active
+        val start = makeUtcMs(2026, 1, 10)
+        val budget = createBudget(rollover = true, amount = 1000.0, startDate = start)
+
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
-            listOf(createExpense(500.0), createExpense(600.0))
-        )
-        
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+
+        // Each completed period: spent 800 out of effective limit
+        // Period 1: eff=1000, surplus=200
+        // Period 2: eff=1200, surplus=400
+        // Period 3: eff=1400, surplus=600
+        // Active: eff=1600
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 800.0
+
         val statuses = budgetRepository.getBudgetStatuses().first()
-        
-        // Verify compounding behavior
+
         assertThat(statuses[0].budget.rollover).isTrue()
+        // Effective limit should reflect accumulated surplus
+        assertThat(statuses[0].budget.amount).isAtLeast(1400.0)
     }
+
+    // ============================================================================
+    // Rollover — surplus never goes negative
+    // ============================================================================
+
+    @Test
+    fun `rollover never goes negative`() = runTest {
+        val start = makeUtcMs(2026, 2, 10)
+        val budget = createBudget(rollover = true, amount = 1000.0, startDate = start)
+
+        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
+        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(1200.0)
+        // Overspent in rollover periods → aggregate returns 1200 for historical windows
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 1200.0
+
+        val statuses = budgetRepository.getBudgetStatuses().first()
+
+        // Surplus is clamped at 0, so effective limit stays at base amount
+        assertThat(statuses[0].budget.amount).isAtLeast(1000.0)
+    }
+
+    // ============================================================================
+    // Compounding rollover arithmetic
+    // ============================================================================
+
+    @Test
+    fun `compounding rollover adds previous surpluses correctly`() = runTest {
+        // Anchor 3 months ago
+        val start = makeUtcMs(2026, 1, 10)
+        val budget = createBudget(rollover = true, amount = 1000.0, startDate = start)
+
+        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
+        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+
+        // Spend 500 in every window (including active)
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 500.0
+
+        val statuses = budgetRepository.getBudgetStatuses().first()
+
+        assertThat(statuses[0].budget.rollover).isTrue()
+        // Period 1: eff=1000, surplus=500 → Period 2: eff=1500, surplus=1000 →
+        // Period 3: eff=2000, surplus=1500 → Active: eff=2500
+        assertThat(statuses[0].budget.amount).isAtLeast(2000.0)
+        assertThat(statuses[0].spentAmount).isEqualTo(500.0)
+    }
+
+    // ============================================================================
+    // Period boundary semantics
+    // ============================================================================
 
     @Test
     fun `rollover calculation respects period boundaries`() = runTest {
+        val start = makeUtcMs(2026, 1, 10)
         val budget = createBudget(
             rollover = true,
             amount = 1000.0,
             period = BudgetPeriod.MONTHLY,
-            startDate = getDateMonthsAgo(3)
+            startDate = start
         )
-        
+
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(emptyList())
-        
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
+
         val statuses = budgetRepository.getBudgetStatuses().first()
-        
+
         // Should calculate rollover based on completed periods only
         assertThat(statuses).hasSize(1)
     }
 
     @Test
     fun `monthly budget rollover works across month boundaries`() = runTest {
+        val start = makeUtcMs(2026, 2, 10)
         val budget = createBudget(
             rollover = true,
             amount = 1000.0,
             period = BudgetPeriod.MONTHLY,
-            startDate = getDateMonthsAgo(2)
+            startDate = start
         )
-        
+
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
-            listOf(createExpense(800.0))
-        )
-        
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(800.0)
+        // 800 spent in each rollover period
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 800.0
+
         val statuses = budgetRepository.getBudgetStatuses().first()
-        
+
         assertThat(statuses[0].budget.rollover).isTrue()
+        // 2 completed months with 200 surplus each → effective limit grows
+        assertThat(statuses[0].budget.amount).isAtLeast(1200.0)
     }
 
     @Test
     fun `weekly budget rollover works across week boundaries`() = runTest {
+        // Anchor 2 weeks ago
+        val start = makeUtcMs(2026, 3, 27) // 2 weeks before Apr 10
         val budget = createBudget(
             rollover = true,
             amount = 500.0,
             period = BudgetPeriod.WEEKLY,
-            startDate = getDateWeeksAgo(2)
+            startDate = start
         )
-        
+
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
-            listOf(createExpense(300.0))
-        )
-        
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(300.0)
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 300.0
+
         val statuses = budgetRepository.getBudgetStatuses().first()
-        
+
         assertThat(statuses[0].budget.rollover).isTrue()
+        // At least one completed week with 200 surplus
+        assertThat(statuses[0].budget.amount).isAtLeast(500.0)
     }
+
+    // ============================================================================
+    // Category-scoped rollover
+    // ============================================================================
 
     @Test
     fun `rollover with category filter only includes category expenses`() = runTest {
-        val category = Category(1L, "Food", "🍽️", "#FF0000", false)
+        val start = makeUtcMs(2026, 3, 10) // 1 completed month
+        val category = Category(1L, "Food", "\uD83C\uDF7D\uFE0F", "#FF0000", false)
         val budget = createBudget(
             rollover = true,
             amount = 500.0,
-            categoryId = 1L
+            categoryId = 1L,
+            startDate = start
         )
-        
-        // Only category expenses should count
-        val foodExpense = createExpense(200.0, categoryId = 1L)
-        val transportExpense = createExpense(300.0, categoryId = 2L)
-        
+
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
         every { categoryDao.getAllFlow() } returns flowOf(listOf(category))
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
-            listOf(foodExpense, transportExpense)
-        )
-        
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(200.0)
+        // Budget has categoryId=1 → getCategorySpentInPeriod is called (only category 1 expenses)
+        coEvery { expenseDao.getCategorySpentInPeriod(eq(1L), any(), any()) } returns 200.0
+
         val statuses = budgetRepository.getBudgetStatuses().first()
-        
-        // Should only consider food expense (200), not transport (300)
+
+        // Active window spend should be 200
         assertThat(statuses[0].spentAmount).isEqualTo(200.0)
+        // Verify no row-level reads
+        coVerify(exactly = 0) { expenseDao.getExpensesBetween(any(), any(), any(), any()) }
     }
+
+    // ============================================================================
+    // Zero spend → full surplus rollover
+    // ============================================================================
 
     @Test
     fun `surplus calculation with zero spend is full budget amount`() = runTest {
-        val budget = createBudget(rollover = true, amount = 1000.0)
-        
+        val start = makeUtcMs(2026, 3, 10) // 1 completed month
+        val budget = createBudget(rollover = true, amount = 1000.0, startDate = start)
+
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(emptyList())
-        
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
+
         val statuses = budgetRepository.getBudgetStatuses().first()
-        
-        // Full budget amount should roll over if nothing spent
+
+        // Zero spend in completed period → full 1000 surplus rolls over
         assertThat(statuses[0].spentAmount).isEqualTo(0.0)
+        // Effective limit = 1000 (base) + 1000 (surplus from completed period) = 2000
+        assertThat(statuses[0].budget.amount).isAtLeast(2000.0)
     }
+
+    // ============================================================================
+    // Anchor day coercion (Jan 31 → Feb 28)
+    // ============================================================================
 
     /**
      * Regression for ISSUE-3: Rollover history must iterate anchored windows with an explicit
@@ -280,8 +343,16 @@ class BudgetRolloverTest {
         val marchFifthMs = makeUtcMs(2025, 3, 5)
         every { timeProvider.now() } returns marchFifthMs
 
+        // Rebuild calculator+repo with the updated time
+        val calc = BudgetCalculator(timeProvider)
+        val repo = BudgetRepository(
+            budgetDao, categoryDao, expenseDao, calc,
+            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider)
+        )
+
         // Budget: anchor 2025-01-31, monthly, amount €1 000, rollover = true
         val jan31Ms = makeUtcMs(2025, 1, 31)
+        val feb28Ms = makeUtcMs(2025, 2, 28)
         val budget = createBudget(
             rollover = true,
             amount = 1000.0,
@@ -289,39 +360,20 @@ class BudgetRolloverTest {
             startDate = jan31Ms
         )
 
-        // Active window is Feb-28 → Mar-31 (or similar anchor-coerced boundary).
-        // Tell the calculator what the active period is for March 5.
-        val feb28Ms  = makeUtcMs(2025, 2, 28)
-        val mar31Ms  = makeUtcMs(2025, 3, 31)
-        every {
-            budgetCalculator.calculatePeriodRange(budget, marchFifthMs)
-        } returns (feb28Ms to mar31Ms)
-
-        // For the EXPLICIT window iterations we use the real BudgetCalculator logic via
-        // calculatePeriodWindowForTime — we DON'T mock that call so the real anchor-aware
-        // calendar math runs and advances windows correctly.
-        val realCalculator = BudgetCalculator(timeProvider)
-        val repository = BudgetRepository(
-            budgetDao,
-            categoryDao,
-            expenseDao,
-            realCalculator,
-            timeProvider,
-            offsetEngine,
-            TimeBoundaryTicker(timeProvider)
-        )
-
-        // One expense of €600 sitting in the Jan-31 → Feb-28 window.
-        val expenseInJanWindow = createExpense(
-            amount  = 600.0,
-            date    = makeUtcMs(2025, 2, 15)  // mid-February, inside Jan31→Feb28
-        )
-
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
         every { categoryDao.getAllFlow()          } returns flowOf(emptyList<Category>())
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(listOf(expenseInJanWindow))
+        every { expenseDao.getTotalSpentFlow()    } returns flowOf(600.0)
 
-        val statuses = repository.getBudgetStatuses().first()
+        // Aggregate: €600 spent in the completed Jan31→Feb28 window, €0 in active window.
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            // Jan31→Feb28 window contains the €600 spend
+            if (start <= jan31Ms && end <= feb28Ms + 86400000L) 600.0
+            else 0.0
+        }
+
+        val statuses = repo.getBudgetStatuses().first()
 
         assertThat(statuses).hasSize(1)
         val status = statuses[0]
@@ -331,30 +383,35 @@ class BudgetRolloverTest {
         assertThat(status.budget.amount).isAtLeast(1400.0)
     }
 
+    // ============================================================================
+    // Active/inactive filtering
+    // ============================================================================
+
     @Test
     fun `deactivating budget stops rollover accumulation`() = runTest {
-        val activeBudget = createBudget(rollover = true, amount = 1000.0, isActive = true)
-        val inactiveBudget = createBudget(rollover = true, amount = 1000.0, isActive = false)
-        
+        val start = makeUtcMs(2026, 3, 10)
+        val activeBudget = createBudget(rollover = true, amount = 1000.0, isActive = true, startDate = start)
+
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(activeBudget))
         every { categoryDao.getAllFlow() } returns flowOf(emptyList())
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(emptyList())
-        
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
+
         val statuses = budgetRepository.getBudgetStatuses().first()
-        
+
         // Only active budgets should appear
         assertThat(statuses).hasSize(1)
         assertThat(statuses[0].budget.isActive).isTrue()
     }
 
-    // Helper methods
-    
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
     private fun createBudget(
         rollover: Boolean,
         amount: Double,
         categoryId: Long? = null,
         period: BudgetPeriod = BudgetPeriod.MONTHLY,
-        startDate: Long = System.currentTimeMillis(),
+        startDate: Long = makeUtcMs(2026, 4, 1),
         isActive: Boolean = true
     ): Budget {
         return Budget(
@@ -368,49 +425,6 @@ class BudgetRolloverTest {
             notifyAtWarning = 0.75f,
             notifyAtCritical = 0.90f
         )
-    }
-    
-    private fun createExpense(
-        amount: Double,
-        categoryId: Long = 1L,
-        date: Long = System.currentTimeMillis()
-    ): Expense {
-        return Expense(
-            id = 1L,
-            merchant = "Test Merchant",
-            amount = amount,
-            date = date,
-            categoryId = categoryId,
-            notes = null,
-            transactionType = TransactionType.PURCHASE,
-            currency = "EUR"
-        )
-    }
-    
-    private fun createMockPeriodRange(): Pair<Long, Long> {
-        val now = System.currentTimeMillis()
-        val startOfMonth = Calendar.getInstance().apply {
-            timeInMillis = now
-            set(Calendar.DAY_OF_MONTH, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-        
-        return Pair(startOfMonth, now + 86400000L)
-    }
-    
-    private fun getDateMonthsAgo(months: Int): Long {
-        return Calendar.getInstance().apply {
-            add(Calendar.MONTH, -months)
-        }.timeInMillis
-    }
-    
-    private fun getDateWeeksAgo(weeks: Int): Long {
-        return Calendar.getInstance().apply {
-            add(Calendar.WEEK_OF_YEAR, -weeks)
-        }.timeInMillis
     }
 
     /**

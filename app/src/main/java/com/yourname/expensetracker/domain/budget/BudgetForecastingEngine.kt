@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.budget
 
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.BudgetForecast
@@ -101,37 +102,48 @@ class BudgetForecastingEngine @Inject constructor(
     
     /**
      * Get historical spending data for pattern analysis.
+     *
+     * Uses aggregate SQL (A.9) instead of fetching raw expense rows, so there
+     * is no row-count cap and no risk of silent truncation.  The DAO
+     * [getMonthlySpendingTotalsByCategoryBetween] and
+     * [getMonthlySpendingTotalsBetween] return pre-grouped monthly totals
+     * computed with the effective-amount formula, preserving A.1 semantics.
+     *
+     * Sparse-history parity: only months that the SQL aggregate actually
+     * returns are used as buckets.  Gap months with no qualifying rows are
+     * **not** synthesized, preserving the same semantics as the pre-A.9
+     * grouped-row code path where only months containing expense rows
+     * produced buckets.
      */
     private suspend fun getHistoricalSpendingData(budget: Budget): HistoricalData {
         val now = timeProvider.now()
         val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
         
-        // Get expenses for this budget's category
-        val expenses = if (budget.categoryId != null) {
-            expenseDao.getExpensesByCategory(
+        // Fetch pre-aggregated monthly totals via SQL — no row-count limit.
+        val monthlyTotals: List<MonthlySpendingTotal> = if (budget.categoryId != null) {
+            expenseDao.getMonthlySpendingTotalsByCategoryBetween(
                 categoryId = budget.categoryId,
                 startDate = threeMonthsAgo,
                 endDate = now
             )
         } else {
-            expenseDao.getExpensesByTypeBetween(
+            expenseDao.getMonthlySpendingTotalsBetween(
                 startDate = threeMonthsAgo,
-                endDate = now,
-                type = "PURCHASE"
+                endDate = now
             )
         }
         
-        // Group by month
-        val monthlyTotals = mutableMapOf<String, Double>()
-        for (expense in expenses) {
-            val monthKey = getMonthKey(expense.date)
-            val current = monthlyTotals[monthKey] ?: 0.0
-            monthlyTotals[monthKey] = current + expense.effectiveAmount
+        // Use only the month keys actually returned by SQL — no gap-month
+        // infill.  This preserves pre-A.9 sparse-history semantics where
+        // only months with qualifying expense rows produced buckets.
+        val monthlySpending = linkedMapOf<String, Double>()
+        for (row in monthlyTotals) {
+            monthlySpending[row.monthKey] = row.total
         }
         
         // Calculate statistics
-        val sortedMonthKeys = monthlyTotals.keys.sorted()
-        val values = sortedMonthKeys.map { monthlyTotals[it] ?: 0.0 }
+        val sortedMonthKeys = monthlySpending.keys.sorted()
+        val values = sortedMonthKeys.map { monthlySpending[it] ?: 0.0 }
         val average = if (values.isNotEmpty()) values.sum() / values.size else 0.0
         
         var variance = 0.0
@@ -174,10 +186,10 @@ class BudgetForecastingEngine @Inject constructor(
         }
         
         return HistoricalData(
-            monthlySpending = monthlyTotals,
+            monthlySpending = monthlySpending,
             averageMonthly = average,
             standardDeviation = standardDeviation,
-            monthsOfHistory = monthlyTotals.size,
+            monthsOfHistory = monthlySpending.size,
             trend = trend
         )
     }
@@ -406,14 +418,6 @@ class BudgetForecastingEngine @Inject constructor(
                 }
             }
         }
-    }
-    
-    private fun getMonthKey(timestamp: Long): String {
-        val calendar = Calendar.getInstance()
-        calendar.timeInMillis = timestamp
-        val year = calendar.get(Calendar.YEAR)
-        val month = calendar.get(Calendar.MONTH) + 1
-        return "$year-${month.toString().padStart(2, '0')}"
     }
     
     /**

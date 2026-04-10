@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
@@ -50,19 +51,14 @@ class BudgetRepository @Inject constructor(
         // Recalculate the expense query window on every day boundary so the flow
         // stays current after midnight rollovers without requiring re-subscription.
         return timeBoundaryTicker.dayBoundaryTicks().flatMapLatest { _ ->
-            // We fetch the last 25 months to cover yearly budgets + rollover (need 24 months for full yearly history)
-            val twentyFiveMonthsAgo = TimePeriodUtils.addMonths(timeProvider.now(), -25)
-            val endExclusive = TimePeriodUtils.getEndOfDay(timeProvider.now())
-
+            // Use a lightweight invalidation trigger instead of fetching all expense rows.
+            // getTotalSpentFlow() emits whenever the expenses table changes (Room invalidation),
+            // so the combine block re-runs and executes fresh aggregate queries.
             combine(
                 budgetDao.getActiveBudgetsFlow(),
                 categoryDao.getAllFlow(),
-                expenseDao.getExpensesBetweenFlow(twentyFiveMonthsAgo, endExclusive)
-            ) { budgets, categories, allExpenses ->
-                val purchases = allExpenses.filter {
-                    it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE &&
-                    !it.isNotMine
-                }
+                expenseDao.getTotalSpentFlow().map { it ?: 0.0 }
+            ) { budgets, categories, _ ->
                 val categoryMap = categories.associateBy { it.id }
 
                 budgets.map { budget ->
@@ -70,23 +66,10 @@ class BudgetRepository @Inject constructor(
                     val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
                     val window = PeriodRange(periodStart, periodEnd)
 
-                    fun getSpentInRange(start: Long, end: Long): Double {
-                        return purchases
-                            .filter {
-                                (budget.categoryId == null || it.categoryId == budget.categoryId) &&
-                                it.date >= start && it.date < end
-                            }
-                            .sumOf { it.effectiveAmount }
-                    }
-
-                    // Calculate effective spend using offset engine for shared expenses
-                    // Note: We can't call suspend function here, so we use the regular calculation
-                    // The offset calculation happens in the background via a separate flow
-                    val rawSpent = getSpentInRange(window.start, window.end)
-
-                    // For now, use the raw spend. The adjusted spend will be calculated
-                    // asynchronously by the BudgetMonitor or ViewModel
-                    val spent = rawSpent
+                    // Use aggregate SQL queries instead of fetching raw rows.
+                    // getCategorySpentInPeriod / getTotalForPeriod already filter by
+                    // transactionType = 'PURCHASE' AND isNotMine = 0 and use effectiveAmount.
+                    val spent = getAggregateSpent(budget.categoryId, window.start, window.end)
                     var limit = budget.amount
 
                     // LOG-002: Implement Compounding Rollover - BUG-2 FIX
@@ -109,7 +92,7 @@ class BudgetRepository @Inject constructor(
                         }
                         var effectiveLimit = budget.amount
                         for (period in periods) {
-                            val spentInPeriod = getSpentInRange(period.start, period.end)
+                            val spentInPeriod = getAggregateSpent(budget.categoryId, period.start, period.end)
                             val surplus = (effectiveLimit - spentInPeriod).coerceAtLeast(0.0)
                             effectiveLimit = budget.amount + surplus
                         }
@@ -138,6 +121,22 @@ class BudgetRepository @Inject constructor(
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * Returns the aggregate spend for a half-open date window using SQL-level
+     * aggregation.  Delegates to [ExpenseDao.getCategorySpentInPeriod] for
+     * category-scoped budgets and [ExpenseDao.getTotalForPeriod] for
+     * whole-wallet budgets.  Both DAO methods already filter by
+     * `transactionType = 'PURCHASE' AND isNotMine = 0` and use the
+     * effective-amount SQL helper, matching the previous in-memory logic.
+     */
+    private suspend fun getAggregateSpent(categoryId: Long?, start: Long, end: Long): Double {
+        return if (categoryId != null) {
+            expenseDao.getCategorySpentInPeriod(categoryId, start, end)
+        } else {
+            expenseDao.getTotalForPeriod(start, end)
         }
     }
 

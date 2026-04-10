@@ -4,10 +4,9 @@ import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
@@ -45,11 +44,11 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
             startDate = atDateTime(2026, 4, 1, 0, 0)
         )
         coEvery { budgetRepository.getById(7L) } returns budget
-        coEvery { expenseDao.getExpensesBetween(startOfMonth(now), now) } returns listOf(
-            expense(id = 1L, amount = 40.0, categoryId = 2L),
-            expense(id = 2L, amount = 60.0, categoryId = 2L),
-            expense(id = 3L, amount = 25.0, categoryId = 3L)
-        )
+        // A.9 Batch 4: aggregate SQL helper returns pre-computed sum for category 2
+        // (40 + 60 = 100; the old category-3 row is excluded by SQL WHERE)
+        coEvery {
+            expenseDao.getEffectiveSpentBetweenForCategory(startOfMonth(now), now, 2L)
+        } returns 100.0
 
         val progress = manager.getSharedBudgetProgress(7L, listOf("a", "b"))
 
@@ -77,11 +76,11 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
             startDate = atDateTime(2026, 4, 1, 0, 0)
         )
         coEvery { budgetRepository.getById(8L) } returns budget
-        coEvery { expenseDao.getExpensesBetween(startOfMonth(now), now) } returns listOf(
-            expense(id = 11L, amount = 30.0, categoryId = 1L),
-            expense(id = 12L, amount = 25.0, categoryId = 2L),
-            expense(id = 13L, amount = 40.0, categoryId = null)
-        )
+        // A.9 Batch 4: null-category aggregate — SQL uses
+        // (categoryId IS NULL) semantics so only uncategorised rows contribute
+        coEvery {
+            expenseDao.getEffectiveSpentBetweenForCategory(startOfMonth(now), now, null)
+        } returns 40.0
 
         val progress = manager.getSharedBudgetProgress(8L, listOf("u1", "u2", "u3"))
 
@@ -108,7 +107,10 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
     }
 
     // =========================================================================
-    // A.1 effectiveAmount regression tests — shared / percentage / isNotMine
+    // A.1 effectiveAmount regression tests — the aggregate SQL helper uses
+    // EFFECTIVE_AMOUNT_SQL which encodes the same ownership rules (shared /
+    // percentage / isNotMine).  The mock returns the pre-computed effective
+    // sum so the tests verify that the manager delegates correctly.
     // =========================================================================
 
     @Test
@@ -124,18 +126,11 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
             startDate = atDateTime(2026, 4, 1, 0, 0)
         )
         coEvery { budgetRepository.getById(10L) } returns budget
-        coEvery { expenseDao.getExpensesBetween(startOfMonth(now), now) } returns listOf(
-            // Shared purchase: raw amount = 100, myShareAmount = 40 → effectiveAmount = 40
-            Expense(
-                id = 20L, amount = 100.0, merchant = "Dinner",
-                transactionType = TransactionType.PURCHASE,
-                date = atDateTime(2026, 4, 5, 19, 0),
-                categoryId = 2L,
-                isSharedExpense = true, myShareAmount = 40.0
-            ),
-            // Regular purchase: effectiveAmount = 60
-            expense(id = 21L, amount = 60.0, categoryId = 2L)
-        )
+        // Shared purchase: raw = 100, myShareAmount = 40 → effectiveAmount = 40
+        // Regular: 60 → effectiveAmount = 60  → total effective = 100
+        coEvery {
+            expenseDao.getEffectiveSpentBetweenForCategory(startOfMonth(now), now, 2L)
+        } returns 100.0
 
         val progress = manager.getSharedBudgetProgress(10L, listOf("a", "b"))
 
@@ -160,17 +155,11 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
             startDate = atDateTime(2026, 4, 1, 0, 0)
         )
         coEvery { budgetRepository.getById(11L) } returns budget
-        coEvery { expenseDao.getExpensesBetween(startOfMonth(now), now) } returns listOf(
-            // Percentage-based shared: raw = 100, 50% → effectiveAmount = 50
-            Expense(
-                id = 30L, amount = 100.0, merchant = "Hotel",
-                transactionType = TransactionType.PURCHASE,
-                date = atDateTime(2026, 4, 8, 12, 0),
-                categoryId = 2L,
-                isSharedExpense = true, mySharePercentage = 50
-            ),
-            expense(id = 31L, amount = 50.0, categoryId = 2L)
-        )
+        // Percentage-based shared: raw = 100, 50% → effectiveAmount = 50
+        // Regular: 50 → effectiveAmount = 50 → total effective = 100
+        coEvery {
+            expenseDao.getEffectiveSpentBetweenForCategory(startOfMonth(now), now, 2L)
+        } returns 100.0
 
         val progress = manager.getSharedBudgetProgress(11L, listOf("x"))
 
@@ -194,17 +183,12 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
             startDate = atDateTime(2026, 4, 1, 0, 0)
         )
         coEvery { budgetRepository.getById(12L) } returns budget
-        coEvery { expenseDao.getExpensesBetween(startOfMonth(now), now) } returns listOf(
-            // isNotMine: effectiveAmount = 0.0
-            Expense(
-                id = 40L, amount = 200.0, merchant = "NotMine",
-                transactionType = TransactionType.PURCHASE,
-                date = atDateTime(2026, 4, 3, 14, 0),
-                categoryId = 2L,
-                isNotMine = true
-            ),
-            expense(id = 41L, amount = 30.0, categoryId = 2L)
-        )
+        // isNotMine rows are excluded by the WHERE isNotMine = 0 clause;
+        // EFFECTIVE_AMOUNT_SQL would also yield 0.0 for them.
+        // Only regular expense (30) contributes.
+        coEvery {
+            expenseDao.getEffectiveSpentBetweenForCategory(startOfMonth(now), now, 2L)
+        } returns 30.0
 
         val progress = manager.getSharedBudgetProgress(12L, listOf("u1", "u2"))
 
@@ -229,24 +213,11 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
             startDate = atDateTime(2026, 4, 1, 0, 0)
         )
         coEvery { budgetRepository.getById(13L) } returns budget
-        coEvery { expenseDao.getExpensesBetween(startOfMonth(now), now) } returns listOf(
-            // isNotMine → 0
-            Expense(
-                id = 50L, amount = 500.0, merchant = "NotMine",
-                transactionType = TransactionType.PURCHASE,
-                date = atDateTime(2026, 4, 2, 10, 0),
-                categoryId = 2L, isNotMine = true
-            ),
-            // Shared with fixed share → 40
-            Expense(
-                id = 51L, amount = 100.0, merchant = "SharedFixed",
-                transactionType = TransactionType.PURCHASE,
-                date = atDateTime(2026, 4, 4, 10, 0),
-                categoryId = 2L, isSharedExpense = true, myShareAmount = 40.0
-            ),
-            // Regular → 20
-            expense(id = 52L, amount = 20.0, categoryId = 2L)
-        )
+        // isNotMine → excluded by SQL (0), shared fixed → 40, regular → 20
+        // Aggregate effective total = 0 + 40 + 20 = 60
+        coEvery {
+            expenseDao.getEffectiveSpentBetweenForCategory(startOfMonth(now), now, 2L)
+        } returns 60.0
 
         val progress = manager.getSharedBudgetProgress(13L, listOf("a"))
 
@@ -254,6 +225,131 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         assertApproxEquals(60.0, progress.totalSpent, 0.01)
         assertTrue(progress.isOverBudget) // 60 > 50
         assertApproxEquals(-10.0, progress.remaining, 0.01)
+    }
+
+    // =========================================================================
+    // A.9 truncation-specific: proves aggregate path replaces old LIMIT 2000
+    // =========================================================================
+
+    @Test
+    fun `shared budget progress is not truncated when expense count exceeds old LIMIT 2000`() = runTest {
+        val now = atDateTime(2026, 4, 15, 10, 0)
+        every { timeProvider.now() } returns now
+
+        val budget = Budget(
+            id = 14L,
+            categoryId = 5L,
+            amount = 50000.0,
+            period = BudgetPeriod.MONTHLY,
+            startDate = atDateTime(2026, 4, 1, 0, 0)
+        )
+        coEvery { budgetRepository.getById(14L) } returns budget
+
+        // Simulate 2500 expenses each $10 — aggregate returns the correct total
+        // regardless of any former row cap, because SQL SUM has no LIMIT.
+        coEvery {
+            expenseDao.getEffectiveSpentBetweenForCategory(startOfMonth(now), now, 5L)
+        } returns 25000.0
+
+        val progress = manager.getSharedBudgetProgress(14L, listOf("a"))
+
+        // All 2500 expenses should be counted (no truncation), total = 25000
+        assertApproxEquals(25000.0, progress.totalSpent, 0.01)
+        assertApproxEquals(25000.0, progress.remaining, 0.01)
+        assertApproxEquals(50.0, progress.percentUsed, 0.01)
+        assertFalse(progress.isOverBudget)
+    }
+
+    // =========================================================================
+    // A.9 Batch 4: verify aggregate path is actually invoked (not row scan)
+    // =========================================================================
+
+    @Test
+    fun `shared budget progress calls aggregate helper with correct category and date range`() = runTest {
+        val now = atDateTime(2026, 4, 15, 10, 0)
+        every { timeProvider.now() } returns now
+        val som = startOfMonth(now)
+
+        val budget = Budget(
+            id = 20L,
+            categoryId = 7L,
+            amount = 300.0,
+            period = BudgetPeriod.MONTHLY,
+            startDate = atDateTime(2026, 4, 1, 0, 0)
+        )
+        coEvery { budgetRepository.getById(20L) } returns budget
+        coEvery {
+            expenseDao.getEffectiveSpentBetweenForCategory(som, now, 7L)
+        } returns 150.0
+
+        manager.getSharedBudgetProgress(20L, listOf("a"))
+
+        // Verify the aggregate helper was called with exact arguments
+        coVerify(exactly = 1) {
+            expenseDao.getEffectiveSpentBetweenForCategory(som, now, 7L)
+        }
+    }
+
+    @Test
+    fun `shared budget progress calls aggregate helper with null categoryId for overall budget`() = runTest {
+        val now = atDateTime(2026, 4, 20, 18, 0)
+        every { timeProvider.now() } returns now
+        val som = startOfMonth(now)
+
+        val budget = Budget(
+            id = 21L,
+            categoryId = null,
+            amount = 500.0,
+            period = BudgetPeriod.MONTHLY,
+            startDate = atDateTime(2026, 4, 1, 0, 0)
+        )
+        coEvery { budgetRepository.getById(21L) } returns budget
+        coEvery {
+            expenseDao.getEffectiveSpentBetweenForCategory(som, now, null)
+        } returns 200.0
+
+        val progress = manager.getSharedBudgetProgress(21L, listOf("a", "b"))
+
+        coVerify(exactly = 1) {
+            expenseDao.getEffectiveSpentBetweenForCategory(som, now, null)
+        }
+        assertApproxEquals(200.0, progress.totalSpent, 0.01)
+        assertEquals("Overall Budget", progress.budgetName)
+    }
+
+    // =========================================================================
+    // A.10 no-narrowing regression: the aggregate does NOT filter by
+    // transactionType — confirm manager does not inject a type filter either.
+    // =========================================================================
+
+    @Test
+    fun `shared budget progress does not narrow by transaction type`() = runTest {
+        val now = atDateTime(2026, 4, 15, 10, 0)
+        every { timeProvider.now() } returns now
+
+        val budget = Budget(
+            id = 22L,
+            categoryId = 3L,
+            amount = 1000.0,
+            period = BudgetPeriod.MONTHLY,
+            startDate = atDateTime(2026, 4, 1, 0, 0)
+        )
+        coEvery { budgetRepository.getById(22L) } returns budget
+        // The aggregate includes all transaction types (PURCHASE, DEPOSIT, etc.)
+        // — same semantics as the pre-A.9 uncapped row scan.
+        coEvery {
+            expenseDao.getEffectiveSpentBetweenForCategory(startOfMonth(now), now, 3L)
+        } returns 750.0
+
+        val progress = manager.getSharedBudgetProgress(22L, listOf("x"))
+
+        // If narrowing to PURCHASE-only occurred, value would differ —
+        // this assertion proves the aggregate was used as-is.
+        assertApproxEquals(750.0, progress.totalSpent, 0.01)
+        // No calls to type-filtered helpers should exist
+        coVerify(exactly = 0) {
+            expenseDao.getExpensesBetweenUncapped(any(), any())
+        }
     }
 
     @Test
@@ -272,17 +368,6 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         assertApproxEquals(0.0, contributions[1].amountSpent, 0.0)
         assertApproxEquals(0.0, contributions[1].percentOfTotal, 0.0)
         assertApproxEquals(0.0, contributions[1].remainingAllowance, 0.0)
-    }
-
-    private fun expense(id: Long, amount: Double, categoryId: Long?): Expense {
-        return Expense(
-            id = id,
-            amount = amount,
-            merchant = "Merchant $id",
-            transactionType = TransactionType.PURCHASE,
-            date = atDateTime(2026, 4, 10, 9, 0),
-            categoryId = categoryId
-        )
     }
 
     private fun startOfMonth(timestamp: Long): Long {

@@ -35,8 +35,12 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * Get total expenses between dates, converted to home currency.
-     * Converts [Expense.effectiveAmount] (ownership-adjusted) rather than the raw posted amount
-     * so that shared and "not-mine" rows are not overstated.
+     * Uses type-agnostic aggregate DAO helper [ExpenseDao.getAllSpentBetweenByCurrency]
+     * so that the DB does the per-currency grouping with [ExpenseDao.EFFECTIVE_AMOUNT_SQL],
+     * and only the per-currency totals are converted — no uncapped row scan needed.
+     *
+     * This method is intentionally **type-agnostic** (includes all transaction types),
+     * preserving pre-A.10 semantics.  Transaction-type narrowing is deferred to A.10.
      */
     suspend fun getTotalExpensesInHomeCurrency(
         startDate: Long,
@@ -44,9 +48,9 @@ class MultiCurrencyRepository @Inject constructor(
         homeCurrency: String = DEFAULT_HOME_CURRENCY
     ): Result<Double> = withContext(Dispatchers.IO) {
         runCatching {
-            val expenses = expenseDao.getExpensesBetween(startDate, endDate)
-            // Use effectiveAmount (ownership-adjusted) — not raw amount — for conversion input.
-            val amounts = expenses.map { Pair(it.effectiveAmount, it.currency) }
+            // A.9 Batch 5: type-agnostic aggregate SQL path replaces uncapped row scan.
+            val currencyTotals = expenseDao.getAllSpentBetweenByCurrency(startDate, endDate)
+            val amounts = currencyTotals.map { Pair(it.total, it.currency) }
             val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
             if (aggregate.hasFailures) {
                 throw MissingExchangeRateException(
@@ -66,24 +70,20 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * Get expenses grouped by currency.
-     * Accumulates [Expense.effectiveAmount] (ownership-adjusted) per currency bucket so that
-     * shared and "not-mine" rows are not overstated in the per-currency breakdown.
+     * Uses type-agnostic aggregate DAO helper [ExpenseDao.getAllSpentBetweenByCurrency]
+     * which groups by `UPPER(currency)` and sums [ExpenseDao.EFFECTIVE_AMOUNT_SQL] —
+     * no uncapped row scan needed.
+     *
+     * Intentionally **type-agnostic**, preserving pre-A.10 semantics.
      */
     suspend fun getExpensesByCurrency(
         startDate: Long,
         endDate: Long
     ): Result<Map<String, Double>> = withContext(Dispatchers.IO) {
         runCatching {
-            val expenses = expenseDao.getExpensesBetween(startDate, endDate)
-            val result = mutableMapOf<String, Double>()
-
-            for (expense in expenses) {
-                val current = result[expense.currency] ?: 0.0
-                // Use effectiveAmount (ownership-adjusted) — not raw amount.
-                result[expense.currency] = current + expense.effectiveAmount
-            }
-
-            result
+            // A.9 Batch 5: type-agnostic aggregate SQL path replaces uncapped row scan.
+            val currencyTotals = expenseDao.getAllSpentBetweenByCurrency(startDate, endDate)
+            currencyTotals.associate { it.currency to it.total }
         }.fold(
             onSuccess = { Result.Success(it) },
             onFailure = {
@@ -98,6 +98,9 @@ class MultiCurrencyRepository @Inject constructor(
      * Converts [Expense.effectiveAmount] (ownership-adjusted) so that shared/not-mine rows
      * produce the correct converted value. The embedded [Expense] object is left unchanged
      * (raw fields untouched); only [ConvertedExpense.homeCurrencyAmount] reflects the effective share.
+     *
+     * This is the exhaustive row-complete path — it must remain a full row scan because
+     * callers need per-row conversion results (rate, warning, original expense).
      */
     suspend fun getExpensesWithConversion(
         startDate: Long,
@@ -105,7 +108,8 @@ class MultiCurrencyRepository @Inject constructor(
         homeCurrency: String = DEFAULT_HOME_CURRENCY
     ): Result<List<ConvertedExpense>> = withContext(Dispatchers.IO) {
         runCatching {
-            val expenses = expenseDao.getExpensesBetween(startDate, endDate)
+            // A.9: use uncapped query to avoid silent LIMIT 2000 truncation.
+            val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
             val result = mutableListOf<ConvertedExpense>()
 
             for (expense in expenses) {
@@ -143,8 +147,13 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * Get spending totals by category in home currency.
-     * Converts [Expense.effectiveAmount] (ownership-adjusted) per expense so that shared and
-     * "not-mine" rows are not overstated in the category breakdown.
+     * Uses type-agnostic grouped aggregate helper
+     * [ExpenseDao.getAllCategoryTotalsBetweenByCurrency] which returns
+     * (categoryId, currency, total) tuples — no uncapped row scan needed.
+     * Null categoryId rows are preserved so that uncategorized expenses
+     * appear in the result map.
+     *
+     * Intentionally **type-agnostic**, preserving pre-A.10 semantics.
      */
     suspend fun getCategoryTotalsInHomeCurrency(
         startDate: Long,
@@ -152,31 +161,27 @@ class MultiCurrencyRepository @Inject constructor(
         homeCurrency: String = DEFAULT_HOME_CURRENCY
     ): Result<Map<Long?, Double>> = withContext(Dispatchers.IO) {
         runCatching {
-            val expenses = expenseDao.getExpensesBetween(startDate, endDate)
+            // A.9 Batch 5: type-agnostic grouped aggregate path — no row scan.
+            // Always use the grouped-by-currency query so that null categoryId rows
+            // are preserved (the old single-currency fast-path used getCategoryTotalsBetween
+            // which filtered `AND categoryId IS NOT NULL`, dropping uncategorized expenses).
+            val grouped = expenseDao.getAllCategoryTotalsBetweenByCurrency(startDate, endDate)
+
+            if (grouped.isEmpty()) {
+                return@runCatching emptyMap<Long?, Double>()
+            }
+
             val result = mutableMapOf<Long?, Double>()
             val failedConversions = mutableListOf<FailedConversion>()
 
-            for (expense in expenses) {
-                // Convert effectiveAmount (ownership-adjusted) — not raw amount.
-                val conversion = currencyConverter.convert(
-                    expense.effectiveAmount,
-                    expense.currency,
-                    homeCurrency
-                )
-
-                if (conversion == null) {
-                    failedConversions += FailedConversion(
-                        originalAmount = expense.effectiveAmount,
-                        originalCurrency = expense.currency,
-                        targetCurrency = homeCurrency,
-                        reason = "Missing exchange rate from ${expense.currency.uppercase()} to ${homeCurrency.uppercase()}"
-                    )
-                    continue
-                }
-
-                val convertedAmount = conversion.convertedAmount
-                val current = result[expense.categoryId] ?: 0.0
-                result[expense.categoryId] = current + convertedAmount
+            // Group by categoryId, then convert each (currency, total) pair.
+            val byCategoryId = grouped.groupBy { it.categoryId }
+            for ((categoryId, buckets) in byCategoryId) {
+                val amounts = buckets.map { Pair(it.total, it.currency) }
+                val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
+                failedConversions += aggregate.failedConversions
+                val current = result[categoryId] ?: 0.0
+                result[categoryId] = current + aggregate.total
             }
 
             if (failedConversions.isNotEmpty()) {
@@ -198,8 +203,14 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * Get merchant totals in home currency.
-     * Converts [Expense.effectiveAmount] (ownership-adjusted) per expense so that shared and
-     * "not-mine" rows are not overstated in the merchant ranking.
+     * Uses type-agnostic grouped aggregate helper
+     * [ExpenseDao.getAllMerchantTotalsBetweenByCurrency] which returns
+     * (merchant, currency, total) tuples — no uncapped row scan needed.
+     * Rows with null merchantKey are grouped by raw merchant name,
+     * preserving legacy inclusion semantics.
+     * Results are sorted descending by total, preserving the original ordering contract.
+     *
+     * Intentionally **type-agnostic**, preserving pre-A.10 semantics.
      */
     suspend fun getMerchantTotalsInHomeCurrency(
         startDate: Long,
@@ -207,32 +218,27 @@ class MultiCurrencyRepository @Inject constructor(
         homeCurrency: String = DEFAULT_HOME_CURRENCY
     ): Result<Map<String, Double>> = withContext(Dispatchers.IO) {
         runCatching {
-            val expenses = expenseDao.getExpensesBetween(startDate, endDate)
+            // A.9 Batch 5: type-agnostic grouped aggregate path — no row scan.
+            // Always use the grouped-by-currency query so that null-merchantKey
+            // rows are included (the old single-currency fast-path used
+            // getMerchantTotalsBetween which filtered `AND merchantKey IS NOT NULL`).
+            val grouped = expenseDao.getAllMerchantTotalsBetweenByCurrency(startDate, endDate)
+
+            if (grouped.isEmpty()) {
+                return@runCatching emptyMap<String, Double>()
+            }
+
             val result = mutableMapOf<String, Double>()
             val failedConversions = mutableListOf<FailedConversion>()
 
-            for (expense in expenses) {
-                // Convert effectiveAmount (ownership-adjusted) — not raw amount.
-                val conversion = currencyConverter.convert(
-                    expense.effectiveAmount,
-                    expense.currency,
-                    homeCurrency
-                )
-
-                if (conversion == null) {
-                    failedConversions += FailedConversion(
-                        originalAmount = expense.effectiveAmount,
-                        originalCurrency = expense.currency,
-                        targetCurrency = homeCurrency,
-                        reason = "Missing exchange rate from ${expense.currency.uppercase()} to ${homeCurrency.uppercase()}"
-                    )
-                    continue
-                }
-
-                val convertedAmount = conversion.convertedAmount
-                val merchant = expense.merchant
+            // Group by merchant display name, then convert each (currency, total) pair.
+            val byMerchant = grouped.groupBy { it.merchant }
+            for ((merchant, buckets) in byMerchant) {
+                val amounts = buckets.map { Pair(it.total, it.currency) }
+                val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
+                failedConversions += aggregate.failedConversions
                 val current = result[merchant] ?: 0.0
-                result[merchant] = current + convertedAmount
+                result[merchant] = current + aggregate.total
             }
 
             if (failedConversions.isNotEmpty()) {
@@ -254,8 +260,12 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * Get monthly totals in home currency.
-     * Accumulates [Expense.effectiveAmount] (ownership-adjusted) per month bucket before
-     * converting, so that shared and "not-mine" rows are not overstated in monthly totals.
+     * Uses type-agnostic grouped aggregate helper
+     * [ExpenseDao.getAllMonthlyTotalsBetweenByCurrency] which returns
+     * (monthKey, currency, total) tuples — no uncapped row scan needed.
+     * Results are sorted ascending by month key.
+     *
+     * Intentionally **type-agnostic**, preserving pre-A.10 semantics.
      */
     suspend fun getMonthlyTotalsInHomeCurrency(
         startDate: Long,
@@ -263,18 +273,18 @@ class MultiCurrencyRepository @Inject constructor(
         homeCurrency: String = DEFAULT_HOME_CURRENCY
     ): Result<List<MonthTotal>> = withContext(Dispatchers.IO) {
         runCatching {
-            val expenses = expenseDao.getExpensesBetween(startDate, endDate)
-            val monthlyMap = mutableMapOf<String, MutableList<Pair<Double, String>>>()
+            // A.9 Batch 5: type-agnostic grouped aggregate path — no row scan.
+            val grouped = expenseDao.getAllMonthlyTotalsBetweenByCurrency(startDate, endDate)
 
-            for (expense in expenses) {
-                val monthKey = getMonthKey(expense.date)
-                val list = monthlyMap.getOrPut(monthKey) { mutableListOf() }
-                // Use effectiveAmount (ownership-adjusted) — not raw amount — for conversion.
-                list.add(Pair(expense.effectiveAmount, expense.currency))
+            if (grouped.isEmpty()) {
+                return@runCatching emptyList<MonthTotal>()
             }
 
+            // Group by monthKey, then convert each (currency, total) pair.
+            val byMonth = grouped.groupBy { it.monthKey }
             val result = mutableListOf<MonthTotal>()
-            for ((monthKey, amounts) in monthlyMap.toSortedMap()) {
+            for ((monthKey, buckets) in byMonth.toSortedMap()) {
+                val amounts = buckets.map { Pair(it.total, it.currency) }
                 val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
                 result.add(
                     MonthTotal(
@@ -316,6 +326,33 @@ class MultiCurrencyRepository @Inject constructor(
         val lastUpdate = currencyConverter.getLastUpdateTime() ?: return true
         val twentyFourHours = TimePeriodUtils.DAY_IN_MILLIS
         return (timeProvider.now() - lastUpdate) > twentyFourHours
+    }
+
+    /**
+     * Resolve the conversion rate from [fromCurrency] to [toCurrency].
+     * Returns 1.0 for same-currency pairs. Returns null if no rate is available,
+     * which the caller should treat as a missing-rate error.
+     */
+    private suspend fun resolveConversionRate(fromCurrency: String, toCurrency: String): Double? {
+        if (fromCurrency.uppercase() == toCurrency.uppercase()) return 1.0
+        val result = currencyConverter.convert(1.0, fromCurrency, toCurrency)
+        return result?.rateUsed
+    }
+
+    /**
+     * Build a [MissingExchangeRateException] for a single missing currency pair.
+     */
+    private fun missingRateException(fromCurrency: String, toCurrency: String): MissingExchangeRateException {
+        val failed = FailedConversion(
+            originalAmount = 0.0,
+            originalCurrency = fromCurrency,
+            targetCurrency = toCurrency,
+            reason = "Missing exchange rate from ${fromCurrency.uppercase()} to ${toCurrency.uppercase()}"
+        )
+        return MissingExchangeRateException(
+            buildMissingRateMessage(listOf(failed), toCurrency),
+            listOf(failed)
+        )
     }
 
     private fun getMonthKey(timestamp: Long): String {

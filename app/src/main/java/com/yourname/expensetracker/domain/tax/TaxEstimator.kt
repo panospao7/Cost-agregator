@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.domain.tax
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +22,12 @@ class TaxEstimator @Inject constructor(
 ) {
     /**
      * Estimate taxes for a period using configured tax rates.
+     *
+     * A.9 fix: VAT calculation now uses [ExpenseDao.getTotalSpentBetween] (aggregate
+     * SQL) instead of fetching individual rows through the capped
+     * [ExpenseDao.getExpensesBetween] (LIMIT 2000).  The VAT fraction is applied to
+     * the aggregate total, eliminating hidden data truncation while producing the
+     * same mathematical result: `SUM(effectiveAmount) * (vatRate / (1 + vatRate))`.
      * 
      * @param taxConfig The tax configuration to use (defaults to Greece if not specified)
      */
@@ -32,12 +37,11 @@ class TaxEstimator @Inject constructor(
         estimatedAnnualIncome: Double,
         taxConfig: TaxConfiguration = TaxConfigurationFactory.getCurrentConfiguration()
     ): TaxEstimate = withContext(Dispatchers.IO) {
-        // Get business expenses (deductible)
-        val businessExpenses = businessExpenseRepository.getBusinessExpenses(startDate, endDate)
-        var totalDeductible = 0.0
-        for (expense in businessExpenses) {
-            totalDeductible += expense.effectiveAmount
-        }
+        // A.9: Aggregate SQL replaces capped row scan for deductible total.
+        // getTotalBusinessExpenses uses SUM(effectiveAmount) via
+        // ExpenseDao.getTotalBusinessExpensesBetween, eliminating hidden
+        // data truncation while producing the same mathematical result.
+        val totalDeductible = businessExpenseRepository.getTotalBusinessExpenses(startDate, endDate)
         
         // HIGH FIX: Calculate income tax bracket from configuration
         val taxRate = calculateTaxRate(estimatedAnnualIncome, taxConfig)
@@ -45,16 +49,11 @@ class TaxEstimator @Inject constructor(
         // HIGH FIX: Use configured VAT rate
         val vatRate = taxConfig.getVatRate()
         
-        // Estimate VAT paid (simplified)
-        val expenses = expenseDao.getExpensesBetween(startDate, endDate)
-        var vatPaid = 0.0
-        for (expense in expenses) {
-            // Assume most purchases include VAT
-            if (expense.transactionType.name == "PURCHASE") {
-                val vatAmount = expense.effectiveAmount * (vatRate / (1 + vatRate))
-                vatPaid += vatAmount
-            }
-        }
+        // A.9: Aggregate SQL replaces capped row scan for VAT calculation.
+        // getTotalSpentBetween already filters for PURCHASE + isNotMine=0 and uses
+        // effective-amount SQL, matching the original per-row filter+sum semantics.
+        val totalPurchaseSpend = expenseDao.getTotalSpentBetween(startDate, endDate) ?: 0.0
+        val vatPaid = totalPurchaseSpend * (vatRate / (1 + vatRate))
         
         val monthsInPeriod = ((endDate - startDate).toDouble() / (30 * 24 * 60 * 60 * 1000))
         val monthlyIncome = if (monthsInPeriod > 0) estimatedAnnualIncome / 12 else estimatedAnnualIncome
@@ -109,12 +108,28 @@ class TaxEstimator @Inject constructor(
         
         val estimate = estimateTaxes(yearStart, yearEnd, 30000.0, taxConfig) // Would get actual income
         
-        val businessExpenses = businessExpenseRepository.getBusinessExpenses(yearStart, yearEnd)
+        // A.9: Grouped aggregate SQL replaces capped row scan for per-category
+        // deduction breakdown.  getExpensesByCategory uses GROUP BY via
+        // ExpenseDao.getBusinessExpensesByCategory (SUM + GROUP BY businessCategory).
+        // That SQL excludes NULL-category rows (AND businessCategory IS NOT NULL),
+        // so we compute the "Uncategorized" bucket as the difference between the
+        // aggregate total and the sum of categorized totals, preserving the original
+        // null-category → "Uncategorized" semantics.
+        val categoryTotals = businessExpenseRepository.getExpensesByCategory(yearStart, yearEnd)
         val categorizedDeductions = mutableMapOf<String, Double>()
-        for (expense in businessExpenses) {
-            val category = expense.businessCategory ?: "Uncategorized"
-            val current = categorizedDeductions[category] ?: 0.0
-            categorizedDeductions[category] = current + expense.effectiveAmount
+        var categorizedSum = 0.0
+        for (ct in categoryTotals) {
+            categorizedDeductions[ct.businessCategory] = ct.total
+            categorizedSum += ct.total
+        }
+        val totalBusiness = businessExpenseRepository.getTotalBusinessExpenses(yearStart, yearEnd)
+        val uncategorized = totalBusiness - categorizedSum
+        if (uncategorized > 0.0) {
+            // Merge into any existing "Uncategorized" grouped total rather
+            // than overwriting it — an explicit businessCategory="Uncategorized"
+            // may already be present from the grouped SQL query.
+            categorizedDeductions["Uncategorized"] =
+                (categorizedDeductions["Uncategorized"] ?: 0.0) + uncategorized
         }
         
         TaxYearSummary(

@@ -1,30 +1,37 @@
 package com.yourname.expensetracker.domain.budget
 
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
-import java.util.Calendar
-import java.util.Locale
-import java.util.TimeZone
+
 
 /**
  * AI-powered budget autopilot engine.
  * 
  * Generates per-category budget adjustment recommendations based on:
- * - Historical spending trends
+ * - Historical spending trends (via aggregate SQL — A.9)
  * - Spending volatility/risk analysis
- * - Monte Carlo simulation results
  * - User-defined delta caps (±15% per cycle)
  * 
  * Formula:
  * recommendedBudget_c = trendAdjustedSpend_c * safetyFactor(risk, volatility)
  * with min/max delta caps (e.g., ±15% per cycle)
+ *
+ * A.9: Historical spending is now retrieved through pre-aggregated monthly
+ * totals from [ExpenseDao] instead of capped raw row reads from
+ * [ExpenseRepository].  This eliminates silent data truncation on large
+ * histories.  Sparse-history parity is preserved by using only the month
+ * keys actually returned by the aggregate SQL — gap months with no
+ * qualifying rows are not synthesized, matching pre-A.9 grouped-row
+ * semantics.
  */
 @Singleton
 class BudgetAutopilotEngine @Inject constructor(
     private val budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository,
-    private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
+    private val expenseDao: ExpenseDao,
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val insightsEngine: com.yourname.expensetracker.domain.analytics.InsightsEngine,
     private val spendingPaceCalculator: com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator,
@@ -47,6 +54,10 @@ class BudgetAutopilotEngine @Inject constructor(
 
     /**
      * Generate per-category budget adjustment recommendations.
+     *
+     * A.9: Uses aggregate monthly spending totals from [ExpenseDao] instead of
+     * fetching raw expense rows through [ExpenseRepository], eliminating the
+     * risk of silent truncation on large datasets.
      */
     suspend fun generateRecommendations(): BudgetAutopilotRecommendations {
         val now = timeProvider.now()
@@ -64,10 +75,6 @@ class BudgetAutopilotEngine @Inject constructor(
             )
         }
         
-        // Get historical spending data for the last 3 months
-        val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
-        val historicalExpenses = expenseRepository.getExpensesBetween(threeMonthsAgo, now)
-        
         val categoryRecommendations = mutableListOf<CategoryBudgetRecommendation>()
         var totalCurrentBudget = 0.0
         var totalRecommendedBudget = 0.0
@@ -78,8 +85,8 @@ class BudgetAutopilotEngine @Inject constructor(
                 categories.find { it.id == catId } 
             }
             
-            // 1. Get historical spend for this budget's category
-            val historicalSpend = getHistoricalSpendForBudget(budget, historicalExpenses)
+            // 1. Get historical monthly spend for this budget's category
+            val historicalSpend = getHistoricalSpendForBudget(budget, now)
             
             // 2. Calculate trend
             val trend = calculateTrend(historicalSpend)
@@ -155,50 +162,46 @@ class BudgetAutopilotEngine @Inject constructor(
     }
     
     /**
-     * Get historical spending data for a specific budget.
+     * Get historical spending data for a specific budget as a list of
+     * chronologically ordered monthly totals.
+     *
+     * A.9: Uses aggregate SQL ([ExpenseDao.getMonthlySpendingTotalsByCategoryBetween]
+     * / [ExpenseDao.getMonthlySpendingTotalsBetween]) instead of fetching raw
+     * expense rows, eliminating the silent-truncation risk of capped row reads.
+     *
+     * Sparse-history parity: only months that the SQL aggregate actually
+     * returns are used as buckets.  Gap months with no qualifying rows are
+     * **not** synthesized, preserving the same semantics as the pre-A.9
+     * grouped-row code path where only months containing expense rows
+     * produced buckets.
      */
-    private fun getHistoricalSpendForBudget(
+    private suspend fun getHistoricalSpendForBudget(
         budget: com.yourname.expensetracker.data.database.entity.Budget,
-        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>
+        now: Long
     ): List<Double> {
-        val threeMonthsAgo = timeProvider.now() - (90L * 24 * 60 * 60 * 1000)
+        val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
 
-        val filteredExpenses = expenses
-            .filter { expense ->
-                // Filter by category if budget is category-specific
-                val categoryMatch = budget.categoryId == null || expense.categoryId == budget.categoryId
-                // Only include purchase transactions
-                val isPurchase = expense.transactionType == 
-                    com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE
-                // Exclude "not mine" expenses
-                val isMine = !expense.isNotMine
-                // Within time range
-                val inRange = expense.date >= threeMonthsAgo
-                
-                categoryMatch && isPurchase && isMine && inRange
-            }
-
-        if (filteredExpenses.isEmpty()) return emptyList()
-
-        // Aggregate spend by month (chronological), then operate on monthly totals.
-        val monthlyTotals = filteredExpenses
-            .sortedBy { it.date }
-            .groupBy { getMonthKey(it.date) }
-            .toSortedMap()
-            .mapValues { (_, txns) -> txns.sumOf { it.effectiveAmount } }
-
-        return monthlyTotals.values.toList()
-    }
-
-    private fun getMonthKey(timestamp: Long): String {
-        val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
-            timeInMillis = timestamp
+        val monthlyTotals: List<MonthlySpendingTotal> = if (budget.categoryId != null) {
+            expenseDao.getMonthlySpendingTotalsByCategoryBetween(
+                categoryId = budget.categoryId,
+                startDate = threeMonthsAgo,
+                endDate = now
+            )
+        } else {
+            expenseDao.getMonthlySpendingTotalsBetween(
+                startDate = threeMonthsAgo,
+                endDate = now
+            )
         }
-        val year = calendar.get(Calendar.YEAR)
-        val month = calendar.get(Calendar.MONTH) + 1
-        return String.format(Locale.US, "%04d-%02d", year, month)
+
+        if (monthlyTotals.isEmpty()) return emptyList()
+
+        // Use only the month keys actually returned by SQL — no gap-month
+        // infill.  Month keys are already sorted by the SQL ORDER BY clause,
+        // so the returned list is in chronological order.
+        return monthlyTotals.map { it.total }
     }
-    
+
     /**
      * Calculate spending trend as percentage change per month.
      */

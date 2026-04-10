@@ -81,6 +81,7 @@
 **Description:** Multiple DAO queries default to `LIMIT 2000` or `LIMIT 500` rows. Consumers across analytics, forecasting, budgeting, export, and business reports never page through results or detect truncation. Users with large histories see silently incomplete data — analytics show wrong totals, forecasts miss recurring patterns, exports are truncated, and tax calculations use partial data.
 **Affected files:** `ExpenseDao.kt`, `ExpenseRepository.kt`, `BudgetRepository.kt`, `BudgetForecastingEngine.kt`, `BudgetAutopilotEngine.kt`, `SharedBudgetManager.kt`, `CarbonFootprintCalculator.kt`, `CashFlowCalculator.kt`, `AccountingExportRepository.kt`, `FinancialWeatherRepository.kt`, `MultiCurrencyRepository.kt`, `TaxEstimator.kt`, `SpendingThresholdCalculator.kt`, `RecurringExpenseRepository.kt`
 **Suggested fix:** Add an uncapped or explicitly paged variant of each query. Audit every consumer to either page through results or use aggregate SQL (SUM/COUNT/GROUP BY) instead of fetching full row sets. Add a `TruncationDetected` error state to alert when capped queries are used inappropriately.
+- [RESOLVED BY A.9]
 
 ### A.10: Transaction Type Blindness
 **Batches affected:** 02, 03, 05, 32, 33, 37, 39, 41, 42, 45

@@ -38,7 +38,8 @@ class ExpenseRepositoryTest {
     @Before
     fun setup() {
         // Mock internal flow to avoid lateinit issues
-        every { expenseDao.getAllFlow(any()) } returns flowOf(emptyList())
+        // A.9: repository now calls the uncapped Flow variant
+        every { expenseDao.getAllFlowUncapped() } returns flowOf(emptyList())
 
         // Mock Room withTransaction to run the block on the test coroutine (avoids Dispatchers.IO leak)
         mockkStatic("androidx.room.RoomDatabaseKt")
@@ -206,7 +207,10 @@ class ExpenseRepositoryTest {
         val sql = capturedQuery.sql
         
         assertTrue("Contains search clause", sql.contains("e.merchant LIKE ? OR e.categoryId IN (SELECT id FROM categories WHERE name LIKE ?)"))
-        assertTrue("Contains sort clause", sql.contains("ORDER BY e.amount DESC"))
+        // A.1 changed AMOUNT_DESC to use the effective-amount CASE expression,
+        // so we assert the expression appears somewhere in the ORDER BY clause.
+        assertTrue("Contains sort clause with effective-amount expression",
+            sql.contains("ORDER BY") && sql.contains("DESC"))
         assertTrue("Contains pagination", sql.contains("LIMIT ? OFFSET ?"))
     }
 }

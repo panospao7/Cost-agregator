@@ -6,7 +6,6 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
@@ -29,9 +28,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `calculateCarbonFootprint returns report for expenses`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             createMockExpenses()
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -43,9 +41,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `fuel purchases have high emission factors`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("SHELL", 50.0, TransactionType.PURCHASE))
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -56,9 +53,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `electronics purchases have moderate emission factors`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("PLAISIO", 100.0, TransactionType.PURCHASE))
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -69,9 +65,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `restaurant purchases have lower emission factors`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("EVEREST", 30.0, TransactionType.PURCHASE))
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -82,9 +77,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `grocery purchases have low emission factors`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("SKLAVENITIS", 80.0, TransactionType.PURCHASE))
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -95,9 +89,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `flights have very high emission factors`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("AEGEAN", 200.0, TransactionType.PURCHASE))
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -108,9 +101,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `category breakdown sums to total emissions`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             createMockExpenses()
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -120,9 +112,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `category percentages sum to approximately 100`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             createMockExpenses()
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -133,9 +124,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `daily average is calculated correctly`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("Test", 300.0, TransactionType.PURCHASE))
-        )
         
         val startDate = System.currentTimeMillis() - (30L * 24 * 60 * 60 * 1000)
         val endDate = System.currentTimeMillis()
@@ -148,9 +138,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `sustainability score is between 0 and 100`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             createMockExpenses()
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -160,9 +149,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `offset cost is calculated for total emissions`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("Test", 100.0, TransactionType.PURCHASE))
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -171,9 +159,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `recommendations are generated based on high emission categories`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("SHELL", 100.0, TransactionType.PURCHASE)) // High fuel emissions
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -182,9 +169,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `alternatives suggested for high impact purchases`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             createMockExpenses()
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -194,9 +180,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `monthly trend calculated from expense history`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             createMockExpenses()
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -205,9 +190,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `paris agreement gap shows percentage above target`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("Test", 100.0, TransactionType.PURCHASE))
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -217,9 +201,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `comparison to national average is calculated`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("Test", 100.0, TransactionType.PURCHASE))
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -229,9 +212,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `merchant patterns used for known merchants`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("SHELL", 50.0, TransactionType.PURCHASE))
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -242,9 +224,8 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `unknown merchants fall back to category detection`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("UNKNOWN STORE", 100.0, TransactionType.PURCHASE))
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -254,12 +235,11 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `non purchase transactions are filtered out`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(
                 createExpense("Deposit", 100.0, TransactionType.DEPOSIT),
                 createExpense("Purchase", 50.0, TransactionType.PURCHASE)
             )
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -269,7 +249,7 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `empty expense list returns zero emissions`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(emptyList())
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns emptyList()
         
         val report = calculator.calculateCarbonFootprint()
         
@@ -279,15 +259,58 @@ class CarbonFootprintCalculatorTest {
 
     @Test
     fun `merchants detected from Greek names`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("ΣΚΛΑΒΕΝΙΤΗΣ", 50.0, TransactionType.PURCHASE))
-        )
         
         val report = calculator.calculateCarbonFootprint()
         
         // Greek supermarket name should be detected
         val groceryCategory = report.categoryBreakdown.find { it.category.contains("GROCERY") }
         assertThat(groceryCategory).isNotNull()
+    }
+
+    // ── A.9 regression tests ──────────────────────────────────────────────
+
+    /**
+     * A.9 Batch 7 regression: CarbonFootprintCalculator must call
+     * [ExpenseDao.getExpensesBetweenUncapped] (one-shot, no LIMIT) instead of
+     * the Flow-based or capped variants.
+     *
+     * This test feeds 2500 purchase expenses and verifies that the total
+     * emissions account for every single row, proving the uncapped path
+     * is used.
+     */
+    @Test
+    fun `A9 regression - carbon report includes all rows beyond old 2000 limit`() = runTest {
+        val allExpenses = (1..2500).map { i ->
+            createExpense("SHELL", 10.0, TransactionType.PURCHASE)
+        }
+
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns allExpenses
+
+        val report = calculator.calculateCarbonFootprint()
+
+        // 2500 purchases × €10 × 2.3 (SHELL factor) = 57500.0 kg CO2
+        val expectedEmissions = 2500.0 * 10.0 * 2.3
+        assertThat(report.totalEmissionsKg).isWithin(0.1).of(expectedEmissions)
+    }
+
+    /**
+     * Verify that the one-shot uncapped DAO method is used and no Flow or
+     * capped variants are invoked.
+     */
+    @Test
+    fun `A9 regression - capped getExpensesBetweenFlow is never called`() = runTest {
+        coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
+            listOf(createExpense("Test", 10.0, TransactionType.PURCHASE))
+
+        calculator.calculateCarbonFootprint()
+
+        // Ensure the one-shot uncapped variant was called
+        coVerify { expenseDao.getExpensesBetweenUncapped(any(), any()) }
+        // Ensure Flow-based and capped variants were NOT called
+        verify(exactly = 0) { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) }
+        verify(exactly = 0) { expenseDao.getExpensesBetweenFlow(any(), any(), any()) }
     }
 
     // Helper methods

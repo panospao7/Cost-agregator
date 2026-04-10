@@ -144,6 +144,52 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         assertEquals("Gym", upcoming.first().merchantName)
     }
 
+    /**
+     * A.9 regression: CashFlowCalculator must process all rows even when
+     * the expense count exceeds the old LIMIT 2000 default.
+     *
+     * The calculator calls [ExpenseRepository.getExpensesBetween] which,
+     * after the Batch 1 repository-level fix, delegates to the uncapped
+     * DAO query.  This test feeds 2500 expenses spanning two days and
+     * verifies that the cumulative balance includes every row.
+     */
+    @Test
+    fun `A9 regression - cashflow includes all rows beyond old 2000 limit`() = runTest {
+        val d1 = ms("2026-04-01")
+        val d2 = ms("2026-04-02")
+
+        // 1500 purchases on day 1 (€1 each) + 1000 purchases on day 2 (€1 each) = 2500 total
+        val expenses = mutableListOf<Expense>()
+        for (i in 1..1500) {
+            expenses.add(expense(d1, 1.0, TransactionType.PURCHASE))
+        }
+        for (i in 1..1000) {
+            expenses.add(expense(d2, 1.0, TransactionType.PURCHASE))
+        }
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
+        every { expenseRepository.getAllExpenses() } returns flowOf(expenses)
+        coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
+
+        val result = calculator.calculateDailyCashFlow(
+            Date(d1), Date(ms("2026-04-03")), startingBalance = 3000.0
+        )
+
+        assertEquals(2, result.size)
+
+        // Day 1: 3000 - 1500 = 1500
+        assertApproxEquals(3000.0, result[0].startingBalance)
+        assertApproxEquals(1500.0, result[0].endingBalance)
+
+        // Day 2: 1500 - 1000 = 500
+        assertApproxEquals(1500.0, result[1].startingBalance)
+        assertApproxEquals(500.0, result[1].endingBalance)
+
+        // Total expenses across both days must equal 2500
+        val totalExpenseCount = result[0].expenses.size + result[1].expenses.size
+        assertEquals(2500, totalExpenseCount)
+    }
+
     private fun expense(date: Long, amount: Double, type: TransactionType) = Expense(
         amount = amount,
         merchant = "T",
