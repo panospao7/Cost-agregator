@@ -58,7 +58,6 @@ class HybridServiceDelegationTest {
             query.router.decide(AiCapability.QUERY_INTERPRETATION, settings, any())
         } returns AiRouteDecision(AiRoute.CLOUD, "Cloud mode")
 
-        every { receipt.cloudService.usedImageInput(receiptInput) } returns false
         coEvery { receipt.cloudService.suggest(receiptInput) } returns receiptCloudResult
         coEvery { categorization.cloudService.suggest(categorizationInput) } returns categorizationCloudResult
         coEvery { query.cloudService.interpret(queryInput) } returns queryCloudResult
@@ -348,6 +347,94 @@ class HybridServiceDelegationTest {
         val onDeviceService: OnDeviceQueryInterpretationService,
         val noOpService: NoOpQueryInterpretationService
     )
+
+    // ---- usedImageInput compatibility shim tests ----
+
+    @Test
+    fun `usedImageInput always returns false on hybrid service — no over-reporting on any route`() {
+        // The hybrid service must never over-report image usage. The only canonical
+        // source of truth for per-request image use is ReceiptAssistSuggestion.usedImageInput.
+        val settings = aiSettings(mode = AiMode.CLOUD, aiEnabled = true)
+        val harness = receiptHarness(settings)
+
+        // Even with image metadata present in the input, the hybrid shim must return false.
+        val inputWithImage = ReceiptAssistInput(
+            receiptId = 2L,
+            rawOcrText = "SCAN 9.99",
+            imagePath = "/storage/emulated/0/receipt.jpg",
+            imageMimeType = "image/jpeg",
+            isImageAnalysisMode = true,
+            redactBeforeCloud = false,
+            parsedMerchant = "Superstore",
+            parsedTotal = null,
+            parsedDate = null,
+            parsedTaxAmount = null,
+            currency = "USD",
+            lineItemsJson = null,
+            currentTimeMs = 1_700_000_000_000
+        )
+
+        assertEquals(false, harness.service.usedImageInput(inputWithImage))
+        assertEquals(false, harness.service.usedImageInput(receiptInput))
+    }
+
+    @Test
+    fun `usedImageInput returns false on non-cloud routes without consulting cloud service`() {
+        // ON_DEVICE route: the hybrid shim must never delegate to cloud service
+        // and must return false regardless of input image metadata.
+        val settingsOnDevice = aiSettings(mode = AiMode.ON_DEVICE, aiEnabled = true)
+        val harnessOnDevice = receiptHarness(settingsOnDevice)
+
+        val inputWithImage = ReceiptAssistInput(
+            receiptId = 3L,
+            rawOcrText = "SCAN 5.00",
+            imagePath = "/storage/emulated/0/scan.jpg",
+            imageMimeType = "image/jpeg",
+            isImageAnalysisMode = true,
+            redactBeforeCloud = false,
+            parsedMerchant = "Local Shop",
+            parsedTotal = null,
+            parsedDate = null,
+            parsedTaxAmount = null,
+            currency = "EUR",
+            lineItemsJson = null,
+            currentTimeMs = 1_700_000_000_000
+        )
+
+        assertEquals(false, harnessOnDevice.service.usedImageInput(inputWithImage))
+
+        // Verify cloud service was never consulted for the usedImageInput call
+        verify(exactly = 0) { harnessOnDevice.cloudService.usedImageInput(any()) }
+    }
+
+    @Test
+    fun `usedImageInput returns false on disabled and deterministic-fallback routes`() {
+        val settingsDisabled = aiSettings(mode = AiMode.AUTO, aiEnabled = false)
+        val harnessDisabled = receiptHarness(settingsDisabled)
+
+        val inputWithImage = ReceiptAssistInput(
+            receiptId = 4L,
+            rawOcrText = "SCAN 3.00",
+            imagePath = "/storage/emulated/0/img.jpg",
+            imageMimeType = "image/jpeg",
+            isImageAnalysisMode = true,
+            redactBeforeCloud = false,
+            parsedMerchant = "Corner Store",
+            parsedTotal = null,
+            parsedDate = null,
+            parsedTaxAmount = null,
+            currency = "EUR",
+            lineItemsJson = null,
+            currentTimeMs = 1_700_000_000_000
+        )
+
+        assertEquals(false, harnessDisabled.service.usedImageInput(inputWithImage))
+
+        // Verify cloud service was never consulted for the usedImageInput call
+        verify(exactly = 0) { harnessDisabled.cloudService.usedImageInput(any()) }
+    }
+
+    // ---- end usedImageInput tests ----
 
     private companion object {
         private val receiptInput = ReceiptAssistInput(

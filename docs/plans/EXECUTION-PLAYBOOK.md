@@ -3,8 +3,8 @@ its cruc# Execution Playbook — ExpenseTracker Refactoring
 > **Project:** ExpenseTracker (Android/Kotlin/Clean Architecture)
 > **Branch:** `master-refactor`
 > **Current Phase:** Phase 1 — Universal Epics
-> **Active Epic:** A.8 — Shared Mutable State / Thread Safety Gaps
-> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 COMPLETE — A.8 next
+> **Active Epic:** A.9 — Hidden Data Truncation / DAO Default Limits
+> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 COMPLETE — A.8 COMPLETE — A.9 next
 
 ---
 
@@ -18,6 +18,15 @@ its cruc# Execution Playbook — ExpenseTracker Refactoring
 - **Micro-Batch Coding:** Always use @specialist-coder for 1-5 files at a time. Never batch large changes.
 - **Sequential Execution:** Complete A.1 → A.2 → A.3 → ... → A.10 in order. Do not skip or parallelize epics.
 - **Phase Gate:** Do NOT begin any Phase B pipeline until **all A epics are fully complete** (PASS + docs + commit).
+
+### Documentation Access Discipline
+- **Registry is Canonical:** `docs/analyses and debug master/MASTER-ISSUE-REGISTRY.md` is the canonical issue source for planning and epic scope.
+- **Planner Restrictions:** `@planner` / `@planner-advanced` should read the Playbook, the Master Registry, and the current epic review doc only if needed for resume context. They should NOT read deep-analysis or final-verification reports during planning.
+- **Coding Restrictions:** `@coder` / `@specialist-coder` / `@swarm-coder` should read the Playbook, the current plan, target code/tests, and the active review doc only. They should NOT read `docs/analyses and debug master/**` except `MASTER-ISSUE-REGISTRY.md`, unless the task is explicitly documentation-only.
+- **Reviewer Restrictions:** `@reviewer` should normally read only the Playbook, current plan, changed code/tests, and active review doc. `@reviewer` may read the Master Registry and the exact final-verification/doc files touched by the epic only at the final gate or when a documentation issue explicitly requires it.
+- **Deep-Analysis Files are Mirror Docs:** Treat deep-analysis reports as historical mirrors, not as primary implementation inputs. Prefer final-verification files over deep-analysis files whenever one source is sufficient.
+- **Documentation Phase Ordering:** Documentation closeout should happen after code review PASS and should proceed in this order: (1) Master Registry, (2) exact final-verification rows, (3) matching deep-analysis mirror rows only.
+- **Avoid Redundant Re-reading:** Do not repeatedly read the Registry, final-verification, and deep-analysis docs for the same issue unless a review blocker specifically requires cross-checking them.
 
 ---
 
@@ -404,16 +413,20 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
   - [x] Registry updated (`[RESOLVED BY A.7]`)
   - [x] Batch reports + deep-analysis mirrors updated
   - [x] Committed
-- [ ] **A.8:** Shared Mutable State / Thread Safety Gaps
+- [x] **A.8:** Shared Mutable State / Thread Safety Gaps
+  - [x] Plan created (`PLAN-A8-thread-safety.md`)
+  - [x] All batches implemented
+  - [x] Review: **PASS** (final gate approved with documented verification waiver for unrelated pre-existing full-lane failures)
+  - [x] Registry updated (`[RESOLVED BY A.8]`)
+  - [x] Batch reports + deep-analysis mirrors updated
+  - [ ] Committed
 - [ ] **A.9:** Hidden Data Truncation / DAO Default Limits
 - [ ] **A.10:** Transaction Type Blindness
 
 ### Phase 1 Todo Roadmap (Strict Priority)
-1. **A.8 — Shared Mutable State / Thread Safety Gaps**
-   - Priority rationale: concurrency safety across singleton services, caches, formatters, and managers
-2. **A.9 — Hidden Data Truncation / DAO Default Limits**
+1. **A.9 — Hidden Data Truncation / DAO Default Limits**
    - Priority rationale: critical data correctness issue with large blast radius; defer until concurrency and time-contract foundations are stable
-3. **A.10 — Transaction Type Blindness**
+2. **A.10 — Transaction Type Blindness**
    - Priority rationale: high-severity aggregation correctness pass that should land after A.9 query contract cleanup to avoid rework
 
 ### Phase 2: Pipeline Fixes
@@ -510,5 +523,5 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
 
 ---
 
-*Last Updated: 2026-04-08*
-*Next Action: Begin A.3 — Non-deterministic Default Values*
+*Last Updated: 2026-04-10*
+*Next Action: Commit A.8 closeout, then begin A.9 planning*

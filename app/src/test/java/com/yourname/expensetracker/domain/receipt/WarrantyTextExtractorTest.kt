@@ -93,6 +93,103 @@ class WarrantyTextExtractorTest {
         assertApproxEquals(0.0, result.confidence, 0.01)
     }
 
+    // -------------------------------------------------------------------------
+    // Regression tests: legacy OCR date-parsing contract (ISSUE-1 / A.8 Batch 1)
+    // These inputs were accepted by the old SimpleDateFormat and must remain
+    // parseable by the new immutable java.time formatter set.
+    // -------------------------------------------------------------------------
+
+    /**
+     * 2-digit year in dd/MM/yy format.
+     * The regex accepts \d{2,4} for the year segment, so "12/05/24" is a valid
+     * OCR match and must round-trip through the formatter layer.
+     */
+    @Test
+    fun `parseDate accepts 2-digit year in dd slash MM slash yy format`() {
+        // Build a date string 5 days ago in dd/MM/yy format, which is within the
+        // reasonable purchase-date window.
+        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -5) }
+        val twoDigitYearFmt = SimpleDateFormat("dd/MM/yy", Locale.getDefault())
+        val dateStr = twoDigitYearFmt.format(cal.time)
+
+        val ocrText = "Date: $dateStr\n2 Year Warranty"
+        val result = extractor.extract(ocrText)
+
+        assertNotNull("Expected purchaseDate to be parsed from 2-digit year dd/MM/yy input", result.purchaseDate)
+    }
+
+    /**
+     * 2-digit year in MM/dd/yy format (US OCR variant).
+     */
+    @Test
+    fun `parseDate accepts 2-digit year in MM slash dd slash yy format`() {
+        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -5) }
+        val twoDigitYearFmt = SimpleDateFormat("MM/dd/yy", Locale.getDefault())
+        val dateStr = twoDigitYearFmt.format(cal.time)
+
+        val ocrText = "Date: $dateStr\n2 Year Warranty"
+        val result = extractor.extract(ocrText)
+
+        assertNotNull("Expected purchaseDate to be parsed from 2-digit year MM/dd/yy input", result.purchaseDate)
+    }
+
+    /**
+     * Full month name with comma: "September 12, 2024".
+     * Old SimpleDateFormat("MMMM dd, yyyy") accepted this; the new MMMM formatter
+     * must accept it too.
+     */
+    @Test
+    fun `parseDate accepts full month name in MMMM dd comma yyyy format`() {
+        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -5) }
+        val fullMonthFmt = SimpleDateFormat("MMMM dd, yyyy", Locale.US)
+        val dateStr = fullMonthFmt.format(cal.time)  // e.g. "April 04, 2026"
+
+        val ocrText = "Purchase Date: $dateStr\n1 Year Warranty"
+        val result = extractor.extract(ocrText)
+
+        assertNotNull("Expected purchaseDate to be parsed from full month-name 'MMMM dd, yyyy' input '$dateStr'", result.purchaseDate)
+    }
+
+    /**
+     * Full month name without comma (day-first): "12 September 2024".
+     * Old SimpleDateFormat("dd MMMM yyyy") accepted this.
+     */
+    @Test
+    fun `parseDate accepts full month name in dd MMMM yyyy format`() {
+        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -5) }
+        val fullMonthFmt = SimpleDateFormat("dd MMMM yyyy", Locale.US)
+        val dateStr = fullMonthFmt.format(cal.time)  // e.g. "04 April 2026"
+
+        val ocrText = "Date: $dateStr\n1 Year Warranty"
+        val result = extractor.extract(ocrText)
+
+        assertNotNull("Expected purchaseDate to be parsed from full month-name 'dd MMMM yyyy' input '$dateStr'", result.purchaseDate)
+    }
+
+    /**
+     * Full month name in uppercase (as produced by normalizeText).
+     * OCR text is uppercased internally, so "SEPTEMBER 12, 2024" must also parse.
+     */
+    @Test
+    fun `parseDate accepts uppercased full month name as produced by internal OCR normalization`() {
+        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -5) }
+        val fullMonthFmt = SimpleDateFormat("MMMM dd, yyyy", Locale.US)
+        val mixedCaseDateStr = fullMonthFmt.format(cal.time)  // e.g. "April 04, 2026"
+        // Simulate what normalizeText does — uppercase the whole string
+        val upperCaseOcrText = "PURCHASE DATE: ${mixedCaseDateStr.uppercase(Locale.getDefault())}\n2 YEAR WARRANTY"
+
+        val result = extractor.extract(upperCaseOcrText)
+
+        assertNotNull(
+            "Expected purchaseDate to parse from uppercased full month-name OCR text (parseCaseInsensitive must be set)",
+            result.purchaseDate
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper
+    // -------------------------------------------------------------------------
+
     private fun recentDateString(): String {
         val format = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
         val calendar = Calendar.getInstance().apply {

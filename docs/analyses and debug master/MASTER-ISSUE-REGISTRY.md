@@ -73,6 +73,7 @@
 **Description:** `SimpleDateFormat` instances stored as mutable singleton state are used across concurrent calls (warranty extraction, export formatters, dashboard briefing builders). In-memory caches use `mutableMapOf` without `Mutex` or `ConcurrentHashMap`. Singleton mutable state (`lastUsedImageInput`, `processedNotifications`) is shared across concurrent requests.
 **Affected files:** `WarrantyTextExtractor.kt`, `AccountingExporters.kt`, `DashboardBriefingInputBuilder.kt`, `SpendingThresholdCalculator.kt`, `BudgetMonitor.kt`, `HybridReceiptAssistService.kt`, `TransactionClassifier.kt`, `GroupTransactionCoordinator.kt`, `RecommendationStateManager.kt`, `ServiceDiagnostics.kt`, `LogSanitizer.kt`, `LocationResolver.kt`
 **Suggested fix:** Replace `SimpleDateFormat` with `java.time.DateTimeFormatter` (immutable). Protect cache access with `Mutex` or use `ConcurrentHashMap`. Remove shared mutable state from service classes and return metadata in result objects.
+- [RESOLVED BY A.8]
 
 ### A.9: Hidden Data Truncation / DAO Default Limits
 **Batches affected:** 01, 02, 03, 05, 14, 27, 32, 33, 37, 39, 41, 44, 45

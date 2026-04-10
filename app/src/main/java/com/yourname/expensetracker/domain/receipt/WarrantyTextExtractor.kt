@@ -1,6 +1,10 @@
 package com.yourname.expensetracker.domain.receipt
 
-import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeFormatterBuilder
+import java.time.format.DateTimeParseException
 import java.util.*
 import java.util.regex.Pattern
 
@@ -27,14 +31,46 @@ data class WarrantyExtractionData(
  */
 class WarrantyTextExtractor {
 
-    private val dateFormatters = listOf(
-        SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()),
-        SimpleDateFormat("MM/dd/yyyy", Locale.getDefault()),
-        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()),
-        SimpleDateFormat("dd-MM-yyyy", Locale.getDefault()),
-        SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()),
-        SimpleDateFormat("MMM dd, yyyy", Locale.US),
-        SimpleDateFormat("dd MMM yyyy", Locale.US)
+    /**
+     * Immutable, thread-safe date formatters replacing the former SimpleDateFormat list.
+     * Month-name patterns use case-insensitive parsing so uppercased OCR text is handled.
+     *
+     * Legacy OCR compatibility notes:
+     *  - 2-digit-year variants (yy) are included because the date regex accepts \d{2,4} and
+     *    old SimpleDateFormat would accept them.
+     *  - Full month-name variants (MMMM) are included because old SimpleDateFormat would accept
+     *    inputs like "September 12, 2024" that MMM alone does not cover.
+     */
+    private val dateFormatters: List<DateTimeFormatter> = listOf(
+        // 4-digit year — numeric separators
+        DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.getDefault()),
+        DateTimeFormatter.ofPattern("MM/dd/yyyy", Locale.getDefault()),
+        DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.getDefault()),
+        DateTimeFormatter.ofPattern("dd-MM-yyyy", Locale.getDefault()),
+        DateTimeFormatter.ofPattern("dd.MM.yyyy", Locale.getDefault()),
+        // 2-digit year — legacy OCR coverage (regex accepts \d{2,4})
+        DateTimeFormatter.ofPattern("dd/MM/yy", Locale.getDefault()),
+        DateTimeFormatter.ofPattern("MM/dd/yy", Locale.getDefault()),
+        DateTimeFormatter.ofPattern("dd-MM-yy", Locale.getDefault()),
+        DateTimeFormatter.ofPattern("dd.MM.yy", Locale.getDefault()),
+        // Abbreviated month name (3-letter), 4-digit year, case-insensitive
+        DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern("MMM dd, yyyy")
+            .toFormatter(Locale.US),
+        DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern("dd MMM yyyy")
+            .toFormatter(Locale.US),
+        // Full month name (e.g. "September 12, 2024"), case-insensitive
+        DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern("MMMM dd, yyyy")
+            .toFormatter(Locale.US),
+        DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern("dd MMMM yyyy")
+            .toFormatter(Locale.US)
     )
 
     /**
@@ -122,16 +158,18 @@ class WarrantyTextExtractor {
     }
     
     /**
-     * Parses a date string using various formats.
+     * Parses a date string using the immutable java.time formatters.
+     * Returns epoch millis in the system default timezone (matching legacy behavior).
      */
     private fun parseDate(dateStr: String): Long? {
         for (formatter in dateFormatters) {
             try {
-                val date = formatter.parse(dateStr)
-                if (date != null) {
-                    return date.time
+                val localDate = LocalDate.parse(dateStr, formatter)
+                val timestamp = localDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                if (isReasonablePurchaseDate(timestamp)) {
+                    return timestamp
                 }
-            } catch (e: Exception) {
+            } catch (e: DateTimeParseException) {
                 // Try next formatter
             }
         }

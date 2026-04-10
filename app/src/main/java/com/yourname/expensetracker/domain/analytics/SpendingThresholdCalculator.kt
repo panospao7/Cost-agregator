@@ -5,6 +5,8 @@ import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import javax.inject.Inject
@@ -39,8 +41,22 @@ class SpendingThresholdCalculator @Inject constructor(
         private const val CACHE_TTL_MS = 24 * 60 * 60 * 1000L // 24 hours
     }
     
-    // In-memory cache per user
-    private val cache = mutableMapOf<String, CachedPercentiles>()
+    // Single synchronization owner for the entire cache — Mutex serialises
+    // lookup/update/remove so refreshThresholds() cannot be undone by an
+    // in-flight recompute that was started before the invalidation.
+    //
+    // Design: per-user generation counters stored in `cacheGenerations` allow
+    // post-compute writeback to detect whether a `refreshThresholds()` call
+    // happened while the (expensive, out-of-lock) recompute was in progress.
+    //   - Normal TTL expiry does NOT bump the generation — expired entries are
+    //     replaced normally by any subsequent compute that wins the post-lock
+    //     write (generation unchanged).
+    //   - `refreshThresholds()` removes the cache entry AND bumps the
+    //     generation; the in-flight recompute captures the generation before
+    //     starting, so it can detect the invalidation and refuse to overwrite.
+    private val cacheMutex = Mutex()
+    private val cache = HashMap<String, CachedPercentiles>()
+    private val cacheGenerations = HashMap<String, Long>()
     
     /**
      * Calculate the "high amount" threshold for a user.
@@ -79,27 +95,32 @@ class SpendingThresholdCalculator @Inject constructor(
      */
     suspend fun calculatePercentiles(userId: String): SpendingPercentiles {
         return withContext(ioDispatcher) {
-            // Check cache first
-            val cached = cache[userId]
+            // Check cache first — under the single owner so refresh cannot
+            // be undone by a concurrent in-flight recompute.
+            // Capture the generation so we can detect a concurrent
+            // refreshThresholds() that runs while we compute below.
+            val (cached, generationAtStart) = cacheMutex.withLock {
+                Pair(cache[userId], cacheGenerations.getOrDefault(userId, 0L))
+            }
             val now = timeProvider.now()
-            
+
             if (cached != null && (now - cached.percentiles.calculatedAt) < CACHE_TTL_MS) {
                 Timber.d("SpendingThresholdCalculator: Using cached percentiles for $userId")
                 return@withContext cached.percentiles
             }
-            
-            // Calculate from scratch
+
+            // Calculate from scratch (expensive I/O outside the lock)
             val (startDate, endDate) = TimePeriodUtils.getLastNDaysRange(now, ANALYSIS_WINDOW_DAYS)
             val amounts = expenseDao.getAmountsForPercentileCalc(startDate, endDate)
-            
+
             if (amounts.isEmpty()) {
                 Timber.d("SpendingThresholdCalculator: No transactions for $userId in last $ANALYSIS_WINDOW_DAYS days")
                 return@withContext SpendingPercentiles.empty(now)
             }
-            
+
             val sorted = amounts.sorted()
             val size = sorted.size
-            
+
             val percentiles = SpendingPercentiles(
                 p50 = percentile(sorted, 0.50),
                 p75 = percentile(sorted, 0.75),
@@ -109,10 +130,19 @@ class SpendingThresholdCalculator @Inject constructor(
                 sampleSize = size,
                 calculatedAt = now
             )
-            
-            // Cache result
-            cache[userId] = CachedPercentiles(percentiles, now)
-            
+
+            // Write back under the same owner — only if the generation
+            // is still the same as when we started.  A concurrent
+            // refreshThresholds() bumps the generation, so a stale
+            // in-flight compute is rejected here.  Normal TTL expiry
+            // does NOT change the generation, so expired entries are
+            // replaced as expected.
+            cacheMutex.withLock {
+                if (cacheGenerations.getOrDefault(userId, 0L) == generationAtStart) {
+                    cache[userId] = CachedPercentiles(percentiles, now)
+                }
+            }
+
             Timber.d("SpendingThresholdCalculator: Calculated percentiles for $userId: P50=${percentiles.p50}, P90=${percentiles.p90}, sample=$size")
             percentiles
         }
@@ -128,7 +158,13 @@ class SpendingThresholdCalculator @Inject constructor(
      */
     suspend fun refreshThresholds(userId: String) {
         withContext(ioDispatcher) {
-            cache.remove(userId)
+            cacheMutex.withLock {
+                cache.remove(userId)
+                // Bump the generation so any in-flight recompute that started
+                // before this invalidation sees a generation mismatch and
+                // refuses to write its stale result back.
+                cacheGenerations[userId] = (cacheGenerations.getOrDefault(userId, 0L)) + 1L
+            }
             Timber.d("SpendingThresholdCalculator: Cache cleared for $userId")
         }
     }

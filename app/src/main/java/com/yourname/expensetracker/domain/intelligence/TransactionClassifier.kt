@@ -28,12 +28,19 @@ open class TransactionClassifier @Inject constructor(
     private val userCorrectionRepository: UserCorrectionRepository
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // Single synchronization owner for all job-handle read/cancel/replace operations.
+    // A plain JVM monitor is used (rather than the coroutine Mutex) because cleanup()
+    // is a non-suspend function that must also cancel both jobs safely.
+    private val jobLock = Any()
     private var saveJob: Job? = null
     private var retrainJob: Job? = null
 
     fun cleanup() {
-        saveJob?.cancel()
-        retrainJob?.cancel()
+        synchronized(jobLock) {
+            saveJob?.cancel()
+            retrainJob?.cancel()
+        }
         scope.cancel()
     }
 
@@ -121,12 +128,15 @@ open class TransactionClassifier @Inject constructor(
     }
 
     fun retrainFromCorrections() {
-        retrainJob?.cancel()
-        retrainJob = scope.launch {
+        val newJob = scope.launch {
             delay(2000) // Debounce for 2 seconds
             mutex.withLock {
                 retrainFromCorrectionsInternal()
             }
+        }
+        synchronized(jobLock) {
+            retrainJob?.cancel()
+            retrainJob = newJob
         }
     }
 
@@ -174,10 +184,13 @@ open class TransactionClassifier @Inject constructor(
     }
 
     private fun scheduleSave() {
-        saveJob?.cancel()
-        saveJob = scope.launch {
+        val newJob = scope.launch {
             delay(2000)
             saveToDisk()
+        }
+        synchronized(jobLock) {
+            saveJob?.cancel()
+            saveJob = newJob
         }
     }
 

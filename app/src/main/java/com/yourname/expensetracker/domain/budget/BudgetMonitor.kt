@@ -30,6 +30,11 @@ class BudgetMonitor @Inject constructor(
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + ioDispatcher)
 
+    // Single synchronization owner for all shared monitor state.
+    // lastCheckTime, cachedStatuses, and cacheTimestamp must always be
+    // observed and mutated together so throttle decisions and cache
+    // freshness checks are never inconsistent.
+    private val stateLock = Any()
     private var lastCheckTime = 0L
     private var cachedStatuses: List<BudgetStatus>? = null
     private var cacheTimestamp: Long = 0L
@@ -62,11 +67,13 @@ class BudgetMonitor @Inject constructor(
 
     fun checkBudgets() {
         val now = timeProvider.now()
-        if (now - lastCheckTime < MIN_CHECK_INTERVAL_MS) {
-            Timber.d("Budget check skipped - too soon (last check: ${now - lastCheckTime}ms ago)")
-            return
+        synchronized(stateLock) {
+            if (now - lastCheckTime < MIN_CHECK_INTERVAL_MS) {
+                Timber.d("Budget check skipped - too soon (last check: ${now - lastCheckTime}ms ago)")
+                return
+            }
+            lastCheckTime = now
         }
-        lastCheckTime = now
         
         serviceScope.launch {
             var lastException: Exception? = null
@@ -110,14 +117,19 @@ class BudgetMonitor @Inject constructor(
     }
 
     private suspend fun getCachedBudgetStatuses(now: Long): List<BudgetStatus> {
-        if (cachedStatuses != null && now - cacheTimestamp < cacheValidityMs) {
-            Timber.d("Using cached budget statuses (${cachedStatuses!!.size} budgets)")
-            return cachedStatuses!!
+        synchronized(stateLock) {
+            val cached = cachedStatuses
+            if (cached != null && now - cacheTimestamp < cacheValidityMs) {
+                Timber.d("Using cached budget statuses (${cached.size} budgets)")
+                return cached
+            }
         }
         
         val statuses = budgetRepository.getBudgetStatuses().first()
-        cachedStatuses = statuses
-        cacheTimestamp = now
+        synchronized(stateLock) {
+            cachedStatuses = statuses
+            cacheTimestamp = now
+        }
         Timber.d("Fetched fresh budget statuses (${statuses.size} budgets)")
         return statuses
     }

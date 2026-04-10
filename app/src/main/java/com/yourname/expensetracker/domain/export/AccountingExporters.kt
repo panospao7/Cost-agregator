@@ -1,7 +1,8 @@
 package com.yourname.expensetracker.domain.export
 
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
@@ -9,7 +10,7 @@ import java.util.Locale
  */
 
 class QuickBooksIIFExporter {
-    private val dateFormat = SimpleDateFormat("MM/dd/yyyy", Locale.US)
+    private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("MM/dd/yyyy", Locale.US)
 
     fun export(expenses: List<ExportTransaction>, categories: Map<Long, String>): String {
         return buildString {
@@ -25,7 +26,7 @@ class QuickBooksIIFExporter {
     }
 
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
-        val date = dateFormat.format(Date(expense.date))
+        val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val account = categories[expense.categoryId] ?: "Uncategorized"
         val amount = expense.amount
         val memo = escapeIifField(expense.notes ?: "")
@@ -46,7 +47,7 @@ class QuickBooksIIFExporter {
 }
 
 class XeroCSVExporter {
-    private val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.UK)
+    private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.UK)
 
     fun export(expenses: List<ExportTransaction>, categories: Map<Long, String>): String {
         return buildString {
@@ -60,7 +61,7 @@ class XeroCSVExporter {
     }
 
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
-        val date = dateFormat.format(Date(expense.date))
+        val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val description = escapeCsvField(expense.merchant)
         val amount = expense.amount
         val account = escapeCsvField(categories[expense.categoryId] ?: "Uncategorized")
@@ -97,7 +98,7 @@ class XeroCSVExporter {
 }
 
 class FreshBooksExporter {
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
 
     fun export(expenses: List<ExportTransaction>, categories: Map<Long, String>): String {
         return buildString {
@@ -111,7 +112,7 @@ class FreshBooksExporter {
     }
 
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
-        val date = dateFormat.format(Date(expense.date))
+        val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val description = escapeCsvField(expense.merchant)
         val amount = expense.amount
         val category = escapeCsvField(categories[expense.categoryId] ?: "Uncategorized")
