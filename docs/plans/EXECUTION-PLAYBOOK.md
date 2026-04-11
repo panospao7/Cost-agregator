@@ -3,8 +3,8 @@ its cruc# Execution Playbook — ExpenseTracker Refactoring
 > **Project:** ExpenseTracker (Android/Kotlin/Clean Architecture)
 > **Branch:** `master-refactor`
 > **Current Phase:** Phase 2 — Domain-Specific Pipelines
-> **Active Epic:** Phase B downstream impact refresh
-> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 COMPLETE — A.8 COMPLETE — A.9 COMPLETE — A.10 COMPLETE
+> **Active Epic:** B.4 — Database/DAO/Entity Pipeline
+> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 COMPLETE — A.8 COMPLETE — A.9 COMPLETE — A.10 COMPLETE — Phase B in progress
 
 ---
 
@@ -436,8 +436,10 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
   - [x] Committed
 
 ### Phase 1 Todo Roadmap (Strict Priority)
-1. **Phase B downstream impact refresh + pipeline execution**
-   - Priority rationale: all universal epics are now complete; re-evaluate pipeline fallout, then execute Phase B with safe parallelization where appropriate
+1. **B.4 — Database/DAO/Entity Pipeline**
+   - Priority rationale: foundational data-contract lane; execute exclusively before Phase B fan-out
+2. **Phase B first-wave fan-out (after B.4)**
+   - `B.1` + `B.2` + `B.5` + `B.7` may run in parallel once B.4 is complete and green
 
 ### Phase 2: Pipeline Fixes
 - [ ] B.1: AI/ML Pipeline
@@ -534,4 +536,4 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
 ---
 
 *Last Updated: 2026-04-11*
-*Next Action: Commit A.10 closeout, then refresh downstream Phase B impact and begin pipeline execution*
+*Next Action: Create PLAN-B4-database-dao-entity.md and execute B.4 as the exclusive first Phase 2 lane*

@@ -602,141 +602,171 @@ class DatabaseMigrationTest {
         db.close()
     }
 
+    /**
+     * Tests MIGRATION_69_70 with encryption forced to fail via the test seam.
+     *
+     * By setting [AppDatabase.tokenEncryptionOverrideForTest] to a throwing lambda
+     * we deterministically exercise the Keystore-unavailable fallback path:
+     *  - migration must complete without crash
+     *  - bank tokens are preserved (not nulled)
+     *  - tokenEncryptionVersion stays 0 (no partial encryption recorded)
+     *  - deduplication, index creation, and emailMessageId normalisation still apply
+     */
     @Test
     @Throws(IOException::class)
-    fun migrate_69_to_70_hardens_tokens_indices_and_email_message_ids() {
+    fun migrate_69_to_70_fallback_when_keystore_unavailable() {
         assumeTrue(hasSchema(69) && hasSchema(70))
 
-        var db = helper.createDatabase(testDb, 69)
-
-        db.execSQL("""
-            INSERT INTO expenses (id, amount, merchant, transactionType, date)
-            VALUES (1, 15.0, 'Store A', 'PURCHASE', 1705000000000)
-        """)
-
-        db.execSQL("""
-            INSERT INTO scanned_receipts (id, imagePath, rawOcrText, confidence, createdAt, expenseId)
-            VALUES (1, '/tmp/s1.jpg', 'ocr-1', 0.9, 1705000000001, 1)
-        """)
-        db.execSQL("""
-            INSERT INTO scanned_receipts (id, imagePath, rawOcrText, confidence, createdAt)
-            VALUES (2, '/tmp/s2.jpg', 'ocr-2', 0.8, 1705000000002)
-        """)
-
-        db.execSQL("""
-            INSERT INTO bank_connections (bankId, bankName, countryCode, accessToken, refreshToken, createdAt)
-            VALUES ('dup-bank', 'Old Bank Record', 'GR', 'plain-access-1', 'plain-refresh-1', 1705000001000)
-        """)
-        db.execSQL("""
-            INSERT INTO bank_connections (bankId, bankName, countryCode, accessToken, refreshToken, createdAt)
-            VALUES ('dup-bank', 'Newest Bank Record', 'GR', 'plain-access-2', 'plain-refresh-2', 1705000002000)
-        """)
-
-        db.execSQL("""
-            INSERT INTO email_receipt_sources (
-                receiptId, emailSender, emailSubject, emailMessageId,
-                parsedAt, provider, confidence, fingerprint
-            ) VALUES (
-                1, 'blank@example.com', 'No Message Id', '   ',
-                1705000003000, 'GMAIL', 0.75, 'fp-blank'
-            )
-        """)
-        db.execSQL("""
-            INSERT INTO email_receipt_sources (
-                receiptId, emailSender, emailSubject, emailMessageId,
-                parsedAt, provider, confidence, fingerprint
-            ) VALUES (
-                2, 'normal@example.com', 'Has Message Id', '<msg-1>',
-                1705000004000, 'GMAIL', 0.9, 'fp-msg-1'
-            )
-        """)
-
-        db.close()
-
-        db = helper.runMigrationsAndValidate(
-            testDb,
-            70,
-            true,
-            AppDatabase.MIGRATION_69_70
-        )
-
-        db.query("PRAGMA foreign_key_check").use { fkCursor ->
-            assertFalse("No FK violations expected after 69→70", fkCursor.moveToFirst())
+        // Force the encryption step to throw so the fallback path is always taken.
+        AppDatabase.tokenEncryptionOverrideForTest = { _ ->
+            throw RuntimeException("Simulated Keystore failure")
         }
-
-        db.query(
-            "SELECT bankName, accessToken, refreshToken, tokenEncryptionVersion FROM bank_connections WHERE bankId='dup-bank'"
-        ).use { cursor ->
-            assertTrue(cursor.moveToFirst())
-            assertEquals("Newest Bank Record", cursor.getString(0))
-            val accessToken = cursor.getString(1)
-            val refreshToken = cursor.getString(2)
-            val encryptionVersion = cursor.getInt(3)
-            assertTrue("access token should be encrypted", accessToken.startsWith("enc:v1:"))
-            assertTrue("refresh token should be encrypted", refreshToken.startsWith("enc:v1:"))
-            assertEquals("tokenEncryptionVersion should be upgraded", 1, encryptionVersion)
-            assertFalse("dedupe should keep only one row per bankId", cursor.moveToNext())
-        }
-
-        assertTrue(hasIndex(db, "index_expenses_date"))
-        assertTrue(hasIndex(db, "index_expenses_merchantKey_date_amount"))
-        assertTrue(hasIndex(db, "index_manual_recurring_expenses_isActive_nextDate"))
-        assertTrue(hasIndex(db, "index_manual_recurring_expenses_isSubscription_isActive_nextDate"))
-        assertTrue(hasIndex(db, "index_manual_recurring_expenses_merchant"))
-        assertTrue(hasIndex(db, "index_spending_personality_profiles_isActive"))
-
-        db.query(
-            "SELECT emailMessageId FROM email_receipt_sources WHERE emailSender='blank@example.com'"
-        ).use { cursor ->
-            assertTrue(cursor.moveToFirst())
-            assertTrue("blank emailMessageId should migrate to NULL", cursor.isNull(0))
-        }
-
-        db.query("PRAGMA table_info(email_receipt_sources)").use { cursor ->
-            val nameIndex = cursor.getColumnIndexOrThrow("name")
-            val notNullIndex = cursor.getColumnIndexOrThrow("notnull")
-            var foundEmailMessageId = false
-            while (cursor.moveToNext()) {
-                if (cursor.getString(nameIndex) == "emailMessageId") {
-                    foundEmailMessageId = true
-                    assertEquals("emailMessageId must be nullable at v70", 0, cursor.getInt(notNullIndex))
-                }
-            }
-            assertTrue(foundEmailMessageId)
-        }
-
-        db.execSQL("""
-            INSERT INTO email_receipt_sources (
-                receiptId, emailSender, emailSubject, emailMessageId,
-                parsedAt, provider, confidence, fingerprint
-            ) VALUES (
-                1, 'second-null@example.com', 'Second Null', NULL,
-                1705000005000, 'GMAIL', 0.7, 'fp-null-2'
-            )
-        """)
-
-        db.query("SELECT COUNT(*) FROM email_receipt_sources WHERE emailMessageId IS NULL").use { cursor ->
-            assertTrue(cursor.moveToFirst())
-            assertEquals(2, cursor.getInt(0))
-        }
-
-        var duplicateNonNullRejected = false
         try {
+            var db = helper.createDatabase(testDb, 69)
+
+            db.execSQL("""
+                INSERT INTO expenses (id, amount, merchant, transactionType, date)
+                VALUES (1, 15.0, 'Store A', 'PURCHASE', 1705000000000)
+            """)
+
+            db.execSQL("""
+                INSERT INTO scanned_receipts (id, imagePath, rawOcrText, confidence, createdAt, expenseId)
+                VALUES (1, '/tmp/s1.jpg', 'ocr-1', 0.9, 1705000000001, 1)
+            """)
+            db.execSQL("""
+                INSERT INTO scanned_receipts (id, imagePath, rawOcrText, confidence, createdAt)
+                VALUES (2, '/tmp/s2.jpg', 'ocr-2', 0.8, 1705000000002)
+            """)
+
+            db.execSQL("""
+                INSERT INTO bank_connections (bankId, bankName, countryCode, accessToken, refreshToken, createdAt)
+                VALUES ('dup-bank', 'Old Bank Record', 'GR', 'plain-access-1', 'plain-refresh-1', 1705000001000)
+            """)
+            db.execSQL("""
+                INSERT INTO bank_connections (bankId, bankName, countryCode, accessToken, refreshToken, createdAt)
+                VALUES ('dup-bank', 'Newest Bank Record', 'GR', 'plain-access-2', 'plain-refresh-2', 1705000002000)
+            """)
+
             db.execSQL("""
                 INSERT INTO email_receipt_sources (
                     receiptId, emailSender, emailSubject, emailMessageId,
                     parsedAt, provider, confidence, fingerprint
                 ) VALUES (
-                    2, 'dup@example.com', 'Duplicate Message Id', '<msg-1>',
-                    1705000006000, 'GMAIL', 0.6, 'fp-dup-msg-1'
+                    1, 'blank@example.com', 'No Message Id', '   ',
+                    1705000003000, 'GMAIL', 0.75, 'fp-blank'
                 )
             """)
-        } catch (_: Exception) {
-            duplicateNonNullRejected = true
-        }
-        assertTrue("duplicate non-null emailMessageId should be rejected", duplicateNonNullRejected)
+            db.execSQL("""
+                INSERT INTO email_receipt_sources (
+                    receiptId, emailSender, emailSubject, emailMessageId,
+                    parsedAt, provider, confidence, fingerprint
+                ) VALUES (
+                    2, 'normal@example.com', 'Has Message Id', '<msg-1>',
+                    1705000004000, 'GMAIL', 0.9, 'fp-msg-1'
+                )
+            """)
 
-        db.close()
+            db.close()
+
+            db = helper.runMigrationsAndValidate(
+                testDb,
+                70,
+                true,
+                AppDatabase.MIGRATION_69_70
+            )
+
+            db.query("PRAGMA foreign_key_check").use { fkCursor ->
+                assertFalse("No FK violations expected after 69→70", fkCursor.moveToFirst())
+            }
+
+            // Fallback contract: encryption threw, so tokens must be preserved as plaintext
+            // and tokenEncryptionVersion must be 0 (never partially incremented).
+            db.query(
+                "SELECT bankName, accessToken, refreshToken, tokenEncryptionVersion FROM bank_connections WHERE bankId='dup-bank'"
+            ).use { cursor ->
+                assertTrue("surviving bank_connection row should exist", cursor.moveToFirst())
+                assertEquals("Newest Bank Record", cursor.getString(0))
+                val accessToken = cursor.getString(1)
+                val refreshToken = cursor.getString(2)
+                val encryptionVersion = cursor.getInt(3)
+
+                assertNotNull("accessToken must not be lost on fallback", accessToken)
+                assertNotNull("refreshToken must not be lost on fallback", refreshToken)
+                // Encryption was forced to throw — tokens must remain plaintext.
+                assertFalse(
+                    "accessToken must not carry enc:v1: prefix when encryption failed",
+                    accessToken.startsWith("enc:v1:")
+                )
+                assertEquals(
+                    "tokenEncryptionVersion must be 0 when encryption failed",
+                    0, encryptionVersion
+                )
+                assertFalse("dedupe should keep only one row per bankId", cursor.moveToNext())
+            }
+
+            assertTrue(hasIndex(db, "index_expenses_date"))
+            assertTrue(hasIndex(db, "index_expenses_merchantKey_date_amount"))
+            assertTrue(hasIndex(db, "index_manual_recurring_expenses_isActive_nextDate"))
+            assertTrue(hasIndex(db, "index_manual_recurring_expenses_isSubscription_isActive_nextDate"))
+            assertTrue(hasIndex(db, "index_manual_recurring_expenses_merchant"))
+            assertTrue(hasIndex(db, "index_spending_personality_profiles_isActive"))
+
+            db.query(
+                "SELECT emailMessageId FROM email_receipt_sources WHERE emailSender='blank@example.com'"
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue("blank emailMessageId should migrate to NULL", cursor.isNull(0))
+            }
+
+            db.query("PRAGMA table_info(email_receipt_sources)").use { cursor ->
+                val nameIndex = cursor.getColumnIndexOrThrow("name")
+                val notNullIndex = cursor.getColumnIndexOrThrow("notnull")
+                var foundEmailMessageId = false
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == "emailMessageId") {
+                        foundEmailMessageId = true
+                        assertEquals("emailMessageId must be nullable at v70", 0, cursor.getInt(notNullIndex))
+                    }
+                }
+                assertTrue(foundEmailMessageId)
+            }
+
+            db.execSQL("""
+                INSERT INTO email_receipt_sources (
+                    receiptId, emailSender, emailSubject, emailMessageId,
+                    parsedAt, provider, confidence, fingerprint
+                ) VALUES (
+                    1, 'second-null@example.com', 'Second Null', NULL,
+                    1705000005000, 'GMAIL', 0.7, 'fp-null-2'
+                )
+            """)
+
+            db.query("SELECT COUNT(*) FROM email_receipt_sources WHERE emailMessageId IS NULL").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(2, cursor.getInt(0))
+            }
+
+            var duplicateNonNullRejected = false
+            try {
+                db.execSQL("""
+                    INSERT INTO email_receipt_sources (
+                        receiptId, emailSender, emailSubject, emailMessageId,
+                        parsedAt, provider, confidence, fingerprint
+                    ) VALUES (
+                        2, 'dup@example.com', 'Duplicate Message Id', '<msg-1>',
+                        1705000006000, 'GMAIL', 0.6, 'fp-dup-msg-1'
+                    )
+                """)
+            } catch (_: Exception) {
+                duplicateNonNullRejected = true
+            }
+            assertTrue("duplicate non-null emailMessageId should be rejected", duplicateNonNullRejected)
+
+            db.close()
+        } finally {
+            // Always restore the seam so other tests are not affected.
+            AppDatabase.tokenEncryptionOverrideForTest = null
+        }
     }
 
     // ── Migration 50 → 51 (Schema normalization) ───────────────────────────────

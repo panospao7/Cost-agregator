@@ -3483,6 +3483,20 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Seam used exclusively by tests to force the token-encryption step inside
+         * MIGRATION_69_70 to fail deterministically.
+         *
+         * In production this is always null (the real BankTokenCipher is used).
+         * A test may set this to a lambda that throws, which exercises the
+         * Keystore-unavailable fallback path, and must reset it to null in tearDown.
+         *
+         * Visibility: @VisibleForTesting — do not call from production code paths.
+         */
+        @androidx.annotation.VisibleForTesting
+        @Volatile
+        var tokenEncryptionOverrideForTest: ((String?) -> String?)? = null
+
         // Migration 69 -> 70: Security and index hardening.
         // - Encrypt legacy plaintext bank tokens and add token encryption metadata
         // - Enforce uniqueness of bankId with deterministic deduplication
@@ -3600,6 +3614,12 @@ abstract class AppDatabase : RoomDatabase() {
                     database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_lastSync ON bank_connections(lastSync)")
 
                     // H13: migrate plaintext tokens to encrypted payloads.
+                    // Resilience: If the Android Keystore is unavailable at migration time
+                    // (e.g. device just rebooted, StrongBox not accessible, emulator), we
+                    // catch the exception per-row and leave that token in plaintext.
+                    // tokenEncryptionVersion stays 0 for unencrypted rows so that the
+                    // application layer can detect and re-attempt encryption on first use.
+                    // Data is never lost — the migration is not rolled back on cipher failure.
                     database.query(
                         "SELECT id, accessToken, refreshToken, tokenEncryptionVersion FROM bank_connections"
                     ).use { cursor ->
@@ -3614,11 +3634,23 @@ abstract class AppDatabase : RoomDatabase() {
                             val refresh = if (cursor.isNull(refreshIndex)) null else cursor.getString(refreshIndex)
                             val version = cursor.getInt(versionIndex)
 
-                            val encryptedAccess = BankTokenCipher.encryptIfNeeded(access)
-                            val encryptedRefresh = BankTokenCipher.encryptIfNeeded(refresh)
-
-                            val shouldMarkEncrypted = encryptedAccess != null || encryptedRefresh != null
-                            val targetVersion = if (shouldMarkEncrypted) 1 else 0
+                            // Attempt Keystore-backed encryption; fall back gracefully on failure.
+                            // In tests, tokenEncryptionOverrideForTest may replace the real cipher
+                            // with a throwing lambda to prove the fallback path deterministically.
+                            val encryptedAccess: String?
+                            val encryptedRefresh: String?
+                            val targetVersion: Int
+                            try {
+                                val encryptFn = tokenEncryptionOverrideForTest
+                                    ?: BankTokenCipher::encryptIfNeeded
+                                encryptedAccess = encryptFn(access)
+                                encryptedRefresh = encryptFn(refresh)
+                                val shouldMarkEncrypted = encryptedAccess != null || encryptedRefresh != null
+                                targetVersion = if (shouldMarkEncrypted) 1 else 0
+                            } catch (_: Exception) {
+                                // Keystore unavailable — leave token as-is; app will re-encrypt later.
+                                continue
+                            }
 
                             if (encryptedAccess != access || encryptedRefresh != refresh || version != targetVersion) {
                                 database.execSQL(

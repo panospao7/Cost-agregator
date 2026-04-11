@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This review consolidates the downstream Phase B impact of completed universal epics **A.1-A.8**.
+This review consolidates the downstream Phase B impact of completed universal epics **A.1-A.10**.
 
 It uses a **conservative annotation policy**:
 
@@ -41,13 +41,23 @@ It uses a **conservative annotation policy**:
 - **B.6** `RecommendationStateManager` stale refresh overwrite / wrong-user clear — **RESOLVED BY A.8**
 - **B.6** `ServiceDiagnostics` unsynchronized counters — **RESOLVED BY A.8**
 
+### A.9
+- **B.2/B.7/B.8** hidden truncation in budgeting, cashflow, export, carbon, tax, and reporting readers — **RESOLVED BY A.9**
+- **B.2** `SharedBudgetManager` truncation slice — **RESOLVED BY A.9**
+- **B.7** repository-backed export truncation / repo-vs-UI divergence — **RESOLVED BY A.9**
+
+### A.10
+- **B.2/B.5/B.8/B.9/B.10** transaction-type blindness across spend-facing analytics/reporting — **RESOLVED BY A.10** where rows specifically concerned deposits/transfers/withdrawals being treated as spending
+- **B.2** business-report spend semantics — **RESOLVED BY A.10**
+- **B.5** map heatmap spend-input pollution — **RESOLVED BY A.10**
+- **B.8** shared-expense deductible overstatement on the main tax/reporting spend path — **RESOLVED BY A.10**
+- **B.8** `FinancialHealthCalculator` non-spend rows counted as spending — **RESOLVED BY A.10**
+- **B.8** `RecurringIncomeTracker` spending-side ratio transaction-type blindness — **RESOLVED BY A.10**
+- **B.9/B.10** challenge / UI / analytics transaction-type semantics called out in downstream audits — **RESOLVED BY A.10** only for the exact spend-filter defects, not broader pipeline logic
+
 ## 2. Likely resolved — verify in pipeline
 
 ### A.1 / A.2
-- **B.2/B.7** business-expense ownership semantics moved from raw `amount` toward `effectiveAmount` — **LIKELY RESOLVED**, but surrounding pipeline semantics still need verification
-- **B.8** shared-expense tax deduction overstatement — **LIKELY RESOLVED BY A.1**, verify during B.8
-- **B.8** recurring-income raw-amount overstatement — **LIKELY RESOLVED BY A.1**, verify during B.8
-- **B.10** challenge spend ownership semantics — **LIKELY RESOLVED BY A.1**, verify during B.10
 - **B.9/B.46/B.47** dashboard/block-party boundary inflation from `DashboardExpense -> Expense` round-trip — **LIKELY RESOLVED BY A.2**, verify during B.9
 
 ## 3. Partially improved — remains open
@@ -71,18 +81,37 @@ It uses a **conservative annotation policy**:
 - **B.6** `DailyBriefingWorker` cancellation handling improved, but timeout / non-cancellation failure semantics remain open
 - **B.1** `HybridReceiptAssistService` metadata contamination improved, but full metadata-accuracy issue still needs pipeline verification
 
+### A.9
+- **B.2** shared-budget / forecast / autopilot semantic backlog is narrower after truncation fixes, but non-truncation logic issues remain open
+- **B.7/B.8** reporting/tax paths improved on completeness, but currency, formatting, progressive-tax, and business-only VAT semantics still remain in places
+
+### A.10
+- **B.1/B.6** dedupe/notification families improved indirectly only where transaction-type candidate quality mattered; the core pipelines remain open
+- **B.3** receipt-matching and warranty internals improved on spend semantics/thread safety in slices, but OCR/parser/vision/privacy backlog remains open
+- **B.5** heatmap negative/refund normalization bug is narrower after removing non-spend inputs, but still remains open
+- **B.6** notification oversize-fallback and recommendation-ordering families remain open
+- **B.7** export/reporting improved on spend semantics, but export schema/format/currency issues remain open
+- **B.8** VAT/business-only semantics and broader tax/savings/investment defects remain open
+- **B.10** feature extraction reproducibility improved, but true event-time semantics and wider challenge/model issues remain open
+- **B.11** email duplicate-key/type semantics improved, but the pipeline still remains open overall
+
 ## 4. Unaffected by epic work
 
 - **A.6** did not clearly resolve any explicit Phase B registry issue; impact was limited to local numeric-fidelity cleanup
-- Most **B.1** privacy/routing issues were unaffected by A.1-A.8
-- Most **B.3** OCR/business-rule issues were unaffected by A.7/A.8 thread-safety fixes
-- **A.9-style truncation issues** remain open and are the active current epic
-- Most **B.5**, **B.11**, and **B.12** structural issues remain open except for the specific direct matches called out above
+- Most **B.1** privacy/routing issues remain unaffected even after A.10
+- Most **B.3** OCR/business-rule/privacy issues remain unaffected except the exact resolved slices called out above
+- Most **B.4** schema/integrity/concurrency issues remain unaffected
+- Most **B.5** structural geocoder/cache/bucketing issues remain unaffected
+- Most **B.6** notification/privacy/persistence/deep-link issues remain unaffected
+- Most **B.7** export schema/format/currency issues remain unaffected
+- Most **B.8** tax/savings/investment structural issues remain unaffected
+- Most **B.11** parsing/email-specific issues remain unaffected
+- Most **B.12** group/share semantics remain unaffected except the timestamp-default slice
 
 ## 5. Potentially worsened / monitor
 
 - **A.2** legacy dashboard health widget path may have regressed because one compatibility path now passes `expenses = emptyList()` rather than reconstructed expenses. Treat as **monitor**, not a registry rewrite yet.
-- **A.1** cash-flow semantics may have been affected if a path that intentionally used raw account movement was changed to `effectiveAmount`. Treat as **monitor**, not a registry rewrite yet.
+- **A.10** sweep/savings semantics now more clearly diverge where downstream code still treats `WITHDRAWAL` as spending while the canonical domain rule is purchase-only. Treat as **monitor** until Phase B.8 addresses it.
 
 ## 6. Recommended registry annotation policy
 
@@ -99,3 +128,4 @@ When updating `MASTER-ISSUE-REGISTRY.md`:
 - During each Phase B pipeline plan, re-check all rows marked **LIKELY RESOLVED** before spending implementation effort.
 - If a future pipeline review confirms the behavior is gone, promote the row to **`[RESOLVED BY A.x]`** or mark it obsolete with explicit evidence.
 - If a future pipeline review shows only a slice was fixed, retain the **PARTIALLY IMPROVED** label and scope the remaining work narrowly.
+- Phase B planning should now assume A.1-A.10 are committed and available as the new baseline; do not reopen A-epic fixes unless a concrete regression is found.
