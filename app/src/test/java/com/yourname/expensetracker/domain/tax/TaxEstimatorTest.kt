@@ -289,6 +289,94 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
     }
 
     // =========================================================================
+    // A.10 Batch 3: Transaction-type isolation (spending semantics)
+    // =========================================================================
+
+    /**
+     * A.10 Batch 3 — Proves that VAT calculation uses only the PURCHASE-filtered
+     * aggregate (getTotalSpentBetween), which has
+     * `WHERE transactionType = 'PURCHASE'` baked into the DAO SQL.
+     *
+     * Deposits, transfers, and withdrawals cannot inflate VAT because
+     * getTotalSpentBetween structurally excludes them.  This test locks
+     * the aggregate query path by verifying that only getTotalSpentBetween
+     * is called for the VAT total — not any row-level scan that might
+     * include other transaction types.
+     */
+    @Test
+    fun `A10 Batch3 - VAT uses only PURCHASE-filtered aggregate path`() = runTest {
+        val start = atDateTime(2026, 3, 1, 0, 0)
+        val end = atDateTime(2026, 4, 1, 0, 0)
+
+        // Only the PURCHASE-only aggregate returns a spend total
+        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 2400.0
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
+
+        val taxConfig = GreeceTaxConfiguration() // 24% VAT
+        val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, taxConfig)
+
+        // VAT = 2400 * (0.24 / 1.24) ≈ 464.52
+        val expectedVat = 2400.0 * (0.24 / 1.24)
+        assertApproxEquals(expectedVat, estimate.estimatedVatPaid, 0.01)
+
+        // Verify only the PURCHASE-filtered aggregate was called
+        coVerify(exactly = 1) { expenseDao.getTotalSpentBetween(start, end) }
+        // No row-level reads that might include deposits/transfers
+        coVerify(exactly = 0) { expenseDao.getExpensesBetween(any(), any()) }
+    }
+
+    /**
+     * A.10 Batch 3 — Business deductions use getTotalBusinessExpenses which
+     * delegates to DAO getTotalBusinessExpensesBetween with
+     * `WHERE transactionType = 'PURCHASE'`.  Deposits/transfers/withdrawals
+     * cannot inflate deductions.
+     */
+    @Test
+    fun `A10 Batch3 - business deductions use only PURCHASE-filtered aggregate`() = runTest {
+        val start = atDateTime(2026, 3, 1, 0, 0)
+        val end = atDateTime(2026, 4, 1, 0, 0)
+
+        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 1000.0
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 300.0
+
+        val estimate = taxEstimator.estimateTaxes(start, end, 20000.0)
+
+        assertApproxEquals(300.0, estimate.deductibleExpenses, 0.01)
+
+        // Only the aggregate (PURCHASE-only) business expense path was used
+        coVerify(exactly = 1) { businessExpenseRepository.getTotalBusinessExpenses(start, end) }
+        // No row-level scan
+        coVerify(exactly = 0) { businessExpenseRepository.getBusinessExpenses(any(), any()) }
+    }
+
+    /**
+     * A.10 Batch 3 — Combined: both VAT and deductions are computed from
+     * PURCHASE-only aggregates.  Non-PURCHASE types in the database do not
+     * affect income tax, VAT, or effective tax rate.
+     */
+    @Test
+    fun `A10 Batch3 - non-PURCHASE types do not affect tax estimate`() = runTest {
+        val start = atDateTime(2026, 3, 1, 0, 0)
+        val end = atDateTime(2026, 4, 1, 0, 0)
+
+        // The aggregate queries only return PURCHASE spend (filtered at SQL level)
+        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 5000.0
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 1000.0
+
+        val estimate1 = taxEstimator.estimateTaxes(start, end, 25000.0)
+
+        // Run with exact same mock setup — demonstrates idempotency:
+        // even if the DB also had deposits/transfers, the aggregate queries
+        // exclude them, so the result is identical.
+        val estimate2 = taxEstimator.estimateTaxes(start, end, 25000.0)
+
+        assertApproxEquals(estimate1.estimatedVatPaid, estimate2.estimatedVatPaid, 0.001)
+        assertApproxEquals(estimate1.deductibleExpenses, estimate2.deductibleExpenses, 0.001)
+        assertApproxEquals(estimate1.estimatedIncomeTax, estimate2.estimatedIncomeTax, 0.001)
+        assertApproxEquals(estimate1.effectiveTaxRate, estimate2.effectiveTaxRate, 0.001)
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 

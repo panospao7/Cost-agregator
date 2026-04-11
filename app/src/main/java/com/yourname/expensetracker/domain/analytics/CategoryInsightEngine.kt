@@ -35,7 +35,7 @@ class CategoryInsightEngine @Inject constructor() {
             it.date != null &&
             it.date >= currentMonth.startMs && 
             it.date < currentMonth.endMs &&
-            it.transactionType.toDomain() == DomainTransactionType.PURCHASE && 
+            it.transactionType.toDomain().isSpending && 
             !it.isNotMine 
         }
         
@@ -44,7 +44,7 @@ class CategoryInsightEngine @Inject constructor() {
                 it.date != null &&
                 it.date >= pm.startMs && 
                 it.date < pm.endMs &&
-                it.transactionType.toDomain() == DomainTransactionType.PURCHASE && 
+                it.transactionType.toDomain().isSpending && 
                 !it.isNotMine 
             }
         }

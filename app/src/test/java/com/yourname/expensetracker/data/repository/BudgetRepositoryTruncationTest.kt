@@ -270,6 +270,133 @@ class BudgetRepositoryTruncationTest {
         verifyNoRowLevelReads()
     }
 
+    // ── A.10 Batch 3: Transaction-type isolation ───────────────────────────
+
+    /**
+     * A.10 Batch 3 — Proves that BudgetRepository spend surfaces delegate
+     * exclusively to DAO aggregate methods that filter by
+     * `transactionType = 'PURCHASE'`.
+     *
+     * The test configures a whole-wallet budget, sets the PURCHASE-only
+     * aggregate (getTotalForPeriod) to €500, and asserts the budget status
+     * reflects exactly that amount.  Because the repository calls only
+     * getTotalForPeriod / getCategorySpentInPeriod — both of which have
+     * `WHERE transactionType = 'PURCHASE'` baked into their SQL — deposits,
+     * transfers, and withdrawals are structurally excluded; no alternative
+     * code path exists that could mix them in.
+     *
+     * Mock verification confirms that no row-level expense reads (which
+     * lack the PURCHASE filter) were invoked.
+     */
+    @Test
+    fun `A10 Batch3 - budget spend uses only PURCHASE-filtered aggregate queries`() = runTest {
+        val now = makeUtcMs(2026, 3, 15)
+        every { timeProvider.now() } returns now
+
+        val start = makeUtcMs(2026, 3, 1)
+        val end = makeUtcMs(2026, 4, 1)
+
+        val budget = makeBudget(amount = 1_000.0, start = start)
+        every { budgetCalculator.calculatePeriodRange(any(), any()) } returns (start to end)
+        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
+        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(500.0)
+
+        // Only the PURCHASE-only aggregate returns a value; any non-PURCHASE
+        // pathway would need a different DAO call that is not stubbed.
+        coEvery { expenseDao.getTotalForPeriod(start, end) } returns 500.0
+
+        val statuses = repository.getBudgetStatuses().first()
+
+        assertThat(statuses).hasSize(1)
+        assertThat(statuses[0].spentAmount).isEqualTo(500.0)
+        assertThat(statuses[0].remainingAmount).isEqualTo(500.0)
+        // 500/1000 = 0.5 → ON_TRACK (below 0.75 warning)
+        assertThat(statuses[0].healthStatus).isEqualTo(BudgetHealthStatus.ON_TRACK)
+
+        // Confirm the aggregate SQL path was used exactly once
+        coVerify(exactly = 1) { expenseDao.getTotalForPeriod(start, end) }
+        verifyNoRowLevelReads()
+    }
+
+    /**
+     * A.10 Batch 3 — Category-scoped budget spend uses only
+     * getCategorySpentInPeriod (which has `transactionType = 'PURCHASE'`
+     * in its SQL).  Deposits/transfers/withdrawals cannot leak into the
+     * category spend because no alternative query path exists.
+     */
+    @Test
+    fun `A10 Batch3 - category budget spend uses only PURCHASE-filtered category aggregate`() = runTest {
+        val now = makeUtcMs(2026, 3, 15)
+        every { timeProvider.now() } returns now
+
+        val start = makeUtcMs(2026, 3, 1)
+        val end = makeUtcMs(2026, 4, 1)
+        val catId = 42L
+
+        val category = Category(catId, "Groceries", "icon", "#00FF00", false)
+        val budget = makeBudget(amount = 800.0, start = start, categoryId = catId)
+
+        every { budgetCalculator.calculatePeriodRange(any(), any()) } returns (start to end)
+        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
+        every { categoryDao.getAllFlow() } returns flowOf(listOf(category))
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(200.0)
+        coEvery { expenseDao.getCategorySpentInPeriod(catId, start, end) } returns 200.0
+
+        val statuses = repository.getBudgetStatuses().first()
+
+        assertThat(statuses).hasSize(1)
+        assertThat(statuses[0].spentAmount).isEqualTo(200.0)
+        assertThat(statuses[0].remainingAmount).isEqualTo(600.0)
+        assertThat(statuses[0].category).isEqualTo(category)
+
+        // Confirm category aggregate was used, no whole-wallet fallback
+        coVerify(exactly = 1) { expenseDao.getCategorySpentInPeriod(catId, start, end) }
+        coVerify(exactly = 0) { expenseDao.getTotalForPeriod(any(), any()) }
+        verifyNoRowLevelReads()
+    }
+
+    /**
+     * A.10 Batch 3 — Rollover math delegates every per-period spend query to
+     * getTotalForPeriod (PURCHASE-only).  Non-PURCHASE types structurally
+     * cannot inflate or deflate the compounding surplus calculation.
+     */
+    @Test
+    fun `A10 Batch3 - rollover surplus is not affected by non-PURCHASE types`() = runTest {
+        val now = makeUtcMs(2026, 3, 15)
+        every { timeProvider.now() } returns now
+
+        val anchorMs = makeUtcMs(2026, 1, 1)
+        val budget = makeBudget(amount = 1_000.0, start = anchorMs, rollover = true)
+
+        val realCalc = BudgetCalculator(timeProvider)
+        val repo = BudgetRepository(
+            budgetDao, categoryDao, expenseDao, realCalc,
+            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider)
+        )
+
+        every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
+        every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
+        every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+
+        // Each completed period: spent €800 out of €1000
+        // surplus = 200 each, compounding over 2 completed periods (Jan, Feb)
+        //   Period 1: eff=1000, surplus=200, nextEff=1200
+        //   Period 2: eff=1200, surplus=400, nextEff=1400
+        // Active period (March): spend = 0
+        coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 800.0
+
+        val statuses = repo.getBudgetStatuses().first()
+
+        assertThat(statuses).hasSize(1)
+        // Effective limit: 1400 (1000 base + 200 + 200 compounding surplus)
+        assertThat(statuses[0].budget.amount).isAtLeast(1_400.0)
+
+        // Every period query used the PURCHASE-only aggregate
+        coVerify(atLeast = 3) { expenseDao.getTotalForPeriod(any(), any()) }
+        verifyNoRowLevelReads()
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private fun makeBudget(

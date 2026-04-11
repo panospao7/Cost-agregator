@@ -2,7 +2,9 @@ package com.yourname.expensetracker.domain.business
 
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.MileageTracking
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -50,8 +52,9 @@ class BusinessExpenseReportGenerator @Inject constructor(
     ): BusinessExpenseReport = withContext(Dispatchers.IO) {
         val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
         
-        // Get all business expenses
+        // Get all business expenses – enforce purchase-only at the boundary
         val expenses = businessExpenseRepository.getBusinessExpenses(startDate, endDate)
+            .filter { it.transactionType.toDomain().isSpending }
         
         // Calculate totals
         var totalExpenses = 0.0
@@ -59,22 +62,25 @@ class BusinessExpenseReportGenerator @Inject constructor(
             totalExpenses += expense.effectiveAmount
         }
         
-        // Group by category
-        val categoryTotals = businessExpenseRepository.getExpensesByCategory(startDate, endDate)
+        // Group by category – derived from the already-filtered purchase-only list
+        // so that pre-aggregated repository data cannot re-admit non-spend movements
         val expensesByCategory = mutableMapOf<String, Double>()
-        for (total in categoryTotals) {
-            expensesByCategory[total.businessCategory] = total.total
+        for (expense in expenses) {
+            val cat = expense.businessCategory ?: continue
+            expensesByCategory[cat] = (expensesByCategory[cat] ?: 0.0) + expense.effectiveAmount
         }
         
-        // Group by project
-        val projectTotals = businessExpenseRepository.getExpensesByProject(startDate, endDate)
+        // Group by project – derived from the already-filtered purchase-only list
+        // so that pre-aggregated repository data cannot re-admit non-spend movements
         val expensesByProject = mutableMapOf<String, Double>()
-        for (total in projectTotals) {
-            expensesByProject[total.businessProject] = total.total
+        for (expense in expenses) {
+            val proj = expense.businessProject ?: continue
+            expensesByProject[proj] = (expensesByProject[proj] ?: 0.0) + expense.effectiveAmount
         }
         
-        // Get expenses missing receipts
+        // Get expenses missing receipts – enforce purchase-only at the boundary
         val missingReceipts = businessExpenseRepository.getExpensesMissingReceipts(startDate, endDate)
+            .filter { it.transactionType.toDomain().isSpending }
         
         // Get top expenses (top 10)
         val sortedExpenses = expenses.sortedByDescending { it.effectiveAmount }
@@ -219,8 +225,9 @@ class BusinessExpenseReportGenerator @Inject constructor(
         // Header
         csv.append("Date,Merchant,Amount,Currency,Business Category,Business Purpose,Project,Requires Receipt,Notes\n")
         
-        // Expenses
+        // Expenses – enforce purchase-only at the boundary
         val expenses = businessExpenseRepository.getBusinessExpenses(startDate, endDate)
+            .filter { it.transactionType.toDomain().isSpending }
         for (expense in expenses) {
             val date = dateFormat.format(Date(expense.date))
             val merchant = escapeCSV(expense.merchant)
@@ -262,4 +269,14 @@ class BusinessExpenseReportGenerator @Inject constructor(
             "\"${value.replace("\"", "\"\"")}\""
         } else value
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

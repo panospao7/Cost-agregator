@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
@@ -16,6 +17,7 @@ import com.yourname.expensetracker.domain.location.SpendingHeatmapEngine
 import com.yourname.expensetracker.domain.location.HeatmapPoint
 import com.yourname.expensetracker.domain.location.LocationInsightsEngine
 import com.yourname.expensetracker.domain.location.PlaceInsight
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -350,7 +352,29 @@ class SpendingMapViewModel @Inject constructor(
             )
         }
 
-        val heatmap = heatmapEngine.compute(domainExpenses)
+        // Filter to canonical spending types only for the heatmap.
+        // Deposits, transfers, and withdrawals must not contribute to the
+        // spending heatmap — they are kept in `markers` for UI display but
+        // excluded from heatmap weight calculation.
+        val spendingOnlyExpenses = filteredExpenses.filter { e ->
+            e.transactionType.toDomain().isSpending
+        }
+        val heatmapExpenses = spendingOnlyExpenses.mapNotNull { e ->
+            val lat = e.latitude ?: return@mapNotNull null
+            val lon = e.longitude ?: return@mapNotNull null
+            LocatedExpense(
+                expenseId = e.id,
+                latitude = lat,
+                longitude = lon,
+                amount = e.effectiveAmount,
+                merchant = e.merchant,
+                date = e.date,
+                locationSource = e.locationSource,
+                placeId = e.placeId
+            )
+        }
+
+        val heatmap = heatmapEngine.compute(heatmapExpenses)
         val insights = insightsEngine.compute(domainExpenses)
 
         val categoriesById = runCatching {
@@ -458,4 +482,14 @@ class SpendingMapViewModel @Inject constructor(
         const val TAG = "SpendingMapViewModel"
         const val UNCATEGORIZED_KEY = "uncategorized"
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

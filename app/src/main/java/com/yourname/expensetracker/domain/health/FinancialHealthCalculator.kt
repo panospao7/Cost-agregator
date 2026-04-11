@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.domain.health
 
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -87,7 +89,8 @@ class FinancialHealthCalculator @Inject constructor(
             TimePeriodUtils.isInRange(it.date, todayStart, todayEnd) 
         }
         
-        val spentToday = todayExpenses.sumOf { it.effectiveAmount }
+        val todaySpending = spendingOnly(todayExpenses)
+        val spentToday = todaySpending.sumOf { it.effectiveAmount }
         
         // Calculate base score components
         val budgetHealth = calculateBudgetHealthScore(budgetStatuses, todayExpenses)
@@ -129,10 +132,11 @@ class FinancialHealthCalculator @Inject constructor(
             TimePeriodUtils.isInRange(it.date, weekStart, weekEnd) 
         }
         
-        val spentThisWeek = weekExpenses.sumOf { it.effectiveAmount }
+        val weekSpending = spendingOnly(weekExpenses)
+        val spentThisWeek = weekSpending.sumOf { it.effectiveAmount }
         
         // Calculate volatility (coefficient of variation)
-        val dailySpending = weekExpenses.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
+        val dailySpending = weekSpending.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
             .map { (_, exps) -> exps.sumOf { it.effectiveAmount } }
         
         val volatility = calculateVolatility(dailySpending)
@@ -175,10 +179,11 @@ class FinancialHealthCalculator @Inject constructor(
             TimePeriodUtils.isInRange(it.date, monthStart, monthEnd) 
         }
         
-        val spentThisMonth = monthExpenses.sumOf { it.effectiveAmount }
+        val monthSpending = spendingOnly(monthExpenses)
+        val spentThisMonth = monthSpending.sumOf { it.effectiveAmount }
         
         // Calculate volatility
-        val dailySpending = monthExpenses.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
+        val dailySpending = monthSpending.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
             .map { (_, exps) -> exps.sumOf { it.effectiveAmount } }
         
         val volatility = calculateVolatility(dailySpending)
@@ -336,6 +341,24 @@ class FinancialHealthCalculator @Inject constructor(
         
         return bonus.coerceAtMost(MAX_BONUS_POINTS)
     }
+
+    /**
+     * Returns only the canonical spending rows from the given list.
+     * Non-spend transaction types (DEPOSIT, TRANSFER, WITHDRAWAL, UNKNOWN)
+     * are excluded so they do not inflate spend totals or distort volatility.
+     */
+    private fun spendingOnly(expenses: List<Expense>): List<Expense> =
+        expenses.filter { it.transactionType.toDomain().isSpending }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 
     private fun calculateVolatility(dailySpending: List<Double>): Double {
         if (dailySpending.isEmpty() || dailySpending.size < 2) return 0.0

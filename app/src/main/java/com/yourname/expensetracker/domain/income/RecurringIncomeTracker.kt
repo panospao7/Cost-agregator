@@ -110,10 +110,11 @@ class RecurringIncomeTracker @Inject constructor(
         var spending = 0.0
         
         for (expense in expenses) {
-            when (expense.transactionType.toDomain()) {
-                DomainTransactionType.DEPOSIT -> income += expense.effectiveAmount
-                DomainTransactionType.PURCHASE, DomainTransactionType.WITHDRAWAL -> spending += expense.effectiveAmount
-                else -> {}
+            val domainType = expense.transactionType.toDomain()
+            when {
+                domainType == DomainTransactionType.DEPOSIT -> income += expense.effectiveAmount
+                domainType.isSpending -> spending += expense.effectiveAmount
+                else -> { /* WITHDRAWAL / TRANSFER / UNKNOWN – not canonical spending */ }
             }
         }
         

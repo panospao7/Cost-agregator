@@ -13,5 +13,18 @@ enum class DomainTransactionType {
     WITHDRAWAL,
     TRANSFER,
     DEPOSIT,
-    UNKNOWN
+    UNKNOWN;
+
+    /**
+     * Single source-of-truth for "spending" semantics at the domain layer.
+     *
+     * A transaction counts as user spending if and only if it is a [PURCHASE].
+     * All in-memory spend-facing filters (analytics, budgets, forecasting,
+     * cash-flow) must use this property instead of ad-hoc `== PURCHASE` checks
+     * so that the spending definition can be widened in one place if needed.
+     *
+     * The SQL-side equivalent lives in [com.yourname.expensetracker.data.database.dao.ExpenseDao.SPENDING_TYPE_SQL].
+     */
+    val isSpending: Boolean
+        get() = this == PURCHASE
 }

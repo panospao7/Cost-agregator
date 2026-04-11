@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -380,5 +381,388 @@ class ExpenseDaoTest {
         // Expected: 150.0 + 25.0 + 0.0 = 175.0
         assertEquals("Business expense total must use effective amounts: 175.0",
             175.0, total, 0.01)
+    }
+
+    // ── A.10 Batch 1 — Canonical spending-filter tests ──────────────────────
+
+    /**
+     * Verify [DomainTransactionType.isSpending] returns true only for PURCHASE.
+     * This is the in-memory single source-of-truth for spending semantics.
+     */
+    @Test
+    fun domainTransactionType_isSpending_onlyTrueForPurchase() {
+        assertTrue("PURCHASE must be spending", DomainTransactionType.PURCHASE.isSpending)
+        assertFalse("WITHDRAWAL must NOT be spending", DomainTransactionType.WITHDRAWAL.isSpending)
+        assertFalse("TRANSFER must NOT be spending", DomainTransactionType.TRANSFER.isSpending)
+        assertFalse("DEPOSIT must NOT be spending", DomainTransactionType.DEPOSIT.isSpending)
+        assertFalse("UNKNOWN must NOT be spending", DomainTransactionType.UNKNOWN.isSpending)
+    }
+
+    /**
+     * Verify [ExpenseDao.SPENDING_TYPE] matches the string name of [TransactionType.PURCHASE].
+     * This keeps the SQL constant and the entity enum in sync.
+     */
+    @Test
+    fun spendingTypeConstant_matchesPurchaseEnumName() {
+        assertEquals(
+            "SPENDING_TYPE must equal TransactionType.PURCHASE.name",
+            TransactionType.PURCHASE.name,
+            ExpenseDao.SPENDING_TYPE
+        )
+    }
+
+    /**
+     * Verify [ExpenseDao.SPENDING_TYPE_SQL] is actually built from [ExpenseDao.SPENDING_TYPE].
+     * This proves the SQL fragment is not a separate hardcoded string — changing
+     * [SPENDING_TYPE] will automatically update every @Query that interpolates
+     * [SPENDING_TYPE_SQL].
+     */
+    @Test
+    fun spendingTypeSqlConstant_derivedFromSpendingType() {
+        assertEquals(
+            "SPENDING_TYPE_SQL must be 'transactionType = \\'<SPENDING_TYPE>\\''",
+            "transactionType = '${ExpenseDao.SPENDING_TYPE}'",
+            ExpenseDao.SPENDING_TYPE_SQL
+        )
+    }
+
+    /**
+     * Verify [ExpenseDao.SPENDING_TYPE_E_SQL] is the alias-prefixed form of [SPENDING_TYPE_SQL].
+     * Used in queries that alias the expenses table as `e`.
+     */
+    @Test
+    fun spendingTypeESqlConstant_derivedFromSpendingType() {
+        assertEquals(
+            "SPENDING_TYPE_E_SQL must be 'e.transactionType = \\'<SPENDING_TYPE>\\''",
+            "e.transactionType = '${ExpenseDao.SPENDING_TYPE}'",
+            ExpenseDao.SPENDING_TYPE_E_SQL
+        )
+    }
+
+    // ── Helper: insert one expense per TransactionType ──
+
+    /**
+     * Insert one row per [TransactionType] at the given date, each with
+     * the specified amount, and return the total count inserted.
+     */
+    private suspend fun insertAllTransactionTypes(
+        amount: Double,
+        date: Long,
+        categoryId: Long? = null,
+        merchantKeyPrefix: String = "merchant"
+    ): Int {
+        var count = 0
+        for (type in TransactionType.values()) {
+            expenseDao.insert(
+                Expense(
+                    amount = amount,
+                    currency = "EUR",
+                    merchant = "${type.name}_$merchantKeyPrefix",
+                    merchantKey = "${type.name.lowercase()}_${merchantKeyPrefix}",
+                    transactionType = type,
+                    date = date,
+                    categoryId = categoryId
+                )
+            )
+            count++
+        }
+        return count
+    }
+
+    /**
+     * getTotalSpentFlow must only sum PURCHASE rows.
+     * Inserts one row per TransactionType; only the PURCHASE row's amount should appear.
+     */
+    @Test
+    fun getTotalSpentFlow_excludesNonPurchaseTypes() = runBlocking {
+        val now = System.currentTimeMillis()
+        val typeCount = insertAllTransactionTypes(amount = 20.0, date = now)
+        assertTrue("Precondition: should have rows for all types", typeCount >= 5)
+
+        val total = expenseDao.getTotalSpentFlow().first()
+        assertEquals(
+            "getTotalSpentFlow must include only PURCHASE (20.0), not all types",
+            20.0, total!!, 0.01
+        )
+    }
+
+    /**
+     * getTotalSpentBetween must only sum PURCHASE rows in the date range.
+     * Verifies WITHDRAWAL, TRANSFER, DEPOSIT, UNKNOWN are excluded.
+     */
+    @Test
+    fun getTotalSpentBetween_excludesNonPurchaseTypes() = runBlocking {
+        val now = 1_700_000_000_000L
+        val start = now - 1000L
+        val end = now + 1000L
+        insertAllTransactionTypes(amount = 15.0, date = now)
+
+        val total = expenseDao.getTotalSpentBetween(start, end)
+        assertEquals(
+            "getTotalSpentBetween must include only PURCHASE (15.0)",
+            15.0, total ?: 0.0, 0.01
+        )
+    }
+
+    /**
+     * getTotalForPeriod must only sum PURCHASE rows.
+     * Mixes all five TransactionTypes with different amounts per type.
+     */
+    @Test
+    fun getTotalForPeriod_excludesNonPurchaseTypes() = runBlocking {
+        val now = System.currentTimeMillis()
+        val start = now - 1000L
+        val end = now + 1000L
+
+        // PURCHASE: 42.0
+        expenseDao.insert(Expense(
+            amount = 42.0, currency = "EUR", merchant = "Shop",
+            transactionType = TransactionType.PURCHASE, date = now
+        ))
+        // DEPOSIT: 500.0 — should NOT appear
+        expenseDao.insert(Expense(
+            amount = 500.0, currency = "EUR", merchant = "Payroll",
+            transactionType = TransactionType.DEPOSIT, date = now
+        ))
+        // WITHDRAWAL: 100.0 — should NOT appear
+        expenseDao.insert(Expense(
+            amount = 100.0, currency = "EUR", merchant = "ATM",
+            transactionType = TransactionType.WITHDRAWAL, date = now
+        ))
+        // TRANSFER: 200.0 — should NOT appear
+        expenseDao.insert(Expense(
+            amount = 200.0, currency = "EUR", merchant = "Transfer",
+            transactionType = TransactionType.TRANSFER, date = now
+        ))
+        // UNKNOWN: 75.0 — should NOT appear
+        expenseDao.insert(Expense(
+            amount = 75.0, currency = "EUR", merchant = "Mystery",
+            transactionType = TransactionType.UNKNOWN, date = now
+        ))
+
+        val total = expenseDao.getTotalForPeriod(start, end)
+        assertEquals(
+            "getTotalForPeriod must include only PURCHASE (42.0)",
+            42.0, total, 0.01
+        )
+    }
+
+    /**
+     * getCountForPeriod must count only PURCHASE rows.
+     */
+    @Test
+    fun getCountForPeriod_excludesNonPurchaseTypes() = runBlocking {
+        val now = System.currentTimeMillis()
+        val start = now - 1000L
+        val end = now + 1000L
+        insertAllTransactionTypes(amount = 10.0, date = now)
+
+        val count = expenseDao.getCountForPeriod(start, end)
+        assertEquals(
+            "getCountForPeriod must count only PURCHASE rows (1)",
+            1, count
+        )
+    }
+
+    /**
+     * getCategorySpentInPeriod must only sum PURCHASE rows for the given category.
+     * Inserts mixed types with the same categoryId; only PURCHASE should contribute.
+     */
+    @Test
+    fun getCategorySpentInPeriod_excludesNonPurchaseTypes() = runBlocking {
+        val now = System.currentTimeMillis()
+        val start = now - 1000L
+        val end = now + 1000L
+
+        val categoryId = database.categoryDao().insert(
+            Category(name = "Groceries", icon = "🛒", color = "#00FF00")
+        )
+
+        // PURCHASE in category: 35.0 — should contribute
+        expenseDao.insert(Expense(
+            amount = 35.0, currency = "EUR", merchant = "Supermarket",
+            transactionType = TransactionType.PURCHASE, date = now,
+            categoryId = categoryId
+        ))
+        // DEPOSIT in same category: 200.0 — should NOT contribute
+        expenseDao.insert(Expense(
+            amount = 200.0, currency = "EUR", merchant = "Refund",
+            transactionType = TransactionType.DEPOSIT, date = now,
+            categoryId = categoryId
+        ))
+        // WITHDRAWAL in same category: 50.0 — should NOT contribute
+        expenseDao.insert(Expense(
+            amount = 50.0, currency = "EUR", merchant = "ATM Cash",
+            transactionType = TransactionType.WITHDRAWAL, date = now,
+            categoryId = categoryId
+        ))
+
+        val spent = expenseDao.getCategorySpentInPeriod(categoryId, start, end)
+        assertEquals(
+            "getCategorySpentInPeriod must sum only PURCHASE rows (35.0)",
+            35.0, spent, 0.01
+        )
+    }
+
+    /**
+     * getAmountsForPercentileCalc must only include PURCHASE rows.
+     * Inserts mixed types; only the PURCHASE amount should appear in the result list.
+     */
+    @Test
+    fun getAmountsForPercentileCalc_excludesNonPurchaseTypes() = runBlocking {
+        val now = System.currentTimeMillis()
+        val start = now - 1000L
+        val end = now + 1000L
+
+        // PURCHASE: 55.0
+        expenseDao.insert(Expense(
+            amount = 55.0, currency = "EUR", merchant = "Shop",
+            transactionType = TransactionType.PURCHASE, date = now
+        ))
+        // DEPOSIT: 1000.0 — must NOT appear
+        expenseDao.insert(Expense(
+            amount = 1000.0, currency = "EUR", merchant = "Salary",
+            transactionType = TransactionType.DEPOSIT, date = now
+        ))
+        // TRANSFER: 300.0 — must NOT appear
+        expenseDao.insert(Expense(
+            amount = 300.0, currency = "EUR", merchant = "Savings",
+            transactionType = TransactionType.TRANSFER, date = now
+        ))
+
+        val amounts = expenseDao.getAmountsForPercentileCalc(start, end)
+        assertEquals("Only 1 PURCHASE amount should be in the list", 1, amounts.size)
+        assertEquals("The single amount should be 55.0", 55.0, amounts[0], 0.01)
+    }
+
+    /**
+     * Combined test: spending aggregates with mixed types AND shared-expense
+     * effectiveAmount semantics. Proves that the spending filter (PURCHASE-only)
+     * and the effective-amount CASE expression work together correctly.
+     */
+    @Test
+    fun spendingAggregates_mixedTypesAndSharedExpenses_correctEffectiveAmounts() = runBlocking {
+        val now = System.currentTimeMillis()
+        val start = now - 1000L
+        val end = now + 1000L
+
+        // PURCHASE, regular: effective = 80.0
+        expenseDao.insert(Expense(
+            amount = 80.0, currency = "EUR", merchant = "RegularShop",
+            transactionType = TransactionType.PURCHASE, date = now
+        ))
+        // PURCHASE, shared with explicit share: effective = 30.0 (not 100.0)
+        expenseDao.insert(Expense(
+            amount = 100.0, currency = "EUR", merchant = "SharedDinner",
+            transactionType = TransactionType.PURCHASE, date = now,
+            isSharedExpense = true, myShareAmount = 30.0
+        ))
+        // PURCHASE, shared with percentage: effective = 20.0 (25% of 80.0)
+        expenseDao.insert(Expense(
+            amount = 80.0, currency = "EUR", merchant = "SharedTrip",
+            transactionType = TransactionType.PURCHASE, date = now,
+            isSharedExpense = true, mySharePercentage = 25
+        ))
+        // PURCHASE, isNotMine: effective = 0.0 (filtered by isNotMine=0)
+        expenseDao.insert(Expense(
+            amount = 500.0, currency = "EUR", merchant = "NotMineShop",
+            transactionType = TransactionType.PURCHASE, date = now,
+            isNotMine = true
+        ))
+        // DEPOSIT: 2000.0 — NOT a spending type, must be excluded
+        expenseDao.insert(Expense(
+            amount = 2000.0, currency = "EUR", merchant = "Salary",
+            transactionType = TransactionType.DEPOSIT, date = now
+        ))
+        // WITHDRAWAL: 100.0 — NOT a spending type, must be excluded
+        expenseDao.insert(Expense(
+            amount = 100.0, currency = "EUR", merchant = "ATM",
+            transactionType = TransactionType.WITHDRAWAL, date = now
+        ))
+        // TRANSFER: 500.0 — NOT a spending type, must be excluded
+        expenseDao.insert(Expense(
+            amount = 500.0, currency = "EUR", merchant = "Savings",
+            transactionType = TransactionType.TRANSFER, date = now
+        ))
+        // UNKNOWN: 75.0 — NOT a spending type, must be excluded
+        expenseDao.insert(Expense(
+            amount = 75.0, currency = "EUR", merchant = "Mystery",
+            transactionType = TransactionType.UNKNOWN, date = now
+        ))
+
+        // Expected effective total: 80.0 + 30.0 + 20.0 = 130.0
+        val totalForPeriod = expenseDao.getTotalForPeriod(start, end)
+        assertEquals(
+            "getTotalForPeriod: only PURCHASE effective amounts (80+30+20=130)",
+            130.0, totalForPeriod, 0.01
+        )
+
+        val totalBetween = expenseDao.getTotalSpentBetween(start, end)
+        assertEquals(
+            "getTotalSpentBetween: only PURCHASE effective amounts (130)",
+            130.0, totalBetween ?: 0.0, 0.01
+        )
+
+        // getCountForPeriod: 3 qualifying PURCHASE rows (isNotMine excluded by isNotMine=0)
+        val count = expenseDao.getCountForPeriod(start, end)
+        assertEquals(
+            "getCountForPeriod: 3 PURCHASE rows (isNotMine excluded)",
+            3, count
+        )
+
+        // getAmountsForPercentileCalc: should return [20.0, 30.0, 80.0] sorted ASC
+        val amounts = expenseDao.getAmountsForPercentileCalc(start, end)
+        assertEquals("3 effective amounts for percentile", 3, amounts.size)
+        assertEquals("Sorted ASC: first = 20.0", 20.0, amounts[0], 0.01)
+        assertEquals("Sorted ASC: second = 30.0", 30.0, amounts[1], 0.01)
+        assertEquals("Sorted ASC: third = 80.0", 80.0, amounts[2], 0.01)
+    }
+
+    /**
+     * getPurchaseCount must only count PURCHASE rows; other types are excluded.
+     */
+    @Test
+    fun getPurchaseCount_excludesNonPurchaseTypes() = runBlocking {
+        val now = System.currentTimeMillis()
+        // 2 PURCHASEs
+        expenseDao.insert(makeExpense(amount = 10.0, date = now))
+        expenseDao.insert(makeExpense(amount = 20.0, date = now))
+        // 1 DEPOSIT
+        expenseDao.insert(Expense(
+            amount = 500.0, currency = "EUR", merchant = "Payroll",
+            transactionType = TransactionType.DEPOSIT, date = now
+        ))
+        // 1 WITHDRAWAL
+        expenseDao.insert(Expense(
+            amount = 60.0, currency = "EUR", merchant = "ATM",
+            transactionType = TransactionType.WITHDRAWAL, date = now
+        ))
+
+        assertEquals(
+            "getPurchaseCount must return 2 (PURCHASE only)",
+            2, expenseDao.getPurchaseCount()
+        )
+    }
+
+    /**
+     * Generic range query getExpensesBetween must NOT be narrowed to PURCHASE-only.
+     * It should return all types in the date range (preserving generic semantics).
+     */
+    @Test
+    fun getExpensesBetween_returnsAllTypes_notNarrowedToSpending() = runBlocking {
+        val now = 1_700_000_000_000L
+        val start = now - 1000L
+        val end = now + 1000L
+
+        // Insert one of each type
+        val count = insertAllTransactionTypes(amount = 10.0, date = now)
+
+        // getExpensesBetween is a generic range query — it filters by isNotMine=0
+        // but does NOT filter by transactionType. All rows should be returned.
+        val results = expenseDao.getExpensesBetween(start, end)
+        assertEquals(
+            "getExpensesBetween must return all $count types (generic, not spending-filtered)",
+            count, results.size
+        )
     }
 }

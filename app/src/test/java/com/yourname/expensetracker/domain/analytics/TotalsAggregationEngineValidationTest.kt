@@ -17,6 +17,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -541,5 +542,110 @@ class TotalsAggregationEngineValidationTest {
         assertEquals(6000.0, total2022 ?: 0.0, 0.01)
         assertEquals(7000.0, total2023 ?: 0.0, 0.01)
         assertEquals(3000.0, total2024 ?: 0.0, 0.01)
+    }
+
+    @Test
+    fun `yearly totals status uses average of completed years only`() = runTest {
+        // Validates that getYearlyTotals computes status against the average of
+        // completed years (excludeCurrent = true), so a partial current year
+        // does not drag the average down and distort all status flags.
+        val referenceDate = createDate(2024, 4, 15, 12, 0)
+        every { timeProvider.now() } returns referenceDate
+
+        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } answers {
+            val startMs = firstArg<Long>()
+            val year = Calendar.getInstance().apply { timeInMillis = startMs }.get(Calendar.YEAR)
+            when (year) {
+                2021 -> 5000.0
+                2022 -> 6000.0
+                2023 -> 7000.0
+                2024 -> 1500.0 // Partial current year — must NOT be in average
+                else -> 0.0
+            }
+        }
+
+        coEvery { expenseRepository.getTransactionCountForPeriod(any(), any()) } answers {
+            val startMs = firstArg<Long>()
+            val year = Calendar.getInstance().apply { timeInMillis = startMs }.get(Calendar.YEAR)
+            when (year) {
+                2021 -> 50
+                2022 -> 60
+                2023 -> 70
+                2024 -> 15
+                else -> 0
+            }
+        }
+
+        val result = engine.getYearlyTotals()
+
+        // Average of completed years = (5000 + 6000 + 7000) / 3 = 6000.0
+        // 2021 (5000) < 6000 → UNDER_AVERAGE
+        // 2022 (6000) >= 6000 → OVER_AVERAGE
+        // 2023 (7000) > 6000 → OVER_AVERAGE
+        // 2024 (1500) < 6000 → UNDER_AVERAGE
+        val s2021 = result.find { it.periodKey == "2021" }
+        val s2022 = result.find { it.periodKey == "2022" }
+        val s2023 = result.find { it.periodKey == "2023" }
+        val s2024 = result.find { it.periodKey == "2024" }
+
+        assertNotNull(s2021)
+        assertNotNull(s2022)
+        assertNotNull(s2023)
+        assertNotNull(s2024)
+
+        assertEquals(PeriodStatus.UNDER_AVERAGE, s2021!!.status)
+        assertEquals(PeriodStatus.OVER_AVERAGE, s2022!!.status)
+        assertEquals(PeriodStatus.OVER_AVERAGE, s2023!!.status)
+        assertEquals(PeriodStatus.UNDER_AVERAGE, s2024!!.status)
+    }
+
+    // ========== SCENARIO 8: Yearly Purchase-Only Count Contract ==========
+
+    @Test
+    fun `yearly totals transaction counts reflect purchase-only repository contract`() = runTest {
+        // Validates that getYearlyTotals surfaces the purchase-only transaction
+        // count returned by getTransactionCountForPeriod (backed by SPENDING_TYPE_SQL).
+        // The engine must not add its own filtering or counting logic on top.
+        val referenceDate = createDate(2024, 4, 15, 12, 0)
+        every { timeProvider.now() } returns referenceDate
+
+        // Simulate repository returning purchase-only totals and counts
+        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } answers {
+            val startMs = firstArg<Long>()
+            val year = Calendar.getInstance().apply { timeInMillis = startMs }.get(Calendar.YEAR)
+            when (year) {
+                2023 -> 8500.0   // purchase-only sum
+                2024 -> 2100.0   // purchase-only sum (partial year)
+                else -> 0.0
+            }
+        }
+        coEvery { expenseRepository.getTransactionCountForPeriod(any(), any()) } answers {
+            val startMs = firstArg<Long>()
+            val year = Calendar.getInstance().apply { timeInMillis = startMs }.get(Calendar.YEAR)
+            when (year) {
+                2023 -> 95   // purchase-only count
+                2024 -> 22   // purchase-only count (partial year)
+                else -> 0
+            }
+        }
+
+        val result = engine.getYearlyTotals()
+
+        val y2023 = result.find { it.periodKey == "2023" }
+        val y2024 = result.find { it.periodKey == "2024" }
+        assertNotNull(y2023)
+        assertNotNull(y2024)
+
+        // Amounts are purchase-only
+        assertEquals(8500.0, y2023!!.totalAmount, 0.01)
+        assertEquals(2100.0, y2024!!.totalAmount, 0.01)
+
+        // Counts are purchase-only (from getTransactionCountForPeriod → SPENDING_TYPE_SQL)
+        assertEquals(95, y2023.transactionCount)
+        assertEquals(22, y2024.transactionCount)
+
+        // Period type is YEAR
+        assertEquals(PeriodType.YEAR, y2023.periodType)
+        assertEquals(PeriodType.YEAR, y2024.periodType)
     }
 }

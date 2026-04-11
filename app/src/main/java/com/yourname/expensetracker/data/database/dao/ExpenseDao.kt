@@ -17,6 +17,35 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ExpenseDao {
     companion object {
+        // ── Canonical spending-type filter (A.10 Batch 1) ────────────────────
+        //
+        // Single source-of-truth for which transactionType values constitute
+        // "user spending" in SQL queries.  Currently PURCHASE only.
+        //
+        // The Kotlin-side mirror is [DomainTransactionType.isSpending].
+        //
+        // Use [SPENDING_TYPE] in RawQuery builders, parameter bindings, and
+        // Kotlin-side comparisons.
+        // Use [SPENDING_TYPE_SQL] / [SPENDING_TYPE_E_SQL] inside @Query
+        // annotations via compile-time `${}` interpolation (Kotlin const val),
+        // in [RawQuery] dynamic SQL builders, and in parameter bindings.
+
+        /** The single transaction-type value that qualifies as user spending. */
+        const val SPENDING_TYPE: String = "PURCHASE"
+
+        /**
+         * Room-safe SQL fragment: `transactionType = 'PURCHASE'`.
+         *
+         * Used in `@Query` annotations via `${SPENDING_TYPE_SQL}` compile-time
+         * interpolation (Kotlin `const val` strings are inlined by the compiler
+         * before Room's annotation processor runs, exactly like
+         * [EFFECTIVE_AMOUNT_SQL]).  Also usable in [RawQuery] dynamic SQL builders.
+         */
+        const val SPENDING_TYPE_SQL: String = "transactionType = '$SPENDING_TYPE'"
+
+        /** Same predicate with `e.` table-alias prefix, for queries that alias expenses as `e`. */
+        const val SPENDING_TYPE_E_SQL: String = "e.transactionType = '$SPENDING_TYPE'"
+
         /**
          * Single source-of-truth SQL fragment for the user's effective (ownership-adjusted) amount.
          *
@@ -157,7 +186,7 @@ interface ExpenseDao {
         SELECT * FROM expenses 
         WHERE merchant = :merchant 
         AND date >= :since 
-        AND transactionType = 'PURCHASE'
+        AND ${SPENDING_TYPE_SQL}
         AND isNotMine = 0
         ORDER BY date ASC
     """)
@@ -168,13 +197,13 @@ interface ExpenseDao {
         SELECT * FROM expenses
         WHERE merchant = :merchant
         AND date >= :since
-        AND transactionType = 'PURCHASE'
+        AND ${SPENDING_TYPE_SQL}
         AND isNotMine = 0
         ORDER BY date ASC
     """)
     suspend fun getRecentExpensesWithCategoryForMerchant(merchant: String, since: Long): List<ExpenseWithCategory>
     
-    @Query("SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses WHERE transactionType = 'PURCHASE' AND isNotMine = 0")
+    @Query("SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND isNotMine = 0")
     fun getTotalSpentFlow(): Flow<Double?>
 
     @Query("DELETE FROM expenses")
@@ -644,7 +673,7 @@ interface ExpenseDao {
 
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND categoryId = :categoryId 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
@@ -653,7 +682,7 @@ interface ExpenseDao {
 
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND categoryId = :categoryId 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
@@ -731,7 +760,7 @@ interface ExpenseDao {
     @Query("""
         SELECT ${EFFECTIVE_AMOUNT_SQL}
         FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
         ORDER BY 1 ASC
@@ -754,7 +783,7 @@ interface ExpenseDao {
         SELECT * FROM expenses
         WHERE categoryId = :categoryId
         AND date >= :startDate AND date < :endDate
-        AND transactionType = 'PURCHASE'
+        AND ${SPENDING_TYPE_SQL}
         AND isNotMine = 0
         ORDER BY date ASC
     """)
@@ -771,7 +800,7 @@ interface ExpenseDao {
 
     @Query("""
         SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startDate AND date < :endDate
         AND isNotMine = 0
     """)
@@ -814,7 +843,7 @@ interface ExpenseDao {
                SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
                COUNT(*) AS txCount
         FROM expenses
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
           AND isNotMine = 0
         GROUP BY UPPER(currency)
@@ -843,7 +872,7 @@ interface ExpenseDao {
                SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
                COUNT(*) AS txCount
         FROM expenses
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
           AND isNotMine = 0
         GROUP BY categoryId, UPPER(currency)
@@ -864,7 +893,7 @@ interface ExpenseDao {
                SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
                COUNT(*) AS txCount
         FROM expenses
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
           AND isNotMine = 0
           AND merchantKey IS NOT NULL
@@ -884,7 +913,7 @@ interface ExpenseDao {
                SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
                COUNT(*) AS txCount
         FROM expenses
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
           AND isNotMine = 0
         GROUP BY monthKey, UPPER(currency)
@@ -980,7 +1009,7 @@ interface ExpenseDao {
                SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
                COUNT(*) AS txCount
         FROM expenses
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
           AND isNotMine = 0
         GROUP BY monthKey
         ORDER BY monthKey ASC
@@ -997,7 +1026,7 @@ interface ExpenseDao {
                SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
                COUNT(*) AS txCount
         FROM expenses
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
           AND date >= :startDate AND date < :endDate
           AND isNotMine = 0
         GROUP BY monthKey
@@ -1015,7 +1044,7 @@ interface ExpenseDao {
                SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
                COUNT(*) AS txCount
         FROM expenses
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
           AND categoryId = :categoryId
           AND date >= :startDate AND date < :endDate
           AND isNotMine = 0
@@ -1028,7 +1057,7 @@ interface ExpenseDao {
         SELECT merchantKey as merchantKey, MIN(merchant) as merchant,
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as cnt 
         FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startDate AND date < :endDate
         AND isNotMine = 0
         AND merchantKey IS NOT NULL
@@ -1040,7 +1069,7 @@ interface ExpenseDao {
     @Query("""
         SELECT categoryId, SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as txCount
         FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startDate AND date < :endDate
         AND categoryId IS NOT NULL
         AND isNotMine = 0
@@ -1049,7 +1078,7 @@ interface ExpenseDao {
     """)
     suspend fun getCategoryTotalsBetween(startDate: Long, endDate: Long): List<CategoryTotal>
 
-    @Query("SELECT COUNT(*) FROM expenses WHERE transactionType = 'PURCHASE' AND isNotMine = 0")
+    @Query("SELECT COUNT(*) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND isNotMine = 0")
     suspend fun getPurchaseCount(): Int
 
     @Query("SELECT MIN(date) FROM expenses WHERE isNotMine = 0")
@@ -1060,7 +1089,7 @@ interface ExpenseDao {
     // Monthly total for a specific month range
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
     """)
@@ -1069,7 +1098,7 @@ interface ExpenseDao {
     // Count for a period
     @Query("""
         SELECT COUNT(*) FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
     """)
@@ -1079,7 +1108,7 @@ interface ExpenseDao {
     @Query("""
         SELECT categoryId, SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as txCount
         FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND categoryId IS NOT NULL
         AND isNotMine = 0
@@ -1102,7 +1131,7 @@ interface ExpenseDao {
                MIN(date) as firstDate, 
                MAX(date) as lastDate
         FROM expenses 
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
         AND isNotMine = 0
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
@@ -1125,7 +1154,7 @@ interface ExpenseDao {
                MIN(date) as firstDate, 
                MAX(date) as lastDate
         FROM expenses 
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
         AND isNotMine = 0
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
@@ -1147,7 +1176,7 @@ interface ExpenseDao {
                MIN(date) as firstDate, 
                MAX(date) as lastDate
         FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
         AND merchantKey IS NOT NULL
@@ -1161,7 +1190,7 @@ interface ExpenseDao {
     // via [EFFECTIVE_AMOUNT_SQL].
     @Query("""
         SELECT * FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
         ORDER BY ${EFFECTIVE_AMOUNT_SQL} DESC
@@ -1173,7 +1202,7 @@ interface ExpenseDao {
     // via [EFFECTIVE_AMOUNT_SQL].
     @Query("""
         SELECT * FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND merchantKey = :merchantKey
         AND isNotMine = 0
@@ -1189,7 +1218,7 @@ interface ExpenseDao {
         FROM expenses e
         LEFT JOIN categories c ON e.categoryId = c.id
         WHERE e.merchantKey = :merchantKey
-        AND e.transactionType = 'PURCHASE'
+        AND ${SPENDING_TYPE_E_SQL}
         AND e.isNotMine = 0
         ORDER BY e.date DESC
         LIMIT :limit
@@ -1202,7 +1231,7 @@ interface ExpenseDao {
                MIN(date) as startDate, MAX(date) as endDate,
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as txCount
         FROM expenses 
-        WHERE transactionType = 'PURCHASE' 
+        WHERE ${SPENDING_TYPE_SQL} 
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
         GROUP BY dayEpoch
@@ -1225,7 +1254,7 @@ interface ExpenseDao {
                MIN(date) as firstDate, 
                MAX(date) as lastDate
         FROM expenses 
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
         AND isNotMine = 0
         AND merchantKey IS NOT NULL
         GROUP BY merchantKey
@@ -1244,7 +1273,7 @@ interface ExpenseDao {
             COUNT(*) as txCount,
             AVG(${EFFECTIVE_AMOUNT_SQL}) as avgAmount
         FROM expenses
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
         GROUP BY dayOfWeek
@@ -1368,7 +1397,7 @@ interface ExpenseDao {
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as cnt
         FROM expenses
         WHERE latitude IS NOT NULL
-          AND transactionType = 'PURCHASE'
+          AND ${SPENDING_TYPE_SQL}
           AND isNotMine = 0
           AND merchantKey IS NOT NULL
         GROUP BY merchantKey
@@ -1450,7 +1479,7 @@ interface ExpenseDao {
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
                COUNT(*) as txCount
         FROM expenses
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
         GROUP BY weekKey
@@ -1465,7 +1494,7 @@ interface ExpenseDao {
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
                COUNT(*) as txCount
         FROM expenses
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
         GROUP BY monthKey
@@ -1480,7 +1509,7 @@ interface ExpenseDao {
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
                COUNT(*) as txCount
         FROM expenses
-        WHERE transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
         GROUP BY dayEpoch
@@ -1492,7 +1521,7 @@ interface ExpenseDao {
         SELECT AVG(daily_total) FROM (
             SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) as daily_total
             FROM expenses
-            WHERE transactionType = 'PURCHASE'
+            WHERE ${SPENDING_TYPE_SQL}
             AND date >= :startMs AND date < :endMs
             AND isNotMine = 0
             GROUP BY strftime('%Y-%m-%d', date/1000, 'unixepoch', 'localtime')
@@ -1506,7 +1535,7 @@ interface ExpenseDao {
                COUNT(*) as txCount
         FROM expenses e
         LEFT JOIN categories c ON e.categoryId = c.id
-        WHERE e.transactionType = 'PURCHASE'
+        WHERE ${SPENDING_TYPE_E_SQL}
         AND e.date >= :startMs AND e.date < :endMs
         AND e.isNotMine = 0
         GROUP BY c.id
@@ -1520,7 +1549,7 @@ interface ExpenseDao {
     @Query("""
         SELECT * FROM expenses 
         WHERE isBusinessExpense = 1 
-        AND transactionType = 'PURCHASE'
+        AND ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate 
         ORDER BY date DESC
     """)
@@ -1529,7 +1558,7 @@ interface ExpenseDao {
     @Query("""
         SELECT * FROM expenses 
         WHERE isBusinessExpense = 1 
-        AND transactionType = 'PURCHASE'
+        AND ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate 
         ORDER BY date DESC
     """)
@@ -1538,7 +1567,7 @@ interface ExpenseDao {
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
         WHERE isBusinessExpense = 1 
-        AND transactionType = 'PURCHASE'
+        AND ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate
     """)
     suspend fun getTotalBusinessExpensesBetween(startDate: Long, endDate: Long): Double?
@@ -1549,7 +1578,7 @@ interface ExpenseDao {
                COUNT(*) as count 
         FROM expenses 
         WHERE isBusinessExpense = 1 
-        AND transactionType = 'PURCHASE'
+        AND ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate
         AND businessCategory IS NOT NULL
         GROUP BY businessCategory
@@ -1563,7 +1592,7 @@ interface ExpenseDao {
                COUNT(*) as count 
         FROM expenses 
         WHERE isBusinessExpense = 1 
-        AND transactionType = 'PURCHASE'
+        AND ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate
         AND businessProject IS NOT NULL
         GROUP BY businessProject
@@ -1574,7 +1603,7 @@ interface ExpenseDao {
     @Query("""
         SELECT * FROM expenses 
         WHERE isBusinessExpense = 1 
-        AND transactionType = 'PURCHASE'
+        AND ${SPENDING_TYPE_SQL}
         AND requiresReceipt = 1 
         AND rawNotificationId IS NULL
         AND date >= :startDate AND date < :endDate

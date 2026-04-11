@@ -2,9 +2,9 @@ its cruc# Execution Playbook — ExpenseTracker Refactoring
 
 > **Project:** ExpenseTracker (Android/Kotlin/Clean Architecture)
 > **Branch:** `master-refactor`
-> **Current Phase:** Phase 1 — Universal Epics
-> **Active Epic:** A.10 — Transaction Type Blindness
-> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 COMPLETE — A.8 COMPLETE — A.9 COMPLETE — A.10 next
+> **Current Phase:** Phase 2 — Domain-Specific Pipelines
+> **Active Epic:** Phase B downstream impact refresh
+> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 COMPLETE — A.8 COMPLETE — A.9 COMPLETE — A.10 COMPLETE
 
 ---
 
@@ -427,11 +427,17 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
   - [x] Registry updated (`[RESOLVED BY A.9]`)
   - [x] Batch reports + deep-analysis mirrors updated
   - [ ] Committed
-- [ ] **A.10:** Transaction Type Blindness
+- [x] **A.10:** Transaction Type Blindness
+  - [x] Plan created (`PLAN-A10-transaction-type-blindness.md`)
+  - [x] All batches implemented
+  - [x] Review: **PASS** (final gate approved with documented targeted-test / full-suite-and-androidTest waiver)
+  - [x] Registry updated (`[RESOLVED BY A.10]`)
+  - [x] Batch reports + deep-analysis mirrors updated
+  - [x] Committed
 
 ### Phase 1 Todo Roadmap (Strict Priority)
-1. **A.10 — Transaction Type Blindness**
-   - Priority rationale: high-severity aggregation correctness pass that should land after A.9 query contract cleanup to avoid rework
+1. **Phase B downstream impact refresh + pipeline execution**
+   - Priority rationale: all universal epics are now complete; re-evaluate pipeline fallout, then execute Phase B with safe parallelization where appropriate
 
 ### Phase 2: Pipeline Fixes
 - [ ] B.1: AI/ML Pipeline
@@ -528,4 +534,4 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
 ---
 
 *Last Updated: 2026-04-11*
-*Next Action: Commit A.9 closeout, then begin A.10 planning*
+*Next Action: Commit A.10 closeout, then refresh downstream Phase B impact and begin pipeline execution*

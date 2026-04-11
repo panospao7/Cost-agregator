@@ -23,8 +23,14 @@ data class HeatmapPoint(
 )
 
 /**
- * Domain-layer engine that converts a list of [MapExpenseMarker]s into a list
+ * Domain-layer engine that converts a list of [LocatedExpense]s into a list
  * of [HeatmapPoint]s suitable for rendering on the osmdroid map.
+ *
+ * **Pre-filter contract:** callers must supply only spending-type expenses
+ * (i.e. those where `DomainTransactionType.isSpending` is `true`).
+ * Deposits, withdrawals, transfers, and unknown types must be excluded
+ * *before* calling [compute]. This engine does not perform transaction-type
+ * filtering itself.
  *
  * Algorithm:
  *  1. Cluster markers that fall within [CLUSTER_RADIUS_DEG] of each other
@@ -37,8 +43,10 @@ data class HeatmapPoint(
 class SpendingHeatmapEngine @Inject constructor() {
 
     /**
-     * Compute heatmap points from the given located expenses.
-     * Returns an empty list if [expenses] is empty.
+     * Compute heatmap points from the given pre-filtered spending-only expenses.
+     *
+     * @param expenses located expenses already filtered to spending types only
+     *                 (see class-level contract). Returns an empty list if empty.
      */
     fun compute(expenses: List<LocatedExpense>): List<HeatmapPoint> {
         if (expenses.isEmpty()) return emptyList()

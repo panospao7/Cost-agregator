@@ -89,6 +89,7 @@
 **Description:** Multiple aggregation pipelines treat all `Expense` rows as spending, ignoring `TransactionType` (DEPOSIT, TRANSFER, WITHDRAWAL). Deposits feed spending heatmaps, transfers inflate budget tracking, refunds appear as purchases, and business reports include non-deductible movements. This compounds with A.1 (effectiveAmount) to produce systematically wrong numbers.
 **Affected files:** `SpendingHeatmapEngine.kt`, `BudgetRepository.kt`, `CashFlowCalculator.kt`, `BusinessExpenseReportGenerator.kt`, `TaxEstimator.kt`, `FinancialHealthCalculator.kt`, `CategoryInsightEngine.kt`, `TotalsAggregationEngine.kt`, `RecurringIncomeTracker.kt`
 **Suggested fix:** Add a canonical `isSpending()` filter at the DAO or repository level. Audit every aggregation pipeline to filter by transaction type. Ensure deposits/transfers are excluded from spending metrics but included in cash flow.
+- [RESOLVED BY A.10]
 
 ---
 

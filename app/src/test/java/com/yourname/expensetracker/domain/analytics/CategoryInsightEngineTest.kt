@@ -120,6 +120,229 @@ class CategoryInsightEngineTest {
         assertTrue(insights.isEmpty())
     }
 
+    // ========== A.10 Batch 7 — Purchase-only lock-in tests ==========
+
+    @Test
+    fun `calculate excludes deposits from category totals`() {
+        val currentMonth = MonthPeriod(
+            year = 2026,
+            month = 2,
+            startMs = startOfMonth(2026, 3),
+            endMs = startOfMonth(2026, 4)
+        )
+
+        val expenses = listOf(
+            createExpense("2026-03-05", 50.0, merchant = "Grocery Store", category = "groceries", id = 201L),
+            createExpense("2026-03-10", 2500.0, type = TransactionType.DEPOSIT, merchant = "Salary", id = 202L),
+            createExpense("2026-03-15", 30.0, merchant = "Restaurant", category = "dining", id = 203L)
+        )
+
+        val insights = engine.calculate(
+            currentMonth = currentMonth,
+            previousMonth = null,
+            categoryMap = TEST_CATEGORIES.associateBy { it.id },
+            allExpenses = expenses
+        )
+
+        // Only PURCHASE transactions should be included
+        val totalAcrossInsights = insights.sumOf { it.currentTotal }
+        assertApproxEquals(80.0, totalAcrossInsights, 0.01)
+
+        // Deposit should not appear in any category
+        assertTrue(insights.none { it.currentTotal >= 2500.0 })
+    }
+
+    @Test
+    fun `calculate excludes transfers from category totals`() {
+        val currentMonth = MonthPeriod(
+            year = 2026,
+            month = 2,
+            startMs = startOfMonth(2026, 3),
+            endMs = startOfMonth(2026, 4)
+        )
+
+        val expenses = listOf(
+            createExpense("2026-03-05", 50.0, merchant = "Grocery Store", category = "groceries", id = 301L),
+            createExpense("2026-03-12", 500.0, type = TransactionType.TRANSFER, merchant = "Bank Transfer", id = 302L),
+            createExpense("2026-03-20", 25.0, merchant = "Coffee Shop", category = "dining", id = 303L)
+        )
+
+        val insights = engine.calculate(
+            currentMonth = currentMonth,
+            previousMonth = null,
+            categoryMap = TEST_CATEGORIES.associateBy { it.id },
+            allExpenses = expenses
+        )
+
+        val totalAcrossInsights = insights.sumOf { it.currentTotal }
+        assertApproxEquals(75.0, totalAcrossInsights, 0.01)
+
+        assertTrue(insights.none { it.currentTotal >= 500.0 })
+    }
+
+    @Test
+    fun `calculate excludes withdrawals from category totals`() {
+        val currentMonth = MonthPeriod(
+            year = 2026,
+            month = 2,
+            startMs = startOfMonth(2026, 3),
+            endMs = startOfMonth(2026, 4)
+        )
+
+        val expenses = listOf(
+            createExpense("2026-03-05", 100.0, merchant = "Supermarket", category = "groceries", id = 401L),
+            createExpense("2026-03-10", 200.0, type = TransactionType.WITHDRAWAL, merchant = "ATM", id = 402L)
+        )
+
+        val insights = engine.calculate(
+            currentMonth = currentMonth,
+            previousMonth = null,
+            categoryMap = TEST_CATEGORIES.associateBy { it.id },
+            allExpenses = expenses
+        )
+
+        assertEquals(1, insights.size)
+        assertApproxEquals(100.0, insights.first().currentTotal, 0.01)
+        assertApproxEquals(100.0f, insights.first().percentageOfTotal, 0.01f)
+    }
+
+    @Test
+    fun `calculate mixed types upstream yields purchase-only percentages summing to 100`() {
+        val currentMonth = MonthPeriod(
+            year = 2026,
+            month = 2,
+            startMs = startOfMonth(2026, 3),
+            endMs = startOfMonth(2026, 4)
+        )
+
+        val expenses = listOf(
+            // Purchases — should be counted
+            createExpense("2026-03-01", 200.0, merchant = "Rent", id = 501L).copy(categoryId = 5L),
+            createExpense("2026-03-05", 60.0, merchant = "Lidl", category = "groceries", id = 502L),
+            createExpense("2026-03-10", 40.0, merchant = "Restaurant", category = "dining", id = 503L),
+            // Non-purchases — should be excluded
+            createExpense("2026-03-15", 3000.0, type = TransactionType.DEPOSIT, merchant = "Salary", id = 504L),
+            createExpense("2026-03-17", 500.0, type = TransactionType.TRANSFER, merchant = "Savings", id = 505L),
+            createExpense("2026-03-20", 100.0, type = TransactionType.WITHDRAWAL, merchant = "ATM", id = 506L),
+            createExpense("2026-03-25", 75.0, type = TransactionType.UNKNOWN, merchant = "Unknown Txn", id = 507L)
+        )
+
+        val insights = engine.calculate(
+            currentMonth = currentMonth,
+            previousMonth = null,
+            categoryMap = TEST_CATEGORIES.associateBy { it.id },
+            allExpenses = expenses
+        )
+
+        // Total from purchases: 200 + 60 + 40 = 300
+        val totalAcrossInsights = insights.sumOf { it.currentTotal }
+        assertApproxEquals(300.0, totalAcrossInsights, 0.01)
+
+        // Transaction count from purchases only
+        val totalCount = insights.sumOf { it.currentCount }
+        assertEquals(3, totalCount)
+
+        // Percentages must sum to 100
+        val percentageSum = insights.sumOf { it.percentageOfTotal.toDouble() }
+        assertApproxEquals(100.0, percentageSum, 0.01)
+    }
+
+    @Test
+    fun `calculate excludes non-purchase types from previous month comparison`() {
+        val currentMonth = MonthPeriod(
+            year = 2026,
+            month = 2,
+            startMs = startOfMonth(2026, 3),
+            endMs = startOfMonth(2026, 4)
+        )
+        val previousMonth = MonthPeriod(
+            year = 2026,
+            month = 1,
+            startMs = startOfMonth(2026, 2),
+            endMs = startOfMonth(2026, 3)
+        )
+
+        val expenses = listOf(
+            // Current month purchases
+            createExpense("2026-03-05", 100.0, merchant = "Grocery Store", category = "groceries", id = 601L),
+            // Previous month: mix of purchases and deposits
+            createExpense("2026-02-05", 80.0, merchant = "Grocery Store", category = "groceries", id = 602L),
+            createExpense("2026-02-15", 5000.0, type = TransactionType.DEPOSIT, merchant = "Salary", category = "groceries", id = 603L)
+        )
+
+        val insights = engine.calculate(
+            currentMonth = currentMonth,
+            previousMonth = previousMonth,
+            categoryMap = TEST_CATEGORIES.associateBy { it.id },
+            allExpenses = expenses
+        )
+
+        val groceries = insights.find { it.category.id == 2L }
+        assertNotNull(groceries)
+
+        // Previous total should only include the 80.0 purchase, not the 5000.0 deposit
+        assertApproxEquals(80.0, groceries!!.previousTotal!!, 0.01)
+
+        // Change from previous: (100 - 80) / 80 * 100 = 25%
+        assertApproxEquals(25.0f, groceries.changeFromPrevious!!, 0.01f)
+    }
+
+    @Test
+    fun `calculate with only non-purchase transactions returns empty insights`() {
+        val currentMonth = MonthPeriod(
+            year = 2026,
+            month = 2,
+            startMs = startOfMonth(2026, 3),
+            endMs = startOfMonth(2026, 4)
+        )
+
+        val expenses = listOf(
+            createExpense("2026-03-10", 3000.0, type = TransactionType.DEPOSIT, merchant = "Salary", id = 701L),
+            createExpense("2026-03-15", 500.0, type = TransactionType.TRANSFER, merchant = "Savings", id = 702L),
+            createExpense("2026-03-20", 200.0, type = TransactionType.WITHDRAWAL, merchant = "ATM", id = 703L)
+        )
+
+        val insights = engine.calculate(
+            currentMonth = currentMonth,
+            previousMonth = null,
+            categoryMap = TEST_CATEGORIES.associateBy { it.id },
+            allExpenses = expenses
+        )
+
+        assertTrue(insights.isEmpty())
+    }
+
+    @Test
+    fun `calculate preserves ranking order after non-purchase exclusion`() {
+        val currentMonth = MonthPeriod(
+            year = 2026,
+            month = 2,
+            startMs = startOfMonth(2026, 3),
+            endMs = startOfMonth(2026, 4)
+        )
+
+        val expenses = listOf(
+            createExpense("2026-03-05", 300.0, merchant = "Electric Co", category = "utilities", id = 801L),
+            createExpense("2026-03-10", 100.0, merchant = "Lidl", category = "groceries", id = 802L),
+            createExpense("2026-03-15", 50.0, merchant = "Cinema", category = "entertainment", id = 803L),
+            // Large deposit should NOT influence ranking
+            createExpense("2026-03-20", 10000.0, type = TransactionType.DEPOSIT, merchant = "Bonus", id = 804L)
+        )
+
+        val insights = engine.calculate(
+            currentMonth = currentMonth,
+            previousMonth = null,
+            categoryMap = TEST_CATEGORIES.associateBy { it.id },
+            allExpenses = expenses
+        )
+
+        assertEquals(3, insights.size)
+        // Ranking: Utilities(300) > Groceries(100) > Entertainment(50)
+        assertEquals(5L, insights[0].category.id) // Utilities
+        assertEquals(2L, insights[1].category.id) // Groceries
+        assertEquals(3L, insights[2].category.id) // Entertainment
+    }
+
     private fun goldenMarchAndFebruaryExpensesWithRentCategory() = listOf(
         createExpense("2026-03-01", 800.00, merchant = "Rent Co", id = 1L).copy(categoryId = 99L),
         createExpense("2026-03-02", 45.30, merchant = "Lidl", category = "groceries", id = 2L),

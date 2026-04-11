@@ -162,6 +162,15 @@ class TotalsAggregationEngine @Inject constructor(
         }
     }
 
+    /**
+     * Returns yearly spending totals for the last 5 years.
+     *
+     * Both the total amount and transaction count reflect **purchase-only**
+     * data: the underlying repository methods ([ExpenseRepository.getTotalForPeriod]
+     * and [ExpenseRepository.getTransactionCountForPeriod]) use the DAO's
+     * `SPENDING_TYPE_SQL` filter, which excludes deposits, transfers,
+     * withdrawals, and non-owned transactions.
+     */
     suspend fun getYearlyTotals(): List<PeriodTotal> = withContext(ioDispatcher) {
         try {
             val now = timeProvider.now()
@@ -169,10 +178,11 @@ class TotalsAggregationEngine @Inject constructor(
             
             // Get data for last 5 years
             val years = (currentYear - 4..currentYear).toList()
-            val average = getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = false)
+            val average = getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = true)
             
             years.map { year ->
                 val (startMs, endMs) = getYearRange(year)
+                // Both calls return purchase-only data (SPENDING_TYPE_SQL at DAO layer)
                 val total = expenseRepository.getTotalForPeriod(startMs, endMs)
                 val count = expenseRepository.getTransactionCountForPeriod(startMs, endMs)
                 
@@ -236,7 +246,8 @@ class TotalsAggregationEngine @Inject constructor(
             when (periodType) {
                 PeriodType.YEAR -> {
                     val currentYear = TimePeriodUtils.getYear(now)
-                    val yearTotals = (currentYear - 4 until currentYear).mapNotNull { year ->
+                    val endYear = if (excludeCurrent) currentYear - 1 else currentYear
+                    val yearTotals = (currentYear - 4..endYear).mapNotNull { year ->
                         val (startMs, endMs) = getYearRange(year)
                         val total = expenseRepository.getTotalForPeriod(startMs, endMs)
                         if (total > 0) total else null

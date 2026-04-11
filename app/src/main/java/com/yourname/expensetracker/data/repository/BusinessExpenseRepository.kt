@@ -6,7 +6,10 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MileageTrackingDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.MileageTracking
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -18,20 +21,26 @@ class BusinessExpenseRepository @Inject constructor(
     
     /**
      * Get all business expenses between two dates.
+     * Enforces purchase-only semantics as a safety net over the DAO filter.
      */
     suspend fun getBusinessExpenses(startDate: Long, endDate: Long): List<Expense> {
         return expenseDao.getBusinessExpensesBetween(startDate, endDate)
+            .filter { it.transactionType.toDomain().isSpending }
     }
     
     /**
      * Get business expenses as Flow for real-time updates.
+     * Enforces purchase-only semantics as a safety net over the DAO filter.
      */
     fun getBusinessExpensesFlow(startDate: Long, endDate: Long): Flow<List<Expense>> {
         return expenseDao.getBusinessExpensesBetweenFlow(startDate, endDate)
+            .map { list -> list.filter { it.transactionType.toDomain().isSpending } }
     }
     
     /**
      * Get total business expenses for a period.
+     * Delegates to the DAO aggregate query which already enforces PURCHASE-only
+     * via the canonical SPENDING_TYPE_SQL predicate.
      */
     suspend fun getTotalBusinessExpenses(startDate: Long, endDate: Long): Double {
         return expenseDao.getTotalBusinessExpensesBetween(startDate, endDate) ?: 0.0
@@ -39,6 +48,8 @@ class BusinessExpenseRepository @Inject constructor(
     
     /**
      * Get business expenses grouped by category.
+     * Delegates to the DAO aggregate query which already enforces PURCHASE-only
+     * via the canonical SPENDING_TYPE_SQL predicate.
      */
     suspend fun getExpensesByCategory(startDate: Long, endDate: Long): List<BusinessCategoryTotal> {
         return expenseDao.getBusinessExpensesByCategory(startDate, endDate)
@@ -46,6 +57,8 @@ class BusinessExpenseRepository @Inject constructor(
     
     /**
      * Get business expenses grouped by project.
+     * Delegates to the DAO aggregate query which already enforces PURCHASE-only
+     * via the canonical SPENDING_TYPE_SQL predicate.
      */
     suspend fun getExpensesByProject(startDate: Long, endDate: Long): List<BusinessProjectTotal> {
         return expenseDao.getBusinessExpensesByProject(startDate, endDate)
@@ -53,9 +66,11 @@ class BusinessExpenseRepository @Inject constructor(
     
     /**
      * Get business expenses that are missing receipts (need for tax purposes).
+     * Enforces purchase-only semantics as a safety net over the DAO filter.
      */
     suspend fun getExpensesMissingReceipts(startDate: Long, endDate: Long): List<Expense> {
         return expenseDao.getBusinessExpensesMissingReceipts(startDate, endDate)
+            .filter { it.transactionType.toDomain().isSpending }
     }
     
     /**
@@ -92,4 +107,14 @@ class BusinessExpenseRepository @Inject constructor(
     suspend fun getTotalMileageDeduction(startDate: Long, endDate: Long): Double {
         return mileageDao.getTotalDeductionBetween(startDate, endDate) ?: 0.0
     }
+
+    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
+    private fun TransactionType.toDomain(): DomainTransactionType =
+        when (this) {
+            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
 }

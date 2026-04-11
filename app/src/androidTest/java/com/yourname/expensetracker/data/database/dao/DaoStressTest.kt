@@ -351,7 +351,7 @@ class DaoStressTest {
     @Test
     fun handles_concurrent_duplicate_checks() = runTest {
         val now = System.currentTimeMillis()
-        val dedupeKey = Expense.generateDedupeKey(10.0, "Same", now)
+        val dedupeKey = Expense.generateDedupeKey(10.0, "Same", now, "EUR")
         
         val jobs = List(10) {
             async {

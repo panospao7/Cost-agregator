@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.cashflow
 
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
@@ -86,14 +87,26 @@ class CashFlowCalculator @Inject constructor(
             // Get day's expenses
             val dayExpenses = expensesByDay[dayKey] ?: mutableListOf()
             
-            // Split into income and expenses manually
+            // Split into inflow and outflow using explicit transaction-type classification.
+            // Inflow  = DEPOSIT, or TRANSFER with transferDirection == INCOMING.
+            // Outflow = PURCHASE, WITHDRAWAL, or TRANSFER with transferDirection == OUTGOING.
+            // TRANSFER rows without a transferDirection and UNKNOWN are excluded
+            // from both sides so they don't distort the cash-flow balance.
             val incomeList = mutableListOf<Expense>()
             val expenseList = mutableListOf<Expense>()
             for (expense in dayExpenses) {
-                if (expense.transactionType.toDomain() == DomainTransactionType.DEPOSIT || expense.amount < 0) {
-                    incomeList.add(expense)
-                } else {
-                    expenseList.add(expense)
+                when (expense.transactionType.toDomain()) {
+                    DomainTransactionType.DEPOSIT -> incomeList.add(expense)
+                    DomainTransactionType.PURCHASE,
+                    DomainTransactionType.WITHDRAWAL -> expenseList.add(expense)
+                    DomainTransactionType.TRANSFER -> {
+                        when (expense.transferDirection) {
+                            TransferDirection.INCOMING -> incomeList.add(expense)
+                            TransferDirection.OUTGOING -> expenseList.add(expense)
+                            null -> { /* unclassified transfer – no cash-flow impact */ }
+                        }
+                    }
+                    else -> { /* UNKNOWN – no cash-flow impact */ }
                 }
             }
             
@@ -111,7 +124,7 @@ class CashFlowCalculator @Inject constructor(
             // Calculate ending balance
             var dayIncome = 0.0
             for (inc in incomeList) {
-                dayIncome += Math.abs(inc.effectiveAmount)
+                dayIncome += inc.effectiveAmount
             }
             
             var dayExpensesTotal = 0.0

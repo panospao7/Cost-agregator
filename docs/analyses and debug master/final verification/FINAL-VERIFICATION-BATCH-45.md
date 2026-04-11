@@ -68,7 +68,7 @@
 ## Missed Issues (found during verification but not in either report)
 | # | File:Line | Severity | Type | Description | Suggested Fix |
 |---|-----------|----------|------|-------------|---------------|
-| 1 | `com/yourname/expensetracker/domain/tax/TaxEstimator.kt:37-39,51-55` | High | Ownership semantics | Tax estimation sums raw `amount` values for deductible expenses and VAT instead of using user-owned/effective amounts. Shared or partially-owned expenses can therefore overstate deductions and VAT. | Sum `effectiveAmount` (or an equivalent DAO aggregate) and keep tax calculations aligned with the ownership semantics documented on `Expense`. |
+| 1 | `com/yourname/expensetracker/domain/tax/TaxEstimator.kt:37-39,51-55` | High | Ownership semantics | Tax estimation sums raw `amount` values for deductible expenses and VAT instead of using user-owned/effective amounts. Shared or partially-owned expenses can therefore overstate deductions and VAT. | Sum `effectiveAmount` (or an equivalent DAO aggregate) and keep tax calculations aligned with the ownership semantics documented on `Expense`. **[RESOLVED BY A.10]** |
 | 2 | `com/yourname/expensetracker/domain/receipt/WarrantyTextExtractor.kt:103-104` | Medium | Parsing | The “date at the start of a line” regex is not compiled with `MULTILINE`, so it only matches the start of the entire OCR text, not later lines as the comment claims. | Add `Pattern.MULTILINE` or split the OCR text into lines and match per line. |
 
 ## False Positives (issues in original reports that are NOT actually bugs)
