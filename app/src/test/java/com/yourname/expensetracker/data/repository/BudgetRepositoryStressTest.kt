@@ -44,6 +44,8 @@ class BudgetRepositoryStressTest {
     @Before
     fun setup() {
         coEvery { budgetDao.insert(any()) } returns 1L
+        coEvery { budgetDao.insertAndActivateOverall(any()) } returns 1L
+        coEvery { budgetDao.insertAndActivateCategory(any()) } returns 1L
         coEvery { budgetDao.update(any()) } returns Unit
         coEvery { budgetDao.delete(any()) } returns Unit
         coEvery { budgetDao.getActiveBudgets() } returns emptyList()

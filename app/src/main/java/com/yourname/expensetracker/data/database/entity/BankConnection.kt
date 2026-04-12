@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.database.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
@@ -10,10 +11,19 @@ import androidx.room.PrimaryKey
  */
 @Entity(
     tableName = "bank_connections",
+    foreignKeys = [
+        ForeignKey(
+            entity = Category::class,
+            parentColumns = ["id"],
+            childColumns = ["defaultCategoryId"],
+            onDelete = ForeignKey.SET_NULL
+        )
+    ],
     indices = [
         Index(value = ["bankId"], unique = true),
         Index(value = ["isActive"]),
-        Index(value = ["lastSync"])
+        Index(value = ["lastSync"]),
+        Index(value = ["defaultCategoryId"])
     ]
 )
 data class BankConnection(

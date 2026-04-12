@@ -33,7 +33,7 @@ interface BankConnectionDao {
     @Query("SELECT * FROM bank_connections WHERE bankId = :bankId LIMIT 1")
     suspend fun getByBankId(bankId: String): BankConnection?
     
-    @Query("UPDATE bank_connections SET isConnected = 0, isActive = 0 WHERE id = :id")
+    @Query("UPDATE bank_connections SET isConnected = 0, isActive = 0, accessToken = NULL, refreshToken = NULL, tokenExpiry = NULL, tokenEncryptionVersion = 0 WHERE id = :id")
     suspend fun disconnect(id: Long)
     
     @Query("UPDATE bank_connections SET lastSync = :timestamp, lastSyncStatus = :status WHERE id = :id")

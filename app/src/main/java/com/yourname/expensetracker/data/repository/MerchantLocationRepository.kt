@@ -62,20 +62,20 @@ class MerchantLocationRepository @Inject constructor(
             val gridLon = kotlin.math.floor(lon / 0.045).toLong()
             "$key|$gridLat|$gridLon"
         } else {
-            "$key|global"
+            "global"
         }
     }
 
     suspend fun saveLocation(
         merchantName: String,
         result: LocationResolutionResult.Resolved,
-        areaKey: String? = "global"
+        areaKey: String = "global"
     ) {
         val key = normalizeKey(merchantName)
         dao.upsertLocation(
             MerchantLocation(
                 normalizedMerchantName = key,
-                areaKey = areaKey ?: "global",
+                areaKey = areaKey,
                 displayName = merchantName,
                 latitude = result.latitude,
                 longitude = result.longitude,

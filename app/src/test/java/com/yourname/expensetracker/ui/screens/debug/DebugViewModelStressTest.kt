@@ -143,7 +143,8 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
             aiSettingsRepository = aiSettingsRepository,
             aiEngagementRepository = aiEngagementRepository,
             aiRuntimeDiagnostics = aiRuntimeDiagnostics,
-            databaseBackupRepository = databaseBackupRepository
+            databaseBackupRepository = databaseBackupRepository,
+            csvExpenseImporter = mockk(relaxed = true)
         )
     }
 

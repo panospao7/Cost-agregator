@@ -18,7 +18,7 @@ import androidx.room.PrimaryKey
     ],
     indices = [
         Index(value = ["rawName"], unique = true),
-        Index(value = ["normalizedKey"]),
+        Index(value = ["normalizedKey"], unique = true),
         Index(value = ["canonicalId"])
     ]
 )

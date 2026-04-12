@@ -21,6 +21,12 @@ import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
             parentColumns = ["id"],
             childColumns = ["categoryId"],
             onDelete = ForeignKey.SET_NULL
+        ),
+        ForeignKey(
+            entity = SplitTemplate::class,
+            parentColumns = ["id"],
+            childColumns = ["splitTemplateId"],
+            onDelete = ForeignKey.SET_NULL
         )
     ],
     indices = [
@@ -37,7 +43,8 @@ import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
         Index(value = ["latitude", "backfillAttempts", "date"]), // Backfill queue optimization
         Index(value = ["merchantKey"]),                // Unified merchant identity key (v32)
         Index(value = ["merchantKey", "date", "amount"]), // Duplicate checks by key + time + amount
-        Index(value = ["isBusinessExpense"])         // Business expense queries (v41)
+        Index(value = ["isBusinessExpense"]),        // Business expense queries (v41)
+        Index(value = ["splitTemplateId"])             // FK index for split_templates (v76)
     ]
 )
 data class Expense(

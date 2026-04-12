@@ -1375,7 +1375,7 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
                 
                 csvContent?.let { content ->
                     scope.launch {
-                        val importer = com.yourname.expensetracker.util.CsvExpenseImporter(context)
+                        val importer = viewModel.csvExpenseImporter
                         val result = importer.importFromContent(content) { progress, total ->
                             // Could update UI with progress here
                         }

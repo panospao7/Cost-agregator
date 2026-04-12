@@ -95,7 +95,22 @@ class EmailReceiptIngestionService @Inject constructor(
                 return EmailReceiptResult.ParseError("Invalid receipt data: amount=${parsedReceipt.amount}, merchant=${parsedReceipt.merchant}")
             }
 
-            // Step 4: Create fingerprint and check for duplicates
+            // Step 4a: If a nonblank messageId is provided, check it first before any
+            // side effects.  A nonblank messageId is globally unique (UNIQUE index on
+            // emailMessageId); finding it means we have already ingested this exact
+            // email, so we can return early without touching scanned_receipts or expenses.
+            // Blank messageIds are skipped here and fall through to the fingerprint path
+            // so that the existing behaviour for providers that omit message IDs is
+            // preserved unchanged.
+            if (messageId.isNotBlank()) {
+                val existingByMessageId = emailReceiptDao.getByMessageId(messageId)
+                if (existingByMessageId != null) {
+                    Timber.d("Duplicate email receipt by messageId=$messageId, existing receiptId=${existingByMessageId.receiptId}")
+                    return EmailReceiptResult.Duplicate(existingByMessageId.receiptId)
+                }
+            }
+
+            // Step 4b: Create fingerprint and check for duplicates
             val normalizedMerchant = merchantNormalizer.normalize(
                 parsedReceipt.merchant
             ).canonical.normalizedName
@@ -123,7 +138,7 @@ class EmailReceiptIngestionService @Inject constructor(
                     confidence = parsedReceipt.confidence,
                     fingerprint = fingerprint
                 )
-                emailReceiptDao.insert(emailSource)
+                emailReceiptDao.insertOrIgnore(emailSource)
                 return EmailReceiptResult.Duplicate(existingScanned.id)
             }
 
@@ -170,7 +185,7 @@ class EmailReceiptIngestionService @Inject constructor(
                 confidence = parsedReceipt.confidence,
                 fingerprint = fingerprint
             )
-            emailReceiptDao.insert(emailSource)
+            emailReceiptDao.insertOrIgnore(emailSource)
 
             // Step 8: Trigger expense creation through categorization engine
             val expenseIds = createExpenseFromReceipt(

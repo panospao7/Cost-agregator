@@ -130,6 +130,48 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `contributeToGoal uses atomic addToGoalAmount`() = runTest(testDispatcher) {
+        configureRepositoryWithGoals(
+            listOf(
+                createGoal(id = 1L, name = "Emergency", targetAmount = 1000.0, currentAmount = 100.0)
+            )
+        )
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        // Two contributions in quick succession — both should stack via atomic add
+        viewModel.contributeToGoal(goalId = 1L, amount = 50.0)
+        viewModel.contributeToGoal(goalId = 1L, amount = 75.0)
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        val updatedGoal = state.goals.first { it.id == 1L }
+
+        // 100.0 + 50.0 + 75.0 = 225.0
+        assertEquals(225.0, updatedGoal.currentAmount, 0.0001)
+    }
+
+    @Test
+    fun `contributeToGoal with nonexistent goal does not crash`() = runTest(testDispatcher) {
+        configureRepositoryWithGoals(
+            listOf(
+                createGoal(id = 1L, name = "Emergency", targetAmount = 1000.0, currentAmount = 100.0)
+            )
+        )
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        // Goal 999 doesn't exist — should silently succeed (no-op)
+        viewModel.contributeToGoal(goalId = 999L, amount = 50.0)
+        advanceUntilIdle()
+
+        // State should be unchanged
+        val state = viewModel.state.value
+        assertEquals(1, state.goals.size)
+        assertEquals(100.0, state.goals.first().currentAmount, 0.0001)
+    }
+
+    @Test
     fun `empty state when no goals`() = runTest(testDispatcher) {
         configureRepositoryWithGoals(emptyList())
         viewModel = createViewModel()
@@ -161,6 +203,18 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
                 if (goal.id == goalId) goal.copy(currentAmount = amount) else goal
             }
             Unit
+        }
+
+        coEvery { savingsGoalRepository.addToGoalAmount(any(), any()) } coAnswers {
+            val goalId = invocation.args[0] as Long
+            val delta = invocation.args[1] as Double
+            val exists = goalsFlow.value.any { it.id == goalId }
+            if (exists) {
+                goalsFlow.value = goalsFlow.value.map { goal ->
+                    if (goal.id == goalId) goal.copy(currentAmount = goal.currentAmount + delta) else goal
+                }
+            }
+            exists
         }
     }
 

@@ -18,7 +18,6 @@ import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
 import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupUseCase
 import com.yourname.expensetracker.domain.logic.SplitCalculator
-import com.yourname.expensetracker.domain.model.Result
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -184,8 +183,15 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     }
     
     /**
-     * Add expense to group by creating a system expense first, then linking to group.
-     * This ensures the expense appears in transaction history and maintains referential integrity.
+     * Add expense to group atomically.
+     *
+     * B.4 Batch 2 (Risk 1): Replaced the two-step flow (create system expense →
+     * link to group) with a single atomic coordinator call via
+     * [AddGroupExpenseUseCase.invokeAtomic]. This eliminates the orphan window
+     * where a system expense could exist without a group link.
+     *
+     * If the atomic call fails, no system expense is created and no cleanup
+     * is necessary.
      */
     fun addExpense(
         groupId: Long,
@@ -196,9 +202,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
         customSplits: Map<Long, Double>? = null
     ) {
         viewModelScope.launch {
-            var createdSystemExpenseId: Long? = null
             try {
-                // Step 1: Create system expense first
                 val group = groupsRepository.getGroupById(groupId)
                 val currency = group?.defaultCurrency ?: "EUR"
                 val payer = groupsRepository.getMemberById(paidById)
@@ -218,85 +222,32 @@ class SharedExpenseGroupsViewModel @Inject constructor(
 
                     is CustomSplitPayload.Valid -> customSplitPayload.serialized
                 }
-                
-                val expenseResult = manualExpenseRepository.addManualExpense(
-                    merchant = description,
+
+                // Single atomic call — system expense + group link in one transaction
+                when (val result = addGroupExpenseUseCase.invokeAtomic(
+                    groupId = groupId,
+                    description = description,
                     amount = amount,
+                    paidById = paidById,
                     currency = currency,
-                    categoryId = null, // Will auto-categorize
+                    splitType = splitType,
+                    customSplitsJson = validatedCustomSplits,
                     transactionType = TransactionType.PURCHASE,
                     notes = "Group expense via ${payer?.name ?: "Unknown"}"
-                )
-                
-                // Step 2: Link to group if expense creation succeeded
-                when (expenseResult) {
-                    is Result.Success -> {
-                        val systemExpenseId = expenseResult.data
-                        createdSystemExpenseId = systemExpenseId
-                        when (val linkResult = addGroupExpenseUseCase(
-                            groupId = groupId,
-                            systemExpenseId = systemExpenseId,
-                            description = description,
-                            amount = amount,
-                            paidById = paidById,
-                            splitType = splitType,
-                            customSplitsJson = validatedCustomSplits
-                        )) {
-                            is GroupExpenseCreationResult.Success -> {
-                                createdSystemExpenseId = null
-                                loadGroups()
-                                _uiState.value = _uiState.value.copy(addingExpense = false)
-                            }
-                            is GroupExpenseCreationResult.Error -> {
-                                val rollbackSucceeded = cleanupOrphanedSystemExpense(systemExpenseId)
-                                createdSystemExpenseId = null
-                                val errorMessage = if (rollbackSucceeded) {
-                                    linkResult.message
-                                } else {
-                                    "${linkResult.message} (rollback failed; cleanup may be required)"
-                                }
-                                _uiState.value = _uiState.value.copy(error = errorMessage)
-                            }
-                        }
+                )) {
+                    is GroupExpenseCreationResult.Success -> {
+                        loadGroups()
+                        _uiState.value = _uiState.value.copy(addingExpense = false)
                     }
-                    is Result.Error -> {
-                        _uiState.value = _uiState.value.copy(
-                            error = "Failed to create expense: ${expenseResult.message}"
-                        )
-                    }
-                    is Result.Duplicate -> {
-                        _uiState.value = _uiState.value.copy(
-                            error = "Duplicate expense detected"
-                        )
-                    }
-                    else -> {
-                        // Loading or other states - ignore or handle as needed
+                    is GroupExpenseCreationResult.Error -> {
+                        _uiState.value = _uiState.value.copy(error = result.message)
                     }
                 }
             } catch (e: Exception) {
-                val rollbackFailed = createdSystemExpenseId
-                    ?.let { !cleanupOrphanedSystemExpense(it) }
-                    ?: false
                 _uiState.value = _uiState.value.copy(
-                    error = if (rollbackFailed) {
-                        "Failed to add expense: ${e.message} (rollback failed; cleanup may be required)"
-                    } else {
-                        "Failed to add expense: ${e.message}"
-                    }
+                    error = "Failed to add expense: ${e.message}"
                 )
             }
-        }
-    }
-
-    private suspend fun cleanupOrphanedSystemExpense(expenseId: Long): Boolean {
-        return try {
-            val createdExpense = expenseRepository.getExpenseById(expenseId)
-            if (createdExpense != null) {
-                expenseRepository.deleteExpense(createdExpense)
-            }
-            true
-        } catch (_: Exception) {
-            false
         }
     }
     

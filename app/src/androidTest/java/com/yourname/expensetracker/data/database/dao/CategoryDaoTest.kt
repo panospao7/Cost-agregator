@@ -22,10 +22,9 @@ class CategoryDaoTest {
 
     @Before
     fun setup() {
-        database = Room.inMemoryDatabaseBuilder(
-            ApplicationProvider.getApplicationContext(),
-            AppDatabase::class.java
-        ).allowMainThreadQueries().build()
+        database = AppDatabase.inMemoryBuilder(
+            ApplicationProvider.getApplicationContext()
+        ).build()
         categoryDao = database.categoryDao()
     }
 
@@ -47,7 +46,7 @@ class CategoryDaoTest {
     )
 
     @Test
-    fun `insert category then retrieve by id returns persisted category`() = runBlocking {
+    fun insert_category_then_retrieve_by_id_returns_persisted_category() = runBlocking {
         val id = categoryDao.insert(
             makeCategory(name = "Groceries", icon = "🛒", color = "#4CAF50")
         )
@@ -61,7 +60,7 @@ class CategoryDaoTest {
     }
 
     @Test
-    fun `query all categories returns defaults first then custom categories`() = runBlocking {
+    fun query_all_categories_returns_defaults_first_then_custom_categories() = runBlocking {
         categoryDao.insert(makeCategory(name = "Food", icon = "🍔", color = "#E53935", isDefault = true))
         categoryDao.insert(makeCategory(name = "Transport", icon = "🚌", color = "#1E88E5", isDefault = true))
         categoryDao.insert(makeCategory(name = "Pets", icon = "🐾", color = "#8E24AA", isDefault = false))
@@ -76,7 +75,7 @@ class CategoryDaoTest {
     }
 
     @Test
-    fun `update category name icon and color persists changes`() = runBlocking {
+    fun update_category_name_icon_and_color_persists_changes() = runBlocking {
         val id = categoryDao.insert(
             makeCategory(name = "Bills", icon = "💳", color = "#546E7A")
         )
@@ -98,7 +97,7 @@ class CategoryDaoTest {
     }
 
     @Test
-    fun `duplicate category name is handled without crash`() = runBlocking {
+    fun duplicate_category_name_is_handled_without_crash() = runBlocking {
         val firstId = categoryDao.insert(
             makeCategory(name = "Travel", icon = "✈️", color = "#3949AB")
         )

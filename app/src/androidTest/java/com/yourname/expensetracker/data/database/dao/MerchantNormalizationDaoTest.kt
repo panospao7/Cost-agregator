@@ -11,6 +11,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -23,10 +24,9 @@ class MerchantNormalizationDaoTest {
 
     @Before
     fun setup() {
-        database = Room.inMemoryDatabaseBuilder(
-            ApplicationProvider.getApplicationContext(),
-            AppDatabase::class.java
-        ).allowMainThreadQueries().build()
+        database = AppDatabase.inMemoryBuilder(
+            ApplicationProvider.getApplicationContext()
+        ).build()
         dao = database.merchantNormalizationDao()
     }
 
@@ -131,5 +131,90 @@ class MerchantNormalizationDaoTest {
 
         assertEquals(1, deleted)
         assertNull(dao.getAliasByRawName("LIDL ATHENS"))
+    }
+
+    // ── Batch 5: searchKey uniqueness ──────────────────────────────────────
+
+    @Test
+    fun insertCanonical_duplicate_searchKey_returns_minus_one() = runBlocking {
+        val first = dao.insertCanonical(makeCanonical("Starbucks", "starbucks"))
+        assertTrue(first > 0)
+
+        // IGNORE strategy → returns -1 on conflict
+        val second = dao.insertCanonical(makeCanonical("Starbucks Coffee", "starbucks"))
+        assertEquals(-1L, second)
+
+        // Only one row exists
+        assertEquals(1, dao.getCanonicalCount())
+    }
+
+    @Test
+    fun insertCanonical_different_searchKeys_both_succeed() = runBlocking {
+        val a = dao.insertCanonical(makeCanonical("Starbucks", "starbucks"))
+        val b = dao.insertCanonical(makeCanonical("Costa Coffee", "costacoffee"))
+
+        assertTrue(a > 0)
+        assertTrue(b > 0)
+        assertTrue(a != b)
+        assertEquals(2, dao.getCanonicalCount())
+    }
+
+    // ── Batch 5: normalizedKey uniqueness ──────────────────────────────────
+
+    @Test
+    fun insertAlias_duplicate_normalizedKey_returns_minus_one() = runBlocking {
+        val canonicalId = dao.insertCanonical(makeCanonical("Lidl", "lidl"))
+
+        val first = dao.insertAlias(makeAlias("LIDL A", "lidl_norm", canonicalId))
+        assertTrue(first > 0)
+
+        // Different rawName but same normalizedKey → unique conflict
+        val second = dao.insertAlias(makeAlias("LIDL B", "lidl_norm", canonicalId))
+        assertEquals(-1L, second)
+    }
+
+    @Test
+    fun insertAlias_different_normalizedKeys_both_succeed() = runBlocking {
+        val canonicalId = dao.insertCanonical(makeCanonical("Lidl", "lidl"))
+
+        val a = dao.insertAlias(makeAlias("LIDL A", "lidla", canonicalId))
+        val b = dao.insertAlias(makeAlias("LIDL B", "lidlb", canonicalId))
+
+        assertTrue(a > 0)
+        assertTrue(b > 0)
+        assertTrue(a != b)
+    }
+
+    // ── Batch 5: deterministic getCanonicalBySearchKey (ORDER BY id DESC) ──
+
+    @Test
+    fun getCanonicalBySearchKey_returns_row_for_unique_searchKey() = runBlocking {
+        dao.insertCanonical(makeCanonical("Starbucks", "starbucks"))
+
+        val result = dao.getCanonicalBySearchKey("starbucks")
+        assertNotNull(result)
+        assertEquals("Starbucks", result!!.normalizedName)
+    }
+
+    @Test
+    fun getCanonicalBySearchKey_returns_null_for_missing_key() = runBlocking {
+        assertNull(dao.getCanonicalBySearchKey("nonexistent"))
+    }
+
+    // ── Batch 5: deterministic getAliasByNormalizedKey (ORDER BY id DESC) ──
+
+    @Test
+    fun getAliasByNormalizedKey_returns_row_for_unique_normalizedKey() = runBlocking {
+        val canonicalId = dao.insertCanonical(makeCanonical("Sklavenitis", "sklavenitis"))
+        dao.insertAlias(makeAlias("ΣΚΛΑΒΕΝΙΤΗΣ", "sklavenitis_norm", canonicalId))
+
+        val loaded = dao.getAliasByNormalizedKey("sklavenitis_norm")
+        assertNotNull(loaded)
+        assertEquals("ΣΚΛΑΒΕΝΙΤΗΣ", loaded!!.rawName)
+    }
+
+    @Test
+    fun getAliasByNormalizedKey_returns_null_for_missing_key() = runBlocking {
+        assertNull(dao.getAliasByNormalizedKey("nonexistent"))
     }
 }

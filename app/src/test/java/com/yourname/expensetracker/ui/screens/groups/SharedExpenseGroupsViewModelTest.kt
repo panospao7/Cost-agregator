@@ -13,7 +13,6 @@ import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
 import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupUseCase
-import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
@@ -105,39 +104,20 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
 
         coEvery { groupsRepository.getGroupById(1L) } returns initialAggregate.group
         coEvery { groupsRepository.getMemberById(11L) } returns initialAggregate.members.first()
+
+        // B.4 Batch 2: Mock the new atomic path instead of the old two-step flow
         coEvery {
-            manualExpenseRepository.addManualExpense(
-                merchant = any(),
-                amount = any(),
-                currency = any(),
-                categoryId = any(),
-                transactionType = any(),
-                paymentMethod = any(),
-                date = any(),
-                notes = any(),
-                transferDirection = any(),
-                transferAccountName = any(),
-                isNotMine = any(),
-                ownerName = any(),
-                isSharedExpense = any(),
-                sharedWithName = any(),
-                mySharePercentage = any(),
-                myShareAmount = any(),
-                latitude = any(),
-                longitude = any(),
-                locationSource = any()
-            )
-        } returns Result.Success(900L)
-        coEvery {
-            addGroupExpenseUseCase.invoke(
+            addGroupExpenseUseCase.invokeAtomic(
                 groupId = any(),
-                systemExpenseId = any(),
                 description = any(),
                 amount = any(),
                 paidById = any(),
+                currency = any(),
                 splitType = any(),
                 customSplitsJson = any(),
-                date = any()
+                date = any(),
+                transactionType = any(),
+                notes = any()
             )
         } returns GroupExpenseCreationResult.Success(groupExpenseId = 301L, expenseId = 900L)
 
@@ -169,16 +149,44 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
             cancelAndIgnoreRemainingEvents()
         }
 
+        // B.4 Batch 2: Verify the atomic path was called (not the old two-step flow)
         coVerify(exactly = 1) {
-            addGroupExpenseUseCase.invoke(
+            addGroupExpenseUseCase.invokeAtomic(
                 groupId = 1L,
-                systemExpenseId = 900L,
                 description = "Dinner",
                 amount = 24.5,
                 paidById = 11L,
+                currency = "EUR",
                 splitType = SplitType.EQUAL,
                 customSplitsJson = null,
-                date = any()
+                date = any(),
+                transactionType = TransactionType.PURCHASE,
+                notes = any()
+            )
+        }
+
+        // B.4 Batch 2: Verify the old two-step flow is NOT used
+        coVerify(exactly = 0) {
+            manualExpenseRepository.addManualExpense(
+                merchant = any(),
+                amount = any(),
+                currency = any(),
+                categoryId = any(),
+                transactionType = any(),
+                paymentMethod = any(),
+                date = any(),
+                notes = any(),
+                transferDirection = any(),
+                transferAccountName = any(),
+                isNotMine = any(),
+                ownerName = any(),
+                isSharedExpense = any(),
+                sharedWithName = any(),
+                mySharePercentage = any(),
+                myShareAmount = any(),
+                latitude = any(),
+                longitude = any(),
+                locationSource = any()
             )
         }
     }
@@ -238,6 +246,115 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
             assertFalse(errorState.isLoading)
             assertTrue(errorState.error?.contains("Failed to load groups: db unavailable") == true)
             assertTrue(errorState.groups.isEmpty())
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // ==================== B.4 Batch 2 Tests ====================
+
+    @Test
+    fun `add expense error sets error state without orphan cleanup`() = runTest(testDispatcher) {
+        val aggregate = createAggregate(groupId = 1L, name = "Trip", memberId = 11L)
+
+        coEvery {
+            groupsRepository.getActiveGroupsWithDetails()
+        } returns listOf(aggregate)
+        coEvery { groupsRepository.getGroupById(1L) } returns aggregate.group
+        coEvery { groupsRepository.getMemberById(11L) } returns aggregate.members.first()
+
+        // Simulate atomic call failure
+        coEvery {
+            addGroupExpenseUseCase.invokeAtomic(
+                groupId = any(),
+                description = any(),
+                amount = any(),
+                paidById = any(),
+                currency = any(),
+                splitType = any(),
+                customSplitsJson = any(),
+                date = any(),
+                transactionType = any(),
+                notes = any()
+            )
+        } returns GroupExpenseCreationResult.Error("Group not found or inactive")
+
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.uiState.test {
+            awaitItem() // initial loaded state
+
+            viewModel.addExpense(
+                groupId = 1L,
+                description = "Dinner",
+                amount = 24.5,
+                paidById = 11L,
+                splitType = SplitType.EQUAL
+            )
+
+            advanceUntilIdle()
+
+            val errorState = awaitItem()
+            assertTrue(errorState.error?.contains("Group not found or inactive") == true)
+
+            // B.4 Batch 2: Verify NO orphan cleanup is attempted (atomic path rolls back automatically)
+            coVerify(exactly = 0) { expenseRepository.getExpenseById(any()) }
+            coVerify(exactly = 0) { expenseRepository.deleteExpense(any()) }
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `add expense exception sets error state without orphan cleanup`() = runTest(testDispatcher) {
+        val aggregate = createAggregate(groupId = 1L, name = "Trip", memberId = 11L)
+
+        coEvery {
+            groupsRepository.getActiveGroupsWithDetails()
+        } returns listOf(aggregate)
+        coEvery { groupsRepository.getGroupById(1L) } returns aggregate.group
+        coEvery { groupsRepository.getMemberById(11L) } returns aggregate.members.first()
+
+        // Simulate atomic call throwing exception
+        coEvery {
+            addGroupExpenseUseCase.invokeAtomic(
+                groupId = any(),
+                description = any(),
+                amount = any(),
+                paidById = any(),
+                currency = any(),
+                splitType = any(),
+                customSplitsJson = any(),
+                date = any(),
+                transactionType = any(),
+                notes = any()
+            )
+        } throws RuntimeException("DB transaction failed")
+
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.uiState.test {
+            awaitItem() // initial loaded state
+
+            viewModel.addExpense(
+                groupId = 1L,
+                description = "Dinner",
+                amount = 24.5,
+                paidById = 11L,
+                splitType = SplitType.EQUAL
+            )
+
+            advanceUntilIdle()
+
+            val errorState = awaitItem()
+            assertTrue(errorState.error?.contains("Failed to add expense") == true)
+            assertTrue(errorState.error?.contains("DB transaction failed") == true)
+
+            // B.4 Batch 2: Verify NO orphan cleanup is attempted
+            coVerify(exactly = 0) { expenseRepository.getExpenseById(any()) }
+            coVerify(exactly = 0) { expenseRepository.deleteExpense(any()) }
 
             cancelAndIgnoreRemainingEvents()
         }

@@ -70,6 +70,12 @@ class ReceiptRepository @Inject constructor(
         // Use the canonical policy for all duplicate detection constants.
         private val STATEMENT_DEDUPE_WINDOW_MS = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
         private val AMOUNT_TOLERANCE = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
+
+        // Minimum positive sentinel for suggestedAmount when the parser fails to
+        // extract a total.  Must satisfy the v76 CHECK(suggestedAmount > 0) invariant.
+        // Matches the migration-time clamp value so behaviour is consistent across
+        // upgrade and fresh-install paths.
+        private const val FALLBACK_SUGGESTED_AMOUNT = 0.01
     }
 
     private enum class StatementInsertOutcome {
@@ -140,10 +146,11 @@ class ReceiptRepository @Inject constructor(
                     // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
                     if (autoCreateReview) {
                         val suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant"
+                        val suggestedAmount = parsed.total ?: FALLBACK_SUGGESTED_AMOUNT
                         val review = PendingReview(
                             rawNotificationId = null,
                             scannedReceiptId = insertedReceiptId,
-                            suggestedAmount = parsed.total ?: 0.0,
+                            suggestedAmount = suggestedAmount,
                             suggestedCurrency = parsed.currency,
                             suggestedMerchant = suggestedMerchant,
                             suggestedMerchantKey = MerchantKeyGenerator.generate(suggestedMerchant),
@@ -154,7 +161,7 @@ class ReceiptRepository @Inject constructor(
                             notificationTitle = "Scanned Receipt",
                             notificationText = ocrResult.fullText.take(200), // Preview snippet
                             suggestedCategoryId = normalizedMerchant?.let {
-                                hybridClassifier.classify(it, parsed.total ?: 0.0).categoryId.takeIf { id -> id > 0 }
+                                hybridClassifier.classify(it, suggestedAmount).categoryId.takeIf { id -> id > 0 }
                             }
                         )
                         pendingReviewDao.insert(review)
@@ -210,7 +217,7 @@ class ReceiptRepository @Inject constructor(
                     val review = PendingReview(
                         rawNotificationId = null,
                         scannedReceiptId = receiptId,
-                        suggestedAmount = 0.0,
+                        suggestedAmount = FALLBACK_SUGGESTED_AMOUNT,
                         suggestedCurrency = "EUR",
                         suggestedMerchant = "Parsing Failed",
                         suggestedMerchantKey = MerchantKeyGenerator.generate("Parsing Failed"),

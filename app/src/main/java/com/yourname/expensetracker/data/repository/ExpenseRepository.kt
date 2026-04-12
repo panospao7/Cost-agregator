@@ -187,16 +187,15 @@ class ExpenseRepository @Inject constructor(
             ""
         }
 
-        // Build the full SQL query - let Room handle the @Relation for category
-        // by not selecting category columns here (use simple SELECT from expenses)
+        // B.4 / ISSUE-1: Use e.* instead of an explicit column list so that every
+        // field in the Expense entity (including newer additions such as
+        // isBusinessExpense, businessPurpose, businessCategory, businessProject,
+        // requiresReceipt, splitTemplateId, and splitVisualization) is projected
+        // without amendment.  Room's @RawQuery + @Embedded maps by column name,
+        // so e.* is safe here; the @Relation for Category is resolved by a
+        // separate query after the main result set is fetched.
         val sql = """
-            SELECT e.id, e.amount, e.currency, e.merchant, e.transactionType, e.date, 
-                   e.rawNotificationId, e.categoryId, e.createdAt, e.paymentMethod, 
-                   e.isManualEntry, e.notes, e.dedupeKey, e.transferDirection, 
-                   e.transferAccountName, e.isNotMine, e.ownerName, 
-                   e.isSharedExpense, e.sharedWithName, e.mySharePercentage, e.myShareAmount,
-                   e.latitude, e.longitude, e.locationSource, e.placeId,
-                   e.backfillAttempts, e.resolvedAddress, e.merchantKey
+            SELECT e.*
             FROM expenses e
             $whereClause
             -- Safety invariant: sortOrder.sql comes from the closed SortOrder enum above.

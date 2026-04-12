@@ -19,7 +19,9 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -212,5 +214,90 @@ class ExpenseRepositoryTest {
         assertTrue("Contains sort clause with effective-amount expression",
             sql.contains("ORDER BY") && sql.contains("DESC"))
         assertTrue("Contains pagination", sql.contains("LIMIT ? OFFSET ?"))
+    }
+
+    // ── B.4 / ISSUE-1 regression tests ────────────────────────────────────────
+    // Verify that getExpensesPagedDynamic() projects the full expense row (e.*)
+    // so that newer fields like isBusinessExpense and splitTemplateId are never
+    // silently dropped to their default values.
+
+    /**
+     * The generated SQL must use "SELECT e.*" so that newer Expense columns
+     * (isBusinessExpense, splitTemplateId, etc.) are always included.
+     * A partial explicit projection would cause Room to silently default-fill
+     * the missing fields, corrupting persisted business/split data.
+     */
+    @Test
+    fun `getExpensesPagedDynamic SQL uses SELECT e-star so newer fields are not dropped`() = runTest {
+        val querySlot = slot<androidx.sqlite.db.SupportSQLiteQuery>()
+        coEvery { expenseDao.getExpensesDynamic(capture(querySlot)) } returns emptyList()
+
+        repository.getExpensesPagedDynamic(limit = 10, offset = 0)
+
+        val sql = querySlot.captured.sql
+        // Must contain the wildcard projection — NOT a hand-enumerated column list.
+        assertTrue(
+            "SQL must use 'SELECT e.*' to project the full expense row; " +
+            "a partial column list would silently drop isBusinessExpense, splitTemplateId, etc.",
+            sql.contains("SELECT e.*")
+        )
+        // Sanity: must not contain any of the fields that were previously
+        // hard-coded and that caused the regression in the first place.
+        assertFalse(
+            "SQL must not fall back to an explicit column enumeration",
+            sql.contains("e.isManualEntry") || sql.contains("e.merchantKey,") || sql.contains("e.merchantKey\n")
+        )
+    }
+
+    /**
+     * When the DAO returns an expense with isBusinessExpense=true and a
+     * non-null splitTemplateId, getExpensesPagedDynamic() must surface those
+     * values unchanged — i.e. the repository layer must not zero/null them out.
+     */
+    @Test
+    fun `getExpensesPagedDynamic preserves isBusinessExpense and splitTemplateId from DAO result`() = runTest {
+        // Arrange: build a stub ExpenseWithCategory that carries the newer fields.
+        val newerFieldsExpense = Expense(
+            id = 999L,
+            amount = 250.0,
+            currency = "EUR",
+            merchant = "Acme Corp",
+            transactionType = TransactionType.PURCHASE,
+            date = System.currentTimeMillis(),
+            isBusinessExpense = true,
+            businessPurpose = "Client dinner",
+            splitTemplateId = 7L,
+            splitVisualization = """{"segments":[]}"""
+        )
+        val stubResult = listOf(
+            ExpenseWithCategory(
+                expense = newerFieldsExpense,
+                category = null
+            )
+        )
+        coEvery { expenseDao.getExpensesDynamic(any()) } returns stubResult
+
+        // Act
+        val results = repository.getExpensesPagedDynamic(limit = 10, offset = 0)
+
+        // Assert: the repository must return the DAO result without stripping fields.
+        assertEquals(1, results.size)
+        val returned = results[0].expense
+        assertTrue(
+            "isBusinessExpense must be preserved through getExpensesPagedDynamic",
+            returned.isBusinessExpense
+        )
+        assertEquals(
+            "splitTemplateId must be preserved through getExpensesPagedDynamic",
+            7L, returned.splitTemplateId
+        )
+        assertEquals(
+            "businessPurpose must be preserved through getExpensesPagedDynamic",
+            "Client dinner", returned.businessPurpose
+        )
+        assertEquals(
+            "splitVisualization must be preserved through getExpensesPagedDynamic",
+            """{"segments":[]}""", returned.splitVisualization
+        )
     }
 }

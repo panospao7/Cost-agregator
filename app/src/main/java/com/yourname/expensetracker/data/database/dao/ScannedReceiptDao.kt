@@ -37,7 +37,7 @@ interface ScannedReceiptDao {
     @Query("DELETE FROM scanned_receipts")
     suspend fun deleteAll()
 
-    @Query("UPDATE scanned_receipts SET expenseId = :expenseId WHERE id = :receiptId")
+    @Query("UPDATE scanned_receipts SET expenseId = :expenseId, matchStatus = 'AUTO_MATCHED' WHERE id = :receiptId")
     suspend fun linkToExpense(receiptId: Long, expenseId: Long)
 
     @Query("UPDATE scanned_receipts SET itemCategorizationStatus = :status WHERE id = :receiptId")

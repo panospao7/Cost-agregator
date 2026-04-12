@@ -51,4 +51,18 @@ class SavingsGoalRepository @Inject constructor(
     suspend fun updateGoalAmount(goalId: Long, amount: Double) {
         savingsGoalDao.updateGoalAmount(goalId, amount)
     }
+
+    /**
+     * Atomically add [delta] to the current saved amount for the given goal.
+     *
+     * Unlike [updateGoalAmount], this operation does **not** require the caller
+     * to first read the current value — the increment is applied inside a
+     * single SQL UPDATE, eliminating the read-modify-write race that can lose
+     * concurrent contributions.
+     *
+     * @return `true` if the goal existed and was updated.
+     */
+    suspend fun addToGoalAmount(goalId: Long, delta: Double): Boolean {
+        return savingsGoalDao.addToGoalAmount(goalId, delta) > 0
+    }
 }

@@ -94,8 +94,10 @@ class BudgetForecastingEngine @Inject constructor(
             overspendProbability = overspendProbability
         )
         
-        // Save forecast
-        budgetForecastDao.insert(forecast)
+        // Save forecast — deactivate any existing active forecast for the same
+        // budget+period to avoid violating the partial unique index on
+        // (budgetId, targetPeriodStart, targetPeriodEnd) WHERE isActive = 1.
+        budgetForecastDao.insertWithDeactivation(forecast)
         
         forecast
     }

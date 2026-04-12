@@ -5,6 +5,7 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import kotlinx.coroutines.flow.Flow
@@ -56,6 +57,49 @@ interface GroupMemberDao {
     
     @Query("SELECT * FROM group_members WHERE groupId = :groupId AND isCurrentUser = 1 LIMIT 1")
     suspend fun getCurrentUser(groupId: Long): GroupMember?
+
+    /**
+     * Clears the current-user flag for every member in [groupId].
+     * Used internally by [setCurrentUser] before promoting a new member.
+     */
+    @Query("UPDATE group_members SET isCurrentUser = 0 WHERE groupId = :groupId AND isCurrentUser = 1")
+    suspend fun clearCurrentUser(groupId: Long)
+
+    /**
+     * Atomically designates [memberId] as the current user for [groupId].
+     *
+     * The partial unique index `index_group_members_groupId_currentUser` enforces
+     * at most one `isCurrentUser = 1` row per group. This transaction clears the
+     * previous current user (if any) before promoting the new one, so the index
+     * constraint is never violated.
+     *
+     * Both [groupId] **and** [memberId] are checked: the promotion query matches
+     * on `id = :memberId AND groupId = :groupId`, preventing a cross-group
+     * `memberId` from silently mutating another group.
+     *
+     * @throws IllegalArgumentException if no row was updated — either [memberId]
+     *   does not exist or it does not belong to [groupId].
+     */
+    @Transaction
+    suspend fun setCurrentUser(groupId: Long, memberId: Long) {
+        clearCurrentUser(groupId)
+        val updated = markAsCurrentUser(groupId, memberId)
+        if (updated == 0) {
+            throw IllegalArgumentException(
+                "Member $memberId does not exist in group $groupId"
+            )
+        }
+    }
+
+    /**
+     * Low-level helper — callers should prefer [setCurrentUser] which clears the
+     * previous current user first.
+     *
+     * Returns the number of rows updated (0 or 1). The query is group-scoped so
+     * a mismatched [groupId]/[memberId] pair touches nothing.
+     */
+    @Query("UPDATE group_members SET isCurrentUser = 1 WHERE id = :memberId AND groupId = :groupId")
+    suspend fun markAsCurrentUser(groupId: Long, memberId: Long): Int
     
     @Query("DELETE FROM group_members WHERE groupId = :groupId")
     suspend fun deleteAllForGroup(groupId: Long)

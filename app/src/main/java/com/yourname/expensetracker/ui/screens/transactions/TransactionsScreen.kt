@@ -54,8 +54,7 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
-import com.yourname.expensetracker.data.database.model.formattedAmount
-import com.yourname.expensetracker.data.database.model.formattedDate
+import com.yourname.expensetracker.data.database.model.formattedTime
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.OwnershipFilter
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.TransactionTab
@@ -1025,7 +1024,7 @@ private fun TransactionItem(
                 
                 // Time
                 Text(
-                    text = transaction.formattedDate,
+                    text = transaction.formattedTime,
                     style = MaterialTheme.typography.labelSmall,
                     color = SemanticColors.TextMuted
                 )

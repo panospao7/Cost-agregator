@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.database.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
@@ -11,11 +12,20 @@ import androidx.room.PrimaryKey
  */
 @Entity(
     tableName = "anomaly_alerts",
+    foreignKeys = [
+        ForeignKey(
+            entity = Expense::class,
+            parentColumns = ["id"],
+            childColumns = ["expenseId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
     indices = [
         Index(value = ["expenseId"]),
         Index(value = ["merchant", "alertedAt"]),
         Index(value = ["severity", "alertedAt"]),
-        Index(value = ["dismissed", "alertedAt"])
+        Index(value = ["dismissed", "alertedAt"]),
+        Index(value = ["category", "alertedAt"])
     ]
 )
 data class AnomalyAlert(

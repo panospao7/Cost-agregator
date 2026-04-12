@@ -3,7 +3,6 @@ package com.yourname.expensetracker.data.database.dao
 import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Insert
-import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import com.yourname.expensetracker.data.database.entity.SubscriptionCandidate
@@ -15,10 +14,10 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface SubscriptionCandidateDao {
     
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert
     suspend fun insert(candidate: SubscriptionCandidate): Long
     
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert
     suspend fun insertAll(candidates: List<SubscriptionCandidate>): List<Long>
     
     @Update

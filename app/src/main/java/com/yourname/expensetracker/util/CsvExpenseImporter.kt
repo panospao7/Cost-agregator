@@ -1,36 +1,31 @@
 package com.yourname.expensetracker.util
 
-import android.content.Context
-import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.CategoryDao
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Locale
+import javax.inject.Inject
 
 /**
  * Utility for importing expenses from CSV exported from old app versions.
- * 
+ *
  * CSV Format expected:
  * date,amount,merchant,category,description
  * 2024-01-15,25.50,Starbucks,Coffee,Morning coffee
- * 
- * Usage:
- * ```kotlin
- * val importer = CsvExpenseImporter(context)
- * importer.importFromUri(uri) { progress ->
- *     // Update UI with progress
- * }
- * ```
+ *
+ * Uses Hilt-provided DAOs so it shares the singleton [AppDatabase] instance
+ * instead of creating a separate [Room.databaseBuilder] connection (B.4-10).
  */
-class CsvExpenseImporter(private val context: Context) {
+class CsvExpenseImporter @Inject constructor(
+    private val categoryDao: CategoryDao,
+    private val expenseDao: ExpenseDao
+) {
 
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-    private val categoryDao = AppDatabase.getInstance(context).categoryDao()
-    private val expenseDao = AppDatabase.getInstance(context).expenseDao()
 
     suspend fun importFromContent(
         csvContent: String,
@@ -131,22 +126,22 @@ class CsvExpenseImporter(private val context: Context) {
     private fun generateColorForCategory(name: String): String {
         // Simple hash-based color generation - returns hex string
         val colors = listOf(
-            "#FFE53935", // Red
-            "#FFD81B60", // Pink
-            "#FF8E24AA", // Purple
-            "#FF5E35B1", // Deep Purple
-            "#FF3949AB", // Indigo
-            "#FF1E88E5", // Blue
-            "#FF039BE5", // Light Blue
-            "#FF00ACC1", // Cyan
-            "#FF00897B", // Teal
-            "#FF43A047", // Green
-            "#FF7CB342", // Light Green
-            "#FFC0CA33", // Lime
-            "#FFFDD835", // Yellow
-            "#FFFFB300", // Amber
-            "#FFFB8C00", // Orange
-            "#FFF4511E"  // Deep Orange
+            "#E53935", // Red
+            "#D81B60", // Pink
+            "#8E24AA", // Purple
+            "#5E35B1", // Deep Purple
+            "#3949AB", // Indigo
+            "#1E88E5", // Blue
+            "#039BE5", // Light Blue
+            "#00ACC1", // Cyan
+            "#00897B", // Teal
+            "#43A047", // Green
+            "#7CB342", // Light Green
+            "#C0CA33", // Lime
+            "#FDD835", // Yellow
+            "#FFB300", // Amber
+            "#FB8C00", // Orange
+            "#F4511E"  // Deep Orange
         )
         
         val hash = name.hashCode()
@@ -157,16 +152,4 @@ class CsvExpenseImporter(private val context: Context) {
         data class Success(val imported: Int, val errors: Int) : ImportResult()
         data class Error(val message: String) : ImportResult()
     }
-}
-
-/**
- * Helper extension to get database instance
- */
-fun AppDatabase.Companion.getInstance(context: Context): AppDatabase {
-    return androidx.room.Room.databaseBuilder(
-        context,
-        AppDatabase::class.java,
-        "expense_tracker_db"
-    ).addMigrations(*AppDatabase.ALL_MIGRATIONS)
-        .build()
 }

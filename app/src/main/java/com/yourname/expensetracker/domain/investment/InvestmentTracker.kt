@@ -89,25 +89,23 @@ class InvestmentTracker @Inject constructor(
             val gainLoss = currentValue - investedValue
             val gainLossPercent = if (investedValue > 0) (gainLoss / investedValue) * 100 else 0.0
             
-            // Get historical values for day change and all-time stats
+            // Get historical values for day change
             val now = timeProvider.now()
             val thirtyDaysAgo = now - (30L * 24 * 60 * 60 * 1000)
-            val historicalValues = investmentValueDao.getValuesBetween(
+            val recentValues = investmentValueDao.getValuesBetween(
                 investmentId, 
                 thirtyDaysAgo, 
                 now
             )
             
-            val dayChange = historicalValues.firstOrNull()?.dayChange
-            val dayChangePercent = historicalValues.firstOrNull()?.dayChangePercent
+            // ASC-ordered list: last element is the most-recent sample in the window.
+            val latestRecentValue = recentValues.lastOrNull()
+            val dayChange = latestRecentValue?.dayChange
+            val dayChangePercent = latestRecentValue?.dayChangePercent
             
-            val allTimeHigh = if (historicalValues.isNotEmpty()) {
-                historicalValues.maxByOrNull { it.price }?.price
-            } else null
-            
-            val allTimeLow = if (historicalValues.isNotEmpty()) {
-                historicalValues.minByOrNull { it.price }?.price
-            } else null
+            // True all-time high/low: query from epoch 0 (all recorded history)
+            val allTimeHigh = investmentValueDao.getMaxPrice(investmentId, 0L)
+            val allTimeLow = investmentValueDao.getMinPrice(investmentId, 0L)
             
             InvestmentPerformance(
                 investment = investment,

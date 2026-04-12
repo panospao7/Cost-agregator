@@ -1600,14 +1600,23 @@ interface ExpenseDao {
     """)
     suspend fun getBusinessExpensesByProject(startDate: Long, endDate: Long): List<BusinessProjectTotal>
     
+    /**
+     * Business expenses that require a receipt but have none attached.
+     *
+     * Receipt linkage is tracked via `scanned_receipts.expenseId`, NOT via
+     * `expenses.rawNotificationId` (which records the originating notification,
+     * not receipt attachment).  A LEFT JOIN / IS NULL anti-join correctly
+     * identifies expenses with no linked receipt row.
+     */
     @Query("""
-        SELECT * FROM expenses 
-        WHERE isBusinessExpense = 1 
-        AND ${SPENDING_TYPE_SQL}
-        AND requiresReceipt = 1 
-        AND rawNotificationId IS NULL
-        AND date >= :startDate AND date < :endDate
-        ORDER BY date DESC
+        SELECT e.* FROM expenses e
+        LEFT JOIN scanned_receipts sr ON sr.expenseId = e.id
+        WHERE e.isBusinessExpense = 1 
+        AND ${SPENDING_TYPE_E_SQL}
+        AND e.requiresReceipt = 1 
+        AND sr.id IS NULL
+        AND e.date >= :startDate AND e.date < :endDate
+        ORDER BY e.date DESC
     """)
     suspend fun getBusinessExpensesMissingReceipts(startDate: Long, endDate: Long): List<Expense>
 }

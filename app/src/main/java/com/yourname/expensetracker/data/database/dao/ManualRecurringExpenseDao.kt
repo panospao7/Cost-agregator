@@ -42,7 +42,7 @@ interface ManualRecurringExpenseDao {
     suspend fun getByMerchant(merchant: String): ManualRecurringExpense?
     
     // CRUD operations
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(expense: ManualRecurringExpense): Long
     
     @Update

@@ -4,7 +4,10 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -19,14 +22,15 @@ class ScannedReceiptDaoTest {
 
     private lateinit var database: AppDatabase
     private lateinit var dao: ScannedReceiptDao
+    private lateinit var expenseDao: ExpenseDao
 
     @Before
     fun setup() {
-        database = Room.inMemoryDatabaseBuilder(
-            ApplicationProvider.getApplicationContext(),
-            AppDatabase::class.java
-        ).allowMainThreadQueries().build()
+        database = AppDatabase.inMemoryBuilder(
+            ApplicationProvider.getApplicationContext()
+        ).build()
         dao = database.scannedReceiptDao()
+        expenseDao = database.expenseDao()
     }
 
     @After
@@ -48,6 +52,17 @@ class ScannedReceiptDaoTest {
         parsedTaxAmount = 1.50,
         confidence = 0.92f,
         createdAt = createdAt
+    )
+
+    private fun makeExpense(
+        amount: Double = 12.50,
+        merchant: String = "Test Store",
+        date: Long = System.currentTimeMillis()
+    ) = Expense(
+        amount = amount,
+        merchant = merchant,
+        transactionType = TransactionType.PURCHASE,
+        date = date
     )
 
     @Test
@@ -100,5 +115,49 @@ class ScannedReceiptDaoTest {
 
         assertNull(dao.getById(id))
         assertEquals(0, dao.getCount())
+    }
+
+    // ── B.4 Batch 9: receipt status lifecycle after linking ───────────────
+
+    @Test
+    fun linkToExpense_transitionsMatchStatusToAutoMatched() = runBlocking {
+        // Insert parent expense (FK target)
+        val expenseId = expenseDao.insert(makeExpense())
+
+        // Insert an unmatched receipt
+        val receiptId = dao.insert(makeReceipt())
+
+        // Precondition: receipt starts UNMATCHED
+        val before = dao.getById(receiptId)!!
+        assertEquals(MatchStatus.UNMATCHED, before.matchStatus)
+        assertNull(before.expenseId)
+
+        // Act: link
+        dao.linkToExpense(receiptId, expenseId)
+
+        // Assert: status transitions to AUTO_MATCHED and expenseId is set
+        val after = dao.getById(receiptId)!!
+        assertEquals(MatchStatus.AUTO_MATCHED, after.matchStatus)
+        assertEquals(expenseId, after.expenseId)
+    }
+
+    @Test
+    fun linkToExpense_doesNotAppearInUnmatchedResults() = runBlocking {
+        val expenseId = expenseDao.insert(makeExpense())
+        val linkedId = dao.insert(makeReceipt(rawOcrText = "linked"))
+        val unmatchedId = dao.insert(makeReceipt(rawOcrText = "still unmatched"))
+
+        dao.linkToExpense(linkedId, expenseId)
+
+        val unmatched = dao.getUnmatchedReceipts()
+        assertEquals(1, unmatched.size)
+        assertEquals("still unmatched", unmatched[0].rawOcrText)
+    }
+
+    @Test
+    fun newReceipt_defaultsToUnmatched() = runBlocking {
+        val id = dao.insert(makeReceipt())
+        val receipt = dao.getById(id)!!
+        assertEquals(MatchStatus.UNMATCHED, receipt.matchStatus)
     }
 }

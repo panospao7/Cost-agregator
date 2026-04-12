@@ -60,7 +60,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
         StressForecastSnapshot::class,
         EmailReceiptSource::class
     ],
-    version = 70,
+    version = 79,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -3732,6 +3732,1451 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Migration 70 -> 71: Group schema integrity — enforce deterministic uniqueness.
+        // - One current user per group: partial unique index on group_members(groupId)
+        //   WHERE isCurrentUser = 1. Duplicate current-user rows are demoted to
+        //   isCurrentUser = 0 (not deleted — they may be referenced by
+        //   group_expenses.paidById which has ON DELETE RESTRICT). The row with the
+        //   largest id per group is retained as isCurrentUser = 1.
+        // - One linked system expense per non-null expenseId in group_expenses: partial
+        //   unique index on group_expenses(expenseId) WHERE expenseId IS NOT NULL.
+        //   Duplicate rows are deduplicated first, keeping the row with the smallest id.
+        // Trigger-based paidById same-group enforcement is explicitly OUT OF SCOPE.
+        val MIGRATION_70_71 = object : androidx.room.migration.Migration(70, 71) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    // ── 1. group_members: one current user per group ──────────────
+
+                    // Demotion rule: among duplicate current-user rows for the same
+                    // groupId, keep the one with the LARGEST id as isCurrentUser = 1
+                    // and demote all others to isCurrentUser = 0.  This avoids
+                    // deleting rows that may be referenced by group_expenses.paidById
+                    // (ON DELETE RESTRICT) and preserves member data.
+                    database.execSQL(
+                        """
+                        UPDATE group_members
+                        SET isCurrentUser = 0
+                        WHERE isCurrentUser = 1
+                          AND id NOT IN (
+                              SELECT MAX(id)
+                              FROM group_members
+                              WHERE isCurrentUser = 1
+                              GROUP BY groupId
+                          )
+                        """.trimIndent()
+                    )
+
+                    // Partial unique index: at most one row with isCurrentUser = 1 per group.
+                    // Rows with isCurrentUser = 0 are unconstrained.
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                            "index_group_members_groupId_currentUser " +
+                            "ON group_members (groupId) WHERE isCurrentUser = 1"
+                    )
+
+                    // ── 2. group_expenses: one linked expense per non-null expenseId ──
+
+                    // Retention rule: among duplicate non-null expenseId rows, keep
+                    // the one with the SMALLEST id.
+                    database.execSQL(
+                        """
+                        DELETE FROM group_expenses
+                        WHERE expenseId IS NOT NULL
+                          AND id NOT IN (
+                              SELECT MIN(id)
+                              FROM group_expenses
+                              WHERE expenseId IS NOT NULL
+                              GROUP BY expenseId
+                          )
+                        """.trimIndent()
+                    )
+
+                    // Partial unique index: at most one row per non-null expenseId.
+                    // Rows with expenseId IS NULL are unconstrained (standalone group expenses).
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                            "index_group_expenses_expenseId_unique " +
+                            "ON group_expenses (expenseId) WHERE expenseId IS NOT NULL"
+                    )
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Migration 71 -> 72: B4 — Budget / recurring / category contract cleanup.
+        //
+        // Budget:
+        //  - Demote duplicate active overall budgets (categoryId IS NULL) and
+        //    duplicate active per-category budgets, keeping the row with the
+        //    largest id as active.
+        //  - Create two partial unique indexes to prevent future duplicates:
+        //    one for active overall budgets, one for active category budgets.
+        //
+        // Recurring:
+        //  - Change the SQL DEFAULT for isSubscription from 1 to 0 on
+        //    manual_recurring_expenses. Existing stored rows are preserved.
+        //    Requires table rebuild because ALTER TABLE cannot change defaults.
+        //  - Child tables subscription_price_history and subscription_usage
+        //    reference manual_recurring_expenses(id) with ON DELETE CASCADE.
+        //    FK enforcement must be disabled before the transaction so the
+        //    table-swap does not cascade-delete child rows.  We verify no FK
+        //    violations remain after the rebuild.
+        //
+        // Category: no schema change — the seeding race fix is purely in Kotlin.
+        val MIGRATION_71_72 = object : androidx.room.migration.Migration(71, 72) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Record whether FK enforcement was on so we restore the same state.
+                val fkWasEnabled = database.query("PRAGMA foreign_keys").use {
+                    it.moveToFirst(); it.getInt(0) == 1
+                }
+                // Disable FK enforcement BEFORE the transaction.  Some SQLite
+                // versions silently ignore PRAGMA foreign_keys changes issued
+                // inside an active transaction.
+                if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                try {
+                    database.beginTransaction()
+                    try {
+                        // ── 1. Budget: demote duplicate active overall budgets ──────────
+                        database.execSQL(
+                            """
+                            UPDATE budgets
+                            SET isActive = 0
+                            WHERE categoryId IS NULL
+                              AND isActive = 1
+                              AND id NOT IN (
+                                  SELECT MAX(id)
+                                  FROM budgets
+                                  WHERE categoryId IS NULL AND isActive = 1
+                              )
+                            """.trimIndent()
+                        )
+
+                        // ── 2. Budget: demote duplicate active per-category budgets ─────
+                        database.execSQL(
+                            """
+                            UPDATE budgets
+                            SET isActive = 0
+                            WHERE categoryId IS NOT NULL
+                              AND isActive = 1
+                              AND id NOT IN (
+                                  SELECT MAX(id)
+                                  FROM budgets
+                                  WHERE categoryId IS NOT NULL AND isActive = 1
+                                  GROUP BY categoryId
+                              )
+                            """.trimIndent()
+                        )
+
+                        // ── 3. Budget: partial unique index for active overall ──────────
+                        database.execSQL(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                                "index_budgets_active_overall " +
+                                "ON budgets (isActive) WHERE isActive = 1 AND categoryId IS NULL"
+                        )
+
+                        // ── 4. Budget: partial unique index for active per-category ─────
+                        database.execSQL(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                                "index_budgets_active_category " +
+                                "ON budgets (categoryId) WHERE isActive = 1 AND categoryId IS NOT NULL"
+                        )
+
+                        // ── 5. Recurring: rebuild table to change isSubscription default ─
+                        // FK enforcement is OFF, so dropping the old parent table will not
+                        // cascade-delete rows in subscription_price_history or subscription_usage.
+                        database.execSQL(
+                            """
+                            CREATE TABLE manual_recurring_expenses_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                merchant TEXT NOT NULL,
+                                amount REAL NOT NULL,
+                                currency TEXT NOT NULL DEFAULT 'EUR',
+                                frequency TEXT NOT NULL,
+                                nextDate INTEGER NOT NULL,
+                                note TEXT,
+                                createdAt INTEGER NOT NULL,
+                                isSubscription INTEGER NOT NULL DEFAULT 0,
+                                subscriptionCategory TEXT,
+                                usageTargetPerMonth INTEGER,
+                                cancellationUrl TEXT,
+                                isActive INTEGER NOT NULL DEFAULT 1
+                            )
+                            """.trimIndent()
+                        )
+
+                        database.execSQL(
+                            """
+                            INSERT INTO manual_recurring_expenses_new (
+                                id, merchant, amount, currency, frequency, nextDate, note,
+                                createdAt, isSubscription, subscriptionCategory,
+                                usageTargetPerMonth, cancellationUrl, isActive
+                            )
+                            SELECT
+                                id, merchant, amount, currency, frequency, nextDate, note,
+                                createdAt, isSubscription, subscriptionCategory,
+                                usageTargetPerMonth, cancellationUrl, isActive
+                            FROM manual_recurring_expenses
+                            """.trimIndent()
+                        )
+
+                        database.execSQL("DROP TABLE manual_recurring_expenses")
+                        database.execSQL("ALTER TABLE manual_recurring_expenses_new RENAME TO manual_recurring_expenses")
+
+                        // Recreate indices on manual_recurring_expenses
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_isActive_nextDate ON manual_recurring_expenses (isActive, nextDate)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_isSubscription_isActive_nextDate ON manual_recurring_expenses (isSubscription, isActive, nextDate)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_merchant ON manual_recurring_expenses (merchant)")
+
+                        // ── 6. Post-rebuild FK verification ─────────────────────────────
+                        // Verify that no FK violations were introduced by the rebuild.
+                        database.query("PRAGMA foreign_key_check").use { violations ->
+                            if (violations.moveToFirst()) {
+                                throw IllegalStateException(
+                                    "Migration 71→72 produced FK violations"
+                                )
+                            }
+                        }
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
+                } finally {
+                    // Restore FK enforcement to its original state AFTER the transaction.
+                    if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
+                }
+            }
+        }
+
+        // Migration 72 -> 73: B4 Batch 5 — Merchant identity / location / correction hardening.
+        //
+        // merchant_canonicals:
+        //  - Enforce UNIQUE on searchKey (was non-unique index).
+        //  - Dedup existing duplicates, keeping the row with the largest id per searchKey.
+        //
+        // merchant_aliases:
+        //  - Enforce UNIQUE on normalizedKey (was non-unique index).
+        //  - Dedup existing duplicates, keeping the row with the largest id per normalizedKey.
+        //
+        // merchant_locations:
+        //  - Make areaKey NOT NULL with DEFAULT 'global'.
+        //  - Backfill legacy NULL rows to 'global'.
+        //  - Dedup collisions created by backfill (prefer higher hitCount, tie-break by larger id).
+        //  - Rebuild table to enforce NOT NULL at the schema level.
+        //
+        // user_corrections:
+        //  - No schema change. The DAO-layer fix (REPLACE→ABORT, deterministic tie-breaks)
+        //    is purely in Kotlin and does not require a migration step.
+        val MIGRATION_72_73 = object : androidx.room.migration.Migration(72, 73) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    // ── 1. merchant_canonicals: unique searchKey ─────────────────────
+                    // Repoint aliases from discarded canonical ids to the survivor
+                    // BEFORE deleting duplicates, so ON DELETE CASCADE does not
+                    // silently drop aliases tied to the loser rows.
+                    database.execSQL(
+                        """
+                        UPDATE merchant_aliases
+                        SET canonicalId = (
+                            SELECT MAX(mc2.id)
+                            FROM merchant_canonicals mc2
+                            WHERE mc2.searchKey = (
+                                SELECT mc3.searchKey
+                                FROM merchant_canonicals mc3
+                                WHERE mc3.id = merchant_aliases.canonicalId
+                            )
+                        )
+                        WHERE canonicalId NOT IN (
+                            SELECT MAX(id)
+                            FROM merchant_canonicals
+                            GROUP BY searchKey
+                        )
+                        """.trimIndent()
+                    )
+
+                    // Dedup: keep the row with the largest id per searchKey.
+                    database.execSQL(
+                        """
+                        DELETE FROM merchant_canonicals
+                        WHERE id NOT IN (
+                            SELECT MAX(id)
+                            FROM merchant_canonicals
+                            GROUP BY searchKey
+                        )
+                        """.trimIndent()
+                    )
+
+                    // Drop the old non-unique index and create a unique one.
+                    database.execSQL("DROP INDEX IF EXISTS index_merchant_canonicals_searchKey")
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_canonicals_searchKey " +
+                            "ON merchant_canonicals (searchKey)"
+                    )
+
+                    // ── 2. merchant_aliases: unique normalizedKey ────────────────────
+
+                    // Dedup: keep the row with the largest id per normalizedKey.
+                    database.execSQL(
+                        """
+                        DELETE FROM merchant_aliases
+                        WHERE id NOT IN (
+                            SELECT MAX(id)
+                            FROM merchant_aliases
+                            GROUP BY normalizedKey
+                        )
+                        """.trimIndent()
+                    )
+
+                    // Drop the old non-unique index and create a unique one.
+                    database.execSQL("DROP INDEX IF EXISTS index_merchant_aliases_normalizedKey")
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_aliases_normalizedKey " +
+                            "ON merchant_aliases (normalizedKey)"
+                    )
+
+                    // ── 3. merchant_locations: non-null areaKey ──────────────────────
+
+                    // Normalize legacy "<key>|global" areaKey values to plain "global".
+                    database.execSQL(
+                        "UPDATE merchant_locations SET areaKey = 'global' WHERE areaKey LIKE '%|global'"
+                    )
+
+                    // Backfill NULL areaKey rows to 'global' before rebuild.
+                    database.execSQL(
+                        "UPDATE merchant_locations SET areaKey = 'global' WHERE areaKey IS NULL"
+                    )
+
+                    // Dedup collisions: after backfilling NULL→'global', rows may collide
+                    // on (normalizedMerchantName, areaKey).
+                    // Retain the row with the highest hitCount; tie-break by largest id.
+                    database.execSQL(
+                        """
+                        DELETE FROM merchant_locations
+                        WHERE id NOT IN (
+                            SELECT id FROM (
+                                SELECT MAX(
+                                    CASE
+                                        WHEN hitCount = maxHit THEN id
+                                        ELSE 0
+                                    END
+                                ) AS id
+                                FROM (
+                                    SELECT ml.id, ml.normalizedMerchantName, ml.areaKey,
+                                           ml.hitCount,
+                                           max_tbl.maxHit
+                                    FROM merchant_locations ml
+                                    INNER JOIN (
+                                        SELECT normalizedMerchantName, areaKey, MAX(hitCount) AS maxHit
+                                        FROM merchant_locations
+                                        GROUP BY normalizedMerchantName, areaKey
+                                    ) max_tbl ON ml.normalizedMerchantName = max_tbl.normalizedMerchantName
+                                              AND ml.areaKey = max_tbl.areaKey
+                                )
+                                GROUP BY normalizedMerchantName, areaKey
+                            )
+                        )
+                        """.trimIndent()
+                    )
+
+                    // Rebuild table with areaKey NOT NULL DEFAULT 'global'.
+                    database.execSQL(
+                        """
+                        CREATE TABLE merchant_locations_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            normalizedMerchantName TEXT NOT NULL,
+                            areaKey TEXT NOT NULL DEFAULT 'global',
+                            displayName TEXT NOT NULL,
+                            latitude REAL NOT NULL,
+                            longitude REAL NOT NULL,
+                            source TEXT NOT NULL,
+                            osmId TEXT,
+                            displayAddress TEXT,
+                            confidence REAL NOT NULL DEFAULT 1.0,
+                            lastResolvedAt INTEGER NOT NULL,
+                            hitCount INTEGER NOT NULL DEFAULT 1
+                        )
+                        """.trimIndent()
+                    )
+
+                    database.execSQL(
+                        """
+                        INSERT INTO merchant_locations_new (
+                            id, normalizedMerchantName, areaKey, displayName,
+                            latitude, longitude, source, osmId, displayAddress,
+                            confidence, lastResolvedAt, hitCount
+                        )
+                        SELECT
+                            id, normalizedMerchantName, areaKey, displayName,
+                            latitude, longitude, source, osmId, displayAddress,
+                            confidence, lastResolvedAt, hitCount
+                        FROM merchant_locations
+                        """.trimIndent()
+                    )
+
+                    database.execSQL("DROP TABLE merchant_locations")
+                    database.execSQL("ALTER TABLE merchant_locations_new RENAME TO merchant_locations")
+
+                    // Recreate indices on merchant_locations.
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                            "index_merchant_locations_normalizedMerchantName_areaKey " +
+                            "ON merchant_locations (normalizedMerchantName, areaKey)"
+                    )
+                    database.execSQL(
+                        "CREATE INDEX IF NOT EXISTS index_merchant_locations_lastResolvedAt " +
+                            "ON merchant_locations (lastResolvedAt)"
+                    )
+
+                    // ── 4. merchant_location_corrections: normalize legacy global areaKey ─
+                    // Older code wrote areaKey as "<merchant>|global" for global corrections.
+                    // v73 runtime writes plain "global", so both forms can coexist for the
+                    // same merchant, defeating the composite unique key.  Normalize here.
+
+                    // Normalize legacy "<anything>|global" to plain "global".
+                    database.execSQL(
+                        "UPDATE merchant_location_corrections SET areaKey = 'global' WHERE areaKey LIKE '%|global'"
+                    )
+
+                    // Dedup collisions: after normalizing, rows may collide on
+                    // (normalizedMerchantName, areaKey).
+                    // Retain the row with the largest id (newest correction wins).
+                    database.execSQL(
+                        """
+                        DELETE FROM merchant_location_corrections
+                        WHERE id NOT IN (
+                            SELECT MAX(id)
+                            FROM merchant_location_corrections
+                            GROUP BY normalizedMerchantName, areaKey
+                        )
+                        """.trimIndent()
+                    )
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Migration 73 -> 74: B4 Batch 6 — Bank / email / notification / alert hardening.
+        //
+        // bank_connections:
+        //  - Add FK from defaultCategoryId → categories(id) ON DELETE SET NULL.
+        //  - Add supporting index on defaultCategoryId.
+        //  - Table rebuild required because ALTER TABLE cannot add FK constraints.
+        //
+        // email_receipt_sources:
+        //  - REPLACE→ABORT/IGNORE change is DAO-only — no schema migration needed.
+        //    The emailMessageId unique index already exists (partial, WHERE NOT NULL).
+        //
+        // raw_notifications:
+        //  - Close NULL != NULL loophole on the 4-column unique index.
+        //  - Drop the old unique index and replace with two partial unique indexes:
+        //    (a) for rows where title AND text are NOT NULL (standard unique).
+        //    (b) for rows where title IS NULL AND text IS NULL (partial unique on
+        //        packageName+timestamp only).
+        //  - Dedup existing bad rows before adding partial indexes.
+        //  - Keep the old non-unique 4-column index for query coverage.
+        //
+        // anomaly_alerts:
+        //  - Add FK from expenseId → expenses(id) ON DELETE CASCADE.
+        //  - Delete orphaned rows before adding FK.
+        //  - Table rebuild required.
+        val MIGRATION_73_74 = object : androidx.room.migration.Migration(73, 74) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // FK enforcement must be disabled before table rebuilds to avoid
+                // cascade side-effects during the rename-swap pattern.
+                val fkWasEnabled = database.query("PRAGMA foreign_keys").use {
+                    it.moveToFirst(); it.getInt(0) == 1
+                }
+                if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                try {
+                    database.beginTransaction()
+                    try {
+                        // ── 1. bank_connections: add FK + index for defaultCategoryId ──
+
+                        // Clean orphaned defaultCategoryId references before adding FK.
+                        database.execSQL(
+                            """
+                            UPDATE bank_connections
+                            SET defaultCategoryId = NULL
+                            WHERE defaultCategoryId IS NOT NULL
+                              AND defaultCategoryId NOT IN (SELECT id FROM categories)
+                            """.trimIndent()
+                        )
+
+                        database.execSQL(
+                            """
+                            CREATE TABLE bank_connections_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                bankId TEXT NOT NULL,
+                                bankName TEXT NOT NULL,
+                                countryCode TEXT NOT NULL,
+                                accessToken TEXT,
+                                refreshToken TEXT,
+                                tokenEncryptionVersion INTEGER NOT NULL DEFAULT 0,
+                                tokenExpiry INTEGER,
+                                isActive INTEGER NOT NULL DEFAULT 0,
+                                isConnected INTEGER NOT NULL DEFAULT 0,
+                                lastSync INTEGER,
+                                lastSyncStatus TEXT NOT NULL DEFAULT 'NEVER',
+                                autoSync INTEGER NOT NULL DEFAULT 1,
+                                syncFrequency TEXT NOT NULL DEFAULT 'DAILY',
+                                defaultCategoryId INTEGER,
+                                lastError TEXT,
+                                lastErrorTime INTEGER,
+                                consecutiveErrors INTEGER NOT NULL DEFAULT 0,
+                                createdAt INTEGER NOT NULL,
+                                FOREIGN KEY (defaultCategoryId) REFERENCES categories(id) ON DELETE SET NULL
+                            )
+                            """.trimIndent()
+                        )
+
+                        database.execSQL(
+                            """
+                            INSERT INTO bank_connections_new (
+                                id, bankId, bankName, countryCode,
+                                accessToken, refreshToken, tokenEncryptionVersion, tokenExpiry,
+                                isActive, isConnected, lastSync, lastSyncStatus,
+                                autoSync, syncFrequency, defaultCategoryId,
+                                lastError, lastErrorTime, consecutiveErrors, createdAt
+                            )
+                            SELECT
+                                id, bankId, bankName, countryCode,
+                                accessToken, refreshToken, tokenEncryptionVersion, tokenExpiry,
+                                isActive, isConnected, lastSync, lastSyncStatus,
+                                autoSync, syncFrequency, defaultCategoryId,
+                                lastError, lastErrorTime, consecutiveErrors, createdAt
+                            FROM bank_connections
+                            """.trimIndent()
+                        )
+
+                        database.execSQL("DROP TABLE bank_connections")
+                        database.execSQL("ALTER TABLE bank_connections_new RENAME TO bank_connections")
+
+                        // Recreate indices.
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_bank_connections_bankId ON bank_connections(bankId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_isActive ON bank_connections(isActive)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_lastSync ON bank_connections(lastSync)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_defaultCategoryId ON bank_connections(defaultCategoryId)")
+
+                        // ── 2. raw_notifications: close NULL loophole ─────────────────
+
+                        // Dedup rows with NULL title AND NULL text that share the same
+                        // packageName+timestamp. Keep the row with the smallest id.
+                        database.execSQL(
+                            """
+                            DELETE FROM raw_notifications
+                            WHERE title IS NULL AND text IS NULL
+                              AND id NOT IN (
+                                  SELECT MIN(id)
+                                  FROM raw_notifications
+                                  WHERE title IS NULL AND text IS NULL
+                                  GROUP BY packageName, timestamp
+                              )
+                            """.trimIndent()
+                        )
+
+                        // Also dedup rows with NULL title (text NOT NULL) — same loophole.
+                        database.execSQL(
+                            """
+                            DELETE FROM raw_notifications
+                            WHERE title IS NULL AND text IS NOT NULL
+                              AND id NOT IN (
+                                  SELECT MIN(id)
+                                  FROM raw_notifications
+                                  WHERE title IS NULL AND text IS NOT NULL
+                                  GROUP BY packageName, timestamp, text
+                              )
+                            """.trimIndent()
+                        )
+
+                        // Dedup rows with NULL text (title NOT NULL).
+                        database.execSQL(
+                            """
+                            DELETE FROM raw_notifications
+                            WHERE text IS NULL AND title IS NOT NULL
+                              AND id NOT IN (
+                                  SELECT MIN(id)
+                                  FROM raw_notifications
+                                  WHERE text IS NULL AND title IS NOT NULL
+                                  GROUP BY packageName, timestamp, title
+                              )
+                            """.trimIndent()
+                        )
+
+                        // Drop the old non-covering unique index.
+                        database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_packageName_timestamp_title_text")
+
+                        // Partial unique index: rows where BOTH title and text are NOT NULL.
+                        database.execSQL(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                                "index_raw_notifications_dedup_nonnull " +
+                                "ON raw_notifications (packageName, timestamp, title, text) " +
+                                "WHERE title IS NOT NULL AND text IS NOT NULL"
+                        )
+
+                        // Partial unique index: rows where BOTH title and text are NULL.
+                        database.execSQL(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                                "index_raw_notifications_dedup_both_null " +
+                                "ON raw_notifications (packageName, timestamp) " +
+                                "WHERE title IS NULL AND text IS NULL"
+                        )
+
+                        // Partial unique index: title IS NULL, text IS NOT NULL.
+                        database.execSQL(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                                "index_raw_notifications_dedup_title_null " +
+                                "ON raw_notifications (packageName, timestamp, text) " +
+                                "WHERE title IS NULL AND text IS NOT NULL"
+                        )
+
+                        // Partial unique index: text IS NULL, title IS NOT NULL.
+                        database.execSQL(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                                "index_raw_notifications_dedup_text_null " +
+                                "ON raw_notifications (packageName, timestamp, title) " +
+                                "WHERE text IS NULL AND title IS NOT NULL"
+                        )
+
+                        // Re-create a non-unique covering index for query performance
+                        // (replaces the dropped unique index for SELECT/ORDER BY coverage).
+                        database.execSQL(
+                            "CREATE INDEX IF NOT EXISTS " +
+                                "index_raw_notifications_packageName_timestamp_title_text " +
+                                "ON raw_notifications (packageName, timestamp, title, text)"
+                        )
+
+                        // ── 3. anomaly_alerts: add FK to expenses ─────────────────────
+
+                        // Delete orphaned alerts whose expense no longer exists.
+                        database.execSQL(
+                            """
+                            DELETE FROM anomaly_alerts
+                            WHERE expenseId NOT IN (SELECT id FROM expenses)
+                            """.trimIndent()
+                        )
+
+                        // Rebuild table with FK constraint.
+                        database.execSQL(
+                            """
+                            CREATE TABLE anomaly_alerts_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                expenseId INTEGER NOT NULL,
+                                merchant TEXT NOT NULL,
+                                category TEXT,
+                                amount REAL NOT NULL,
+                                anomalyReason TEXT NOT NULL,
+                                severity TEXT NOT NULL,
+                                alertedAt INTEGER NOT NULL,
+                                dismissed INTEGER NOT NULL DEFAULT 0,
+                                dismissedAt INTEGER,
+                                userFeedback TEXT,
+                                FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE CASCADE
+                            )
+                            """.trimIndent()
+                        )
+
+                        database.execSQL(
+                            """
+                            INSERT INTO anomaly_alerts_new (
+                                id, expenseId, merchant, category, amount,
+                                anomalyReason, severity, alertedAt, dismissed,
+                                dismissedAt, userFeedback
+                            )
+                            SELECT
+                                id, expenseId, merchant, category, amount,
+                                anomalyReason, severity, alertedAt, dismissed,
+                                dismissedAt, userFeedback
+                            FROM anomaly_alerts
+                            """.trimIndent()
+                        )
+
+                        database.execSQL("DROP TABLE anomaly_alerts")
+                        database.execSQL("ALTER TABLE anomaly_alerts_new RENAME TO anomaly_alerts")
+
+                        // Recreate indices.
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_anomaly_alerts_expenseId ON anomaly_alerts(expenseId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_anomaly_alerts_merchant_alertedAt ON anomaly_alerts(merchant, alertedAt)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_anomaly_alerts_severity_alertedAt ON anomaly_alerts(severity, alertedAt)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_anomaly_alerts_dismissed_alertedAt ON anomaly_alerts(dismissed, alertedAt)")
+
+                        // ── 4. Post-rebuild FK verification ───────────────────────────
+                        if (fkWasEnabled) {
+                            database.query("PRAGMA foreign_key_check").use { violations ->
+                                if (violations.moveToFirst()) {
+                                    throw IllegalStateException(
+                                        "Migration 73→74 produced FK violations"
+                                    )
+                                }
+                            }
+                        }
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
+                } finally {
+                    if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
+                }
+            }
+        }
+
+        // ── Migration 74 → 75 ───────────────────────────────────────────────────
+        // Batch 7: subscription_candidates + budget_forecasts uniqueness constraints.
+        //
+        //  subscription_candidates:
+        //  - Dedup pending candidates with duplicate (canonicalMerchant, detectedInterval).
+        //  - Create partial unique index on (canonicalMerchant, detectedInterval)
+        //    WHERE isConverted = 0 AND userAction = 'pending'.
+        //
+        //  budget_forecasts:
+        //  - Demote duplicate active forecasts for the same (budgetId, targetPeriodStart,
+        //    targetPeriodEnd) by setting isActive = 0 on all but the latest (MAX id).
+        //  - Create partial unique index on (budgetId, targetPeriodStart, targetPeriodEnd)
+        //    WHERE isActive = 1.
+        val MIGRATION_74_75 = object : androidx.room.migration.Migration(74, 75) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    // ── 1. subscription_candidates: dedup pending duplicates ──────
+
+                    // Among pending candidates (isConverted = 0 AND userAction = 'pending')
+                    // with the same (canonicalMerchant, detectedInterval), delete all but
+                    // the row with the largest id.
+                    database.execSQL(
+                        """
+                        DELETE FROM subscription_candidates
+                        WHERE isConverted = 0 AND userAction = 'pending'
+                          AND id NOT IN (
+                              SELECT MAX(id)
+                              FROM subscription_candidates
+                              WHERE isConverted = 0 AND userAction = 'pending'
+                              GROUP BY canonicalMerchant, detectedInterval
+                          )
+                        """.trimIndent()
+                    )
+
+                    // Create partial unique index to prevent future duplicates.
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                            "index_subscription_candidates_pending_merchant_interval " +
+                            "ON subscription_candidates (canonicalMerchant, detectedInterval) " +
+                            "WHERE isConverted = 0 AND userAction = 'pending'"
+                    )
+
+                    // ── 2. budget_forecasts: demote duplicate active forecasts ────
+
+                    // Among active forecasts (isActive = 1) with the same
+                    // (budgetId, targetPeriodStart, targetPeriodEnd), demote all but
+                    // the row with the largest id to isActive = 0.
+                    database.execSQL(
+                        """
+                        UPDATE budget_forecasts
+                        SET isActive = 0
+                        WHERE isActive = 1
+                          AND id NOT IN (
+                              SELECT MAX(id)
+                              FROM budget_forecasts
+                              WHERE isActive = 1
+                              GROUP BY budgetId, targetPeriodStart, targetPeriodEnd
+                          )
+                        """.trimIndent()
+                    )
+
+                    // Create partial unique index to prevent future duplicates.
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                            "index_budget_forecasts_active_budget_period " +
+                            "ON budget_forecasts (budgetId, targetPeriodStart, targetPeriodEnd) " +
+                            "WHERE isActive = 1"
+                    )
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // ─── Migration 75 → 76 (B4 Batch 8): Financial / auxiliary contract wave ────
+        //
+        // Adds DB-level CHECK constraints and FK hardening for:
+        //   savings_goals   — targetAmount > 0, currentAmount >= 0
+        //   mileage_tracking — distanceKm > 0, deductionRatePerKm >= 0,
+        //                      odometer ordering, fuelCost >= 0
+        //   pending_reviews  — suggestedAmount > 0, suggestedType ∈ known enum set
+        //   expenses         — splitTemplateId FK → split_templates(id) ON DELETE SET NULL
+        //   budgets          — amount > 0, threshold ordering (warning ≤ critical)
+        //
+        // Each table requiring new CHECK constraints is rebuilt (rename-swap) because
+        // CHECK constraints are part of CREATE TABLE DDL in SQLite and cannot be added
+        // via ALTER TABLE.
+        //
+        // Data cleanup runs BEFORE constraint addition to avoid migration failures:
+        //   - savings_goals:   clamp targetAmount ≤ 0 → 0.01; clamp currentAmount < 0 → 0
+        //   - mileage_tracking: clamp distanceKm ≤ 0 → 0.01; clamp deductionRatePerKm < 0 → 0;
+        //                       swap inverted odometers; clamp fuelCost < 0 → 0
+        //   - pending_reviews:  coerce unknown suggestedType → 'UNKNOWN';
+        //                       clamp suggestedAmount ≤ 0 → 0.01
+        //   - expenses:         orphan splitTemplateId → NULL (FK cleanup)
+        //   - budgets:          clamp amount ≤ 0 → 0.01; fix threshold ordering
+        val MIGRATION_75_76 = object : androidx.room.migration.Migration(75, 76) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // FK enforcement must be OFF for table rebuilds.
+                val fkWasEnabled = database.query("PRAGMA foreign_keys").use {
+                    it.moveToFirst(); it.getInt(0) == 1
+                }
+                if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                try {
+                    database.beginTransaction()
+                    try {
+                        // ── 1. savings_goals: data cleanup + rebuild with CHECKs ────────
+
+                        // Clamp invalid values
+                        database.execSQL("UPDATE savings_goals SET targetAmount = 0.01 WHERE targetAmount <= 0")
+                        database.execSQL("UPDATE savings_goals SET currentAmount = 0 WHERE currentAmount < 0")
+
+                        database.execSQL(
+                            """
+                            CREATE TABLE savings_goals_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                name TEXT NOT NULL,
+                                targetAmount REAL NOT NULL CHECK(targetAmount > 0),
+                                currentAmount REAL NOT NULL DEFAULT 0.0 CHECK(currentAmount >= 0),
+                                targetDate INTEGER,
+                                protectionLevel TEXT NOT NULL,
+                                createdAt INTEGER NOT NULL
+                            )
+                            """.trimIndent()
+                        )
+                        database.execSQL(
+                            """
+                            INSERT INTO savings_goals_new (id, name, targetAmount, currentAmount, targetDate, protectionLevel, createdAt)
+                            SELECT id, name, targetAmount, currentAmount, targetDate, protectionLevel, createdAt
+                            FROM savings_goals
+                            """.trimIndent()
+                        )
+                        database.execSQL("DROP TABLE savings_goals")
+                        database.execSQL("ALTER TABLE savings_goals_new RENAME TO savings_goals")
+
+                        // ── 2. mileage_tracking: data cleanup + rebuild with CHECKs ────
+
+                        // Clamp invalid distances and rates
+                        database.execSQL("UPDATE mileage_tracking SET distanceKm = 0.01 WHERE distanceKm <= 0")
+                        database.execSQL("UPDATE mileage_tracking SET deductionRatePerKm = 0 WHERE deductionRatePerKm < 0")
+                        database.execSQL("UPDATE mileage_tracking SET fuelCost = 0 WHERE fuelCost IS NOT NULL AND fuelCost < 0")
+
+                        // Fix inverted odometer pairs: swap when both present and end < start
+                        database.execSQL(
+                            """
+                            UPDATE mileage_tracking
+                            SET startOdometer = endOdometer,
+                                endOdometer = startOdometer
+                            WHERE startOdometer IS NOT NULL
+                              AND endOdometer IS NOT NULL
+                              AND endOdometer < startOdometer
+                            """.trimIndent()
+                        )
+
+                        database.execSQL(
+                            """
+                            CREATE TABLE mileage_tracking_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                date INTEGER NOT NULL,
+                                startOdometer REAL,
+                                endOdometer REAL,
+                                distanceKm REAL NOT NULL CHECK(distanceKm > 0),
+                                startLocation TEXT,
+                                endLocation TEXT,
+                                startLatitude REAL,
+                                startLongitude REAL,
+                                endLatitude REAL,
+                                endLongitude REAL,
+                                isBusinessTrip INTEGER NOT NULL DEFAULT 1,
+                                tripPurpose TEXT NOT NULL,
+                                businessProject TEXT,
+                                clientName TEXT,
+                                deductionRatePerKm REAL NOT NULL DEFAULT 0.30 CHECK(deductionRatePerKm >= 0),
+                                calculatedDeduction REAL,
+                                linkedExpenseId INTEGER,
+                                fuelCost REAL CHECK(fuelCost IS NULL OR fuelCost >= 0),
+                                notes TEXT,
+                                createdAt INTEGER NOT NULL,
+                                CHECK(endOdometer IS NULL OR startOdometer IS NULL OR endOdometer >= startOdometer),
+                                FOREIGN KEY(linkedExpenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                            )
+                            """.trimIndent()
+                        )
+                        database.execSQL(
+                            """
+                            INSERT INTO mileage_tracking_new (
+                                id, date, startOdometer, endOdometer, distanceKm,
+                                startLocation, endLocation, startLatitude, startLongitude,
+                                endLatitude, endLongitude, isBusinessTrip, tripPurpose,
+                                businessProject, clientName, deductionRatePerKm,
+                                calculatedDeduction, linkedExpenseId, fuelCost, notes, createdAt
+                            )
+                            SELECT
+                                id, date, startOdometer, endOdometer, distanceKm,
+                                startLocation, endLocation, startLatitude, startLongitude,
+                                endLatitude, endLongitude, isBusinessTrip, tripPurpose,
+                                businessProject, clientName, deductionRatePerKm,
+                                calculatedDeduction, linkedExpenseId, fuelCost, notes, createdAt
+                            FROM mileage_tracking
+                            """.trimIndent()
+                        )
+                        database.execSQL("DROP TABLE mileage_tracking")
+                        database.execSQL("ALTER TABLE mileage_tracking_new RENAME TO mileage_tracking")
+
+                        // Recreate mileage_tracking indexes
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_mileage_tracking_linkedExpenseId ON mileage_tracking (linkedExpenseId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_mileage_tracking_date ON mileage_tracking (date)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_mileage_tracking_isBusinessTrip ON mileage_tracking (isBusinessTrip)")
+
+                        // ── 3. pending_reviews: data cleanup + rebuild with CHECKs ──────
+
+                        // Coerce unknown suggestedType values to 'UNKNOWN'
+                        database.execSQL(
+                            """
+                            UPDATE pending_reviews
+                            SET suggestedType = 'UNKNOWN'
+                            WHERE suggestedType NOT IN ('PURCHASE', 'WITHDRAWAL', 'TRANSFER', 'DEPOSIT', 'UNKNOWN')
+                            """.trimIndent()
+                        )
+                        // Clamp non-positive suggestedAmount
+                        database.execSQL("UPDATE pending_reviews SET suggestedAmount = 0.01 WHERE suggestedAmount <= 0")
+
+                        database.execSQL(
+                            """
+                            CREATE TABLE pending_reviews_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                rawNotificationId INTEGER,
+                                scannedReceiptId INTEGER,
+                                suggestedAmount REAL NOT NULL CHECK(suggestedAmount > 0),
+                                suggestedCurrency TEXT NOT NULL,
+                                suggestedMerchant TEXT NOT NULL,
+                                suggestedMerchantKey TEXT,
+                                suggestedType TEXT NOT NULL CHECK(suggestedType IN ('PURCHASE', 'WITHDRAWAL', 'TRANSFER', 'DEPOSIT', 'UNKNOWN')),
+                                suggestedCategoryId INTEGER,
+                                suggestedDate INTEGER,
+                                confidence REAL NOT NULL,
+                                matchType TEXT,
+                                explanation TEXT,
+                                packageName TEXT NOT NULL,
+                                notificationTitle TEXT,
+                                notificationText TEXT,
+                                createdAt INTEGER NOT NULL,
+                                status TEXT NOT NULL DEFAULT 'PENDING',
+                                suggestedDirection TEXT,
+                                suggestedAccountName TEXT,
+                                suggestedLatitude REAL,
+                                suggestedLongitude REAL,
+                                FOREIGN KEY (rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
+                                FOREIGN KEY (scannedReceiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL
+                            )
+                            """.trimIndent()
+                        )
+                        database.execSQL(
+                            """
+                            INSERT INTO pending_reviews_new (
+                                id, rawNotificationId, scannedReceiptId, suggestedAmount,
+                                suggestedCurrency, suggestedMerchant, suggestedMerchantKey,
+                                suggestedType, suggestedCategoryId, suggestedDate, confidence,
+                                matchType, explanation, packageName, notificationTitle,
+                                notificationText, createdAt, status, suggestedDirection,
+                                suggestedAccountName, suggestedLatitude, suggestedLongitude
+                            )
+                            SELECT
+                                id, rawNotificationId, scannedReceiptId, suggestedAmount,
+                                suggestedCurrency, suggestedMerchant, suggestedMerchantKey,
+                                suggestedType, suggestedCategoryId, suggestedDate, confidence,
+                                matchType, explanation, packageName, notificationTitle,
+                                notificationText, createdAt, status, suggestedDirection,
+                                suggestedAccountName, suggestedLatitude, suggestedLongitude
+                            FROM pending_reviews
+                            """.trimIndent()
+                        )
+                        database.execSQL("DROP TABLE pending_reviews")
+                        database.execSQL("ALTER TABLE pending_reviews_new RENAME TO pending_reviews")
+
+                        // Recreate pending_reviews indexes
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_suggestedMerchantKey ON pending_reviews (suggestedMerchantKey)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_suggestedMerchantKey_suggestedDate ON pending_reviews (status, suggestedMerchantKey, suggestedDate)")
+
+                        // ── 4. expenses: FK cleanup + rebuild with splitTemplateId FK ───
+
+                        // Orphan cleanup: NULL out splitTemplateId values that reference
+                        // non-existent split_templates rows.
+                        database.execSQL(
+                            """
+                            UPDATE expenses
+                            SET splitTemplateId = NULL
+                            WHERE splitTemplateId IS NOT NULL
+                              AND splitTemplateId NOT IN (SELECT id FROM split_templates)
+                            """.trimIndent()
+                        )
+
+                        database.execSQL(
+                            """
+                            CREATE TABLE expenses_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                amount REAL NOT NULL,
+                                currency TEXT NOT NULL DEFAULT 'EUR',
+                                merchant TEXT NOT NULL,
+                                transactionType TEXT NOT NULL,
+                                date INTEGER NOT NULL,
+                                rawNotificationId INTEGER,
+                                categoryId INTEGER,
+                                createdAt INTEGER NOT NULL DEFAULT 0,
+                                paymentMethod TEXT NOT NULL DEFAULT 'UNKNOWN',
+                                isManualEntry INTEGER NOT NULL DEFAULT 0,
+                                notes TEXT,
+                                dedupeKey TEXT,
+                                transferDirection TEXT,
+                                transferAccountName TEXT,
+                                isNotMine INTEGER NOT NULL DEFAULT 0,
+                                ownerName TEXT,
+                                isSharedExpense INTEGER NOT NULL DEFAULT 0,
+                                sharedWithName TEXT,
+                                mySharePercentage INTEGER,
+                                myShareAmount REAL,
+                                latitude REAL,
+                                longitude REAL,
+                                locationSource TEXT,
+                                placeId TEXT,
+                                backfillAttempts INTEGER NOT NULL DEFAULT 0,
+                                resolvedAddress TEXT,
+                                merchantKey TEXT,
+                                isBusinessExpense INTEGER NOT NULL DEFAULT 0,
+                                businessPurpose TEXT,
+                                businessCategory TEXT,
+                                businessProject TEXT,
+                                requiresReceipt INTEGER NOT NULL DEFAULT 0,
+                                splitTemplateId INTEGER,
+                                splitVisualization TEXT,
+                                FOREIGN KEY (rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
+                                FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL,
+                                FOREIGN KEY (splitTemplateId) REFERENCES split_templates(id) ON DELETE SET NULL
+                            )
+                            """.trimIndent()
+                        )
+                        database.execSQL(
+                            """
+                            INSERT INTO expenses_new SELECT * FROM expenses
+                            """.trimIndent()
+                        )
+                        database.execSQL("DROP TABLE expenses")
+                        database.execSQL("ALTER TABLE expenses_new RENAME TO expenses")
+
+                        // Recreate all 15 expenses indexes (13 original + backfill + merchantKey_date_amount + splitTemplateId)
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_rawNotificationId ON expenses (rawNotificationId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_date ON expenses (date)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_date ON expenses (transactionType, date)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_categoryId_date ON expenses (transactionType, categoryId, date)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_categoryId_date ON expenses (categoryId, date)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_amount_merchant_date ON expenses (amount, merchant, date)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_merchant_date ON expenses (merchant, date)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_transactionType_merchant_date ON expenses (transactionType, merchant, date)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_expenses_dedupeKey ON expenses (dedupeKey)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_latitude_longitude ON expenses (latitude, longitude)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_latitude_backfillAttempts_date ON expenses (latitude, backfillAttempts, date)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_merchantKey ON expenses (merchantKey)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_merchantKey_date_amount ON expenses (merchantKey, date, amount)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_isBusinessExpense ON expenses (isBusinessExpense)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_splitTemplateId ON expenses (splitTemplateId)")
+
+                        // ── 5. budgets: data cleanup + rebuild with CHECKs ──────────────
+
+                        // Clamp non-positive amounts
+                        database.execSQL("UPDATE budgets SET amount = 0.01 WHERE amount <= 0")
+
+                        // Fix threshold ordering: ensure warning and critical are positive
+                        // and warning ≤ critical.
+                        database.execSQL("UPDATE budgets SET notifyAtWarning = 0.75 WHERE notifyAtWarning <= 0")
+                        database.execSQL("UPDATE budgets SET notifyAtCritical = 0.9 WHERE notifyAtCritical <= 0")
+                        // If warning > critical after cleanup, reset both to defaults
+                        database.execSQL(
+                            """
+                            UPDATE budgets
+                            SET notifyAtWarning = 0.75, notifyAtCritical = 0.9
+                            WHERE notifyAtWarning > notifyAtCritical
+                            """.trimIndent()
+                        )
+
+                        database.execSQL(
+                            """
+                            CREATE TABLE budgets_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                categoryId INTEGER,
+                                amount REAL NOT NULL CHECK(amount > 0),
+                                period TEXT NOT NULL,
+                                periodMode TEXT NOT NULL DEFAULT 'ROLLING',
+                                startDate INTEGER NOT NULL,
+                                isActive INTEGER NOT NULL DEFAULT 1,
+                                notifyAtWarning REAL NOT NULL DEFAULT 0.75 CHECK(notifyAtWarning > 0),
+                                notifyAtCritical REAL NOT NULL DEFAULT 0.9 CHECK(notifyAtCritical > 0),
+                                rollover INTEGER NOT NULL DEFAULT 0,
+                                createdAt INTEGER NOT NULL,
+                                lastWarningNotifiedAt INTEGER,
+                                lastCriticalNotifiedAt INTEGER,
+                                lastExceededNotifiedAt INTEGER,
+                                CHECK(notifyAtWarning <= notifyAtCritical),
+                                FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                            )
+                            """.trimIndent()
+                        )
+                        database.execSQL(
+                            """
+                            INSERT INTO budgets_new (
+                                id, categoryId, amount, period, periodMode, startDate,
+                                isActive, notifyAtWarning, notifyAtCritical, rollover,
+                                createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt,
+                                lastExceededNotifiedAt
+                            )
+                            SELECT
+                                id, categoryId, amount, period, periodMode, startDate,
+                                isActive, notifyAtWarning, notifyAtCritical, rollover,
+                                createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt,
+                                lastExceededNotifiedAt
+                            FROM budgets
+                            """.trimIndent()
+                        )
+                        database.execSQL("DROP TABLE budgets")
+                        database.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
+
+                        // Recreate budgets indexes (including partial unique indexes from B4)
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
+                        database.execSQL(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                                "index_budgets_active_overall " +
+                                "ON budgets (isActive) WHERE isActive = 1 AND categoryId IS NULL"
+                        )
+                        database.execSQL(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                                "index_budgets_active_category " +
+                                "ON budgets (categoryId) WHERE isActive = 1 AND categoryId IS NOT NULL"
+                        )
+
+                        // ── 6. Post-rebuild FK verification ─────────────────────────────
+                        database.query("PRAGMA foreign_key_check").use { violations ->
+                            if (violations.moveToFirst()) {
+                                throw IllegalStateException(
+                                    "Migration 75→76 produced FK violations"
+                                )
+                            }
+                        }
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
+                } finally {
+                    if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
+                }
+            }
+        }
+
+        /**
+         * Callback that creates supplementary partial unique indexes on **fresh install**
+         * and applies CHECK constraints that Room annotations cannot express.
+         *
+         * Room's `@Index` annotation does not support `WHERE` clauses, so these
+         * constraints must be applied via raw SQL after Room creates the schema.
+         * Similarly, Room has no `@Check` annotation, so CHECK constraints are
+         * added by rebuilding tables in this callback.
+         *
+         * On upgrade paths the same indexes/constraints are created by the respective
+         * migrations ([MIGRATION_70_71] for group constraints, [MIGRATION_71_72] for
+         * budget constraints, [MIGRATION_73_74] for raw_notifications NULL-safety
+         * constraints, [MIGRATION_74_75] for subscription-candidate and budget-forecast
+         * constraints, [MIGRATION_75_76] for financial CHECK constraints and expense FK).
+         *
+         * Invariants enforced:
+         *  - At most one `isCurrentUser = 1` row per group in `group_members`.
+         *  - At most one row per non-null `expenseId` in `group_expenses`.
+         *  - At most one active overall budget (categoryId IS NULL, isActive = 1).
+         *  - At most one active budget per category (categoryId IS NOT NULL, isActive = 1).
+         *  - At most one raw_notification per (packageName, timestamp) combo per NULL pattern.
+         *  - At most one pending subscription candidate per (canonicalMerchant, detectedInterval).
+         *  - At most one active budget forecast per (budgetId, targetPeriodStart, targetPeriodEnd).
+         *  - savings_goals: targetAmount > 0, currentAmount >= 0.
+         *  - mileage_tracking: distanceKm > 0, deductionRatePerKm >= 0, fuelCost >= 0,
+         *    odometer ordering.
+         *  - pending_reviews: suggestedAmount > 0, suggestedType ∈ known enum set.
+         *  - budgets: amount > 0, notifyAtWarning > 0, notifyAtCritical > 0,
+         *    notifyAtWarning ≤ notifyAtCritical.
+         */
+        val FRESH_INSTALL_CALLBACK = object : RoomDatabase.Callback() {
+            override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                super.onCreate(db)
+                // B3: group constraints
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_group_members_groupId_currentUser " +
+                        "ON group_members (groupId) WHERE isCurrentUser = 1"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_group_expenses_expenseId_unique " +
+                        "ON group_expenses (expenseId) WHERE expenseId IS NOT NULL"
+                )
+                // B4: budget constraints — one active overall, one active per category
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_budgets_active_overall " +
+                        "ON budgets (isActive) WHERE isActive = 1 AND categoryId IS NULL"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_budgets_active_category " +
+                        "ON budgets (categoryId) WHERE isActive = 1 AND categoryId IS NOT NULL"
+                )
+                // B4 Batch 6: raw_notifications partial unique indexes to close NULL loophole.
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_raw_notifications_dedup_nonnull " +
+                        "ON raw_notifications (packageName, timestamp, title, text) " +
+                        "WHERE title IS NOT NULL AND text IS NOT NULL"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_raw_notifications_dedup_both_null " +
+                        "ON raw_notifications (packageName, timestamp) " +
+                        "WHERE title IS NULL AND text IS NULL"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_raw_notifications_dedup_title_null " +
+                        "ON raw_notifications (packageName, timestamp, text) " +
+                        "WHERE title IS NULL AND text IS NOT NULL"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_raw_notifications_dedup_text_null " +
+                        "ON raw_notifications (packageName, timestamp, title) " +
+                        "WHERE text IS NULL AND title IS NOT NULL"
+                )
+                // B7: subscription_candidates — one pending candidate per merchant+interval
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_subscription_candidates_pending_merchant_interval " +
+                        "ON subscription_candidates (canonicalMerchant, detectedInterval) " +
+                        "WHERE isConverted = 0 AND userAction = 'pending'"
+                )
+                // B7: budget_forecasts — one active forecast per budget+period
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_budget_forecasts_active_budget_period " +
+                        "ON budget_forecasts (budgetId, targetPeriodStart, targetPeriodEnd) " +
+                        "WHERE isActive = 1"
+                )
+
+                // ── B8: CHECK constraints (table rebuilds — tables are empty on fresh install) ──
+
+                // savings_goals: targetAmount > 0, currentAmount >= 0
+                db.execSQL(
+                    """
+                    CREATE TABLE savings_goals_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        name TEXT NOT NULL,
+                        targetAmount REAL NOT NULL CHECK(targetAmount > 0),
+                        currentAmount REAL NOT NULL DEFAULT 0.0 CHECK(currentAmount >= 0),
+                        targetDate INTEGER,
+                        protectionLevel TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("INSERT INTO savings_goals_new SELECT * FROM savings_goals")
+                db.execSQL("DROP TABLE savings_goals")
+                db.execSQL("ALTER TABLE savings_goals_new RENAME TO savings_goals")
+
+                // mileage_tracking: distanceKm > 0, deductionRatePerKm >= 0,
+                // fuelCost >= 0 when non-null, odometer ordering
+                db.execSQL(
+                    """
+                    CREATE TABLE mileage_tracking_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        date INTEGER NOT NULL,
+                        startOdometer REAL,
+                        endOdometer REAL,
+                        distanceKm REAL NOT NULL CHECK(distanceKm > 0),
+                        startLocation TEXT,
+                        endLocation TEXT,
+                        startLatitude REAL,
+                        startLongitude REAL,
+                        endLatitude REAL,
+                        endLongitude REAL,
+                        isBusinessTrip INTEGER NOT NULL DEFAULT 1,
+                        tripPurpose TEXT NOT NULL,
+                        businessProject TEXT,
+                        clientName TEXT,
+                        deductionRatePerKm REAL NOT NULL DEFAULT 0.30 CHECK(deductionRatePerKm >= 0),
+                        calculatedDeduction REAL,
+                        linkedExpenseId INTEGER,
+                        fuelCost REAL CHECK(fuelCost IS NULL OR fuelCost >= 0),
+                        notes TEXT,
+                        createdAt INTEGER NOT NULL,
+                        CHECK(endOdometer IS NULL OR startOdometer IS NULL OR endOdometer >= startOdometer),
+                        FOREIGN KEY(linkedExpenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("INSERT INTO mileage_tracking_new SELECT * FROM mileage_tracking")
+                db.execSQL("DROP TABLE mileage_tracking")
+                db.execSQL("ALTER TABLE mileage_tracking_new RENAME TO mileage_tracking")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_mileage_tracking_linkedExpenseId ON mileage_tracking (linkedExpenseId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_mileage_tracking_date ON mileage_tracking (date)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_mileage_tracking_isBusinessTrip ON mileage_tracking (isBusinessTrip)")
+
+                // pending_reviews: suggestedAmount > 0, suggestedType enum guard
+                db.execSQL(
+                    """
+                    CREATE TABLE pending_reviews_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        rawNotificationId INTEGER,
+                        scannedReceiptId INTEGER,
+                        suggestedAmount REAL NOT NULL CHECK(suggestedAmount > 0),
+                        suggestedCurrency TEXT NOT NULL,
+                        suggestedMerchant TEXT NOT NULL,
+                        suggestedMerchantKey TEXT,
+                        suggestedType TEXT NOT NULL CHECK(suggestedType IN ('PURCHASE', 'WITHDRAWAL', 'TRANSFER', 'DEPOSIT', 'UNKNOWN')),
+                        suggestedCategoryId INTEGER,
+                        suggestedDate INTEGER,
+                        confidence REAL NOT NULL,
+                        matchType TEXT,
+                        explanation TEXT,
+                        packageName TEXT NOT NULL,
+                        notificationTitle TEXT,
+                        notificationText TEXT,
+                        createdAt INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'PENDING',
+                        suggestedDirection TEXT,
+                        suggestedAccountName TEXT,
+                        suggestedLatitude REAL,
+                        suggestedLongitude REAL,
+                        FOREIGN KEY (rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
+                        FOREIGN KEY (scannedReceiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("INSERT INTO pending_reviews_new SELECT * FROM pending_reviews")
+                db.execSQL("DROP TABLE pending_reviews")
+                db.execSQL("ALTER TABLE pending_reviews_new RENAME TO pending_reviews")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_suggestedMerchantKey ON pending_reviews (suggestedMerchantKey)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_suggestedMerchantKey_suggestedDate ON pending_reviews (status, suggestedMerchantKey, suggestedDate)")
+
+                // budgets: amount > 0, notifyAtWarning > 0, notifyAtCritical > 0,
+                // notifyAtWarning <= notifyAtCritical
+                db.execSQL(
+                    """
+                    CREATE TABLE budgets_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        categoryId INTEGER,
+                        amount REAL NOT NULL CHECK(amount > 0),
+                        period TEXT NOT NULL,
+                        periodMode TEXT NOT NULL DEFAULT 'ROLLING',
+                        startDate INTEGER NOT NULL,
+                        isActive INTEGER NOT NULL DEFAULT 1,
+                        notifyAtWarning REAL NOT NULL DEFAULT 0.75 CHECK(notifyAtWarning > 0),
+                        notifyAtCritical REAL NOT NULL DEFAULT 0.9 CHECK(notifyAtCritical > 0),
+                        rollover INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL,
+                        lastWarningNotifiedAt INTEGER,
+                        lastCriticalNotifiedAt INTEGER,
+                        lastExceededNotifiedAt INTEGER,
+                        CHECK(notifyAtWarning <= notifyAtCritical),
+                        FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("INSERT INTO budgets_new SELECT * FROM budgets")
+                db.execSQL("DROP TABLE budgets")
+                db.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
+                // Re-create B4 partial unique indexes (destroyed by the budgets rebuild above)
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_budgets_active_overall " +
+                        "ON budgets (isActive) WHERE isActive = 1 AND categoryId IS NULL"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_budgets_active_category " +
+                        "ON budgets (categoryId) WHERE isActive = 1 AND categoryId IS NOT NULL"
+                )
+            }
+        }
+
+        // Migration 76 → 77: Add missing index on user_corrections.originalMerchant.
+        // The entity declared indices for originalCategoryId, correctedCategoryId,
+        // packageName, wasApproved, and wasRejected but omitted originalMerchant.
+        // This index is needed for efficient merchant-based correction lookups.
+        val MIGRATION_76_77 = object : androidx.room.migration.Migration(76, 77) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "index_user_corrections_originalMerchant " +
+                        "ON user_corrections (originalMerchant)"
+                )
+            }
+        }
+
+        val MIGRATION_77_78 = object : androidx.room.migration.Migration(77, 78) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "index_anomaly_alerts_category_alertedAt " +
+                        "ON anomaly_alerts (category, alertedAt)"
+                )
+            }
+        }
+
+        val MIGRATION_78_79 = object : androidx.room.migration.Migration(78, 79) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "index_exchange_rates_toCurrency " +
+                        "ON exchange_rates (toCurrency)"
+                )
+            }
+        }
+
+        /**
+         * Creates an in-memory [RoomDatabase.Builder] pre-configured with
+         * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
+         *
+         * Every test that needs a fresh `AppDatabase` **must** go through this
+         * factory so that partial unique indexes (Batch 3 through Batch 8) are
+         * present, matching the production fresh-install path.
+         */
+        @JvmStatic
+        fun inMemoryBuilder(context: android.content.Context): androidx.room.RoomDatabase.Builder<AppDatabase> {
+            return Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+                .addCallback(FRESH_INSTALL_CALLBACK)
+                .allowMainThreadQueries()
+        }
+
         /**
          * Canonical migration registry used by every database builder path.
          *
@@ -3803,7 +5248,16 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_66_67,
             MIGRATION_67_68,
             MIGRATION_68_69,
-            MIGRATION_69_70
+            MIGRATION_69_70,
+            MIGRATION_70_71,
+            MIGRATION_71_72,
+            MIGRATION_72_73,
+            MIGRATION_73_74,
+            MIGRATION_74_75,
+            MIGRATION_75_76,
+            MIGRATION_76_77,
+            MIGRATION_77_78,
+            MIGRATION_78_79
         )
     }
 }

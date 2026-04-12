@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
@@ -36,6 +37,7 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         budgetForecastDao = mockk(relaxed = true)
         every { timeProvider.now() } returns now
         coEvery { budgetForecastDao.insert(any()) } returns 1L
+        coEvery { budgetForecastDao.insertWithDeactivation(any()) } returns 1L
         coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 0.0
 
         // Default: no monthly aggregate data
@@ -334,5 +336,37 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         // avg=100, STABLE -> prediction=100 (same as before infill logic)
         assertApproxEquals(100.0, forecast.predictedSpending, 0.01)
+    }
+
+    // =========================================================================
+    // B7: Transactional deactivate+insert (unique-index safety)
+    // =========================================================================
+
+    @Test
+    fun `generateForecast calls insertWithDeactivation not plain insert`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-03", 100.0, 1)
+        )
+
+        engine.generateForecast(budget)
+
+        coVerify(exactly = 1) { budgetForecastDao.insertWithDeactivation(any()) }
+        coVerify(exactly = 0) { budgetForecastDao.insert(any()) }
+    }
+
+    @Test
+    fun `regenerating forecast for same period deactivates previous via DAO`() = runTest {
+        val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-03", 100.0, 1)
+        )
+
+        // Generate twice for the same period
+        engine.generateForecast(budget)
+        engine.generateForecast(budget)
+
+        coVerify(exactly = 2) { budgetForecastDao.insertWithDeactivation(any()) }
+        coVerify(exactly = 0) { budgetForecastDao.insert(any()) }
     }
 }

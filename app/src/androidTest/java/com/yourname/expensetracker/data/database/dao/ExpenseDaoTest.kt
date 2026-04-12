@@ -6,6 +6,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.MatchStatus
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import kotlinx.coroutines.flow.first
@@ -20,14 +22,15 @@ import org.junit.runner.RunWith
 class ExpenseDaoTest {
     private lateinit var database: AppDatabase
     private lateinit var expenseDao: ExpenseDao
+    private lateinit var scannedReceiptDao: ScannedReceiptDao
 
     @Before
     fun setup() {
-        database = Room.inMemoryDatabaseBuilder(
-            ApplicationProvider.getApplicationContext(),
-            AppDatabase::class.java
-        ).allowMainThreadQueries().build()
+        database = AppDatabase.inMemoryBuilder(
+            ApplicationProvider.getApplicationContext()
+        ).build()
         expenseDao = database.expenseDao()
+        scannedReceiptDao = database.scannedReceiptDao()
     }
 
     @After
@@ -764,5 +767,113 @@ class ExpenseDaoTest {
             "getExpensesBetween must return all $count types (generic, not spending-filtered)",
             count, results.size
         )
+    }
+
+    // ── B.4 Batch 9 — Business-expense receipt-detection query correctness ──
+
+    private fun makeReceipt(
+        expenseId: Long? = null,
+        rawOcrText: String = "TOTAL 12.50",
+        createdAt: Long = System.currentTimeMillis()
+    ) = ScannedReceipt(
+        imagePath = null,
+        rawOcrText = rawOcrText,
+        parsedTotal = 12.50,
+        parsedMerchant = "Test Store",
+        parsedDate = createdAt,
+        parsedItems = null,
+        parsedTaxAmount = null,
+        confidence = 0.90f,
+        expenseId = expenseId,
+        matchStatus = if (expenseId != null) MatchStatus.AUTO_MATCHED else MatchStatus.UNMATCHED,
+        createdAt = createdAt
+    )
+
+    /**
+     * A business expense with requiresReceipt=1 and NO linked scanned_receipt
+     * must appear in [getBusinessExpensesMissingReceipts].
+     */
+    @Test
+    fun getBusinessExpensesMissingReceipts_noReceipt_appearsInResults() = runBlocking {
+        val now = System.currentTimeMillis()
+        val start = now - 1000L
+        val end = now + 1000L
+
+        expenseDao.insert(Expense(
+            amount = 50.0, currency = "EUR", merchant = "Client Lunch",
+            transactionType = TransactionType.PURCHASE, date = now,
+            isBusinessExpense = true, requiresReceipt = true
+        ))
+
+        val missing = expenseDao.getBusinessExpensesMissingReceipts(start, end)
+        assertEquals("Business expense with no receipt should appear", 1, missing.size)
+        assertEquals("Client Lunch", missing[0].merchant)
+    }
+
+    /**
+     * A business expense with requiresReceipt=1 that HAS a linked scanned_receipt
+     * must NOT appear in [getBusinessExpensesMissingReceipts].
+     */
+    @Test
+    fun getBusinessExpensesMissingReceipts_withReceipt_doesNotAppear() = runBlocking {
+        val now = System.currentTimeMillis()
+        val start = now - 1000L
+        val end = now + 1000L
+
+        val expenseId = expenseDao.insert(Expense(
+            amount = 75.0, currency = "EUR", merchant = "Conference Hotel",
+            transactionType = TransactionType.PURCHASE, date = now,
+            isBusinessExpense = true, requiresReceipt = true
+        ))
+
+        // Link a receipt to this expense
+        scannedReceiptDao.insert(makeReceipt(expenseId = expenseId))
+
+        val missing = expenseDao.getBusinessExpensesMissingReceipts(start, end)
+        assertEquals(
+            "Business expense WITH a linked receipt should NOT appear",
+            0, missing.size
+        )
+    }
+
+    /**
+     * Regression: the old query used `rawNotificationId IS NULL` as a proxy
+     * for "missing receipt". An expense that has a rawNotificationId but no
+     * linked scanned_receipt must STILL appear in the missing list.
+     * This proves the LEFT JOIN anti-join against scanned_receipts is correct,
+     * and that rawNotificationId is irrelevant to receipt attachment.
+     */
+    @Test
+    fun getBusinessExpensesMissingReceipts_withRawNotificationId_butNoReceipt_stillAppears() = runBlocking {
+        val now = System.currentTimeMillis()
+        val start = now - 1000L
+        val end = now + 1000L
+
+        // Insert a RawNotification parent so the FK is valid
+        val notifId = database.rawNotificationDao().insert(
+            com.yourname.expensetracker.data.database.entity.RawNotification(
+                packageName = "com.test.bank",
+                appName = "Test Bank",
+                title = "Payment",
+                text = "You spent 50.00 at Office Supply",
+                timestamp = now,
+                capturedAt = now
+            )
+        )
+
+        // Business expense with rawNotificationId set but NO receipt
+        expenseDao.insert(Expense(
+            amount = 50.0, currency = "EUR", merchant = "Office Supply",
+            transactionType = TransactionType.PURCHASE, date = now,
+            isBusinessExpense = true, requiresReceipt = true,
+            rawNotificationId = notifId
+        ))
+
+        val missing = expenseDao.getBusinessExpensesMissingReceipts(start, end)
+        assertEquals(
+            "Expense with rawNotificationId but no receipt must still appear as missing",
+            1, missing.size
+        )
+        assertEquals("Office Supply", missing[0].merchant)
     }
 }

@@ -26,7 +26,7 @@ interface LocationCachePort {
     suspend fun saveLocation(
         merchantName: String,
         result: LocationResolutionResult.Resolved,
-        areaKey: String? = "global"
+        areaKey: String = "global"
     )
 }
 

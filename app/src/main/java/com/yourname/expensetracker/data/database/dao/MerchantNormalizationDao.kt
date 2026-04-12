@@ -21,7 +21,7 @@ interface MerchantNormalizationDao {
     @Query("SELECT * FROM merchant_canonicals WHERE id = :id")
     suspend fun getCanonicalById(id: Long): MerchantCanonical?
     
-    @Query("SELECT * FROM merchant_canonicals WHERE searchKey = :searchKey LIMIT 1")
+    @Query("SELECT * FROM merchant_canonicals WHERE searchKey = :searchKey ORDER BY id DESC LIMIT 1")
     suspend fun getCanonicalBySearchKey(searchKey: String): MerchantCanonical?
     
     @Query("SELECT * FROM merchant_canonicals WHERE normalizedName = :name LIMIT 1")
@@ -53,7 +53,7 @@ interface MerchantNormalizationDao {
     @Query("SELECT * FROM merchant_aliases WHERE rawName = :rawName LIMIT 1")
     suspend fun getAliasByRawName(rawName: String): MerchantAlias?
     
-    @Query("SELECT * FROM merchant_aliases WHERE normalizedKey = :normalizedKey LIMIT 1")
+    @Query("SELECT * FROM merchant_aliases WHERE normalizedKey = :normalizedKey ORDER BY id DESC LIMIT 1")
     suspend fun getAliasByNormalizedKey(normalizedKey: String): MerchantAlias?
     
     @Query("SELECT * FROM merchant_aliases WHERE canonicalId = :canonicalId")

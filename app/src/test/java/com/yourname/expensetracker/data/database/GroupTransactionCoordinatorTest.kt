@@ -14,6 +14,7 @@ import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -58,16 +59,15 @@ class GroupTransactionCoordinatorTest {
 
     @Before
     fun setup() {
-        database = Room.inMemoryDatabaseBuilder(
-            ApplicationProvider.getApplicationContext(),
-            AppDatabase::class.java
-        ).allowMainThreadQueries().build()
+        database = AppDatabase.inMemoryBuilder(
+            ApplicationProvider.getApplicationContext()
+        ).build()
 
         groupDao = database.expenseGroupDao()
         memberDao = database.groupMemberDao()
         groupExpenseDao = database.groupExpenseDao()
         expenseDao = database.expenseDao()
-        coordinator = GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao, Dispatchers.IO)
+        coordinator = GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao, expenseDao, Dispatchers.IO)
     }
 
     @After
@@ -145,7 +145,7 @@ class GroupTransactionCoordinatorTest {
         coEvery { mockMemberDao.insertAll(any()) } throws SQLException("Disk full")
 
         val mockCoordinator = GroupTransactionCoordinator(
-            database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, Dispatchers.IO
+            database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, expenseDao, Dispatchers.IO
         )
 
         // Act - Should throw exception
@@ -165,7 +165,7 @@ class GroupTransactionCoordinatorTest {
     }
 
     @Test
-    fun `addExpenseToGroupAtomic should insert expense and update balances`() = runTest {
+    fun `addExpenseToGroupAtomic should insert expense record`() = runTest {
         // Arrange - Create group and members first
         val group = ExpenseGroup(name = "Test Group")
         val members = listOf(
@@ -176,7 +176,6 @@ class GroupTransactionCoordinatorTest {
 
         val savedMembers = memberDao.getMembersForGroup(groupId).first()
         val aliceId = savedMembers.first { it.name == "Alice" }.id
-        val bobId = savedMembers.first { it.name == "Bob" }.id
 
         // Create an actual expense first (required for foreign key constraint)
         val expense = Expense(
@@ -199,13 +198,8 @@ class GroupTransactionCoordinatorTest {
             splitType = SplitType.EQUAL
         )
 
-        val balanceUpdates = mapOf(
-            aliceId to 50.0,
-            bobId to -50.0
-        )
-
-        // Act
-        val expenseId = coordinator.addExpenseToGroupAtomic(groupExpense, balanceUpdates)
+        // Act — insert-only; no balance updates
+        val expenseId = coordinator.addExpenseToGroupAtomic(groupExpense)
 
         // Assert
         assertThat(expenseId).isGreaterThan(0)
@@ -352,7 +346,7 @@ class GroupTransactionCoordinatorTest {
     }
 
     @Test
-    fun `addExpenseToGroupAtomic should handle zero balance updates`() = runTest {
+    fun `addExpenseToGroupAtomic should handle insert with no extra args`() = runTest {
         // Arrange
         val group = ExpenseGroup(name = "Test Group")
         val members = listOf(GroupMember(groupId = 0, name = "Alice"), GroupMember(groupId = 0, name = "Bob"))
@@ -379,8 +373,8 @@ class GroupTransactionCoordinatorTest {
             splitType = SplitType.EQUAL
         )
 
-        // Act
-        val expenseId = coordinator.addExpenseToGroupAtomic(groupExpense, emptyMap())
+        // Act — insert-only
+        val expenseId = coordinator.addExpenseToGroupAtomic(groupExpense)
 
         // Assert
         assertThat(expenseId).isGreaterThan(0)
@@ -422,5 +416,181 @@ class GroupTransactionCoordinatorTest {
         }
 
         // If any assertion fails here, it means partial commit occurred (BUG!)
+    }
+
+    // ==================== B.4 Batch 2 Tests ====================
+
+    @Test
+    fun `createSystemExpenseAndLinkToGroup atomically creates both records`() = runTest {
+        // Arrange - Create group with member
+        val group = ExpenseGroup(name = "Atomic Link Group", defaultCurrency = "EUR")
+        val members = listOf(
+            GroupMember(groupId = 0, name = "Alice", isCurrentUser = true)
+        )
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+        val savedMembers = memberDao.getMembersForGroup(groupId).first()
+        val aliceId = savedMembers.first().id
+
+        // Act
+        val result = coordinator.createSystemExpenseAndLinkToGroup(
+            groupId = groupId,
+            description = "Atomic Dinner",
+            amount = 50.0,
+            paidById = aliceId,
+            currency = "EUR",
+            splitType = SplitType.EQUAL,
+            date = System.currentTimeMillis(),
+            transactionType = TransactionType.PURCHASE,
+            notes = "Group expense via Alice"
+        )
+
+        // Assert
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+        val success = result as GroupExpenseCreationResult.Success
+        assertThat(success.groupExpenseId).isGreaterThan(0)
+        assertThat(success.expenseId).isGreaterThan(0)
+
+        // Verify system expense exists
+        val systemExpense = expenseDao.getById(success.expenseId)
+        assertThat(systemExpense).isNotNull()
+        assertThat(systemExpense!!.amount).isEqualTo(50.0)
+        assertThat(systemExpense.merchant).isEqualTo("Atomic Dinner")
+
+        // Verify group expense exists and is linked
+        val groupExpenses = groupExpenseDao.getExpensesForGroup(groupId).first()
+        assertThat(groupExpenses).hasSize(1)
+        assertThat(groupExpenses[0].expenseId).isEqualTo(success.expenseId)
+        assertThat(groupExpenses[0].totalAmount).isEqualTo(50.0)
+    }
+
+    @Test
+    fun `createSystemExpenseAndLinkToGroup fails for inactive group`() = runTest {
+        // Arrange - Create then archive group
+        val group = ExpenseGroup(name = "Archived Group")
+        val members = listOf(GroupMember(groupId = 0, name = "Alice"))
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+        val savedMembers = memberDao.getMembersForGroup(groupId).first()
+        groupDao.archiveGroup(groupId)
+
+        // Act
+        val result = coordinator.createSystemExpenseAndLinkToGroup(
+            groupId = groupId,
+            description = "Should Fail",
+            amount = 25.0,
+            paidById = savedMembers.first().id,
+            currency = "EUR",
+            splitType = SplitType.EQUAL,
+            date = System.currentTimeMillis(),
+            transactionType = TransactionType.PURCHASE
+        )
+
+        // Assert
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
+        val error = result as GroupExpenseCreationResult.Error
+        assertThat(error.message).contains("inactive")
+
+        // Verify no system expense was created (atomic rollback)
+        val allExpenses = expenseDao.getAllUncapped()
+        assertThat(allExpenses).isEmpty()
+    }
+
+    @Test
+    fun `createSystemExpenseAndLinkToGroup fails for non-member payer`() = runTest {
+        // Arrange
+        val group = ExpenseGroup(name = "Test Group")
+        val members = listOf(GroupMember(groupId = 0, name = "Alice"))
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+
+        // Act - use a non-existent member ID
+        val result = coordinator.createSystemExpenseAndLinkToGroup(
+            groupId = groupId,
+            description = "Should Fail",
+            amount = 30.0,
+            paidById = 99999L,
+            currency = "EUR",
+            splitType = SplitType.EQUAL,
+            date = System.currentTimeMillis(),
+            transactionType = TransactionType.PURCHASE
+        )
+
+        // Assert
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
+        val error = result as GroupExpenseCreationResult.Error
+        assertThat(error.message).contains("Payer")
+
+        // Verify no system expense was created (atomic rollback)
+        val allExpenses = expenseDao.getAllUncapped()
+        assertThat(allExpenses).isEmpty()
+    }
+
+    @Test
+    fun `addMemberToGroup is atomic - validates inside transaction`() = runTest {
+        // Arrange
+        val group = ExpenseGroup(name = "Member Test Group")
+        val members = listOf(GroupMember(groupId = 0, name = "Alice"))
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+
+        // Act - add member to valid active group
+        val memberId = coordinator.addMemberToGroup(groupId, "Bob", "bob@test.com", false)
+
+        // Assert
+        assertThat(memberId).isNotNull()
+        assertThat(memberId!!).isGreaterThan(0)
+
+        val savedMembers = memberDao.getMembersForGroup(groupId).first()
+        assertThat(savedMembers).hasSize(2)
+        assertThat(savedMembers.map { it.name }).containsExactly("Alice", "Bob")
+    }
+
+    @Test
+    fun `addMemberToGroup returns null for inactive group`() = runTest {
+        // Arrange
+        val group = ExpenseGroup(name = "Archive Test")
+        val members = listOf(GroupMember(groupId = 0, name = "Alice"))
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+        groupDao.archiveGroup(groupId)
+
+        // Act
+        val memberId = coordinator.addMemberToGroup(groupId, "Bob", null, false)
+
+        // Assert
+        assertThat(memberId).isNull()
+    }
+
+    @Test
+    fun `addExpenseWithLink is atomic - validates inside transaction`() = runTest {
+        // Arrange
+        val group = ExpenseGroup(name = "Link Test Group", defaultCurrency = "EUR")
+        val members = listOf(GroupMember(groupId = 0, name = "Alice"))
+        val groupId = coordinator.createGroupWithMembersAtomic(group, members)
+        val savedMembers = memberDao.getMembersForGroup(groupId).first()
+        val aliceId = savedMembers.first().id
+
+        // Create system expense first
+        val expense = Expense(
+            amount = 75.0,
+            merchant = "Link Test",
+            transactionType = TransactionType.PURCHASE,
+            date = System.currentTimeMillis()
+        )
+        val systemExpenseId = expenseDao.insert(expense)
+
+        // Act
+        val result = coordinator.addExpenseWithLink(
+            groupId = groupId,
+            systemExpenseId = systemExpenseId,
+            description = "Link Test",
+            amount = 75.0,
+            paidById = aliceId,
+            currency = "EUR",
+            splitType = SplitType.EQUAL,
+            date = System.currentTimeMillis()
+        )
+
+        // Assert
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+        val success = result as GroupExpenseCreationResult.Success
+        assertThat(success.groupExpenseId).isGreaterThan(0)
+        assertThat(success.expenseId).isEqualTo(systemExpenseId)
     }
 }

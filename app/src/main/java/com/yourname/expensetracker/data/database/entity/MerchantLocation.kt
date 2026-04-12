@@ -28,10 +28,10 @@ data class MerchantLocation(
     /**
      * Area key scoping this cache entry to a geographic grid cell (v30).
      * Format: "${normalizedName}|${floor(lat/0.045).toLong()}|${floor(lon/0.045).toLong()}" for area-scoped,
-     * or "${normalizedName}|global" for global/fallback entries.
-     * New code always sets a non-null value; legacy NULL rows are treated as global by queries.
+     * or plain "global" for global/fallback entries.
+     * Non-null since v73; legacy NULL rows were backfilled to "global" by MIGRATION_72_73.
      */
-    val areaKey: String? = "global",
+    @ColumnInfo(defaultValue = "global") val areaKey: String = "global",
 
     /** Raw merchant name as it appears in the notification/statement (for display). */
     val displayName: String,

@@ -1,10 +1,10 @@
-its cruc# Execution Playbook — ExpenseTracker Refactoring
+# Execution Playbook — ExpenseTracker Refactoring
 
 > **Project:** ExpenseTracker (Android/Kotlin/Clean Architecture)
 > **Branch:** `master-refactor`
 > **Current Phase:** Phase 2 — Domain-Specific Pipelines
-> **Active Epic:** B.4 — Database/DAO/Entity Pipeline
-> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 COMPLETE — A.8 COMPLETE — A.9 COMPLETE — A.10 COMPLETE — Phase B in progress
+> **Active Epic:** B.4 closeout — PASS / pending local commit (Phase B fan-out unlocked after commit)
+> **Status:** A.1 COMPLETE — A.2 COMPLETE — A.3 COMPLETE — A.4 COMPLETE — A.5 COMPLETE — A.6 COMPLETE — A.7 COMPLETE — A.8 COMPLETE — A.9 COMPLETE — A.10 COMPLETE — B.4 PASS (pending local commit)
 
 ---
 
@@ -419,14 +419,14 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
   - [x] Review: **PASS** (final gate approved with documented verification waiver for unrelated pre-existing full-lane failures)
   - [x] Registry updated (`[RESOLVED BY A.8]`)
   - [x] Batch reports + deep-analysis mirrors updated
-  - [ ] Committed
+  - [x] Committed (`1d929c9`)
 - [x] **A.9:** Hidden Data Truncation / DAO Default Limits
   - [x] Plan created (`PLAN-A9-hidden-data-truncation.md`)
   - [x] All batches implemented
   - [x] Review: **PASS** (final gate approved with documented environmental/full-lane timeout waiver)
   - [x] Registry updated (`[RESOLVED BY A.9]`)
   - [x] Batch reports + deep-analysis mirrors updated
-  - [ ] Committed
+  - [x] Committed (`1723632`)
 - [x] **A.10:** Transaction Type Blindness
   - [x] Plan created (`PLAN-A10-transaction-type-blindness.md`)
   - [x] All batches implemented
@@ -436,16 +436,16 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
   - [x] Committed
 
 ### Phase 1 Todo Roadmap (Strict Priority)
-1. **B.4 — Database/DAO/Entity Pipeline**
-   - Priority rationale: foundational data-contract lane; execute exclusively before Phase B fan-out
-2. **Phase B first-wave fan-out (after B.4)**
-   - `B.1` + `B.2` + `B.5` + `B.7` may run in parallel once B.4 is complete and green
+1. ~~**B.4 — Database/DAO/Entity Pipeline**~~ **PASS / pending local commit**
+   - Foundational data-contract lane executed exclusively; Phase B fan-out unlocked after B.4 commit lands
+2. **Phase B first-wave fan-out (next — after B.4 commit)**
+   - `B.1` + `B.2` + `B.5` + `B.7` may run in parallel once the B.4 local commit is created
 
 ### Phase 2: Pipeline Fixes
 - [ ] B.1: AI/ML Pipeline
 - [ ] B.2: Budget/Forecasting Pipeline
 - [ ] B.3: Receipt/OCR Pipeline
-- [ ] B.4: Database/DAO/Entity Pipeline
+- [x] B.4: Database/DAO/Entity Pipeline — **PASS / pending local commit** (final schema version 79; Batch 29 final fixes: `formattedTime` extension rename + stale `TransactionsScreen` import removed; `ExchangeRate.toCurrency` supplementary index via `MIGRATION_78_79` (schema version 79); late closeout: `UserCorrection.originalMerchant` index via `MIGRATION_76_77`, `AnomalyAlert (category, alertedAt)` composite index via `MIGRATION_77_78`, `InvestmentTracker` recent-value ordering, `ExpenseRepository` paged-projection re-verified; docs updated — Phase B fan-out unlocked after local commit lands)
 - [ ] B.5: Location/Geocoding Pipeline
 - [ ] B.6: Notification/Service/Worker Pipeline
 - [ ] B.7: Export/Backup Pipeline
@@ -535,5 +535,5 @@ When a Universal Epic (like A.1) is fixed, it likely resolves or alters downstre
 
 ---
 
-*Last Updated: 2026-04-11*
-*Next Action: Create PLAN-B4-database-dao-entity.md and execute B.4 as the exclusive first Phase 2 lane*
+*Last Updated: 2026-04-12 — B.4 Batch 29 final closeout documentation applied (schema version 79; ExchangeRate toCurrency index via MIGRATION_78_79; formattedTime extension rename; stale TransactionsScreen import removed)*
+*Next Action: Create B.4 local commit, then execute Phase B fan-out — B.1 + B.2 + B.5 + B.7 may run in parallel once the B.4 commit lands*

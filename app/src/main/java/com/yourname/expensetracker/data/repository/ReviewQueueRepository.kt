@@ -47,6 +47,10 @@ class ReviewQueueRepository @Inject constructor(
         private const val ERROR_REVIEW_NOT_FOUND = "REVIEW_NOT_FOUND"
         private const val ERROR_AMOUNT_EXCEEDS_LIMIT = "AMOUNT_EXCEEDS_LIMIT"
         private const val ERROR_REVIEW_ALREADY_PROCESSED = "REVIEW_ALREADY_PROCESSED"
+
+        // Minimum positive sentinel for suggestedAmount when the parser cannot
+        // extract a total.  Must satisfy the v76 CHECK(suggestedAmount > 0) invariant.
+        private const val FALLBACK_SUGGESTED_AMOUNT = 0.01
     }
 
 
@@ -402,7 +406,7 @@ class ReviewQueueRepository @Inject constructor(
         val pendingReview = if (isRelevant && parsed == null) {
             PendingReview(
                 rawNotificationId = id,
-                suggestedAmount = 0.0,
+                suggestedAmount = FALLBACK_SUGGESTED_AMOUNT,
                 suggestedCurrency = "EUR",
                 suggestedMerchant = "Unknown",
                 suggestedMerchantKey = MerchantKeyGenerator.generate("Unknown"),

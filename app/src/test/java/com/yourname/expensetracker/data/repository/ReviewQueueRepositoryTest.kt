@@ -494,4 +494,43 @@ class ReviewQueueRepositoryTest {
         )
         coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE) }
     }
+
+    // ── Batch 8 regression: suggestedAmount CHECK(suggestedAmount > 0) ──────
+
+    /**
+     * Regression for B4 Batch 8: when markAsRelevant() creates a fallback
+     * PendingReview (parsing returned null), the suggestedAmount must be > 0
+     * to satisfy the v76 CHECK constraint.  Previously it was 0.0.
+     */
+    @Test
+    fun `markAsRelevant fallback PendingReview uses positive suggestedAmount`() = runTest {
+        val notificationId = 100L
+        val notification = RawNotification(
+            id = notificationId,
+            packageName = "com.bank.app",
+            appName = "Bank",
+            title = "Payment",
+            text = "You paid something",
+            timestamp = 1700000000000L,
+            capturedAt = 1700000000000L
+        )
+
+        coEvery { rawNotificationDao.getById(notificationId) } returns notification
+        // Parser returns null → forces the fallback PendingReview creation path
+        coEvery {
+            parserRegistry.parse(any(), any(), any(), any(), any())
+        } returns null
+
+        repository.markAsRelevant(notificationId, isRelevant = true)
+
+        val reviewSlot = slot<PendingReview>()
+        coVerify { pendingReviewDao.insert(capture(reviewSlot)) }
+
+        val captured = reviewSlot.captured
+        assertTrue(
+            "Fallback suggestedAmount must be > 0 to satisfy v76 CHECK constraint, was ${captured.suggestedAmount}",
+            captured.suggestedAmount > 0
+        )
+        assertEquals(0.01, captured.suggestedAmount, 0.001)
+    }
 }

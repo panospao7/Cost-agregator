@@ -44,7 +44,7 @@ class MerchantLocationCachePortAdapter @Inject constructor(
     override suspend fun saveLocation(
         merchantName: String,
         result: LocationResolutionResult.Resolved,
-        areaKey: String?
+        areaKey: String
     ) {
         merchantLocationRepository.saveLocation(merchantName, result, areaKey)
     }

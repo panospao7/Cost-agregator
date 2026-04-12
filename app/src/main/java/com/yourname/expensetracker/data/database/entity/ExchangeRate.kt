@@ -13,7 +13,8 @@ import androidx.room.PrimaryKey
     tableName = "exchange_rates",
     indices = [
         Index(value = ["fromCurrency", "toCurrency"], unique = true),
-        Index(value = ["lastUpdated"])
+        Index(value = ["lastUpdated"]),
+        Index(value = ["toCurrency"])
     ]
 )
 data class ExchangeRate(

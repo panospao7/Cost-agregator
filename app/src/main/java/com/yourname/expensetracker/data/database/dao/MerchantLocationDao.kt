@@ -9,8 +9,8 @@ interface MerchantLocationDao {
 
     // ── MerchantLocation cache ────────────────────────────────────────────────
 
-    /** Global cache lookup: prefers 'global' or NULL areaKey entries, falls back to any entry. */
-    @Query("SELECT * FROM merchant_locations WHERE normalizedMerchantName = :key ORDER BY CASE WHEN areaKey = 'global' OR areaKey IS NULL THEN 0 ELSE 1 END, hitCount DESC LIMIT 1")
+    /** Global cache lookup: prefers 'global' areaKey entries, falls back to any entry. */
+    @Query("SELECT * FROM merchant_locations WHERE normalizedMerchantName = :key ORDER BY CASE WHEN areaKey = 'global' THEN 0 ELSE 1 END, hitCount DESC LIMIT 1")
     suspend fun getByNormalizedName(key: String): MerchantLocation?
 
     /** Area-scoped cache lookup (v30): looks up by normalized name AND area key. */
@@ -23,7 +23,7 @@ interface MerchantLocationDao {
      */
     @Transaction
     suspend fun upsertLocation(location: MerchantLocation) {
-        val effectiveAreaKey = location.areaKey ?: "global"
+        val effectiveAreaKey = location.areaKey
         val existing = getByNormalizedNameAndArea(location.normalizedMerchantName, effectiveAreaKey)
         if (existing != null) {
             updateExistingLocation(
@@ -59,8 +59,8 @@ interface MerchantLocationDao {
         confidence: Float, lastResolvedAt: Long, hitCount: Int
     )
 
-    /** Increment the hit counter for a global cached entry (areaKey = 'global' or legacy NULL). */
-    @Query("UPDATE merchant_locations SET hitCount = hitCount + 1, lastResolvedAt = :now WHERE normalizedMerchantName = :key AND (areaKey = 'global' OR areaKey IS NULL)")
+    /** Increment the hit counter for a global cached entry (areaKey = 'global'). */
+    @Query("UPDATE merchant_locations SET hitCount = hitCount + 1, lastResolvedAt = :now WHERE normalizedMerchantName = :key AND areaKey = 'global'")
     suspend fun incrementHitCount(key: String, now: Long = System.currentTimeMillis())
 
     /** Increment the hit counter for an area-scoped cached entry. */

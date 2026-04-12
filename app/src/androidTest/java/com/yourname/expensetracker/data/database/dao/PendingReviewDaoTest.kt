@@ -23,10 +23,9 @@ class PendingReviewDaoTest {
 
     @Before
     fun setup() {
-        database = Room.inMemoryDatabaseBuilder(
-            ApplicationProvider.getApplicationContext(),
-            AppDatabase::class.java
-        ).allowMainThreadQueries().build()
+        database = AppDatabase.inMemoryBuilder(
+            ApplicationProvider.getApplicationContext()
+        ).build()
         pendingReviewDao = database.pendingReviewDao()
         rawNotificationDao = database.rawNotificationDao()
     }

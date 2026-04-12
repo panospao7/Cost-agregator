@@ -12,8 +12,15 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface EmailReceiptDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(emailReceipt: EmailReceiptSource): Long
+
+    /**
+     * Non-destructive insert: returns the new row ID, or -1 if the
+     * emailMessageId unique constraint fires (row already exists).
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertOrIgnore(emailReceipt: EmailReceiptSource): Long
 
     @Update
     suspend fun update(emailReceipt: EmailReceiptSource)
@@ -31,7 +38,7 @@ interface EmailReceiptDao {
     suspend fun getById(id: Long): EmailReceiptSource?
 
     @Query("SELECT * FROM email_receipt_sources WHERE receiptId = :receiptId")
-    suspend fun getByReceiptId(receiptId: Long): EmailReceiptSource?
+    suspend fun getByReceiptId(receiptId: Long): List<EmailReceiptSource>
 
     @Query("SELECT * FROM email_receipt_sources WHERE emailMessageId = :messageId")
     suspend fun getByMessageId(messageId: String): EmailReceiptSource?

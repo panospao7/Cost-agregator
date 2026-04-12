@@ -9,6 +9,14 @@ import androidx.room.PrimaryKey
 /**
  * Links an expense to a group with split information.
  */
+/**
+ * Note: the partial unique index enforcing "at most one group_expenses row per
+ * non-null expenseId" (`index_group_expenses_expenseId_unique … WHERE expenseId
+ * IS NOT NULL`) cannot be expressed via Room's @Index annotation, which does not
+ * support WHERE clauses.  It is applied by [AppDatabase.FRESH_INSTALL_CALLBACK]
+ * on fresh installs and by [AppDatabase.MIGRATION_70_71] on upgrades.
+ * The non-unique index on expenseId declared below serves FK-lookup optimisation.
+ */
 @Entity(
     tableName = "group_expenses",
     foreignKeys = [

@@ -9,7 +9,15 @@ import javax.inject.Singleton
 class ManualRecurringExpenseRepository @Inject constructor(
     private val dao: ManualRecurringExpenseDao
 ) {
-    suspend fun getAll(): List<ManualRecurringExpense> = dao.getAll()
+    /**
+     * Returns only active recurring expenses.
+     * B4: contract changed from all-rows to active-only for consistency
+     * with [RecurringExpenseRepository].
+     */
+    suspend fun getAll(): List<ManualRecurringExpense> = dao.getAllActive()
+
+    /** Returns all rows including inactive — use only when explicitly needed. */
+    suspend fun getAllIncludingInactive(): List<ManualRecurringExpense> = dao.getAll()
 
     suspend fun insert(expense: ManualRecurringExpense): Long = dao.insert(expense)
 

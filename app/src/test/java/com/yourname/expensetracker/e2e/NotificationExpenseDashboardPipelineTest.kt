@@ -293,6 +293,19 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
 
             override suspend fun deleteMember(groupId: Long, memberId: Long): DeleteGroupMemberResult =
                 DeleteGroupMemberResult.Error("Not needed in this test")
+
+            override suspend fun createSystemExpenseAndLinkToGroup(
+                groupId: Long,
+                description: String,
+                amount: Double,
+                paidById: Long,
+                currency: String,
+                splitType: com.yourname.expensetracker.data.database.entity.SplitType,
+                customSplitsJson: String?,
+                date: Long,
+                transactionType: com.yourname.expensetracker.data.database.entity.TransactionType,
+                notes: String?
+            ): GroupExpenseCreationResult = GroupExpenseCreationResult.Error("Not needed in this test")
         }
 
         val sharedExpenseManager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, testDispatcher)

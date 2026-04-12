@@ -47,7 +47,9 @@ data class MerchantLocationCorrection(
      * Stable key used as the unique conflict target.
      * Format: "<normalizedMerchant>|<latBucket>|<lonBucket>" where buckets
      * snap to ~5 km grid cells.  For global corrections (areaLatitude == null)
-     * the value is "<normalizedMerchant>|global".
+     * the value is plain "global" — matching the canonical representation in
+     * [MerchantLocation.areaKey] and the DAO queries that filter on
+     * `areaKey = 'global'`.
      */
     val areaKey: String = buildAreaKey(normalizedMerchantName, areaLatitude, areaLongitude),
 
@@ -78,7 +80,7 @@ data class MerchantLocationCorrection(
             areaLat: Double?,
             areaLon: Double?
         ): String {
-            if (areaLat == null || areaLon == null) return "$normalizedMerchant|global"
+            if (areaLat == null || areaLon == null) return "global"
             val latBucket = kotlin.math.floor(areaLat / AREA_SNAP_DEG).toLong()
             val lonBucket = kotlin.math.floor(areaLon / AREA_SNAP_DEG).toLong()
             return "$normalizedMerchant|$latBucket|$lonBucket"

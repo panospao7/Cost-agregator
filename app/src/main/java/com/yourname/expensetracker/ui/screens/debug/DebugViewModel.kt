@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
+import com.yourname.expensetracker.util.CsvExpenseImporter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +42,8 @@ class DebugViewModel @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiEngagementRepository: AiEngagementRepository,
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
-    private val databaseBackupRepository: com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
+    private val databaseBackupRepository: com.yourname.expensetracker.domain.backup.DatabaseBackupRepository,
+    val csvExpenseImporter: CsvExpenseImporter
 ) : ViewModel() {
 
     private data class ClearAllUndoSnapshot(

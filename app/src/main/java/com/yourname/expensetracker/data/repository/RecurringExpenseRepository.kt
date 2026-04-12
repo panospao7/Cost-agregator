@@ -14,14 +14,27 @@ import javax.inject.Singleton
 class RecurringExpenseRepository @Inject constructor(
     private val dao: RecurringExpenseDao
 ) {
-    fun getAllFlow(): Flow<List<ManualRecurringExpense>> = dao.getAllFlow()
+    /**
+     * Observe active recurring expenses only (isActive = 1).
+     * B4: contract changed from all-rows to active-only.
+     */
+    @Suppress("DEPRECATION")
+    fun getAllFlow(): Flow<List<ManualRecurringExpense>> = dao.getAllActiveFlow()
 
-    suspend fun getAll(): List<ManualRecurringExpense> = dao.getAll()
+    /**
+     * One-shot read of active recurring expenses only (isActive = 1).
+     * B4: contract changed from all-rows to active-only.
+     */
+    @Suppress("DEPRECATION")
+    suspend fun getAll(): List<ManualRecurringExpense> = dao.getAllActive()
     
+    @Suppress("DEPRECATION")
     suspend fun getById(id: Long): ManualRecurringExpense? = dao.getById(id)
 
+    @Suppress("DEPRECATION")
     suspend fun getByMerchant(merchant: String): ManualRecurringExpense? = dao.getByMerchant(merchant)
 
+    @Suppress("DEPRECATION")
     suspend fun addRecurringExpense(
         merchant: String,
         amount: Double,
@@ -43,12 +56,16 @@ class RecurringExpenseRepository @Inject constructor(
         return dao.insert(expense)
     }
 
+    @Suppress("DEPRECATION")
     suspend fun insert(expense: ManualRecurringExpense) = dao.insert(expense)
 
+    @Suppress("DEPRECATION")
     suspend fun delete(expense: ManualRecurringExpense) = dao.delete(expense)
     
+    @Suppress("DEPRECATION")
     suspend fun deleteById(id: Long) = dao.deleteById(id)
 
+    @Suppress("DEPRECATION")
     suspend fun update(expense: ManualRecurringExpense) = dao.update(expense)
 
     private fun calculateNextDate(lastDate: Long, frequency: RecurrenceFrequency): Long {

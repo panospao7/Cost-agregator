@@ -6,7 +6,6 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
@@ -24,20 +23,29 @@ class CategoryRepository @Inject constructor(
 
     suspend fun getAll(): List<Category> = categoryDao.getAll()
 
+    /**
+     * Seed default categories and merchant dictionary if the categories table is empty.
+     *
+     * B4 fixes:
+     * - Uses [CategoryDao.seedDefaultsIfEmpty] which is @Transaction-annotated,
+     *   so the count-check + insertAll is atomic and race-free.
+     * - Uses one-shot [CategoryDao.getAll] instead of flow-based `.first()` to
+     *   avoid fragile flow semantics inside a seeding path.
+     * - Ensures "Uncategorized" category exists for existing users via one-shot read.
+     */
     suspend fun ensureDefaultCategories() = withContext(Dispatchers.IO) {
         try {
-            if (categoryDao.getCount() == 0) {
-                // Seed Categories
-                val defaults = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.categoryBlueprints
-                categoryDao.insertAll(defaults)
-                
+            val defaults = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.categoryBlueprints
+            val seeded = categoryDao.seedDefaultsIfEmpty(defaults)
+
+            if (seeded) {
                 // Seed Merchant Dictionary
                 // We need to resolve Category IDs first to map names to IDs
-                val categories = categoryDao.getAllFlow().first() // Use flow first emission or simple get
-                
+                val categories = categoryDao.getAll()
+
                 // Map: "Groceries" -> 1, "Transport" -> 2
                 val categoryIdMap = categories.associate { it.name to it.id }
-                
+
                 val merchantMap = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.getExpandedMap()
                 val merchantEntities = merchantMap.mapNotNull { (merchant, categoryName) ->
                    val catId = categoryIdMap[categoryName]
@@ -53,10 +61,9 @@ class CategoryRepository @Inject constructor(
                 }
             } else {
                 // BUG-012 Fix: Ensure "Uncategorized" exists even for existing users
-                val categories = categoryDao.getAllFlow().first()
+                val categories = categoryDao.getAll()
                 if (categories.none { it.name.equals("Uncategorized", ignoreCase = true) }) {
-                    val uncategorized = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.categoryBlueprints
-                        .find { it.name == "Uncategorized" }
+                    val uncategorized = defaults.find { it.name == "Uncategorized" }
                     if (uncategorized != null) {
                         categoryDao.insert(uncategorized)
                     }

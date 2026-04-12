@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.database.dao
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
@@ -47,6 +48,34 @@ interface BudgetForecastDao {
     
     @Query("UPDATE budget_forecasts SET isActive = 0 WHERE id = :forecastId")
     suspend fun deactivateForecast(forecastId: Long)
+
+    /**
+     * Deactivates all currently-active forecasts for a given budget + target period.
+     *
+     * Used by [insertWithDeactivation] to ensure the partial unique index
+     * `index_budget_forecasts_active_budget_period` is never violated.
+     */
+    @Query("""
+        UPDATE budget_forecasts SET isActive = 0
+        WHERE budgetId = :budgetId
+          AND targetPeriodStart = :targetPeriodStart
+          AND targetPeriodEnd = :targetPeriodEnd
+          AND isActive = 1
+    """)
+    suspend fun deactivateForPeriod(budgetId: Long, targetPeriodStart: Long, targetPeriodEnd: Long)
+
+    /**
+     * Atomically deactivates any existing active forecast for the same
+     * (budgetId, targetPeriodStart, targetPeriodEnd) and then inserts a new one.
+     *
+     * This prevents UNIQUE constraint violations on the partial unique index
+     * created by MIGRATION_74_75.
+     */
+    @Transaction
+    suspend fun insertWithDeactivation(forecast: BudgetForecast): Long {
+        deactivateForPeriod(forecast.budgetId, forecast.targetPeriodStart, forecast.targetPeriodEnd)
+        return insert(forecast)
+    }
     
     @Query("DELETE FROM budget_forecasts WHERE budgetId = :budgetId")
     suspend fun deleteForecastsForBudget(budgetId: Long)

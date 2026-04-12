@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
@@ -30,6 +31,7 @@ object DatabaseModule {
             AppDatabase::class.java,
             "expense_tracker_db"
         ).addMigrations(*AppDatabase.ALL_MIGRATIONS)
+            .addCallback(AppDatabase.FRESH_INSTALL_CALLBACK)
             // ISSUE-1: Never destructively wipe user data on migration failures.
             // Old schemas must be migrated explicitly or handled through backup/recovery UX.
             .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
@@ -48,8 +50,9 @@ object DatabaseModule {
         groupDao: ExpenseGroupDao,
         memberDao: GroupMemberDao,
         groupExpenseDao: GroupExpenseDao,
+        expenseDao: ExpenseDao,
         @IoDispatcher ioDispatcher: CoroutineDispatcher
     ): GroupTransactionCoordinatorInterface {
-        return GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao, ioDispatcher)
+        return GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao, expenseDao, ioDispatcher)
     }
 }

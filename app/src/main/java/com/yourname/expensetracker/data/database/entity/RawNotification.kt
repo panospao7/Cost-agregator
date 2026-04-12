@@ -10,7 +10,14 @@ import androidx.room.PrimaryKey
         Index(value = ["packageName", "timestamp"]),
         Index(value = ["capturedAt"]),
         Index(value = ["isRelevant"]),
-        Index(value = ["packageName", "timestamp", "title", "text"], unique = true)
+        // The entity-level unique index is NOT declared here because SQLite
+        // treats NULL != NULL, so the 4-column unique index cannot prevent
+        // duplicate rows when title or text is NULL.  A partial unique index
+        // (created in MIGRATION_73_74 / FRESH_INSTALL_CALLBACK) closes this
+        // loophole at the DB level.  The old index
+        // index_raw_notifications_packageName_timestamp_title_text is dropped
+        // by the migration and replaced by two partial indexes.
+        Index(value = ["packageName", "timestamp", "title", "text"])
     ]
 )
 data class RawNotification(

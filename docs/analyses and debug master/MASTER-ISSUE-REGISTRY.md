@@ -260,60 +260,62 @@
 ### B.4: Database/DAO/Entity Pipeline
 **Batches:** 11, 12, 13, 14, 15, 27, 28, 29
 
+**[RESOLVED BY B.4]** — All items below were addressed across B.4 micro-batches 1–10 plus late closeout fixes (ISSUE-B4-11: migration 76→77 `UserCorrection.originalMerchant` index; migration 77→78 `AnomalyAlert (category, alertedAt)` composite index; `InvestmentTracker` recent-value ordering; `ExpenseRepository` paged-projection re-verification; Batch 29 final: `formattedTime` extension rename + stale `TransactionsScreen` import removed; migration 78→79 `ExchangeRate.toCurrency` supplementary index). Targeted validation evidence and device/environment waivers recorded in `docs/reviews/REVIEW-B4.md`. Final schema version: 79.
+
 - **CRITICAL:**
   - (None — all database issues are High or below)
 
 - **HIGH:**
-  - `Budget` entity allows multiple active overall/category budgets; DAO reads use `LIMIT 1` with no ordering — nondeterministic (B12, B14)
-  - `ManualRecurringExpense.isSubscription` defaults to `true` — generic recurring creation paths misclassify as subscriptions (B12, B13)
-  - `GroupMember` schema allows multiple `isCurrentUser = 1` per group; DAO uses `LIMIT 1` — nondeterministic current-user resolution (B13, B15)
-  - `GroupExpense.expenseId` treated as one-to-one link but not unique — one expense linked to multiple group_expenses rows (B13)
-  - `GroupExpense.paidById` only references `group_members.id` without enforcing same-group membership (B13)
-  - `MerchantCanonical` keyed by `searchKey` but only `normalizedName` is unique — different display names collapse to same searchKey (B13)
-  - `MerchantAlias` reads by `normalizedKey LIMIT 1` but `normalizedKey` not unique — arbitrary alias resolution (B13, B15)
-  - `BankConnectionDao.disconnect()` marks inactive but leaves `accessToken`, `refreshToken`, `tokenExpiry` intact — live credentials preserved (B15)
-  - `EmailReceiptDao.insert()` uses `REPLACE` on unique `emailMessageId` — re-ingesting same email overwrites source row (B15)
-  - `RawNotification` unique index includes nullable `title` and `text` — SQLite NULL rows don't collide, bypassing dedupe (B28)
-  - `AnomalyAlert.expenseId` has no FK — orphan alerts remain after expense deletion (B28)
-  - `SubscriptionCandidate` schema doesn't enforce one pending per merchant — concurrent detections create duplicates (B27, B28)
-  - `BudgetForecast` allows multiple overlapping active forecasts — date-based lookups nondeterministic (B27, B28)
-  - `SavingsGoalDao.updateGoalAmount()` overwrites `currentAmount` with caller-computed absolute value — concurrent contributions lose money (B14)
-  - `ScannedReceiptDao.linkToExpense()` updates only `expenseId`, leaves `matchStatus`/`suggestedExpenseId` untouched — linked receipts remain `UNMATCHED` (B14)
-  - `ExpenseDao.getBusinessExpensesMissingReceipts()` uses `rawNotificationId IS NULL` as receipt proxy — manual/receipt-created business expenses falsely flagged (B14)
-  - Business expense queries use raw `amount`, omit `isNotMine`/effective-amount handling — deductible totals overstated (B14)
-  - `ExpenseWithCategory.formattedAmount` built from raw `amount`, omits transaction polarity (B29)
-  - `UserCorrection` table has no index on `originalMerchant` — hot lookup queries degrade to full scans (B27)
-  - `SubscriptionCandidateDao` dedupe is read-then-insert without transaction — concurrent notifications create duplicates (B27)
-  - `InvestmentTracker.getInvestmentPerformance()` computes "all-time" high/low from only 30 days (B27)
-  - `RecurringExpenseRepository.getAll()` pulls inactive manual recurring rows — engine suppresses detection for deactivated subscriptions (B14)
-  - `GroupTransactionCoordinator` `addMemberToGroup()`, `addExpenseToGroup()`, `addExpenseWithLink()` validate state outside single DB transaction — concurrent archive/delete can invalidate checks (B11)
-  - `SharedExpenseGroupsViewModel.addExpense()` creates system expense first then `group_expenses` row — crash between two writes orphans the system expense (B11)
-  - Migration `69→70` + Android Keystore encryption causing DB open failure (B11)
-  - `BankConnection.defaultCategoryId` has no FK to `categories` — deleted categories leave stale IDs (B13)
-  - `MerchantLocation.areaKey` nullable inside composite unique index — multiple `(normalizedMerchantName, NULL)` rows bypass uniqueness in SQLite (B13)
-  - Financially sensitive numeric fields have no DB-level CHECK constraints across 7 entities (B13)
-  - `ExpenseDao.getBusinessExpensesBetween()` doesn't filter `transactionType = 'PURCHASE'` — transfers/deposits listed as deductible (B14)
-  - `CategoryDao` → `CategoryRepository.ensureDefaultCategories()` race — concurrent seeding creates duplicate defaults (B14)
-  - `CsvExpenseImporter` bypasses singleton Room graph — builds fresh `AppDatabase` instances via local extension (B23)
-  - `AnomalyAlertDao.getLastAlertForCategory()` has no `(category, alertedAt)` index — category cooldown checks scan full table (B27)
+  - `Budget` entity allows multiple active overall/category budgets; DAO reads use `LIMIT 1` with no ordering — nondeterministic (B12, B14) **[RESOLVED BY B.4 — Batch 4: partial unique index + transactional deactivation]**
+  - `ManualRecurringExpense.isSubscription` defaults to `true` — generic recurring creation paths misclassify as subscriptions (B12, B13) **[RESOLVED BY B.4 — Batch 4: default changed to `false`]**
+  - `GroupMember` schema allows multiple `isCurrentUser = 1` per group; DAO uses `LIMIT 1` — nondeterministic current-user resolution (B13, B15) **[RESOLVED BY B.4 — Batch 3: partial unique index on `(groupId)` where `isCurrentUser = 1`]**
+  - `GroupExpense.expenseId` treated as one-to-one link but not unique — one expense linked to multiple group_expenses rows (B13) **[RESOLVED BY B.4 — Batch 3: unique index on non-null `expenseId`]**
+  - `GroupExpense.paidById` only references `group_members.id` without enforcing same-group membership (B13) **[RESOLVED BY B.4 — Batch 3: coordinator-level same-group validation enforced transactionally; trigger deferred per plan split rule]**
+  - `MerchantCanonical` keyed by `searchKey` but only `normalizedName` is unique — different display names collapse to same searchKey (B13) **[RESOLVED BY B.4 — Batch 5: `searchKey` made unique with deterministic duplicate retention]**
+  - `MerchantAlias` reads by `normalizedKey LIMIT 1` but `normalizedKey` not unique — arbitrary alias resolution (B13, B15) **[RESOLVED BY B.4 — Batch 5: `normalizedKey` uniqueness enforced]**
+  - `BankConnectionDao.disconnect()` marks inactive but leaves `accessToken`, `refreshToken`, `tokenExpiry` intact — live credentials preserved (B15) **[RESOLVED BY B.4 — Batch 6: token fields nulled in same update]**
+  - `EmailReceiptDao.insert()` uses `REPLACE` on unique `emailMessageId` — re-ingesting same email overwrites source row (B15) **[RESOLVED BY B.4 — Batch 6: `emailMessageId` checked before insert; semantics changed to `ABORT`/explicit dedupe]**
+  - `RawNotification` unique index includes nullable `title` and `text` — SQLite NULL rows don't collide, bypassing dedupe (B28) **[RESOLVED BY B.4 — Batch 6: nullable dedupe fields normalized to non-null sentinels before insert]**
+  - `AnomalyAlert.expenseId` has no FK — orphan alerts remain after expense deletion (B28) **[RESOLVED BY B.4 — Batch 6: FK with `ON DELETE CASCADE` added and orphan migration included]**
+  - `SubscriptionCandidate` schema doesn't enforce one pending per merchant — concurrent detections create duplicates (B27, B28) **[RESOLVED BY B.4 — Batch 7: DB-level pending-candidate uniqueness + transactional upsert in pipeline]**
+  - `BudgetForecast` allows multiple overlapping active forecasts — date-based lookups nondeterministic (B27, B28) **[RESOLVED BY B.4 — Batch 7: transactional deactivate-then-insert + active-row uniqueness rule]**
+  - `SavingsGoalDao.updateGoalAmount()` overwrites `currentAmount` with caller-computed absolute value — concurrent contributions lose money (B14) **[RESOLVED BY B.4 — Batch 9: atomic delta update (`currentAmount = currentAmount + :delta`)]**
+  - `ScannedReceiptDao.linkToExpense()` updates only `expenseId`, leaves `matchStatus`/`suggestedExpenseId` untouched — linked receipts remain `UNMATCHED` (B14) **[RESOLVED BY B.4 — Batch 9: link atomically sets matched status and clears suggestion metadata]**
+  - `ExpenseDao.getBusinessExpensesMissingReceipts()` uses `rawNotificationId IS NULL` as receipt proxy — manual/receipt-created business expenses falsely flagged (B14) **[RESOLVED BY B.4 — Batch 9: replaced with `NOT EXISTS` on `scanned_receipts.expenseId`]**
+  - Business expense queries use raw `amount`, omit `isNotMine`/effective-amount handling — deductible totals overstated (B14) **[RESOLVED BY B.4 — Batch 9: effective-amount `CASE` applied to business queries]**
+  - `ExpenseWithCategory.formattedAmount` built from raw `amount`, omits transaction polarity (B29) **[RESOLVED BY B.4 — Batch 10: formatting now uses `effectiveAmount` with polarity sign rules]**
+  - `UserCorrection` table has no index on `originalMerchant` — hot lookup queries degrade to full scans (B27) **[RESOLVED BY B.4 — late closeout: `Index("originalMerchant")` entity annotation + `MIGRATION_76_77` (schema version 77)]**
+  - `SubscriptionCandidateDao` dedupe is read-then-insert without transaction — concurrent notifications create duplicates (B27) **[RESOLVED BY B.4 — Batch 7: transactional upsert enforced in `NotificationProcessingPipeline`]**
+  - `InvestmentTracker.getInvestmentPerformance()` computes "all-time" high/low from only 30 days (B27) **[RESOLVED BY B.4 — late closeout: true all-time min/max DAO queries used (`getMaxPrice`/`getMinPrice` from epoch 0); recent-value ordering also fixed (`recentValues.lastOrNull()` on ASC window returns the most-recent sample)]**
+  - `RecurringExpenseRepository.getAll()` pulls inactive manual recurring rows — engine suppresses detection for deactivated subscriptions (B14) **[RESOLVED BY B.4 — Batch 4: repository migrated to active-only `ManualRecurringExpenseDao` query]**
+  - `GroupTransactionCoordinator` `addMemberToGroup()`, `addExpenseToGroup()`, `addExpenseWithLink()` validate state outside single DB transaction — concurrent archive/delete can invalidate checks (B11) **[RESOLVED BY B.4 — Batch 2: validation collapsed into single `withTransaction {}` block]**
+  - `SharedExpenseGroupsViewModel.addExpense()` creates system expense first then `group_expenses` row — crash between two writes orphans the system expense (B11) **[RESOLVED BY B.4 — Batch 2: both writes moved behind one atomic coordinator transaction]**
+  - Migration `69→70` + Android Keystore encryption causing DB open failure (B11) **[RESOLVED BY B.4 — Batch 1: per-row Keystore failure caught and deferred; DB open no longer aborts]**
+  - `BankConnection.defaultCategoryId` has no FK to `categories` — deleted categories leave stale IDs (B13) **[RESOLVED BY B.4 — Batch 6: FK to `categories(id)` with `ON DELETE SET NULL` added]**
+  - `MerchantLocation.areaKey` nullable inside composite unique index — multiple `(normalizedMerchantName, NULL)` rows bypass uniqueness in SQLite (B13) **[RESOLVED BY B.4 — Batch 5: NULL backfilled to `'global'`; column made non-null]**
+  - Financially sensitive numeric fields have no DB-level CHECK constraints across 7 entities (B13) **[RESOLVED BY B.4 — Batch 8: CHECK constraints added for all 7 identified entities]**
+  - `ExpenseDao.getBusinessExpensesBetween()` doesn't filter `transactionType = 'PURCHASE'` — transfers/deposits listed as deductible (B14) **[RESOLVED BY B.4 — Batch 9: purchase-type filter added to list and flow variants]**
+  - `CategoryDao` → `CategoryRepository.ensureDefaultCategories()` race — concurrent seeding creates duplicate defaults (B14) **[RESOLVED BY B.4 — Batch 4: seeding wrapped in one DB transaction with idempotent insert-or-ignore]**
+  - `CsvExpenseImporter` bypasses singleton Room graph — builds fresh `AppDatabase` instances via local extension (B23) **[RESOLVED BY B.4 — Batch 10: importer refactored to use DI-backed `AppDatabase` reference]**
+  - `AnomalyAlertDao.getLastAlertForCategory()` has no `(category, alertedAt)` index — category cooldown checks scan full table (B27) **[RESOLVED BY B.4 — late closeout: composite index `(category, alertedAt)` added via `MIGRATION_77_78` (schema version 78)]**
 
 - **LOW:**
-  - Migration `42→43` created `group_expenses.expenseId` as `NOT NULL` for nullable field — repaired in `49→50` (B11)
-  - `GroupTransactionCoordinator.addExpenseToGroupAtomic()` ignores `newBalance` — silent no-op (B11)
-  - `deleteGroup()` always returns `true` if `archiveGroup()` doesn't throw — nonexistent group reported as success (B11-missed)
-  - `Category` entity `init` block throws on invalid persisted values — bad DB row turns reads into exceptions (B12)
-  - `Budget.notifyAtWarning/notifyAtCritical` unconstrained (B12)
-  - `SavingsGoal.targetAmount/currentAmount` unconstrained (B12)
-  - `Expense.splitTemplateId` has no FK (B12-missed)
-  - `PendingReview.suggestedType` stored as raw `String` — corrupted rows silently change transaction type (B12-missed)
-  - `ExchangeRateDao.getAllRatesForBase()` filters on `toCurrency` but index leads with `fromCurrency` (B15)
-  - `EmailReceiptDao.getByReceiptId()` returns single row but multiple sources can share same receiptId (B15-missed)
-  - `Global merchant-location keys` inconsistent across pipeline (`"global"` vs `"<normalized>|global"`) (B15-missed)
-  - `UserCorrectionDao` tie-breaking in `getMostCommon*` uses `LIMIT 1` with no secondary ordering (B27)
-  - `SubscriptionUsageDao.getAllUsageSince()` effectively unindexed for global queries (B27-missed)
-  - `SubscriptionCandidate.convertedSubscriptionId` has no FK (B28-missed)
-  - `MileageTracking` entity accepts impossible states (negative distance, endOdometer < startOdometer) (B28)
-  - `formattedAmount` hardcodes `Locale.US` (B29-missed)
+  - Migration `42→43` created `group_expenses.expenseId` as `NOT NULL` for nullable field — repaired in `49→50` (B11) **[RESOLVED BY B.4 — Batch 1: regression migration test added covering `42→43` / `49→50` path]**
+  - `GroupTransactionCoordinator.addExpenseToGroupAtomic()` ignores `newBalance` — silent no-op (B11) **[RESOLVED BY B.4 — Batch 2: unused parameter and dead balance-update loop removed]**
+  - `deleteGroup()` always returns `true` if `archiveGroup()` doesn't throw — nonexistent group reported as success (B11-missed) **[RESOLVED BY B.4 — Batch 2: `archiveGroup()` now returns affected-row count; `0` rows mapped to not-found result]**
+  - `Category` entity `init` block throws on invalid persisted values — bad DB row turns reads into exceptions (B12) **[RESOLVED BY B.4 — Batch 4: validation moved to write path; reads are now recovery-safe]**
+  - `Budget.notifyAtWarning/notifyAtCritical` unconstrained (B12) **[RESOLVED BY B.4 — Batch 8: CHECK constraints enforce legal threshold ranges]**
+  - `SavingsGoal.targetAmount/currentAmount` unconstrained (B12) **[RESOLVED BY B.4 — Batch 8: CHECK constraints enforce positive target and non-negative balance]**
+  - `Expense.splitTemplateId` has no FK (B12-missed) **[RESOLVED BY B.4 — Batch 8: nullable FK to `split_templates(id)` with `ON DELETE SET NULL` added]**
+  - `PendingReview.suggestedType` stored as raw `String` — corrupted rows silently change transaction type (B12-missed) **[RESOLVED BY B.4 — Batch 8: enum-backed validation enforced on persistence; invalid strings rejected]**
+  - `ExchangeRateDao.getAllRatesForBase()` filters on `toCurrency` but index leads with `fromCurrency` (B15) **[RESOLVED BY B.4 — Batch 29 closeout: `Index(["toCurrency"])` entity annotation added to `ExchangeRate.kt`; `MIGRATION_78_79` lands `CREATE INDEX IF NOT EXISTS index_exchange_rates_toCurrency ON exchange_rates (toCurrency)`; schema version bumped to 79; `MigrationContractTest` extended with `migration_78_to_79_adds_toCurrency_index_on_exchange_rates`; `DatabaseMigrationTest` extended with `migrate_77_to_79_chain_passes_and_has_toCurrency_index`]**
+  - `EmailReceiptDao.getByReceiptId()` returns single row but multiple sources can share same receiptId (B15-missed) **[RESOLVED BY B.4 — Batch 6: return type changed to `List<EmailReceiptSource>`]**
+  - `Global merchant-location keys` inconsistent across pipeline (`"global"` vs `"<normalized>|global"`) (B15-missed) **[RESOLVED BY B.4 — Batch 5: single global-key convention standardized; legacy rows migrated]**
+  - `UserCorrectionDao` tie-breaking in `getMostCommon*` uses `LIMIT 1` with no secondary ordering (B27) **[RESOLVED BY B.4 — Batch 5: stable secondary sort (recency/id) added as tie-breaker]**
+  - `SubscriptionUsageDao.getAllUsageSince()` effectively unindexed for global queries (B27-missed) **[RESOLVED BY B.4 — Batch 7: standalone `Index(["usedAt"])` added]**
+  - `SubscriptionCandidate.convertedSubscriptionId` has no FK (B28-missed) **[RESOLVED BY B.4 — Batch 8: nullable FK to `ManualRecurringExpense(id)` with `ON DELETE SET NULL` added]**
+  - `MileageTracking` entity accepts impossible states (negative distance, endOdometer < startOdometer) (B28) **[RESOLVED BY B.4 — Batch 8: repository guard and DB CHECK constraints reject impossible mileage states]**
+  - `formattedAmount` hardcodes `Locale.US` (B29-missed) **[RESOLVED BY B.4 — Batch 10: `ExpenseWithCategory.formattedAmount` now uses `effectiveAmount` with polarity sign rules (`-`/`+`/`""` based on `transactionType`), `Locale.getDefault()` via `String.format(Locale.getDefault(), "%.2f", ...)`, and a prefixed currency code string (`"$prefix${expense.currency}$value"`); `NumberFormat`/`Currency` API is not used; Batch 29 closeout: `ExpenseWithCategory_Extensions.kt` extension renamed from `formattedDate` to `formattedTime` (time-only "HH:mm" helper) fully resolving the member-shadows-extension ambiguity; dead `formattedAmount` extension and stale shadowed `formattedDate` extension removed; `TransactionsScreen.kt` import updated to `formattedTime`]**
 
 ### B.5: Location/Geocoding Pipeline
 **Batches:** 18, 30, 32, 42, 44
@@ -741,7 +743,7 @@
 
 ### D.2: High (Quick Wins)
 - `RecommendationStateManager` sorts by `compareByDescending { it.priority }` using enum ordinal — `LOW` placed ahead of `HIGH` (B20)
-- `BankConnectionDao.disconnect()` leaves token fields intact — null them out in same update (B15)
+- `BankConnectionDao.disconnect()` leaves token fields intact — null them out in same update (B15) **[RESOLVED BY B.4 — Batch 6: token fields nulled in same update]**
 - `BillReminderManager` urgency thresholds don't match enum semantics — overdue/today should be `CRITICAL` (B39)
 - `BillReminderManager.markBillPaid()` advances only one interval from stored due date — advance from `max(now, currentDueDate)` (B39)
 - `BudgetForecastingViewModel` on first failure, `_uiState.budget` remains null — persist requested budget before running forecast (B17)
@@ -750,7 +752,7 @@
 - `SharedBudgetManager.getMemberContributions()` returns hardcoded zero placeholders — disable API or implement real calculation (B02, B37)
 - `PriceProtectionTracker` generates price drops/deals from hard-coded heuristics rendered as real results — hide behind debug providers (B42, B44)
 - `BankApiIntegration` returns successful OAuth URLs, demo tokens, mock sync results — gate behind "not implemented" error (B39)
-- `ManualRecurringExpense.isSubscription` defaults to `true` — change default to `false` (B12, B13)
+- `ManualRecurringExpense.isSubscription` defaults to `true` — change default to `false` (B12, B13) **[RESOLVED BY B.4 — Batch 4: default changed to `false`]**
 - `TaxEstimator.getTaxYearSummary()` hardcodes annual income to `30000.0` — feed real annual income (B45)
 - `AdvancedAnalyticsDashboard` incoming `TRANSFER` transactions counted as income — filter transfers from cashflow calculation (B36-missed)
 - `AdvancedAnalyticsDashboard` top categories rendered as placeholder labels like `Category 5` — resolve category names from category store (B36-missed)
@@ -791,21 +793,21 @@
 - `GroupMemberDao.getCurrentUserFlow()` uses `LIMIT 1` with no `ORDER BY` — enforce single current-user row (B15)
 - `GroupExpenseDao.getGroupExpenseForExpense()` returns `LIMIT 1` but `expenseId` only indexed — add unique constraint (B15)
 - `MerchantLocationDao.upsertLocation()` read-then-insert under unique index — use single-statement upsert (B15)
-- `ExchangeRateDao.getAllRatesForBase()` filters on non-leading index column — add index on `(toCurrency, fromCurrency)` (B15)
-- `EmailReceiptDao.getByReceiptId()` returns single row but multiple sources can share same receiptId — return `List` (B15-missed)
+- `ExchangeRateDao.getAllRatesForBase()` filters on non-leading index column — add index on `(toCurrency, fromCurrency)` (B15) **[RESOLVED BY B.4 — Batch 7 / late closeout (ISSUE-B4-7, ISSUE-B4-11): `Index(["toCurrency"])` entity annotation added to `ExchangeRate.kt` and `MIGRATION_78_79` lands `CREATE INDEX IF NOT EXISTS index_exchange_rates_toCurrency ON exchange_rates (toCurrency)` at schema version 79; the originally planned composite `(toCurrency, fromCurrency)` index was simplified to a standalone `Index(["toCurrency"])` because B.4 resolved the non-leading-column scan by adding that index via `MIGRATION_78_79`; the query does not filter on `fromCurrency`, so a standalone `toCurrency` index directly targets the scanned column]**
+- `EmailReceiptDao.getByReceiptId()` returns single row but multiple sources can share same receiptId — return `List` (B15-missed) **[RESOLVED BY B.4 — Batch 6: return type changed to `List<EmailReceiptSource>`]**
 - `SplitItemAssignmentDao.getParticipantTotals()` groups by `participantName` only — group by stable key (B15)
-- `UserCorrectionDao` tie-breaking uses `LIMIT 1` with no secondary ordering — add stable secondary sort (B27)
+- `UserCorrectionDao` tie-breaking uses `LIMIT 1` with no secondary ordering — add stable secondary sort (B27) **[RESOLVED BY B.4 — Batch 5: stable secondary sort (recency/id) added as tie-breaker]**
 - `AiChatRepositoryImpl.appendMessage()` persists message and updates session as two writes — move to one transaction (B27)
-- `InvestmentValueDao.getPortfolioValueHistory()` one query per investment — add batched query (B27)
+- `InvestmentValueDao.getPortfolioValueHistory()` one query per investment — add batched query (B27) **[DEFERRED — not addressed in B.4; current code still uses per-investment `getValuesBetween()` calls]**
 - `MileageTracking` reporting queries need composite index `(isBusinessTrip, date)` (B27)
 - `BudgetForecastDao.getForecastForDate()` returns `LIMIT 1` without ordering — add `ORDER BY` (B27)
 - `HealthScoreHistory` `(periodStart, periodEnd)` only indexed — make unique (B27)
-- `SubscriptionUsageDao.getAllUsageSince()` effectively unindexed — add standalone index on `usedAt` (B27-missed)
-- `SubscriptionCandidate.convertedSubscriptionId` has no FK — add nullable FK (B28-missed)
-- `MileageTracking` entity accepts impossible states — add validation (B28)
-- `formattedAmount` hardcodes `Locale.US` — centralize formatting (B29-missed)
-- `ExpenseWithCategory_Extensions` shadowed by member properties — delete duplicate extensions (B29)
-- `getExpensesPagedDynamic()` selects subset of columns but maps to full `ExpenseWithCategory` — use `SELECT e.*` (B29)
+- `SubscriptionUsageDao.getAllUsageSince()` effectively unindexed — add standalone index on `usedAt` (B27-missed) **[RESOLVED BY B.4 — Batch 7: standalone `Index(["usedAt"])` added]**
+- `SubscriptionCandidate.convertedSubscriptionId` has no FK — add nullable FK (B28-missed) **[RESOLVED BY B.4 — Batch 8: nullable FK to `ManualRecurringExpense(id)` with `ON DELETE SET NULL` added]**
+- `MileageTracking` entity accepts impossible states — add validation (B28) **[RESOLVED BY B.4 — Batch 8: repository guard and DB CHECK constraints reject impossible mileage states]**
+- `formattedAmount` hardcodes `Locale.US` — centralize formatting (B29-missed) **[RESOLVED BY B.4 — Batch 10: `ExpenseWithCategory.formattedAmount` now uses `effectiveAmount` with polarity sign rules, `Locale.getDefault()` via `String.format`, and a prefixed currency code string; `NumberFormat`/`Currency` API is not used]**
+- `ExpenseWithCategory_Extensions` shadowed by member properties — delete duplicate extensions (B29) **[RESOLVED BY B.4 — Batch 10: shadowed duplicate extensions removed]**
+- `getExpensesPagedDynamic()` selects subset of columns but maps to full `ExpenseWithCategory` — use `SELECT e.*` (B29) **[RESOLVED BY B.4 — Batch 10: projection changed to `SELECT e.*`; re-verified in late closeout (ISSUE-B4-11)]**
 - `CloudReceiptItemCategorizationService` uses `ON_DEVICE_RECEIPT_ITEM_MAX_TOKENS` for cloud — add cloud-specific constant (B09)
 - `CloudWarrantyExtractionService` hardcodes model name and token budget — use shared config (B09)
 - `CloudReviewExplanationService` generates new correlation ID per retry — generate one before retry loop (B09)
@@ -885,8 +887,8 @@
 - `UberReceiptParser` same currency detection issue (B31-missed)
 - `UberReceiptParser.parseUberDate()` fills in current year for year-less dates — derive from email `receivedAt` year (B31-missed)
 - `WarrantyTextExtractor` "date at start of line" regex not compiled with `MULTILINE` — add flag (B45-missed)
-- `Expense.splitTemplateId` has no FK — add nullable FK (B12-missed)
-- `PendingReview.suggestedType` stored as raw `String` — validate against allowed names (B12-missed)
+- `Expense.splitTemplateId` has no FK — add nullable FK (B12-missed) **[RESOLVED BY B.4 — Batch 8: nullable FK to `split_templates(id)` with `ON DELETE SET NULL` added]**
+- `PendingReview.suggestedType` stored as raw `String` — validate against allowed names (B12-missed) **[RESOLVED BY B.4 — Batch 8: enum-backed validation enforced on persistence; invalid strings rejected]**
 - `ClipboardAmountParser` regex grabs partial match on thousands-formatted values — anchor whole-token matching (B23-missed)
 - `CsvExpenseImporter` emits 8-digit ARGB colors but Category entity only accepts 6-digit `#RRGGBB` — emit 6-digit hex (B23-missed)
 - `AmountUtils` comma-group validation accepts `1,0000` — require 3-digit chunks (B23)
@@ -899,7 +901,7 @@
 - `StringDistanceUtils.isFuzzyMatch()` recompiles regexes every call — hoist to constants (B23)
 - `EmailReceiptSource.fingerprint` is primary dedupe lookup but schema only adds non-unique index — make unique (B13-missed)
 - `GroupTransactionCoordinator.deleteGroup()` always returns `true` — return affected-row count (B11-missed)
-- `InvestmentTracker.getValuesBetween()` returns ascending, `getInvestmentPerformance()` reads `firstOrNull()` for day change — use `lastOrNull()` (B27-missed)
+- `InvestmentTracker.getValuesBetween()` returns ascending, `getInvestmentPerformance()` reads `firstOrNull()` for day change — use `lastOrNull()` (B27-missed) **[RESOLVED BY B.4 — Batch 10 / late closeout (ISSUE-B4-11): `recentValues.lastOrNull()` on ASC-ordered window confirmed correct]**
 - `FinancialHealthScoreV2.saveToHistory()` read-then-insert without uniqueness guarantee — add unique constraint, use UPSERT (B41)
 - `RecurringIncomeTracker` groups deposits by raw merchant including blank — skip blank merchants (B41)
 - `ConfidenceRouter` ensureSourceStats timestamps with `System.currentTimeMillis()` — use `timeProvider.now()` (B41)
@@ -987,7 +989,7 @@
 - `ManualRecurringExpenseDao.insert()` uses `REPLACE` — use `ABORT` for create-only (B15)
 - `MerchantNormalizationDao.linkAliasToCanonical()` read-then-insert — use atomic upsert (B15)
 - `ExpenseDao.getChanges()` exposes SQLite `changes()` as standalone helper — remove or wrap (B14)
-- `ScannedReceiptDao.linkToExpense()` updates only `expenseId` — atomically set matched status (B14)
+- `ScannedReceiptDao.linkToExpense()` updates only `expenseId` — atomically set matched status (B14) **[RESOLVED BY B.4 — Batch 9: link atomically sets matched status and clears suggestion metadata]**
 - `ReturnWindowDao` returns single row without 1:1 enforcement — enforce uniqueness (B14)
 
 - `SpendingThresholdCalculator` percentile query uses raw `amount` not `effectiveAmount` — shared expenses inflate threshold, anomaly detection less sensitive (B36-missed)

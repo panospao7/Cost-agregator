@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.groups
 import com.yourname.expensetracker.data.database.entity.ExpenseGroup
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.data.database.entity.TransactionType
 
 /**
  * HIGH-06 FIX: Single Coordinator Pattern
@@ -143,6 +144,42 @@ interface GroupTransactionCoordinator {
         date: Long = 0L // sentinel — callers MUST supply an explicit boundary timestamp
     ): GroupExpenseCreationResult
     
+    /**
+     * Atomically create a system expense AND link it to a group in a single transaction.
+     * This eliminates the orphan window where a system expense could exist without a group link.
+     *
+     * The implementation must:
+     * 1. Validate group exists and is active
+     * 2. Validate payer is a member of the group
+     * 3. Insert the system expense
+     * 4. Insert the group expense linked to the system expense
+     * All within a single database transaction — if any step fails, everything rolls back.
+     *
+     * @param groupId Group ID
+     * @param description Expense description (used as merchant for system expense)
+     * @param amount Total expense amount
+     * @param paidById ID of member who paid
+     * @param currency Currency code for this expense
+     * @param splitType How to split the expense
+     * @param customSplitsJson Serialized custom split configuration, if applicable
+     * @param date Expense date in milliseconds
+     * @param transactionType Transaction type for the system expense
+     * @param notes Optional notes for the system expense
+     * @return GroupExpenseCreationResult with IDs or error
+     */
+    suspend fun createSystemExpenseAndLinkToGroup(
+        groupId: Long,
+        description: String,
+        amount: Double,
+        paidById: Long,
+        currency: String,
+        splitType: SplitType = SplitType.EQUAL,
+        customSplitsJson: String? = null,
+        date: Long = 0L,
+        transactionType: TransactionType = TransactionType.PURCHASE,
+        notes: String? = null
+    ): GroupExpenseCreationResult
+
     /**
      * Delete a group and all associated data (members, expenses).
      * This is a soft delete - sets isActive = false.

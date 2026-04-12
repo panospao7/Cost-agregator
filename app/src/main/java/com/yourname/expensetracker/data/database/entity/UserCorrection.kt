@@ -23,7 +23,8 @@ import androidx.room.*
         Index("correctedCategoryId"),
         Index("packageName"),
         Index("wasApproved"),
-        Index("wasRejected")
+        Index("wasRejected"),
+        Index("originalMerchant")
     ]
 )
 data class UserCorrection(

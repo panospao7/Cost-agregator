@@ -1,17 +1,22 @@
 package com.yourname.expensetracker.data.database
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
+import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.ExpenseGroup
 import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator as DomainCoordinator
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -29,6 +34,8 @@ import javax.inject.Singleton
  * - Isolation: Concurrent transactions don't interfere
  * - Durability: Committed changes survive crashes
  * 
+ * B.4 Batch 2: Added ExpenseDao for atomic system-expense + group-link flow.
+ * 
  * This is the SINGLE implementation of the GroupTransactionCoordinator contract.
  */
 @Singleton
@@ -37,6 +44,7 @@ class GroupTransactionCoordinator @Inject constructor(
     private val groupDao: ExpenseGroupDao,
     private val memberDao: GroupMemberDao,
     private val groupExpenseDao: GroupExpenseDao,
+    private val expenseDao: ExpenseDao,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : DomainCoordinator {
     
@@ -79,6 +87,8 @@ class GroupTransactionCoordinator @Inject constructor(
     
     /**
      * Add a member to an existing group.
+     * B.4 Batch 2: Wrapped in database.withTransaction to close the
+     * read-check-then-insert TOCTOU window (Risk 3).
      */
     override suspend fun addMemberToGroup(
         groupId: Long,
@@ -87,20 +97,22 @@ class GroupTransactionCoordinator @Inject constructor(
         isCurrentUser: Boolean
     ): Long? = withContext(ioDispatcher) {
         try {
-            // Verify group exists and is active
-            val group = groupDao.getById(groupId)
-            if (group == null || !group.isActive) {
-                return@withContext null
+            database.withTransaction {
+                // Verify group exists and is active inside the transaction
+                val group = groupDao.getById(groupId)
+                if (group == null || !group.isActive) {
+                    return@withTransaction null
+                }
+
+                val member = GroupMember(
+                    groupId = groupId,
+                    name = name,
+                    email = email,
+                    isCurrentUser = isCurrentUser
+                )
+
+                memberDao.insert(member)
             }
-            
-            val member = GroupMember(
-                groupId = groupId,
-                name = name,
-                email = email,
-                isCurrentUser = isCurrentUser
-            )
-            
-            memberDao.insert(member)
         } catch (e: Exception) {
             null
         }
@@ -164,6 +176,8 @@ class GroupTransactionCoordinator @Inject constructor(
     /**
      * Add an expense to a group and link it to a system expense.
      * This is the proper way to create group expenses that appear in transaction history.
+     * B.4 Batch 2: Wrapped in database.withTransaction so validation + insert
+     * are atomic (Risk 2).
      */
     override suspend fun addExpenseWithLink(
         groupId: Long,
@@ -177,43 +191,45 @@ class GroupTransactionCoordinator @Inject constructor(
         date: Long
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
-            // Verify group exists and is active
-            val group = groupDao.getById(groupId)
-            if (group == null || !group.isActive) {
-                return@withContext GroupExpenseCreationResult.Error("Group not found or inactive")
-            }
-            
-            // Verify payer is a member
-            val members = memberDao.getAllForGroup(groupId)
-            if (members.none { it.id == paidById }) {
-                return@withContext GroupExpenseCreationResult.Error("Payer is not a member of this group")
-            }
+            database.withTransaction {
+                // Verify group exists and is active
+                val group = groupDao.getById(groupId)
+                if (group == null || !group.isActive) {
+                    return@withTransaction GroupExpenseCreationResult.Error("Group not found or inactive")
+                }
 
-            val expenseCurrency = currency ?: group.defaultCurrency
-            
-            // Create the group expense with system link
-            val expense = GroupExpense(
-                groupId = groupId,
-                expenseId = systemExpenseId, // Link to system expense
-                description = description,
-                totalAmount = amount,
-                paidById = paidById,
-                date = date,
-                currency = expenseCurrency,
-                splitType = splitType,
-                customSplitsJson = customSplitsJson
-            )
-            
-            val groupExpenseId = groupExpenseDao.insert(expense)
-            
-            if (groupExpenseId <= 0) {
-                return@withContext GroupExpenseCreationResult.Error("Failed to create group expense")
+                // Verify payer is a member
+                val members = memberDao.getAllForGroup(groupId)
+                if (members.none { it.id == paidById }) {
+                    return@withTransaction GroupExpenseCreationResult.Error("Payer is not a member of this group")
+                }
+
+                val expenseCurrency = currency ?: group.defaultCurrency
+
+                // Create the group expense with system link
+                val expense = GroupExpense(
+                    groupId = groupId,
+                    expenseId = systemExpenseId,
+                    description = description,
+                    totalAmount = amount,
+                    paidById = paidById,
+                    date = date,
+                    currency = expenseCurrency,
+                    splitType = splitType,
+                    customSplitsJson = customSplitsJson
+                )
+
+                val groupExpenseId = groupExpenseDao.insert(expense)
+
+                if (groupExpenseId <= 0) {
+                    return@withTransaction GroupExpenseCreationResult.Error("Failed to create group expense")
+                }
+
+                GroupExpenseCreationResult.Success(
+                    groupExpenseId = groupExpenseId,
+                    expenseId = systemExpenseId
+                )
             }
-            
-            GroupExpenseCreationResult.Success(
-                groupExpenseId = groupExpenseId,
-                expenseId = systemExpenseId
-            )
         } catch (e: Exception) {
             GroupExpenseCreationResult.Error("Failed to add expense: ${e.message}")
         }
@@ -272,28 +288,119 @@ class GroupTransactionCoordinator @Inject constructor(
             groupId
         }
     }
+
+    /**
+     * B.4 Batch 2 — Risk 1: Atomically create a system expense AND link it to
+     * a group in a single database transaction.
+     *
+     * This eliminates the orphan window in the old two-step ViewModel flow
+     * where a system expense could exist without an associated group link.
+     *
+     * All validation (group active, payer membership) and both inserts happen
+     * inside [database.withTransaction]. If any step fails, everything rolls back.
+     */
+    override suspend fun createSystemExpenseAndLinkToGroup(
+        groupId: Long,
+        description: String,
+        amount: Double,
+        paidById: Long,
+        currency: String,
+        splitType: SplitType,
+        customSplitsJson: String?,
+        date: Long,
+        transactionType: TransactionType,
+        notes: String?
+    ): GroupExpenseCreationResult = withContext(ioDispatcher) {
+        try {
+            database.withTransaction {
+                // 1. Validate group exists and is active
+                val group = groupDao.getById(groupId)
+                if (group == null || !group.isActive) {
+                    return@withTransaction GroupExpenseCreationResult.Error("Group not found or inactive")
+                }
+
+                // 2. Validate payer is a member of the group
+                val members = memberDao.getAllForGroup(groupId)
+                if (members.none { it.id == paidById }) {
+                    return@withTransaction GroupExpenseCreationResult.Error("Payer is not a member of this group")
+                }
+
+                val payer = members.first { it.id == paidById }
+
+                val expenseCurrency = group.defaultCurrency
+
+                // 3. Create system expense with type-aware dedupe key
+                // (mirrors ManualExpenseRepository's safe-insert semantics
+                // so that the shared unique index on dedupeKey prevents
+                // duplicate system expenses from group flows)
+                val systemExpense = Expense(
+                    amount = amount,
+                    currency = expenseCurrency,
+                    merchant = description,
+                    merchantKey = MerchantKeyGenerator.generate(description),
+                    transactionType = transactionType,
+                    date = date,
+                    isManualEntry = true,
+                    notes = notes ?: "Group expense via ${payer.name}",
+                    createdAt = System.currentTimeMillis(),
+                    dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                        amount = amount,
+                        merchant = description,
+                        date = date,
+                        currency = expenseCurrency,
+                        transactionType = transactionType
+                    )
+                )
+
+                // insertAtomic is IGNORE-on-conflict — last-line race guard
+                // matching the convention used by ManualExpenseRepository
+                val systemExpenseId = expenseDao.insertAtomic(systemExpense)
+                if (systemExpenseId <= 0) {
+                    return@withTransaction GroupExpenseCreationResult.Error("Failed to create system expense")
+                }
+
+                // 4. Create group expense linked to system expense
+                val groupExpense = GroupExpense(
+                    groupId = groupId,
+                    expenseId = systemExpenseId,
+                    description = description,
+                    totalAmount = amount,
+                    paidById = paidById,
+                    date = date,
+                    currency = expenseCurrency,
+                    splitType = splitType,
+                    customSplitsJson = customSplitsJson
+                )
+
+                val groupExpenseId = groupExpenseDao.insert(groupExpense)
+                if (groupExpenseId <= 0) {
+                    return@withTransaction GroupExpenseCreationResult.Error("Failed to create group expense link")
+                }
+
+                GroupExpenseCreationResult.Success(
+                    groupExpenseId = groupExpenseId,
+                    expenseId = systemExpenseId
+                )
+            }
+        } catch (e: Exception) {
+            GroupExpenseCreationResult.Error("Failed to create group expense atomically: ${e.message}")
+        }
+    }
     
     /**
-     * Atomic expense addition to group with member updates.
-     * Used by SharedExpenseManager for direct entity-based operations.
+     * Atomically insert a group expense record.
+     *
+     * This is an insert-only helper — it does NOT update member balances.
+     * Balance computation is performed at read time by [SplitCalculator].
+     *
+     * @param groupExpense the [GroupExpense] entity to insert
+     * @return the row-id of the inserted group expense
      */
     suspend fun addExpenseToGroupAtomic(
-        groupExpense: GroupExpense,
-        memberBalanceUpdates: Map<Long, Double> // memberId -> new balance
+        groupExpense: GroupExpense
     ): Long {
         return database.withTransaction {
-            // Insert group expense
-            val expenseId = groupExpenseDao.insert(groupExpense)
-            
-            // Update member balances atomically
-            memberBalanceUpdates.forEach { (memberId, newBalance) ->
-                val member = memberDao.getMemberById(memberId)
-                member?.let {
-                    memberDao.update(it.copy()) // Balance updates should be handled via member entity
-                }
-            }
-            
-            expenseId
+            groupExpenseDao.insert(groupExpense)
         }
     }
     

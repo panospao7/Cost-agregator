@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import timber.log.Timber
 
 /**
@@ -41,10 +42,17 @@ data class ExpenseWithCategory(
     /**
      * Human-readable amount string representing the user's effective (ownership-adjusted) spend.
      * Uses [Expense.effectiveAmount] so that shared and "not-mine" rows are reflected correctly.
+     * Includes a polarity prefix (+/−) based on [Expense.transactionType] and places the
+     * currency code before the numeric value for consistent presentation across all surfaces.
      * Raw posted amount is available via [expense.amount] when explicitly needed for reference.
      */
     val formattedAmount: String by lazy {
-        String.format(java.util.Locale.US, "%.2f %s", expense.effectiveAmount, expense.currency)
+        val prefix = when (expense.transactionType) {
+            TransactionType.PURCHASE, TransactionType.WITHDRAWAL -> "-"
+            TransactionType.DEPOSIT -> "+"
+            else -> ""
+        }
+        "$prefix${expense.currency}${String.format(java.util.Locale.getDefault(), "%.2f", expense.effectiveAmount)}"
     }
 
     val categoryColor: Long by lazy {

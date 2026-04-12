@@ -116,10 +116,11 @@ class EmailReceiptIngestionServiceTest {
         val emailSourceSlot = slot<EmailReceiptSource>()
         val expenseSlot = slot<Expense>()
 
+        coEvery { emailReceiptDao.getByMessageId("msg-amazon-1") } returns null
         coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
         coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
         coEvery { scannedReceiptDao.insert(capture(scannedSlot)) } returns 501L
-        coEvery { emailReceiptDao.insert(capture(emailSourceSlot)) } returns 1L
+        coEvery { emailReceiptDao.insertOrIgnore(capture(emailSourceSlot)) } returns 1L
         coEvery { expenseDao.insertAtomic(capture(expenseSlot)) } returns 901L
         coEvery { scannedReceiptDao.getById(501L) } returns null
 
@@ -163,12 +164,13 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
+        coEvery { emailReceiptDao.getByMessageId(any()) } returns null
         coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
         coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
         coEvery { scannedReceiptDao.insert(any()) } returnsMany listOf(601L, 602L)
 
         val providerSlots = mutableListOf<EmailReceiptSource>()
-        coEvery { emailReceiptDao.insert(any()) } answers {
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } answers {
             providerSlots += firstArg<EmailReceiptSource>()
             providerSlots.size.toLong()
         }
@@ -208,6 +210,7 @@ class EmailReceiptIngestionServiceTest {
         )
 
         val fingerprintSlot = slot<String>()
+        coEvery { emailReceiptDao.getByMessageId("msg-dedupe-1") } returns null
         coEvery { emailReceiptDao.getByFingerprint(capture(fingerprintSlot)) } returns EmailReceiptSource(
             id = 12L,
             receiptId = 333L,
@@ -248,6 +251,7 @@ class EmailReceiptIngestionServiceTest {
             confidence = 0.9
         )
 
+        coEvery { emailReceiptDao.getByMessageId("msg-scan-dup-1") } returns null
         coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
         coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns listOf(
             ScannedReceipt(
@@ -264,7 +268,7 @@ class EmailReceiptIngestionServiceTest {
             )
         )
         val emailSourceSlot = slot<EmailReceiptSource>()
-        coEvery { emailReceiptDao.insert(capture(emailSourceSlot)) } returns 1L
+        coEvery { emailReceiptDao.insertOrIgnore(capture(emailSourceSlot)) } returns 1L
 
         val result = service.processEmailReceipt(
             emailBody = "Order Total: \$12.34 Order # 123-456",
@@ -308,6 +312,231 @@ class EmailReceiptIngestionServiceTest {
 
         assertTrue(result is EmailReceiptResult.ParseError)
         assertTrue((result as EmailReceiptResult.ParseError).reason.contains("parse", ignoreCase = true))
+    }
+
+    // -------------------------------------------------------------------------
+    // Batch-6 fix: nonblank messageId uniqueness guard
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `processEmailReceipt returns Duplicate immediately when nonblank messageId already exists`() = runTest {
+        // The guard runs BEFORE any scanned-receipt or expense side effects.
+        every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Amazon",
+            amount = 99.99,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "ORD-MID-1",
+            confidence = 0.9
+        )
+
+        // getByMessageId returns an existing row → service must short-circuit
+        coEvery { emailReceiptDao.getByMessageId("msg-known-1") } returns EmailReceiptSource(
+            id = 7L,
+            receiptId = 200L,
+            emailSender = "auto-confirm@amazon.com",
+            emailSubject = "prev order",
+            emailMessageId = "msg-known-1",
+            parsedAt = FIXED_NOW - 10_000L,
+            provider = "amazon",
+            confidence = 0.9,
+            fingerprint = "amazon_99.99_${FIXED_NOW / 300_000L}"
+        )
+
+        val result = service.processEmailReceipt(
+            emailBody = "Order Total: \$99.99 Order # ORD-MID-1",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-known-1"
+        )
+
+        assertTrue("Expected Duplicate but got $result", result is EmailReceiptResult.Duplicate)
+        assertEquals(200L, (result as EmailReceiptResult.Duplicate).existingReceiptId)
+
+        // Crucial: no ScannedReceipt row or Expense row must have been created
+        coVerify(exactly = 0) { scannedReceiptDao.insert(any()) }
+        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+        coVerify(exactly = 0) { emailReceiptDao.insertOrIgnore(any()) }
+    }
+
+    @Test
+    fun `processEmailReceipt skips messageId guard when messageId is blank`() = runTest {
+        // Blank messageId → guard is not applied; fingerprint check runs instead.
+        every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Amazon",
+            amount = 55.00,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "ORD-BLANK",
+            confidence = 0.9
+        )
+
+        // fingerprint check → no existing row
+        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
+        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
+        coEvery { scannedReceiptDao.insert(any()) } returns 700L
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        coEvery { expenseDao.insertAtomic(any()) } returns 800L
+        coEvery { scannedReceiptDao.getById(700L) } returns null
+
+        val result = service.processEmailReceipt(
+            emailBody = "Order Total: \$55.00 Order # ORD-BLANK",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "" // blank
+        )
+
+        assertTrue("Expected Success for blank messageId but got $result", result is EmailReceiptResult.Success)
+
+        // getByMessageId must NOT have been called (blank ids are excluded from the guard)
+        coVerify(exactly = 0) { emailReceiptDao.getByMessageId(any()) }
+        // Normal pipeline must still have run
+        coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }
+        coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
+    }
+
+    @Test
+    fun `processEmailReceipt skips messageId guard when messageId is whitespace only`() = runTest {
+        every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Amazon",
+            amount = 33.00,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "ORD-WS",
+            confidence = 0.9
+        )
+
+        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
+        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
+        coEvery { scannedReceiptDao.insert(any()) } returns 701L
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        coEvery { expenseDao.insertAtomic(any()) } returns 801L
+        coEvery { scannedReceiptDao.getById(701L) } returns null
+
+        val result = service.processEmailReceipt(
+            emailBody = "Order Total: \$33.00 Order # ORD-WS",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "   " // whitespace only – treated as blank
+        )
+
+        assertTrue("Expected Success for whitespace messageId but got $result", result is EmailReceiptResult.Success)
+        coVerify(exactly = 0) { emailReceiptDao.getByMessageId(any()) }
+    }
+
+    @Test
+    fun `processEmailReceipt messageId guard does not fire for unknown nonblank messageId`() = runTest {
+        // When getByMessageId returns null the guard passes and normal pipeline runs.
+        every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Amazon",
+            amount = 77.77,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "ORD-NEW",
+            confidence = 0.9
+        )
+
+        coEvery { emailReceiptDao.getByMessageId("msg-brand-new") } returns null
+        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
+        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
+        coEvery { scannedReceiptDao.insert(any()) } returns 750L
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        coEvery { expenseDao.insertAtomic(any()) } returns 850L
+        coEvery { scannedReceiptDao.getById(750L) } returns null
+
+        val result = service.processEmailReceipt(
+            emailBody = "Order Total: \$77.77 Order # ORD-NEW",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-brand-new"
+        )
+
+        assertTrue("Expected Success when messageId is new but got $result", result is EmailReceiptResult.Success)
+        coVerify(exactly = 1) { emailReceiptDao.getByMessageId("msg-brand-new") }
+        coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }
+        coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
+    }
+
+    @Test
+    fun `insertOrIgnore preserves original row when duplicate emailMessageId is seen`() = runTest {
+        // With the Batch-6 messageId guard in place the second call is caught by
+        // getByMessageId before it ever reaches insertOrIgnore, so insertOrIgnore
+        // is only called once and the destructive insert() path is never used.
+        every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Amazon",
+            amount = 42.00,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "ORD-DEDUP-1",
+            confidence = 0.9
+        )
+
+        val existingSource = EmailReceiptSource(
+            id = 1L,
+            receiptId = 600L,
+            emailSender = "auto-confirm@amazon.com",
+            emailSubject = "Your Amazon order",
+            emailMessageId = "msg-dedup-test-1",
+            parsedAt = FIXED_NOW,
+            provider = "amazon",
+            confidence = 0.9,
+            fingerprint = "amazon_42.00_${FIXED_NOW / 300_000L}"
+        )
+
+        // First call: messageId not known yet → null; fingerprint not known yet → null.
+        coEvery { emailReceiptDao.getByMessageId("msg-dedup-test-1") } returnsMany
+            listOf(null, existingSource)
+        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
+        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
+        coEvery { scannedReceiptDao.insert(any()) } returns 600L
+        coEvery { expenseDao.insertAtomic(any()) } returns 900L
+        coEvery { scannedReceiptDao.getById(600L) } returns null
+
+        var insertCallCount = 0
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } answers {
+            insertCallCount++
+            1L // always succeeds for the single valid call
+        }
+
+        // First ingestion — should succeed.
+        val result1 = service.processEmailReceipt(
+            emailBody = "Order Total: \$42.00 Order # ORD-DEDUP-1 Order Date: March 03, 2026",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-dedup-test-1"
+        )
+        assertTrue("First insert should succeed", result1 is EmailReceiptResult.Success)
+
+        // Second ingestion with the same messageId: guard catches it via getByMessageId,
+        // returns Duplicate before any scanned_receipt / expense side effects.
+        val result2 = service.processEmailReceipt(
+            emailBody = "Order Total: \$42.00 Order # ORD-DEDUP-1 Order Date: March 03, 2026",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-dedup-test-1"
+        )
+
+        assertTrue("Second call must be Duplicate", result2 is EmailReceiptResult.Duplicate)
+        assertEquals(600L, (result2 as EmailReceiptResult.Duplicate).existingReceiptId)
+
+        // insertOrIgnore only called once (for the first, successful ingestion).
+        assertEquals("insertOrIgnore called exactly once", 1, insertCallCount)
+        // Destructive insert() must never have been used.
+        coVerify(exactly = 0) { emailReceiptDao.insert(any()) }
+        // No new ScannedReceipt or Expense created on the second call.
+        coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }
+        coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
     }
 
     companion object {

@@ -8,27 +8,31 @@ import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import android.database.sqlite.SQLiteConstraintException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
+@Suppress("DEPRECATION") // RecurringExpenseDao is deprecated; tests exercise it intentionally
 @RunWith(AndroidJUnit4::class)
 class RecurringExpenseDaoTest {
 
     private lateinit var database: AppDatabase
     private lateinit var recurringExpenseDao: RecurringExpenseDao
+    private lateinit var manualRecurringExpenseDao: ManualRecurringExpenseDao
 
     @Before
     fun setup() {
-        database = Room.inMemoryDatabaseBuilder(
-            ApplicationProvider.getApplicationContext(),
-            AppDatabase::class.java
-        ).allowMainThreadQueries().build()
+        database = AppDatabase.inMemoryBuilder(
+            ApplicationProvider.getApplicationContext()
+        ).build()
         recurringExpenseDao = database.recurringExpenseDao()
+        manualRecurringExpenseDao = database.manualRecurringExpenseDao()
     }
 
     @After
@@ -51,7 +55,7 @@ class RecurringExpenseDaoTest {
     )
 
     @Test
-    fun `insert recurring expense then retrieve by id returns persisted expense`() = runBlocking {
+    fun insert_recurring_expense_then_retrieve_by_id_returns_persisted_expense() = runBlocking {
         val id = recurringExpenseDao.insert(
             makeRecurringExpense(
                 merchant = "Netflix",
@@ -69,7 +73,7 @@ class RecurringExpenseDaoTest {
     }
 
     @Test
-    fun `query active recurring expenses returns only active rows`() = runBlocking {
+    fun query_active_recurring_expenses_returns_only_active_rows() = runBlocking {
         recurringExpenseDao.insert(
             makeRecurringExpense(
                 merchant = "Spotify",
@@ -87,14 +91,49 @@ class RecurringExpenseDaoTest {
             )
         )
 
-        val active = recurringExpenseDao.getAll().filter { it.isActive }
+        val active = recurringExpenseDao.getAllActive()
 
         assertEquals(1, active.size)
         assertEquals("Spotify", active.first().merchant)
     }
 
     @Test
-    fun `update next occurrence date persists new nextDate`() = runBlocking {
+    fun getAllActive_excludes_inactive_rows_while_getAllIncludingInactive_returns_both() = runBlocking {
+        recurringExpenseDao.insert(
+            makeRecurringExpense(
+                merchant = "Active1",
+                amount = 1.00,
+                nextDate = 1_710_374_400_000L,
+                isActive = true
+            )
+        )
+        recurringExpenseDao.insert(
+            makeRecurringExpense(
+                merchant = "Inactive1",
+                amount = 2.00,
+                nextDate = 1_710_460_800_000L,
+                isActive = false
+            )
+        )
+        recurringExpenseDao.insert(
+            makeRecurringExpense(
+                merchant = "Active2",
+                amount = 3.00,
+                nextDate = 1_710_547_200_000L,
+                isActive = true
+            )
+        )
+
+        val activeOnly = recurringExpenseDao.getAllActive()
+        val all = recurringExpenseDao.getAllIncludingInactive()
+
+        assertEquals(2, activeOnly.size)
+        assertTrue(activeOnly.all { it.isActive })
+        assertEquals(3, all.size)
+    }
+
+    @Test
+    fun update_next_occurrence_date_persists_new_nextDate() = runBlocking {
         val id = recurringExpenseDao.insert(
             makeRecurringExpense(
                 merchant = "Gym",
@@ -113,7 +152,7 @@ class RecurringExpenseDaoTest {
     }
 
     @Test
-    fun `delete recurring expense then verify removed`() = runBlocking {
+    fun delete_recurring_expense_then_verify_removed() = runBlocking {
         val id = recurringExpenseDao.insert(
             makeRecurringExpense(
                 merchant = "Cloud Storage",
@@ -126,5 +165,73 @@ class RecurringExpenseDaoTest {
 
         val deleted = recurringExpenseDao.getById(id)
         assertNull(deleted)
+    }
+
+    @Test
+    fun insert_duplicate_id_via_recurringExpenseDao_throws_instead_of_replacing() = runBlocking {
+        val id = recurringExpenseDao.insert(
+            makeRecurringExpense(
+                merchant = "Netflix",
+                amount = 15.99,
+                nextDate = 1_710_288_000_000L
+            )
+        )
+
+        val duplicate = ManualRecurringExpense(
+            id = id,
+            merchant = "Netflix v2",
+            amount = 19.99,
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = 1_713_000_000_000L,
+            isActive = true,
+            createdAt = 1_700_000_000_000L
+        )
+
+        try {
+            recurringExpenseDao.insert(duplicate)
+            fail("Expected SQLiteConstraintException for duplicate PK insert")
+        } catch (_: SQLiteConstraintException) {
+            // expected — ABORT semantics
+        }
+
+        // Original row must be untouched
+        val original = recurringExpenseDao.getById(id)
+        assertNotNull(original)
+        assertEquals("Netflix", original!!.merchant)
+        assertEquals(15.99, original.amount, 0.0001)
+    }
+
+    @Test
+    fun insert_duplicate_id_via_manualRecurringExpenseDao_throws_instead_of_replacing() = runBlocking {
+        val id = manualRecurringExpenseDao.insert(
+            makeRecurringExpense(
+                merchant = "Spotify",
+                amount = 9.99,
+                nextDate = 1_710_374_400_000L
+            )
+        )
+
+        val duplicate = ManualRecurringExpense(
+            id = id,
+            merchant = "Spotify v2",
+            amount = 14.99,
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = 1_713_000_000_000L,
+            isActive = true,
+            createdAt = 1_700_000_000_000L
+        )
+
+        try {
+            manualRecurringExpenseDao.insert(duplicate)
+            fail("Expected SQLiteConstraintException for duplicate PK insert")
+        } catch (_: SQLiteConstraintException) {
+            // expected — ABORT semantics
+        }
+
+        // Original row must be untouched
+        val original = manualRecurringExpenseDao.getById(id)
+        assertNotNull(original)
+        assertEquals("Spotify", original!!.merchant)
+        assertEquals(9.99, original.amount, 0.0001)
     }
 }

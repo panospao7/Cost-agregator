@@ -144,7 +144,15 @@ class BudgetRepository @Inject constructor(
         return try {
             if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
             if (budget.startDate <= 0) throw IllegalArgumentException("Invalid budget start date")
-            val id = budgetDao.insert(budget)
+            val id = when {
+                // Inactive budgets can never violate the partial unique indexes,
+                // so a plain insert is safe and avoids needless deactivation work.
+                !budget.isActive -> budgetDao.insert(budget)
+                // Active overall budget → atomically demote the previous active overall row.
+                budget.categoryId == null -> budgetDao.insertAndActivateOverall(budget)
+                // Active category budget → atomically demote the previous active row for this category.
+                else -> budgetDao.insertAndActivateCategory(budget)
+            }
             // budgetMonitor.checkBudgets() // Removed to avoid circular dependency. Monitor should observe flow.
             com.yourname.expensetracker.domain.model.Result.Success(id)
         } catch (e: Exception) {

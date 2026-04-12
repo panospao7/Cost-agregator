@@ -8,6 +8,10 @@ import kotlinx.coroutines.flow.Flow
  * @deprecated Use ManualRecurringExpenseDao instead.
  * This DAO is kept for backward compatibility during migration.
  * All methods delegate to ManualRecurringExpenseDao functionality.
+ *
+ * B4 contract change: [getAllActiveFlow] and [getAllActive] now return only
+ * active rows (isActive = 1).  The old unfiltered [getAllIncludingInactive]
+ * methods are provided for callers that explicitly need inactive rows.
  */
 @Deprecated(
     message = "Use ManualRecurringExpenseDao instead",
@@ -16,13 +20,44 @@ import kotlinx.coroutines.flow.Flow
 )
 @Dao
 interface RecurringExpenseDao {
+    /**
+     * Observe only active recurring expenses, ordered by next date.
+     * This is the primary reactive read path — inactive rows are excluded.
+     */
+    @Query("SELECT * FROM manual_recurring_expenses WHERE isActive = 1 ORDER BY nextDate ASC")
+    fun getAllActiveFlow(): Flow<List<ManualRecurringExpense>>
+
+    /**
+     * One-shot read of active recurring expenses only.
+     */
+    @Query("SELECT * FROM manual_recurring_expenses WHERE isActive = 1 ORDER BY nextDate ASC")
+    suspend fun getAllActive(): List<ManualRecurringExpense>
+
+    /**
+     * @deprecated Renamed to [getAllActiveFlow] for clarity. Returns all rows including inactive.
+     */
+    @Deprecated("Use getAllActiveFlow() for active-only, or getAllIncludingInactiveFlow() for all rows",
+        replaceWith = ReplaceWith("getAllActiveFlow()"))
     @Query("SELECT * FROM manual_recurring_expenses ORDER BY nextDate ASC")
     fun getAllFlow(): Flow<List<ManualRecurringExpense>>
 
+    /**
+     * @deprecated Renamed to [getAllActive] for clarity. Returns all rows including inactive.
+     */
+    @Deprecated("Use getAllActive() for active-only, or getAllIncludingInactive() for all rows",
+        replaceWith = ReplaceWith("getAllActive()"))
     @Query("SELECT * FROM manual_recurring_expenses")
     suspend fun getAll(): List<ManualRecurringExpense>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /** Returns all rows including inactive — use only when explicitly needed. */
+    @Query("SELECT * FROM manual_recurring_expenses ORDER BY nextDate ASC")
+    fun getAllIncludingInactiveFlow(): Flow<List<ManualRecurringExpense>>
+
+    /** Returns all rows including inactive — use only when explicitly needed. */
+    @Query("SELECT * FROM manual_recurring_expenses ORDER BY createdAt DESC")
+    suspend fun getAllIncludingInactive(): List<ManualRecurringExpense>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(expense: ManualRecurringExpense): Long
 
     @Update

@@ -26,7 +26,7 @@ data class ManualRecurringExpense(
     val createdAt: Long = System.currentTimeMillis(),
     
     // Subscription-specific fields (added in migration 39→40)
-    @ColumnInfo(defaultValue = "1") val isSubscription: Boolean = true, // Default to true for backwards compatibility
+    @ColumnInfo(defaultValue = "0") val isSubscription: Boolean = false, // B4: default false; only true when explicitly a subscription
     val subscriptionCategory: String? = null, // e.g., "Streaming", "Software", "Fitness", "News"
     val usageTargetPerMonth: Int? = null, // Expected usage count per month
     val cancellationUrl: String? = null, // URL for easy cancellation

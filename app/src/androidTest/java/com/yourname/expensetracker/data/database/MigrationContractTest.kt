@@ -459,6 +459,272 @@ class MigrationContractTest {
         }
     }
 
+    // ── MIGRATION_72_73 contract: merchant identity / location / correction ──
+
+    /**
+     * Validates MIGRATION_72_73:
+     *  - Duplicate merchant_canonicals by searchKey are deduped (largest id wins).
+     *  - searchKey index becomes UNIQUE.
+     *  - Duplicate merchant_aliases by normalizedKey are deduped (largest id wins).
+     *  - normalizedKey index becomes UNIQUE.
+     *  - merchant_locations with NULL areaKey are backfilled to 'global'.
+     *  - Collisions after backfill are deduped (higher hitCount wins, tie-break largest id).
+     *  - areaKey column becomes NOT NULL.
+     */
+    @Test
+    fun migration_72_to_73_deduplicates_and_enforces_uniqueness() {
+        withTestDb("migration-contract-72-73.db", version = 72) { db ->
+
+            // ── minimal v72 schema for tables in scope ────────────────────────
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS categories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    name TEXT NOT NULL,
+                    icon TEXT NOT NULL,
+                    color TEXT NOT NULL,
+                    isDefault INTEGER NOT NULL DEFAULT 0
+                )
+            """.trimIndent())
+
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS merchant_canonicals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    normalizedName TEXT NOT NULL,
+                    searchKey TEXT NOT NULL,
+                    categoryId INTEGER,
+                    totalOccurrences INTEGER NOT NULL DEFAULT 0,
+                    totalSpent REAL NOT NULL DEFAULT 0.0,
+                    isVerified INTEGER NOT NULL DEFAULT 0,
+                    logoUrl TEXT,
+                    createdAt INTEGER NOT NULL,
+                    updatedAt INTEGER NOT NULL,
+                    FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                )
+            """.trimIndent())
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_canonicals_normalizedName ON merchant_canonicals (normalizedName)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_canonicals_searchKey ON merchant_canonicals (searchKey)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_canonicals_categoryId ON merchant_canonicals (categoryId)")
+
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS merchant_aliases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    rawName TEXT NOT NULL,
+                    normalizedKey TEXT NOT NULL,
+                    canonicalId INTEGER NOT NULL,
+                    occurrenceCount INTEGER NOT NULL DEFAULT 1,
+                    isUserDefined INTEGER NOT NULL DEFAULT 0,
+                    createdAt INTEGER NOT NULL,
+                    lastUsedAt INTEGER NOT NULL,
+                    FOREIGN KEY(canonicalId) REFERENCES merchant_canonicals(id) ON DELETE CASCADE
+                )
+            """.trimIndent())
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_aliases_rawName ON merchant_aliases (rawName)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_aliases_normalizedKey ON merchant_aliases (normalizedKey)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_aliases_canonicalId ON merchant_aliases (canonicalId)")
+
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS merchant_locations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    normalizedMerchantName TEXT NOT NULL,
+                    areaKey TEXT,
+                    displayName TEXT NOT NULL,
+                    latitude REAL NOT NULL,
+                    longitude REAL NOT NULL,
+                    source TEXT NOT NULL,
+                    osmId TEXT,
+                    displayAddress TEXT,
+                    confidence REAL NOT NULL DEFAULT 1.0,
+                    lastResolvedAt INTEGER NOT NULL,
+                    hitCount INTEGER NOT NULL DEFAULT 1
+                )
+            """.trimIndent())
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_merchant_locations_normalizedMerchantName_areaKey ON merchant_locations (normalizedMerchantName, areaKey)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_merchant_locations_lastResolvedAt ON merchant_locations (lastResolvedAt)")
+
+            // ── seed: duplicate searchKey canonicals ──────────────────────────
+            val now = 1700000000000L
+            db.execSQL("INSERT INTO merchant_canonicals (id, normalizedName, searchKey, totalOccurrences, totalSpent, createdAt, updatedAt) VALUES (1, 'McDonalds A', 'mcdonalds', 10, 100.0, $now, $now)")
+            db.execSQL("INSERT INTO merchant_canonicals (id, normalizedName, searchKey, totalOccurrences, totalSpent, createdAt, updatedAt) VALUES (2, 'McDonalds B', 'mcdonalds', 20, 200.0, $now, $now)")
+            db.execSQL("INSERT INTO merchant_canonicals (id, normalizedName, searchKey, totalOccurrences, totalSpent, createdAt, updatedAt) VALUES (3, 'Starbucks', 'starbucks', 5, 50.0, $now, $now)")
+
+            // ── seed: duplicate normalizedKey aliases ─────────────────────────
+            // canonicalId=2 (will survive) and canonicalId=3 (unique key)
+            db.execSQL("INSERT INTO merchant_aliases (id, rawName, normalizedKey, canonicalId, occurrenceCount, createdAt, lastUsedAt) VALUES (10, 'MCDONALDS #1', 'mcdonalds', 1, 5, $now, $now)")
+            db.execSQL("INSERT INTO merchant_aliases (id, rawName, normalizedKey, canonicalId, occurrenceCount, createdAt, lastUsedAt) VALUES (11, 'MCDONALDS #2', 'mcdonalds', 2, 8, $now, $now)")
+            // Note: rawName is unique, so we use different rawNames but same normalizedKey
+            // After dedup on normalizedKey, id=11 should survive (largest id)
+            db.execSQL("INSERT INTO merchant_aliases (id, rawName, normalizedKey, canonicalId, occurrenceCount, createdAt, lastUsedAt) VALUES (12, 'STARBUCKS', 'starbucks', 3, 3, $now, $now)")
+
+            // ── seed: merchant_locations with NULL areaKey ────────────────────
+            // Two rows for same normalizedMerchantName: one NULL, one 'global'
+            // After backfill, they collide — higher hitCount wins.
+            db.execSQL("INSERT INTO merchant_locations (id, normalizedMerchantName, areaKey, displayName, latitude, longitude, source, lastResolvedAt, hitCount) VALUES (100, 'mcdonalds', NULL, 'McD-null', 37.9, 23.7, 'NOMINATIM', $now, 5)")
+            db.execSQL("INSERT INTO merchant_locations (id, normalizedMerchantName, areaKey, displayName, latitude, longitude, source, lastResolvedAt, hitCount) VALUES (101, 'mcdonalds', 'global', 'McD-global', 37.9, 23.7, 'NOMINATIM', $now, 3)")
+            // A standalone NULL row with no collision
+            db.execSQL("INSERT INTO merchant_locations (id, normalizedMerchantName, areaKey, displayName, latitude, longitude, source, lastResolvedAt, hitCount) VALUES (102, 'starbucks', NULL, 'Starbucks', 37.95, 23.75, 'NOMINATIM', $now, 1)")
+
+            // ── run migration ────────────────────────────────────────────────
+            AppDatabase.MIGRATION_72_73.migrate(db)
+
+            // ── assertions ───────────────────────────────────────────────────
+
+            // 1. merchant_canonicals: only id=2 survives for 'mcdonalds', id=3 untouched
+            val mcCanonicals = db.query("SELECT id FROM merchant_canonicals WHERE searchKey = 'mcdonalds'")
+            assertEquals(1, mcCanonicals.count)
+            mcCanonicals.moveToFirst()
+            assertEquals(2L, mcCanonicals.getLong(0))
+            mcCanonicals.close()
+
+            val sbCanonicals = db.query("SELECT id FROM merchant_canonicals WHERE searchKey = 'starbucks'")
+            assertEquals(1, sbCanonicals.count)
+            sbCanonicals.close()
+
+            // searchKey index is now unique
+            fun isUniqueIndex(indexName: String): Boolean {
+                db.query("SELECT sql FROM sqlite_master WHERE type='index' AND name='$indexName'").use {
+                    if (!it.moveToFirst()) return false
+                    return it.getString(0)?.contains("UNIQUE") == true
+                }
+            }
+            assertTrue("searchKey index must be unique", isUniqueIndex("index_merchant_canonicals_searchKey"))
+
+            // 2. merchant_aliases: only id=11 survives for 'mcdonalds', id=12 untouched
+            val mcAliases = db.query("SELECT id FROM merchant_aliases WHERE normalizedKey = 'mcdonalds'")
+            assertEquals(1, mcAliases.count)
+            mcAliases.moveToFirst()
+            assertEquals(11L, mcAliases.getLong(0))
+            mcAliases.close()
+
+            assertTrue("normalizedKey index must be unique", isUniqueIndex("index_merchant_aliases_normalizedKey"))
+
+            // 3. merchant_locations: NULL areaKey rows backfilled to 'global'
+            val nullAreaRows = db.query("SELECT COUNT(*) FROM merchant_locations WHERE areaKey IS NULL")
+            nullAreaRows.moveToFirst()
+            assertEquals(0, nullAreaRows.getInt(0))
+            nullAreaRows.close()
+
+            // Collision resolved: 'mcdonalds'+'global' — hitCount=5 wins (id=100)
+            val mcdLocations = db.query("SELECT id, hitCount FROM merchant_locations WHERE normalizedMerchantName = 'mcdonalds' AND areaKey = 'global'")
+            assertEquals(1, mcdLocations.count)
+            mcdLocations.moveToFirst()
+            assertEquals(100L, mcdLocations.getLong(0))
+            assertEquals(5, mcdLocations.getInt(1))
+            mcdLocations.close()
+
+            // 'starbucks' row backfilled to 'global', no collision
+            val sbLocations = db.query("SELECT id FROM merchant_locations WHERE normalizedMerchantName = 'starbucks' AND areaKey = 'global'")
+            assertEquals(1, sbLocations.count)
+            sbLocations.close()
+
+            // areaKey is NOT NULL in the rebuilt table
+            val colInfo = db.query("PRAGMA table_info(merchant_locations)")
+            while (colInfo.moveToNext()) {
+                val colName = colInfo.getString(colInfo.getColumnIndex("name"))
+                if (colName == "areaKey") {
+                    val notNull = colInfo.getInt(colInfo.getColumnIndex("notnull"))
+                    assertEquals("areaKey must be NOT NULL", 1, notNull)
+                }
+            }
+            colInfo.close()
+        }
+    }
+
+    @Test
+    fun migration_77_to_78_adds_category_alertedAt_index_on_anomaly_alerts() {
+        withTestDb("migration-contract-77-78.db", version = 77) { db ->
+            // Create anomaly_alerts table matching the v77 schema (without category+alertedAt index)
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS anomaly_alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    expenseId INTEGER NOT NULL,
+                    merchant TEXT NOT NULL,
+                    category TEXT,
+                    amount REAL NOT NULL,
+                    anomalyReason TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    alertedAt INTEGER NOT NULL,
+                    dismissed INTEGER NOT NULL DEFAULT 0,
+                    dismissedAt INTEGER,
+                    userFeedback TEXT
+                )
+                """.trimIndent()
+            )
+
+            // Seed a row to confirm data survives the index creation
+            db.execSQL(
+                "INSERT INTO anomaly_alerts (expenseId, merchant, category, amount, anomalyReason, severity, alertedAt) " +
+                    "VALUES (1, 'Shop', 'food', 99.99, 'spike', 'HIGH', 1000)"
+            )
+
+            AppDatabase.MIGRATION_77_78.migrate(db)
+
+            // Verify the index exists
+            val idx = db.query(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name='index_anomaly_alerts_category_alertedAt'"
+            )
+            assertTrue("index_anomaly_alerts_category_alertedAt must exist", idx.moveToFirst())
+            idx.close()
+
+            // Verify existing data is intact
+            val row = db.query("SELECT category, amount FROM anomaly_alerts WHERE id = 1")
+            assertTrue(row.moveToFirst())
+            assertEquals("food", row.getString(0))
+            assertEquals(99.99, row.getDouble(1), 0.001)
+            row.close()
+        }
+    }
+
+    @Test
+    fun migration_78_to_79_adds_toCurrency_index_on_exchange_rates() {
+        withTestDb("migration-contract-78-79.db", version = 78) { db ->
+            // Create exchange_rates table matching the v78 schema (without toCurrency index)
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS exchange_rates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    fromCurrency TEXT NOT NULL,
+                    toCurrency TEXT NOT NULL,
+                    rate REAL NOT NULL,
+                    lastUpdated INTEGER NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'manual'
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS index_exchange_rates_fromCurrency_toCurrency " +
+                    "ON exchange_rates (fromCurrency, toCurrency)"
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_exchange_rates_lastUpdated " +
+                    "ON exchange_rates (lastUpdated)"
+            )
+
+            // Seed a row to confirm data survives the index creation
+            db.execSQL(
+                "INSERT INTO exchange_rates (fromCurrency, toCurrency, rate, lastUpdated, source) " +
+                    "VALUES ('USD', 'EUR', 0.92, 1700000000000, 'api')"
+            )
+
+            AppDatabase.MIGRATION_78_79.migrate(db)
+
+            // Verify the index exists
+            val idx = db.query(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name='index_exchange_rates_toCurrency'"
+            )
+            assertTrue("index_exchange_rates_toCurrency must exist", idx.moveToFirst())
+            idx.close()
+
+            // Verify existing data is intact
+            val row = db.query("SELECT fromCurrency, toCurrency, rate FROM exchange_rates WHERE id = 1")
+            assertTrue(row.moveToFirst())
+            assertEquals("USD", row.getString(0))
+            assertEquals("EUR", row.getString(1))
+            assertEquals(0.92, row.getDouble(2), 0.001)
+            row.close()
+        }
+    }
+
     private inline fun withTestDb(
         name: String,
         version: Int,

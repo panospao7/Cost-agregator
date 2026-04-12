@@ -10,7 +10,7 @@ interface UserCorrectionDao {
     data class MerchantCorrectionStats(val total: Int, val rejections: Int)
     data class PackageCorrectionStats(val total: Int, val rejections: Int)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(correction: UserCorrection): Long
 
     @Query("SELECT * FROM user_corrections ORDER BY createdAt DESC")
@@ -47,7 +47,7 @@ interface UserCorrectionDao {
         AND correctedMerchant IS NOT NULL 
         AND correctedMerchant != originalMerchant
         GROUP BY correctedMerchant 
-        ORDER BY COUNT(*) DESC 
+        ORDER BY COUNT(*) DESC, MAX(createdAt) DESC, correctedMerchant ASC
         LIMIT 1
     """)
     suspend fun getMostCommonMerchantCorrection(originalMerchant: String): String?
@@ -86,7 +86,7 @@ interface UserCorrectionDao {
         WHERE originalMerchant = :merchant 
         AND correctedCategoryId IS NOT NULL
         GROUP BY correctedCategoryId 
-        ORDER BY COUNT(*) DESC 
+        ORDER BY COUNT(*) DESC, MAX(createdAt) DESC, correctedCategoryId ASC
         LIMIT 1
     """)
     suspend fun getMostCommonCategoryForMerchant(merchant: String): Long?

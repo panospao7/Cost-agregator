@@ -13,6 +13,17 @@ enum class BudgetPeriod {
     YEARLY
 }
 
+/**
+ * Budget entity.
+ *
+ * Schema invariants (enforced by partial unique indexes, not expressible via
+ * Room `@Index` annotations):
+ *  - At most one active overall budget: `UNIQUE(isActive) WHERE isActive = 1 AND categoryId IS NULL`
+ *  - At most one active budget per category: `UNIQUE(categoryId) WHERE isActive = 1 AND categoryId IS NOT NULL`
+ *
+ * These indexes are created by [AppDatabase.MIGRATION_71_72] on upgrade and
+ * [AppDatabase.FRESH_INSTALL_CALLBACK] on fresh install.
+ */
 @Entity(
     tableName = "budgets",
     foreignKeys = [

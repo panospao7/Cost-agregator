@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
 import com.yourname.expensetracker.domain.logic.CustomSplitMode
@@ -123,6 +124,36 @@ class GroupsRepositoryImpl @Inject constructor(
             splitType = splitType,
             customSplitsJson = customSplitsJson,
             date = date
+        )
+    }
+
+    /**
+     * B.4 Batch 2: Delegates to coordinator's atomic create-and-link method.
+     * Currency is resolved from the group if not directly available at this layer.
+     */
+    override suspend fun createSystemExpenseAndLinkToGroup(
+        groupId: Long,
+        description: String,
+        amount: Double,
+        paidById: Long,
+        currency: String,
+        splitType: SplitType,
+        customSplitsJson: String?,
+        date: Long,
+        transactionType: TransactionType,
+        notes: String?
+    ): GroupExpenseCreationResult = withContext(ioDispatcher) {
+        coordinator.createSystemExpenseAndLinkToGroup(
+            groupId = groupId,
+            description = description,
+            amount = amount,
+            paidById = paidById,
+            currency = currency,
+            splitType = splitType,
+            customSplitsJson = customSplitsJson,
+            date = date,
+            transactionType = transactionType,
+            notes = notes
         )
     }
 

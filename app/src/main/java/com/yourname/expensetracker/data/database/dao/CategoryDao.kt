@@ -5,6 +5,7 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import com.yourname.expensetracker.data.database.entity.Category
 import kotlinx.coroutines.flow.Flow
@@ -40,4 +41,19 @@ interface CategoryDao {
 
     @Query("SELECT * FROM categories ORDER BY isDefault DESC, name ASC")
     suspend fun getAll(): List<Category>
+
+    /**
+     * Atomically seed defaults if the table is empty.
+     * Returns true if categories were actually inserted, false if the table was non-empty.
+     *
+     * B4: replaces the racy getCount() → insertAll() two-step in [CategoryRepository].
+     * The @Transaction annotation ensures the check-then-insert is serialized under
+     * Room's transaction lock, preventing duplicate seeding under concurrency.
+     */
+    @Transaction
+    suspend fun seedDefaultsIfEmpty(defaults: List<Category>): Boolean {
+        if (getCount() > 0) return false
+        insertAll(defaults)
+        return true
+    }
 }
