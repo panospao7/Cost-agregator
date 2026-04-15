@@ -122,7 +122,7 @@ interface ForegroundLocationProvider {
 /**
  * Sealed result type for the full resolution pipeline.
  */
-sealed class LocationResolutionResult {
+abstract class LocationResolutionResult {
     /** Successfully resolved to a single coordinate. */
     data class Resolved(
         val latitude: Double,
@@ -138,6 +138,9 @@ sealed class LocationResolutionResult {
      * to the user for manual selection.
      */
     data class NeedsUserSelection(val candidates: List<NearbyPoi>) : LocationResolutionResult()
+
+    /** Resolver hit a transient provider failure; caller may retry later. */
+    data class Retryable(val error: GeocodingError) : LocationResolutionResult()
 
     /** Could not resolve — expense latitude remains null. */
     object Unresolved : LocationResolutionResult()

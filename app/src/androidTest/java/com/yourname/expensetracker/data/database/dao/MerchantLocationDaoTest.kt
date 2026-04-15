@@ -71,38 +71,37 @@ class MerchantLocationDaoTest {
 
         dao.insertLocation(loc)
 
-        val loaded = dao.getByNormalizedName("starbucks")
+        val loaded = dao.getGlobalByNormalizedName("starbucks")
         assertNotNull(loaded)
         assertEquals("global", loaded!!.areaKey)
     }
 
-    // ── getByNormalizedName prefers 'global' entries ────────────────────────
+    // ── getGlobalByNormalizedName strict global lookup ──────────────────────
 
     @Test
-    fun getByNormalizedName_prefers_global_over_area_scoped() = runBlocking {
+    fun getGlobalByNormalizedName_returns_global_entry_when_both_global_and_area_exist() = runBlocking {
         val globalLoc = makeLocation("lidl", areaKey = "global", hitCount = 1)
         val areaLoc = makeLocation("lidl", areaKey = "lidl|843|527", hitCount = 5)
         dao.insertLocation(globalLoc)
         dao.insertLocation(areaLoc)
 
-        val result = dao.getByNormalizedName("lidl")
+        val result = dao.getGlobalByNormalizedName("lidl")
         assertNotNull(result)
         assertEquals("global", result!!.areaKey)
     }
 
     @Test
-    fun getByNormalizedName_returns_area_entry_when_no_global_exists() = runBlocking {
+    fun getGlobalByNormalizedName_returns_null_when_no_global_exists() = runBlocking {
         val areaLoc = makeLocation("lidl", areaKey = "lidl|843|527")
         dao.insertLocation(areaLoc)
 
-        val result = dao.getByNormalizedName("lidl")
-        assertNotNull(result)
-        assertEquals("lidl|843|527", result!!.areaKey)
+        val result = dao.getGlobalByNormalizedName("lidl")
+        assertNull(result)
     }
 
     @Test
-    fun getByNormalizedName_returns_null_for_unknown_merchant() = runBlocking {
-        assertNull(dao.getByNormalizedName("nonexistent"))
+    fun getGlobalByNormalizedName_returns_null_for_unknown_merchant() = runBlocking {
+        assertNull(dao.getGlobalByNormalizedName("nonexistent"))
     }
 
     // ── getByNormalizedNameAndArea exact match ──────────────────────────────
@@ -216,8 +215,8 @@ class MerchantLocationDaoTest {
         dao.deleteStaleEntries(now - 50_000)
 
         assertEquals(1, dao.count())
-        assertNotNull(dao.getByNormalizedName("new"))
-        assertNull(dao.getByNormalizedName("old"))
+        assertNotNull(dao.getGlobalByNormalizedName("new"))
+        assertNull(dao.getGlobalByNormalizedName("old"))
     }
 
     // ── Global correction → merchant_locations cache coherence ─────────────
@@ -255,7 +254,7 @@ class MerchantLocationDaoTest {
         )
 
         // The cached row must be findable via the standard global lookup path
-        val cached = dao.getByNormalizedName("starbucks")
+        val cached = dao.getGlobalByNormalizedName("starbucks")
         assertNotNull(cached)
         assertEquals("global", cached!!.areaKey)
         assertEquals(37.98, cached.latitude, 0.001)

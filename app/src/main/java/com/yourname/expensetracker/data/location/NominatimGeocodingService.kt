@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.location
 
 import android.util.Log
 import com.yourname.expensetracker.data.location.internal.anonymizeForLog
+import com.yourname.expensetracker.data.location.internal.executeCancellable
 import com.yourname.expensetracker.di.LocationHttpClient
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.GeocodingBatchResult
@@ -9,6 +10,7 @@ import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -115,7 +117,7 @@ class NominatimGeocodingService @Inject constructor(
             .build()
         try {
             // B16 fix: use response.use {} to ensure body is closed even on exceptions
-            client.newCall(request).execute().use { response ->
+            client.executeCancellable(request).use { response ->
                 if (!response.isSuccessful) {
                     Log.w(TAG, "reverseGeocode HTTP ${response.code}")
                     return@withRateLimit GeocodingLookupResult.Failure(GeocodingError.HttpError(response.code))
@@ -147,6 +149,8 @@ class NominatimGeocodingService @Inject constructor(
                     source = AppConfig.Location.SOURCE_NOMINATIM_GPS_BIAS
                 ))
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: IOException) {
             Log.e(TAG, "reverseGeocode network error: ${e.message}", e)
             GeocodingLookupResult.Failure(GeocodingError.NetworkError)
@@ -226,7 +230,7 @@ class NominatimGeocodingService @Inject constructor(
 
         repeat(maxAttempts) { attempt ->
             try {
-                val response = client.newCall(request).execute()
+                val response = client.executeCancellable(request)
                 if (response.code >= 500 || response.code == 429) {
                     if (attempt < maxAttempts - 1) {
                         response.close()

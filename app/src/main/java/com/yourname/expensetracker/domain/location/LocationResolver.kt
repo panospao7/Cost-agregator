@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.location
 
 import android.util.Log
+import com.yourname.expensetracker.data.location.internal.anonymizeForLog
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
 import com.yourname.expensetracker.domain.config.AppConfig
@@ -116,18 +117,22 @@ class LocationResolver @Inject constructor(
                 biasLat = topCluster.centerLat,
                 biasLon = topCluster.centerLon,
                 bounded = true
-            ) ?: geocode(
+            ).orElseGeocode(
                 name = cleanedName,
                 biasLat = topCluster.centerLat,
                 biasLon = topCluster.centerLon,
                 bounded = true
             )
-            if (clusterResult != null) {
+            when (clusterResult) {
+                is GeocodeAttempt.Found -> {
                 // HIGH-14 FIX: Anonymize merchant names in logs
-                Log.d(TAG, "History-biased Nominatim resolved merchant hash: ${cacheKey.anonymizeForLog()} (cluster count=${topCluster.count})")
-                val resolved = clusterResult.toResolved()
-                locationCachePort.saveLocation(cacheKey, resolved, areaKey)
-                return resolved
+                    Log.d(TAG, "History-biased Nominatim resolved merchant hash: ${cacheKey.anonymizeForLog()} (cluster count=${topCluster.count})")
+                    val resolved = clusterResult.result.toResolved()
+                    locationCachePort.saveLocation(cacheKey, resolved, areaKey)
+                    return resolved
+                }
+                is GeocodeAttempt.Retryable -> return LocationResolutionResult.Retryable(clusterResult.error)
+                GeocodeAttempt.NoMatch -> Unit
             }
         }
 
@@ -154,29 +159,49 @@ class LocationResolver @Inject constructor(
                 name = latinName,
                 biasLat = deviceLocation.first,
                 biasLon = deviceLocation.second
-            ) ?: geocode(
+            ).orElseGeocode(
                 name = cleanedName,  // retry with original Greek
                 biasLat = deviceLocation.first,
                 biasLon = deviceLocation.second
             )
-            if (result != null) {
+            when (result) {
+                is GeocodeAttempt.Found -> {
                 // HIGH-14 FIX: Anonymize merchant names in logs
-                Log.d(TAG, "Nominatim GPS-bias resolved merchant hash: ${cacheKey.anonymizeForLog()}")
-                val resolved = result.toResolved()
-                locationCachePort.saveLocation(cacheKey, resolved)
-                return resolved
+                    Log.d(TAG, "Nominatim GPS-bias resolved merchant hash: ${cacheKey.anonymizeForLog()}")
+                    val resolved = result.result.toResolved()
+                    val areaKey = getAreaKeyForResolvedLocation(
+                        merchantName = cacheKey,
+                        resolvedLat = resolved.latitude,
+                        resolvedLon = resolved.longitude,
+                        fallbackLat = deviceLocation.first,
+                        fallbackLon = deviceLocation.second
+                    )
+                    locationCachePort.saveLocation(cacheKey, resolved, areaKey)
+                    return resolved
+                }
+                is GeocodeAttempt.Retryable -> return LocationResolutionResult.Retryable(result.error)
+                GeocodeAttempt.NoMatch -> Unit
             }
         }
 
         // ── Step 6: Nominatim name-only (Greece bias) ─────────────────────────
         val nameOnlyResult = geocode(latinName)
-            ?: geocode(cleanedName)
-        if (nameOnlyResult != null) {
+            .orElseGeocode(cleanedName)
+        when (nameOnlyResult) {
+            is GeocodeAttempt.Found -> {
             // HIGH-14 FIX: Anonymize merchant names in logs
-            Log.d(TAG, "Nominatim name-only resolved merchant hash: ${cacheKey.anonymizeForLog()}")
-            val resolved = nameOnlyResult.toResolved()
-            locationCachePort.saveLocation(cacheKey, resolved)
-            return resolved
+                Log.d(TAG, "Nominatim name-only resolved merchant hash: ${cacheKey.anonymizeForLog()}")
+                val resolved = nameOnlyResult.result.toResolved()
+                val areaKey = getAreaKeyForResolvedLocation(
+                    merchantName = cacheKey,
+                    resolvedLat = resolved.latitude,
+                    resolvedLon = resolved.longitude
+                )
+                locationCachePort.saveLocation(cacheKey, resolved, areaKey)
+                return resolved
+            }
+            is GeocodeAttempt.Retryable -> return LocationResolutionResult.Retryable(nameOnlyResult.error)
+            GeocodeAttempt.NoMatch -> Unit
         }
 
         // ── Step 7: Overpass nearby POIs (requires device location) ───────────
@@ -191,6 +216,9 @@ class LocationResolver @Inject constructor(
                 is NearbyPoiResult.Success -> nearbyResult.pois
                 is NearbyPoiResult.Failure -> {
                     Timber.w("Overpass lookup failed for merchant hash ${cacheKey.anonymizeForLog()}: ${nearbyResult.error}")
+                    if (isTransient(nearbyResult.error)) {
+                        return LocationResolutionResult.Retryable(nearbyResult.error)
+                    }
                     emptyList()
                 }
             }.filter { !isNullIsland(it.latitude, it.longitude) }
@@ -230,15 +258,33 @@ class LocationResolver @Inject constructor(
         biasLon: Double? = null,
         cityHint: String? = null,
         bounded: Boolean = false
-    ): GeocodingResult? {
+    ): GeocodeAttempt {
         return when (val result = geocodingService.search(name, biasLat, biasLon, cityHint, bounded)) {
             is GeocodingLookupResult.Success -> result.result
                 ?.takeUnless { isNullIsland(it.latitude, it.longitude) }
+                ?.let(GeocodeAttempt::Found)
+                ?: GeocodeAttempt.NoMatch
             is GeocodingLookupResult.Failure -> {
                 Timber.w("Geocoding failed for merchant hash '${name.anonymizeForLog()}': ${result.error}")
-                null
+                if (isTransient(result.error)) {
+                    GeocodeAttempt.Retryable(result.error)
+                } else {
+                    GeocodeAttempt.NoMatch
+                }
             }
         }
+    }
+
+    private suspend fun GeocodeAttempt.orElseGeocode(
+        name: String,
+        biasLat: Double? = null,
+        biasLon: Double? = null,
+        cityHint: String? = null,
+        bounded: Boolean = false
+    ): GeocodeAttempt = when (this) {
+        is GeocodeAttempt.Found,
+        is GeocodeAttempt.Retryable -> this
+        GeocodeAttempt.NoMatch -> geocode(name, biasLat, biasLon, cityHint, bounded)
     }
 
     private fun GeocodingResult.toResolved() = LocationResolutionResult.Resolved(
@@ -250,6 +296,21 @@ class LocationResolver @Inject constructor(
         confidence = confidence
     )
 
+    private fun getAreaKeyForResolvedLocation(
+        merchantName: String,
+        resolvedLat: Double?,
+        resolvedLon: Double?,
+        fallbackLat: Double? = null,
+        fallbackLon: Double? = null
+    ): String {
+        val (areaLat, areaLon) = if (resolvedLat != null && resolvedLon != null) {
+            resolvedLat to resolvedLon
+        } else {
+            fallbackLat to fallbackLon
+        }
+        return locationCachePort.getMostLikelyArea(merchantName, areaLat, areaLon)
+    }
+
     /**
      * Reject coordinates at or very near (0.0, 0.0) — "Null Island".
      * GPS hardware, uninitialised DB fields, and some geocoders can emit
@@ -258,8 +319,20 @@ class LocationResolver @Inject constructor(
     private fun isNullIsland(lat: Double, lon: Double): Boolean =
         Math.abs(lat) < 0.01 && Math.abs(lon) < 0.01
 
-    private fun String.anonymizeForLog(): String =
-        hashCode().toUInt().toString(16)
+    private fun isTransient(error: GeocodingError): Boolean = when (error) {
+        GeocodingError.RateLimited,
+        GeocodingError.ServiceDown,
+        GeocodingError.NetworkError,
+        GeocodingError.Timeout -> true
+        is GeocodingError.HttpError -> error.code >= 500
+        else -> false
+    }
+
+    private sealed interface GeocodeAttempt {
+        data class Found(val result: GeocodingResult) : GeocodeAttempt
+        data class Retryable(val error: GeocodingError) : GeocodeAttempt
+        data object NoMatch : GeocodeAttempt
+    }
 
     private companion object {
         const val TAG = "LocationResolver"

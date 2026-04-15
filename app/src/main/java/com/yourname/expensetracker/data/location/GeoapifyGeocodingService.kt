@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.location
 
 import android.util.Log
 import com.yourname.expensetracker.data.location.internal.anonymizeForLog
+import com.yourname.expensetracker.data.location.internal.executeCancellable
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeoapifyKey
 import com.yourname.expensetracker.di.LocationHttpClient
@@ -102,7 +103,7 @@ class GeoapifyGeocodingService @Inject constructor(
         var lastError: IOException? = null
         repeat(maxAttempts) { attempt ->
             try {
-                val response = client.newCall(request).execute()
+                val response = client.executeCancellable(request)
                 if (response.code >= 500 || response.code == 429) {
                     if (attempt < maxAttempts - 1) {
                         response.close()

@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
+import com.yourname.expensetracker.data.location.internal.anonymizeForLog
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
@@ -68,9 +69,14 @@ class LocationBackfillWorker @AssistedInject constructor(
         Log.d(TAG, "Processing ${unlocated.size} unlocated expenses")
         var resolved = 0
         var failed = 0
+        var shouldRetry = false
 
         for (expense in unlocated) {
             if (isStopped) break  // Worker was cancelled
+
+            val merchantToken = merchantLocationRepository
+                .normalizeKey(expense.merchant)
+                .anonymizeForLog()
 
             val result = try {
                 locationResolver.resolve(
@@ -78,9 +84,8 @@ class LocationBackfillWorker @AssistedInject constructor(
                     transactionDateMs = expense.date
                 )
             } catch (e: Exception) {
-                Log.w(TAG, "Resolver threw for '${expense.merchant}'", e)
-                // Increment attempt count so we don't retry this forever
-                expenseRepository.incrementBackfillAttempts(expense.id)
+                Log.w(TAG, "Resolver threw for expenseId=${expense.id} merchantToken=$merchantToken", e)
+                shouldRetry = true
                 failed++
                 continue
             }
@@ -97,22 +102,30 @@ class LocationBackfillWorker @AssistedInject constructor(
                     )
                     resolved++
                 }
+                is LocationResolutionResult.Retryable -> {
+                    Log.w(
+                        TAG,
+                        "Retryable backfill failure for expenseId=${expense.id} merchantToken=$merchantToken error=${result.error}"
+                    )
+                    shouldRetry = true
+                    failed++
+                }
                 is LocationResolutionResult.NeedsUserSelection -> {
                     // Cannot auto-resolve; leave for user interaction in Map screen.
                     // Count as a failed attempt so we don't spam Overpass on each run.
-                    Log.d(TAG, "NeedsUserSelection for '${expense.merchant}' — skipping backfill")
+                    Log.d(TAG, "NeedsUserSelection for expenseId=${expense.id} merchantToken=$merchantToken — skipping backfill")
                     expenseRepository.incrementBackfillAttempts(expense.id)
                 }
                 is LocationResolutionResult.Unresolved -> {
-                    Log.d(TAG, "Unresolved for '${expense.merchant}'")
+                    Log.d(TAG, "Unresolved for expenseId=${expense.id} merchantToken=$merchantToken")
                     expenseRepository.incrementBackfillAttempts(expense.id)
                     failed++
                 }
             }
         }
 
-        Log.d(TAG, "Backfill run complete: resolved=$resolved failed=$failed")
-        Result.success()
+        Log.d(TAG, "Backfill run complete: resolved=$resolved failed=$failed shouldRetry=$shouldRetry")
+        if (shouldRetry) Result.retry() else Result.success()
     }
 
     companion object {

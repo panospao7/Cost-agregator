@@ -29,7 +29,7 @@ class MerchantLocationRepository @Inject constructor(
 
     suspend fun getCachedLocation(merchantName: String): MerchantLocation? {
         val key = normalizeKey(merchantName)
-        val cached = dao.getByNormalizedName(key) ?: return null
+        val cached = dao.getGlobalByNormalizedName(key) ?: return null
         // Evict if stale
         if (timeProvider.now() - cached.lastResolvedAt > AppConfig.Location.CACHE_TTL_MS) {
             return null

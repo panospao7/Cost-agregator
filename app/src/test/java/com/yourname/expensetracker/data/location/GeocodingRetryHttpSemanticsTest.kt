@@ -51,6 +51,20 @@ class GeocodingRetryHttpSemanticsTest {
     }
 
     @Test
+    fun `nominatim returns final 503 response after retries`() = runBlocking {
+        val attempts = AtomicInteger(0)
+        val service = NominatimGeocodingService(client = fixedResponseClient(attempts, code = 503, message = "Service Unavailable"))
+
+        val result = service.searchMultiple(query = "coffee", biasLat = null, biasLon = null, limit = 5)
+
+        assertEquals(3, attempts.get())
+        assertTrue(result is GeocodingBatchResult.Failure)
+        val failure = result as GeocodingBatchResult.Failure
+        assertEquals(GeocodingError.HttpError(503), failure.error)
+        assertTrue(failure.error != GeocodingError.NetworkError)
+    }
+
+    @Test
     fun `geoapify returns RateLimited after three 429 responses`() = runBlocking {
         val attempts = AtomicInteger(0)
         val keyStorage = mockk<SecureKeyStorage>()
@@ -89,15 +103,19 @@ class GeocodingRetryHttpSemanticsTest {
     }
 
     private fun rateLimitedClient(attempts: AtomicInteger): OkHttpClient {
+        return fixedResponseClient(attempts, code = 429, message = "Too Many Requests")
+    }
+
+    private fun fixedResponseClient(attempts: AtomicInteger, code: Int, message: String): OkHttpClient {
         return OkHttpClient.Builder()
             .addInterceptor { chain ->
                 attempts.incrementAndGet()
                 Response.Builder()
                     .request(chain.request())
                     .protocol(Protocol.HTTP_1_1)
-                    .code(429)
-                    .message("Too Many Requests")
-                    .body("{\"error\":\"rate_limited\"}".toResponseBody("application/json".toMediaType()))
+                    .code(code)
+                    .message(message)
+                    .body("{\"error\":\"test\"}".toResponseBody("application/json".toMediaType()))
                     .build()
             }
             .build()

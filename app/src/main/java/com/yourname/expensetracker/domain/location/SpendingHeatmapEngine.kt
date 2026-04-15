@@ -35,7 +35,8 @@ data class HeatmapPoint(
  * Algorithm:
  *  1. Cluster markers that fall within [CLUSTER_RADIUS_DEG] of each other
  *     (simple grid-snap clustering — O(n) with a HashMap).
- *  2. Sum the `amount` for each cluster cell.
+ *  2. Ignore non-positive `amount` values, then sum positive spend for each
+ *     cluster cell.
  *  3. Apply log-normalisation so a single monster spend doesn't drown everything.
  *  4. Normalise all weights to [0.0, 1.0].
  */
@@ -65,6 +66,8 @@ class SpendingHeatmapEngine @Inject constructor() {
         val cells = HashMap<GridCell, Accumulator>()
 
         for (expense in expenses) {
+            if (expense.amount <= 0.0) continue
+
             val latBucket = (expense.latitude / CLUSTER_RADIUS_DEG).toLong()
             val lonBucket = (expense.longitude / CLUSTER_RADIUS_DEG).toLong()
             val cell = GridCell(latBucket, lonBucket)

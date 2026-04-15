@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantLocationRepository
+import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
 import io.mockk.coEvery
@@ -112,8 +113,22 @@ class LocationBackfillWorkerTest {
 
         val result = buildWorker().doWork()
 
-        assertEquals(Result.success(), result)
-        coVerify(exactly = 1) { expenseRepository.incrementBackfillAttempts(expense.id) }
+        assertEquals(Result.retry(), result)
+        coVerify(exactly = 0) { expenseRepository.incrementBackfillAttempts(expense.id) }
+    }
+
+    @Test
+    fun `retryable resolver result does not consume attempt budget`() = runTest {
+        val expense = sampleExpense(id = 4L, merchant = "Flaky Merchant")
+        coEvery { expenseRepository.getUnlocatedExpensesForBackfill(any()) } returns listOf(expense)
+        coEvery {
+            locationResolver.resolve(rawMerchantName = expense.merchant, transactionDateMs = expense.date)
+        } returns LocationResolutionResult.Retryable(GeocodingError.Timeout)
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.retry(), result)
+        coVerify(exactly = 0) { expenseRepository.incrementBackfillAttempts(expense.id) }
     }
 
     private fun sampleExpense(id: Long, merchant: String): Expense {

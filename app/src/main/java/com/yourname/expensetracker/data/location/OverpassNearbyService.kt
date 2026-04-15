@@ -1,12 +1,15 @@
 package com.yourname.expensetracker.data.location
 
 import android.util.Log
+import com.yourname.expensetracker.data.location.internal.executeCancellable
 import com.yourname.expensetracker.di.LocationHttpClient
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.NearbyPoiResult
 import com.yourname.expensetracker.domain.location.NearbyPoi
 import com.yourname.expensetracker.domain.location.NearbyPoiService
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -14,7 +17,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
-import kotlinx.coroutines.delay
+import java.text.Normalizer
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.*
@@ -58,6 +61,8 @@ class OverpassNearbyService @Inject constructor(
                 if (parsed.isEmpty()) NearbyPoiResult.Failure(GeocodingError.NoResults)
                 else NearbyPoiResult.Success(parsed)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: IOException) {
             Log.w(TAG, "Overpass network error: ${e.message}")
             NearbyPoiResult.Failure(GeocodingError.NetworkError)
@@ -76,14 +81,16 @@ class OverpassNearbyService @Inject constructor(
         var lastError: IOException? = null
         repeat(maxAttempts) { attempt ->
             try {
-                val response = client.newCall(request).execute()
+                val response = client.executeCancellable(request)
                 if (response.code >= 500 || response.code == 429) {
-                    response.close()
                     if (attempt < maxAttempts - 1) {
+                        response.close()
                         delay(currentDelay)
                         currentDelay = (currentDelay * 2).coerceAtMost(3000)
+                        lastError = null
+                        return@repeat
                     }
-                    return@repeat
+                    return response
                 }
                 return response
             } catch (e: IOException) {
@@ -160,7 +167,7 @@ class OverpassNearbyService @Inject constructor(
         }
 
         // Sort by name-similarity score (desc) then distance (asc)
-        val normalizedQuery = merchantName.lowercase().replace(Regex("[^a-z0-9]"), "")
+        val normalizedQuery = normalizeNameForRanking(merchantName)
         return pois.sortedWith(
             compareByDescending<NearbyPoi> { nameSimilarity(it.name, normalizedQuery) }
                 .thenBy { it.distanceMetres }
@@ -180,7 +187,7 @@ class OverpassNearbyService @Inject constructor(
      * Simple Jaccard-like token overlap similarity in [0, 1].
      */
     private fun nameSimilarity(candidateName: String, normalizedQuery: String): Double {
-        val candidate = candidateName.lowercase().replace(Regex("[^a-z0-9]"), "")
+        val candidate = normalizeNameForRanking(candidateName)
         if (candidate.isEmpty() || normalizedQuery.isEmpty()) return 0.0
         if (candidate.contains(normalizedQuery) || normalizedQuery.contains(candidate)) return 0.9
         val shorter = minOf(candidate.length, normalizedQuery.length)
@@ -190,6 +197,21 @@ class OverpassNearbyService @Inject constructor(
             if (candidate.getOrNull(i) == normalizedQuery.getOrNull(i)) matches++
         }
         return (matches.toDouble() / 4).coerceIn(0.0, 1.0) * (shorter.toDouble() / longer)
+    }
+
+    private fun normalizeNameForRanking(value: String): String {
+        val decomposed = Normalizer.normalize(value, Normalizer.Form.NFKD)
+        val strippedMarks = buildString(decomposed.length) {
+            decomposed.forEach { char ->
+                if (Character.getType(char) != Character.NON_SPACING_MARK.toInt()) {
+                    append(char)
+                }
+            }
+        }
+
+        return strippedMarks
+            .lowercase()
+            .filter { it.isLetterOrDigit() }
     }
 
     /** Haversine distance in metres between two lat/lon points. */

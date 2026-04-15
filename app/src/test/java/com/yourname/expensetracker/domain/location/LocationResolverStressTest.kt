@@ -5,11 +5,13 @@ import com.yourname.expensetracker.domain.categorization.CanonicalResult
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
+import io.mockk.verify
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -53,6 +55,12 @@ class LocationResolverStressTest {
         coEvery { locationCachePort.getCachedLocation(any()) } returns null
         coEvery { locationCachePort.getCachedLocationForArea(any(), any()) } returns null
         coEvery { merchantClusterPort.getMerchantLocationClusters(any()) } returns emptyList()
+        every { locationCachePort.getMostLikelyArea(any(), any(), any()) } answers {
+            val merchantName = firstArg<String>()
+            val lat = secondArg<Double?>()
+            val lon = thirdArg<Double?>()
+            if (lat != null && lon != null) "$merchantName|$lat|$lon" else "global"
+        }
         coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns
             GeocodingLookupResult.Success(null)
         coEvery { nearbyPoiService.findNearby(any(), any(), any(), any()) } returns
@@ -112,6 +120,24 @@ class LocationResolverStressTest {
     }
 
     @Test
+    fun `gps biased geocode saves under derived non global area key`() = runBlocking {
+        val rawMerchantName = "Shop"
+        val merchantKey = MerchantKeyGenerator.generate(rawMerchantName)
+        val expectedAreaKey = "$merchantKey|40.72|-74.02"
+
+        coEvery { locationProvider.getLastKnownLocation() } returns (40.71 to -74.01)
+        coEvery { geocodingService.search(any(), 40.71, -74.01, any(), any()) } returns
+            GeocodingLookupResult.Success(geocoded(40.72, -74.02))
+
+        val result = locationResolver.resolve(rawMerchantName, System.currentTimeMillis() - 60_000)
+
+        assertTrue(result is LocationResolutionResult.Resolved)
+        verify(exactly = 1) { locationCachePort.getMostLikelyArea(merchantKey, 40.72, -74.02) }
+        coVerify(exactly = 1) { locationCachePort.saveLocation(merchantKey, any(), expectedAreaKey) }
+        coVerify(exactly = 0) { locationCachePort.saveLocation(merchantKey, any(), "global") }
+    }
+
+    @Test
     fun `old transaction does not use gps bias`() = runBlocking {
         coEvery { locationProvider.getLastKnownLocation() } returns (40.71 to -74.01)
         coEvery { geocodingService.search(any(), null, null, any(), any()) } returns
@@ -123,12 +149,41 @@ class LocationResolverStressTest {
     }
 
     @Test
+    fun `name only geocode saves under derived non global area key`() = runBlocking {
+        val rawMerchantName = "Shop"
+        val merchantKey = MerchantKeyGenerator.generate(rawMerchantName)
+        val expectedAreaKey = "$merchantKey|41.0|-73.0"
+
+        coEvery { geocodingService.search(any(), null, null, any(), any()) } returns
+            GeocodingLookupResult.Success(geocoded(41.0, -73.0))
+
+        val result = locationResolver.resolve(rawMerchantName, 0L)
+
+        assertTrue(result is LocationResolutionResult.Resolved)
+        verify(exactly = 1) { locationCachePort.getMostLikelyArea(merchantKey, 41.0, -73.0) }
+        coVerify(exactly = 1) { locationCachePort.saveLocation(merchantKey, any(), expectedAreaKey) }
+        coVerify(exactly = 0) { locationCachePort.saveLocation(merchantKey, any(), "global") }
+    }
+
+    @Test
     fun `null island result is rejected`() = runBlocking {
         coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns
             GeocodingLookupResult.Success(geocoded(0.0, 0.0))
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis())
         assertTrue(result is LocationResolutionResult.Unresolved)
+    }
+
+    @Test
+    fun `transient geocoder failure surfaces as retryable`() = runBlocking {
+        coEvery { geocodingService.search(any(), any(), any(), any(), any()) } returns
+            GeocodingLookupResult.Failure(GeocodingError.RateLimited)
+
+        val result = locationResolver.resolve("Shop", System.currentTimeMillis())
+
+        assertTrue(result is LocationResolutionResult.Retryable)
+        assertEquals(GeocodingError.RateLimited, (result as LocationResolutionResult.Retryable).error)
+        coVerify(exactly = 1) { geocodingService.search(any(), any(), any(), any(), any()) }
     }
 
     @Test

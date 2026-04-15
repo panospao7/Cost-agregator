@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
@@ -40,10 +41,13 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
         Log.d(TAG, "Merchant-key backfill started")
 
         var totalUpdated = 0
+        val failedExpenseIdsThisRun = mutableSetOf<Long>()
 
         while (!isStopped) {
             val batch = try {
                 expenseRepository.getExpensesWithNullMerchantKey(limit = BATCH_SIZE)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to fetch batch", e)
                 return@withContext Result.retry()
@@ -51,16 +55,36 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
 
             if (batch.isEmpty()) break
 
-            for (expense in batch) {
+            val pendingBatch = batch.filterNot { expense -> expense.id in failedExpenseIdsThisRun }
+            if (pendingBatch.isEmpty()) {
+                Log.w(
+                    TAG,
+                    "Merchant-key backfill made no progress; retrying after repeated failures for ${batch.size} rows"
+                )
+                return@withContext Result.retry()
+            }
+
+            var batchUpdated = 0
+
+            for (expense in pendingBatch) {
                 if (isStopped) break
                 val key = MerchantKeyGenerator.generate(expense.merchant)
                 try {
                     expenseRepository.updateMerchantKey(expense.id, key)
                     totalUpdated++
+                    batchUpdated++
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
+                    failedExpenseIdsThisRun += expense.id
                     // Non-fatal: row will be retried in the next batch on the next run.
                     Log.w(TAG, "Failed to update merchantKey for expense ${expense.id}", e)
                 }
+            }
+
+            if (!isStopped && batchUpdated == 0) {
+                Log.w(TAG, "Merchant-key backfill made no progress for current batch; retrying")
+                return@withContext Result.retry()
             }
         }
 

@@ -9,9 +9,9 @@ interface MerchantLocationDao {
 
     // ── MerchantLocation cache ────────────────────────────────────────────────
 
-    /** Global cache lookup: prefers 'global' areaKey entries, falls back to any entry. */
-    @Query("SELECT * FROM merchant_locations WHERE normalizedMerchantName = :key ORDER BY CASE WHEN areaKey = 'global' THEN 0 ELSE 1 END, hitCount DESC LIMIT 1")
-    suspend fun getByNormalizedName(key: String): MerchantLocation?
+    /** Global cache lookup: returns only rows with the canonical 'global' areaKey. */
+    @Query("SELECT * FROM merchant_locations WHERE normalizedMerchantName = :key AND areaKey = 'global' LIMIT 1")
+    suspend fun getGlobalByNormalizedName(key: String): MerchantLocation?
 
     /** Area-scoped cache lookup (v30): looks up by normalized name AND area key. */
     @Query("SELECT * FROM merchant_locations WHERE normalizedMerchantName = :key AND areaKey = :areaKey LIMIT 1")

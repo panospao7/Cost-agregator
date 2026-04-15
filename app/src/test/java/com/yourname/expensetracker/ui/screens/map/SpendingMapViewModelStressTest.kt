@@ -5,11 +5,15 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.location.GeocodingService
+import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.LocatedExpense
 import com.yourname.expensetracker.domain.location.LocationInsightsEngine
+import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
 import com.yourname.expensetracker.domain.location.SpendingHeatmapEngine
 import com.yourname.expensetracker.util.ViewModelTestUtils
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -249,6 +253,37 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
         val totalSpend = heatmap.sumOf { it.totalSpend }
         assertEquals("All purchase spend accounted for", 180.0, totalSpend, 0.01)
         assertTrue("Heatmap has points", heatmap.isNotEmpty())
+    }
+
+    @Test
+    fun `stress - manual resolve retryable failure shows temporary snackbar`() = runTest(testDispatcher) {
+        val marker = MapExpenseMarker(
+            expenseId = 42L,
+            latitude = 37.98,
+            longitude = 23.72,
+            amount = 12.5,
+            merchant = "Cafe Retry",
+            date = 1_700_000_000_000L,
+            locationSource = null,
+            placeId = null
+        )
+        coEvery {
+            locationResolver.resolve(
+                rawMerchantName = marker.merchant,
+                transactionDateMs = marker.date,
+                forceRefresh = true
+            )
+        } returns LocationResolutionResult.Retryable(GeocodingError.Timeout)
+
+        viewModel.onResolveLocationForMarker(marker)
+        advanceUntilIdle()
+
+        assertEquals(
+            "Temporary location lookup failure. Please try again.",
+            viewModel.state.value.snackbarMessage
+        )
+        assertFalse(viewModel.state.value.isResolvingLocation)
+        coVerify(exactly = 0) { expenseRepository.updateExpenseLocation(any(), any(), any(), any(), any(), any()) }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

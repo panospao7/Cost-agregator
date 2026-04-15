@@ -145,11 +145,20 @@ class SpendingMapViewModel @Inject constructor(
     fun onResolveLocationForMarker(marker: MapExpenseMarker) {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isResolvingLocation = true) }
-            val result = locationResolver.resolve(
-                rawMerchantName = marker.merchant,
-                transactionDateMs = marker.date,
-                forceRefresh = true
-            )
+            val result = try {
+                locationResolver.resolve(
+                    rawMerchantName = marker.merchant,
+                    transactionDateMs = marker.date,
+                    forceRefresh = true
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Temporary location resolution failure for expenseId=${marker.expenseId}", e)
+                _state.update { it.copy(
+                    isResolvingLocation = false,
+                    snackbarMessage = TEMPORARY_LOCATION_FAILURE_MESSAGE
+                ) }
+                return@launch
+            }
             when (result) {
                 is LocationResolutionResult.Resolved -> {
                     expenseRepository.updateExpenseLocation(
@@ -171,6 +180,12 @@ class SpendingMapViewModel @Inject constructor(
                     _state.update { it.copy(
                         isResolvingLocation = false,
                         overpassCandidates = result.candidates
+                    ) }
+                }
+                is LocationResolutionResult.Retryable -> {
+                    _state.update { it.copy(
+                        isResolvingLocation = false,
+                        snackbarMessage = TEMPORARY_LOCATION_FAILURE_MESSAGE
                     ) }
                 }
                 is LocationResolutionResult.Unresolved -> {
@@ -481,6 +496,7 @@ class SpendingMapViewModel @Inject constructor(
     private companion object {
         const val TAG = "SpendingMapViewModel"
         const val UNCATEGORIZED_KEY = "uncategorized"
+        const val TEMPORARY_LOCATION_FAILURE_MESSAGE = "Temporary location lookup failure. Please try again."
     }
 
     // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType

@@ -122,10 +122,37 @@ class SpendingHeatmapEngineStressTest {
 
         val heatmap = heatmapEngine.compute(expenses)
 
-        assertEquals(2, heatmap.size)
-        val zeroPoint = heatmap.find { it.totalSpend == 0.0 }
-        assertNotNull(zeroPoint)
-        assertTrue("Zero should still have weight", zeroPoint?.weight!! >= 0f)
+        assertEquals(1, heatmap.size)
+        assertEquals(100.0, heatmap[0].totalSpend, 0.01)
+        assertEquals(1, heatmap[0].count)
+    }
+
+    @Test
+    fun `stress - negative only inputs return empty heatmap`() {
+        val expenses = listOf(
+            createExpense(1, 40.7128, -74.0060, -10.0),
+            createExpense(2, 40.7200, -74.0100, -25.0)
+        )
+
+        val heatmap = heatmapEngine.compute(expenses)
+
+        assertTrue(heatmap.isEmpty())
+    }
+
+    @Test
+    fun `stress - mixed positive and negative inputs only accumulate positive spend`() {
+        val expenses = listOf(
+            createExpense(1, 40.712800, -74.006000, 50.0),
+            createExpense(2, 40.712805, -74.006005, -20.0),
+            createExpense(3, 40.712810, -74.006010, 25.0)
+        )
+
+        val heatmap = heatmapEngine.compute(expenses)
+
+        assertEquals(1, heatmap.size)
+        assertEquals(75.0, heatmap[0].totalSpend, 0.01)
+        assertEquals(2, heatmap[0].count)
+        assertEquals(1.0f, heatmap[0].weight, 0.01f)
     }
 
     @Test
