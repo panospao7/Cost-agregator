@@ -113,4 +113,37 @@ class AppParserRegistryTest {
         )
         assertNull("Should reject OTP even if it contains 'payment' and numbers", result)
     }
+
+    @Test
+    fun `test Revolut grouped amount parses via registry without fallback`() {
+        val result = registry.parse(
+            title = "Paid €1,234.56 at IKEA",
+            text = null,
+            bigText = null,
+            subText = null,
+            packageName = "com.revolut.revolut"
+        )
+        assertNotNull("Grouped amount should be parsed by RevolutParser, not fall through to generic", result)
+        assertEquals(1234.56, result!!.amount, 0.01)
+        assertEquals("IKEA", result.merchant)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
+        // Confidence should be from RevolutParser (0.95), not generic parser
+        assertEquals(0.95f, result.confidence, 0.01f)
+    }
+
+    @Test
+    fun `test SMS grouped amount parses via registry without fallback`() {
+        val result = registry.parse(
+            title = "NBG",
+            text = "Αγορά 1,234.56 EUR στο SUPERMARKET στις 10/04",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.messaging"
+        )
+        assertNotNull("Grouped SMS amount should be parsed by SmsParser, not fall through to generic", result)
+        assertEquals(1234.56, result!!.amount, 0.01)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
+        // Confidence should be from SmsParser (0.85), not generic parser
+        assertEquals(0.85f, result.confidence, 0.01f)
+    }
 }

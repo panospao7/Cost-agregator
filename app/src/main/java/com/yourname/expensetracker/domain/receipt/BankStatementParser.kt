@@ -47,10 +47,24 @@ class BankStatementParser @Inject constructor(
             "AXIAS", "axia", "AXIA", "HM_NIA_AXIAS", "HM_NIA_AKIAS"
         )
 
+        /**
+         * Represents the detected position of the transaction-date column
+         * relative to the value-date column in header rows.
+         */
+        enum class TransactionDateOrder {
+            /** Transaction date appears before the value date in the header. */
+            FIRST,
+            /** Transaction date appears after the value date in the header. */
+            SECOND,
+            /** Header order could not be determined. */
+            UNKNOWN
+        }
+
         // Data class for date column detection info
         data class DateColumnInfo(
             val hasTransactionDateKeyword: Boolean,
-            val hasValueDateKeyword: Boolean
+            val hasValueDateKeyword: Boolean,
+            val transactionDateOrder: TransactionDateOrder = TransactionDateOrder.UNKNOWN
         )
     }
 
@@ -106,20 +120,52 @@ class BankStatementParser @Inject constructor(
     }
 
     /**
-     * Detect date column order from headers
+     * Detect date column order from headers.
+     *
+     * Scans the first few rows for transaction-date and value-date keywords,
+     * then compares their character positions to determine which date column
+     * comes first.  The resolved [DateColumnInfo.transactionDateOrder] is
+     * consumed by [extractTransactionFromRow] when choosing between two
+     * parsed dates in data rows.
      */
     private fun detectDateColumns(rows: List<String>): DateColumnInfo {
-        val headerRows = rows.take(5).joinToString(" ").uppercase()
-        
-        val hasTransactionDateKeyword = TRANSACTION_DATE_KEYWORDS.any { headerRows.contains(it.uppercase()) }
-        val hasValueDateKeyword = VALUE_DATE_KEYWORDS.any { headerRows.contains(it.uppercase()) }
-        
-        // If we have both keywords, transaction date should come first in typical Greek bank statements
-        // If only one is present, the first date in each row is typically transaction date
-        
+        val headerText = rows.take(5).joinToString(" ").uppercase()
+
+        // Find the *earliest* position of any transaction-date keyword
+        var txDatePos: Int = Int.MAX_VALUE
+        var hasTxKeyword = false
+        for (keyword in TRANSACTION_DATE_KEYWORDS) {
+            val pos = headerText.indexOf(keyword.uppercase())
+            if (pos >= 0) {
+                hasTxKeyword = true
+                if (pos < txDatePos) txDatePos = pos
+            }
+        }
+
+        // Find the *earliest* position of any value-date keyword
+        var valDatePos: Int = Int.MAX_VALUE
+        var hasValKeyword = false
+        for (keyword in VALUE_DATE_KEYWORDS) {
+            val pos = headerText.indexOf(keyword.uppercase())
+            if (pos >= 0) {
+                hasValKeyword = true
+                if (pos < valDatePos) valDatePos = pos
+            }
+        }
+
+        val order = when {
+            hasTxKeyword && hasValKeyword && txDatePos < valDatePos ->
+                Companion.TransactionDateOrder.FIRST
+            hasTxKeyword && hasValKeyword && valDatePos < txDatePos ->
+                Companion.TransactionDateOrder.SECOND
+            // Only one keyword or identical positions — default to UNKNOWN
+            else -> Companion.TransactionDateOrder.UNKNOWN
+        }
+
         return DateColumnInfo(
-            hasTransactionDateKeyword = hasTransactionDateKeyword,
-            hasValueDateKeyword = hasValueDateKeyword
+            hasTransactionDateKeyword = hasTxKeyword,
+            hasValueDateKeyword = hasValKeyword,
+            transactionDateOrder = order
         )
     }
 
@@ -169,6 +215,46 @@ class BankStatementParser @Inject constructor(
     }
     
     /**
+     * Classify a Revolut statement row description into a [ParsedTransactionType].
+     *
+     * This helper is intentionally local to statement parsing; standalone
+     * `RevolutParser.kt` (notification-based) has its own classification and
+     * will be addressed in Batch 6C.
+     */
+    private fun classifyRevolutStatementType(
+        description: String,
+        isMoneyInByPosition: Boolean
+    ): ParsedTransactionType {
+        val upper = description.uppercase()
+        return when {
+            // Transfers between accounts / people
+            upper.contains("TRANSFER TO") ||
+            upper.contains("TRANSFER FROM") ||
+            upper.contains("RECEIVED FROM") -> ParsedTransactionType.TRANSFER
+
+            // ATM / cash withdrawals
+            upper.contains("ATM") ||
+            upper.contains("CASH WITHDRAWAL") ||
+            upper.contains("WITHDRAW") -> ParsedTransactionType.WITHDRAWAL
+
+            // Refunds, top-ups, promo credits, add-money — all money-in
+            upper.contains("REFUND") ||
+            upper.contains("TOP-UP") ||
+            upper.contains("TOP UP") ||
+            upper.contains("TOPUP") ||
+            upper.contains("PROMO") ||
+            upper.contains("ADD MONEY") ||
+            upper.contains("ADD-MONEY") -> ParsedTransactionType.DEPOSIT
+
+            // Positional money-in that didn't match explicit keywords above
+            isMoneyInByPosition -> ParsedTransactionType.DEPOSIT
+
+            // Default: outgoing merchant spend
+            else -> ParsedTransactionType.PURCHASE
+        }
+    }
+
+    /**
      * Try to parse a Revolut transaction line.
      * Format: Apr 12, 2023 Tzakmaki Panagiota MoneyOut? MoneyIn? Balance
      * 
@@ -204,12 +290,16 @@ class BankStatementParser @Inject constructor(
         // The last is balance, the second-to-last is tx amount
         val txAmountStr = amountMatches[amountMatches.size - 2]
         val balanceStr = amountMatches.last()
-        
-        val rawAmount = txAmountStr.replace(Regex("""[€$£\s]"""), "").replace(",", ".")
-        val absAmount = kotlin.math.abs(rawAmount.toDoubleOrNull() ?: run {
+
+        // Strip only the currency symbol and layout whitespace, then delegate
+        // to AmountUtils for locale-safe parsing (handles both €1,234.56 and
+        // €1.234,56 correctly).
+        val rawAmountToken = txAmountStr.replace(Regex("""[€$£\s]"""), "")
+        val parsedAmount = AmountUtils.parseAmount(rawAmountToken) ?: run {
             if (BuildConfig.DEBUG) Timber.d("RevolutParser: Failed to parse amount '$txAmountStr' in row -> $rowText")
             return null
-        })
+        }
+        val absAmount = kotlin.math.abs(parsedAmount)
         
         if (absAmount <= 0.0 || !absAmount.isFinite()) {
             if (BuildConfig.DEBUG) Timber.d("RevolutParser: Invalid absolute amount ($absAmount) in row -> $rowText")
@@ -220,7 +310,7 @@ class BankStatementParser @Inject constructor(
         if (txAmountStr.contains("£")) currency = "GBP"
         if (txAmountStr.contains("$")) currency = "USD"
 
-        // 3. Determine if it's Money Out or Money In
+        // 3. Determine if it's Money Out or Money In by spatial position
         // Find the block that contains the transaction amount to determine its X position
         val txAmountBlock = rowBlocks.find { it.text.contains(txAmountStr) } ?: rowBlocks.last()
         val balanceBlock = rowBlocks.find { it.text.contains(balanceStr) } ?: rowBlocks.last()
@@ -239,13 +329,10 @@ class BankStatementParser @Inject constructor(
         val relativeX = (txAmountBlock.left - rowLeft).toFloat() / rowWidth
         
         // Layout: Date (0-15%), Description (15-60%), Money out (60-75%), Money In (75-90%), Balance (90-100%)
-        val isMoneyIn = relativeX > 0.75f || 
-                       rowText.contains("Top-up", ignoreCase = true) || 
-                       rowText.contains("Received from", ignoreCase = true) ||
-                       rowText.contains("Transfer from", ignoreCase = true) ||
-                       rowText.contains("Promo", ignoreCase = true)
+        val isMoneyInByPosition = relativeX > 0.75f
 
-        val type = if (isMoneyIn) ParsedTransactionType.DEPOSIT else ParsedTransactionType.PURCHASE
+        // 4. Classify transaction type using description keywords + positional hint
+        val type = classifyRevolutStatementType(rowText, isMoneyInByPosition)
         
         // Merchant is usually between the date and the first amount
         // Use the index of the MatchResult to correctly handle variable spacing
@@ -263,7 +350,8 @@ class BankStatementParser @Inject constructor(
             .replace(Regex("""\s+"""), " ")
             .trim()
             
-        // Specific Revolut prefixes
+        // Specific Revolut prefixes — strip for display but do NOT strip before
+        // classification (classifyRevolutStatementType runs on raw rowText above).
         merchant = merchant.replace(Regex("""(?i)\bTransfer to\s+"""), "")
         merchant = merchant.replace(Regex("""(?i)\bTransfer from\s+"""), "")
         merchant = merchant.replace(Regex("""(?i)\bTop-up by\s+"""), "")
@@ -466,11 +554,36 @@ class BankStatementParser @Inject constructor(
             )
         }
         if (candidates.isEmpty()) return null
-        val bestCandidate = candidates.maxWithOrNull(
-            compareBy<AmountCandidate> { it.score }
-                .thenBy { kotlin.math.abs(it.parsed) }
-                .thenBy { it.startIndex }
-        ) ?: return null
+
+        // Select the best amount candidate.
+        // When multiple candidates share the same heuristic score, prefer the
+        // *first* (leftmost) qualifying amount rather than the largest absolute
+        // value.  In typical bank statements the rightmost amount column is the
+        // running balance; the transaction amount column appears earlier.
+        val bestCandidate = if (candidates.size > 1) {
+            // Separate the rightmost candidate (likely running balance)
+            val rightmost = candidates.maxByOrNull { it.startIndex }!!
+            val nonRightmost = candidates.filter { it !== rightmost }
+            // Among the remaining, pick by score then leftmost position
+            val bestNonRightmost = nonRightmost.maxWithOrNull(
+                compareBy<AmountCandidate> { it.score }
+                    .thenByDescending { it.startIndex } // prefer later column among non-balance columns
+            )
+            // Use the non-rightmost winner unless the rightmost has a strictly
+            // higher heuristic score (e.g. it has a currency symbol and the
+            // others do not).
+            if (bestNonRightmost != null && bestNonRightmost.score >= rightmost.score) {
+                bestNonRightmost
+            } else {
+                // Fallback: take highest score, breaking ties by earliest position
+                candidates.maxWithOrNull(
+                    compareBy<AmountCandidate> { it.score }
+                        .thenByDescending { -it.startIndex }
+                ) ?: return null
+            }
+        } else {
+            candidates.first()
+        }
         
         // Robust European & US decimal parsing
         val rawAmount = bestCandidate.rawToken
@@ -515,12 +628,21 @@ class BankStatementParser @Inject constructor(
             else -> ParsedTransactionType.PURCHASE 
         }
 
-        // 4. Extract dates - prioritize transaction date (first date) over value date (second date)
+        // 4. Extract dates — use header-derived transaction-date order when
+        //    two dates are present.
         val allDates = extractAllDates(cleanRow)
-        
-        val dateValue = allDates.transactionDate 
-            ?: allDates.valueDate 
-            ?: allDates.firstDate
+
+        val dateValue = when (columnInfo.transactionDateOrder) {
+            // Header tells us transaction date is the first date column
+            Companion.TransactionDateOrder.FIRST ->
+                allDates.firstDate ?: allDates.valueDate
+            // Header tells us transaction date is the second date column
+            Companion.TransactionDateOrder.SECOND ->
+                allDates.valueDate ?: allDates.firstDate
+            // Unknown — keep legacy behavior (first date preferred)
+            Companion.TransactionDateOrder.UNKNOWN ->
+                allDates.transactionDate ?: allDates.valueDate ?: allDates.firstDate
+        }
 
         // 5. Extract merchant - remove all dates from the row
         val monthsRegex = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"

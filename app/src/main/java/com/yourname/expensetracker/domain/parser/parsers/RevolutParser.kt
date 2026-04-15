@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransferDirection
 import com.yourname.expensetracker.domain.util.AmountUtils
+import com.yourname.expensetracker.domain.util.CommonPatterns
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import java.util.regex.Pattern
@@ -34,23 +35,26 @@ class RevolutParser @Inject constructor(
     // Also: "ATM withdrawal: €50.00"
     // Ignore: "Your exchange rate...", "Weekly report", "Special offer"
 
+    // Shared grouped-amount fragment supports thousands-separated amounts (e.g. 1,234.56 / 1.234,56)
+    private val AMT = CommonPatterns.GROUPED_AMOUNT_TOKEN
+
     private val PAID_AT_PATTERN = Pattern.compile(
-        """(?:paid|sent|💳)\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*at\s+(.+)""",
+        """(?:paid|sent|💳)\s*([€$£]|EUR|USD|GBP)?\s*($AMT)\s*at\s+(.+)""",
         Pattern.CASE_INSENSITIVE
     )
     
     private val PAID_TO_PATTERN = Pattern.compile(
-        """(?:you\s+)?(?:paid|sent)\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*to\s+(.+)""",
+        """(?:you\s+)?(?:paid|sent)\s*([€$£]|EUR|USD|GBP)?\s*($AMT)\s*to\s+(.+)""",
         Pattern.CASE_INSENSITIVE
     )
 
     private val RECEIVED_PATTERN = Pattern.compile(
-        """(?:received|added)\s*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})\s*(?:from\s+(.+))?""",
+        """(?:received|added)\s*([€$£]|EUR|USD|GBP)?\s*($AMT)\s*(?:from\s+(.+))?""",
         Pattern.CASE_INSENSITIVE
     )
 
     private val ATM_PATTERN = Pattern.compile(
-        """(?:atm|withdrawal)[:\s]*([€$£]|EUR|USD|GBP)?\s*(\d+[.,]\d{2})""",
+        """(?:atm|withdrawal)[:\s]*([€$£]|EUR|USD|GBP)?\s*($AMT)""",
         Pattern.CASE_INSENSITIVE
     )
 

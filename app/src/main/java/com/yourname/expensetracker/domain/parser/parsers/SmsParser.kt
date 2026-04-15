@@ -12,6 +12,7 @@ import java.util.regex.Pattern
  * because messaging apps send ALL messages.
  */
 import com.yourname.expensetracker.domain.util.AmountUtils
+import com.yourname.expensetracker.domain.util.CommonPatterns
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import javax.inject.Inject
@@ -35,8 +36,9 @@ class SmsParser @Inject constructor(
     )
 
     private val amountPattern by lazy {
+        val amt = CommonPatterns.GROUPED_AMOUNT_TOKEN
         Pattern.compile(
-            """(\d+[.,]\d{2})\s*(EUR|€|USD|\$|GBP|£)|(EUR|€|USD|\$|GBP|£)\s*(\d+[.,]\d{2})""",
+            """($amt)\s*(EUR|€|USD|\$|GBP|£)|(EUR|€|USD|\$|GBP|£)\s*($amt)""",
             Pattern.CASE_INSENSITIVE
         )
     }
@@ -147,6 +149,7 @@ class SmsParser @Inject constructor(
     
     /**
      * Detects transfer direction from SMS text.
+     * Returns null for ambiguous cases (tie/no evidence) to avoid biasing unknown transfers.
      */
     private fun detectSmsDirection(text: String, transactionType: ParsedTransactionType): ParsedTransferDirection? {
         if (transactionType != ParsedTransactionType.DEPOSIT && 
@@ -160,7 +163,8 @@ class SmsParser @Inject constructor(
         return when {
             incomingScore > outgoingScore -> ParsedTransferDirection.INCOMING
             outgoingScore > incomingScore -> ParsedTransferDirection.OUTGOING
-            else -> ParsedTransferDirection.INCOMING  // Default to incoming for deposits
+            // Ambiguous: no evidence or tie — return null instead of defaulting
+            else -> null
         }
     }
     

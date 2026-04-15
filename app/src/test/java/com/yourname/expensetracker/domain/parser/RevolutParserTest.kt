@@ -232,4 +232,121 @@ class RevolutParserTest {
     fun `only supports revolut package`() {
         assertEquals(setOf("com.revolut.revolut"), parser.supportedPackages)
     }
+
+    // === GROUPED-AMOUNT REGRESSIONS ===
+
+    @Test
+    fun `parse purchase with US-format grouped amount`() {
+        val result = parser.parse(
+            title = "Paid €1,234.56 at IKEA",
+            text = null, bigText = null, subText = null,
+            packageName = "com.revolut.revolut"
+        )
+        assertNotNull(result)
+        assertEquals(1234.56, result!!.amount, 0.01)
+        assertEquals("EUR", result.currency)
+        assertEquals("IKEA", result.merchant)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
+    }
+
+    @Test
+    fun `parse purchase with EU-format grouped amount`() {
+        val result = parser.parse(
+            title = "Paid €1.234,56 at MediaMarkt",
+            text = null, bigText = null, subText = null,
+            packageName = "com.revolut.revolut"
+        )
+        assertNotNull(result)
+        assertEquals(1234.56, result!!.amount, 0.01)
+        assertEquals("EUR", result.currency)
+        assertEquals("MediaMarkt", result.merchant)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
+    }
+
+    @Test
+    fun `parse outgoing transfer with grouped amount`() {
+        val result = parser.parse(
+            title = "You paid €2,500.00 to John",
+            text = null, bigText = null, subText = null,
+            packageName = "com.revolut.revolut"
+        )
+        assertNotNull(result)
+        assertEquals(2500.00, result!!.amount, 0.01)
+        assertEquals("EUR", result.currency)
+        assertEquals("John", result.merchant)
+        assertEquals(ParsedTransactionType.TRANSFER, result.type)
+        assertEquals(ParsedTransferDirection.OUTGOING, result.transferDirection)
+    }
+
+    @Test
+    fun `parse incoming transfer with grouped amount`() {
+        val result = parser.parse(
+            title = "Received €5,000.00 from Maria",
+            text = null, bigText = null, subText = null,
+            packageName = "com.revolut.revolut"
+        )
+        assertNotNull(result)
+        assertEquals(5000.00, result!!.amount, 0.01)
+        assertEquals("EUR", result.currency)
+        assertEquals("Maria", result.merchant)
+        assertEquals(ParsedTransactionType.TRANSFER, result.type)
+        assertEquals(ParsedTransferDirection.INCOMING, result.transferDirection)
+    }
+
+    @Test
+    fun `parse add-money with grouped amount`() {
+        val result = parser.parse(
+            title = "Added €10,000.00",
+            text = null, bigText = null, subText = null,
+            packageName = "com.revolut.revolut"
+        )
+        assertNotNull(result)
+        assertEquals(10000.00, result!!.amount, 0.01)
+        assertEquals("EUR", result.currency)
+        assertEquals(ParsedTransactionType.DEPOSIT, result.type)
+        assertEquals(ParsedTransferDirection.INCOMING, result.transferDirection)
+    }
+
+    @Test
+    fun `parse ATM withdrawal with grouped amount`() {
+        val result = parser.parse(
+            title = "ATM withdrawal: €1,000.00",
+            text = null, bigText = null, subText = null,
+            packageName = "com.revolut.revolut"
+        )
+        assertNotNull(result)
+        assertEquals(1000.00, result!!.amount, 0.01)
+        assertEquals("EUR", result.currency)
+        assertEquals("ATM Withdrawal", result.merchant)
+        assertEquals(ParsedTransactionType.WITHDRAWAL, result.type)
+    }
+
+    @Test
+    fun `parse purchase with large EU-format grouped amount`() {
+        val result = parser.parse(
+            title = "Paid €12.345,67 at Furniture Store",
+            text = null, bigText = null, subText = null,
+            packageName = "com.revolut.revolut"
+        )
+        assertNotNull(result)
+        assertEquals(12345.67, result!!.amount, 0.01)
+        assertEquals("EUR", result.currency)
+        assertEquals("Furniture Store", result.merchant)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
+    }
+
+    @Test
+    fun `parse outgoing transfer with EU-format grouped amount`() {
+        val result = parser.parse(
+            title = "Sent €3.500,00 to Alex",
+            text = null, bigText = null, subText = null,
+            packageName = "com.revolut.revolut"
+        )
+        assertNotNull(result)
+        assertEquals(3500.00, result!!.amount, 0.01)
+        assertEquals("EUR", result.currency)
+        assertEquals("Alex", result.merchant)
+        assertEquals(ParsedTransactionType.TRANSFER, result.type)
+        assertEquals(ParsedTransferDirection.OUTGOING, result.transferDirection)
+    }
 }
