@@ -60,6 +60,18 @@ class ReviewQueueRepository @Inject constructor(
     fun getPendingReviewCount(): Flow<Int> =
         pendingReviewDao.getPendingCountFlow()
 
+    private suspend fun hasCanonicalApprovalDuplicate(expense: Expense): Boolean {
+        return expenseDao.isDuplicateCurrencyAware(
+            amount = expense.amount,
+            merchant = expense.merchant,
+            date = expense.date,
+            currency = expense.currency,
+            transactionType = expense.transactionType.name,
+            merchantKey = expense.merchantKey,
+            dedupeKey = expense.dedupeKey
+        )
+    }
+
     suspend fun getReviewById(reviewId: Long): PendingReview? =
         pendingReviewDao.getById(reviewId)
 
@@ -146,15 +158,7 @@ class ReviewQueueRepository @Inject constructor(
             // (b) legacy rows with the old 3-part dedupe key are still caught by the
             // merchant/amount/date/currency/type window query (not just by key collision).
             // insertAtomic() below is kept only as a final race-condition guard.
-            val isDuplicate = expenseDao.isDuplicateCurrencyAware(
-                amount = expense.amount,
-                merchant = expense.merchant,
-                date = expense.date,
-                currency = expense.currency,
-                transactionType = expense.transactionType.name,
-                merchantKey = expense.merchantKey,
-                dedupeKey = expense.dedupeKey
-            )
+            val isDuplicate = hasCanonicalApprovalDuplicate(expense)
             if (isDuplicate) {
                 sourceStatsDao.incrementDuplicate(review.packageName)
                 sourceStatsDao.decrementPending(review.packageName)
@@ -195,6 +199,9 @@ class ReviewQueueRepository @Inject constructor(
                 userCorrectionDao.insert(correction)
                 id
             } else {
+                check(hasCanonicalApprovalDuplicate(expense)) {
+                    "Expense insert conflicted without a canonical duplicate for reviewId=$reviewId"
+                }
                 sourceStatsDao.incrementDuplicate(review.packageName)
                 sourceStatsDao.decrementPending(review.packageName)
                 pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE)

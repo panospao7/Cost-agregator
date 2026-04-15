@@ -29,10 +29,31 @@ interface RecommendationDao {
             WHEN 'MEDIUM' THEN 2
             ELSE 1
         END DESC,
-        createdAt DESC
+        createdAt DESC,
+        id ASC
         LIMIT 5
     """)
     suspend fun getActiveByUser(userId: String, nowMillis: Long = System.currentTimeMillis()): List<RecommendationEntity>
+
+    /**
+     * Get the full active recommendation set for a user without the UI-facing cap.
+     * Used by repository cap enforcement to inspect and prune overflow rows.
+     */
+    @Query("""
+        SELECT * FROM recommendations
+        WHERE userId = :userId
+          AND status = 'ACTIVE'
+          AND dismissedAt IS NULL
+          AND expiresAt > :nowMillis
+        ORDER BY CASE priority
+            WHEN 'HIGH' THEN 3
+            WHEN 'MEDIUM' THEN 2
+            ELSE 1
+        END DESC,
+        createdAt DESC,
+        id ASC
+    """)
+    suspend fun getAllActiveByUser(userId: String, nowMillis: Long = System.currentTimeMillis()): List<RecommendationEntity>
     
     /**
      * Observe active recommendations for reactive UI updates.
@@ -48,7 +69,8 @@ interface RecommendationDao {
             WHEN 'MEDIUM' THEN 2
             ELSE 1
         END DESC,
-        createdAt DESC
+        createdAt DESC,
+        id ASC
         LIMIT 5
     """)
     fun observeActiveByUser(userId: String, nowMillis: Long = System.currentTimeMillis()): Flow<List<RecommendationEntity>>
@@ -82,6 +104,26 @@ interface RecommendationDao {
         WHERE id = :id
     """)
     suspend fun archive(id: String, nowMillis: Long = System.currentTimeMillis())
+
+    /**
+     * Archive active recommendations outside the retained active set.
+     */
+    @Query("""
+        UPDATE recommendations
+        SET status = 'ARCHIVED',
+            dismissedAt = :nowMillis,
+            updatedAt = :nowMillis
+        WHERE userId = :userId
+          AND status = 'ACTIVE'
+          AND dismissedAt IS NULL
+          AND expiresAt > :nowMillis
+          AND id NOT IN (:retainedIds)
+    """)
+    suspend fun archiveActiveOverflow(
+        userId: String,
+        retainedIds: List<String>,
+        nowMillis: Long = System.currentTimeMillis()
+    ): Int
     
     /**
      * Expire old recommendations in bulk.

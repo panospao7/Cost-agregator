@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -21,7 +22,6 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
-import org.junit.Ignore
 
 class DeliverProactiveBriefingNotificationUseCaseTest {
 
@@ -41,6 +41,7 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         aiEngagementRepository = mockk(relaxed = true)
         notificationService = mockk(relaxed = true)
         aiRuntimeDiagnostics = mockk(relaxed = true)
+        every { notificationService.sendAiBriefingReadyWithResult(any(), any(), any(), any()) } returns DeliveryResult.DELIVERED
         useCase = DeliverProactiveBriefingNotificationUseCase(
             context,
             aiSettingsRepository,
@@ -51,7 +52,6 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         )
     }
 
-    @Ignore("Notification mock arg mismatch")
     @Test
     fun `invoke sends briefing notification when fresh ready artifact exists`() = runTest {
         every { aiSettingsRepository.settings() } returns flowOf(
@@ -70,7 +70,7 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         useCase(dateKey = "2026-03-17", startedAt = 1_000L)
 
         verify {
-            notificationService.sendAiBriefingReady(
+            notificationService.sendAiBriefingReadyWithResult(
                 notificationId = any(),
                 title = "Your AI briefing is ready",
                 message = any(),
@@ -79,6 +79,42 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         }
         coVerify { aiEngagementRepository.setLastDeliveredDashboardBriefingKey("dashboard_home:2026-03-17") }
         verify { aiRuntimeDiagnostics.recordInteraction(type = "phase4_delivery", message = any(), now = any()) }
+    }
+
+    @Test
+    fun `invoke does not record delivery when notification service does not deliver`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(
+                aiEnabled = true,
+                dashboardBriefingEnabled = true,
+                proactiveBriefingsEnabled = true
+            )
+        )
+        coEvery { aiEngagementRepository.getLastDeliveredDashboardBriefingKey() } returns null
+        coEvery { aiEngagementRepository.getLastOpenedDashboardBriefingKey() } returns null
+        coEvery {
+            aiArtifactRepository.getLatest("dashboard_home:2026-03-17", AiCapability.DASHBOARD_BRIEFING)
+        } returns briefingArtifact(updatedAt = 1_100L)
+        every {
+            notificationService.sendAiBriefingReadyWithResult(any(), any(), any(), any())
+        } returns DeliveryResult.NOT_DELIVERED
+
+        useCase(dateKey = "2026-03-17", startedAt = 1_000L)
+
+        verify(exactly = 1) {
+            notificationService.sendAiBriefingReadyWithResult(
+                notificationId = any(),
+                title = "Your AI briefing is ready",
+                message = any(),
+                targetKey = "dashboard_home:2026-03-17"
+            )
+        }
+        coVerify(exactly = 0) {
+            aiEngagementRepository.setLastDeliveredDashboardBriefingKey(any())
+        }
+        verify(exactly = 0) {
+            aiRuntimeDiagnostics.recordInteraction(type = "phase4_delivery", message = any(), now = any())
+        }
     }
 
     @Test
@@ -98,7 +134,7 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
 
         useCase(dateKey = "2026-03-17", startedAt = 1_000L)
 
-        verify(exactly = 0) { notificationService.sendAiBriefingReady(any(), any(), any(), any()) }
+        verify(exactly = 0) { notificationService.sendAiBriefingReadyWithResult(any(), any(), any(), any()) }
     }
 
     @Test
@@ -114,7 +150,7 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         useCase(dateKey = "2026-03-17", startedAt = 1_000L)
 
         coVerify(exactly = 0) { aiArtifactRepository.getLatest(any(), any()) }
-        verify(exactly = 0) { notificationService.sendAiBriefingReady(any(), any(), any(), any()) }
+        verify(exactly = 0) { notificationService.sendAiBriefingReadyWithResult(any(), any(), any(), any()) }
     }
 
     @Test
@@ -132,7 +168,7 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         useCase(dateKey = "2026-03-17", startedAt = 1_000L)
 
         coVerify(exactly = 0) { aiArtifactRepository.getLatest(any(), any()) }
-        verify(exactly = 0) { notificationService.sendAiBriefingReady(any(), any(), any(), any()) }
+        verify(exactly = 0) { notificationService.sendAiBriefingReadyWithResult(any(), any(), any(), any()) }
     }
 
     @Test
@@ -150,7 +186,7 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         useCase(dateKey = "2026-03-17", startedAt = 1_000L)
 
         coVerify(exactly = 0) { aiArtifactRepository.getLatest(any(), any()) }
-        verify(exactly = 0) { notificationService.sendAiBriefingReady(any(), any(), any(), any()) }
+        verify(exactly = 0) { notificationService.sendAiBriefingReadyWithResult(any(), any(), any(), any()) }
     }
 
     private fun briefingArtifact(updatedAt: Long) = AiArtifactRecord(

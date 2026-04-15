@@ -67,7 +67,7 @@ object NotificationFilter {
      * @param text Notification body text
      * @param bigText Big text content (if any)
      */
-    fun shouldCapture(packageName: String, title: String, text: String, bigText: String): Boolean {
+    fun shouldCapture(packageName: String, title: String?, text: String?, bigText: String?): Boolean {
         if (IGNORED_PACKAGES.contains(packageName)) return false
 
         // Finance apps bypass heuristics — every notification is financial
@@ -75,7 +75,9 @@ object NotificationFilter {
 
         // Communication apps (Gmail, Viber, SMS) and unknown packages both go
         // through the same heuristic gate: require amount + financial keyword.
-        val content = (title + " " + text + " " + bigText).lowercase()
+        val content = listOf(title, text, bigText)
+            .joinToString(separator = " ") { it.orEmpty() }
+            .lowercase()
 
         val hasAmount = REGEX_CURRENCY.containsMatchIn(content) || REGEX_AMOUNT.containsMatchIn(content)
         if (!hasAmount) return false

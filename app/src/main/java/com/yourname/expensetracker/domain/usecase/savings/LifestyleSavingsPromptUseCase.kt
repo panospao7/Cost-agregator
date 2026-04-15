@@ -119,7 +119,7 @@ class LifestyleSavingsPromptUseCase @Inject constructor(
         // Generate reason text
         val reason = generateReason(report, goals.isNotEmpty())
         
-        return LifestyleSavingsRecommendation(
+        val recommendation = LifestyleSavingsRecommendation(
             inflationRate = report.lifestyleInflationRate,
             suggestedMonthlyUplift = suggestedUplift.coerceAtLeast(1.0), // At least 1%
             reason = reason,
@@ -129,6 +129,10 @@ class LifestyleSavingsPromptUseCase @Inject constructor(
             incomeElasticity = report.incomeElasticity,
             goals = goals
         )
+
+        promptStateRepository.recordPrompt(PROMPT_TYPE)
+
+        return recommendation
     }
     
     /**

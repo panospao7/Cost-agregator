@@ -90,8 +90,22 @@ class AndroidNotificationService @Inject constructor(
         message: String,
         targetKey: String
     ) {
+        sendAiBriefingReadyWithResult(
+            notificationId = notificationId,
+            title = title,
+            message = message,
+            targetKey = targetKey
+        )
+    }
+
+    override fun sendAiBriefingReadyWithResult(
+        notificationId: Int,
+        title: String,
+        message: String,
+        targetKey: String
+    ): NotificationService.DeliveryResult {
         if (!notificationManager.areNotificationsEnabled()) {
-            return
+            return NotificationService.DeliveryResult.NOT_DELIVERED
         }
 
         val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://dashboard?briefingKey=$targetKey")).apply {
@@ -116,6 +130,7 @@ class AndroidNotificationService @Inject constructor(
             .build()
 
         notificationManager.notify(notificationId, notification)
+        return NotificationService.DeliveryResult.DELIVERED
     }
 
     override fun sendAnomalyAlert(

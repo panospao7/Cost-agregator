@@ -242,6 +242,90 @@ class RecommendationDaoTest {
     }
 
     @Test
+    fun `getAllActiveByUser returns full active set beyond capped query`() = runTest {
+        val userId = "user123"
+        val nowMillis = System.currentTimeMillis()
+        val futureMillis = nowMillis + (24 * 60 * 60 * 1000)
+
+        repeat(8) { i ->
+            dao.insert(
+                createRecommendation(
+                    id = "rec_$i",
+                    userId = userId,
+                    status = RecommendationStatus.ACTIVE,
+                    dismissedAt = null,
+                    expiresAt = futureMillis,
+                    priority = RecommendationPriority.MEDIUM,
+                    createdAt = nowMillis + i,
+                    updatedAt = nowMillis + i
+                )
+            )
+        }
+
+        val capped = dao.getActiveByUser(userId, nowMillis)
+        val fullSet = dao.getAllActiveByUser(userId, nowMillis)
+
+        assertEquals(5, capped.size)
+        assertEquals(8, fullSet.size)
+        assertEquals((7 downTo 0).map { "rec_$it" }, fullSet.map { it.id })
+    }
+
+    @Test
+    fun `archiveActiveOverflow archives only active rows outside retained set`() = runTest {
+        val userId = "user123"
+        val nowMillis = System.currentTimeMillis()
+        val futureMillis = nowMillis + (24 * 60 * 60 * 1000)
+
+        val activeRecommendations = (0 until 7).map { i ->
+            createRecommendation(
+                id = "active_$i",
+                userId = userId,
+                status = RecommendationStatus.ACTIVE,
+                dismissedAt = null,
+                expiresAt = futureMillis,
+                priority = RecommendationPriority.MEDIUM,
+                createdAt = nowMillis + i,
+                updatedAt = nowMillis + i
+            )
+        }
+        dao.insertAll(activeRecommendations)
+
+        val archivedAlready = createRecommendation(
+            id = "archived_existing",
+            userId = userId,
+            status = RecommendationStatus.ARCHIVED,
+            dismissedAt = nowMillis - 1,
+            expiresAt = futureMillis,
+            createdAt = nowMillis - 10,
+            updatedAt = nowMillis - 1
+        )
+        dao.insert(archivedAlready)
+
+        val retainedIds = activeRecommendations
+            .sortedByDescending { it.createdAt }
+            .take(5)
+            .map { it.id }
+
+        val archivedCount = dao.archiveActiveOverflow(userId, retainedIds, nowMillis)
+
+        assertEquals(2, archivedCount)
+        assertEquals(5, dao.countActive(userId, nowMillis))
+
+        retainedIds.forEach { id ->
+            assertEquals(RecommendationStatus.ACTIVE, dao.getById(id)?.status)
+        }
+
+        listOf("active_0", "active_1").forEach { id ->
+            val entity = dao.getById(id)
+            assertNotNull(entity)
+            assertEquals(RecommendationStatus.ARCHIVED, entity.status)
+            assertEquals(nowMillis, entity.dismissedAt)
+        }
+
+        assertEquals(RecommendationStatus.ARCHIVED, dao.getById(archivedAlready.id)?.status)
+    }
+
+    @Test
     fun `getActiveByUser orders by priority then createdAt DESC`() = runTest {
         val userId = "user123"
         val nowMillis = System.currentTimeMillis()

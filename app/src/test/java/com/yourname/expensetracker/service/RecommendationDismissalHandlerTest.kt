@@ -4,9 +4,11 @@ import com.yourname.expensetracker.data.repository.RecommendationRepository
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationStatus
+import io.mockk.every
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -61,7 +63,7 @@ class RecommendationDismissalHandlerTest {
         handler.dismiss(recommendation)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
+        verify(exactly = 1) { stateManager.removeFromState("rec1") }
     }
 
     @Test
@@ -77,23 +79,23 @@ class RecommendationDismissalHandlerTest {
     }
 
     @Test
-    fun `dismiss updates state before repository call`() = runTest(testDispatcher) {
+    fun `dismiss persists before state update`() = runTest(testDispatcher) {
         val recommendation = createRecommendation(id = "rec1")
         val callOrder = mutableListOf<String>()
 
-        coEvery { stateManager.removeFromState("rec1") } answers {
-            callOrder.add("state")
-        }
         coEvery { repository.dismiss("rec1") } answers {
             callOrder.add("repo")
+        }
+        every { stateManager.removeFromState("rec1") } answers {
+            callOrder.add("state")
         }
 
         handler.dismiss(recommendation)
         advanceUntilIdle()
 
         assertEquals(2, callOrder.size)
-        assertEquals("state", callOrder[0])
-        assertEquals("repo", callOrder[1])
+        assertEquals("repo", callOrder[0])
+        assertEquals("state", callOrder[1])
     }
 
     @Test
@@ -106,22 +108,38 @@ class RecommendationDismissalHandlerTest {
         handler.dismiss(recommendation)
         advanceUntilIdle()
 
-        // State should still be updated
-        coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
+        verify(exactly = 0) { stateManager.removeFromState("rec1") }
     }
 
     @Test
-    fun `dismiss handles state manager errors gracefully`() = runTest(testDispatcher) {
-        val recommendation = createRecommendation(id = "rec1")
+    fun `dismiss refreshes current user when state removal fails after persistence`() = runTest(testDispatcher) {
+        val recommendation = createRecommendation(id = "rec1", userId = "user123")
 
-        coEvery { stateManager.removeFromState("rec1") } throws RuntimeException("State error")
+        every { stateManager.removeFromState("rec1") } throws RuntimeException("State error")
+        every { stateManager.getCurrentUserId() } returns "user123"
 
-        // Should not throw exception
         handler.dismiss(recommendation)
         advanceUntilIdle()
 
-        // Repository should still be called
         coVerify(exactly = 1) { repository.dismiss("rec1") }
+        verify(exactly = 1) { stateManager.removeFromState("rec1") }
+        verify(exactly = 1) { stateManager.getCurrentUserId() }
+        verify(exactly = 1) { stateManager.refreshForUser("user123", forceRefresh = true) }
+    }
+
+    @Test
+    fun `dismiss does not refresh when state removal fails for different current user`() = runTest(testDispatcher) {
+        val recommendation = createRecommendation(id = "rec1", userId = "user123")
+
+        every { stateManager.removeFromState("rec1") } throws RuntimeException("State error")
+        every { stateManager.getCurrentUserId() } returns "otherUser"
+
+        handler.dismiss(recommendation)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { repository.dismiss("rec1") }
+        verify(exactly = 1) { stateManager.getCurrentUserId() }
+        verify(exactly = 0) { stateManager.refreshForUser(any(), forceRefresh = true) }
     }
 
     @Test
@@ -133,7 +151,7 @@ class RecommendationDismissalHandlerTest {
         handler.dismiss(recommendation)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
+        verify(exactly = 0) { stateManager.removeFromState("rec1") }
     }
 
     @Test
@@ -146,7 +164,7 @@ class RecommendationDismissalHandlerTest {
         handler.dismiss(recommendation)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.removeFromState("rec_high") }
+        verify(exactly = 1) { stateManager.removeFromState("rec_high") }
         coVerify(exactly = 1) { repository.dismiss("rec_high") }
     }
 
@@ -160,7 +178,7 @@ class RecommendationDismissalHandlerTest {
         handler.dismiss(recommendation)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.removeFromState("rec_low") }
+        verify(exactly = 1) { stateManager.removeFromState("rec_low") }
         coVerify(exactly = 1) { repository.dismiss("rec_low") }
     }
 
@@ -178,7 +196,7 @@ class RecommendationDismissalHandlerTest {
         handler.dismiss(recommendation)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.removeFromState("rec_expired") }
+        verify(exactly = 1) { stateManager.removeFromState("rec_expired") }
         coVerify(exactly = 1) { repository.dismiss("rec_expired") }
     }
 
@@ -202,7 +220,7 @@ class RecommendationDismissalHandlerTest {
         handler.dismiss(recommendation)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.removeFromState("rec-123_test@domain") }
+        verify(exactly = 1) { stateManager.removeFromState("rec-123_test@domain") }
         coVerify(exactly = 1) { repository.dismiss("rec-123_test@domain") }
     }
 
@@ -267,9 +285,9 @@ class RecommendationDismissalHandlerTest {
         handler.dismissAndRefresh("user123")
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
+        verify(exactly = 1) { stateManager.removeFromState("rec1") }
         coVerify(exactly = 1) { repository.dismiss("rec1") }
-        coVerify(exactly = 1) { stateManager.refreshForUser("user123", forceRefresh = true) }
+        verify(exactly = 1) { stateManager.refreshForUser("user123", forceRefresh = true) }
     }
 
     @Test
@@ -283,9 +301,9 @@ class RecommendationDismissalHandlerTest {
         handler.dismiss(rec3)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
-        coVerify(exactly = 1) { stateManager.removeFromState("rec2") }
-        coVerify(exactly = 1) { stateManager.removeFromState("rec3") }
+        verify(exactly = 1) { stateManager.removeFromState("rec1") }
+        verify(exactly = 1) { stateManager.removeFromState("rec2") }
+        verify(exactly = 1) { stateManager.removeFromState("rec3") }
         coVerify(exactly = 1) { repository.dismiss("rec1") }
         coVerify(exactly = 1) { repository.dismiss("rec2") }
         coVerify(exactly = 1) { repository.dismiss("rec3") }
@@ -301,8 +319,8 @@ class RecommendationDismissalHandlerTest {
         handler.dismiss(rec2)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
-        coVerify(exactly = 1) { stateManager.removeFromState("rec2") }
+        verify(exactly = 1) { stateManager.removeFromState("rec1") }
+        verify(exactly = 1) { stateManager.removeFromState("rec2") }
     }
 
     // ========== Error Recovery Tests ==========
@@ -316,8 +334,7 @@ class RecommendationDismissalHandlerTest {
         handler.dismiss(recommendation)
         advanceUntilIdle()
 
-        // State should still be updated
-        coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
+        verify(exactly = 0) { stateManager.removeFromState("rec1") }
     }
 
     @Test
@@ -329,7 +346,7 @@ class RecommendationDismissalHandlerTest {
         handler.dismiss(recommendation)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { stateManager.removeFromState("rec1") }
+        verify(exactly = 0) { stateManager.removeFromState("rec1") }
     }
 
     @Test

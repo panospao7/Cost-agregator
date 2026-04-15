@@ -1,6 +1,11 @@
 package com.yourname.expensetracker.domain.service
 
 interface NotificationService {
+    enum class DeliveryResult {
+        DELIVERED,
+        NOT_DELIVERED
+    }
+
     fun sendBudgetAlert(
         notificationId: Int,
         title: String,
@@ -13,6 +18,21 @@ interface NotificationService {
         message: String,
         targetKey: String
     )
+
+    fun sendAiBriefingReadyWithResult(
+        notificationId: Int,
+        title: String,
+        message: String,
+        targetKey: String
+    ): DeliveryResult {
+        sendAiBriefingReady(
+            notificationId = notificationId,
+            title = title,
+            message = message,
+            targetKey = targetKey
+        )
+        return DeliveryResult.DELIVERED
+    }
 
     /**
      * Send an anomaly alert notification for unusual charges.

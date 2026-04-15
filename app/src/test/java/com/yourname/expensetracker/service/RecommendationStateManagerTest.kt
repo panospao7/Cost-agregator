@@ -92,17 +92,21 @@ class RecommendationStateManagerTest {
     }
 
     @Test
-    fun `refreshForUser skips when same user and not forced`() = runTest(testDispatcher) {
-        coEvery { repository.getActiveForUser("user1") } returns listOf(createRecommendation("r1"))
+    fun `refreshForUser same user re-queries repository without force refresh`() = runTest(testDispatcher) {
+        coEvery { repository.getActiveForUser("user1") } returnsMany listOf(
+            listOf(createRecommendation("r1")),
+            listOf(createRecommendation("r2"))
+        )
 
         manager.refreshForUser("user1")
         advanceUntilIdle()
 
-        // Second call without forceRefresh should be a no-op
         manager.refreshForUser("user1")
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { repository.getActiveForUser("user1") }
+        coVerify(exactly = 2) { repository.getActiveForUser("user1") }
+        assertEquals(1, manager.recommendations.value.size)
+        assertEquals("r2", manager.recommendations.value.single().id)
     }
 
     @Test
@@ -115,6 +119,25 @@ class RecommendationStateManagerTest {
         manager.refreshForUser("user1", forceRefresh = true)
         advanceUntilIdle()
 
+        coVerify(exactly = 2) { repository.getActiveForUser("user1") }
+    }
+
+    @Test
+    fun `refreshForUser same user reload after invalidate path publishes fresh data`() = runTest(testDispatcher) {
+        coEvery { repository.getActiveForUser("user1") } returnsMany listOf(
+            listOf(createRecommendation("initial", userId = "user1")),
+            listOf(createRecommendation("reloaded", userId = "user1"))
+        )
+
+        manager.refreshForUser("user1")
+        advanceUntilIdle()
+        assertEquals("initial", manager.recommendations.value.single().id)
+
+        manager.refreshForUser("user1")
+        advanceUntilIdle()
+
+        assertEquals("reloaded", manager.recommendations.value.single().id)
+        coVerify(exactly = 2) { repository.expireOld("user1") }
         coVerify(exactly = 2) { repository.getActiveForUser("user1") }
     }
 
@@ -495,6 +518,37 @@ class RecommendationStateManagerTest {
             assertEquals("user2", manager.getCurrentUserId())
             assertEquals(1, manager.recommendations.value.size)
             assertEquals("fresh-r2", manager.recommendations.value[0].id)
+        }
+
+    @Test
+    fun `overlap - stale same-user refresh blocked by gate is discarded after newer same-user refresh`() =
+        runTest(testDispatcher) {
+            val firstGate = CompletableDeferred<Unit>()
+            val firstResponse = listOf(createRecommendation("stale-r1", userId = "user1"))
+            val secondResponse = listOf(createRecommendation("fresh-r2", userId = "user1"))
+
+            coEvery { repository.getActiveForUser("user1") } coAnswers {
+                firstGate.await()
+                firstResponse
+            } andThen secondResponse
+
+            manager.refreshForUser("user1")
+            advanceUntilIdle()
+
+            manager.refreshForUser("user1")
+            advanceUntilIdle()
+
+            assertEquals("user1", manager.getCurrentUserId())
+            assertEquals(1, manager.recommendations.value.size)
+            assertEquals("fresh-r2", manager.recommendations.value.single().id)
+
+            firstGate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals("user1", manager.getCurrentUserId())
+            assertEquals(1, manager.recommendations.value.size)
+            assertEquals("fresh-r2", manager.recommendations.value.single().id)
+            coVerify(exactly = 2) { repository.getActiveForUser("user1") }
         }
 
     /**

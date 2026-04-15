@@ -4,6 +4,8 @@ import com.yourname.expensetracker.data.database.entity.BankConnection
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.SyncFrequency
 import com.yourname.expensetracker.data.database.entity.SyncStatus
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.security.BankTokenCipher
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
@@ -13,7 +15,6 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.abs
 
 data class BankTransaction(
     val id: String,
@@ -22,8 +23,24 @@ data class BankTransaction(
     val currency: String,
     val merchant: String,
     val description: String,
-    val reference: String?
+    val reference: String?,
+    val movementType: BankMovementType? = null,
+    val transferDirection: TransferDirection? = null
 )
+
+enum class BankMovementType {
+    PURCHASE,
+    WITHDRAWAL,
+    TRANSFER,
+    DEPOSIT
+}
+
+private fun BankMovementType.toTransactionType(): TransactionType = when (this) {
+    BankMovementType.PURCHASE -> TransactionType.PURCHASE
+    BankMovementType.WITHDRAWAL -> TransactionType.WITHDRAWAL
+    BankMovementType.TRANSFER -> TransactionType.TRANSFER
+    BankMovementType.DEPOSIT -> TransactionType.DEPOSIT
+}
 
 data class SyncResult(
     val success: Boolean,
@@ -215,15 +232,32 @@ class BankApiIntegration @Inject constructor(
         transaction: BankTransaction,
         connection: BankConnection
     ): Expense {
+        val transactionType = transaction.movementType?.toTransactionType() ?: inferTransactionType(transaction)
+
         return Expense(
-            amount = abs(transaction.amount),
+            amount = transaction.amount,
             currency = transaction.currency,
             merchant = transaction.merchant,
-            transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+            transactionType = transactionType,
             date = transaction.date,
             categoryId = connection.defaultCategoryId,
+            transferDirection = transaction.transferDirection.takeIf { transactionType == TransactionType.TRANSFER },
             notes = transaction.description + (transaction.reference?.let { " (Ref: $it)" } ?: "")
         )
+    }
+
+    private fun inferTransactionType(transaction: BankTransaction): TransactionType {
+        val normalized = transaction.description.lowercase(Locale.ROOT)
+
+        return when {
+            transaction.transferDirection != null -> TransactionType.TRANSFER
+            normalized.contains("refund") || normalized.contains("reversal") || normalized.contains("cashback") -> TransactionType.DEPOSIT
+            normalized.contains("transfer") || normalized.contains("sent to") || normalized.contains("received from") -> TransactionType.TRANSFER
+            normalized.contains("withdraw") || normalized.contains("atm") || normalized.contains("cash withdrawal") -> TransactionType.WITHDRAWAL
+            transaction.amount > 0 -> TransactionType.DEPOSIT
+            transaction.amount < 0 -> TransactionType.PURCHASE
+            else -> TransactionType.UNKNOWN
+        }
     }
     
     /**
@@ -240,15 +274,17 @@ class BankApiIntegration @Inject constructor(
         
         for (i in 0 until count) {
             val date = startTime + ((now - startTime) * i / count)
+            val merchant = merchants.random()
             transactions.add(
                 BankTransaction(
                     id = "${bankId}_tx_${i}_${date}",
                     date = date,
                     amount = -(10..200).random().toDouble(),
                     currency = "EUR",
-                    merchant = merchants.random(),
-                    description = "Purchase from ${merchants.random()}",
-                    reference = "REF${(1000..9999).random()}"
+                    merchant = merchant,
+                    description = "Purchase from $merchant",
+                    reference = "REF${(1000..9999).random()}",
+                    movementType = BankMovementType.PURCHASE
                 )
             )
         }

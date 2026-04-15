@@ -1,14 +1,17 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
+import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.entity.RawNotification
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
@@ -16,12 +19,19 @@ import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightU
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
+import com.yourname.expensetracker.domain.intelligence.RoutingDecision
+import com.yourname.expensetracker.domain.intelligence.RoutingResult
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
+import com.yourname.expensetracker.domain.intelligence.ml.ClassificationResult
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
+import com.yourname.expensetracker.domain.intelligence.ml.MatchType
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
 import com.yourname.expensetracker.domain.subscription.NotificationSubscriptionDetector
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -29,9 +39,12 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.slot
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.StandardTestDispatcher
+import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -90,9 +103,20 @@ class NotificationProcessingPipelineReliabilityTest {
         applicationScope = applicationScope
     )
 
+    @Before
+    fun setup() {
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        val dbBlock = slot<suspend () -> Any>()
+        coEvery { database.withTransaction(capture(dbBlock)) } coAnswers {
+            dbBlock.captured.invoke()
+        }
+        coEvery { classifier.initialize() } returns Unit
+        every { timeProvider.now() } returns 1_700_000_000_000L
+    }
+
     @Test
     fun `process swallows parser exceptions`() = runBlocking {
-        every { parserRegistry.parse(any(), any(), any(), any(), any()) } throws RuntimeException("boom")
+        coEvery { parserRegistry.parseWithAiFallback(any(), any(), any(), any(), any()) } throws RuntimeException("boom")
 
         pipeline.process(testNotification("com.test.app"))
 
@@ -101,8 +125,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
     @Test
     fun `processBatch initializes classifier once and continues on per-item failures`() = runBlocking {
-        coEvery { classifier.initialize() } returns Unit
-        every { parserRegistry.parse(any(), any(), any(), any(), any()) } throws RuntimeException("parse failure")
+        coEvery { parserRegistry.parseWithAiFallback(any(), any(), any(), any(), any()) } throws RuntimeException("parse failure")
 
         val notifications = listOf(
             testNotification("com.test.a"),
@@ -222,6 +245,91 @@ class NotificationProcessingPipelineReliabilityTest {
         val date = 5_000_000L
         val expected = date + DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS + 1L
         assertEquals(expected, DuplicateDetectionPolicy.windowEndExclusive(date))
+    }
+
+    @Test
+    fun `process auto-accept does not treat same merchant-date-amount with different currency as duplicate`() = runBlocking {
+        val notification = testNotification("com.wallet")
+        val parsed = ParsedTransaction(
+            amount = 50.0,
+            currency = "EUR",
+            merchant = "Shop",
+            type = ParsedTransactionType.PURCHASE,
+            confidence = 0.95f,
+            date = notification.timestamp
+        )
+
+        coEvery {
+            parserRegistry.parseWithAiFallback(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns parsed
+        coEvery {
+            confidenceRouter.route(parsed, notification.packageName, any())
+        } returns RoutingResult(
+            decision = RoutingDecision.AUTO_ACCEPT,
+            adjustedConfidence = 0.95f,
+            reason = "high confidence"
+        )
+        coEvery { merchantNormalizer.normalize("Shop", any(), any()) } returns merchantLookupResult("Shop")
+        coEvery {
+            hybridClassifier.classify(
+                merchantName = "Shop",
+                amount = 50.0,
+                notificationTitle = notification.title,
+                notificationText = notification.text,
+                packageName = notification.packageName
+            )
+        } returns ClassificationResult(
+            categoryId = 0L,
+            categoryName = "Unknown",
+            confidence = 0f,
+            matchType = MatchType.FALLBACK
+        )
+        coEvery { rawDao.insertOrIgnore(notification) } returns 123L
+        coEvery {
+            expenseDao.isDuplicateCurrencyAware(
+                amount = 50.0,
+                merchant = "Shop",
+                date = notification.timestamp,
+                currency = "EUR",
+                transactionType = "PURCHASE",
+                windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                merchantKey = any(),
+                dedupeKey = any()
+            )
+        } returns false
+        coEvery { expenseDao.insertAtomic(any()) } returns 456L
+
+        val result = pipeline.process(notification)
+
+        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        coVerify {
+            expenseDao.insertAtomic(match {
+                it.amount == 50.0 &&
+                    it.currency == "EUR" &&
+                    it.merchant == "Shop" &&
+                    it.transactionType == TransactionType.PURCHASE
+            })
+        }
+        coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, any()) }
+    }
+
+    private fun merchantLookupResult(normalizedName: String): MerchantLookupResult {
+        return MerchantLookupResult(
+            canonical = MerchantCanonical(
+                id = 1L,
+                normalizedName = normalizedName,
+                searchKey = normalizedName.lowercase()
+            ),
+            alias = null,
+            confidence = 1.0f,
+            matchType = MatchType.EXACT_MATCH
+        )
     }
 
     private fun testNotification(pkg: String): RawNotification =

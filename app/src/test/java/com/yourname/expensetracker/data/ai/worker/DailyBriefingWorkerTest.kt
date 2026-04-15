@@ -19,6 +19,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -110,7 +111,23 @@ class DailyBriefingWorkerTest {
 
         val result = buildWorker().doWork()
 
-        assertEquals(Result.success(), result)
+        assertEquals(Result.retry(), result)
+        coVerify(exactly = 0) {
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any())
+        }
+    }
+
+    @Test
+    fun `worker retries when delivery times out`() = runTest {
+        val processed = sampleProcessedData()
+        coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(processed)
+        coEvery { generateDashboardBriefingUseCase(processed, 1000L) } coAnswers {
+            delay(12_100L)
+        }
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.retry(), result)
         coVerify(exactly = 0) {
             deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any())
         }

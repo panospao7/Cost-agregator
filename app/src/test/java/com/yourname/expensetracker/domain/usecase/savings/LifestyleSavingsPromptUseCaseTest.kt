@@ -54,6 +54,7 @@ class LifestyleSavingsPromptUseCaseTest {
 
         assertNull(result)
         coVerify(exactly = 0) { lifestyleInflationDetector.analyzeLifestyleInflation(any()) }
+        coVerify(exactly = 0) { promptStateRepository.recordPrompt(any()) }
     }
 
     @Test
@@ -71,12 +72,14 @@ class LifestyleSavingsPromptUseCaseTest {
 
         assertNull(result)
         coVerify(exactly = 0) { lifestyleInflationDetector.analyzeLifestyleInflation(any()) }
+        coVerify(exactly = 0) { promptStateRepository.recordPrompt(any()) }
     }
 
     @Test
     fun `evaluateAndPrompt converts savings rate ratio to percentage and caps uplift`() = runTest {
         coEvery { promptStateRepository.hasPromptedRecently(any(), any()) } returns false
         coEvery { promptStateRepository.hasUserTakenAction(any(), any(), any()) } returns false
+        coEvery { promptStateRepository.recordPrompt(LifestyleSavingsPromptUseCase.PROMPT_TYPE) } returns 1L
         coEvery { lifestyleInflationDetector.analyzeLifestyleInflation(12) } returns report(
             monthlyData = sixMonthData(
                 lastSavingsRate = 0.10,
@@ -92,12 +95,14 @@ class LifestyleSavingsPromptUseCaseTest {
         assertApproxEquals(10.0, result!!.currentSavingsRate, 0.0001)
         // income growth = 20% => alpha uplift = 10pp, capped at 20% of current savings rate = 2pp
         assertApproxEquals(2.0, result.suggestedMonthlyUplift, 0.0001)
+        coVerify(exactly = 1) { promptStateRepository.recordPrompt(LifestyleSavingsPromptUseCase.PROMPT_TYPE) }
     }
 
     @Test
     fun `evaluateAndPrompt keeps percentage savings rate and uses growth-based uplift`() = runTest {
         coEvery { promptStateRepository.hasPromptedRecently(any(), any()) } returns false
         coEvery { promptStateRepository.hasUserTakenAction(any(), any(), any()) } returns false
+        coEvery { promptStateRepository.recordPrompt(LifestyleSavingsPromptUseCase.PROMPT_TYPE) } returns 1L
         coEvery { lifestyleInflationDetector.analyzeLifestyleInflation(12) } returns report(
             monthlyData = sixMonthData(
                 lastSavingsRate = 15.0,
@@ -113,6 +118,7 @@ class LifestyleSavingsPromptUseCaseTest {
         assertApproxEquals(15.0, result!!.currentSavingsRate, 0.0001)
         // income growth = 10% => alpha uplift = 5pp, cap = 3pp => suggested = 3pp
         assertApproxEquals(3.0, result.suggestedMonthlyUplift, 0.0001)
+        coVerify(exactly = 1) { promptStateRepository.recordPrompt(LifestyleSavingsPromptUseCase.PROMPT_TYPE) }
     }
 
     @Test
@@ -127,6 +133,7 @@ class LifestyleSavingsPromptUseCaseTest {
         val result = useCase.evaluateAndPrompt()
 
         assertNull(result)
+        coVerify(exactly = 0) { promptStateRepository.recordPrompt(any()) }
     }
 
     @Test
@@ -143,12 +150,49 @@ class LifestyleSavingsPromptUseCaseTest {
         val result = useCase.evaluateAndPrompt()
 
         assertNull(result)
+        coVerify(exactly = 0) { promptStateRepository.recordPrompt(any()) }
+    }
+
+    @Test
+    fun `evaluateAndPrompt returns null when lifestyle creep is not detected`() = runTest {
+        coEvery { promptStateRepository.hasPromptedRecently(any(), any()) } returns false
+        coEvery { promptStateRepository.hasUserTakenAction(any(), any(), any()) } returns false
+        coEvery { lifestyleInflationDetector.analyzeLifestyleInflation(12) } returns report(
+            lifestyleCreepDetected = false,
+            incomeElasticity = 1.1
+        )
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+
+        val result = useCase.evaluateAndPrompt()
+
+        assertNull(result)
+        coVerify(exactly = 0) { promptStateRepository.recordPrompt(any()) }
+    }
+
+    @Test
+    fun `evaluateAndPrompt returns null when confidence is below threshold`() = runTest {
+        coEvery { promptStateRepository.hasPromptedRecently(any(), any()) } returns false
+        coEvery { promptStateRepository.hasUserTakenAction(any(), any(), any()) } returns false
+        coEvery { lifestyleInflationDetector.analyzeLifestyleInflation(12) } returns report(
+            lifestyleCreepDetected = false,
+            incomeElasticity = 1.2,
+            incomeGrowthRate = 0.10,
+            spendingGrowthRate = 0.12,
+            monthlyData = sixMonthData()
+        )
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+
+        val result = useCase.evaluateAndPrompt()
+
+        assertNull(result)
+        coVerify(exactly = 0) { promptStateRepository.recordPrompt(any()) }
     }
 
     @Test
     fun `evaluateAndPrompt handles zero previous income with minimum uplift`() = runTest {
         coEvery { promptStateRepository.hasPromptedRecently(any(), any()) } returns false
         coEvery { promptStateRepository.hasUserTakenAction(any(), any(), any()) } returns false
+        coEvery { promptStateRepository.recordPrompt(LifestyleSavingsPromptUseCase.PROMPT_TYPE) } returns 1L
         coEvery { lifestyleInflationDetector.analyzeLifestyleInflation(12) } returns report(
             monthlyData = listOf(
                 monthData("2026-01", income = 0.0, savingsRate = 0.08),
@@ -180,6 +224,7 @@ class LifestyleSavingsPromptUseCaseTest {
         assertApproxEquals(12.0, result!!.currentSavingsRate, 0.0001)
         // previous income is zero => income growth delta is forced to 0 => uplift min floor applies (1pp).
         assertApproxEquals(1.0, result.suggestedMonthlyUplift, 0.0001)
+        coVerify(exactly = 1) { promptStateRepository.recordPrompt(LifestyleSavingsPromptUseCase.PROMPT_TYPE) }
     }
 
     private fun report(

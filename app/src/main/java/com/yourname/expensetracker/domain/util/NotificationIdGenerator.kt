@@ -13,7 +13,8 @@ package com.yourname.expensetracker.domain.util
  * 
  * ID Ranges:
  * - 1-9999: Budget alerts
- * - 10000-19999: Warranty notifications
+ * - 10000-14999: 7-day warranty notifications
+ * - 15000-19999: 30-day warranty notifications
  * - 20000-29999: Receipt matching
  * - 30000-39999: Bill reminders
  * - 40000-49999: General app notifications
@@ -23,20 +24,25 @@ object NotificationIdGenerator {
     
     private const val BUDGET_RANGE_START = 1
     private const val WARRANTY_RANGE_START = 10000
+    private const val WARRANTY_30_DAY_RANGE_START = 15000
     private const val RECEIPT_RANGE_START = 20000
     private const val BILL_RANGE_START = 30000
     private const val GENERAL_RANGE_START = 40000
     private const val RANGE_SIZE = 9999
+    private const val WARRANTY_SUBRANGE_SIZE = 5000
     
     /**
      * Generate notification ID for warranty expiration.
      * Maps warranty Long ID to safe Int range.
      */
     fun forWarranty(warrantyId: Long, daysUntilExpiration: Int): Int {
-        // Use modulo to fit within range, add days offset to differentiate 7 vs 30 day alerts
-        val baseId = (warrantyId % RANGE_SIZE).toInt()
-        val daysOffset = if (daysUntilExpiration <= 7) 0 else 5000
-        return WARRANTY_RANGE_START + baseId + daysOffset
+        val baseId = (warrantyId % WARRANTY_SUBRANGE_SIZE).toInt()
+        val rangeStart = if (daysUntilExpiration <= 7) {
+            WARRANTY_RANGE_START
+        } else {
+            WARRANTY_30_DAY_RANGE_START
+        }
+        return rangeStart + baseId
     }
     
     /**

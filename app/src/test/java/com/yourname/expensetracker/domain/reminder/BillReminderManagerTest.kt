@@ -1,0 +1,106 @@
+package com.yourname.expensetracker.domain.reminder
+
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Before
+import org.junit.Test
+
+class BillReminderManagerTest {
+
+    private val recurringExpenseRepository = mockk<RecurringExpenseRepository>(relaxed = true)
+    private val timeProvider = mockk<TimeProvider>()
+
+    private lateinit var manager: BillReminderManager
+
+    @Before
+    fun setUp() {
+        manager = BillReminderManager(recurringExpenseRepository, timeProvider)
+        every { timeProvider.now() } returns 0L
+    }
+
+    @Test
+    fun `markBillPaid advances annually by one year`() = runTest {
+        val expense = recurringExpense(id = 1L, frequency = RecurrenceFrequency.ANNUALLY, nextDate = date(2026, 1, 15))
+        val updatedSlot = slot<ManualRecurringExpense>()
+        coEvery { recurringExpenseRepository.getById(1L) } returns expense
+        coEvery { recurringExpenseRepository.update(capture(updatedSlot)) } returns Unit
+
+        manager.markBillPaid(1L)
+
+        assertEquals(TimePeriodUtils.addYears(expense.nextDate, 1), updatedSlot.captured.nextDate)
+        assertEquals(RecurrenceFrequency.ANNUALLY, updatedSlot.captured.frequency)
+    }
+
+    @Test
+    fun `markBillPaid advances semi annually by six months`() = runTest {
+        val expense = recurringExpense(id = 2L, frequency = RecurrenceFrequency.SEMI_ANNUALLY, nextDate = date(2026, 2, 10))
+        val updatedSlot = slot<ManualRecurringExpense>()
+        coEvery { recurringExpenseRepository.getById(2L) } returns expense
+        coEvery { recurringExpenseRepository.update(capture(updatedSlot)) } returns Unit
+
+        manager.markBillPaid(2L)
+
+        assertEquals(TimePeriodUtils.addMonths(expense.nextDate, 6), updatedSlot.captured.nextDate)
+        assertEquals(RecurrenceFrequency.SEMI_ANNUALLY, updatedSlot.captured.frequency)
+    }
+
+    @Test
+    fun `markBillPaid advances irregular by one month fallback`() = runTest {
+        val expense = recurringExpense(id = 3L, frequency = RecurrenceFrequency.IRREGULAR, nextDate = date(2026, 3, 5))
+        val updatedSlot = slot<ManualRecurringExpense>()
+        coEvery { recurringExpenseRepository.getById(3L) } returns expense
+        coEvery { recurringExpenseRepository.update(capture(updatedSlot)) } returns Unit
+
+        manager.markBillPaid(3L)
+
+        assertEquals(TimePeriodUtils.addMonths(expense.nextDate, 1), updatedSlot.captured.nextDate)
+        assertEquals(RecurrenceFrequency.IRREGULAR, updatedSlot.captured.frequency)
+    }
+
+    @Test
+    fun `getMonthlyBillsTotal includes annual semi annual and irregular semantics`() = runTest {
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(
+            recurringExpense(id = 10L, amount = 1200.0, frequency = RecurrenceFrequency.ANNUALLY),
+            recurringExpense(id = 11L, amount = 600.0, frequency = RecurrenceFrequency.SEMI_ANNUALLY),
+            recurringExpense(id = 12L, amount = 45.0, frequency = RecurrenceFrequency.IRREGULAR)
+        )
+
+        val total = manager.getMonthlyBillsTotal()
+
+        assertEquals(245.0, total, 0.0001)
+        coVerify(exactly = 1) { recurringExpenseRepository.getAll() }
+    }
+
+    private fun recurringExpense(
+        id: Long,
+        amount: Double = 50.0,
+        frequency: RecurrenceFrequency,
+        nextDate: Long = date(2026, 1, 1)
+    ): ManualRecurringExpense = ManualRecurringExpense(
+        id = id,
+        merchant = "Merchant $id",
+        amount = amount,
+        currency = "EUR",
+        frequency = frequency,
+        nextDate = nextDate,
+        isActive = true
+    )
+
+    private fun date(year: Int, month: Int, day: Int): Long {
+        val calendar = java.util.Calendar.getInstance().apply {
+            set(year, month - 1, day, 0, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        return calendar.timeInMillis
+    }
+}

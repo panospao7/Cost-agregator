@@ -89,6 +89,10 @@ class RecommendationStateManager @Inject constructor(
      * Refresh recommendations for a specific user.
      * Expires old recommendations and loads active ones.
      *
+     * Same-user callers must still re-query storage. Invalidation/reload paths call
+     * this method for the already-active user after upstream data changes, so the
+     * current user match cannot be used as a skip gate.
+     *
      * Repository I/O is performed outside [stateLock]. The lock is acquired only
      * for the brief generation-capture step (before I/O) and the publish step
      * (after I/O), ensuring no monitor is held across a suspension point.
@@ -100,7 +104,6 @@ class RecommendationStateManager @Inject constructor(
         scope.launch {
             // --- lock section 1: validate and capture generation ---
             val capturedGeneration: Long = synchronized(stateLock) {
-                if (currentUserId == userId && !forceRefresh) return@launch
                 // If this is a force-refresh but the current user context has changed
                 // (clear set it to null, or another user was switched in), bail out.
                 if (forceRefresh && currentUserId != userId) return@launch

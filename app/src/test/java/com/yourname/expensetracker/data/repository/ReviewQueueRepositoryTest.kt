@@ -189,8 +189,9 @@ class ReviewQueueRepositoryTest {
                 PendingReviewStatus.PROCESSING
             )
         } returns 1
-        // Pre-check says no duplicate (race window), but insertAtomic is blocked by constraint
-        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returns false
+        // Pre-check says no duplicate (race window), but a post-conflict re-check sees the
+        // concurrently inserted canonical duplicate and classifies the review accordingly.
+        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returnsMany listOf(false, true)
         coEvery { expenseDao.insertAtomic(any()) } returns -1L
 
         // Act
@@ -325,6 +326,7 @@ class ReviewQueueRepositoryTest {
         // Scenario: An expense for 50 USD at "Shop" already exists. A review for
         // 50 EUR at "Shop" on the same date must NOT be blocked — currencies differ.
         val reviewId = 7L
+        val reviewDate = 1_700_000_000_123L
         val pendingReview = PendingReview(
             id = reviewId,
             rawNotificationId = 12L,
@@ -332,6 +334,7 @@ class ReviewQueueRepositoryTest {
             suggestedCurrency = "EUR",          // ← different currency from the existing USD row
             suggestedMerchant = "Shop",
             suggestedType = "PURCHASE",
+            suggestedDate = reviewDate,
             suggestedCategoryId = 2L,
             confidence = 0.85f,
             packageName = "com.wallet",
@@ -352,7 +355,7 @@ class ReviewQueueRepositoryTest {
             expenseDao.isDuplicateCurrencyAware(
                 amount = 50.0,
                 merchant = "Shop",
-                date = any(),
+                date = reviewDate,
                 currency = "EUR",
                 transactionType = "PURCHASE",
                 merchantKey = any(),
@@ -366,6 +369,17 @@ class ReviewQueueRepositoryTest {
         assertTrue("EUR expense must not be blocked by existing USD expense, got $result",
             result is Result.Success)
         assertEquals(300L, (result as Result.Success).data)
+        coVerify {
+            expenseDao.isDuplicateCurrencyAware(
+                amount = 50.0,
+                merchant = "Shop",
+                date = reviewDate,
+                currency = "EUR",
+                transactionType = "PURCHASE",
+                merchantKey = any(),
+                dedupeKey = any()
+            )
+        }
         coVerify { expenseDao.insertAtomic(match { it.currency == "EUR" && it.amount == 50.0 }) }
         coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED) }
     }
@@ -480,8 +494,8 @@ class ReviewQueueRepositoryTest {
         coEvery {
             pendingReviewDao.transitionStatus(reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING)
         } returns 1
-        // Policy says no duplicate (concurrent winner committed after this check)
-        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returns false
+        // Policy says no duplicate before insert, then sees the canonical duplicate after the race.
+        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returnsMany listOf(false, true)
         // insertAtomic fails because a concurrent PURCHASE for the same tx won the race
         coEvery { expenseDao.insertAtomic(any()) } returns -1L
 

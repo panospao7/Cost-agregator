@@ -6,10 +6,13 @@ import androidx.work.ListenableWorker.Result
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
+import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.service.NotificationService
+import io.mockk.capture
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
@@ -79,10 +82,14 @@ class WarrantyExpirationWorkerTest {
     fun `worker returns success result`() = runTest {
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns emptyList()
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns listOf(sampleWarranty(id = 2L))
+        val notificationIds = mutableListOf<Int>()
+        every { notificationService.sendBudgetAlert(capture(notificationIds), any(), any()) } returns Unit
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
+        assertThat(notificationIds).hasSize(1)
+        assertThat(notificationIds.single()).isLessThan(20000)
     }
 
     @Test

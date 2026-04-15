@@ -19,6 +19,10 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -162,6 +166,41 @@ class AnomalyAlertOrchestratorTest {
         coVerify(exactly = 0) { anomalyAlertDao.getLastAlertForMerchant(any(), any()) }
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
         verify(exactly = 0) { notificationService.sendAnomalyAlert(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `checkAndAlert uses single-flight guard for concurrent calls on same expense`() = runTest {
+        val expense = expenseWithCategory(id = 450L, merchant = "Single Flight Merchant", categoryId = 8L, categoryName = "Shopping")
+        val anomaly = anomalyFor(expense.expense, deviation = 8.5f, method = AnomalyMethod.MAD)
+        val historyGate = CompletableDeferred<Unit>()
+
+        coEvery { expenseDao.getExpensesByCategory(eq(8L), any(), any()) } coAnswers {
+            historyGate.await()
+            emptyList()
+        }
+        every { anomalyDetector.detect(any(), any(), any()) } returns listOf(anomaly)
+        coEvery { anomalyAlertDao.getLastAlertForExpense(450L) } returns null
+        coEvery { anomalyAlertDao.getLastAlertForMerchant("Single Flight Merchant", any()) } returns null
+        coEvery { anomalyAlertDao.getLastAlertForCategory("Shopping", any()) } returns null
+        coEvery { anomalyAlertDao.getLooksNormalCountForMerchant("Single Flight Merchant") } returns 0
+        coEvery { anomalyAlertDao.insert(any()) } returns 9450L
+
+        val firstCall = async { orchestrator.checkAndAlert(expense) }
+        runCurrent()
+
+        val secondCall = async { orchestrator.checkAndAlert(expense) }
+        runCurrent()
+
+        historyGate.complete(Unit)
+        advanceUntilIdle()
+
+        firstCall.await()
+        secondCall.await()
+
+        coVerify(exactly = 1) { expenseDao.getExpensesByCategory(eq(8L), any(), any()) }
+        coVerify(exactly = 1) { anomalyAlertDao.getLastAlertForExpense(450L) }
+        coVerify(exactly = 1) { anomalyAlertDao.insert(any()) }
+        verify(exactly = 1) { notificationService.sendAnomalyAlert(any(), any(), any(), 450L) }
     }
 
     @Test

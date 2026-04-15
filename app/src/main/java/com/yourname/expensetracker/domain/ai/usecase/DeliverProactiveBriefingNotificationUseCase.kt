@@ -41,12 +41,16 @@ class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
         if (artifact.updatedAt < startedAt) return
 
         val summary = artifact.summaryText?.trim()?.takeIf { it.isNotBlank() } ?: return
-        notificationService.sendAiBriefingReady(
+        val deliveryResult = notificationService.sendAiBriefingReadyWithResult(
             notificationId = targetKey.hashCode(),
             title = BRIEFING_NOTIFICATION_TITLE,
             message = summary.take(180),
             targetKey = targetKey
         )
+        if (deliveryResult != NotificationService.DeliveryResult.DELIVERED) {
+            return
+        }
+
         aiEngagementRepository.setLastDeliveredDashboardBriefingKey(targetKey)
         val providerLabel = artifact.provider ?: "unknown"
         val modelLabel = artifact.modelName ?: "unknown"

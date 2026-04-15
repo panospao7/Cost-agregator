@@ -338,6 +338,19 @@ class NotificationProcessingPipeline @Inject constructor(
         val deviceGps: Pair<Double, Double>?
     )
 
+    private suspend fun hasCanonicalExpenseDuplicate(preDb: PreDbContext): Boolean {
+        return expenseDao.isDuplicateCurrencyAware(
+            amount = preDb.parsed.amount,
+            merchant = preDb.correctedMerchant,
+            date = preDb.eventDate,
+            currency = preDb.parsed.currency,
+            transactionType = preDb.transactionType.name,
+            windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+            merchantKey = preDb.merchantKey,
+            dedupeKey = preDb.dedupeKey
+        )
+    }
+
     private suspend fun buildPreDbContext(
         notification: RawNotification,
         parsed: com.yourname.expensetracker.domain.parser.ParsedTransaction
@@ -442,16 +455,7 @@ class NotificationProcessingPipeline @Inject constructor(
         rawId: Long,
         preDb: PreDbContext
     ): ParsedDbOutcome {
-        val isDuplicate = expenseDao.isDuplicateCurrencyAware(
-            amount = preDb.parsed.amount,
-            merchant = preDb.correctedMerchant,
-            date = preDb.eventDate,
-            currency = preDb.parsed.currency,
-            transactionType = preDb.transactionType.name,
-            windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
-            merchantKey = preDb.merchantKey,
-            dedupeKey = preDb.dedupeKey
-        )
+        val isDuplicate = hasCanonicalExpenseDuplicate(preDb)
         if (isDuplicate) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
@@ -486,6 +490,9 @@ class NotificationProcessingPipeline @Inject constructor(
                 insertedExpense = expense
             )
         } else {
+            check(hasCanonicalExpenseDuplicate(preDb)) {
+                "Expense insert conflicted without a canonical duplicate for rawId=$rawId"
+            }
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
             ParsedDbOutcome.Duplicate
@@ -497,16 +504,7 @@ class NotificationProcessingPipeline @Inject constructor(
         rawId: Long,
         preDb: PreDbContext
     ): ParsedDbOutcome {
-        val isDuplicate = expenseDao.isDuplicateCurrencyAware(
-            amount = preDb.parsed.amount,
-            merchant = preDb.correctedMerchant,
-            date = preDb.eventDate,
-            currency = preDb.parsed.currency,
-            transactionType = preDb.transactionType.name,
-            windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
-            merchantKey = preDb.merchantKey,
-            dedupeKey = preDb.dedupeKey
-        )
+        val isDuplicate = hasCanonicalExpenseDuplicate(preDb)
         if (isDuplicate) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())

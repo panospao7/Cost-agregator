@@ -30,6 +30,17 @@ class NotificationCaptureServiceFallbackTest {
     }
 
     @Test
+    fun `whitespace bigText with missing infoText falls back to summaryText`() {
+        val result = resolveEffectiveBigText(
+            bigText = " \n\t ",
+            infoText = null,
+            summaryText = "Summary transaction detail"
+        )
+
+        assertEquals("Summary transaction detail", result)
+    }
+
+    @Test
     fun `non blank bigText wins over fallback fields`() {
         val result = resolveEffectiveBigText(
             bigText = "Primary transaction detail",

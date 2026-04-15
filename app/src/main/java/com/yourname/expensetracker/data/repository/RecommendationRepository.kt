@@ -75,31 +75,53 @@ class RecommendationRepository @Inject constructor(
         withContext(ioDispatcher) {
             if (recommendations.isEmpty()) return@withContext
             
+            val userId = recommendations.firstOrNull()?.userId ?: return@withContext
+            val nowMillis = timeProvider.now()
+
             // Step 1: Deduplicate within the batch
             val uniqueNew = deduplicator.deduplicate(recommendations)
-            
-            // Step 2: Get existing active recommendations to check for duplicates across calls
-            val userId = recommendations.firstOrNull()?.userId ?: return@withContext
-            val existingActive = dao.getActiveByUser(userId)
+
+            // Step 2: Get the full existing active set to check for duplicates and prune overflow
+            val existingActive = dao.getAllActiveByUser(userId, nowMillis)
             val existingSignatures = existingActive.map { computeSignature(it) }.toSet()
-            
+
             // Step 3: Filter out any new recommendations that already exist in DB
             val trulyNew = uniqueNew.filter { rec ->
                 val sig = deduplicator.computeSignature(rec)
                 sig !in existingSignatures
             }
-            
-            if (trulyNew.isEmpty()) {
-                Timber.d("RecommendationRepository: All recommendations already exist, skipping insert")
-                return@withContext
+
+            // Step 4: Merge existing + new, then keep only the global top 5 ACTIVE rows.
+            val mergedRanked = (existingActive + trulyNew.map { it.toEntity() })
+                .sortedWith(activeRecommendationComparator())
+
+            val retained = mergedRanked.take(MAX_ACTIVE_RECOMMENDATIONS)
+            val retainedIds = retained.map { it.id }
+            val retainedIdSet = retainedIds.toSet()
+
+            val retainedNew = trulyNew.filter { it.id in retainedIdSet }
+            if (retainedNew.isNotEmpty()) {
+                dao.insertAll(retainedNew.map { it.toEntity() })
             }
-            
-            // Step 4: Sort by priority (HIGH > MEDIUM > LOW) and take top 5
-            val topRecommendations = trulyNew
-                .sortedWith(compareByDescending<DashboardFollowThroughRecommendation> { it.priority.rank() })
-                .take(MAX_ACTIVE_RECOMMENDATIONS)
-            
-            dao.insertAll(topRecommendations.map { it.toEntity() })
+
+            val existingOverflowIds = existingActive
+                .asSequence()
+                .map { it.id }
+                .filterNot { it in retainedIdSet }
+                .toList()
+
+            if (existingOverflowIds.isNotEmpty()) {
+                dao.archiveActiveOverflow(userId, retainedIds, nowMillis)
+                Timber.d(
+                    "RecommendationRepository: Archived %d overflow active recommendations for user %s",
+                    existingOverflowIds.size,
+                    userId
+                )
+            }
+
+            if (trulyNew.isEmpty()) {
+                Timber.d("RecommendationRepository: All recommendations already exist, pruned active set if needed")
+            }
         }
     }
     
@@ -107,12 +129,13 @@ class RecommendationRepository @Inject constructor(
      * Compute signature for database entity (navTarget + category + filter criteria hash).
      */
     private fun computeSignature(entity: RecommendationEntity): String {
-        val parts = mutableListOf<String>()
-        parts.add(entity.navigationTarget)
-        parts.add(entity.category)
-        // Simple hash of filterCriteria for comparison
-        parts.add(entity.filterCriteria.hashCode().toString())
-        return parts.joinToString(":")
+        return deduplicator.computeSignature(entity.toDomain())
+    }
+
+    private fun activeRecommendationComparator(): Comparator<RecommendationEntity> {
+        return compareByDescending<RecommendationEntity> { it.priority.rank() }
+            .thenByDescending { it.createdAt }
+            .thenBy { it.id }
     }
     
     /**

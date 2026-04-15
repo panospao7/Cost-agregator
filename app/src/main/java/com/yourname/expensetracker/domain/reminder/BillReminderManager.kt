@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.reminder
 
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
@@ -101,7 +102,7 @@ class BillReminderManager @Inject constructor(
         val expense = recurringExpenseRepository.getById(recurringExpenseId) ?: return@withContext
         
         // Calculate next occurrence based on frequency
-        val nextDate = calculateNextDate(expense.nextDate, expense.frequency.name)
+        val nextDate = calculateNextDate(expense.nextDate, expense.frequency)
         
         val updated = expense.copy(nextDate = nextDate)
         recurringExpenseRepository.update(updated)
@@ -120,13 +121,14 @@ class BillReminderManager @Inject constructor(
             if (!expense.isActive) continue
             
             // Convert to monthly equivalent
-            val monthlyAmount = when (expense.frequency.name) {
-                "WEEKLY" -> expense.amount * 4.33
-                "BIWEEKLY" -> expense.amount * 2.17
-                "MONTHLY" -> expense.amount
-                "QUARTERLY" -> expense.amount / 3
-                "YEARLY" -> expense.amount / 12
-                else -> expense.amount
+            val monthlyAmount = when (expense.frequency) {
+                RecurrenceFrequency.WEEKLY -> expense.amount * 4.33
+                RecurrenceFrequency.BIWEEKLY -> expense.amount * 2.17
+                RecurrenceFrequency.MONTHLY -> expense.amount
+                RecurrenceFrequency.QUARTERLY -> expense.amount / 3
+                RecurrenceFrequency.SEMI_ANNUALLY -> expense.amount / 6
+                RecurrenceFrequency.ANNUALLY -> expense.amount / 12
+                RecurrenceFrequency.IRREGULAR -> expense.amount
             }
             
             total += monthlyAmount
@@ -135,14 +137,15 @@ class BillReminderManager @Inject constructor(
         total
     }
     
-    private fun calculateNextDate(currentDate: Long, frequency: String): Long {
+    private fun calculateNextDate(currentDate: Long, frequency: RecurrenceFrequency): Long {
         return when (frequency) {
-            "WEEKLY" -> TimePeriodUtils.addDays(currentDate, 7)
-            "BIWEEKLY" -> TimePeriodUtils.addDays(currentDate, 14)
-            "MONTHLY" -> TimePeriodUtils.addMonths(currentDate, 1)
-            "QUARTERLY" -> TimePeriodUtils.addMonths(currentDate, 3)
-            "YEARLY" -> TimePeriodUtils.addYears(currentDate, 1)
-            else -> TimePeriodUtils.addMonths(currentDate, 1)
+            RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(currentDate, 7)
+            RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(currentDate, 14)
+            RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(currentDate, 1)
+            RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(currentDate, 3)
+            RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(currentDate, 6)
+            RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(currentDate, 1)
+            RecurrenceFrequency.IRREGULAR -> TimePeriodUtils.addMonths(currentDate, 1)
         }
     }
 }

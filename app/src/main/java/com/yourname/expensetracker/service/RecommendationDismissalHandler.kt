@@ -18,18 +18,18 @@ class RecommendationDismissalHandler @Inject constructor(
 
     suspend fun dismiss(recommendation: DashboardFollowThroughRecommendation) {
         withContext(ioDispatcher) {
-            // Update UI state immediately.
-            try {
-                stateManager.removeFromState(recommendation.id)
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to remove recommendation from state: ${recommendation.id}")
-            }
-
-            // Then archive in storage.
             try {
                 repository.dismiss(recommendation.id)
             } catch (e: Exception) {
                 Timber.e(e, "Failed to persist dismissal for recommendation: ${recommendation.id}")
+                return@withContext
+            }
+
+            try {
+                stateManager.removeFromState(recommendation.id)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to remove recommendation from state after dismissal: ${recommendation.id}")
+                refreshCurrentUserIfNeeded(recommendation.userId)
             }
         }
     }
@@ -41,6 +41,23 @@ class RecommendationDismissalHandler @Inject constructor(
             } catch (e: Exception) {
                 Timber.e(e, "Failed to refresh recommendations for user: $userId")
             }
+        }
+    }
+
+    private fun refreshCurrentUserIfNeeded(userId: String) {
+        val currentUserId = try {
+            stateManager.getCurrentUserId()
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to read current recommendation user before refresh: $userId")
+            return
+        }
+
+        if (currentUserId != userId) return
+
+        try {
+            stateManager.refreshForUser(userId, forceRefresh = true)
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to refresh recommendations after dismissal state mismatch for user: $userId")
         }
     }
 }

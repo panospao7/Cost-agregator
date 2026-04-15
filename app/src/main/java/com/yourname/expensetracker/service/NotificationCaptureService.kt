@@ -228,12 +228,13 @@ class NotificationCaptureService : NotificationListenerService() {
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
 
-        // Filter using non-null values for heuristic matching
+        // Preserve nullability through filter evaluation; normalization happens only
+        // inside the filter/hash helpers so fallback decisions remain intact.
         if (!NotificationFilter.shouldCapture(
                 packageName,
-                title.orEmpty(),
-                text.orEmpty(),
-                bigText.orEmpty()
+                title,
+                text,
+                bigText
             )) return
         
         // Better deduplication using notification key + content
@@ -349,9 +350,9 @@ class NotificationCaptureService : NotificationListenerService() {
 
         if (!NotificationFilter.shouldCapture(
                 packageName,
-                title.orEmpty(),
-                text.orEmpty(),
-                bigText.orEmpty()
+                title,
+                text,
+                bigText
             )) {
             Timber.d("Skipping (shouldCapture=false): $packageName")
             return

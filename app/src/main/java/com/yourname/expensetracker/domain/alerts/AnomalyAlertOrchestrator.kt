@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.cancellation.CancellationException
@@ -34,6 +35,8 @@ class AnomalyAlertOrchestrator @Inject constructor(
     private val anomalyAlertDao: AnomalyAlertDao,
     private val timeProvider: TimeProvider
 ) {
+    private val inFlightExpenseIds = ConcurrentHashMap.newKeySet<Long>()
+
     companion object {
         // Cooldown periods
         private const val MERCHANT_COOLDOWN_MS = 24 * 60 * 60 * 1000L // 24 hours
@@ -67,84 +70,96 @@ class AnomalyAlertOrchestrator @Inject constructor(
             return
         }
 
+        val expenseId = expense.expense.id
+        if (!inFlightExpenseIds.add(expenseId)) {
+            Timber.d("Anomaly alert already in-flight for expense $expenseId")
+            return
+        }
+
         try {
-            // Build a 90-day detection window so detector has enough samples
-            val now = timeProvider.now()
-            val lookbackStart = TimePeriodUtils.addDays(now, -HISTORY_LOOKBACK_DAYS)
-            val detectionPeriod = getDetectionPeriod(now, lookbackStart)
+            try {
+                // Build a 90-day detection window so detector has enough samples
+                val now = timeProvider.now()
+                val lookbackStart = TimePeriodUtils.addDays(now, -HISTORY_LOOKBACK_DAYS)
+                val detectionPeriod = getDetectionPeriod(now, lookbackStart)
 
-            // Provide detector with 90-day category history + current expense context
-            val categoryId = expense.expense.categoryId
-            val historicalExpenses = if (categoryId != null) {
-                expenseDao.getExpensesByCategory(categoryId, lookbackStart, now)
-                    .filter { it.id != expense.expense.id }
-            } else {
-                emptyList()
+                // Provide detector with 90-day category history + current expense context
+                val categoryId = expense.expense.categoryId
+                val historicalExpenses = if (categoryId != null) {
+                    expenseDao.getExpensesByCategory(categoryId, lookbackStart, now)
+                        .filter { it.id != expenseId }
+                } else {
+                    emptyList()
+                }
+                val allExpenses = historicalExpenses + listOf(expense.expense)
+                val categoryMap = expense.category?.let { mapOf(it.id to it) } ?: emptyMap()
+
+                // Run anomaly detection
+                val anomalies = anomalyDetector.detect(
+                    monthPeriod = detectionPeriod,
+                    categoryMap = categoryMap,
+                    allExpenses = allExpenses
+                )
+
+                // Check if this expense was flagged
+                val expenseAnomalies = anomalies.filter { it.expense.id == expenseId }
+
+                if (expenseAnomalies.isEmpty()) {
+                    Timber.d("No anomalies detected for expense $expenseId")
+                    return
+                }
+
+                // Check if we should alert
+                if (!shouldAlert(expense, expenseAnomalies)) {
+                    Timber.d("Alert suppressed for expense $expenseId due to cooldown/deduplication")
+                    return
+                }
+
+                // Determine severity
+                val severity = determineSeverity(expenseAnomalies)
+
+                // Only alert on HIGH severity
+                if (severity != MIN_SEVERITY) {
+                    Timber.d("Alert suppressed for expense $expenseId - severity $severity below threshold")
+                    return
+                }
+
+                // Build and send notification
+                val message = buildNotificationMessage(expense, expenseAnomalies)
+                val notificationId = ANOMALY_NOTIFICATION_BASE_ID + (expenseId % 100000).toInt()
+
+                // Record the alert in database
+                val alert = AnomalyAlert(
+                    expenseId = expenseId,
+                    merchant = expense.expense.merchant,
+                    category = expense.category?.name,
+                    amount = expense.expense.effectiveAmount,
+                    anomalyReason = buildAnomalyReason(expenseAnomalies),
+                    severity = severity,
+                    alertedAt = now
+                )
+
+                val alertId = anomalyAlertDao.insert(alert)
+                Timber.d("Created anomaly alert $alertId for expense $expenseId")
+
+                // Send the notification
+                notificationService.sendAnomalyAlert(
+                    notificationId = notificationId,
+                    title = "Unusual Charge Detected",
+                    message = message,
+                    expenseId = expenseId
+                )
+
+                Timber.i("Anomaly alert sent for ${expense.expense.merchant}: €${expense.expense.effectiveAmount}")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e(e, "Error checking anomaly alert for expense $expenseId")
             }
-            val allExpenses = historicalExpenses + listOf(expense.expense)
-            val categoryMap = expense.category?.let { mapOf(it.id to it) } ?: emptyMap()
-
-            // Run anomaly detection
-            val anomalies = anomalyDetector.detect(
-                monthPeriod = detectionPeriod,
-                categoryMap = categoryMap,
-                allExpenses = allExpenses
-            )
-
-            // Check if this expense was flagged
-            val expenseAnomalies = anomalies.filter { it.expense.id == expense.expense.id }
-
-            if (expenseAnomalies.isEmpty()) {
-                Timber.d("No anomalies detected for expense ${expense.expense.id}")
-                return
-            }
-
-            // Check if we should alert
-            if (!shouldAlert(expense, expenseAnomalies)) {
-                Timber.d("Alert suppressed for expense ${expense.expense.id} due to cooldown/deduplication")
-                return
-            }
-
-            // Determine severity
-            val severity = determineSeverity(expenseAnomalies)
-
-            // Only alert on HIGH severity
-            if (severity != MIN_SEVERITY) {
-                Timber.d("Alert suppressed for expense ${expense.expense.id} - severity $severity below threshold")
-                return
-            }
-
-            // Build and send notification
-            val message = buildNotificationMessage(expense, expenseAnomalies)
-            val notificationId = ANOMALY_NOTIFICATION_BASE_ID + (expense.expense.id % 100000).toInt()
-
-            // Record the alert in database
-            val alert = AnomalyAlert(
-                expenseId = expense.expense.id,
-                merchant = expense.expense.merchant,
-                category = expense.category?.name,
-                amount = expense.expense.effectiveAmount,
-                anomalyReason = buildAnomalyReason(expenseAnomalies),
-                severity = severity,
-                alertedAt = now
-            )
-
-            val alertId = anomalyAlertDao.insert(alert)
-            Timber.d("Created anomaly alert $alertId for expense ${expense.expense.id}")
-
-            // Send the notification
-            notificationService.sendAnomalyAlert(
-                notificationId = notificationId,
-                title = "Unusual Charge Detected",
-                message = message,
-                expenseId = expense.expense.id
-            )
-
-            Timber.i("Anomaly alert sent for ${expense.expense.merchant}: €${expense.expense.effectiveAmount}")
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
-            Timber.e(e, "Error checking anomaly alert for expense ${expense.expense.id}")
+        } finally {
+            inFlightExpenseIds.remove(expenseId)
         }
     }
 

@@ -61,6 +61,16 @@ class NotificationFilterTest {
     }
 
     @Test
+    fun `Gmail with amount but without financial keyword does NOT capture`() {
+        assertFalse(NotificationFilter.shouldCapture(
+            "com.google.android.gm",
+            "Flight itinerary",
+            "Your seat 25.50 is confirmed",
+            ""
+        ))
+    }
+
+    @Test
     fun `SMS apps with financial content captures`() {
         assertTrue(NotificationFilter.shouldCapture(
             "com.google.android.apps.messaging",

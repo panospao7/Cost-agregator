@@ -1,8 +1,8 @@
 package com.yourname.expensetracker.domain.util
 
 import com.google.common.truth.Truth.assertThat
-import org.junit.Test
 import org.junit.Ignore
+import org.junit.Test
 
 /**
  * CRITICAL TEST (HIGH-4): Notification ID Generator
@@ -38,9 +38,9 @@ class NotificationIdGeneratorTest {
         assertThat(id7Days).isNotEqualTo(id30Days)
         assertThat(id7Days).isAtMost(14999)
         assertThat(id30Days).isAtLeast(15000)
+        assertThat(id30Days).isAtMost(19999)
     }
 
-    @Ignore("ID range bounds off by small margin")
     @Test
     fun `warranty notification handles very large ID`() {
         val hugeId = Long.MAX_VALUE // 9,223,372,036,854,775,807
@@ -50,6 +50,16 @@ class NotificationIdGeneratorTest {
         // Should still be within warranty range, no overflow
         assertThat(result).isAtLeast(10000)
         assertThat(result).isAtMost(14999)
+    }
+
+    @Test
+    fun `warranty 30-day notification handles very large ID`() {
+        val hugeId = Long.MAX_VALUE
+
+        val result = NotificationIdGenerator.forWarranty(hugeId, 30)
+
+        assertThat(result).isAtLeast(15000)
+        assertThat(result).isAtMost(19999)
     }
 
     @Test
@@ -181,13 +191,31 @@ class NotificationIdGeneratorTest {
     @Test
     fun `same database ID in different ranges produces different notification IDs`() {
         val warrantyId = NotificationIdGenerator.forWarranty(100L, 7)
+        val warranty30DayId = NotificationIdGenerator.forWarranty(100L, 30)
         val receiptId = NotificationIdGenerator.forReceipt(100L)
         val billId = NotificationIdGenerator.forBill(100L)
         
         // All should be different
         assertThat(warrantyId).isNotEqualTo(receiptId)
+        assertThat(warranty30DayId).isNotEqualTo(receiptId)
         assertThat(warrantyId).isNotEqualTo(billId)
+        assertThat(warranty30DayId).isNotEqualTo(billId)
         assertThat(receiptId).isNotEqualTo(billId)
+    }
+
+    @Test
+    fun `warranty ranges stay fully below receipt range`() {
+        val samples = listOf(0L, 1L, 4_999L, 5_000L, 9_999L, Long.MAX_VALUE)
+
+        samples.forEach { warrantyId ->
+            val warranty7DayId = NotificationIdGenerator.forWarranty(warrantyId, 7)
+            val warranty30DayId = NotificationIdGenerator.forWarranty(warrantyId, 30)
+
+            assertThat(warranty7DayId).isLessThan(20000)
+            assertThat(warranty30DayId).isLessThan(20000)
+            assertThat(warranty7DayId).isNotEqualTo(NotificationIdGenerator.forReceipt(warrantyId))
+            assertThat(warranty30DayId).isNotEqualTo(NotificationIdGenerator.forReceipt(warrantyId))
+        }
     }
 
     @Test
@@ -246,7 +274,7 @@ class NotificationIdGeneratorTest {
 
     // ==================== EDGE CASE TESTS ====================
 
-    @Ignore("ID range bounds off by small margin")
+    @Ignore("Negative IDs are unsupported for receipt notification mapping")
     @Test
     fun `negative long ID is handled correctly`() {
         // In Kotlin, -1L % 9999 is negative, but we convert to Int which handles it
@@ -304,7 +332,9 @@ class NotificationIdGeneratorTest {
         val id1 = NotificationIdGenerator.forWarranty(100L, 1)
         val id7 = NotificationIdGenerator.forWarranty(100L, 7)
         
+        assertThat(id1).isAtLeast(10000)
         assertThat(id1).isAtMost(14999)
+        assertThat(id7).isAtLeast(10000)
         assertThat(id7).isAtMost(14999)
     }
 
@@ -316,8 +346,11 @@ class NotificationIdGeneratorTest {
         val id365 = NotificationIdGenerator.forWarranty(100L, 365)
         
         assertThat(id8).isAtLeast(15000)
+        assertThat(id8).isAtMost(19999)
         assertThat(id30).isAtLeast(15000)
+        assertThat(id30).isAtMost(19999)
         assertThat(id365).isAtLeast(15000)
+        assertThat(id365).isAtMost(19999)
     }
 
     @Test

@@ -137,8 +137,9 @@ class RecommendationRepositoryTest {
             createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_8")
         )
 
-        coEvery { dao.getActiveByUser(userId, any()) } returns emptyList()
+        coEvery { dao.getAllActiveByUser(userId, any()) } returns emptyList()
         coEvery { dao.insertAll(any()) } returns Unit
+        coEvery { dao.archiveActiveOverflow(userId, any(), any()) } returns 0
 
         repository.saveAll(recommendations)
 
@@ -148,6 +149,7 @@ class RecommendationRepositoryTest {
                 entities.size == 5
             }) 
         }
+        coVerify(exactly = 0) { dao.archiveActiveOverflow(userId, any(), any()) }
     }
 
     @Test
@@ -164,8 +166,9 @@ class RecommendationRepositoryTest {
             createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_6")
         )
 
-        coEvery { dao.getActiveByUser(userId, any()) } returns emptyList()
+        coEvery { dao.getAllActiveByUser(userId, any()) } returns emptyList()
         coEvery { dao.insertAll(any()) } returns Unit
+        coEvery { dao.archiveActiveOverflow(userId, any(), any()) } returns 0
 
         repository.saveAll(recommendations)
 
@@ -177,6 +180,86 @@ class RecommendationRepositoryTest {
                 entities.count { it.priority == RecommendationPriority.MEDIUM } == 2 &&
                 entities.count { it.priority == RecommendationPriority.LOW } == 1
             }) 
+        }
+        coVerify(exactly = 0) { dao.archiveActiveOverflow(userId, any(), any()) }
+    }
+
+    @Test
+    fun `saveAll merges with existing active set and archives overflow deterministically`() = runTest {
+        val userId = "user123"
+        val existing = listOf(
+            createRecommendationEntity(id = "existing_high_old", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_E1", createdAt = 100L),
+            createRecommendationEntity(id = "existing_medium_old", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_E2", createdAt = 90L),
+            createRecommendationEntity(id = "existing_low_old", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_E3", createdAt = 80L),
+            createRecommendationEntity(id = "existing_high_newer", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_E4", createdAt = 110L),
+            createRecommendationEntity(id = "existing_medium_newer", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_E5", createdAt = 105L)
+        )
+        val incoming = listOf(
+            createRecommendation(id = "new_high_best", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_N1", createdAt = 120L),
+            createRecommendation(id = "new_medium_mid", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_N2", createdAt = 115L),
+            createRecommendation(id = "new_low_recent", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_N3", createdAt = 130L)
+        )
+
+        coEvery { dao.getAllActiveByUser(userId, any()) } returns existing
+        coEvery { dao.insertAll(any()) } returns Unit
+        coEvery { dao.archiveActiveOverflow(userId, any(), any()) } returns 3
+
+        repository.saveAll(incoming)
+
+        coVerify(exactly = 1) {
+            dao.insertAll(match { inserted ->
+                inserted.map { it.id } == listOf("new_high_best")
+            })
+        }
+        coVerify(exactly = 1) {
+            dao.archiveActiveOverflow(
+                userId,
+                match { retainedIds ->
+                    retainedIds == listOf(
+                        "new_high_best",
+                        "existing_high_newer",
+                        "existing_high_old",
+                        "new_medium_mid",
+                        "existing_medium_newer"
+                    )
+                },
+                any()
+            )
+        }
+    }
+
+    @Test
+    fun `saveAll prunes existing overflow even when incoming batch is fully duplicate`() = runTest {
+        val userId = "user123"
+        val existing = listOf(
+            createRecommendationEntity(id = "existing_1", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_1", createdAt = 200L),
+            createRecommendationEntity(id = "existing_2", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_2", createdAt = 190L),
+            createRecommendationEntity(id = "existing_3", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_3", createdAt = 180L),
+            createRecommendationEntity(id = "existing_4", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_4", createdAt = 170L),
+            createRecommendationEntity(id = "existing_5", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_5", createdAt = 160L),
+            createRecommendationEntity(id = "existing_6", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_6", createdAt = 150L),
+            createRecommendationEntity(id = "existing_7", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_7", createdAt = 140L)
+        )
+        val duplicateIncoming = listOf(
+            createRecommendation(id = "duplicate_1", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_1"),
+            createRecommendation(id = "duplicate_2", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_3")
+        )
+
+        coEvery { dao.getAllActiveByUser(userId, any()) } returns existing
+        coEvery { dao.insertAll(any()) } returns Unit
+        coEvery { dao.archiveActiveOverflow(userId, any(), any()) } returns 2
+
+        repository.saveAll(duplicateIncoming)
+
+        coVerify(exactly = 0) { dao.insertAll(any()) }
+        coVerify(exactly = 1) {
+            dao.archiveActiveOverflow(
+                userId,
+                match { retainedIds ->
+                    retainedIds == listOf("existing_1", "existing_2", "existing_3", "existing_4", "existing_5")
+                },
+                any()
+            )
         }
     }
 
@@ -285,7 +368,9 @@ class RecommendationRepositoryTest {
         recommendationText: String = "Test recommendation",
         priority: RecommendationPriority = RecommendationPriority.MEDIUM,
         status: RecommendationStatus = RecommendationStatus.ACTIVE,
-        category: String = "GENERAL"
+        category: String = "GENERAL",
+        createdAt: Long = 1_000L,
+        updatedAt: Long = createdAt
     ): DashboardFollowThroughRecommendation {
         return DashboardFollowThroughRecommendation(
             id = id,
@@ -293,6 +378,8 @@ class RecommendationRepositoryTest {
             recommendationText = recommendationText,
             navigationTarget = "TRANSACTION_LIST",
             filterCriteria = "{}",
+            createdAt = createdAt,
+            updatedAt = updatedAt,
             priority = priority,
             category = category,
             sourceArtifactId = "",
@@ -305,7 +392,12 @@ class RecommendationRepositoryTest {
         userId: String = "user123",
         recommendationText: String = "Test recommendation",
         priority: RecommendationPriority = RecommendationPriority.MEDIUM,
-        status: RecommendationStatus = RecommendationStatus.ACTIVE
+        status: RecommendationStatus = RecommendationStatus.ACTIVE,
+        category: String = "GENERAL",
+        createdAt: Long = 1_000L,
+        updatedAt: Long = createdAt,
+        dismissedAt: Long? = null,
+        expiresAt: Long = createdAt + (7L * 24 * 60 * 60 * 1000)
     ): RecommendationEntity {
         return RecommendationEntity(
             id = id,
@@ -313,12 +405,12 @@ class RecommendationRepositoryTest {
             recommendationText = recommendationText,
             navigationTarget = "TRANSACTION_LIST",
             filterCriteria = "{}",
-            createdAt = System.currentTimeMillis(),
-            updatedAt = System.currentTimeMillis(),
-            dismissedAt = null,
-            expiresAt = System.currentTimeMillis() + (7L * 24 * 60 * 60 * 1000),
+            createdAt = createdAt,
+            updatedAt = updatedAt,
+            dismissedAt = dismissedAt,
+            expiresAt = expiresAt,
             priority = priority,
-            category = "GENERAL",
+            category = category,
             sourceArtifactId = "",
             status = status
         )
