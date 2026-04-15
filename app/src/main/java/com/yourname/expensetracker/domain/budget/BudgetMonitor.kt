@@ -8,9 +8,11 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -39,9 +41,39 @@ class BudgetMonitor @Inject constructor(
     private var cachedStatuses: List<BudgetStatus>? = null
     private var cacheTimestamp: Long = 0L
     private val cacheValidityMs = 30_000L // 30 seconds cache
-    
-    fun cleanup() {
+
+    /**
+     * Non-destructive lifecycle callback for routine app backgrounding.
+     *
+     * Cancels any in-flight monitor work and clears transient throttle/cache state,
+     * but keeps the parent scope alive so future foreground checks can still run.
+     */
+    fun onBackground() {
+        serviceJob.cancelChildren()
+        synchronized(stateLock) {
+            lastCheckTime = 0L
+            cachedStatuses = null
+            cacheTimestamp = 0L
+        }
+    }
+
+    /**
+     * Permanently cancels this monitor's coroutine scope.
+     *
+     * After this call, no further checks can be launched.
+     * Use only for true disposal (for example in tests/process teardown).
+     */
+    fun destroy() {
+        onBackground()
         serviceJob.cancel()
+    }
+
+    @Deprecated(
+        message = "Use onBackground() for routine backgrounding or destroy() for permanent disposal",
+        replaceWith = ReplaceWith("onBackground()")
+    )
+    fun cleanup() {
+        destroy()
     }
 
     companion object {
@@ -124,8 +156,9 @@ class BudgetMonitor @Inject constructor(
                 return cached
             }
         }
-        
+
         val statuses = budgetRepository.getBudgetStatuses().first()
+        currentCoroutineContext().ensureActive()
         synchronized(stateLock) {
             cachedStatuses = statuses
             cacheTimestamp = now
@@ -138,6 +171,7 @@ class BudgetMonitor @Inject constructor(
         status: BudgetStatus, 
         now: Long
     ) {
+        currentCoroutineContext().ensureActive()
         val budget = status.budget
         val spent = status.spentAmount
         val categoryName = status.category?.name ?: "Overall"

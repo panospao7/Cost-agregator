@@ -219,6 +219,51 @@ class FinancialStressForecastEngineTest {
         }
     }
 
+    @Test
+    fun `computeStressForecast missing income history does not fall back to budget as income`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(5_000.0, spent = 0.0)))
+
+        val result = engine.computeStressForecast()
+
+        result.horizons.forEach { horizon ->
+            assertApproxEquals(0.0, horizon.expectedIncome, 0.0001)
+        }
+    }
+
+    @Test
+    fun `computeStressForecast includes zero spend days in discretionary samples`() = runTest {
+        val singlePurchase = expense(400L, 100.0, TransactionType.PURCHASE, now - 10 * dayMs)
+        allExpenses = listOf(singlePurchase)
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+        val horizon30 = result.horizons.first { it.daysAhead == 30 }
+
+        assertApproxEquals(0.0, horizon30.expectedIncome, 0.0001)
+        assertApproxEquals(0.0, horizon30.projectedBalance, 0.0001)
+        assertTrue(horizon30.minProjectedBalance >= -200.0)
+    }
+
+    @Test
+    fun `computeStressForecast does not treat current month net cashflow as account balance`() = runTest {
+        allExpenses = listOf(
+            expense(500L, 3_000.0, TransactionType.DEPOSIT, now - 2 * dayMs, merchant = "Employer"),
+            expense(501L, 200.0, TransactionType.PURCHASE, now - 1 * dayMs)
+        )
+        allDeposits = emptyList()
+
+        val result = engine.computeStressForecast()
+
+        result.horizons.forEach { horizon ->
+            assertTrue(
+                "Projected balance should not be inflated by month-to-date net cashflow",
+                horizon.projectedBalance <= 0.0
+            )
+        }
+    }
+
     private fun classifyRiskLevelViaReflection(probability: Double): StressRiskLevel {
         val method = FinancialStressForecastEngine::class.java.getDeclaredMethod(
             "classifyRiskLevel",

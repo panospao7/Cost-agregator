@@ -171,6 +171,34 @@ class BudgetAutopilotEngineTest {
     }
 
     @Test
+    fun `generateRecommendations uses overall budget as canonical summary scope when overall and category budgets coexist`() = runTest {
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
+            budget(id = 1L, categoryId = null, amount = 1000.0),
+            budget(id = 2L, categoryId = 1L, amount = 200.0)
+        )
+
+        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 1000.0, 10),
+            MonthlySpendingTotal("2026-02", 1000.0, 10),
+            MonthlySpendingTotal("2026-03", 1000.0, 10)
+        )
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 200.0, 2),
+            MonthlySpendingTotal("2026-02", 200.0, 2),
+            MonthlySpendingTotal("2026-03", 200.0, 2)
+        )
+
+        val result = engine.generateRecommendations()
+        val overallRecommendation = result.categoryRecommendations.single { it.categoryId == null }
+
+        assertEquals(2, result.categoryRecommendations.size)
+        assertApproxEquals(1000.0, result.totalCurrentBudget, 0.01)
+        assertApproxEquals(1000.0, result.totalRecommendedBudget, 0.01)
+        assertApproxEquals(0.0, result.overallDelta, 0.01)
+        assertApproxEquals(overallRecommendation.confidence, result.confidence, 0.0001)
+    }
+
+    @Test
     fun `generateRecommendations edge case empty budgets returns empty recommendations`() = runTest {
         coEvery { budgetRepository.getActiveBudgets() } returns emptyList()
 
@@ -195,6 +223,7 @@ class BudgetAutopilotEngineTest {
         // With no history, raw recommendation becomes 0 and is capped at -15%.
         assertApproxEquals(85.0, rec.recommendedBudget, 0.01)
         assertEquals(BudgetTrend.STABLE, rec.trend)
+        assertApproxEquals(0.0, rec.confidence, 0.0001)
     }
 
     @Test
@@ -214,6 +243,8 @@ class BudgetAutopilotEngineTest {
         assertEquals(BudgetTrend.STABLE, rec.trend)
         assertTrue(!rec.recommendedBudget.isNaN())
         assertTrue(rec.recommendedBudget.isFinite())
+        assertApproxEquals(0.1333, rec.confidence, 0.001)
+        assertTrue(rec.confidence < 0.2)
     }
 
     @Test
@@ -253,16 +284,12 @@ class BudgetAutopilotEngineTest {
     }
 
     @Test
-    fun `generateRecommendations uses sparse months without gap infill`() = runTest {
+    fun `generateRecommendations infills missing zero-spend months before trend math`() = runTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
             budget(id = 1L, categoryId = 1L, amount = 100.0)
         )
-        // SQL returns Jan and Mar but not Feb — engine must NOT infill Feb=0.0
-        // historicalSpend = [200.0, 200.0] => avg = 200
-        // trend: firstHalf=[200.0], secondHalf=[200.0] => ratio=1.0 => STABLE
-        // trendAdjustedSpend = 200 * (1 + 0*3) = 200
-        // safetyFactor: CV of [200,200] => stdDev=0, CV=0 => LOW => 1.0
-        // recommended = 200 * 1.0 = 200, capped at [85, 115] => 115
+        // SQL returns Jan and Mar but not Feb — engine should infill Feb=0.0
+        // so the trend sees [200, 0, 200] instead of [200, 200].
         coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
             MonthlySpendingTotal("2026-01", 200.0, 2),
             MonthlySpendingTotal("2026-03", 200.0, 2)
@@ -270,9 +297,8 @@ class BudgetAutopilotEngineTest {
 
         val rec = engine.generateRecommendations().categoryRecommendations.single()
 
-        // Sparse history: 2 months, avg=200 > 100+15=115 => capped at +15%
-        assertApproxEquals(115.0, rec.recommendedBudget, 0.01)
-        assertEquals(BudgetTrend.STABLE, rec.trend)
+        assertApproxEquals(85.0, rec.recommendedBudget, 0.01)
+        assertEquals(BudgetTrend.DECREASING, rec.trend)
     }
 
     @Test

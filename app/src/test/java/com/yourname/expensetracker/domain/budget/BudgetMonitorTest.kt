@@ -123,18 +123,21 @@ class BudgetMonitorTest {
     }
 
     @Test
-    fun `cleanup cancels monitor scope and subsequent checks perform no repository reads`() = runTest(testDispatcher) {
-        val now = atDateTime(2026, 4, 8, 10, 0)
-        every { timeProvider.now() } returns now
+    fun `onBackground clears transient state and next foreground check still runs`() = runTest(testDispatcher) {
+        val firstNow = atDateTime(2026, 4, 8, 10, 0)
+        val secondNow = firstNow + 5_000L
+        every { timeProvider.now() } returnsMany listOf(firstNow, secondNow)
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
 
-        monitor.cleanup()
         monitor.checkBudgets()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        verify(exactly = 0) { budgetRepository.getBudgetStatuses() }
-        coVerify(exactly = 0) { budgetRepository.updateWarningNotification(any(), any()) }
-        coVerify(exactly = 0) { budgetRepository.updateCriticalNotification(any(), any()) }
-        coVerify(exactly = 0) { budgetRepository.updateExceededNotification(any(), any()) }
+        monitor.onBackground()
+        monitor.checkBudgets()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        verify(exactly = 2) { budgetRepository.getBudgetStatuses() }
+        verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
     }
 
     private fun budget(id: Long, period: BudgetPeriod): Budget {

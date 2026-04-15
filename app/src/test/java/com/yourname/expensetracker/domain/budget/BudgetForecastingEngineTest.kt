@@ -18,6 +18,7 @@ import org.junit.Before
 import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 
 class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
@@ -184,6 +185,101 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         // avg=102.5, stable trend => unchanged
         assertApproxEquals(102.5, forecast.predictedSpending, 0.01)
+    }
+
+    @Test
+    fun `forecast uses remaining active period duration instead of requested approximation`() = runTest {
+        val budget = Budget(
+            categoryId = 1L,
+            amount = 1000.0,
+            period = BudgetPeriod.MONTHLY,
+            startDate = LocalDate.of(2026, 4, 1)
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        )
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 300.0, 1),
+            MonthlySpendingTotal("2026-02", 300.0, 1),
+            MonthlySpendingTotal("2026-03", 300.0, 1)
+        )
+
+        val forecast = engine.generateForecast(budget, forecastPeriodDays = 60)
+        val remainingDays = ChronoUnit.DAYS.between(
+            LocalDate.of(2026, 4, 15),
+            LocalDate.of(2026, 5, 1)
+        ).toDouble()
+
+        assertApproxEquals(300.0 * (remainingDays / 30.0), forecast.predictedSpending, 0.01)
+        assertEquals(
+            LocalDate.of(2026, 4, 1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+            forecast.targetPeriodStart
+        )
+        assertEquals(
+            LocalDate.of(2026, 5, 1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+            forecast.targetPeriodEnd
+        )
+    }
+
+    @Test
+    fun `projected overspend stays deterministic even with subunit confidence`() = runTest {
+        val budget = Budget(
+            categoryId = null,
+            amount = 100.0,
+            period = BudgetPeriod.MONTHLY,
+            startDate = LocalDate.of(2026, 4, 1)
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        )
+        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-02", 50.0, 1),
+            MonthlySpendingTotal("2026-03", 200.0, 1)
+        )
+        coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 50.0
+
+        val forecast = engine.generateForecast(budget)
+
+        assertTrue(forecast.confidenceScore < 0.6)
+        assertTrue(forecast.predictedSpending + 50.0 > budget.amount)
+        assertEquals(1.0, forecast.overspendProbability, 0.0)
+    }
+
+    @Test
+    fun `calendar yearly budgets forecast against remaining calendar year window`() = runTest {
+        val budget = Budget(
+            categoryId = 1L,
+            amount = 5_000.0,
+            period = BudgetPeriod.YEARLY,
+            periodMode = "CALENDAR",
+            startDate = LocalDate.of(2023, 8, 20)
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        )
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
+            MonthlySpendingTotal("2026-01", 100.0, 1),
+            MonthlySpendingTotal("2026-02", 100.0, 1),
+            MonthlySpendingTotal("2026-03", 100.0, 1)
+        )
+
+        val forecast = engine.generateForecast(budget)
+        val yearStart = LocalDate.of(2026, 1, 1)
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        val yearEnd = LocalDate.of(2027, 1, 1)
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        val remainingDays = ChronoUnit.DAYS.between(
+            LocalDate.of(2026, 4, 15),
+            LocalDate.of(2027, 1, 1)
+        ).toDouble()
+
+        assertEquals(yearStart, forecast.targetPeriodStart)
+        assertEquals(yearEnd, forecast.targetPeriodEnd)
+        assertApproxEquals(100.0 * (remainingDays / 30.0), forecast.predictedSpending, 0.01)
     }
 
     // =========================================================================

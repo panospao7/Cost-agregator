@@ -114,9 +114,9 @@ class CarbonFootprintCalculator @Inject constructor(
         startDate: Long = System.currentTimeMillis() - (30L * 24 * 60 * 60 * 1000),
         endDate: Long = System.currentTimeMillis()
     ): CarbonFootprintReport {
-        // A.9 Batch 7: one-shot uncapped read so carbon reporting is never
-        // silently truncated at the old LIMIT 2000 default and avoids live
-        // Flow collection for a point-in-time report.
+        // Keep carbon reporting on a one-shot uncapped snapshot so the
+        // point-in-time report is never silently truncated by the old
+        // LIMIT 2000 DAO path and never relies on live Flow observation.
         val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
             .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE }
         

@@ -128,6 +128,45 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `ui contract remains stable when engine returns active period forecast window`() = runTest(testDispatcher) {
+        val budget = createBudget(id = 25L, amount = 300.0)
+        val activeWindowForecast = createForecast(
+            budgetId = budget.id,
+            predictedSpending = 75.0,
+            predictedRemaining = 180.0,
+            riskLevel = ForecastRiskLevel.MEDIUM,
+            overspendProbability = 0.4
+        ).copy(
+            targetPeriodStart = 1_712_505_600_000L,
+            targetPeriodEnd = 1_713_888_000_000L
+        )
+        coEvery { forecastingEngine.generateForecast(budget, 30) } returns activeWindowForecast
+
+        viewModel.uiState.test {
+            awaitItem()
+
+            viewModel.generateForecast(budget)
+            advanceUntilIdle()
+
+            awaitItem()
+            val loaded = awaitItem()
+
+            assertFalse(loaded.isLoading)
+            assertEquals(activeWindowForecast.targetPeriodStart, loaded.forecast!!.targetPeriodStart)
+            assertEquals(activeWindowForecast.targetPeriodEnd, loaded.forecast!!.targetPeriodEnd)
+            assertEquals(activeWindowForecast.overspendProbability, loaded.forecast!!.overspendProbability, 0.0)
+            assertEquals(120.0, loaded.budget!!.amount - loaded.forecast!!.predictedRemaining, 0.0)
+
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        coVerify(exactly = 1) { forecastingEngine.generateForecast(budget, 30) }
+        verify(exactly = 1) {
+            recommendationEngine.generateRecommendations(any(), any(), 120.0)
+        }
+    }
+
+    @Test
     fun `error in engine sets error state`() = runTest(testDispatcher) {
         val budget = createBudget(id = 30L, amount = 120.0)
         coEvery { forecastingEngine.generateForecast(budget, 30) } throws IllegalStateException("engine failure")

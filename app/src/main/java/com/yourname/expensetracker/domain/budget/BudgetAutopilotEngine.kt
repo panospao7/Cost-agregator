@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import kotlinx.coroutines.flow.first
+import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -22,11 +23,9 @@ import javax.inject.Singleton
  *
  * A.9: Historical spending is now retrieved through pre-aggregated monthly
  * totals from [ExpenseDao] instead of capped raw row reads from
- * [ExpenseRepository].  This eliminates silent data truncation on large
- * histories.  Sparse-history parity is preserved by using only the month
- * keys actually returned by the aggregate SQL — gap months with no
- * qualifying rows are not synthesized, matching pre-A.9 grouped-row
- * semantics.
+ * [ExpenseRepository]. This eliminates silent data truncation on large
+ * histories while normalizing sparse month gaps into zero-spend buckets for
+ * trend and volatility analysis.
  */
 @Singleton
 class BudgetAutopilotEngine @Inject constructor(
@@ -76,9 +75,7 @@ class BudgetAutopilotEngine @Inject constructor(
         }
         
         val categoryRecommendations = mutableListOf<CategoryBudgetRecommendation>()
-        var totalCurrentBudget = 0.0
-        var totalRecommendedBudget = 0.0
-        var totalConfidence = 0.0
+        val hasOverallBudget = budgets.any { it.categoryId == null }
         
         for (budget in budgets) {
             val category = budget.categoryId?.let { catId -> 
@@ -89,13 +86,13 @@ class BudgetAutopilotEngine @Inject constructor(
             val historicalSpend = getHistoricalSpendForBudget(budget, now)
             
             // 2. Calculate trend
-            val trend = calculateTrend(historicalSpend)
+            val trend = calculateTrend(historicalSpend.values)
             
             // 3. Calculate trend-adjusted spend
-            val trendAdjustedSpend = calculateTrendAdjustedSpend(historicalSpend, trend)
+            val trendAdjustedSpend = calculateTrendAdjustedSpend(historicalSpend.values, trend)
             
             // 4. Calculate volatility
-            val volatility = calculateVolatility(historicalSpend)
+            val volatility = calculateVolatility(historicalSpend.values)
             
             // 5. Determine safety factor based on risk/volatility
             val safetyFactor = calculateSafetyFactor(volatility)
@@ -118,7 +115,11 @@ class BudgetAutopilotEngine @Inject constructor(
             val reason = generateReason(trend, volatility, safetyFactor, budget.amount, recommendedBudget)
             
             // 10. Calculate confidence based on data quality
-            val confidence = calculateRecommendationConfidence(historicalSpend, volatility)
+            val confidence = calculateRecommendationConfidence(
+                historicalSpend = historicalSpend.values,
+                observedHistoryMonths = historicalSpend.observedMonthCount,
+                volatility = volatility
+            )
             
             // 11. Determine trend direction
             val trendDirection = when {
@@ -142,13 +143,21 @@ class BudgetAutopilotEngine @Inject constructor(
                 )
             )
             
-            totalCurrentBudget += budget.amount
-            totalRecommendedBudget += recommendedBudget
-            totalConfidence += confidence
         }
-        
-        val overallConfidence = if (categoryRecommendations.isNotEmpty()) {
-            totalConfidence / categoryRecommendations.size
+
+        val summaryRecommendations = categoryRecommendations.filter { recommendation ->
+            if (hasOverallBudget) {
+                recommendation.categoryId == null
+            } else {
+                recommendation.categoryId != null
+            }
+        }
+
+        val totalCurrentBudget = summaryRecommendations.sumOf { it.currentBudget }
+        val totalRecommendedBudget = summaryRecommendations.sumOf { it.recommendedBudget }
+
+        val overallConfidence = if (summaryRecommendations.isNotEmpty()) {
+            summaryRecommendations.map { it.confidence }.average()
         } else 0.0
         
         return BudgetAutopilotRecommendations(
@@ -169,16 +178,13 @@ class BudgetAutopilotEngine @Inject constructor(
      * / [ExpenseDao.getMonthlySpendingTotalsBetween]) instead of fetching raw
      * expense rows, eliminating the silent-truncation risk of capped row reads.
      *
-     * Sparse-history parity: only months that the SQL aggregate actually
-     * returns are used as buckets.  Gap months with no qualifying rows are
-     * **not** synthesized, preserving the same semantics as the pre-A.9
-     * grouped-row code path where only months containing expense rows
-     * produced buckets.
+     * Gap months between the first and last observed months are synthesized as
+     * explicit zero-spend buckets before trend/volatility math runs.
      */
     private suspend fun getHistoricalSpendForBudget(
         budget: com.yourname.expensetracker.data.database.entity.Budget,
         now: Long
-    ): List<Double> {
+    ): HistoricalSpendSeries {
         val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
 
         val monthlyTotals: List<MonthlySpendingTotal> = if (budget.categoryId != null) {
@@ -194,12 +200,31 @@ class BudgetAutopilotEngine @Inject constructor(
             )
         }
 
-        if (monthlyTotals.isEmpty()) return emptyList()
+        if (monthlyTotals.isEmpty()) {
+            return HistoricalSpendSeries(
+                values = emptyList(),
+                observedMonthCount = 0
+            )
+        }
 
-        // Use only the month keys actually returned by SQL — no gap-month
-        // infill.  Month keys are already sorted by the SQL ORDER BY clause,
-        // so the returned list is in chronological order.
-        return monthlyTotals.map { it.total }
+        val totalsByMonth = linkedMapOf<String, Double>()
+        for (monthlyTotal in monthlyTotals) {
+            totalsByMonth[monthlyTotal.monthKey] = monthlyTotal.total
+        }
+
+        val sortedMonthKeys = totalsByMonth.keys.sorted()
+        val infilledValues = runCatching {
+            buildMonthKeyRange(sortedMonthKeys.first(), sortedMonthKeys.last()).map { monthKey ->
+                totalsByMonth[monthKey] ?: 0.0
+            }
+        }.getOrElse {
+            monthlyTotals.map { it.total }
+        }
+
+        return HistoricalSpendSeries(
+            values = infilledValues,
+            observedMonthCount = monthlyTotals.size
+        )
     }
 
     /**
@@ -321,8 +346,14 @@ class BudgetAutopilotEngine @Inject constructor(
      */
     private fun calculateRecommendationConfidence(
         historicalSpend: List<Double>,
+        observedHistoryMonths: Int,
         volatility: Double
     ): Double {
+        if (observedHistoryMonths < MIN_HISTORY_MONTHS) {
+            return ((observedHistoryMonths.toDouble() / MIN_HISTORY_MONTHS) * 0.4)
+                .coerceIn(0.0, 0.4)
+        }
+
         var confidence = 0.5 // Base confidence
         
         // More data = higher confidence
@@ -338,6 +369,46 @@ class BudgetAutopilotEngine @Inject constructor(
         
         return confidence.coerceIn(0.0, 1.0)
     }
+
+    private fun buildMonthKeyRange(startMonthKey: String, endMonthKey: String): List<String> {
+        val cursor = parseMonthKey(startMonthKey)
+        val end = parseMonthKey(endMonthKey)
+        val monthKeys = mutableListOf<String>()
+
+        while (!cursor.after(end)) {
+            monthKeys.add(formatMonthKey(cursor))
+            cursor.add(Calendar.MONTH, 1)
+        }
+
+        return monthKeys
+    }
+
+    private fun parseMonthKey(monthKey: String): Calendar {
+        val parts = monthKey.split("-")
+        require(parts.size == 2) { "Unexpected month key: $monthKey" }
+
+        val year = parts[0].toInt()
+        val month = parts[1].toInt()
+        require(month in 1..12) { "Unexpected month key: $monthKey" }
+
+        return Calendar.getInstance().apply {
+            clear()
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month - 1)
+            set(Calendar.DAY_OF_MONTH, 1)
+        }
+    }
+
+    private fun formatMonthKey(calendar: Calendar): String {
+        val year = calendar.get(Calendar.YEAR)
+        val month = calendar.get(Calendar.MONTH) + 1
+        return String.format("%04d-%02d", year, month)
+    }
+
+    private data class HistoricalSpendSeries(
+        val values: List<Double>,
+        val observedMonthCount: Int
+    )
 }
 
 /**

@@ -8,7 +8,6 @@ import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.data.repository.BudgetRepository
-import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -31,10 +30,13 @@ class BudgetForecastingEngine @Inject constructor(
     private val budgetForecastDao: BudgetForecastDao,
     private val timeProvider: TimeProvider
 ) {
+    private val budgetCalculator = BudgetCalculator(timeProvider)
+
     companion object {
         const val MIN_HISTORY_MONTHS = 3
         const val CONFIDENCE_THRESHOLD_HIGH = 0.8
         const val CONFIDENCE_THRESHOLD_MEDIUM = 0.6
+        private const val MILLIS_PER_DAY = 24 * 60 * 60 * 1000.0
     }
 
     /**
@@ -47,9 +49,10 @@ class BudgetForecastingEngine @Inject constructor(
         val now = timeProvider.now()
         
         // Calculate active budget period window and elapsed segment for spent-to-date.
-        val (periodStart, periodEnd) = calculateCurrentBudgetPeriodRange(budget, now)
+        val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
         val elapsedEnd = now.coerceAtMost(periodEnd)
         val spentToDate = getSpentAmount(budget, periodStart, elapsedEnd)
+        val remainingForecastDays = ((periodEnd - elapsedEnd).coerceAtLeast(0L) / MILLIS_PER_DAY)
         
         // Get historical spending data for this budget's category
         val historicalData = getHistoricalSpendingData(budget)
@@ -57,7 +60,7 @@ class BudgetForecastingEngine @Inject constructor(
         // Calculate predicted spending using multiple factors
         val predictedSpending = calculatePredictedSpending(
             historicalData = historicalData,
-            forecastPeriodDays = forecastPeriodDays
+            forecastPeriodDays = remainingForecastDays
         )
         
         // Calculate confidence based on data quality
@@ -201,7 +204,7 @@ class BudgetForecastingEngine @Inject constructor(
      */
     private fun calculatePredictedSpending(
         historicalData: HistoricalData,
-        forecastPeriodDays: Int
+        forecastPeriodDays: Double
     ): Double {
         val months = forecastPeriodDays / 30.0
         
@@ -287,9 +290,12 @@ class BudgetForecastingEngine @Inject constructor(
         }
 
         val projectedTotal = spentToDate + predictedSpending
+        if (projectedTotal >= budgetAmount) {
+            return 1.0
+        }
+
         val buffer = budgetAmount - projectedTotal
         val probability = when {
-            buffer < 0 -> 1.0 // Already predicted to exceed
             buffer < budgetAmount * 0.1 -> 0.8 // Very tight
             buffer < budgetAmount * 0.25 -> 0.5 // Tight
             buffer < budgetAmount * 0.5 -> 0.2 // Comfortable
@@ -330,95 +336,6 @@ class BudgetForecastingEngine @Inject constructor(
             )
         } else {
             expenseDao.getTotalSpentBetween(periodStart, periodEnd) ?: 0.0
-        }
-    }
-
-    private fun calculateCurrentBudgetPeriodRange(budget: Budget, now: Long): Pair<Long, Long> {
-        return if (budget.periodMode.equals("CALENDAR", ignoreCase = true)) {
-            when (budget.period) {
-                BudgetPeriod.DAILY -> TimePeriodUtils.getStartOfDay(now) to TimePeriodUtils.getEndOfDay(now)
-                BudgetPeriod.WEEKLY -> TimePeriodUtils.getWeekRange(now)
-                BudgetPeriod.MONTHLY -> TimePeriodUtils.getMonthRange(now)
-                BudgetPeriod.YEARLY -> TimePeriodUtils.getYearRange(now)
-            }
-        } else {
-            val calendar = Calendar.getInstance().apply { timeInMillis = now }
-            val startOfToday = TimePeriodUtils.getStartOfDay(now)
-            val anchorCal = Calendar.getInstance().apply { timeInMillis = budget.startDate }
-
-            when (budget.period) {
-                BudgetPeriod.DAILY -> {
-                    val start = startOfToday
-                    val end = TimePeriodUtils.getEndOfDay(start)
-                    start to end
-                }
-
-                BudgetPeriod.WEEKLY -> {
-                    val cal = Calendar.getInstance().apply { timeInMillis = startOfToday }
-                    val anchorDayOfWeek = anchorCal.get(Calendar.DAY_OF_WEEK)
-                    while (cal.get(Calendar.DAY_OF_WEEK) != anchorDayOfWeek) {
-                        cal.add(Calendar.DAY_OF_YEAR, -1)
-                    }
-                    val start = cal.timeInMillis
-                    cal.add(Calendar.WEEK_OF_YEAR, 1)
-                    start to cal.timeInMillis
-                }
-
-                BudgetPeriod.MONTHLY -> {
-                    val cal = Calendar.getInstance().apply { timeInMillis = startOfToday }
-                    val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-
-                    cal.set(Calendar.DAY_OF_MONTH, 1)
-                    val evalDay = calendar.get(Calendar.DAY_OF_MONTH)
-                    val adjustedAnchorDay = anchorDay.coerceAtMost(
-                        calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
-                    )
-
-                    if (evalDay < adjustedAnchorDay) {
-                        cal.add(Calendar.MONTH, -1)
-                    }
-
-                    val monthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                    cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(monthMax))
-                    val start = cal.timeInMillis
-
-                    cal.add(Calendar.MONTH, 1)
-                    val nextMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                    cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(nextMonthMax))
-                    start to cal.timeInMillis
-                }
-
-                BudgetPeriod.YEARLY -> {
-                    val cal = Calendar.getInstance().apply { timeInMillis = startOfToday }
-                    val anchorMonth = anchorCal.get(Calendar.MONTH)
-                    val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-
-                    val currentMonth = cal.get(Calendar.MONTH)
-                    val currentDay = cal.get(Calendar.DAY_OF_MONTH)
-                    val adjustedAnniversaryDay = Calendar.getInstance().apply {
-                        timeInMillis = startOfToday
-                        set(Calendar.DAY_OF_MONTH, 1)
-                        set(Calendar.MONTH, anchorMonth)
-                    }.getActualMaximum(Calendar.DAY_OF_MONTH).let { maxDayOfAnchorMonthInCurrentYear ->
-                        anchorDay.coerceAtMost(maxDayOfAnchorMonthInCurrentYear)
-                    }
-                    val passedAnniversary = currentMonth > anchorMonth ||
-                        (currentMonth == anchorMonth && currentDay >= adjustedAnniversaryDay)
-
-                    if (!passedAnniversary) {
-                        cal.add(Calendar.YEAR, -1)
-                    }
-
-                    cal.set(Calendar.MONTH, anchorMonth)
-                    cal.set(
-                        Calendar.DAY_OF_MONTH,
-                        anchorDay.coerceAtMost(cal.getActualMaximum(Calendar.DAY_OF_MONTH))
-                    )
-                    val start = cal.timeInMillis
-                    cal.add(Calendar.YEAR, 1)
-                    start to cal.timeInMillis
-                }
-            }
         }
     }
     

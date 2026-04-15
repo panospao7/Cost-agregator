@@ -28,7 +28,7 @@ class RecurringExpenseEngineTest {
         recurringExpenseRepository = mockk()
         timeProvider = mockk()
         coEvery { recurringExpenseRepository.getAll() } returns emptyList()
-        coEvery { timeProvider.now() } returns System.currentTimeMillis()
+        coEvery { timeProvider.now() } returns timestampOf(2026, Calendar.APRIL, 15)
         engine = RecurringExpenseEngine(expenseRepository, recurringExpenseRepository, timeProvider)
     }
 
@@ -213,6 +213,41 @@ class RecurringExpenseEngineTest {
         assertTrue("Not-mine expenses should not produce recurring patterns", patterns.isEmpty())
     }
 
+    @Test
+    fun `manual stale next date is rolled forward into the future`() = runTest {
+        val staleManual = ManualRecurringExpense(
+            id = 7L,
+            merchant = "Gym",
+            amount = 50.0,
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = timestampOf(2026, Calendar.JANUARY, 10),
+            createdAt = timestampOf(2025, Calendar.DECEMBER, 1)
+        )
+        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(staleManual)
+
+        val patterns = engine.getPatterns()
+
+        assertEquals(1, patterns.size)
+        assertEquals(timestampOf(2026, Calendar.MAY, 10), patterns.first().nextExpectedDate)
+    }
+
+    @Test
+    fun `detected stale next date is rolled forward into the future`() = runTest {
+        val expenses = listOf(
+            createExpense("Water", 30.0, "2025-11-01"),
+            createExpense("Water", 30.0, "2025-12-01"),
+            createExpense("Water", 30.0, "2026-01-01")
+        )
+        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+
+        val patterns = engine.getPatterns()
+
+        assertEquals(1, patterns.size)
+        assertEquals(RecurrenceFrequency.MONTHLY, patterns.first().frequency)
+        assertEquals(timestampOf(2026, Calendar.MAY, 1), patterns.first().nextExpectedDate)
+    }
+
 
     private fun createExpense(
         merchant: String,
@@ -232,5 +267,17 @@ class RecurringExpenseEngineTest {
             date = calendar.timeInMillis,
             isNotMine = isNotMine
         )
+    }
+
+    private fun timestampOf(year: Int, month: Int, day: Int): Long {
+        return Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, day)
+            set(Calendar.HOUR_OF_DAY, 12)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
     }
 }

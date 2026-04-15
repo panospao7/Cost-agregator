@@ -89,7 +89,7 @@ class LifecycleObserver(
             // Use non-destructive onBackground() so the classifier can still
             // schedule save/retrain work when the app returns to the foreground.
             transactionClassifier.onBackground()
-            budgetMonitor.cleanup()
+            budgetMonitor.onBackground()
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) {
                 Timber.e(e, "Error during cleanup")

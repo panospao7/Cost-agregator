@@ -269,10 +269,10 @@ class CarbonFootprintCalculatorTest {
         assertThat(groceryCategory).isNotNull()
     }
 
-    // ── A.9 regression tests ──────────────────────────────────────────────
+    // ── DAO snapshot path regression tests ───────────────────────────────
 
     /**
-     * A.9 Batch 7 regression: CarbonFootprintCalculator must call
+     * Regression: CarbonFootprintCalculator must call
      * [ExpenseDao.getExpensesBetweenUncapped] (one-shot, no LIMIT) instead of
      * the Flow-based or capped variants.
      *
@@ -281,8 +281,8 @@ class CarbonFootprintCalculatorTest {
      * is used.
      */
     @Test
-    fun `A9 regression - carbon report includes all rows beyond old 2000 limit`() = runTest {
-        val allExpenses = (1..2500).map { i ->
+    fun `regression - carbon report includes all rows beyond old 2000 limit`() = runTest {
+        val allExpenses = (1..2500).map {
             createExpense("SHELL", 10.0, TransactionType.PURCHASE)
         }
 
@@ -300,17 +300,16 @@ class CarbonFootprintCalculatorTest {
      * capped variants are invoked.
      */
     @Test
-    fun `A9 regression - capped getExpensesBetweenFlow is never called`() = runTest {
+    fun `regression - calculator uses one shot uncapped dao path only`() = runTest {
         coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns
             listOf(createExpense("Test", 10.0, TransactionType.PURCHASE))
 
         calculator.calculateCarbonFootprint()
 
-        // Ensure the one-shot uncapped variant was called
-        coVerify { expenseDao.getExpensesBetweenUncapped(any(), any()) }
-        // Ensure Flow-based and capped variants were NOT called
+        coVerify(exactly = 1) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
         verify(exactly = 0) { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) }
         verify(exactly = 0) { expenseDao.getExpensesBetweenFlow(any(), any(), any()) }
+        coVerify(exactly = 0) { expenseDao.getExpensesBetween(any(), any(), any(), any()) }
     }
 
     // Helper methods

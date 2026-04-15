@@ -8,11 +8,10 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.flow.first
 import timber.log.Timber
-import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.Calendar
 import java.util.Random
 
 /**
@@ -50,24 +49,18 @@ class FinancialStressForecastEngine @Inject constructor(
         
         return try {
             val now = timeProvider.now()
-            val calendar = Calendar.getInstance().apply { timeInMillis = now }
-            val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
-            
-            // Get current financial state
-            val currentBalance = computeCurrentBalance()
+
+            // No canonical account-balance source exists in this pipeline.
+            // Use a neutral starting point instead of presenting month-to-date
+            // net cashflow as if it were the user's real cash balance.
+            val currentBalance = resolveStartingBalanceBaseline()
             val patterns = recurringExpenseEngine.getPatterns()
-            
-            // Get budget info for income estimation
-            val budgetStatuses = budgetRepository.getBudgetStatuses().first()
-            val totalBudget = budgetStatuses.find { it.budget.categoryId == null }?.budget?.amount
-                ?: budgetStatuses.sumOf { it.budget.amount }
-            
+
             // Calculate horizons
             val horizon30 = calculateHorizon(
                 daysAhead = DAYS_30,
                 currentBalance = currentBalance,
                 patterns = patterns,
-                totalBudget = totalBudget,
                 now = now
             )
             
@@ -75,7 +68,6 @@ class FinancialStressForecastEngine @Inject constructor(
                 daysAhead = DAYS_60,
                 currentBalance = currentBalance,
                 patterns = patterns,
-                totalBudget = totalBudget,
                 now = now
             )
             
@@ -83,7 +75,6 @@ class FinancialStressForecastEngine @Inject constructor(
                 daysAhead = DAYS_90,
                 currentBalance = currentBalance,
                 patterns = patterns,
-                totalBudget = totalBudget,
                 now = now
             )
             
@@ -96,7 +87,7 @@ class FinancialStressForecastEngine @Inject constructor(
             val earliestCrunchDate = findEarliestCrunchDate(horizons, now)
             
             // Generate recommendations
-            val recommendations = generateRecommendations(horizons, currentBalance, patterns)
+            val recommendations = generateRecommendations(horizons, patterns)
             
             val duration = System.currentTimeMillis() - startTime
             Timber.d("$TAG: Stress forecast computed in ${duration}ms - Risk: $overallRiskLevel")
@@ -133,7 +124,6 @@ class FinancialStressForecastEngine @Inject constructor(
         daysAhead: Int,
         currentBalance: Double,
         patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
-        totalBudget: Double,
         now: Long
     ): StressHorizon {
         val horizonEnd = now + (daysAhead * TimePeriodUtils.DAY_IN_MILLIS)
@@ -142,7 +132,7 @@ class FinancialStressForecastEngine @Inject constructor(
         val recurringOutflows = calculateRecurringOutflows(patterns, now, horizonEnd)
         
         // 2. Estimate expected income
-        val expectedIncome = estimateIncome(daysAhead, totalBudget)
+        val expectedIncome = estimateIncome(daysAhead)
         
         // 3. Run Monte Carlo for discretionary spending
         val mcResult = runMonteCarloSimulation(daysAhead, patterns)
@@ -220,7 +210,7 @@ class FinancialStressForecastEngine @Inject constructor(
     /**
      * Estimate expected income for the horizon based on historical deposits.
      */
-    private suspend fun estimateIncome(daysAhead: Int, totalBudget: Double): Double {
+    private suspend fun estimateIncome(daysAhead: Int): Double {
         // Look back 90 days to estimate monthly income
         val now = timeProvider.now()
         val ninetyDaysAgo = now - (90 * TimePeriodUtils.DAY_IN_MILLIS)
@@ -233,10 +223,7 @@ class FinancialStressForecastEngine @Inject constructor(
         
         // Scale to the horizon
         val monthsInHorizon = daysAhead / 30.0
-        val estimatedIncome = avgMonthlyIncome * monthsInHorizon
-        
-        // If no deposit history, use budget as fallback (assume user budgets based on income)
-        return if (estimatedIncome > 0) estimatedIncome else (totalBudget * monthsInHorizon)
+        return (avgMonthlyIncome * monthsInHorizon).coerceAtLeast(0.0)
     }
 
     /**
@@ -270,28 +257,8 @@ class FinancialStressForecastEngine @Inject constructor(
             }
         }
         
-        // Build empirical distribution of daily discretionary totals
-        val dailyTotals = discretionaryPurchases
-            .groupBy { TimePeriodUtils.getStartOfDay(it.date) }
-            .mapValues { (_, txns) -> txns.sumOf { it.effectiveAmount } }
-            .values
-            .filter { it > 0.0 }
-
-        // Recurring-only purchase history implies no discretionary empirical signal.
-        if (dailyTotals.isEmpty() && purchases.isNotEmpty()) {
-            val zeroTotals = DoubleArray(NUM_SIMULATIONS) { 0.0 }
-            return MonteCarloHorizonResult(
-                percentile10 = 0.0,
-                percentile25 = 0.0,
-                percentile50 = 0.0,
-                percentile75 = 0.0,
-                percentile90 = 0.0,
-                simulatedTotals = zeroTotals.toList()
-            )
-        }
-        
-        // If insufficient data, return conservative estimates
-        if (dailyTotals.isEmpty()) {
+        // If there is no recent purchase history at all, return conservative estimates.
+        if (purchases.isEmpty()) {
             val random = Random(SEED)
             val fallbackTotals = DoubleArray(NUM_SIMULATIONS) {
                 (daysAhead * 20.0 + random.nextGaussian() * 5.0).coerceAtLeast(0.0)
@@ -306,6 +273,22 @@ class FinancialStressForecastEngine @Inject constructor(
                 percentile90 = percentile(fallbackTotals, 0.90),
                 simulatedTotals = fallbackTotals.toList()
             )
+        }
+
+        // Build empirical distribution of daily discretionary totals, including
+        // zero-spend days so sparse history does not overstate routine spending.
+        val discretionaryTotalsByDay = discretionaryPurchases
+            .groupBy { TimePeriodUtils.getStartOfDay(it.date) }
+            .mapValues { (_, txns) -> txns.sumOf { it.effectiveAmount } }
+
+        val sampleStartDay = TimePeriodUtils.getStartOfDay(sixtyDaysAgo)
+        val sampleEndDay = TimePeriodUtils.getStartOfDay(now)
+        val dailyTotals = mutableListOf<Double>()
+        var cursorDay = sampleStartDay
+
+        while (cursorDay <= sampleEndDay) {
+            dailyTotals += discretionaryTotalsByDay[cursorDay] ?: 0.0
+            cursorDay = TimePeriodUtils.addDays(cursorDay, 1)
         }
 
         // Run simulations
@@ -394,7 +377,6 @@ class FinancialStressForecastEngine @Inject constructor(
      */
     private fun generateRecommendations(
         horizons: List<StressHorizon>,
-        currentBalance: Double,
         patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>
     ): List<String> {
         val recommendations = mutableListOf<String>()
@@ -430,7 +412,7 @@ class FinancialStressForecastEngine @Inject constructor(
         }
         
         // Add positive reinforcement when healthy
-        if (!anyRisk && currentBalance > DEFAULT_EMERGENCY_BUFFER) {
+        if (!anyRisk && horizons.all { it.projectedBalance > DEFAULT_EMERGENCY_BUFFER }) {
             recommendations.add("Great job! Your financial stress level is low. Keep up the good habits.")
         }
         
@@ -438,25 +420,11 @@ class FinancialStressForecastEngine @Inject constructor(
     }
 
     /**
-     * Compute current balance (income to date minus expenses to date this month).
+     * Forecasting has no canonical account-balance source in this pipeline.
+     * Use a neutral baseline instead of fabricating a balance from cashflow.
      */
-    private suspend fun computeCurrentBalance(): Double {
-        val now = timeProvider.now()
-        val monthStart = TimePeriodUtils.getStartOfMonth(now)
-        
-        val expenses = expenseRepository.getExpensesBetween(monthStart, now)
-        
-        val totalIncome = expenses
-            .filter { it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT }
-            .sumOf { it.effectiveAmount }
-        
-        val totalExpenses = expenses
-            .filter { 
-                it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine 
-            }
-            .sumOf { it.effectiveAmount }
-        
-        return totalIncome - totalExpenses
+    private fun resolveStartingBalanceBaseline(): Double {
+        return 0.0
     }
 
     /**

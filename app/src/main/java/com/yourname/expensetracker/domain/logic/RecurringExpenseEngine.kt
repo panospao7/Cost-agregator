@@ -31,12 +31,13 @@ class RecurringExpenseEngine @Inject constructor(
         return getPatterns(allExpenses)
     }
 
-    /**
-     * Overload for when we already have the list of expenses (e.g. from Analytics).
-     */
-    suspend fun getPatterns(allExpenses: List<com.yourname.expensetracker.data.database.entity.Expense>): List<RecurringPattern> {
-        // 1. Fetch Manual Overrides
-        val manualExpenses = recurringExpenseRepository.getAll()
+/**
+ * Overload for when we already have the list of expenses (e.g. from Analytics).
+ */
+suspend fun getPatterns(allExpenses: List<com.yourname.expensetracker.data.database.entity.Expense>): List<RecurringPattern> {
+    val now = timeProvider.now()
+    // 1. Fetch Manual Overrides
+    val manualExpenses = recurringExpenseRepository.getAll()
         // Use lowercase().trim() to match how expenses are grouped (normalized merchant names)
         val manualMap = manualExpenses.associateBy { it.merchant.lowercase().trim() }
         
@@ -109,7 +110,7 @@ class RecurringExpenseEngine @Inject constructor(
                         frequency = frequency,
                         periodVarianceDays = varianceDays,
                         amountVariancePercent = amountVariance,
-                        nextExpectedDate = nextDate,
+                        nextExpectedDate = rollNextExpectedDateForward(nextDate, frequency, now),
                         confidence = confidence.toFloat(),
                         previousDates = dates.takeLast(5),
                         categoryId = sorted.first().categoryId
@@ -127,7 +128,7 @@ class RecurringExpenseEngine @Inject constructor(
                 frequency = manual.frequency,
                 periodVarianceDays = 0,
                 amountVariancePercent = 0.0,
-                nextExpectedDate = manual.nextDate,
+                nextExpectedDate = rollNextExpectedDateForward(manual.nextDate, manual.frequency, now),
                 confidence = 1.0f, // Manual is 100% confident
                 previousDates = emptyList(), // No history needed for display
                 categoryId = null, // Manual entries don't have categoryId yet
@@ -150,6 +151,32 @@ class RecurringExpenseEngine @Inject constructor(
 
     private fun calculateStdDev(values: List<Double>): Double {
         return com.yourname.expensetracker.domain.util.StatisticsUtils.calculateStdDev(values)
+    }
+
+    private fun rollNextExpectedDateForward(
+        nextExpectedDate: Long,
+        frequency: RecurrenceFrequency,
+        now: Long
+    ): Long {
+        if (frequency == RecurrenceFrequency.IRREGULAR) return nextExpectedDate
+
+        var rolledDate = nextExpectedDate
+        while (rolledDate <= now) {
+            val candidate = when (frequency) {
+                RecurrenceFrequency.WEEKLY,
+                RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(rolledDate, frequency.days)
+                RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(rolledDate, 1)
+                RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(rolledDate, 3)
+                RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(rolledDate, 6)
+                RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(rolledDate, 1)
+                RecurrenceFrequency.IRREGULAR -> rolledDate
+            }
+
+            if (candidate == rolledDate) break
+            rolledDate = candidate
+        }
+
+        return rolledDate
     }
 
     private fun determineFrequency(intervalsMs: List<Long>, dates: List<Long>): Triple<RecurrenceFrequency, Double, Int> {

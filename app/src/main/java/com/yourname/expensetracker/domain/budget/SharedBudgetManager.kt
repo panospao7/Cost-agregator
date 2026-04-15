@@ -16,20 +16,22 @@ import javax.inject.Singleton
 class SharedBudgetManager @Inject constructor(
     private val budgetRepository: BudgetRepository,
     private val expenseDao: ExpenseDao,
+    private val budgetCalculator: BudgetCalculator,
     private val timeProvider: TimeProvider
 ) {
     
     /**
      * Calculate spending for a shared budget.
      *
-     * A.9 Batch 4 fix: uses [ExpenseDao.getEffectiveSpentBetweenForCategory]
-     * — an exact aggregate SQL helper that sums EFFECTIVE_AMOUNT_SQL over the
-     * half-open date range with `isNotMine = 0` and nullable-category equality
-     * semantics.  This replaces the prior uncapped row scan + in-memory filter,
-     * pushing the work entirely into SQLite.
+     * B.2 Batch 3 fix: align shared-budget progress with canonical budget
+     * semantics by using [BudgetCalculator.calculatePeriodRange] for the
+     * active budget window and the same aggregate helpers used by budget
+     * status calculations:
+     *  - category budgets → [ExpenseDao.getCategorySpentInPeriod]
+     *  - overall budgets → [ExpenseDao.getTotalForPeriod]
      *
-     * The aggregate intentionally does **not** narrow by transaction type;
-     * that responsibility belongs to A.10.
+     * Both helpers preserve effective-amount behavior and PURCHASE-only
+     * budget spend semantics.
      */
     suspend fun getSharedBudgetProgress(
         budgetId: Long,
@@ -37,15 +39,20 @@ class SharedBudgetManager @Inject constructor(
     ): SharedBudgetProgress = withContext(Dispatchers.IO) {
         val budget = budgetRepository.getById(budgetId) ?: throw IllegalArgumentException("Budget not found")
         val now = timeProvider.now()
-        val startOfMonth = getStartOfMonth(now)
-
-        // A.9 Batch 4: exact aggregate — no row scan, no LIMIT,
-        // nullable-category equality, all transaction types.
-        val totalSpent = expenseDao.getEffectiveSpentBetweenForCategory(
-            startDate = startOfMonth,
-            endDate = now,
-            categoryId = budget.categoryId
-        )
+        val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
+        val elapsedEnd = now.coerceAtMost(periodEnd).coerceAtLeast(periodStart)
+        val totalSpent = if (budget.categoryId != null) {
+            expenseDao.getCategorySpentInPeriod(
+                categoryId = budget.categoryId,
+                startMs = periodStart,
+                endMs = elapsedEnd
+            )
+        } else {
+            expenseDao.getTotalForPeriod(
+                startMs = periodStart,
+                endMs = elapsedEnd
+            )
+        }
         
         val remaining = budget.amount - totalSpent
         val percentUsed = if (budget.amount > 0) (totalSpent / budget.amount) * 100 else 0.0
@@ -82,16 +89,6 @@ class SharedBudgetManager @Inject constructor(
         }
     }
     
-    private fun getStartOfMonth(timestamp: Long): Long {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = timestamp
-        calendar.set(java.util.Calendar.DAY_OF_MONTH, 1)
-        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        calendar.set(java.util.Calendar.MINUTE, 0)
-        calendar.set(java.util.Calendar.SECOND, 0)
-        calendar.set(java.util.Calendar.MILLISECOND, 0)
-        return calendar.timeInMillis
-    }
 }
 
 data class SharedBudgetProgress(

@@ -16,6 +16,7 @@ import org.junit.Before
 import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 
 class BudgetTrendBoundaryTest {
 
@@ -82,13 +83,18 @@ class BudgetTrendBoundaryTest {
         )
         val minus1001 = engine.generateForecast(budget)
 
+        val remainingMonths = ChronoUnit.DAYS.between(
+            LocalDate.of(2026, 4, 15),
+            LocalDate.of(2026, 5, 15)
+        ) / 30.0
+
         // exactly +/-10% should remain STABLE (no 1.1/0.9 multiplier)
-        assertApproxEquals((100.0 + 110.0 + 110.0) / 3.0, exactlyPlus10.predictedSpending, 0.0001)
-        assertApproxEquals((100.0 + 90.0 + 90.0) / 3.0, exactlyMinus10.predictedSpending, 0.0001)
+        assertApproxEquals(((100.0 + 110.0 + 110.0) / 3.0) * remainingMonths, exactlyPlus10.predictedSpending, 0.0001)
+        assertApproxEquals(((100.0 + 90.0 + 90.0) / 3.0) * remainingMonths, exactlyMinus10.predictedSpending, 0.0001)
 
         // +/-10.01% should trigger INCREASING/DECREASING multipliers
-        val plus1001Average = (100.0 + 110.01 + 110.01) / 3.0
-        val minus1001Average = (100.0 + 89.99 + 89.99) / 3.0
+        val plus1001Average = ((100.0 + 110.01 + 110.01) / 3.0) * remainingMonths
+        val minus1001Average = ((100.0 + 89.99 + 89.99) / 3.0) * remainingMonths
         assertApproxEquals(plus1001Average * 1.1, plus1001.predictedSpending, 0.0001)
         assertApproxEquals(minus1001Average * 0.9, minus1001.predictedSpending, 0.0001)
 
