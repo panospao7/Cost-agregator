@@ -86,7 +86,9 @@ class LifecycleObserver(
     override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {
         super.onStop(owner)
         try {
-            transactionClassifier.cleanup()
+            // Use non-destructive onBackground() so the classifier can still
+            // schedule save/retrain work when the app returns to the foreground.
+            transactionClassifier.onBackground()
             budgetMonitor.cleanup()
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) {

@@ -30,18 +30,54 @@ open class TransactionClassifier @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // Single synchronization owner for all job-handle read/cancel/replace operations.
-    // A plain JVM monitor is used (rather than the coroutine Mutex) because cleanup()
-    // is a non-suspend function that must also cancel both jobs safely.
+    // A plain JVM monitor is used (rather than the coroutine Mutex) because lifecycle
+    // methods are non-suspend functions that must also cancel both jobs safely.
     private val jobLock = Any()
     private var saveJob: Job? = null
     private var retrainJob: Job? = null
 
-    fun cleanup() {
+    /**
+     * Non-destructive lifecycle callback for routine app backgrounding.
+     *
+     * Cancels any pending save/retrain jobs without killing the parent scope,
+     * so that future [scheduleSave] and [retrainFromCorrections] calls can
+     * still launch new coroutines in the same process.
+     */
+    fun onBackground() {
         synchronized(jobLock) {
             saveJob?.cancel()
+            saveJob = null
             retrainJob?.cancel()
+            retrainJob = null
         }
+    }
+
+    /**
+     * Permanently cancels this classifier's coroutine scope.
+     *
+     * After this call, no further coroutines can be launched.
+     * Use only when the classifier instance is truly being disposed of
+     * (e.g., in tests or when the process is being terminated).
+     */
+    fun destroy() {
+        onBackground()
         scope.cancel()
+    }
+
+    /**
+     * Legacy cleanup method. Preserved for backward compatibility.
+     *
+     * Calling this method permanently cancels the classifier's scope,
+     * which means no future save/retrain work can be scheduled.
+     * Prefer [onBackground] for routine app backgrounding and
+     * [destroy] for true scope disposal.
+     */
+    @Deprecated(
+        message = "Use onBackground() for routine backgrounding or destroy() for permanent disposal",
+        replaceWith = ReplaceWith("onBackground()")
+    )
+    fun cleanup() {
+        destroy()
     }
 
     companion object {

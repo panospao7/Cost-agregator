@@ -2,15 +2,14 @@ package com.yourname.expensetracker.domain.intelligence.ml
 
 import android.content.Context
 import timber.log.Timber
-import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import com.yourname.expensetracker.di.IoDispatcher
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -18,21 +17,30 @@ import javax.inject.Singleton
 /**
  * Naive Bayes Classifier for Expense Categorization.
  * Uses multinomial Naive Bayes with Laplace smoothing.
+ *
+ * Persistence strategy: learned state is saved to disk after every
+ * [DURABLE_SAVE_INTERVAL] training samples (bounded, durable save).
+ * Explicit [saveModel] always awaits the actual disk write before returning.
  */
 @Singleton
 class ExpenseCategoryClassifier @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
     companion object {
         private const val TAG = "ExpenseCategoryNB"
         private const val MODEL_FILE = "expense_category_model.json"
         private const val SMOOTHING = 1.0
         private const val MIN_SAMPLES = 20
-        private const val BATCH_SAVE_THRESHOLD = 100
+        /**
+         * Bounded durable-save interval: persist after every N training samples
+         * so learned corrections survive ordinary process death.
+         * Kept intentionally low to prevent data loss while avoiding per-call I/O.
+         */
+        internal const val DURABLE_SAVE_INTERVAL = 5
     }
 
     private val mutex = Mutex()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
     private var categoryCounts = mutableMapOf<Long, Int>()
     private var totalSamples = 0
@@ -90,7 +98,7 @@ class ExpenseCategoryClassifier @Inject constructor(
             
             unsavedChanges++
             
-            if (unsavedChanges >= BATCH_SAVE_THRESHOLD) {
+            if (unsavedChanges >= DURABLE_SAVE_INTERVAL) {
                 saveModelInternal()
                 unsavedChanges = 0
             }
@@ -134,7 +142,12 @@ class ExpenseCategoryClassifier @Inject constructor(
         }
     }
 
-    private fun saveModelInternal() {
+    /**
+     * Persists the current model state to disk.
+     * Awaits the actual file write so callers have a real durability guarantee.
+     * Must be called while [mutex] is held.
+     */
+    private suspend fun saveModelInternal() {
         try {
             val json = JSONObject().apply {
                 put("totalSamples", totalSamples)
@@ -152,15 +165,24 @@ class ExpenseCategoryClassifier @Inject constructor(
                 }
                 put("wordCounts", wordCountsJson)
             }
-            scope.launch {
-                File(context.filesDir, MODEL_FILE).writeText(json.toString())
+            // Await disk write on the I/O dispatcher — no fire-and-forget.
+            withContext(ioDispatcher) {
+                val target = File(context.filesDir, MODEL_FILE)
+                val tmp = File(context.filesDir, "$MODEL_FILE.tmp")
+                tmp.writeText(json.toString())
+                if (!tmp.renameTo(target)) {
+                    // Fallback: direct overwrite (preserves backward compat on
+                    // filesystems where atomic rename fails).
+                    target.writeText(json.toString())
+                    tmp.delete()
+                }
             }
         } catch (e: Exception) {
             Timber.e(e, "Failed to save model")
         }
     }
 
-    private suspend fun loadModel() = withContext(Dispatchers.IO) {
+    private suspend fun loadModel() = withContext(ioDispatcher) {
         mutex.withLock {
             try {
                 val file = File(context.filesDir, MODEL_FILE)

@@ -82,35 +82,36 @@ class HybridExpenseClassifier @Inject constructor(
             return@withContext dictionaryResult
         }
 
-        // 2. ML Prediction (with fallback when model unavailable - LOW bug fix)
+        // 2. ML Prediction — the classifier itself decides whether it has
+        //    enough data (including persisted on-disk state loaded at cold start).
+        //    No external isReady() gate: classify() returns an empty list when
+        //    the model is not usable, preserving fallback semantics.
         try {
-            if (nbClassifier.isReady()) {
-                val mlResults = nbClassifier.classify(features)
-                if (mlResults.isNotEmpty()) {
-                    val best = mlResults.first()
-                    // Use > for strict boundary; >= ensures exactly-at-threshold is accepted
-                    if (best.score >= ML_THRESHOLD) {
-                        val category = categories.find { it.id == best.categoryId }
-                        return@withContext ClassificationResult(
-                            categoryId = best.categoryId,
-                            categoryName = category?.name ?: "Unknown",
-                            confidence = best.score.coerceIn(0.0f, 1.0f),
-                            alternatives = mlResults.take(3).map { res ->
-                                res.copy(
-                                    categoryName = categories.find { it.id == res.categoryId }?.name ?: "Unknown",
-                                    score = res.score.coerceIn(0.0f, 1.0f)
-                                )
-                            },
-                            matchType = MatchType.ML_PREDICTION
-                        )
-                    }
+            val mlResults = nbClassifier.classify(features)
+            if (mlResults.isNotEmpty()) {
+                val best = mlResults.first()
+                // Use > for strict boundary; >= ensures exactly-at-threshold is accepted
+                if (best.score >= ML_THRESHOLD) {
+                    val category = categories.find { it.id == best.categoryId }
+                    return@withContext ClassificationResult(
+                        categoryId = best.categoryId,
+                        categoryName = category?.name ?: "Unknown",
+                        confidence = best.score.coerceIn(0.0f, 1.0f),
+                        alternatives = mlResults.take(3).map { res ->
+                            res.copy(
+                                categoryName = categories.find { it.id == res.categoryId }?.name ?: "Unknown",
+                                score = res.score.coerceIn(0.0f, 1.0f)
+                            )
+                        },
+                        matchType = MatchType.ML_PREDICTION
+                    )
                 }
             }
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "ML classifier failed, using fallback")
         }
 
-        // 3. Fallback (dictionary miss or ML unavailable)
+        // 3. Fallback (dictionary miss, ML unavailable, or model not yet trained)
         fallbackResult()
     }
 
