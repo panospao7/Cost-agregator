@@ -133,9 +133,9 @@ class DedupeJudgeInputBuilder @Inject constructor(
             }
         }.take(AppConfig.Ai.MAX_DEDUPE_CANDIDATES_FOR_AI)
 
-        if (candidates.size < 2) {
+        if (candidates.isEmpty()) {
             return DedupeJudgeBuildResult.NotNeeded(
-                "Deterministic duplicate matching already narrowed this to a single candidate."
+                "No bounded duplicate candidates remained after deterministic filtering."
             )
         }
 

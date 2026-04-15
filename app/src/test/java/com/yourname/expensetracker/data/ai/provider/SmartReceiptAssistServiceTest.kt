@@ -16,8 +16,10 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.match
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -43,10 +45,16 @@ class SmartReceiptAssistServiceTest {
         every { aiPolicy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
 
         coEvery {
-            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, settings, any())
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode == settings.preferredMode }, any())
         } returns AiRouteDecision(
             route = AiRoute.ON_DEVICE,
             reason = "On-device forced for current context"
+        )
+        coEvery {
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode.name == "CLOUD" }, any())
+        } returns AiRouteDecision(
+            route = AiRoute.DETERMINISTIC_FALLBACK,
+            reason = "Cloud unavailable"
         )
 
         coEvery { onDeviceReceiptAssistService.suggest(any()) } returns AiServiceResult.Success(
@@ -98,12 +106,19 @@ class SmartReceiptAssistServiceTest {
         val settings = defaultSettings()
         every { aiSettingsRepository.settings() } returns flowOf(settings)
         every { aiPolicy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
+        every { aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
 
         coEvery {
-            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, settings, any())
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode == settings.preferredMode }, any())
         } returns AiRouteDecision(
             route = AiRoute.CLOUD,
             reason = "Cloud forced for current context"
+        )
+        coEvery {
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode.name == "ON_DEVICE" }, any())
+        } returns AiRouteDecision(
+            route = AiRoute.DETERMINISTIC_FALLBACK,
+            reason = "On-device unavailable"
         )
 
         coEvery { cloudReceiptAssistService.suggest(any()) } returns successfulSuggestionResult()
@@ -135,8 +150,10 @@ class SmartReceiptAssistServiceTest {
 
         val settings = defaultSettings()
         every { aiSettingsRepository.settings() } returns flowOf(settings)
+        every { aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
+        every { aiPolicy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
         coEvery {
-            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, settings, any())
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode == settings.preferredMode }, any())
         } returns AiRouteDecision(
             route = AiRoute.DETERMINISTIC_FALLBACK,
             reason = "Cloud and on-device unavailable in this context"
@@ -172,9 +189,11 @@ class SmartReceiptAssistServiceTest {
 
         val settings = defaultSettings()
         every { aiSettingsRepository.settings() } returns flowOf(settings)
+        every { aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
+        every { aiPolicy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
 
         coEvery {
-            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, settings, any())
+            aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode == settings.preferredMode }, any())
         } returns AiRouteDecision(
             route = AiRoute.DISABLED,
             reason = "Feature disabled"
@@ -198,6 +217,147 @@ class SmartReceiptAssistServiceTest {
         assertTrue(result is AiServiceResult.Failure)
         coVerify(exactly = 0) { cloudReceiptAssistService.suggest(any()) }
         coVerify(exactly = 0) { onDeviceReceiptAssistService.suggest(any()) }
+        coVerify(exactly = 1) { noOpReceiptAssistService.suggest(any()) }
+    }
+
+    @Test
+    fun `suggest falls through from cloud to on device when cloud attempt fails`() = runTest {
+        val cloudReceiptAssistService = mockk<CloudReceiptAssistService>()
+        val onDeviceReceiptAssistService = mockk<OnDeviceReceiptAssistService>()
+        val noOpReceiptAssistService = mockk<NoOpReceiptAssistService>()
+        val aiCapabilityRouter = mockk<AiCapabilityRouter>()
+        val aiSettingsRepository = mockk<AiSettingsRepository>()
+        val aiPolicy = mockk<AiPolicy>()
+
+        val settings = defaultSettings()
+        every { aiSettingsRepository.settings() } returns flowOf(settings)
+        every { aiPolicy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
+        every { aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
+        every { aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
+        every { aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
+        every { aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
+        coEvery { aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode == settings.preferredMode }, any()) } returns AiRouteDecision(
+            route = AiRoute.CLOUD,
+            reason = "Cloud preferred"
+        )
+        coEvery { aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode.name == "ON_DEVICE" }, any()) } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "On-device fallback is available"
+        )
+        coEvery { cloudReceiptAssistService.suggest(any()) } returnsMany listOf(
+            AiServiceResult.Failure(AiServiceError.Timeout),
+            AiServiceResult.Failure(AiServiceError.Timeout)
+        )
+        coEvery { onDeviceReceiptAssistService.suggest(any()) } returns successfulSuggestionResult()
+
+        val service = SmartReceiptAssistService(
+            cloudReceiptAssistService,
+            onDeviceReceiptAssistService,
+            noOpReceiptAssistService,
+            aiCapabilityRouter,
+            aiSettingsRepository,
+            aiPolicy
+        )
+
+        val result = service.suggest(defaultInput())
+
+        assertTrue(result is AiServiceResult.Success)
+        val suggestion = (result as AiServiceResult.Success).value
+        assertEquals(2, suggestion.attemptDetails.size)
+        assertEquals("CLOUD_VISION", suggestion.attemptDetails[0].method)
+        assertEquals("ON_DEVICE_VISION", suggestion.attemptDetails[1].method)
+        coVerify(atLeast = 1) { cloudReceiptAssistService.suggest(any()) }
+        coVerify(atLeast = 1) { onDeviceReceiptAssistService.suggest(any()) }
+    }
+
+    @Test
+    fun `suggest falls through from on device to cloud when local attempt fails`() = runTest {
+        val cloudReceiptAssistService = mockk<CloudReceiptAssistService>()
+        val onDeviceReceiptAssistService = mockk<OnDeviceReceiptAssistService>()
+        val noOpReceiptAssistService = mockk<NoOpReceiptAssistService>()
+        val aiCapabilityRouter = mockk<AiCapabilityRouter>()
+        val aiSettingsRepository = mockk<AiSettingsRepository>()
+        val aiPolicy = mockk<AiPolicy>()
+
+        val settings = defaultSettings()
+        every { aiSettingsRepository.settings() } returns flowOf(settings)
+        every { aiPolicy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
+        every { aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
+        every { aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_EXTRACTION) } returns true
+        coEvery { aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode == settings.preferredMode }, any()) } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "On-device preferred"
+        )
+        coEvery { aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode.name == "CLOUD" }, any()) } returns AiRouteDecision(
+            route = AiRoute.CLOUD,
+            reason = "Cloud fallback is available"
+        )
+        coEvery { onDeviceReceiptAssistService.suggest(any()) } returnsMany listOf(
+            AiServiceResult.Failure(AiServiceError.ParseError("bad parse")),
+            AiServiceResult.Failure(AiServiceError.ParseError("bad parse"))
+        )
+        coEvery { cloudReceiptAssistService.suggest(any()) } returns successfulSuggestionResult()
+
+        val service = SmartReceiptAssistService(
+            cloudReceiptAssistService,
+            onDeviceReceiptAssistService,
+            noOpReceiptAssistService,
+            aiCapabilityRouter,
+            aiSettingsRepository,
+            aiPolicy
+        )
+
+        val result = service.suggest(defaultInput())
+
+        assertTrue(result is AiServiceResult.Success)
+        val suggestion = (result as AiServiceResult.Success).value
+        assertEquals("ON_DEVICE_VISION", suggestion.attemptDetails[0].method)
+        assertEquals("CLOUD_VISION", suggestion.attemptDetails[1].method)
+        assertTrue(suggestion.usedImageInput)
+        coVerify(atLeast = 1) { onDeviceReceiptAssistService.suggest(any()) }
+        coVerify(atLeast = 1) { cloudReceiptAssistService.suggest(any()) }
+    }
+
+    @Test
+    fun `suggest does not retry cloud fallback when router-selected on-device has no viable cloud route`() = runTest {
+        val cloudReceiptAssistService = mockk<CloudReceiptAssistService>()
+        val onDeviceReceiptAssistService = mockk<OnDeviceReceiptAssistService>()
+        val noOpReceiptAssistService = mockk<NoOpReceiptAssistService>()
+        val aiCapabilityRouter = mockk<AiCapabilityRouter>()
+        val aiSettingsRepository = mockk<AiSettingsRepository>()
+        val aiPolicy = mockk<AiPolicy>()
+
+        val settings = defaultSettings()
+        every { aiSettingsRepository.settings() } returns flowOf(settings)
+
+        coEvery { aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode == settings.preferredMode }, any()) } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "On-device preferred because cloud is unavailable"
+        )
+        coEvery { aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, match { it.preferredMode.name == "CLOUD" }, any()) } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "Cloud unavailable, on-device fallback only"
+        )
+        coEvery { onDeviceReceiptAssistService.suggest(any()) } returnsMany listOf(
+            AiServiceResult.Failure(AiServiceError.ParseError("bad parse")),
+            AiServiceResult.Failure(AiServiceError.ParseError("bad parse"))
+        )
+        coEvery { noOpReceiptAssistService.suggest(any()) } returns successfulSuggestionResult()
+
+        val service = SmartReceiptAssistService(
+            cloudReceiptAssistService,
+            onDeviceReceiptAssistService,
+            noOpReceiptAssistService,
+            aiCapabilityRouter,
+            aiSettingsRepository,
+            aiPolicy
+        )
+
+        val result = service.suggest(defaultInput())
+
+        assertTrue(result is AiServiceResult.Success)
+        coVerify(exactly = 0) { cloudReceiptAssistService.suggest(any()) }
+        coVerify(exactly = 2) { onDeviceReceiptAssistService.suggest(any()) }
         coVerify(exactly = 1) { noOpReceiptAssistService.suggest(any()) }
     }
 

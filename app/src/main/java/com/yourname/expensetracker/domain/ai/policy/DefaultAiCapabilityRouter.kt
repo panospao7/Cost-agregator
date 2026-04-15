@@ -59,9 +59,18 @@ class DefaultAiCapabilityRouter @Inject constructor(
             )
         }
 
+        if (canUseCloud(capability, settings)) {
+            return AiRouteDecision(
+                route = AiRoute.CLOUD,
+                reason = "On-device was preferred but unavailable, so using cloud fallback.",
+                providerName = capability.defaultCloudProviderName(),
+                modelName = capability.defaultCloudModelName()
+            )
+        }
+
         return AiRouteDecision(
             route = AiRoute.DETERMINISTIC_FALLBACK,
-            reason = onDeviceUnavailableReason(capability, settings, onDeviceStatus)
+            reason = combinedUnavailableReason(capability, settings, onDeviceStatus)
         )
     }
 
@@ -79,7 +88,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
             )
         }
 
-        if (isLowRiskOnDeviceFallback(capability) && canUseOnDevice(capability, settings, onDeviceStatus)) {
+        if (canUseOnDevice(capability, settings, onDeviceStatus)) {
             return AiRouteDecision(
                 route = AiRoute.ON_DEVICE,
                 reason = "Cloud was preferred but unavailable, so using on-device fallback.",
@@ -249,14 +258,6 @@ class DefaultAiCapabilityRouter @Inject constructor(
             AiCapability.SEMANTIC_DEDUPE -> settings.aiEnabled // Uses general AI toggle
             AiCapability.RECEIPT_ITEM_CATEGORIZATION -> settings.receiptItemCategorizationEnabled
         }
-    }
-
-    private fun isLowRiskOnDeviceFallback(capability: AiCapability): Boolean {
-        return capability in setOf(
-            AiCapability.REVIEW_EXPLANATION,
-            AiCapability.RECEIPT_EXTRACTION,
-            AiCapability.CATEGORIZATION_FALLBACK
-        )
     }
 
     private fun isOnDeviceImplemented(capability: AiCapability): Boolean {

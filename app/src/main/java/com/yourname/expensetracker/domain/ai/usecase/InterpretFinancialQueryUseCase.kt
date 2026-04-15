@@ -13,7 +13,6 @@ import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.model.PeriodRange
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
@@ -53,7 +52,9 @@ class InterpretFinancialQueryUseCase @Inject constructor(
         }
 
         return when (providerResult) {
-            is FinancialQueryInterpretationResult.Structured -> providerResult
+            is FinancialQueryInterpretationResult.Structured -> {
+                enrichStructuredResult(providerResult, rawQuery, input.currentTimeMs)
+            }
             is FinancialQueryInterpretationResult.Clarification -> {
                 // If provider returns another clarification, try local fallback as safety net
                 val fallbackResult = localFallbackInterpret(rawQuery, input.currentTimeMs)
@@ -67,6 +68,85 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             is FinancialQueryInterpretationResult.Unsupported ->
                 localFallbackInterpret(rawQuery, input.currentTimeMs)
         }
+    }
+
+    /**
+     * Merges locally derivable period/category/type/ownership dimensions into a
+     * provider-structured result when the provider omitted them.
+     *
+     * Provider-supplied non-default values are always preserved; local heuristics
+     * only fill gaps so that richer queries (e.g. "largest groceries this week")
+     * retain their grouping/metric richness from the provider while gaining the
+     * period and category filters the provider may not have resolved.
+     */
+    private suspend fun enrichStructuredResult(
+        result: FinancialQueryInterpretationResult.Structured,
+        rawQuery: String,
+        nowMs: Long
+    ): FinancialQueryInterpretationResult.Structured {
+        val intent = result.intent
+        val normalized = rawQuery.trim().lowercase(Locale.getDefault())
+        val filters = intent.filters
+
+        // --- Fill period if provider left it null ---
+        val enrichedPeriod = filters.period ?: resolvePeriod(normalized, nowMs)
+
+        // --- Fill categoryIds if provider left them empty ---
+        val enrichedCategoryIds = if (filters.categoryIds.isEmpty()) {
+            val categories = categoryRepository.getAll()
+            val matchedCategory = categories.firstOrNull { category ->
+                normalized.contains(category.name.lowercase(Locale.getDefault()))
+            }
+            matchedCategory?.id?.let(::setOf) ?: emptySet()
+        } else {
+            filters.categoryIds
+        }
+
+        // --- Fill transactionTypes if provider left them empty ---
+        val enrichedTypes = if (filters.transactionTypes.isEmpty()) {
+            val matchedType = when {
+                normalized.contains("transfer") -> DomainTransactionType.TRANSFER
+                normalized.contains("withdraw") || normalized.contains("atm") -> DomainTransactionType.WITHDRAWAL
+                normalized.contains("deposit") || normalized.contains("income") || normalized.contains("salary") -> DomainTransactionType.DEPOSIT
+                normalized.contains("purchase") || normalized.contains("spend") || normalized.contains("spent") -> DomainTransactionType.PURCHASE
+                else -> null
+            }
+            matchedType?.let(::setOf) ?: emptySet()
+        } else {
+            filters.transactionTypes
+        }
+
+        // --- Fill ownership if provider returned ALL and local cues are stronger ---
+        val enrichedOwnership = if (filters.ownership == QueryOwnershipScope.ALL) {
+            resolveOwnership(normalized)
+        } else {
+            filters.ownership
+        }
+
+        // --- Fill comparison if provider returned NONE and local cues suggest comparison ---
+        val enrichedComparison = if (intent.comparison == QueryComparison.NONE) {
+            if (normalized.contains("compare") || normalized.contains("vs") || normalized.contains("previous")) {
+                QueryComparison.PREVIOUS_EQUIVALENT_PERIOD
+            } else {
+                QueryComparison.NONE
+            }
+        } else {
+            intent.comparison
+        }
+
+        val enrichedFilters = filters.copy(
+            period = enrichedPeriod,
+            categoryIds = enrichedCategoryIds,
+            transactionTypes = enrichedTypes,
+            ownership = enrichedOwnership
+        )
+
+        return result.copy(
+            intent = intent.copy(
+                filters = enrichedFilters,
+                comparison = enrichedComparison
+            )
+        )
     }
 
     private suspend fun localFallbackInterpret(
@@ -87,7 +167,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
         }
 
         when {
-            normalized == "this month" || normalized == "this month only" || normalized.contains("for this month") -> return FinancialQueryInterpretationResult.Structured(
+            isBarePeriodOnlyQuery(normalized, "this month", "current month") -> return FinancialQueryInterpretationResult.Structured(
                 FinancialQueryIntent(
                     rawQuery = rawQuery,
                     normalizedQuery = normalized,
@@ -97,7 +177,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
                     comparison = QueryComparison.NONE
                 )
             )
-            normalized == "last month" || normalized == "previous month" || normalized.contains("for last month") || normalized.contains("last month") -> return FinancialQueryInterpretationResult.Structured(
+            isBarePeriodOnlyQuery(normalized, "last month", "previous month") -> return FinancialQueryInterpretationResult.Structured(
                 FinancialQueryIntent(
                     rawQuery = rawQuery,
                     normalizedQuery = normalized,
@@ -107,7 +187,7 @@ class InterpretFinancialQueryUseCase @Inject constructor(
                     comparison = QueryComparison.NONE
                 )
             )
-            normalized == "this week" || normalized == "current week" || normalized.contains("this week") && !normalized.contains("last") -> return FinancialQueryInterpretationResult.Structured(
+            isBarePeriodOnlyQuery(normalized, "this week", "current week") -> return FinancialQueryInterpretationResult.Structured(
                 FinancialQueryIntent(
                     rawQuery = rawQuery,
                     normalizedQuery = normalized,
@@ -217,5 +297,50 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             else -> TimePeriodUtils.getMonthRange(now, 0)
         }
         return PeriodRange(start = pair.first, end = pair.second)
+    }
+
+    private fun isBarePeriodOnlyQuery(query: String, vararg periodPhrases: String): Boolean {
+        val normalized = query.trim()
+        if (normalized.isBlank()) return false
+        if (periodPhrases.none { phrase -> normalized == phrase || normalized == "$phrase only" || normalized == "for $phrase" }) {
+            return false
+        }
+
+        return !containsRichIntentCue(normalized)
+    }
+
+    private fun containsRichIntentCue(query: String): Boolean {
+        val keywords = listOf(
+            "top",
+            "largest",
+            "biggest",
+            "highest",
+            "average",
+            "avg",
+            "count",
+            "how many",
+            "number of",
+            "show",
+            "list",
+            "merchant",
+            "merchants",
+            "category",
+            "categories",
+            "grocer",
+            "transport",
+            "transfer",
+            "withdraw",
+            "deposit",
+            "purchase",
+            "spend",
+            "spent",
+            "shared",
+            "mine",
+            "not mine",
+            "compare",
+            "vs",
+            "previous"
+        )
+        return keywords.any(query::contains)
     }
 }

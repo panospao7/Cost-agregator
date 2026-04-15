@@ -79,6 +79,8 @@ class FinancialQueryInterpretationInputBuilderTest {
         assertEquals(timeProvider.now(), result.currentTimeMs)
         assertEquals(listOf("Groceries", "Transport"), result.categoryNames)
         assertEquals(listOf("Lidl", "Spotify"), result.merchantNames)
+        assertEquals("Lidl", result.merchantLookupMap["Lidl"])
+        assertEquals(1L, result.categoryLookupMap["Groceries"])
         assertTrue(result.merchantAliasMap.isEmpty())
         assertTrue(result.categoryAliasMap.isEmpty())
         assertEquals(AppConfig.Ai.MAX_QUERY_HISTORY_TURNS_FOR_MODEL, result.conversationHistory.size)
@@ -108,10 +110,21 @@ class FinancialQueryInterpretationInputBuilderTest {
             Category(id = 2L, name = "Transport", icon = "T", color = "#0000FF")
         )
         coEvery { expenseRepository.getRecentMerchantNames() } returns listOf("Lidl", "Uber")
+        val history = listOf(
+            AiChatMessage(
+                id = 1L,
+                sessionId = 1L,
+                role = AssistantMessageRole.USER,
+                kind = AssistantMessageKind.QUERY,
+                text = "Show Lidl groceries",
+                createdAt = 1L
+            )
+        )
 
         val result = builder.build(
-            rawQuery = "Card 4242 4242 4242 4242",
-            settings = AiSettings()
+            rawQuery = "Card 4242 4242 4242 4242 spent at Lidl for Groceries",
+            settings = AiSettings(),
+            conversationHistory = history
         )
 
         val lidlAlias = "merchant_${"Lidl".sha256Prefix()}"
@@ -122,12 +135,22 @@ class FinancialQueryInterpretationInputBuilderTest {
         assertEquals(listOf(lidlAlias, uberAlias), result.merchantNames)
         assertEquals("Lidl", result.merchantAliasMap[lidlAlias])
         assertEquals("Uber", result.merchantAliasMap[uberAlias])
+        assertEquals("Lidl", result.merchantLookupMap[lidlAlias])
+        assertTrue(result.merchantLookupMap["Lidl"] == null)
 
         assertTrue(result.categoryNames.contains(groceriesAlias))
         assertTrue(result.categoryNames.contains(transportAlias))
         assertEquals("Groceries", result.categoryAliasMap[groceriesAlias])
         assertEquals("Transport", result.categoryAliasMap[transportAlias])
+        assertEquals(1L, result.categoryLookupMap[groceriesAlias])
+        assertEquals(2L, result.categoryLookupMap[transportAlias])
+        assertTrue(result.categoryLookupMap["Groceries"] == null)
+        assertEquals(1L, result.categoryNameToIdMap["Groceries"])
 
         assertTrue(result.rawQuery.contains("[REDACTED_CARD]"))
+        assertTrue(result.rawQuery.contains(lidlAlias))
+        assertTrue(result.rawQuery.contains(groceriesAlias))
+        assertTrue(result.conversationHistory.single().text.contains(lidlAlias))
+        assertTrue(result.conversationHistory.single().text.contains(groceriesAlias))
     }
 }

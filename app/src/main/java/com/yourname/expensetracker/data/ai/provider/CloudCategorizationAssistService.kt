@@ -85,7 +85,7 @@ class CloudCategorizationAssistService @Inject constructor(
                         }
 
                         val body = response.body?.string() ?: return@use null
-                        parseResponse(body)
+                        parseResponse(body, input)
                     }
 
                     if (parsed != null) return@withContext parsed
@@ -146,7 +146,7 @@ class CloudCategorizationAssistService @Inject constructor(
     }
 
     private fun buildPrompt(input: CategorizationAssistInput): String {
-        val categories = input.candidateCategories.joinToString("\n") { "- ${it.id}: ${it.name}" }
+        val categories = input.candidateCategories.joinToString("\n") { "- ${it.id}: ${it.cloudLabel}" }
         val merchantContext = buildMerchantContext(input)
         
         return """
@@ -201,7 +201,7 @@ class CloudCategorizationAssistService @Inject constructor(
         if (input.recentTransactionsWithSameMerchant.isNotEmpty()) {
             val examples = input.recentTransactionsWithSameMerchant
                 .take(5)
-                .joinToString("; ") { "${it.merchant} → ${it.categoryName}" }
+                .joinToString("; ") { "${it.cloudMerchant} → ${it.cloudCategoryName}" }
             parts.add("Known merchant history: $examples")
         }
         
@@ -212,7 +212,7 @@ class CloudCategorizationAssistService @Inject constructor(
         }
     }
 
-    private fun parseResponse(body: String): CategoryAssistSuggestion? {
+    private fun parseResponse(body: String, input: CategorizationAssistInput): CategoryAssistSuggestion? {
         val root = JSONObject(body)
         val candidates = root.optJSONArray("candidates") ?: return null
         if (candidates.length() == 0) return null
@@ -229,12 +229,22 @@ class CloudCategorizationAssistService @Inject constructor(
         if (!suggestion.has("categoryId") || suggestion.isNull("categoryId")) return null
         if (!suggestion.has("categoryName") || suggestion.optString("categoryName").isBlank()) return null
 
+        val categoryId = suggestion.optLong("categoryId")
+        val matchedCategory = input.candidateCategories.firstOrNull { it.id == categoryId }
+            ?: input.candidateCategories.firstOrNull {
+                it.name.equals(suggestion.optString("categoryName").trim(), ignoreCase = true) ||
+                    it.cloudLabel.equals(suggestion.optString("categoryName").trim(), ignoreCase = true)
+            }
+            ?: return null
+
         return CategoryAssistSuggestion(
-            categoryId = suggestion.optLong("categoryId"),
-            categoryName = suggestion.optString("categoryName").trim(),
+            categoryId = matchedCategory.id,
+            categoryName = matchedCategory.name,
             confidence = if (suggestion.has("confidence") && !suggestion.isNull("confidence")) suggestion.optDouble("confidence").toFloat() else null,
             rationale = suggestion.optString("rationale").trim().ifBlank { null },
-            alternativeCategoryIds = suggestion.optJSONArray("alternativeCategoryIds").toLongList()
+            alternativeCategoryIds = suggestion.optJSONArray("alternativeCategoryIds")
+                .toLongList()
+                .filter { altId -> input.candidateCategories.any { it.id == altId } }
         )
     }
 

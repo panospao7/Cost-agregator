@@ -103,7 +103,7 @@ class GenerateDashboardBriefingUseCaseTest {
         provider      = AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_PROVIDER,
         modelName     = AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL,
         promptVersion = AppConfig.Ai.PROMPT_VERSION_DASHBOARD,
-        sourceHash    = "existing_hash",
+        sourceHash    = fakeInput().hashCode().toString(),
         createdAt     = now,
         updatedAt     = now,
         expiresAt     = now + AppConfig.Ai.DASHBOARD_BRIEFING_TTL_MS
@@ -161,6 +161,23 @@ class GenerateDashboardBriefingUseCaseTest {
 
         coVerify(exactly = 0) { dashboardBriefingService.generate(any()) }
         coVerify(exactly = 0) { aiArtifactRepository.upsert(any()) }
+    }
+
+    @Test
+    fun `invoke regenerates when ready artifact source hash is stale`() = runTest {
+        val briefing = DashboardBriefing(title = "Today's Briefing", text = "Fresh text", tone = "neutral")
+        val staleInput = fakeInput().copy(weatherHeadline = "Stormy")
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        every { inputBuilder.build(any()) } returns staleInput
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns freshReadyArtifact()
+        coEvery { dashboardBriefingService.generate(any()) } returns AiServiceResult.Success(briefing)
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        useCase(processedData)
+
+        coVerify(exactly = 1) { dashboardBriefingService.generate(any()) }
+        assertEquals(AiArtifactStatus.READY, captured.last().status)
     }
 
     // ── provider returns null ─────────────────────────────────────────────────

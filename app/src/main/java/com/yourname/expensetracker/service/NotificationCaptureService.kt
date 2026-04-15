@@ -28,6 +28,20 @@ import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
+internal fun computeNotificationContentHash(
+    title: String?,
+    text: String?,
+    bigText: String?
+): Int = (title.orEmpty() + text.orEmpty() + bigText.orEmpty()).hashCode()
+
+internal fun resolveEffectiveBigText(
+    bigText: String?,
+    infoText: String?,
+    summaryText: String?
+): String? = bigText?.takeIf { it.isNotBlank() }
+    ?: infoText?.takeIf { it.isNotBlank() }
+    ?: summaryText?.takeIf { it.isNotBlank() }
+
 @AndroidEntryPoint
 class NotificationCaptureService : NotificationListenerService() {
 
@@ -208,18 +222,25 @@ class NotificationCaptureService : NotificationListenerService() {
 
         val packageName = sbn.packageName
         
-        // Extract notification data for both filtering and deduplication
+        // Extract notification data — preserve nullability until fallback resolution
         val extras = sbn.notification.extras
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
-        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
 
-        if (!NotificationFilter.shouldCapture(packageName, title, text, bigText)) return
+        // Filter using non-null values for heuristic matching
+        if (!NotificationFilter.shouldCapture(
+                packageName,
+                title.orEmpty(),
+                text.orEmpty(),
+                bigText.orEmpty()
+            )) return
         
         // Better deduplication using notification key + content
         // sbn.key is unique to the notification slot
         // contentHash ensures we catch updates to the same notification if content differs
-        val contentHash = (title.orEmpty() + text.orEmpty() + bigText.orEmpty()).hashCode()
+        // Normalize at the hash boundary only — use orEmpty() here, not earlier
+        val contentHash = computeNotificationContentHash(title, text, bigText)
         val dedupeKey = "${sbn.key}:$contentHash"
         val now = timeProvider.now()
         
@@ -266,8 +287,9 @@ class NotificationCaptureService : NotificationListenerService() {
         val infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString()
         val summaryText = extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString()
         
-        // Combine text for robust parsing - some apps put the real info in odd places
-        val effectiveBigText = bigText ?: infoText ?: summaryText
+        // Combine text for robust parsing - some apps put the real info in odd places.
+        // Treat blank bigText (null or whitespace-only) as absent so infoText/summaryText can win.
+        val effectiveBigText = resolveEffectiveBigText(bigText, infoText, summaryText)
 
         val extrasJson = try {
             buildExtrasJson(extras)
@@ -319,12 +341,18 @@ class NotificationCaptureService : NotificationListenerService() {
     private fun processNotificationBypassDedupe(sbn: StatusBarNotification) {
         val packageName = sbn.packageName
         
+        // Preserve nullability — do not collapse null to empty before fallback decisions
         val extras = sbn.notification.extras
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
-        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
 
-        if (!NotificationFilter.shouldCapture(packageName, title, text, bigText)) {
+        if (!NotificationFilter.shouldCapture(
+                packageName,
+                title.orEmpty(),
+                text.orEmpty(),
+                bigText.orEmpty()
+            )) {
             Timber.d("Skipping (shouldCapture=false): $packageName")
             return
         }

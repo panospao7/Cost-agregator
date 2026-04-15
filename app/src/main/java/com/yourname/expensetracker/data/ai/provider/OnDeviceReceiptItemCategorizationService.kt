@@ -105,8 +105,8 @@ class OnDeviceReceiptItemCategorizationService @Inject constructor() : ReceiptIt
                 }
         } else emptyList()
         
-        val confidence = bestScore.coerceIn(0.4f, 0.85f) // Cap at 0.85 for on-device
-        
+        val confidence = bestScore.coerceAtMost(0.85f) // Cap at 0.85 for on-device
+
         return CategorizedReceiptItem(
             itemDescription = description,
             amount = amount,
@@ -117,11 +117,7 @@ class OnDeviceReceiptItemCategorizationService @Inject constructor() : ReceiptIt
                     confidence = confidence,
                     isNewCategorySuggestion = false
                 )
-            } ?: CategorySuggestion(
-                categoryId = userCategories.firstOrNull()?.id,
-                categoryName = userCategories.firstOrNull()?.name ?: "Uncategorized",
-                confidence = 0.4f
-            ),
+            },
             confidence = confidence,
             rationale = generateRationale(description, bestMatch?.first?.name),
             alternatives = alternatives,
@@ -144,7 +140,7 @@ class OnDeviceReceiptItemCategorizationService @Inject constructor() : ReceiptIt
         val overlap = descWords.intersect(catWords.toSet()).size
         val score = overlap.toFloat() / catWords.size.coerceAtLeast(1)
         
-        return score.coerceIn(0.3f, 0.7f)
+        return score.coerceIn(0f, 0.7f)
     }
     
     private fun calculateKeywordScore(description: String, keywords: List<String>): Float {

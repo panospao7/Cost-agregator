@@ -300,4 +300,47 @@ class ExpenseRepositoryTest {
             """{"segments":[]}""", returned.splitVisualization
         )
     }
+
+    @Test
+    fun `assistant filtered helpers keep multi value list and count filters in sync`() = runTest {
+        val listQuerySlot = slot<androidx.sqlite.db.SupportSQLiteQuery>()
+        val countQuerySlot = slot<androidx.sqlite.db.SupportSQLiteQuery>()
+        coEvery { expenseDao.getAssistantExpensesDynamic(capture(listQuerySlot)) } returns emptyList()
+        coEvery { expenseDao.getAssistantExpenseCountDynamic(capture(countQuerySlot)) } returns 0
+
+        repository.getAssistantExpensesFiltered(
+            startDate = 100L,
+            endDate = 200L,
+            transactionTypes = setOf(TransactionType.PURCHASE, TransactionType.WITHDRAWAL),
+            categoryIds = setOf(1L, 2L),
+            merchantNames = setOf("Lidl", "Shell"),
+            ownershipFilter = OwnershipFilter.SHARED,
+            minAmount = 5.0,
+            maxAmount = 50.0
+        )
+        repository.getAssistantExpenseCountFiltered(
+            startDate = 100L,
+            endDate = 200L,
+            transactionTypes = setOf(TransactionType.PURCHASE, TransactionType.WITHDRAWAL),
+            categoryIds = setOf(1L, 2L),
+            merchantNames = setOf("Lidl", "Shell"),
+            ownershipFilter = OwnershipFilter.SHARED,
+            minAmount = 5.0,
+            maxAmount = 50.0
+        )
+
+        val listSql = listQuerySlot.captured.sql
+        val countSql = countQuerySlot.captured.sql
+
+        assertTrue(listSql.contains("e.transactionType IN (?, ?)"))
+        assertTrue(countSql.contains("e.transactionType IN (?, ?)"))
+        assertTrue(listSql.contains("e.categoryId IN (?, ?)"))
+        assertTrue(countSql.contains("e.categoryId IN (?, ?)"))
+        assertTrue(listSql.contains("e.merchantKey IN (?, ?)"))
+        assertTrue(countSql.contains("e.merchantKey IN (?, ?)"))
+        assertTrue(listSql.contains("e.isSharedExpense = 1"))
+        assertTrue(countSql.contains("e.isSharedExpense = 1"))
+        assertTrue(listSql.contains("LIMIT") .not())
+        assertTrue(countSql.contains("ORDER BY").not())
+    }
 }

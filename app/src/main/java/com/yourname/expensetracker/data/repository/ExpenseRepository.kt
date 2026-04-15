@@ -112,10 +112,117 @@ class ExpenseRepository @Inject constructor(
         maxAmount: Double? = null,
         sortOrder: SortOrder = SortOrder.DATE_DESC
     ): List<ExpenseWithCategory> {
+        val (sql, args) = buildExpenseDynamicQueryParts(
+            searchQuery = searchQuery,
+            startDate = startDate,
+            endDate = endDate,
+            transactionTypes = transactionType?.let(::setOf).orEmpty(),
+            categoryIds = categoryId?.let(::setOf).orEmpty(),
+            merchantNames = merchantName?.let(::setOf).orEmpty(),
+            ownershipFilter = ownershipFilter,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            sortOrder = sortOrder,
+            includePagination = true,
+            limit = limit,
+            offset = offset,
+            selectClause = "SELECT e.*"
+        )
+        return expenseDao.getExpensesDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))
+    }
+
+    /**
+     * Assistant-only exact full-read variant of [getExpensesPagedDynamic].
+     *
+     * Shares the same filter contract as the paged query builder but omits
+     * LIMIT/OFFSET so assistant financial queries can execute against the full
+     * matching dataset. Existing UI paging callers must remain on the bounded
+     * method above.
+     */
+    suspend fun getAssistantExpensesFiltered(
+        searchQuery: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null,
+        transactionTypes: Set<TransactionType> = emptySet(),
+        categoryIds: Set<Long> = emptySet(),
+        merchantNames: Set<String> = emptySet(),
+        ownershipFilter: OwnershipFilter = OwnershipFilter.ALL,
+        minAmount: Double? = null,
+        maxAmount: Double? = null,
+        sortOrder: SortOrder = SortOrder.DATE_DESC
+    ): List<ExpenseWithCategory> {
+        val (sql, args) = buildExpenseDynamicQueryParts(
+            searchQuery = searchQuery,
+            startDate = startDate,
+            endDate = endDate,
+            transactionTypes = transactionTypes,
+            categoryIds = categoryIds,
+            merchantNames = merchantNames,
+            ownershipFilter = ownershipFilter,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            sortOrder = sortOrder,
+            includePagination = false,
+            limit = null,
+            offset = null,
+            selectClause = "SELECT e.*"
+        )
+        return expenseDao.getAssistantExpensesDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))
+    }
+
+    /**
+     * Assistant-only exact count helper paired with [getAssistantExpensesFiltered].
+     * Any filter change here must stay in sync with the list helper above.
+     */
+    suspend fun getAssistantExpenseCountFiltered(
+        searchQuery: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null,
+        transactionTypes: Set<TransactionType> = emptySet(),
+        categoryIds: Set<Long> = emptySet(),
+        merchantNames: Set<String> = emptySet(),
+        ownershipFilter: OwnershipFilter = OwnershipFilter.ALL,
+        minAmount: Double? = null,
+        maxAmount: Double? = null
+    ): Int {
+        val (sql, args) = buildExpenseDynamicQueryParts(
+            searchQuery = searchQuery,
+            startDate = startDate,
+            endDate = endDate,
+            transactionTypes = transactionTypes,
+            categoryIds = categoryIds,
+            merchantNames = merchantNames,
+            ownershipFilter = ownershipFilter,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            sortOrder = SortOrder.DATE_DESC,
+            includePagination = false,
+            limit = null,
+            offset = null,
+            selectClause = "SELECT COUNT(*)"
+        )
+        return expenseDao.getAssistantExpenseCountDynamic(SimpleSQLiteQuery(sql, args.toTypedArray()))
+    }
+
+    private fun buildExpenseDynamicQueryParts(
+        searchQuery: String? = null,
+        startDate: Long? = null,
+        endDate: Long? = null,
+        transactionTypes: Set<TransactionType> = emptySet(),
+        categoryIds: Set<Long> = emptySet(),
+        merchantNames: Set<String> = emptySet(),
+        ownershipFilter: OwnershipFilter = OwnershipFilter.ALL,
+        minAmount: Double? = null,
+        maxAmount: Double? = null,
+        sortOrder: SortOrder = SortOrder.DATE_DESC,
+        includePagination: Boolean,
+        limit: Int?,
+        offset: Int?,
+        selectClause: String
+    ): Pair<String, MutableList<Any>> {
         val args = mutableListOf<Any>()
         val whereClauses = mutableListOf<String>()
 
-        // Search query (merchant or category name)
         if (!searchQuery.isNullOrBlank()) {
             whereClauses.add("(e.merchant LIKE ? OR e.categoryId IN (SELECT id FROM categories WHERE name LIKE ?))")
             val searchPattern = "%$searchQuery%"
@@ -123,7 +230,6 @@ class ExpenseRepository @Inject constructor(
             args.add(searchPattern)
         }
 
-        // Date range
         if (startDate != null) {
             whereClauses.add("e.date >= ?")
             args.add(startDate)
@@ -133,26 +239,24 @@ class ExpenseRepository @Inject constructor(
             args.add(endDate)
         }
 
-        // Transaction type
-        if (transactionType != null) {
-            whereClauses.add("e.transactionType = ?")
-            args.add(transactionType.name)
+        if (transactionTypes.isNotEmpty()) {
+            whereClauses.add(transactionTypes.toSqlInClause("e.transactionType", args) { it.name })
         }
 
-        // Category filter
-        if (categoryId != null) {
-            whereClauses.add("e.categoryId = ?")
-            args.add(categoryId)
+        if (categoryIds.isNotEmpty()) {
+            whereClauses.add(categoryIds.toSqlInClause("e.categoryId", args) { it })
         }
 
-        // Merchant filter
-        if (!merchantName.isNullOrBlank()) {
-            whereClauses.add("e.merchantKey = ?")
-            args.add(MerchantKeyGenerator.generate(merchantName))
+        if (merchantNames.isNotEmpty()) {
+            val merchantKeys = merchantNames
+                .map { MerchantKeyGenerator.generate(it) }
+                .filter { it.isNotBlank() }
+                .toSet()
+            if (merchantKeys.isNotEmpty()) {
+                whereClauses.add(merchantKeys.toSqlInClause("e.merchantKey", args) { it })
+            }
         }
 
-        // Effective amount range filter — uses the canonical ownership-adjusted SQL expression
-        // from ExpenseDao.EFFECTIVE_AMOUNT_E_SQL (e. alias prefix) as the single source of truth.
         val effectiveAmountExpr = EFFECTIVE_AMOUNT_E_SQL
         if (minAmount != null) {
             whereClauses.add("$effectiveAmountExpr >= ?")
@@ -163,53 +267,50 @@ class ExpenseRepository @Inject constructor(
             args.add(maxAmount)
         }
 
-        // Ownership filter
         when (ownershipFilter) {
-            OwnershipFilter.MINE -> {
-                whereClauses.add("e.isNotMine = 0")
-            }
-            OwnershipFilter.NOT_MINE -> {
-                whereClauses.add("e.isNotMine = 1")
-            }
-            OwnershipFilter.SHARED -> {
-                whereClauses.add("e.isSharedExpense = 1")
-            }
-            OwnershipFilter.TRANSFER -> {
-                whereClauses.add("e.transactionType = 'TRANSFER'")
-            }
-            OwnershipFilter.ALL -> { /* No filter */ }
+            OwnershipFilter.MINE -> whereClauses.add("e.isNotMine = 0")
+            OwnershipFilter.NOT_MINE -> whereClauses.add("e.isNotMine = 1")
+            OwnershipFilter.SHARED -> whereClauses.add("e.isSharedExpense = 1")
+            OwnershipFilter.TRANSFER -> whereClauses.add("e.transactionType = 'TRANSFER'")
+            OwnershipFilter.ALL -> Unit
         }
 
-        // Build WHERE clause
         val whereClause = if (whereClauses.isNotEmpty()) {
             "WHERE ${whereClauses.joinToString(" AND ")}"
         } else {
             ""
         }
 
-        // B.4 / ISSUE-1: Use e.* instead of an explicit column list so that every
-        // field in the Expense entity (including newer additions such as
-        // isBusinessExpense, businessPurpose, businessCategory, businessProject,
-        // requiresReceipt, splitTemplateId, and splitVisualization) is projected
-        // without amendment.  Room's @RawQuery + @Embedded maps by column name,
-        // so e.* is safe here; the @Relation for Category is resolved by a
-        // separate query after the main result set is fetched.
-        val sql = """
-            SELECT e.*
-            FROM expenses e
-            $whereClause
-            -- Safety invariant: sortOrder.sql comes from the closed SortOrder enum above.
-            -- Do not populate it from user input or remote config.
-            ORDER BY ${sortOrder.sql}
-            LIMIT ? OFFSET ?
-        """.trimIndent()
+        val sql = buildString {
+            appendLine(selectClause)
+            appendLine("FROM expenses e")
+            if (whereClause.isNotEmpty()) {
+                appendLine(whereClause)
+            }
+            if (selectClause != "SELECT COUNT(*)") {
+                appendLine("-- Safety invariant: sortOrder.sql comes from the closed SortOrder enum above.")
+                appendLine("-- Do not populate it from user input or remote config.")
+                appendLine("ORDER BY ${sortOrder.sql}")
+            }
+            if (includePagination) {
+                require(limit != null && offset != null) { "Paged dynamic query requires limit and offset" }
+                appendLine("LIMIT ? OFFSET ?")
+                args.add(limit)
+                args.add(offset)
+            }
+        }.trim()
 
-        args.add(limit)
-        args.add(offset)
+        return sql to args
+    }
 
-        val argArray = args.toTypedArray()
-        val query = SimpleSQLiteQuery(sql, argArray)
-        return expenseDao.getExpensesDynamic(query)
+    private fun <T> Collection<T>.toSqlInClause(
+        columnName: String,
+        args: MutableList<Any>,
+        valueMapper: (T) -> Any
+    ): String {
+        val placeholders = joinToString(", ") { "?" }
+        forEach { args.add(valueMapper(it)) }
+        return "$columnName IN ($placeholders)"
     }
 
     suspend fun getCountForPeriod(startMs: Long, endMs: Long): Int =

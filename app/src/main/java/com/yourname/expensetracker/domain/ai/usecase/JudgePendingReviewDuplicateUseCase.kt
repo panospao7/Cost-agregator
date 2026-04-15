@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeBuildResult
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeGenerationResult
+import com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
@@ -94,7 +95,7 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
         return try {
             when (val serviceResult = dedupeJudgeService.judge(input)) {
                 is AiServiceResult.Success -> {
-                    val suggestion = serviceResult.value
+                    val suggestion = serviceResult.value.validatedAgainst(input)
                     aiArtifactRepository.upsert(
                         baseEntity.copy(
                             status = AiArtifactStatus.READY,
@@ -133,6 +134,23 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
             )
         }
     }
+}
+
+private fun DedupeJudgeSuggestion.validatedAgainst(input: DedupeJudgeInput): DedupeJudgeSuggestion {
+    val matchedType = matchedTargetType
+    val matchedId = matchedTargetId
+    if (matchedType == null || matchedId == null) return this
+
+    val isValid = input.candidates.any { candidate ->
+        candidate.targetType == matchedType && candidate.targetId == matchedId
+    }
+    if (isValid) return this
+
+    return copy(
+        verdict = com.yourname.expensetracker.domain.ai.model.DuplicateVerdict.UNCERTAIN,
+        matchedTargetType = null,
+        matchedTargetId = null
+    )
 }
 
 private fun AiServiceError.toReadableMessage(): String = when (this) {

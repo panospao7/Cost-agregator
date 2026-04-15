@@ -118,7 +118,7 @@ class CloudQueryInterpretationService @Inject constructor(
     }
 
     private fun buildRequestBody(input: FinancialQueryInterpretationInput): String {
-        val prompt = promptHelper.buildPrompt(input)
+        val prompt = promptHelper.buildPrompt(input.toCloudPromptInput())
         return JSONObject().apply {
             put(
                 "contents",
@@ -162,6 +162,20 @@ class CloudQueryInterpretationService @Inject constructor(
             ?: return unsupported()
 
         return promptHelper.parseResponse(input, text) ?: unsupported()
+    }
+
+    private fun FinancialQueryInterpretationInput.toCloudPromptInput(): FinancialQueryInterpretationInput {
+        if (merchantAliasMap.isEmpty() && categoryAliasMap.isEmpty()) return this
+
+        val aliasOnlyCategoryLookup = categoryAliasMap.keys.associateWith { alias ->
+            categoryLookupMap[alias] ?: categoryNameToIdMap[alias] ?: -1L
+        }.filterValues { it >= 0L }
+
+        return copy(
+            merchantLookupMap = merchantAliasMap,
+            categoryLookupMap = aliasOnlyCategoryLookup,
+            categoryNameToIdMap = categoryNameToIdMap.filterKeys(categoryAliasMap::containsKey)
+        )
     }
 
     private fun unsupported(

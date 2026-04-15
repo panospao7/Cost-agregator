@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.ai.usecase
 
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
 import com.yourname.expensetracker.domain.ai.model.QueryComparison
@@ -11,7 +13,7 @@ import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.model.UiText
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import java.util.Locale
 import javax.inject.Inject
 
 class ExecuteFinancialQueryUseCase @Inject constructor(
@@ -41,10 +43,19 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val preview = loadFilteredExpenses(intent, period)
+        val previewCount = expenseRepository.getAssistantExpenseCountFiltered(
+            startDate = period.start,
+            endDate = period.end,
+            transactionTypes = intent.filters.transactionTypes.map { it.toEntity() }.toSet(),
+            categoryIds = intent.filters.categoryIds,
+            merchantNames = intent.filters.merchants,
+            ownershipFilter = intent.filters.ownership.toRepositoryOwnershipFilter(),
+            minAmount = intent.filters.minAmount,
+            maxAmount = intent.filters.maxAmount
+        )
         return FinancialQueryResult.TransactionList(
             title = buildListTitle(intent),
-            previewCount = preview.size,
+            previewCount = previewCount,
             drilldownIntent = intent
         )
     }
@@ -54,16 +65,21 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         period: PeriodRange
     ): FinancialQueryResult {
         val categoriesById = categoryRepository.getAll().associateBy { it.id }
-        val rows = expenseRepository.getCategoryTotalsForPeriod(period.start, period.end)
-            .filter { total ->
-                intent.filters.categoryIds.isEmpty() || total.categoryId in intent.filters.categoryIds
-            }
+        val filtered = assistantFilteredExpenses(intent, period)
+        val rows = filtered.expenses
+            .filter { it.expense.categoryId != null }
+            .groupBy { it.expense.categoryId!! }
+            .values
+            .sortedByDescending { grouped -> grouped.sumOf { it.expense.effectiveAmount } }
             .take(8)
-            .map { total ->
+            .map { grouped ->
+                val categoryId = grouped.first().expense.categoryId!!
+                val currencyTotals = grouped.toCurrencyTotals()
                 FinancialQueryResult.Breakdown.Row(
-                    label = categoriesById[total.categoryId]?.name ?: "Unknown",
-                    amount = total.total,
-                    count = total.txCount
+                    label = categoriesById[categoryId]?.name ?: "Unknown",
+                    amount = currencyTotals.singleOrNull()?.amount,
+                    count = grouped.size,
+                    valueText = formatCurrencyTotals(currencyTotals)
                 )
             }
 
@@ -78,22 +94,25 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val merchantStats = expenseRepository.getTopMerchantsForPeriod(period.start, period.end, limit = 8)
-            .filter { stat ->
-                intent.filters.merchants.isEmpty() || stat.displayName in intent.filters.merchants ||
-                    stat.merchantName in intent.filters.merchants.map { MerchantKeyGenerator.generate(it) }
-            }
-            .map { stat ->
+        val filtered = assistantFilteredExpenses(intent, period)
+        val merchantRows = filtered.expenses
+            .groupBy { it.expense.merchantKey ?: it.expense.merchant }
+            .values
+            .sortedByDescending { grouped -> grouped.sumOf { it.expense.effectiveAmount } }
+            .take(8)
+            .map { grouped ->
+                val currencyTotals = grouped.toCurrencyTotals()
                 FinancialQueryResult.Breakdown.Row(
-                    label = stat.displayName,
-                    amount = stat.totalAmount,
-                    count = stat.transactionCount
+                    label = grouped.minOf { it.expense.merchant },
+                    amount = currencyTotals.singleOrNull()?.amount,
+                    count = grouped.size,
+                    valueText = formatCurrencyTotals(currencyTotals)
                 )
             }
 
         return FinancialQueryResult.Breakdown(
             title = UiText.fromKey("domain_ai_top_merchants"),
-            rows = merchantStats,
+            rows = merchantRows,
             drilldownIntent = intent
         )
     }
@@ -102,17 +121,18 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val largest = expenseRepository.getLargestExpenseForPeriod(period.start, period.end)
+        val matching = assistantFilteredExpenses(intent, period)
+        val largest = matching.expenses.maxByOrNull { it.expense.effectiveAmount }
             ?: return FinancialQueryResult.Unsupported("No matching transactions found")
 
         return FinancialQueryResult.Summary(
             title = UiText.fromKey("domain_ai_largest_purchase"),
-            primaryText = "${largest.merchant}: %.2f EUR".format(largest.effectiveAmount),
+            primaryText = "${largest.expense.merchant}: ${formatSingleExpenseAmount(largest.expense)}",
             supportingText = null,
             drilldownIntent = intent.copy(
                 filters = intent.filters.copy(
-                    merchants = setOf(largest.merchant),
-                    transactionTypes = setOf(largest.transactionType.toDomain())
+                    merchants = setOf(largest.expense.merchant),
+                    transactionTypes = setOf(largest.expense.transactionType.toDomain())
                 )
             )
         )
@@ -122,27 +142,20 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val currentTotal = if (intent.filters.isSimplePurchaseTotal()) {
-            expenseRepository.getTotalForPeriod(period.start, period.end)
-        } else {
-            loadFilteredExpenses(intent, period).sumOf { it.expense.effectiveAmount }
-        }
+        val current = assistantFilteredExpenses(intent, period)
+        val currentCurrencyTotals = current.expenses.toCurrencyTotals()
 
         val supporting = if (intent.comparison == QueryComparison.PREVIOUS_EQUIVALENT_PERIOD) {
             val previous = previousEquivalentPeriod(period)
-            val previousTotal = if (intent.filters.isSimplePurchaseTotal()) {
-                expenseRepository.getTotalForPeriod(previous.start, previous.end)
-            } else {
-                loadFilteredExpenses(intent, previous).sumOf { it.expense.effectiveAmount }
-            }
-            "Previous period: %.2f EUR".format(previousTotal)
+            val previousResult = assistantFilteredExpenses(intent, previous)
+            "Previous period: ${formatCurrencyTotals(previousResult.expenses.toCurrencyTotals())}"
         } else {
             null
         }
 
         return FinancialQueryResult.Summary(
             title = UiText.fromKey("domain_ai_total_spending"),
-            primaryText = "%.2f EUR".format(currentTotal),
+            primaryText = formatCurrencyTotals(currentCurrencyTotals),
             supportingText = supporting,
             drilldownIntent = intent
         )
@@ -152,7 +165,16 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val count = loadFilteredExpenses(intent, period).size
+        val count = expenseRepository.getAssistantExpenseCountFiltered(
+            startDate = period.start,
+            endDate = period.end,
+            transactionTypes = intent.filters.transactionTypes.map { it.toEntity() }.toSet(),
+            categoryIds = intent.filters.categoryIds,
+            merchantNames = intent.filters.merchants,
+            ownershipFilter = intent.filters.ownership.toRepositoryOwnershipFilter(),
+            minAmount = intent.filters.minAmount,
+            maxAmount = intent.filters.maxAmount
+        )
         return FinancialQueryResult.Summary(
             title = UiText.fromKey("domain_ai_transaction_count"),
             primaryText = count.toString(),
@@ -164,31 +186,34 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val expenses = loadFilteredExpenses(intent, period)
-        val average = if (expenses.isEmpty()) 0.0 else expenses.sumOf { it.expense.effectiveAmount } / expenses.size
+        val result = assistantFilteredExpenses(intent, period)
+        val expenses = result.expenses
         return FinancialQueryResult.Summary(
             title = UiText.fromKey("domain_ai_average_spending"),
-            primaryText = "%.2f EUR".format(average),
+            primaryText = formatCurrencyAverages(expenses.toCurrencyTotals()),
             supportingText = if (expenses.isNotEmpty()) "Across ${expenses.size} transactions" else null,
             drilldownIntent = intent
         )
     }
 
-    private suspend fun loadFilteredExpenses(
+    private suspend fun assistantFilteredExpenses(
         intent: FinancialQueryIntent,
         period: PeriodRange
-    ) = expenseRepository.getExpensesPagedDynamic(
-        limit = 500,
-        offset = 0,
-        startDate = period.start,
-        endDate = period.end,
-        transactionType = intent.filters.transactionTypes.singleOrNull()?.toEntity(),
-        categoryId = intent.filters.categoryIds.singleOrNull(),
-        merchantName = intent.filters.merchants.singleOrNull(),
-        ownershipFilter = intent.filters.ownership.toRepositoryOwnershipFilter(),
-        minAmount = intent.filters.minAmount,
-        maxAmount = intent.filters.maxAmount
-    )
+    ): AssistantFilteredExpenses {
+        val expenses = expenseRepository.getAssistantExpensesFiltered(
+            startDate = period.start,
+            endDate = period.end,
+            transactionTypes = intent.filters.transactionTypes.map { it.toEntity() }.toSet(),
+            categoryIds = intent.filters.categoryIds,
+            merchantNames = intent.filters.merchants,
+            ownershipFilter = intent.filters.ownership.toRepositoryOwnershipFilter(),
+            minAmount = intent.filters.minAmount,
+            maxAmount = intent.filters.maxAmount
+        )
+        return AssistantFilteredExpenses(
+            expenses = expenses
+        )
+    }
 
     private fun buildListTitle(intent: FinancialQueryIntent): UiText = when {
         intent.filters.categoryIds.isNotEmpty() -> UiText.from("Matching category transactions")
@@ -200,6 +225,51 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         val duration = period.end - period.start
         return PeriodRange(period.start - duration, period.start)
     }
+
+    private fun formatSingleExpenseAmount(expense: Expense): String =
+        formatAmount(expense.effectiveAmount, expense.currency)
+
+    private fun formatCurrencyTotals(currencyTotals: List<CurrencyTotal>): String = when {
+        currencyTotals.isEmpty() -> formatAmount(0.0, "EUR")
+        currencyTotals.size == 1 -> formatAmount(currencyTotals.first().amount, currencyTotals.first().currency)
+        else -> currencyTotals.joinToString(" + ") { total ->
+            formatAmount(total.amount, total.currency)
+        }
+    }
+
+    private fun formatCurrencyAverages(currencyTotals: List<CurrencyTotal>): String = when {
+        currencyTotals.isEmpty() -> formatAmount(0.0, "EUR")
+        currencyTotals.size == 1 -> formatAmount(currencyTotals.first().amount / currencyTotals.first().count, currencyTotals.first().currency)
+        else -> currencyTotals.joinToString(" • ") { total ->
+            "${formatAmount(total.amount / total.count, total.currency)} avg"
+        }
+    }
+
+    private fun formatAmount(amount: Double, currency: String): String =
+        String.format(Locale.US, "%.2f %s", amount, currency.normalizedCurrencyCode())
+
+    private fun String.normalizedCurrencyCode(): String = trim().uppercase(Locale.US).ifBlank { "EUR" }
+
+    private fun List<ExpenseWithCategory>.toCurrencyTotals(): List<CurrencyTotal> =
+        groupBy { it.expense.currency.normalizedCurrencyCode() }
+            .map { (currency, expenses) ->
+                CurrencyTotal(
+                    currency = currency,
+                    amount = expenses.sumOf { it.expense.effectiveAmount },
+                    count = expenses.size
+                )
+            }
+            .sortedBy { it.currency }
+
+    private data class AssistantFilteredExpenses(
+        val expenses: List<ExpenseWithCategory>
+    )
+
+    private data class CurrencyTotal(
+        val currency: String,
+        val amount: Double,
+        val count: Int
+    )
 
     private fun QueryOwnershipScope.toRepositoryOwnershipFilter(): com.yourname.expensetracker.data.repository.OwnershipFilter =
         when (this) {
@@ -228,12 +298,4 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
         }
 
-    private fun com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters.isSimplePurchaseTotal(): Boolean {
-        return merchants.isEmpty() &&
-            categoryIds.isEmpty() &&
-            transactionTypes.isEmpty() &&
-            ownership == QueryOwnershipScope.ALL &&
-            minAmount == null &&
-            maxAmount == null
-    }
 }

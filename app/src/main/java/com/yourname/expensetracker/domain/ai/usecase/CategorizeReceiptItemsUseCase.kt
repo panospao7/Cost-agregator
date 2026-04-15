@@ -119,15 +119,15 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
                     // Use simple keyword matching as fallback
                     createFallbackResult(input)
                 }
-                else -> {
-                    updateArtifactFailed(baseEntity, "Invalid route")
-                    return CategorizationResult.Error
-                }
+                else -> return failCategorization(receiptId, baseEntity, "Invalid route")
             }
 
             if (result == null) {
-                updateArtifactFailed(baseEntity, "Service returned null")
-                return CategorizationResult.Error
+                return failCategorization(receiptId, baseEntity, "Service returned null")
+            }
+
+            validateResult(input, result)?.let { reason ->
+                return failCategorization(receiptId, baseEntity, reason)
             }
 
             // 10. Store results
@@ -142,9 +142,7 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             CategorizationResult.Success(result)
         } catch (e: Exception) {
             Timber.e(e, "Error categorizing receipt items for $receiptId")
-            updateArtifactFailed(baseEntity, e.message ?: "Unknown error")
-            receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.PENDING)
-            CategorizationResult.Error
+            failCategorization(receiptId, baseEntity, e.message ?: "Unknown error")
         }
     }
 
@@ -267,5 +265,30 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
                 updatedAt = timeProvider.now()
             )
         )
+    }
+
+    private fun validateResult(
+        input: ReceiptItemCategorizationInput,
+        result: ReceiptItemCategorizationResult
+    ): String? {
+        if (result.items.isEmpty()) {
+            return "Service returned no categorized items"
+        }
+
+        if (result.items.size != input.lineItems.size) {
+            return "Service returned invalid item count"
+        }
+
+        return null
+    }
+
+    private suspend fun failCategorization(
+        receiptId: Long,
+        baseEntity: AiArtifactRecord,
+        reason: String
+    ): CategorizationResult {
+        updateArtifactFailed(baseEntity, reason)
+        receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.PENDING)
+        return CategorizationResult.Error
     }
 }

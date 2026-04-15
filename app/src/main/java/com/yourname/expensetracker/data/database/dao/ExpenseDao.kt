@@ -114,6 +114,24 @@ interface ExpenseDao {
     @RawQuery
     suspend fun getExpensesDynamic(query: SupportSQLiteQuery): List<ExpenseWithCategory>
 
+    /**
+     * Assistant-only uncapped dynamic query entry point.
+     *
+     * Keep paged/UI callers on [getExpensesDynamic]; this variant exists so the
+     * assistant can execute exact full-read queries without inheriting UI page
+     * limits from repository call sites.
+     */
+    @Transaction
+    @RawQuery
+    suspend fun getAssistantExpensesDynamic(query: SupportSQLiteQuery): List<ExpenseWithCategory>
+
+    /**
+     * Assistant-only exact-count dynamic query entry point that must share the
+     * same WHERE/filter contract as [getAssistantExpensesDynamic].
+     */
+    @RawQuery
+    suspend fun getAssistantExpenseCountDynamic(query: SupportSQLiteQuery): Int
+
     @Transaction
     @Query("""
         SELECT * FROM expenses 

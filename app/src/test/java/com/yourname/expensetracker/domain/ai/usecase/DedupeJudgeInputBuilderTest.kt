@@ -61,6 +61,27 @@ class DedupeJudgeInputBuilderTest {
         assertTrue(result is DedupeJudgeBuildResult.Ready)
     }
 
+    @Test
+    fun `build returns Ready when exactly one candidate exists`() = runTest {
+        val review = makeReview()
+        coEvery {
+            expenseRepository.getDuplicateCandidatesInWindow(
+                amount = any(),
+                date = any(),
+                currency = any(),
+                transactionType = any(),
+                windowMs = any()
+            )
+        } returns listOf(
+            Expense(id = 1L, amount = 10.0, merchant = "Lidl", merchantKey = MerchantKeyGenerator.generate("Lidl"), transactionType = TransactionType.PURCHASE, date = 1_000L)
+        )
+        coEvery { reviewQueueRepository.getPendingReviewsByMerchant("Lidl") } returns emptyList()
+
+        val result = builder.build(PendingReviewWithReceipt(review, null), AiSettings())
+
+        assertTrue(result is DedupeJudgeBuildResult.Ready)
+    }
+
     /**
      * A.4 regression: the builder must call getDuplicateCandidatesInWindow
      * with the canonical window from DuplicateDetectionPolicy, NOT the old

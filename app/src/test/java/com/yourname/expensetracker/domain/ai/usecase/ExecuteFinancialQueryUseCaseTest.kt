@@ -1,24 +1,24 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.database.dao.CategoryTotal
-import com.yourname.expensetracker.data.database.dao.MerchantStats
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.OwnershipFilter
 import com.yourname.expensetracker.domain.ai.model.ExpenseQueryFilters
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
 import com.yourname.expensetracker.domain.ai.model.QueryComparison
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
-import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
 import com.yourname.expensetracker.domain.model.PeriodRange
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -39,7 +39,19 @@ class ExecuteFinancialQueryUseCaseTest {
 
     @Test
     fun `invoke returns summary total for simple purchase total`() = runTest {
-        coEvery { expenseRepository.getTotalForPeriod(100L, 200L) } returns 42.5
+        coEvery {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = 100L,
+                endDate = 200L,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        } returns listOf(expenseWithCategory(id = 1L, amount = 42.5, currency = "EUR"))
 
         val result = useCase(
             FinancialQueryIntent(
@@ -57,8 +69,32 @@ class ExecuteFinancialQueryUseCaseTest {
 
     @Test
     fun `invoke returns previous period supporting text for comparison total`() = runTest {
-        coEvery { expenseRepository.getTotalForPeriod(100L, 200L) } returns 80.0
-        coEvery { expenseRepository.getTotalForPeriod(0L, 100L) } returns 60.0
+        coEvery {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = 100L,
+                endDate = 200L,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        } returns listOf(expenseWithCategory(id = 1L, amount = 80.0, currency = "EUR"))
+        coEvery {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = 0L,
+                endDate = 100L,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        } returns listOf(expenseWithCategory(id = 2L, amount = 60.0, currency = "EUR"))
 
         val result = useCase(
             FinancialQueryIntent(
@@ -77,8 +113,21 @@ class ExecuteFinancialQueryUseCaseTest {
 
     @Test
     fun `invoke returns merchant breakdown`() = runTest {
-        coEvery { expenseRepository.getTopMerchantsForPeriod(100L, 200L, 8) } returns listOf(
-            MerchantStats("lidl", "Lidl", 50.0, 3, 16.6, 10.0, 30.0, 101L, 199L)
+        coEvery {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = 100L,
+                endDate = 200L,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        } returns listOf(
+            expenseWithCategory(id = 1L, amount = 20.0, merchant = "Lidl", merchantKey = "lidl"),
+            expenseWithCategory(id = 2L, amount = 30.0, merchant = "Lidl", merchantKey = "lidl")
         )
 
         val result = useCase(
@@ -94,7 +143,7 @@ class ExecuteFinancialQueryUseCaseTest {
         assertTrue(result is FinancialQueryResult.Breakdown)
         result as FinancialQueryResult.Breakdown
         assertEquals("Lidl", result.rows.first().label)
-        assertEquals(50.0, result.rows.first().amount)
+        assertEquals("50.00 EUR", result.rows.first().valueText)
     }
 
     @Test
@@ -102,8 +151,21 @@ class ExecuteFinancialQueryUseCaseTest {
         coEvery { categoryRepository.getAll() } returns listOf(
             Category(1L, "Groceries", "G", "#00FF00")
         )
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(100L, 200L) } returns listOf(
-            CategoryTotal(1L, 99.0, 4)
+        coEvery {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = 100L,
+                endDate = 200L,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        } returns listOf(
+            expenseWithCategory(id = 1L, amount = 40.0, categoryId = 1L),
+            expenseWithCategory(id = 2L, amount = 59.0, categoryId = 1L)
         )
 
         val result = useCase(
@@ -119,24 +181,23 @@ class ExecuteFinancialQueryUseCaseTest {
         assertTrue(result is FinancialQueryResult.Breakdown)
         result as FinancialQueryResult.Breakdown
         assertEquals("Groceries", result.rows.first().label)
+        assertEquals("99.00 EUR", result.rows.first().valueText)
     }
 
     @Test
     fun `invoke returns transaction list for list metric`() = runTest {
         coEvery {
-            expenseRepository.getExpensesPagedDynamic(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
-        } returns listOf(
-            ExpenseWithCategory(
-                expense = Expense(
-                    id = 1L,
-                    amount = 12.0,
-                    merchant = "Lidl",
-                    transactionType = TransactionType.PURCHASE,
-                    date = 150L
-                ),
-                category = null
+            expenseRepository.getAssistantExpenseCountFiltered(
+                startDate = 100L,
+                endDate = 200L,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null
             )
-        )
+        } returns 1200
 
         val intent = FinancialQueryIntent(
             rawQuery = "show groceries this month",
@@ -149,17 +210,26 @@ class ExecuteFinancialQueryUseCaseTest {
 
         assertTrue(result is FinancialQueryResult.TransactionList)
         result as FinancialQueryResult.TransactionList
-        assertEquals(1, result.previewCount)
+        assertEquals(1200, result.previewCount)
     }
 
     @Test
     fun `invoke returns largest purchase summary`() = runTest {
-        coEvery { expenseRepository.getLargestExpenseForPeriod(100L, 200L) } returns Expense(
-            id = 1L,
-            amount = 120.0,
-            merchant = "Amazon",
-            transactionType = TransactionType.PURCHASE,
-            date = 150L
+        coEvery {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = 100L,
+                endDate = 200L,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        } returns listOf(
+            expenseWithCategory(id = 1L, amount = 120.0, merchant = "Amazon", currency = "USD"),
+            expenseWithCategory(id = 2L, amount = 20.0, merchant = "Bakery", currency = "EUR")
         )
 
         val result = useCase(
@@ -173,6 +243,130 @@ class ExecuteFinancialQueryUseCaseTest {
 
         assertTrue(result is FinancialQueryResult.Summary)
         result as FinancialQueryResult.Summary
-        assertEquals("Amazon: 120.00 EUR", result.primaryText)
+        assertEquals("Amazon: 120.00 USD", result.primaryText)
     }
+
+    @Test
+    fun `invoke preserves multi value filters for assistant queries`() = runTest {
+        val intent = FinancialQueryIntent(
+            rawQuery = "show grocery or fuel purchases",
+            normalizedQuery = "show grocery or fuel purchases",
+            filters = ExpenseQueryFilters(
+                period = PeriodRange(100L, 200L),
+                merchants = setOf("Lidl", "Shell"),
+                categoryIds = setOf(1L, 2L),
+                transactionTypes = setOf(
+                    com.yourname.expensetracker.domain.model.DomainTransactionType.PURCHASE,
+                    com.yourname.expensetracker.domain.model.DomainTransactionType.WITHDRAWAL
+                )
+            ),
+            metric = QueryMetric.COUNT
+        )
+        coEvery { expenseRepository.getAssistantExpenseCountFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 7
+
+        useCase(intent)
+
+        coVerify {
+            expenseRepository.getAssistantExpenseCountFiltered(
+                startDate = 100L,
+                endDate = 200L,
+                transactionTypes = setOf(TransactionType.PURCHASE, TransactionType.WITHDRAWAL),
+                categoryIds = setOf(1L, 2L),
+                merchantNames = setOf("Lidl", "Shell"),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null
+            )
+        }
+    }
+
+    @Test
+    fun `invoke renders mixed currency totals without fake EUR label`() = runTest {
+        coEvery {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = 100L,
+                endDate = 200L,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        } returns listOf(
+            expenseWithCategory(id = 1L, amount = 12.0, currency = "EUR"),
+            expenseWithCategory(id = 2L, amount = 5.0, currency = "USD")
+        )
+
+        val result = useCase(
+            FinancialQueryIntent(
+                rawQuery = "total this month",
+                normalizedQuery = "total this month",
+                filters = ExpenseQueryFilters(period = PeriodRange(100L, 200L)),
+                metric = QueryMetric.TOTAL
+            )
+        )
+
+        assertTrue(result is FinancialQueryResult.Summary)
+        result as FinancialQueryResult.Summary
+        assertEquals("12.00 EUR + 5.00 USD", result.primaryText)
+    }
+
+    @Test
+    fun `invoke renders mixed currency breakdown rows with valueText and no eur fallback amount`() = runTest {
+        coEvery { categoryRepository.getAll() } returns listOf(Category(1L, "Groceries", "G", "#00FF00"))
+        coEvery {
+            expenseRepository.getAssistantExpensesFiltered(
+                startDate = 100L,
+                endDate = 200L,
+                transactionTypes = emptySet(),
+                categoryIds = emptySet(),
+                merchantNames = emptySet(),
+                ownershipFilter = OwnershipFilter.ALL,
+                minAmount = null,
+                maxAmount = null,
+                sortOrder = any()
+            )
+        } returns listOf(
+            expenseWithCategory(id = 1L, amount = 10.0, currency = "EUR", categoryId = 1L),
+            expenseWithCategory(id = 2L, amount = 5.0, currency = "USD", categoryId = 1L)
+        )
+
+        val result = useCase(
+            FinancialQueryIntent(
+                rawQuery = "top categories this month",
+                normalizedQuery = "top categories this month",
+                filters = ExpenseQueryFilters(period = PeriodRange(100L, 200L)),
+                metric = QueryMetric.TOTAL,
+                grouping = QueryGrouping.CATEGORY
+            )
+        )
+
+        assertTrue(result is FinancialQueryResult.Breakdown)
+        result as FinancialQueryResult.Breakdown
+        assertEquals("10.00 EUR + 5.00 USD", result.rows.first().valueText)
+        assertNull(result.rows.first().amount)
+    }
+
+    private fun expenseWithCategory(
+        id: Long,
+        amount: Double,
+        currency: String = "EUR",
+        merchant: String = "Lidl",
+        merchantKey: String? = merchant.lowercase(),
+        categoryId: Long? = null
+    ) = ExpenseWithCategory(
+        expense = Expense(
+            id = id,
+            amount = amount,
+            currency = currency,
+            merchant = merchant,
+            merchantKey = merchantKey,
+            categoryId = categoryId,
+            transactionType = TransactionType.PURCHASE,
+            date = 150L
+        ),
+        category = null
+    )
 }

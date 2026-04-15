@@ -119,7 +119,7 @@ class ExplainPendingReviewUseCaseTest {
         status        = AiArtifactStatus.READY,
         mode          = AiMode.AUTO,
         promptVersion = AppConfig.Ai.PROMPT_VERSION_REVIEW,
-        sourceHash    = "existing_hash",
+        sourceHash    = makeInput(reviewId = reviewId).hashCode().toString(),
         createdAt     = now,
         updatedAt     = now,
         expiresAt     = now + AppConfig.Ai.REVIEW_EXPLANATION_TTL_MS
@@ -171,6 +171,25 @@ class ExplainPendingReviewUseCaseTest {
         coVerify(exactly = 0) { reviewExplanationService.generate(any()) }
         // No upsert after cache hit
         coVerify(exactly = 0) { aiArtifactRepository.upsert(any()) }
+    }
+
+    @Test
+    fun `invoke regenerates when cached review explanation source hash is stale`() = runTest {
+        val review = makePendingReview(id = 7L)
+        val staleInput = makeInput(reviewId = 7L).copy(notificationText = "Different notification")
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        every { inputBuilder.build(any(), any()) } returns staleInput
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns freshReadyArtifact(reviewId = 7L)
+        coEvery { reviewExplanationService.generate(any()) } returns AiServiceResult.Success(
+            ReviewExplanation(headline = "Fresh", body = "Fresh body")
+        )
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        useCase(review)
+
+        coVerify(exactly = 1) { reviewExplanationService.generate(any()) }
+        assertEquals(AiArtifactStatus.READY, captured.last().status)
     }
 
     // ── provider returns null ─────────────────────────────────────────────────

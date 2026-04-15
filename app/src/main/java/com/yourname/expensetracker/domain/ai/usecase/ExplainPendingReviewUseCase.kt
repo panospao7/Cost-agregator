@@ -62,20 +62,16 @@ class ExplainPendingReviewUseCase @Inject constructor(
         // ── 3. Derive target key ─────────────────────────────────────────────
         val targetKey = "pending_review:${review.id}"
         val now       = timeProvider.now()
+        val sourceHash = input.hashCode().toString()
 
         // ── 4. Cache freshness check ─────────────────────────────────────────
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.REVIEW_EXPLANATION)
-        if (existing != null &&
-            existing.status == AiArtifactStatus.READY &&
-            existing.promptVersion == AppConfig.Ai.PROMPT_VERSION_REVIEW &&
-            existing.expiresAt != null && existing.expiresAt > now
-        ) {
+        if (existing.isFreshArtifact(AppConfig.Ai.PROMPT_VERSION_REVIEW, sourceHash, now)) {
             Timber.d("ExplainPendingReviewUseCase: fresh artifact found for review ${review.id}, skipping generation.")
             return
         }
 
         // ── 5a. Persist RUNNING tombstone ────────────────────────────────────
-        val sourceHash = input.hashCode().toString()
         val baseEntity = AiArtifactRecord(
             targetType    = AiTargetType.PENDING_REVIEW,
             targetKey     = targetKey,

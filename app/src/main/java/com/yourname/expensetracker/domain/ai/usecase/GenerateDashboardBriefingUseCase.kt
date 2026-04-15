@@ -67,20 +67,16 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
         // ── 3. Derive target key ─────────────────────────────────────────────
         val targetKey = "dashboard_home:${input.dateKey}"
         val now       = eventTimeMillis ?: timeProvider.now()
+        val sourceHash = input.hashCode().toString()
 
         // ── 4. Cache freshness check ─────────────────────────────────────────
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.DASHBOARD_BRIEFING)
-        if (existing != null &&
-            existing.status == AiArtifactStatus.READY &&
-            existing.promptVersion == AppConfig.Ai.PROMPT_VERSION_DASHBOARD &&
-            existing.expiresAt != null && existing.expiresAt > now
-        ) {
+        if (existing.isFreshArtifact(AppConfig.Ai.PROMPT_VERSION_DASHBOARD, sourceHash, now)) {
             Timber.d("GenerateDashboardBriefingUseCase: fresh artifact found, skipping generation.")
             return
         }
 
         // ── 5a. Persist RUNNING tombstone ────────────────────────────────────
-        val sourceHash = input.hashCode().toString()
         val baseEntity = AiArtifactRecord(
             targetType    = AiTargetType.DASHBOARD,
             targetKey     = targetKey,

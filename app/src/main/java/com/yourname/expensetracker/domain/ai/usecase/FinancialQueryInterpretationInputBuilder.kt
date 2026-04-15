@@ -30,13 +30,24 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
         val categories = categoryRepository.getAll()
         val merchants = expenseRepository.getRecentMerchantNames()
         val merchantAliases = mutableMapOf<String, String>()
+        val merchantAliasesByRawName = linkedMapOf<String, String>()
+        val merchantLookup = linkedMapOf<String, String>()
         val categoryAliases = mutableMapOf<String, String>()
+        val categoryAliasesByRawName = linkedMapOf<String, String>()
+        val categoryLookup = linkedMapOf<String, Long>()
+        // Maps the name/alias that will appear in categoryNames → category ID.
+        // Under redaction the key is the alias; otherwise it is the raw name.
+        val categoryNameToId = mutableMapOf<String, Long>()
         val categoryNames = if (shouldRedact) {
             categories
                 .map { category ->
+                    categoryNameToId[category.name] = category.id
                     val alias = sanitizeCategoryContext(category.name, shouldRedact = true)
                     if (alias.isNotBlank()) {
                         categoryAliases[alias] = category.name
+                        categoryAliasesByRawName[category.name] = alias
+                        categoryLookup[alias] = category.id
+                        categoryNameToId[alias] = category.id
                     }
                     alias
                 }
@@ -44,6 +55,10 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
                 .distinct()
                 .sorted()
         } else {
+            categories.forEach { category ->
+                categoryLookup[category.name] = category.id
+                categoryNameToId[category.name] = category.id
+            }
             categories.map { it.name }.sorted()
         }
         val merchantNames = merchants
@@ -51,6 +66,10 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
                 val alias = sanitizeMerchantContext(merchant, shouldRedact)
                 if (shouldRedact && alias.isNotBlank()) {
                     merchantAliases[alias] = merchant
+                    merchantAliasesByRawName[merchant] = alias
+                    merchantLookup[alias] = merchant
+                } else if (!shouldRedact) {
+                    merchantLookup[merchant] = merchant
                 }
                 alias
             }
@@ -59,13 +78,19 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
             .take(100)
 
         return FinancialQueryInterpretationInput(
-            rawQuery = sanitizeFreeText(rawQuery, shouldRedact)
+            rawQuery = sanitizeFreeText(
+                sanitizeQueryContext(rawQuery, shouldRedact, merchantAliasesByRawName, categoryAliasesByRawName),
+                shouldRedact
+            )
                 .take(AppConfig.Ai.MAX_QUERY_INPUT_CHARS),
             currentTimeMs = timeProvider.now(),
             categoryNames = categoryNames,
             merchantNames = merchantNames,
+            merchantLookupMap = merchantLookup,
             merchantAliasMap = merchantAliases,
+            categoryLookupMap = categoryLookup,
             categoryAliasMap = categoryAliases,
+            categoryNameToIdMap = categoryNameToId,
             conversationHistory = conversationHistory
                 .takeLast(AppConfig.Ai.MAX_QUERY_HISTORY_TURNS_FOR_MODEL)
                 .map { message ->
@@ -73,7 +98,15 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
                         message
                     } else {
                         message.copy(
-                            text = sanitizeFreeText(message.text, shouldRedact),
+                            text = sanitizeFreeText(
+                                sanitizeQueryContext(
+                                    message.text,
+                                    shouldRedact,
+                                    merchantAliasesByRawName,
+                                    categoryAliasesByRawName
+                                ),
+                                shouldRedact
+                            ),
                             payloadJson = null
                         )
                     }
@@ -93,6 +126,34 @@ class FinancialQueryInterpretationInputBuilder @Inject constructor(
         if (!shouldRedact) return trimmed
         if (trimmed.isBlank()) return ""
         return "category_${trimmed.sha256Prefix()}"
+    }
+
+    private fun sanitizeQueryContext(
+        text: String,
+        shouldRedact: Boolean,
+        merchantAliasesByRawName: Map<String, String>,
+        categoryAliasesByRawName: Map<String, String>
+    ): String {
+        val trimmed = text.trim()
+        if (!shouldRedact || trimmed.isBlank()) return trimmed
+
+        val replacements = linkedMapOf<String, String>()
+        merchantAliasesByRawName.forEach { (rawName, alias) ->
+            if (rawName.isNotBlank() && alias.isNotBlank()) {
+                replacements.putIfAbsent(rawName, alias)
+            }
+        }
+        categoryAliasesByRawName.forEach { (rawName, alias) ->
+            if (rawName.isNotBlank() && alias.isNotBlank()) {
+                replacements.putIfAbsent(rawName, alias)
+            }
+        }
+
+        return replacements.entries
+            .sortedByDescending { it.key.length }
+            .fold(trimmed) { acc, (rawName, alias) ->
+                acc.replace(Regex(Regex.escape(rawName), RegexOption.IGNORE_CASE), alias)
+            }
     }
 
     private fun sanitizeFreeText(text: String, shouldRedact: Boolean): String {

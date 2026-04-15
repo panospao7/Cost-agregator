@@ -67,8 +67,16 @@ data class FinancialQueryInterpretationInput(
     val localeTag: String = "en-US",
     val categoryNames: List<String> = emptyList(),
     val merchantNames: List<String> = emptyList(),
+    val merchantLookupMap: Map<String, String> = emptyMap(),
     val merchantAliasMap: Map<String, String> = emptyMap(),
+    val categoryLookupMap: Map<String, Long> = emptyMap(),
     val categoryAliasMap: Map<String, String> = emptyMap(),
+    /**
+     * Maps canonical category name (or redacted alias) → category ID.
+     * Used by the interpretation service to resolve model-emitted category
+     * names/aliases back to [ExpenseQueryFilters.categoryIds].
+     */
+    val categoryNameToIdMap: Map<String, Long> = emptyMap(),
     val conversationHistory: List<AiChatMessage> = emptyList()
 )
 

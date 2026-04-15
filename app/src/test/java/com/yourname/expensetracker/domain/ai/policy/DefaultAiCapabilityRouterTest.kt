@@ -315,4 +315,43 @@ class DefaultAiCapabilityRouterTest {
         assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
         assertTrue(result.reason.contains("Cloud AI is disabled", ignoreCase = true))
     }
+
+    @Test
+    fun `decide falls back to on device when cloud preferred capability has no cloud route but local is available`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns false
+        every { environmentMonitor.isWifiConnected() } returns false
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.NOTIFICATION_PARSE) } returns OnDeviceModelStatus.AVAILABLE
+
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            allowOnDeviceAi = true,
+            preferredMode = AiMode.CLOUD
+        )
+
+        val result = router.decide(AiCapability.NOTIFICATION_PARSE, settings)
+
+        assertEquals(AiRoute.ON_DEVICE, result.route)
+        assertEquals(AppConfig.Ai.ON_DEVICE_PROVIDER_NAME, result.providerName)
+    }
+
+    @Test
+    fun `decide falls back to cloud when on device preferred capability has no local availability`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns true
+        every { environmentMonitor.isWifiConnected() } returns true
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.REVIEW_EXPLANATION) } returns OnDeviceModelStatus.UNAVAILABLE
+
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            allowOnDeviceAi = true,
+            reviewExplanationEnabled = true,
+            preferredMode = AiMode.ON_DEVICE
+        )
+
+        val result = router.decide(AiCapability.REVIEW_EXPLANATION, settings)
+
+        assertEquals(AiRoute.CLOUD, result.route)
+        assertEquals(AppConfig.Ai.REVIEW_EXPLANATION_CLOUD_PROVIDER, result.providerName)
+    }
 }

@@ -136,6 +136,56 @@ class JudgePendingReviewDuplicateUseCaseTest {
         assertTrue(captured.last().explanationText?.contains("Route: ON_DEVICE") == true)
     }
 
+    @Test
+    fun `invoke clears invalid matched target outside candidate set`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { dedupeJudgeService.judge(any()) } returns AiServiceResult.Success(
+            DedupeJudgeSuggestion(
+                verdict = DuplicateVerdict.LIKELY_DUPLICATE,
+                matchedTargetType = AiTargetType.EXPENSE,
+                matchedTargetId = 99L,
+                rationale = "looks similar"
+            )
+        )
+        val captured = mutableListOf<AiArtifactRecord>()
+        coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
+
+        val result = useCase(makeItem())
+
+        assertTrue(result is DedupeJudgeGenerationResult.Success)
+        val suggestion = (result as DedupeJudgeGenerationResult.Success).suggestion
+        assertEquals(DuplicateVerdict.UNCERTAIN, suggestion.verdict)
+        assertEquals(null, suggestion.matchedTargetId)
+        assertEquals(null, suggestion.matchedTargetType)
+        assertTrue(captured.last().payloadJson?.contains("UNCERTAIN") == true)
+    }
+
+    @Test
+    fun `invoke preserves matched target inside candidate set`() = runTest {
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(makeInput())
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { dedupeJudgeService.judge(any()) } returns AiServiceResult.Success(
+            DedupeJudgeSuggestion(
+                verdict = DuplicateVerdict.LIKELY_DUPLICATE,
+                matchedTargetType = AiTargetType.EXPENSE,
+                matchedTargetId = 3L,
+                rationale = "exact match"
+            )
+        )
+        coEvery { aiArtifactRepository.upsert(any()) } returns 1L
+
+        val result = useCase(makeItem())
+
+        assertTrue(result is DedupeJudgeGenerationResult.Success)
+        val suggestion = (result as DedupeJudgeGenerationResult.Success).suggestion
+        assertEquals(DuplicateVerdict.LIKELY_DUPLICATE, suggestion.verdict)
+        assertEquals(3L, suggestion.matchedTargetId)
+        assertEquals(AiTargetType.EXPENSE, suggestion.matchedTargetType)
+    }
+
     private fun makeItem() = PendingReviewWithReceipt(
         PendingReview(
             id = 2L,

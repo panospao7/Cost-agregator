@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
+import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
 import com.yourname.expensetracker.domain.ai.model.AiServiceError
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
@@ -60,10 +61,21 @@ class SmartReceiptAssistService @Inject constructor(
         DETERMINISTIC_FALLBACK
     }
 
+    private data class AttemptPlan(
+        val attemptNumber: Int,
+        val method: AttemptMethod
+    )
+
+    private data class RouteViability(
+        val cloudAvailable: Boolean,
+        val onDeviceAvailable: Boolean
+    )
+
     override suspend fun suggest(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> {
         val settings = aiSettingsRepository.settings().first()
         val routeDecision = aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, settings)
         val attempts = mutableListOf<AttemptDetails>()
+        val orderedAttempts = orderedAttemptsFor(routeDecision.route)
         
         Timber.d("SmartReceiptAssist: Starting analysis for receipt ${input.receiptId}, route: ${routeDecision.route}")
 
@@ -75,59 +87,16 @@ class SmartReceiptAssistService @Inject constructor(
             return fallbackResult.withExecutionMetadata(usedImageInput = false, attempts = attempts)
         }
 
-        // Attempt 1: Cloud Vision AI (if image available and cloud enabled)
-        if (shouldAttemptCloudVision(input, settings, routeDecision.route)) {
-            Timber.d("SmartReceiptAssist: Attempt 1 - Cloud Vision AI")
-            val result = tryCloudVision(input)
-            attempts.add(result.toAttemptDetails(1, AttemptMethod.CLOUD_VISION))
+        val routeViability = resolveRouteViability(settings, routeDecision.route)
+
+        for (plan in orderedAttempts) {
+            val result = executeAttempt(plan, input, settings, routeViability) ?: continue
+            attempts.add(result.toAttemptDetails(plan.attemptNumber, plan.method))
 
             if (result is AiServiceResult.Success && isGoodResult(result.value)) {
-                Timber.d("SmartReceiptAssist: Cloud Vision succeeded with confidence ${result.value.total?.confidence}")
-                return result.withExecutionMetadata(
-                    usedImageInput = result.value.usedImageInput,
-                    attempts = attempts
-                )
-            }
-        }
-
-        // Attempt 2: On-Device Vision AI (if available and image mode enabled)
-        if (shouldAttemptOnDeviceVision(input, settings, routeDecision.route)) {
-            Timber.d("SmartReceiptAssist: Attempt 2 - On-Device Vision AI")
-            val result = tryOnDeviceVision(input)
-            attempts.add(result.toAttemptDetails(2, AttemptMethod.ON_DEVICE_VISION))
-
-            if (result is AiServiceResult.Success && isGoodResult(result.value)) {
-                Timber.d("SmartReceiptAssist: On-Device Vision succeeded")
-                return result.withExecutionMetadata(
-                    usedImageInput = result.value.usedImageInput,
-                    attempts = attempts
-                )
-            }
-        }
-
-        // Attempt 3: Cloud Text AI (OCR text)
-        if (shouldAttemptCloudText(routeDecision.route)) {
-            Timber.d("SmartReceiptAssist: Attempt 3 - Cloud Text AI")
-            val textInput = input.copy(isImageAnalysisMode = false)  // Force text mode
-            val result = tryCloudText(textInput)
-            attempts.add(result.toAttemptDetails(3, AttemptMethod.CLOUD_TEXT))
-
-            if (result is AiServiceResult.Success && isGoodResult(result.value)) {
-                Timber.d("SmartReceiptAssist: Cloud Text succeeded")
-                return result.withExecutionMetadata(usedImageInput = false, attempts = attempts)
-            }
-        }
-
-        // Attempt 4: On-Device Text AI (OCR text)
-        if (shouldAttemptOnDeviceText(settings, routeDecision.route)) {
-            Timber.d("SmartReceiptAssist: Attempt 4 - On-Device Text AI")
-            val textInput = input.copy(isImageAnalysisMode = false)  // Force text mode
-            val result = tryOnDeviceText(textInput)
-            attempts.add(result.toAttemptDetails(4, AttemptMethod.ON_DEVICE_TEXT))
-
-            if (result is AiServiceResult.Success && isGoodResult(result.value)) {
-                Timber.d("SmartReceiptAssist: On-Device Text succeeded")
-                return result.withExecutionMetadata(usedImageInput = false, attempts = attempts)
+                val usedImageInput = plan.method == AttemptMethod.CLOUD_VISION ||
+                    plan.method == AttemptMethod.ON_DEVICE_VISION
+                return result.withExecutionMetadata(usedImageInput = usedImageInput, attempts = attempts)
             }
         }
 
@@ -141,43 +110,108 @@ class SmartReceiptAssistService @Inject constructor(
         return fallbackResult.withExecutionMetadata(usedImageInput = false, attempts = attempts)
     }
 
-    private fun shouldAttemptCloudVision(
-        input: ReceiptAssistInput, 
+    private fun orderedAttemptsFor(route: AiRoute): List<AttemptPlan> {
+        return if (route == AiRoute.CLOUD) {
+            listOf(
+                AttemptPlan(1, AttemptMethod.CLOUD_VISION),
+                AttemptPlan(2, AttemptMethod.ON_DEVICE_VISION),
+                AttemptPlan(3, AttemptMethod.CLOUD_TEXT),
+                AttemptPlan(4, AttemptMethod.ON_DEVICE_TEXT)
+            )
+        } else {
+            listOf(
+                AttemptPlan(1, AttemptMethod.ON_DEVICE_VISION),
+                AttemptPlan(2, AttemptMethod.CLOUD_VISION),
+                AttemptPlan(3, AttemptMethod.ON_DEVICE_TEXT),
+                AttemptPlan(4, AttemptMethod.CLOUD_TEXT)
+            )
+        }
+    }
+
+    private suspend fun executeAttempt(
+        plan: AttemptPlan,
+        input: ReceiptAssistInput,
         settings: AiSettings,
-        route: AiRoute
+        routeViability: RouteViability
+    ): AiServiceResult<ReceiptAssistSuggestion>? {
+        return when (plan.method) {
+            AttemptMethod.CLOUD_VISION -> {
+                if (!shouldAttemptCloudVision(input, settings, routeViability)) return null
+                Timber.d("SmartReceiptAssist: Attempt ${plan.attemptNumber} - Cloud Vision AI")
+                tryCloudVision(input)
+            }
+            AttemptMethod.ON_DEVICE_VISION -> {
+                if (!shouldAttemptOnDeviceVision(input, routeViability)) return null
+                Timber.d("SmartReceiptAssist: Attempt ${plan.attemptNumber} - On-Device Vision AI")
+                tryOnDeviceVision(input)
+            }
+            AttemptMethod.CLOUD_TEXT -> {
+                if (!shouldAttemptCloudText(routeViability)) return null
+                Timber.d("SmartReceiptAssist: Attempt ${plan.attemptNumber} - Cloud Text AI")
+                tryCloudText(input.copy(isImageAnalysisMode = false))
+            }
+            AttemptMethod.ON_DEVICE_TEXT -> {
+                if (!shouldAttemptOnDeviceText(routeViability)) return null
+                Timber.d("SmartReceiptAssist: Attempt ${plan.attemptNumber} - On-Device Text AI")
+                tryOnDeviceText(input.copy(isImageAnalysisMode = false))
+            }
+            AttemptMethod.DETERMINISTIC_FALLBACK -> null
+        }
+    }
+
+    private suspend fun resolveRouteViability(
+        settings: AiSettings,
+        selectedRoute: AiRoute
+    ): RouteViability {
+        return when (selectedRoute) {
+            AiRoute.CLOUD -> RouteViability(
+                cloudAvailable = true,
+                onDeviceAvailable = aiCapabilityRouter.decide(
+                    capability = AiCapability.RECEIPT_EXTRACTION,
+                    settings = settings.copy(preferredMode = AiMode.ON_DEVICE)
+                ).route == AiRoute.ON_DEVICE
+            )
+            AiRoute.ON_DEVICE -> RouteViability(
+                cloudAvailable = aiCapabilityRouter.decide(
+                    capability = AiCapability.RECEIPT_EXTRACTION,
+                    settings = settings.copy(preferredMode = AiMode.CLOUD)
+                ).route == AiRoute.CLOUD,
+                onDeviceAvailable = true
+            )
+            AiRoute.DETERMINISTIC_FALLBACK,
+            AiRoute.DISABLED -> RouteViability(
+                cloudAvailable = false,
+                onDeviceAvailable = false
+            )
+        }
+    }
+
+    private fun shouldAttemptCloudVision(
+        input: ReceiptAssistInput,
+        settings: AiSettings,
+        routeViability: RouteViability
     ): Boolean {
-        return route == AiRoute.CLOUD &&
-               input.isImageAnalysisMode &&
-               input.imagePath != null &&
-               settings.receiptImageCloudEnabled
+        return routeViability.cloudAvailable &&
+            input.isImageAnalysisMode &&
+            input.imagePath != null &&
+            input.imageMimeType != null &&
+            settings.receiptImageCloudEnabled
     }
 
     private fun shouldAttemptOnDeviceVision(
-        input: ReceiptAssistInput, 
-        settings: AiSettings,
-        route: AiRoute
+        input: ReceiptAssistInput,
+        routeViability: RouteViability
     ): Boolean {
-        if (!isOnDeviceRouteEligible(route)) return false
-
-        val onDeviceAllowed = aiPolicy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION)
         return input.isImageAnalysisMode &&
-               input.imagePath != null &&
-               onDeviceAllowed
+            input.imagePath != null &&
+            routeViability.onDeviceAvailable
     }
 
-    private fun shouldAttemptCloudText(route: AiRoute): Boolean = route == AiRoute.CLOUD
+    private fun shouldAttemptCloudText(routeViability: RouteViability): Boolean =
+        routeViability.cloudAvailable
 
-    private fun shouldAttemptOnDeviceText(
-        settings: AiSettings,
-        route: AiRoute
-    ): Boolean {
-        if (!isOnDeviceRouteEligible(route)) return false
-        return aiPolicy.shouldAllowOnDevice(settings, AiCapability.RECEIPT_EXTRACTION)
-    }
-
-    private fun isOnDeviceRouteEligible(route: AiRoute): Boolean {
-        return route == AiRoute.ON_DEVICE
-    }
+    private fun shouldAttemptOnDeviceText(routeViability: RouteViability): Boolean =
+        routeViability.onDeviceAvailable
 
     private suspend fun tryCloudVision(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> =
         cloudReceiptAssistService.suggest(input)

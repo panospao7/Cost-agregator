@@ -3,8 +3,10 @@ package com.yourname.expensetracker.domain.ai.usecase
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategoryName
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -76,7 +78,19 @@ class CategorizationAssistInputBuilderTest {
             confidence = 0.9f,
             matchType = MatchType.EXACT_MATCH
         )
-        coEvery { expenseRepository.getRecentTransactionsForMerchant(any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getRecentTransactionsForMerchant(any(), any()) } returns listOf(
+            ExpenseWithCategoryName(
+                expense = Expense(
+                    id = 77L,
+                    amount = 18.0,
+                    merchant = "Lidl",
+                    currency = "EUR",
+                    transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+                    date = 1234L
+                ),
+                categoryName = "Groceries"
+            )
+        )
 
         val result = builder.build(makeItem(), AiSettings(redactBeforeCloud = true))
 
@@ -84,6 +98,11 @@ class CategorizationAssistInputBuilderTest {
         assertNull(result.deterministicExplanation)
         assertTrue(result.merchant.startsWith("merchant_"))
         assertTrue(result.merchant != "Lidl")
+        assertTrue(result.candidateCategories.isEmpty())
+        assertTrue(result.recentTransactionsWithSameMerchant.single().cloudMerchant.startsWith("merchant_"))
+        assertTrue(result.recentTransactionsWithSameMerchant.single().cloudCategoryName.startsWith("category_"))
+        assertEquals("Lidl", result.recentTransactionsWithSameMerchant.single().merchant)
+        assertEquals("Groceries", result.recentTransactionsWithSameMerchant.single().categoryName)
     }
 
     @Test

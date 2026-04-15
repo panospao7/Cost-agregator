@@ -6,14 +6,13 @@ import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
-import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
-import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
@@ -41,6 +40,8 @@ class GenerateTransactionInsightUseCase @Inject constructor(
     private val aiArtifactRepository: AiArtifactRepository,
     private val dashboardBriefingService: DashboardBriefingService,
     private val aiCapabilityRouter: AiCapabilityRouter,
+    private val aiPolicy: AiPolicy,
+    private val inputBuilder: TransactionInsightInputBuilder,
     private val timeProvider: TimeProvider
 ) {
 
@@ -88,9 +89,15 @@ class GenerateTransactionInsightUseCase @Inject constructor(
             return null
         }
 
-        // ── 3. Build minimal input ───────────────────────────────────────────
-        val input = buildTransactionInput(transaction)
-        Timber.d("GenerateTransactionInsightUseCase: Step 3 - Input built: headline='${input.weatherHeadline}', summary='${input.weatherSummary}', amount=${input.totalCommitted}")
+        // ── 3. Build sanitized input ─────────────────────────────────────────
+        val shouldRedact = routeDecision.route == AiRoute.CLOUD &&
+            aiPolicy.shouldRedact(settings, AiCapability.DASHBOARD_BRIEFING)
+        val input = inputBuilder.build(transaction, shouldRedact)
+        Timber.d(
+            "GenerateTransactionInsightUseCase: Step 3 - Input built (route=%s, redacted=%s)",
+            routeDecision.route,
+            shouldRedact
+        )
 
         // ── 4. Generate insight ──────────────────────────────────────────────
         val now = timeProvider.now()
@@ -129,40 +136,6 @@ class GenerateTransactionInsightUseCase @Inject constructor(
                 null
             }
         }
-    }
-
-    /**
-     * Build a minimal DashboardBriefingInput from a transaction.
-     * 
-     * This creates a simple context for the AI to generate an insight.
-     */
-    private fun buildTransactionInput(transaction: Expense): DashboardBriefingInput {
-        val dateKey = java.time.Instant.ofEpochMilli(transaction.date)
-            .atZone(java.time.ZoneId.systemDefault())
-            .toLocalDate()
-            .toString()
-
-        return DashboardBriefingInput(
-            dateKey = dateKey,
-            weatherHeadline = "New transaction recorded",
-            weatherSummary = "${transaction.merchant ?: "Unknown"} - €${transaction.amount}",
-            discretionaryBudget = 0.0,
-            totalCommitted = transaction.amount,
-            totalLikely = 0.0,
-            pendingReviewCount = 0,
-            currentMonthSpent = transaction.amount,
-            topCategories = emptyList(),
-            budgetWarnings = buildList {
-                if (transaction.amount > 100.0) {
-                    add("High-value transaction: €${transaction.amount}")
-                }
-            },
-            upcomingItems = buildList {
-                transaction.merchant?.let { merchant ->
-                    add("Transaction from: $merchant")
-                }
-            }
-        )
     }
 
     private fun AiRoute.toArtifactMode(): AiMode = when (this) {

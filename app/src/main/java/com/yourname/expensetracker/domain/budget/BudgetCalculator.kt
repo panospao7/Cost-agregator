@@ -10,23 +10,29 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * BudgetCalculator - Handles budget period calculations.
- * 
- * ## Period Calculation Logic
- * 
- * ### Supported Periods:
- * - DAILY: 24-hour window starting from anchor date
- * - WEEKLY: 7-day window aligned to anchor's day of week
- * - MONTHLY: Calendar month containing anchor date
- * - QUARTERLY: 3-month window (Q1, Q2, Q3, Q4)
- * - YEARLY: Full calendar year
- * 
- * ### Key Concepts:
- * - **Anchor Date**: The reference date for calculating the period
- * - **Evaluation Time**: The current time (for determining if period is current/future/past)
- * - **Period Window**: Start and end timestamps in milliseconds
- * 
- * ### Edge Cases Handled:
+ * BudgetCalculator — Canonical authority for budget-period boundaries.
+ *
+ * ## Two modes
+ *
+ * | `periodMode` | Semantics |
+ * |---|---|
+ * | `ROLLING` | Anchor-based cycle containing `now`. Window boundaries depend on the budget's `startDate` anchor. |
+ * | `CALENDAR` (or any non-ROLLING value) | Natural calendar boundaries via [TimePeriodUtils]. DAILY → today, WEEKLY → Mon–Mon, MONTHLY → 1st–1st, YEARLY → Jan 1 – Jan 1. |
+ *
+ * ## Key concepts
+ *
+ * - **Anchor Date** (`Budget.startDate`): reference date for ROLLING period arithmetic.
+ * - **Evaluation Time**: the point-in-time used to determine which cycle is "active" (defaults to `timeProvider.now()`).
+ * - **Period Window**: half-open `[start, end)` timestamps in milliseconds.
+ *
+ * ## Convenience vs. explicit API
+ *
+ * - [calculatePeriodWindow] is a convenience wrapper that reads `timeProvider.now()` implicitly.
+ *   **Do not use it** when the caller needs a historical or next-window derivation; use
+ *   [calculatePeriodWindowForTime] with an explicit evaluation time instead.
+ *
+ * ## Edge cases handled
+ *
  * - Month-end dates (31st, 30th, February)
  * - Leap years
  * - Year boundaries
@@ -46,18 +52,26 @@ class BudgetCalculator @Inject constructor(
                 window.start to window.end
             }
             else -> {
+                // CALENDAR mode: use natural calendar boundaries via TimePeriodUtils.
+                // The anchor date is irrelevant for calendar windows.
                 when (budget.period) {
-                    BudgetPeriod.MONTHLY -> TimePeriodUtils.getMonthRange(now)
+                    BudgetPeriod.DAILY -> TimePeriodUtils.getDayRange(now)
                     BudgetPeriod.WEEKLY -> TimePeriodUtils.getWeekRange(now)
-                    else -> {
-                        val window = calculatePeriodWindowForTime(budget.period, budget.startDate, now)
-                        window.start to window.end
-                    }
+                    BudgetPeriod.MONTHLY -> TimePeriodUtils.getMonthRange(now)
+                    BudgetPeriod.YEARLY -> TimePeriodUtils.getYearRange(now)
                 }
             }
         }
     }
 
+    /**
+     * Convenience wrapper: computes an anchor-based period window using `timeProvider.now()`
+     * as the evaluation time.
+     *
+     * **Important:** this method reads `now()` implicitly.
+     * If you need a historical or next-window derivation, call
+     * [calculatePeriodWindowForTime] with an explicit `evaluationTime` instead.
+     */
     fun calculatePeriodWindow(period: BudgetPeriod, anchorDate: Long): PeriodRange {
         return calculatePeriodWindowForTime(period, anchorDate, timeProvider.now())
     }

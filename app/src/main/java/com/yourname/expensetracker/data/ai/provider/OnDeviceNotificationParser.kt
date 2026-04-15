@@ -120,7 +120,7 @@ class OnDeviceNotificationParser @Inject constructor(
             appendLine("  \"currency\": string (ISO code: EUR, USD, GBP, etc., default EUR),")
             appendLine("  \"merchant\": string (merchant name or \"Unknown\" if unclear),")
             appendLine("  \"type\": string (one of: PURCHASE, TRANSFER, DEPOSIT, WITHDRAWAL, default PURCHASE),")
-            appendLine("  \"direction\": string (one of: INCOMING, OUTGOING, or null),")
+            appendLine("  \"direction\": string (one of: INCOMING, OUTGOING, or null; only set for TRANSFER or DEPOSIT, otherwise null),")
             appendLine("  \"confidence\": number (0.0-1.0, your confidence in this parsing),")
             appendLine("  \"reasoning\": string (brief explanation of how you interpreted the notification)")
             appendLine("}")
@@ -131,12 +131,13 @@ class OnDeviceNotificationParser @Inject constructor(
             appendLine("- type TRANSFER: Moving money between accounts/people")
             appendLine("- type DEPOSIT: Receiving money (salary, refund, etc.)")
             appendLine("- type WITHDRAWAL: Taking cash from ATM")
-            appendLine("- direction INCOMING: You received money (deposit, incoming transfer)")
-            appendLine("- direction OUTGOING: You paid/sent money (purchase, outgoing transfer)")
-            appendLine("- For Greek: χρεωθήκατε = charged (OUTGOING), πιστώθηκε = credited (INCOMING)")
+            appendLine("- direction INCOMING: Use only when type is DEPOSIT or incoming TRANSFER")
+            appendLine("- direction OUTGOING: Use only when type is outgoing TRANSFER")
+            appendLine("- For PURCHASE or WITHDRAWAL, set direction to null")
+            appendLine("- For Greek: χρεωθήκατε = charged (usually PURCHASE, direction null), πιστώθηκε = credited (DEPOSIT, direction INCOMING)")
             appendLine()
             appendLine("Example for 'χρεωθήκατε 5€ στο Σκλαβενίτη':")
-            appendLine("{\"amount\":5.0,\"currency\":\"EUR\",\"merchant\":\"Σκλαβενίτης\",\"type\":\"PURCHASE\",\"direction\":\"OUTGOING\",\"confidence\":0.85,\"reasoning\":\"Greek word 'χρεωθήκατε' means 'charged', indicating outgoing payment\"}")
+            appendLine("{\"amount\":5.0,\"currency\":\"EUR\",\"merchant\":\"Σκλαβενίτης\",\"type\":\"PURCHASE\",\"direction\":null,\"confidence\":0.85,\"reasoning\":\"Greek word 'χρεωθήκατε' means 'charged', indicating a purchase\"}")
         }
     }
 
@@ -178,6 +179,12 @@ class OnDeviceNotificationParser @Inject constructor(
                 else -> null
             }
 
+            val transferDirection = when (transactionType) {
+                ParsedTransactionType.TRANSFER,
+                ParsedTransactionType.DEPOSIT -> direction
+                else -> null
+            }
+
             // Parse confidence
             val confidence = json.optDouble("confidence", 0.5).toFloat().coerceIn(0f, 1f)
 
@@ -193,8 +200,8 @@ class OnDeviceNotificationParser @Inject constructor(
                 merchant = merchant,
                 type = transactionType,
                 confidence = confidence,
-                transferDirection = direction,
-                transferAccountName = direction?.let {
+                transferDirection = transferDirection,
+                transferAccountName = transferDirection?.let {
                     when (it) {
                         ParsedTransferDirection.INCOMING -> "From: $merchant"
                         ParsedTransferDirection.OUTGOING -> "To: $merchant"

@@ -13,6 +13,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -198,6 +199,71 @@ class CloudCategorizationAssistServiceTest {
         assertTrue(result != null)
         assertEquals(2L, result?.categoryId)
         assertEquals("Transport", result?.categoryName)
+    }
+
+    @Test
+    fun `suggest builds redacted prompt and maps alias response back to real category`() = runBlocking {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-gemini-key"
+
+        var capturedBody = ""
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                val buffer = Buffer()
+                chain.request().body!!.writeTo(buffer)
+                capturedBody = buffer.readUtf8()
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(
+                        """
+                        {
+                          "candidates": [
+                            {
+                              "content": {
+                                "parts": [
+                                  {
+                                    "text": "{\"categoryId\":1,\"categoryName\":\"category_alias_groceries\",\"confidence\":0.9,\"alternativeCategoryIds\":[2]}"
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                        """.trimIndent().toResponseBody("application/json".toMediaType())
+                    )
+                    .build()
+            }
+            .build()
+
+        val service = CloudCategorizationAssistService(mockKeyStorage, client)
+
+        val result = service.suggest(
+            defaultInput().copy(
+                merchant = "merchant_123",
+                candidateCategories = listOf(
+                    CategoryOption(1L, "Groceries", cloudLabel = "category_alias_groceries"),
+                    CategoryOption(2L, "Transport", cloudLabel = "category_alias_transport")
+                ),
+                recentTransactionsWithSameMerchant = listOf(
+                    com.yourname.expensetracker.domain.ai.model.MerchantTransactionHint(
+                        merchant = "Lidl",
+                        categoryName = "Groceries",
+                        cloudMerchant = "merchant_123",
+                        cloudCategoryName = "category_alias_groceries"
+                    )
+                )
+            )
+        )
+
+        assertTrue(capturedBody.contains("category_alias_groceries"))
+        assertTrue(capturedBody.contains("merchant_123"))
+        assertTrue(!capturedBody.contains("Lidl"))
+        assertTrue(!capturedBody.contains("Known merchant history: Lidl → Groceries"))
+        assertEquals(1L, result?.categoryId)
+        assertEquals("Groceries", result?.categoryName)
     }
 
     private fun defaultInput(): CategorizationAssistInput {

@@ -16,7 +16,8 @@ data class SuggestedValue<T>(
 
 data class CategoryOption(
     val id: Long,
-    val name: String
+    val name: String,
+    val cloudLabel: String = name
 )
 
 data class ReceiptAssistInput(
@@ -85,7 +86,9 @@ sealed interface ReceiptAssistGenerationResult {
 
 data class MerchantTransactionHint(
     val merchant: String,
-    val categoryName: String
+    val categoryName: String,
+    val cloudMerchant: String = merchant,
+    val cloudCategoryName: String = categoryName
 )
 
 data class CategorizationAssistInput(
