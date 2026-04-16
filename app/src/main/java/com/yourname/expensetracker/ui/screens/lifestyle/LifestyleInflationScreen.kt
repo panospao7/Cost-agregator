@@ -33,6 +33,34 @@ import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import java.text.NumberFormat
 import java.util.Locale
 
+internal const val MONTHLY_TREND_MIN_SEGMENT_WEIGHT = 0.001f
+
+internal data class MonthlyTrendBarWeights(
+    val essential: Float?,
+    val discretionary: Float?,
+    val savings: Float?
+)
+
+internal fun calculateMonthlyTrendBarWeights(
+    month: LifestyleInflationDetector.MonthlyLifestyleData,
+    maxReferenceAmount: Double
+): MonthlyTrendBarWeights {
+    val safeReferenceAmount = maxReferenceAmount.coerceAtLeast(1.0)
+
+    fun weightOrNull(amount: Double): Float? {
+        if (amount <= 0.0) return null
+        return (amount / safeReferenceAmount).toFloat().coerceAtLeast(MONTHLY_TREND_MIN_SEGMENT_WEIGHT)
+    }
+
+    val savings = (month.income - month.totalSpending).coerceAtLeast(0.0)
+
+    return MonthlyTrendBarWeights(
+        essential = weightOrNull(month.essentialSpending),
+        discretionary = weightOrNull(month.discretionarySpending),
+        savings = weightOrNull(savings)
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LifestyleInflationScreen(
@@ -483,6 +511,10 @@ fun CreepAlertCard(alert: LifestyleInflationDetector.LifestyleCreepAlert) {
 @Composable
 fun MonthlyTrendCard(monthlyData: List<LifestyleInflationDetector.MonthlyLifestyleData>) {
     val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+    val maxReferenceAmount = monthlyData
+        .maxOfOrNull { maxOf(it.income, it.totalSpending) }
+        ?.coerceAtLeast(1.0)
+        ?: 1.0
     
     Card(
         modifier = Modifier.fillMaxWidth()
@@ -513,7 +545,10 @@ fun MonthlyTrendCard(monthlyData: List<LifestyleInflationDetector.MonthlyLifesty
                     )
                     
                     // Income bar
-                    val maxIncome = monthlyData.maxOf { it.income }.coerceAtLeast(1.0)
+                    val barWeights = calculateMonthlyTrendBarWeights(
+                        month = month,
+                        maxReferenceAmount = maxReferenceAmount
+                    )
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -521,28 +556,31 @@ fun MonthlyTrendCard(monthlyData: List<LifestyleInflationDetector.MonthlyLifesty
                             .clip(RoundedCornerShape(4.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant)
                     ) {
-                        Row {
+                        Row(modifier = Modifier.fillMaxSize()) {
                             // Essential spending (gray)
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .weight(month.essentialSpending.toFloat() / maxIncome.toFloat())
-                                    .background(MaterialTheme.colorScheme.outline)
-                            )
-                            // Discretionary spending (orange)
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .weight(month.discretionarySpending.toFloat() / maxIncome.toFloat())
-                                    .background(MaterialTheme.colorScheme.tertiary)
-                            )
-                            // Savings (green)
-                            val savings = month.income - month.totalSpending
-                            if (savings > 0) {
+                            barWeights.essential?.let { essentialWeight ->
                                 Box(
                                     modifier = Modifier
                                         .fillMaxHeight()
-                                        .weight(savings.toFloat() / maxIncome.toFloat())
+                                        .weight(essentialWeight)
+                                        .background(MaterialTheme.colorScheme.outline)
+                                )
+                            }
+                            // Discretionary spending (orange)
+                            barWeights.discretionary?.let { discretionaryWeight ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .weight(discretionaryWeight)
+                                        .background(MaterialTheme.colorScheme.tertiary)
+                                )
+                            }
+                            // Savings (green)
+                            barWeights.savings?.let { savingsWeight ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .weight(savingsWeight)
                                         .background(MaterialTheme.colorScheme.primary)
                                 )
                             }

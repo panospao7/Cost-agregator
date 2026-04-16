@@ -14,6 +14,47 @@ import javax.inject.Singleton
 class RecurringExpenseRepository @Inject constructor(
     private val dao: RecurringExpenseDao
 ) {
+    companion object {
+        fun createRecurringExpenseEntity(
+            merchant: String,
+            amount: Double,
+            frequency: RecurrenceFrequency,
+            lastDate: Long,
+            currency: String = "EUR",
+            note: String? = null
+        ): ManualRecurringExpense {
+            val nextDate = calculateNextDate(lastDate, frequency)
+
+            return ManualRecurringExpense(
+                merchant = merchant,
+                amount = amount,
+                currency = currency,
+                frequency = frequency,
+                nextDate = nextDate,
+                note = note ?: "Created from manual entry"
+            )
+        }
+
+        private fun calculateNextDate(lastDate: Long, frequency: RecurrenceFrequency): Long {
+            val lastLocalDate = Instant.ofEpochMilli(lastDate)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+
+            val nextLocalDate = when (frequency) {
+                RecurrenceFrequency.WEEKLY -> lastLocalDate.plusWeeks(1)
+                RecurrenceFrequency.BIWEEKLY -> lastLocalDate.plusWeeks(2)
+                RecurrenceFrequency.MONTHLY -> lastLocalDate.plusMonths(1)
+                RecurrenceFrequency.QUARTERLY -> lastLocalDate.plusMonths(3)
+                RecurrenceFrequency.SEMI_ANNUALLY -> lastLocalDate.plusMonths(6)
+                RecurrenceFrequency.ANNUALLY -> lastLocalDate.plusYears(1)
+                RecurrenceFrequency.IRREGULAR -> lastLocalDate
+                else -> lastLocalDate.plusDays(frequency.days.toLong())
+            }
+
+            return nextLocalDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        }
+    }
+
     /**
      * Observe active recurring expenses only (isActive = 1).
      * B4: contract changed from all-rows to active-only.
@@ -43,15 +84,13 @@ class RecurringExpenseRepository @Inject constructor(
         currency: String = "EUR",
         note: String? = null
     ): Long {
-        val nextDate = calculateNextDate(lastDate, frequency)
-        
-        val expense = ManualRecurringExpense(
+        val expense = createRecurringExpenseEntity(
             merchant = merchant,
             amount = amount,
-            currency = currency,
             frequency = frequency,
-            nextDate = nextDate,
-            note = note ?: "Created from manual entry"
+            lastDate = lastDate,
+            currency = currency,
+            note = note
         )
         return dao.insert(expense)
     }
@@ -68,22 +107,4 @@ class RecurringExpenseRepository @Inject constructor(
     @Suppress("DEPRECATION")
     suspend fun update(expense: ManualRecurringExpense) = dao.update(expense)
 
-    private fun calculateNextDate(lastDate: Long, frequency: RecurrenceFrequency): Long {
-        val lastLocalDate = Instant.ofEpochMilli(lastDate)
-            .atZone(ZoneId.systemDefault())
-            .toLocalDate()
-
-        val nextLocalDate = when (frequency) {
-            RecurrenceFrequency.WEEKLY -> lastLocalDate.plusWeeks(1)
-            RecurrenceFrequency.BIWEEKLY -> lastLocalDate.plusWeeks(2)
-            RecurrenceFrequency.MONTHLY -> lastLocalDate.plusMonths(1)
-            RecurrenceFrequency.QUARTERLY -> lastLocalDate.plusMonths(3)
-            RecurrenceFrequency.SEMI_ANNUALLY -> lastLocalDate.plusMonths(6)
-            RecurrenceFrequency.ANNUALLY -> lastLocalDate.plusYears(1)
-            RecurrenceFrequency.IRREGULAR -> lastLocalDate 
-            else -> lastLocalDate.plusDays(frequency.days.toLong())
-        }
-
-        return nextLocalDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-    }
 }

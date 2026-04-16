@@ -6,6 +6,8 @@ import com.yourname.expensetracker.domain.carbon.CarbonFootprintCalculator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,6 +19,9 @@ class CarbonFootprintViewModel @Inject constructor(
     private val calculator: CarbonFootprintCalculator,
     private val timeProvider: TimeProvider
 ) : ViewModel() {
+
+    private var loadReportJob: Job? = null
+    private var latestLoadRequestId: Long = 0
     
     private val _report = MutableStateFlow<CarbonFootprintCalculator.CarbonFootprintReport?>(null)
     val report: StateFlow<CarbonFootprintCalculator.CarbonFootprintReport?> = _report.asStateFlow()
@@ -25,19 +30,29 @@ class CarbonFootprintViewModel @Inject constructor(
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
     
     fun loadReport(days: Int = 30) {
-        viewModelScope.launch {
+        val requestId = ++latestLoadRequestId
+        loadReportJob?.cancel()
+        loadReportJob = viewModelScope.launch {
             _isLoading.value = true
             try {
                 val endDate = timeProvider.now()
                 val startDate = endDate - (days * TimePeriodUtils.DAY_IN_MILLIS)
                 
                 val result = calculator.calculateCarbonFootprint(startDate, endDate)
-                _report.value = result
+                if (requestId == latestLoadRequestId) {
+                    _report.value = result
+                }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 e.printStackTrace()
-                _report.value = null
+                if (requestId == latestLoadRequestId) {
+                    _report.value = null
+                }
             } finally {
-                _isLoading.value = false
+                if (requestId == latestLoadRequestId) {
+                    _isLoading.value = false
+                }
             }
         }
     }

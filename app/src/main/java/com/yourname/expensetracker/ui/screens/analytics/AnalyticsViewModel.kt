@@ -240,6 +240,12 @@ class AnalyticsViewModel @Inject constructor(
         }
         val allExpenses = expenseRepository.getExpensesBetween(fullWindowStart, currentEnd)
 
+        val yearOverYearLookbackStart = TimePeriodUtils.getYearRange(TimePeriodUtils.getYear(now) - 1).first
+        val yearOverYearExpenses = expenseRepository.getExpensesBetween(yearOverYearLookbackStart, currentEnd)
+            .asSequence()
+            .filter { it.transactionType == TransactionType.PURCHASE }
+            .toList()
+
         val categoryMap = categories.associateBy { it.id }
 
         val periodLength = currentEnd - currentStart
@@ -337,7 +343,7 @@ class AnalyticsViewModel @Inject constructor(
         }
 
         // ── Year-over-Year Comparison ──────────────────────────────────────────
-        val yearOverYear = computeYearOverYear(purchases, now)
+        val yearOverYear = computeYearOverYear(yearOverYearExpenses, now)
 
         // ── Spending Velocity Anomalies ──────────────────────────────────
         val velocityAnomalies = computeVelocityAnomalies(currentExpenses)

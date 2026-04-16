@@ -6,9 +6,13 @@ import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -132,6 +136,33 @@ class LifestyleInflationViewModelTest : ViewModelTestUtils() {
             assertFalse(awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test
+    fun `latest analyze request wins when stale result completes last`() = runTest(testDispatcher) {
+        val staleResult = CompletableDeferred<LifestyleInflationDetector.LifestyleInflationReport>()
+        val staleReport = lifestyleReport(lifestyleInflationRate = 0.21)
+        val latestReport = lifestyleReport(lifestyleInflationRate = 0.04)
+
+        coEvery { lifestyleDetector.analyzeLifestyleInflation(12) } coAnswers {
+            withContext(NonCancellable) { staleResult.await() }
+        }
+        coEvery { lifestyleDetector.analyzeLifestyleInflation(6) } returns latestReport
+
+        viewModel.analyze(12)
+        runCurrent()
+
+        viewModel.analyze(6)
+        advanceUntilIdle()
+
+        assertEquals(latestReport, viewModel.report.value)
+        assertFalse(viewModel.isLoading.value)
+
+        staleResult.complete(staleReport)
+        advanceUntilIdle()
+
+        assertEquals(latestReport, viewModel.report.value)
+        assertFalse(viewModel.isLoading.value)
     }
 
     private fun lifestyleReport(

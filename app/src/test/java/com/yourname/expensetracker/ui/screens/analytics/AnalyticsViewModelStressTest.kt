@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.ui.screens.analytics
 
 import app.cash.turbine.test
+import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.TimePeriod
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -17,6 +20,10 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 @Ignore("Stress test: may hang in CI, run manually")
 class AnalyticsViewModelStressTest : ViewModelTestUtils() {
+
+    companion object {
+        private const val DAY_MS = 24L * 60L * 60L * 1000L
+    }
 
     private lateinit var expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository
     private lateinit var categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository
@@ -50,6 +57,7 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
         timeProvider = mockk(relaxed = true)
 
         every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         coEvery { analyticsRepository.getSpendingSummary(any(), any()) } returns flowOf(
             com.yourname.expensetracker.data.repository.SpendingSummary(
@@ -177,4 +185,67 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
         assertEquals(0.0, state.currentTotal, 0.001)
         assertEquals(0, state.transactionCount)
     }
+
+    @Test
+    fun `stress - month period keeps current period totals while loading prior year for yoy`() = runTest(testDispatcher) {
+        val now = TimePeriodUtils.getStartOfDay(System.currentTimeMillis()) + (12L * 60L * 60L * 1000L)
+        every { timeProvider.now() } returns now
+
+        val currentMonthExpense = expense(amount = 120.0, date = now - DAY_MS)
+        val priorYearExpense = expense(
+            amount = 75.0,
+            date = TimePeriodUtils.addYears(now, -1) - DAY_MS
+        )
+        val allExpenses = listOf(currentMonthExpense, priorYearExpense)
+
+        every { expenseRepository.getAllExpenses() } returns flowOf(allExpenses)
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            allExpenses.filter { it.date in start until end }
+        }
+        coEvery { analyticsRepository.getSpendingSummary(any(), any()) } returns flowOf(
+            com.yourname.expensetracker.data.repository.SpendingSummary(
+                totalSpent = 120.0,
+                previousTotalSpent = null,
+                changePercent = null,
+                dailyHistory = emptyList(),
+                previousDailyHistory = emptyList(),
+                transactionCount = 1
+            )
+        )
+
+        viewModel = AnalyticsViewModel(
+            expenseRepository,
+            categoryRepository,
+            budgetRepository,
+            insightsEngine,
+            recurringExpenseEngine,
+            analyticsRepository,
+            advancedAnalyticsEngine,
+            locationInsightsEngine,
+            areaSpendingEngine,
+            travelDetectionEngine,
+            spendingPersonalityClassifier,
+            timeProvider
+        )
+
+        testDispatcher.scheduler.advanceTimeBy(400)
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals(120.0, state.currentTotal, 0.001)
+        assertEquals(1, state.transactionCount)
+        assertNotNull(state.yearOverYear)
+        assertEquals(120.0, state.yearOverYear!!.currentYearTotal, 0.001)
+        assertEquals(75.0, state.yearOverYear!!.priorYearTotal, 0.001)
+    }
+
+    private fun expense(amount: Double, date: Long): Expense = Expense(
+        id = date,
+        amount = amount,
+        merchant = "Test Merchant",
+        transactionType = TransactionType.PURCHASE,
+        date = date
+    )
 }

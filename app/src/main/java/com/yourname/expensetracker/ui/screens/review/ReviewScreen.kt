@@ -451,7 +451,8 @@ fun ReviewScreen(
                         approveAllPending = approveAllPending,
                         finalLatitude = lat,
                         finalLongitude = lon,
-                        finalAddress = address
+                        finalAddress = address,
+                        finalPlaceId = osmId
                     )
                     editingReview = null
                     editingReviewReceipt = null

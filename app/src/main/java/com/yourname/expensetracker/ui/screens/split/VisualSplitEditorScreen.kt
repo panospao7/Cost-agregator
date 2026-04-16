@@ -38,6 +38,22 @@ import java.util.Locale
 
 private const val DEFAULT_SPLIT_COLOR = "#FF6B6B"
 
+internal fun buildCompletedSplitShares(
+    participants: List<SplitShare>,
+    splitData: EnhancedSplitManager.VisualSplitData
+): List<SplitShare> {
+    val segmentsByIndex = splitData.segments.associateBy { it.index }
+
+    return participants.map { participant ->
+        val segment = segmentsByIndex[participant.participantIndex]
+        participant.copy(
+            percentage = segment?.percentage ?: participant.percentage,
+            amount = segment?.amount ?: participant.amount,
+            color = segment?.color ?: participant.color
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VisualSplitEditorScreen(
@@ -97,11 +113,9 @@ fun VisualSplitEditorScreen(
     var showSaveTemplateDialog by rememberSaveable { mutableStateOf(false) }
     var templateName by rememberSaveable { mutableStateOf("") }
     var selectedTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val canApplyToExpense = expenseId != null
     
-    val currency = remember(currencyCode) {
-        Currency.getInstance(currencyCode)
-    }
-    val numberFormat = remember { NumberFormat.getCurrencyInstance(Locale.getDefault()) }
+    val numberFormat = remember(currencyCode) { buildCurrencyFormat(currencyCode) }
     
     // Load template if templateId is provided
     LaunchedEffect(templateId) {
@@ -177,10 +191,16 @@ fun VisualSplitEditorScreen(
                         
                         Button(
                             onClick = {
-                                onSplitComplete(participants, splitType)
+                                if (!canApplyToExpense) return@Button
+                                currentSplit?.let { splitData ->
+                                    onSplitComplete(
+                                        buildCompletedSplitShares(participants, splitData),
+                                        splitType
+                                    )
+                                }
                             },
                             modifier = Modifier.weight(1f),
-                            enabled = currentSplit?.remainingAmount == 0.0
+                            enabled = canApplyToExpense && currentSplit?.remainingAmount == 0.0
                         ) {
                             Text(stringResource(R.string.visual_split_apply_split))
                         }
@@ -300,16 +320,15 @@ fun VisualSplitEditorScreen(
                 }
             }
             
+            val segmentsByIndex = currentSplit?.segments?.associateBy { it.index }.orEmpty()
             items(participants) { participant ->
+                val segment = segmentsByIndex[participant.participantIndex]
                 ParticipantSplitCard(
                     participant = participant,
                     splitType = splitType,
-                    assignedAmount = currentSplit?.segments?.find { 
-                        it.participantName == participant.participantName 
-                    }?.amount ?: 0.0,
-                    percentage = currentSplit?.segments?.find { 
-                        it.participantName == participant.participantName 
-                    }?.percentage ?: 0.0,
+                    assignedAmount = segment?.amount ?: 0.0,
+                    percentage = segment?.percentage ?: 0.0,
+                    currencyCode = currencyCode,
                     onNameChange = { newName ->
                         participants = participants.map {
                             if (it.participantIndex == participant.participantIndex) {
@@ -509,13 +528,14 @@ fun ParticipantSplitCard(
     splitType: SplitTemplate.SplitType,
     assignedAmount: Double,
     percentage: Double,
+    currencyCode: String,
     onNameChange: (String) -> Unit,
     onPercentageChange: (Double) -> Unit,
     onAmountChange: (Double) -> Unit,
     onRemove: () -> Unit,
     canRemove: Boolean
 ) {
-    val numberFormat = remember { NumberFormat.getCurrencyInstance(Locale.getDefault()) }
+    val numberFormat = remember(currencyCode) { buildCurrencyFormat(currencyCode) }
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -629,4 +649,11 @@ private fun sanitizeColorHex(rawColor: String?, fallback: String = DEFAULT_SPLIT
     val validChars = normalized.drop(1).all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
 
     return if (validLength && validChars) normalized else fallback
+}
+
+private fun buildCurrencyFormat(currencyCode: String): NumberFormat {
+    val fallbackCurrency = Currency.getInstance("EUR")
+    return NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
+        currency = runCatching { Currency.getInstance(currencyCode) }.getOrDefault(fallbackCurrency)
+    }
 }

@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifie
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineScope
@@ -89,7 +90,9 @@ class ManualExpenseRepository @Inject constructor(
         myShareAmount: Double? = null,
         latitude: Double? = null,
         longitude: Double? = null,
-        locationSource: String? = null
+        locationSource: String? = null,
+        recurrenceFrequency: RecurrenceFrequency? = null,
+        recurringNote: String? = null
     ): Result<Long> {
         if (amount <= 0) {
             return Result.Error(message = context.getString(R.string.debug_error_amount_greater_than_zero))
@@ -173,6 +176,22 @@ class ManualExpenseRepository @Inject constructor(
 
             insertedExpenseForHook = expense.copy(id = id)
             insertedCategoryIdForAnomaly = finalCategoryId
+
+            if (recurrenceFrequency != null) {
+                val recurringExpense = RecurringExpenseRepository.createRecurringExpenseEntity(
+                    merchant = merchant,
+                    amount = amount,
+                    frequency = recurrenceFrequency,
+                    lastDate = date,
+                    currency = currency,
+                    note = recurringNote
+                )
+
+                val recurringId = database.recurringExpenseDao().insert(recurringExpense)
+                if (recurringId <= 0) {
+                    throw IllegalStateException("Failed to create recurring expense rule")
+                }
+            }
 
             // 4. Check budgets
             budgetMonitor.checkBudgets()

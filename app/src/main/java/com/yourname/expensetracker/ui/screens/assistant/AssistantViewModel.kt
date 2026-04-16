@@ -139,7 +139,7 @@ class AssistantViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(input = value, errorMessage = null)
     }
 
-    fun submitQuery(rawQuery: String = _uiState.value.input, isClarificationResponse: Boolean = false) {
+    fun submitQuery(rawQuery: String = _uiState.value.input) {
         val query = rawQuery.trim()
         if (query.isBlank()) return
         if (!_isSubmitting.compareAndSet(false, true)) return
@@ -175,7 +175,7 @@ class AssistantViewModel @Inject constructor(
 
                 persistUserTurn(sessionId, query)
 
-                val historyMessages = if (settings.storeConversationHistory && sessionId != null && !isClarificationResponse) {
+                val historyMessages = if (settings.storeConversationHistory && sessionId != null) {
                     aiChatRepository.observeMessages(sessionId).first()
                 } else {
                     emptyList()
@@ -276,7 +276,7 @@ class AssistantViewModel @Inject constructor(
 
     fun onClarificationSelected(text: String) {
         updateInput(text)
-        submitQuery(text, isClarificationResponse = true)
+        submitQuery(text)
     }
 
     fun openDrilldown(filter: TransactionFilter?) {

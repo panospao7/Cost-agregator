@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.ui.navigation
 
+import com.yourname.expensetracker.data.database.entity.SplitShare
+import com.yourname.expensetracker.data.database.entity.SplitTemplate
 import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
 import com.yourname.expensetracker.data.database.entity.Expense
 
@@ -53,7 +55,32 @@ sealed class NavigationDestination {
         val expenseCurrency: String? = null,
         // Backward-compatible optional payload for in-memory navigation callers.
         val expense: Expense? = null
-    ) : NavigationDestination()
+    ) : NavigationDestination() {
+        val resolvedExpenseId: Long?
+            get() = expenseId ?: expense?.id
+
+        val resolvedExpenseAmount: Double?
+            get() = expenseAmount ?: expense?.amount
+
+        val resolvedExpenseCurrency: String?
+            get() = expenseCurrency ?: expense?.currency
+
+        companion object {
+            fun forTemplateCreation(): VisualSplitEditor = VisualSplitEditor()
+
+            fun forTemplateEdit(templateId: Long): VisualSplitEditor = VisualSplitEditor(
+                templateId = templateId
+            )
+
+            fun forExpense(expense: Expense): VisualSplitEditor = VisualSplitEditor(
+                templateId = expense.splitTemplateId,
+                expenseId = expense.id,
+                expenseAmount = expense.amount,
+                expenseCurrency = expense.currency,
+                expense = expense
+            )
+        }
+    }
     data object CurrencyManagement : NavigationDestination()
     data object SubscriptionManagement : NavigationDestination()
     data object TaxConfiguration : NavigationDestination()
@@ -86,7 +113,7 @@ sealed class NavigationDestination {
             CashFlowCalendar,
             LifestyleInflation,
             SplitTemplates,
-            VisualSplitEditor(),
+            VisualSplitEditor.forTemplateCreation(),
             CurrencyManagement,
             SubscriptionManagement,
             TaxConfiguration,
@@ -99,6 +126,14 @@ sealed class NavigationDestination {
             CategoryManagement
         )
     }
+}
+
+sealed interface NavigationResult {
+    data class VisualSplitApplied(
+        val expenseId: Long?,
+        val shares: List<SplitShare>,
+        val splitType: SplitTemplate.SplitType
+    ) : NavigationResult
 }
 
 /**

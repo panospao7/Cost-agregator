@@ -360,6 +360,47 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
         }
     }
 
+    @Test
+    fun `refresh preserves selected group and dialog flags`() = runTest(testDispatcher) {
+        val initialAggregate = createAggregate(groupId = 1L, name = "Trip", memberId = 11L)
+        val refreshedExpense = createGroupExpense(
+            id = 401L,
+            groupId = 1L,
+            paidById = 11L,
+            amount = 50.0
+        )
+        val refreshedAggregate = createAggregate(
+            groupId = 1L,
+            name = "Trip",
+            memberId = 11L,
+            expenses = listOf(refreshedExpense)
+        )
+
+        coEvery {
+            groupsRepository.getActiveGroupsWithDetails()
+        } returnsMany listOf(listOf(initialAggregate), listOf(refreshedAggregate))
+
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val initiallySelected = viewModel.uiState.value.groups.first()
+        viewModel.selectGroup(initiallySelected)
+        viewModel.toggleCreateGroup(true)
+        viewModel.toggleAddMember(true)
+        viewModel.toggleAddExpense(true)
+
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        val refreshedState = viewModel.uiState.value
+        assertTrue(refreshedState.creatingGroup)
+        assertTrue(refreshedState.addingMember)
+        assertTrue(refreshedState.addingExpense)
+        assertEquals(1L, refreshedState.selectedGroup?.group?.id)
+        assertEquals(1, refreshedState.selectedGroup?.expenses?.size)
+        assertEquals(50.0, refreshedState.selectedGroup?.totalSpent, 0.0)
+    }
+
     private fun createViewModel(): SharedExpenseGroupsViewModel {
         return SharedExpenseGroupsViewModel(
             groupsRepository = groupsRepository,

@@ -4,13 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
-import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -68,7 +66,6 @@ class AddExpenseViewModel @Inject constructor(
     private val manualExpenseRepository: ManualExpenseRepository,
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
     private val categoryRepository: CategoryRepository,
-    private val recurringExpenseRepository: RecurringExpenseRepository,
     private val timeProvider: TimeProvider
 ) : ViewModel() {
 
@@ -337,22 +334,12 @@ class AddExpenseViewModel @Inject constructor(
                         currentState.isSharedExpense && it.isNotBlank()
                     },
                     mySharePercentage = sharePercentage,
-                    myShareAmount = shareAmount
+                    myShareAmount = shareAmount,
+                    recurrenceFrequency = currentState.recurrenceFrequency.takeIf { currentState.isRecurring }
                 )
 
                 when (result) {
                     is Result.Success -> {
-                        // 2. If recurring, save the rule
-                        if (currentState.isRecurring) {
-                            recurringExpenseRepository.addRecurringExpense(
-                                merchant = merchantTrimmed,
-                                amount = normalizedAmount,
-                                frequency = currentState.recurrenceFrequency,
-                                lastDate = currentState.date,
-                                currency = "EUR"
-                            )
-                        }
-                        
                         _state.update {
                             it.copy(isSaving = false, saveResult = SaveResult.Success)
                         }

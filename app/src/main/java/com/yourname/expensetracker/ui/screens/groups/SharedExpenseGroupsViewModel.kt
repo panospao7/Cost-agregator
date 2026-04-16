@@ -72,7 +72,8 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     
     private fun loadGroups() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
+            val previousState = _uiState.value
+            _uiState.value = previousState.copy(isLoading = true)
             
             try {
                 val groupsWithDetails: List<GroupWithDetails> = groupsRepository
@@ -96,10 +97,16 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                         )
                     }
                 
-                _uiState.value = GroupsUiState(
+                val refreshedSelectedGroup = previousState.selectedGroup
+                    ?.let { selected ->
+                        groupsWithDetails.firstOrNull { it.group.id == selected.group.id }
+                    }
+
+                _uiState.value = previousState.copy(
                     groups = groupsWithDetails,
                     isLoading = false,
-                    error = null
+                    error = null,
+                    selectedGroup = refreshedSelectedGroup
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(

@@ -15,13 +15,19 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import timber.log.Timber
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 data class AiSettingsUiState(
@@ -45,6 +51,13 @@ class AiSettingsViewModel @Inject constructor(
     private val syncProactiveBriefingWorkUseCase: SyncProactiveBriefingWorkUseCase,
     private val secureKeyStorage: SecureKeyStorage
 ) : ViewModel() {
+
+    private val providerConnectionTestClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
+    }
 
     private val _uiState = MutableStateFlow(AiSettingsUiState())
     val uiState: StateFlow<AiSettingsUiState> = _uiState.asStateFlow()
@@ -108,7 +121,11 @@ class AiSettingsViewModel @Inject constructor(
         val key = _uiState.value.apiKeyInput.trim()
         val validation = validateApiKey(key)
         if (validation != null) {
-            _uiState.value = _uiState.value.copy(apiKeyValidationMessage = validation)
+            _uiState.value = _uiState.value.copy(
+                apiKeyValidationMessage = validation,
+                connectionTestMessage = "Enter a valid API key before saving.",
+                isConnectionTestSuccess = false
+            )
             return
         }
 
@@ -119,6 +136,15 @@ class AiSettingsViewModel @Inject constructor(
                 apiKeyValidationMessage = null,
                 connectionTestMessage = "API key removed.",
                 isConnectionTestSuccess = null
+            )
+            return
+        }
+
+        if (_uiState.value.isConnectionTestSuccess != true) {
+            _uiState.value = _uiState.value.copy(
+                apiKeyValidationMessage = null,
+                connectionTestMessage = "Run a successful connection test before saving this API key.",
+                isConnectionTestSuccess = false
             )
             return
         }
@@ -170,15 +196,6 @@ class AiSettingsViewModel @Inject constructor(
                     return@launch
                 }
 
-                if (typedKey.isNotBlank()) {
-                    secureKeyStorage.storeKey(SecureKeyStorage.KEY_GEMINI, typedKey)
-                    _uiState.value = _uiState.value.copy(
-                        apiKeyInput = "",
-                        hasStoredApiKey = true,
-                        apiKeyValidationMessage = null
-                    )
-                }
-
                 val settings = _uiState.value.settings
                 if (!settings.aiEnabled) {
                     _uiState.value = _uiState.value.copy(
@@ -198,7 +215,7 @@ class AiSettingsViewModel @Inject constructor(
 
                 val summary = getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION))
                 val capability = summary.capabilities.firstOrNull { it.capability == AiCapability.QUERY_INTERPRETATION }
-                val failure = when {
+                val runtimeFailure = when {
                     !summary.networkAvailable -> "No network connection. Check internet and retry."
                     settings.wifiOnlyForCloud && !summary.wifiConnected -> "Cloud AI is limited to Wi-Fi by settings."
                     capability == null -> "Couldn’t load runtime status. Please retry."
@@ -207,11 +224,14 @@ class AiSettingsViewModel @Inject constructor(
                     else -> null
                 }
 
+                val providerFailure = runtimeFailure ?: probeCloudProviderConnection(keyToUse)
+
                 _uiState.value = _uiState.value.copy(
                     runtimeSummary = summary,
-                    connectionTestMessage = failure
+                    apiKeyValidationMessage = null,
+                    connectionTestMessage = providerFailure
                         ?: "Connection test passed. Cloud provider is configured and reachable.",
-                    isConnectionTestSuccess = failure == null
+                    isConnectionTestSuccess = providerFailure == null
                 )
             } catch (e: Exception) {
                 Timber.e(e, "AI settings connection test failed")
@@ -222,6 +242,29 @@ class AiSettingsViewModel @Inject constructor(
             } finally {
                 _uiState.value = _uiState.value.copy(isTestingConnection = false)
             }
+        }
+    }
+
+    private suspend fun probeCloudProviderConnection(apiKey: String): String? = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models")
+            .header("x-goog-api-key", apiKey)
+            .get()
+            .build()
+
+        try {
+            providerConnectionTestClient.newCall(request).execute().use { response ->
+                when {
+                    response.isSuccessful -> null
+                    response.code in setOf(400, 401, 403) -> "Provider rejected the API key. Check the key and retry."
+                    response.code == 429 -> "Provider rate limit reached. Wait a moment and retry."
+                    response.code in 500..599 -> "Provider is temporarily unavailable. Please retry."
+                    else -> "Provider connectivity test failed (HTTP ${response.code})."
+                }
+            }
+        } catch (e: IOException) {
+            Timber.w(e, "AI settings provider probe failed")
+            "Could not reach the cloud provider. Check internet and retry."
         }
     }
 

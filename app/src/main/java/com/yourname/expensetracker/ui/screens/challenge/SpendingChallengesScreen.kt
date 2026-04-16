@@ -2,10 +2,12 @@ package com.yourname.expensetracker.ui.screens.challenge
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -17,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.challenge.NoSpendStatus
+import com.yourname.expensetracker.domain.challenge.SpendingChallenge
 import com.yourname.expensetracker.ui.components.common.EmptyStateType
 import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
@@ -36,9 +39,11 @@ fun SpendingChallengesScreen(
 ) {
     val noSpendStatus by viewModel.noSpendStatus.collectAsState()
     val activeChallenges by viewModel.activeChallenges.collectAsState()
+    val challengesAvailability by viewModel.challengesAvailability.collectAsState()
+    val completedActionKeys by actionRegistry.completedActions.collectAsState()
     
     // Get contextual actions for empty state
-    val emptyStateActions by remember {
+    val emptyStateActions by remember(completedActionKeys) {
         derivedStateOf {
             actionRegistry.getActions(EmptyStateScreenKeys.CHALLENGES)
         }
@@ -81,7 +86,15 @@ fun SpendingChallengesScreen(
             }
             
             // Show active challenges or empty state
-            if (activeChallenges.isEmpty()) {
+            if (!challengesAvailability.hasCanonicalSource) {
+                item {
+                    ChallengesUnavailableCard(
+                        reason = challengesAvailability.unavailableReason,
+                        onCreateChallenge = onCreateChallenge,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            } else if (activeChallenges.isEmpty()) {
                 item {
                     // Enhanced empty state with contextual actions
                     EnhancedEmptyState(
@@ -117,10 +130,11 @@ fun SpendingChallengesScreen(
                     )
                 }
             } else {
-                // Would show active challenges here
-                items(activeChallenges.size) { index ->
-                    // ChallengeCard(challenge = activeChallenges[index])
-                    Text("Challenge ${index + 1}")
+                items(activeChallenges, key = { it.id }) { challenge ->
+                    ActiveChallengeCard(
+                        challenge = challenge,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
         }
@@ -128,8 +142,83 @@ fun SpendingChallengesScreen(
 }
 
 @Composable
+private fun ChallengesUnavailableCard(
+    reason: String?,
+    onCreateChallenge: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Active challenges unavailable",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Text(
+                text = reason ?: "This build does not have a persisted active-challenges source yet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            OutlinedButton(onClick = onCreateChallenge) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(text = stringResource(R.string.challenges_create_cd))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActiveChallengeCard(
+    challenge: SpendingChallenge,
+    modifier: Modifier = Modifier
+) {
+    Card(modifier = modifier) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = challenge.name,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = challenge.type.name.replace('_', ' '),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
 private fun NoSpendStreakCard(status: NoSpendStatus?) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.GERMANY)
+    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     
     Card(
         modifier = Modifier.fillMaxWidth(),

@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -125,5 +127,69 @@ class AiSettingsViewModelTest : ViewModelTestUtils() {
         assertEquals("Runtime info", viewModel.uiState.value.runtimeSummary.highestPriorityMessage)
         assertEquals(4321L, viewModel.uiState.value.runtimeSummary.lastRefreshedAt)
         assertEquals(AiRoute.CLOUD, viewModel.uiState.value.runtimeSummary.capabilities.first().route)
+    }
+
+    @Test
+    fun `saveApiKey requires successful connection test before storing typed key`() = runTest(testDispatcher) {
+        viewModel.updateApiKeyInput("AIza12345678901234567890")
+
+        viewModel.saveApiKey()
+        advanceUntilIdle()
+
+        io.mockk.verify(exactly = 0) { secureKeyStorage.storeKey(SecureKeyStorage.KEY_GEMINI, any()) }
+        assertEquals("Run a successful connection test before saving this API key.", viewModel.uiState.value.connectionTestMessage)
+        assertEquals(false, viewModel.uiState.value.isConnectionTestSuccess)
+        assertEquals("AIza12345678901234567890", viewModel.uiState.value.apiKeyInput)
+    }
+
+    @Test
+    fun `testConnection does not persist typed key when connection test fails`() = runTest(testDispatcher) {
+        settingsFlow.value = AiSettings(aiEnabled = false, allowCloudAi = true)
+        viewModel.updateApiKeyInput("AIza12345678901234567890")
+
+        viewModel.testConnection()
+        advanceUntilIdle()
+
+        io.mockk.verify(exactly = 0) { secureKeyStorage.storeKey(SecureKeyStorage.KEY_GEMINI, any()) }
+        assertEquals("Enable AI first, then run connection test again.", viewModel.uiState.value.connectionTestMessage)
+        assertEquals(false, viewModel.uiState.value.isConnectionTestSuccess)
+        assertEquals("AIza12345678901234567890", viewModel.uiState.value.apiKeyInput)
+        assertFalse(viewModel.uiState.value.hasStoredApiKey)
+    }
+
+    @Test
+    fun `saveApiKey stores typed key after successful connection test`() = runTest(testDispatcher) {
+        val summary = AiRuntimeStatusSummary(
+            capabilities = listOf(
+                AiCapabilityRuntimeStatus(
+                    capability = AiCapability.QUERY_INTERPRETATION,
+                    status = OnDeviceModelStatus.UNAVAILABLE,
+                    message = null,
+                    actionLabel = null,
+                    route = AiRoute.CLOUD,
+                    providerName = "google-ai-studio",
+                    modelName = "gemini-2.5-flash"
+                )
+            ),
+            highestPriorityMessage = null,
+            networkAvailable = true,
+            wifiConnected = true,
+            lastRefreshedAt = 9999L
+        )
+        coEvery { getAiRuntimeStatusUseCase(listOf(AiCapability.QUERY_INTERPRETATION)) } returns summary
+
+        viewModel.updateApiKeyInput("AIza12345678901234567890")
+        viewModel.testConnection()
+        advanceUntilIdle()
+        viewModel.saveApiKey()
+        advanceUntilIdle()
+
+        io.mockk.verify(exactly = 1) {
+            secureKeyStorage.storeKey(SecureKeyStorage.KEY_GEMINI, "AIza12345678901234567890")
+        }
+        assertTrue(viewModel.uiState.value.hasStoredApiKey)
+        assertEquals("", viewModel.uiState.value.apiKeyInput)
+        assertEquals("API key saved securely.", viewModel.uiState.value.connectionTestMessage)
+        assertEquals(true, viewModel.uiState.value.isConnectionTestSuccess)
     }
 }

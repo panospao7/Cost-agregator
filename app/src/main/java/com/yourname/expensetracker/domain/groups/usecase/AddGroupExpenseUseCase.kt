@@ -29,12 +29,15 @@ class AddGroupExpenseUseCase @Inject constructor(
         customSplitsJson: String? = null,
         date: Long? = null
     ): GroupExpenseCreationResult {
+        validateInputs(description = description, amount = amount)?.let { return it }
+
         val resolvedDate = date ?: timeProvider.now()
+        val normalizedDescription = description.trim()
 
         return groupsRepository.addExpenseWithLink(
             groupId = groupId,
             systemExpenseId = systemExpenseId,
-            description = description,
+            description = normalizedDescription,
             amount = amount,
             paidById = paidById,
             splitType = splitType,
@@ -62,11 +65,14 @@ class AddGroupExpenseUseCase @Inject constructor(
         transactionType: TransactionType = TransactionType.PURCHASE,
         notes: String? = null
     ): GroupExpenseCreationResult {
+        validateInputs(description = description, amount = amount)?.let { return it }
+
         val resolvedDate = date ?: timeProvider.now()
+        val normalizedDescription = description.trim()
 
         return groupsRepository.createSystemExpenseAndLinkToGroup(
             groupId = groupId,
-            description = description,
+            description = normalizedDescription,
             amount = amount,
             paidById = paidById,
             currency = currency,
@@ -76,5 +82,17 @@ class AddGroupExpenseUseCase @Inject constructor(
             transactionType = transactionType,
             notes = notes
         )
+    }
+
+    private fun validateInputs(description: String, amount: Double): GroupExpenseCreationResult.Error? {
+        if (description.isBlank()) {
+            return GroupExpenseCreationResult.Error("Description cannot be blank")
+        }
+
+        if (!amount.isFinite() || amount <= 0.0) {
+            return GroupExpenseCreationResult.Error("Amount must be a positive finite number")
+        }
+
+        return null
     }
 }

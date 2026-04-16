@@ -200,4 +200,28 @@ class VisualSplitViewModelTest : ViewModelTestUtils() {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    @Test
+    fun `build completed split shares matches duplicate names by participant index`() {
+        val participants = listOf(
+            SplitShare(participantIndex = 0, participantName = "Alex", color = "#FF6B6B"),
+            SplitShare(participantIndex = 1, participantName = "Alex", color = "#4ECDC4")
+        )
+        val splitData = EnhancedSplitManager.VisualSplitData(
+            totalAmount = 100.0,
+            assignedAmount = 100.0,
+            remainingAmount = 0.0,
+            segments = listOf(
+                EnhancedSplitManager.SplitSegment("Alex", 25.0, 25.0, "#FF6B6B", 0),
+                EnhancedSplitManager.SplitSegment("Alex", 75.0, 75.0, "#4ECDC4", 1)
+            )
+        )
+
+        val completedShares = buildCompletedSplitShares(participants, splitData)
+
+        assertEquals(25.0, completedShares[0].amount, 0.0)
+        assertEquals(25.0, completedShares[0].percentage, 0.0)
+        assertEquals(75.0, completedShares[1].amount, 0.0)
+        assertEquals(75.0, completedShares[1].percentage, 0.0)
+    }
 }

@@ -217,6 +217,118 @@ class GroupUseCasesTest {
     }
 
     @Test
+    fun `add group expense rejects blank description before repository call`() = runTest {
+        val result = addGroupExpenseUseCase(
+            groupId = 1L,
+            systemExpenseId = 10L,
+            description = "   ",
+            amount = 45.0,
+            paidById = 2L,
+            splitType = SplitType.EQUAL
+        )
+
+        assertTrue(result is GroupExpenseCreationResult.Error)
+        result as GroupExpenseCreationResult.Error
+        assertEquals("Description cannot be blank", result.message)
+        coVerify(exactly = 0) { groupsRepository.addExpenseWithLink(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `add group expense rejects non-positive or non-finite amount before repository call`() = runTest {
+        val invalidAmounts = listOf(0.0, -1.0, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY)
+
+        invalidAmounts.forEach { invalidAmount ->
+            val result = addGroupExpenseUseCase(
+                groupId = 1L,
+                systemExpenseId = 10L,
+                description = "Dinner",
+                amount = invalidAmount,
+                paidById = 2L,
+                splitType = SplitType.EQUAL
+            )
+
+            assertTrue(result is GroupExpenseCreationResult.Error)
+            result as GroupExpenseCreationResult.Error
+            assertEquals("Amount must be a positive finite number", result.message)
+        }
+
+        coVerify(exactly = 0) { groupsRepository.addExpenseWithLink(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `add group expense atomic path trims description before repository call`() = runTest {
+        coEvery {
+            groupsRepository.createSystemExpenseAndLinkToGroup(
+                groupId = 1L,
+                description = "Dinner",
+                amount = 45.0,
+                paidById = 2L,
+                currency = "EUR",
+                splitType = SplitType.EQUAL,
+                customSplitsJson = null,
+                date = 1234L,
+                transactionType = any(),
+                notes = any()
+            )
+        } returns GroupExpenseCreationResult.Success(groupExpenseId = 77L, expenseId = 88L)
+
+        val result = addGroupExpenseUseCase.invokeAtomic(
+            groupId = 1L,
+            description = "  Dinner  ",
+            amount = 45.0,
+            paidById = 2L,
+            currency = "EUR",
+            splitType = SplitType.EQUAL,
+            date = 1234L
+        )
+
+        assertTrue(result is GroupExpenseCreationResult.Success)
+        coVerify(exactly = 1) {
+            groupsRepository.createSystemExpenseAndLinkToGroup(
+                groupId = 1L,
+                description = "Dinner",
+                amount = 45.0,
+                paidById = 2L,
+                currency = "EUR",
+                splitType = SplitType.EQUAL,
+                customSplitsJson = null,
+                date = 1234L,
+                transactionType = any(),
+                notes = any()
+            )
+        }
+    }
+
+    @Test
+    fun `add group expense atomic path rejects invalid inputs before repository call`() = runTest {
+        val blankDescription = addGroupExpenseUseCase.invokeAtomic(
+            groupId = 1L,
+            description = "\n\t ",
+            amount = 45.0,
+            paidById = 2L,
+            currency = "EUR",
+            splitType = SplitType.EQUAL
+        )
+        assertTrue(blankDescription is GroupExpenseCreationResult.Error)
+        blankDescription as GroupExpenseCreationResult.Error
+        assertEquals("Description cannot be blank", blankDescription.message)
+
+        val invalidAmount = addGroupExpenseUseCase.invokeAtomic(
+            groupId = 1L,
+            description = "Dinner",
+            amount = Double.NaN,
+            paidById = 2L,
+            currency = "EUR",
+            splitType = SplitType.EQUAL
+        )
+        assertTrue(invalidAmount is GroupExpenseCreationResult.Error)
+        invalidAmount as GroupExpenseCreationResult.Error
+        assertEquals("Amount must be a positive finite number", invalidAmount.message)
+
+        coVerify(exactly = 0) { groupsRepository.createSystemExpenseAndLinkToGroup(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
     fun `delete group use case delegates and returns repository value`() = runTest {
         coEvery { groupsRepository.deleteGroup(55L) } returns true
 

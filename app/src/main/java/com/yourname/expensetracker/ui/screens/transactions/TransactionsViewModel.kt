@@ -8,7 +8,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.NotificationRepository
-import com.yourname.expensetracker.data.repository.OwnershipFilter
+import com.yourname.expensetracker.data.repository.OwnershipFilter as RepositoryOwnershipFilter
 import com.yourname.expensetracker.data.repository.SortOrder
 import dagger.hilt.android.lifecycle.HiltViewModel
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
@@ -77,9 +77,13 @@ class TransactionsViewModel @Inject constructor(
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    // Ownership filter state
-    private val _ownershipFilter = MutableStateFlow(OwnershipFilter.ALL)
-    val ownershipFilter: StateFlow<OwnershipFilter> = _ownershipFilter.asStateFlow()
+    // Filter state for drill-down
+    private val _filter = MutableStateFlow<TransactionFilter?>(null)
+    val filter: StateFlow<TransactionFilter?> = _filter.asStateFlow()
+
+    val ownershipFilter: StateFlow<OwnershipFilter> = _filter
+        .map { toUiOwnershipFilter(it?.ownership) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), OwnershipFilter.ALL)
 
     // Sort order state
     private val _sortOrder = MutableStateFlow(SortOrder.DATE_DESC)
@@ -88,6 +92,8 @@ class TransactionsViewModel @Inject constructor(
     // Pagination state for ALL tab
     private val _currentPage = MutableStateFlow(0)
     private val _pagedExpenses = MutableStateFlow<List<ExpenseWithCategory>>(emptyList())
+    private val _hasReachedEnd = MutableStateFlow(false)
+    val hasReachedEnd: StateFlow<Boolean> = _hasReachedEnd.asStateFlow()
     private var loadInitialAllJob: Job? = null
     private var loadMoreJob: Job? = null
     private var loadInitialAllRequestId: Long = 0L
@@ -113,10 +119,6 @@ class TransactionsViewModel @Inject constructor(
     // Refresh trigger for pull-to-refresh
     private val _refreshTrigger = MutableStateFlow(0)
 
-    // Filter state for drill-down
-    private val _filter = MutableStateFlow<TransactionFilter?>(null)
-    val filter: StateFlow<TransactionFilter?> = _filter.asStateFlow()
-
     /**
      * Main transactions flow with reactive filtering.
      * Combines tab selection, search query, filter, ownership filter, and refresh triggers.
@@ -126,31 +128,23 @@ class TransactionsViewModel @Inject constructor(
         _selectedTab,
         _searchQuery,
         _filter,
-        _ownershipFilter,
         _refreshTrigger
-    ) { tab, query, filter, ownership, _ -> 
-        FilterParams(tab, query, filter, ownership) 
+    ) { tab, query, filter, _ -> 
+        FilterParams(tab, query, filter) 
     }
         .flatMapLatest { params ->
             val baseExpenses = if (params.filter != null) {
                 if (params.tab == TransactionTab.ALL) {
                     _pagedExpenses
                 } else {
-                    val tabRange = getTimeRangeForTab(params.tab)
-                    val filterRange = params.filter.dateRange ?: tabRange
-                    val effectiveRange = intersectRanges(tabRange, filterRange)
-
-                    if (effectiveRange == null) {
-                        flowOf(emptyList())
-                    } else {
-                        expenseRepository.getExpensesWithCategoryFiltered(
-                            startMs = effectiveRange.first,
-                            endMs = effectiveRange.second,
-                            type = params.filter.transactionType,
-                            categoryId = params.filter.categoryId,
-                            merchantKey = params.filter.merchantName?.let { MerchantKeyGenerator.generate(it) }
-                        )
-                    }
+                    val range = params.filter.dateRange ?: getTimeRangeForTab(params.tab)
+                    expenseRepository.getExpensesWithCategoryFiltered(
+                        startMs = range.first,
+                        endMs = range.second,
+                        type = params.filter.transactionType,
+                        categoryId = params.filter.categoryId,
+                        merchantKey = params.filter.merchantName?.let { MerchantKeyGenerator.generate(it) }
+                    )
                 }
             } else if (params.tab == TransactionTab.ALL) {
                 _pagedExpenses
@@ -168,7 +162,7 @@ class TransactionsViewModel @Inject constructor(
                 if (params.query.isNotBlank()) {
                     filtered = filtered.filter { matchesSearch(it, params.query) }
                 }
-                filtered = filterByOwnership(filtered, params.ownership)
+                filtered = filterByOwnership(filtered, toUiOwnershipFilter(params.filter?.ownership))
                 filtered
             }
         }
@@ -187,8 +181,7 @@ class TransactionsViewModel @Inject constructor(
     private data class FilterParams(
         val tab: TransactionTab,
         val query: String,
-        val filter: TransactionFilter?,
-        val ownership: OwnershipFilter
+        val filter: TransactionFilter?
     )
 
     /**
@@ -256,8 +249,7 @@ class TransactionsViewModel @Inject constructor(
     fun applyFilter(filter: TransactionFilter) {
         _filter.value = filter
         if (_selectedTab.value == TransactionTab.ALL) {
-            _currentPage.value = 0
-            _pagedExpenses.value = emptyList()
+            resetAllPagingState()
             loadInitialAll()
         }
     }
@@ -273,10 +265,8 @@ class TransactionsViewModel @Inject constructor(
 
     fun clearFilter() {
         _filter.value = null
-        _ownershipFilter.value = OwnershipFilter.ALL
         if (_selectedTab.value == TransactionTab.ALL) {
-            _currentPage.value = 0
-            _pagedExpenses.value = emptyList()
+            resetAllPagingState()
             loadInitialAll()
         }
     }
@@ -285,8 +275,7 @@ class TransactionsViewModel @Inject constructor(
         if (_selectedTab.value == tab) return
         
         _selectedTab.value = tab
-        _currentPage.value = 0
-        _pagedExpenses.value = emptyList() // Clear to prevent stale data flash
+        resetAllPagingState()
         _searchQuery.value = "" // Reset search on tab change
         _filter.value = null // Clear filter when manually changing tabs
         
@@ -298,8 +287,7 @@ class TransactionsViewModel @Inject constructor(
     fun search(query: String) {
         _searchQuery.value = query.trim()
         if (_selectedTab.value == TransactionTab.ALL) {
-            _currentPage.value = 0
-            _pagedExpenses.value = emptyList()
+            resetAllPagingState()
             loadInitialAll()
         }
     }
@@ -307,17 +295,21 @@ class TransactionsViewModel @Inject constructor(
     fun setSortOrder(order: SortOrder) {
         _sortOrder.value = order
         if (_selectedTab.value == TransactionTab.ALL) {
-            _currentPage.value = 0
-            _pagedExpenses.value = emptyList()
+            resetAllPagingState()
             loadInitialAll()
         }
     }
 
     fun setOwnershipFilter(filter: OwnershipFilter) {
-        _ownershipFilter.value = filter
+        val currentFilter = _filter.value
+        _filter.value = when {
+            filter == OwnershipFilter.ALL && currentFilter == null -> null
+            filter == OwnershipFilter.ALL -> currentFilter?.copy(ownership = null)
+            currentFilter != null -> currentFilter.copy(ownership = toRepositoryOwnershipFilter(filter))
+            else -> TransactionFilter(ownership = toRepositoryOwnershipFilter(filter))
+        }
         if (_selectedTab.value == TransactionTab.ALL) {
-            _currentPage.value = 0
-            _pagedExpenses.value = emptyList()
+            resetAllPagingState()
             loadInitialAll()
         }
     }
@@ -327,8 +319,7 @@ class TransactionsViewModel @Inject constructor(
         _refreshTrigger.value += 1
         
         if (_selectedTab.value == TransactionTab.ALL) {
-            _currentPage.value = 0
-            _pagedExpenses.value = emptyList()
+            resetAllPagingState()
             loadInitialAll()
         }
     }
@@ -337,34 +328,21 @@ class TransactionsViewModel @Inject constructor(
         // Guard conditions - prevent loading if not on ALL tab or already loading
         if (_selectedTab.value != TransactionTab.ALL) return
         if (_isLoadingMoreState.value) return
+        if (_isLoading.value) return
+        if (_hasReachedEnd.value) return
 
         loadMoreJob?.cancel()
         loadMoreJob = viewModelScope.launch {
             // Double-check inside coroutine to prevent race conditions
             if (_isLoadingMoreState.value) return@launch
+            if (_hasReachedEnd.value) return@launch
             
             _isLoadingMoreState.value = true
             try {
                 val nextPage = _currentPage.value + 1
                 val offset = nextPage * PAGE_SIZE
                 
-                val nextItems = withContext(Dispatchers.IO) {
-                    val activeFilter = _filter.value
-                    expenseRepository.getExpensesPagedDynamic(
-                        limit = PAGE_SIZE,
-                        offset = offset,
-                        searchQuery = _searchQuery.value.takeIf { it.isNotBlank() },
-                        startDate = activeFilter?.dateRange?.first,
-                        endDate = activeFilter?.dateRange?.second,
-                        transactionType = activeFilter?.transactionType,
-                        categoryId = activeFilter?.categoryId,
-                        merchantName = activeFilter?.merchantName,
-                        ownershipFilter = mapOwnershipFilter(_ownershipFilter.value),
-                        minAmount = activeFilter?.minAmount,
-                        maxAmount = activeFilter?.maxAmount,
-                        sortOrder = _sortOrder.value
-                    )
-                }
+                val nextItems = loadPagedExpensesPage(limit = PAGE_SIZE, offset = offset)
                 
                 if (nextItems.isNotEmpty()) {
                     // Use thread-safe list concatenation
@@ -373,6 +351,8 @@ class TransactionsViewModel @Inject constructor(
                     }
                     _currentPage.value = nextPage
                 }
+
+                _hasReachedEnd.value = nextItems.size < PAGE_SIZE
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 _error.emit("Failed to load more transactions: ${e.message}")
@@ -408,6 +388,7 @@ class TransactionsViewModel @Inject constructor(
                     expenseRepository.updateExpenseCategory(expense, categoryId)
                     _successMessage.emit("Category updated")
                 }
+                refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 _error.emit("Failed to update category: ${e.message}")
             } finally {
@@ -429,6 +410,7 @@ class TransactionsViewModel @Inject constructor(
             expenseRepository.updateExpenseMerchant(expense, trimmedName, applyToAll)
             val message = if (applyToAll) "Merchant renamed to $trimmedName globally" else "Merchant renamed to $trimmedName"
             _successMessage.emit(message)
+            refreshPagedExpensesAfterMutation()
         } catch (e: Exception) {
             _error.emit("Failed to update merchant: ${e.message}")
         } finally {
@@ -464,6 +446,7 @@ class TransactionsViewModel @Inject constructor(
                     )
                 }
                 _successMessage.emit("Type changed to ${newType.name}")
+                refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 _error.emit("Failed to update type: ${e.message}")
             } finally {
@@ -481,6 +464,7 @@ class TransactionsViewModel @Inject constructor(
             try {
                 expenseRepository.updateTransferDetails(expense, transferDirection, transferAccountName.takeIf { it.isNotBlank() })
                 _successMessage.emit("Transfer details updated")
+                refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 _error.emit("Failed to update: ${e.message}")
             }
@@ -490,8 +474,18 @@ class TransactionsViewModel @Inject constructor(
     fun updateNotMineDetails(expense: Expense, isNotMine: Boolean, ownerName: String) {
         viewModelScope.launch {
             try {
+                if (isNotMine && expense.isSharedExpense) {
+                    expenseRepository.updateSharedExpenseDetails(
+                        expense = expense,
+                        isSharedExpense = false,
+                        sharedWithName = null,
+                        mySharePercentage = null,
+                        myShareAmount = null
+                    )
+                }
                 expenseRepository.updateNotMineDetails(expense, isNotMine, ownerName.takeIf { it.isNotBlank() })
                 _successMessage.emit(if (isNotMine) "Marked as not mine" else "Marked as mine")
+                refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 _error.emit("Failed to update: ${e.message}")
             }
@@ -516,6 +510,13 @@ class TransactionsViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
+                if (isSharedExpense && expense.isNotMine) {
+                    expenseRepository.updateNotMineDetails(
+                        expense = expense,
+                        isNotMine = false,
+                        ownerName = null
+                    )
+                }
                 expenseRepository.updateSharedExpenseDetails(
                     expense = expense,
                     isSharedExpense = isSharedExpense,
@@ -524,6 +525,7 @@ class TransactionsViewModel @Inject constructor(
                     myShareAmount = myShareAmount.toDoubleOrNull()
                 )
                 _successMessage.emit(if (isSharedExpense) "Marked as shared expense" else "Unmarked shared expense")
+                refreshPagedExpensesAfterMutation()
             } catch (e: Exception) {
                 _error.emit("Failed to update: ${e.message}")
             }
@@ -590,7 +592,7 @@ class TransactionsViewModel @Inject constructor(
                     amount = expense.effectiveAmount,
                     frequency = frequency,
                     lastDate = timeProvider.now(),
-                    currency = "EUR"
+                    currency = expense.currency
                 )
                 _successMessage.emit("Marked as recurring (${frequency.name.lowercase().replace("_", " ")})")
             } catch (e: Exception) {
@@ -613,26 +615,11 @@ class TransactionsViewModel @Inject constructor(
         loadInitialAllJob = viewModelScope.launch {
             _isLoading.value = true
             try {
-                val initial = withContext(Dispatchers.IO) {
-                    val activeFilter = _filter.value
-                    expenseRepository.getExpensesPagedDynamic(
-                        limit = PAGE_SIZE,
-                        offset = 0,
-                        searchQuery = _searchQuery.value.takeIf { it.isNotBlank() },
-                        startDate = activeFilter?.dateRange?.first,
-                        endDate = activeFilter?.dateRange?.second,
-                        transactionType = activeFilter?.transactionType,
-                        categoryId = activeFilter?.categoryId,
-                        merchantName = activeFilter?.merchantName,
-                        ownershipFilter = mapOwnershipFilter(_ownershipFilter.value),
-                        minAmount = activeFilter?.minAmount,
-                        maxAmount = activeFilter?.maxAmount,
-                        sortOrder = _sortOrder.value
-                    )
-                }
+                val initial = loadPagedExpensesPage(limit = PAGE_SIZE, offset = 0)
                 if (requestId != loadInitialAllRequestId) return@launch
                 _pagedExpenses.value = initial
                 _currentPage.value = 0
+                _hasReachedEnd.value = initial.size < PAGE_SIZE
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 _error.emit("Failed to load transactions: ${e.message}")
@@ -645,13 +632,68 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
-    private fun mapOwnershipFilter(filter: OwnershipFilter): com.yourname.expensetracker.data.repository.OwnershipFilter {
+    private fun resetAllPagingState() {
+        loadMoreJob?.cancel()
+        _isLoadingMoreState.value = false
+        _currentPage.value = 0
+        _pagedExpenses.value = emptyList()
+        _hasReachedEnd.value = false
+    }
+
+    private suspend fun loadPagedExpensesPage(limit: Int, offset: Int): List<ExpenseWithCategory> {
+        return withContext(Dispatchers.IO) {
+            val activeFilter = _filter.value
+            expenseRepository.getExpensesPagedDynamic(
+                limit = limit,
+                offset = offset,
+                searchQuery = _searchQuery.value.takeIf { it.isNotBlank() },
+                startDate = activeFilter?.dateRange?.first,
+                endDate = activeFilter?.dateRange?.second,
+                transactionType = activeFilter?.transactionType,
+                categoryId = activeFilter?.categoryId,
+                merchantName = activeFilter?.merchantName,
+                ownershipFilter = activeFilter?.ownership ?: RepositoryOwnershipFilter.ALL,
+                minAmount = activeFilter?.minAmount,
+                maxAmount = activeFilter?.maxAmount,
+                sortOrder = _sortOrder.value
+            )
+        }
+    }
+
+    private suspend fun refreshPagedExpensesAfterMutation() {
+        if (_selectedTab.value != TransactionTab.ALL) return
+
+        val loadedCount = _pagedExpenses.value.size
+        if (loadedCount == 0) {
+            loadInitialAll()
+            return
+        }
+
+        val refreshedPage = loadPagedExpensesPage(limit = loadedCount + 1, offset = 0)
+        val visibleItems = refreshedPage.take(loadedCount)
+
+        _pagedExpenses.value = visibleItems
+        _currentPage.value = if (visibleItems.isEmpty()) 0 else (visibleItems.size - 1) / PAGE_SIZE
+        _hasReachedEnd.value = refreshedPage.size <= loadedCount
+    }
+
+    private fun toRepositoryOwnershipFilter(filter: OwnershipFilter): RepositoryOwnershipFilter {
         return when (filter) {
-            OwnershipFilter.ALL -> com.yourname.expensetracker.data.repository.OwnershipFilter.ALL
-            OwnershipFilter.MINE -> com.yourname.expensetracker.data.repository.OwnershipFilter.MINE
-            OwnershipFilter.NOT_MINE -> com.yourname.expensetracker.data.repository.OwnershipFilter.NOT_MINE
-            OwnershipFilter.SHARED -> com.yourname.expensetracker.data.repository.OwnershipFilter.SHARED
-            OwnershipFilter.TRANSFER -> com.yourname.expensetracker.data.repository.OwnershipFilter.TRANSFER
+            OwnershipFilter.ALL -> RepositoryOwnershipFilter.ALL
+            OwnershipFilter.MINE -> RepositoryOwnershipFilter.MINE
+            OwnershipFilter.NOT_MINE -> RepositoryOwnershipFilter.NOT_MINE
+            OwnershipFilter.SHARED -> RepositoryOwnershipFilter.SHARED
+            OwnershipFilter.TRANSFER -> RepositoryOwnershipFilter.TRANSFER
+        }
+    }
+
+    private fun toUiOwnershipFilter(filter: RepositoryOwnershipFilter?): OwnershipFilter {
+        return when (filter ?: RepositoryOwnershipFilter.ALL) {
+            RepositoryOwnershipFilter.ALL -> OwnershipFilter.ALL
+            RepositoryOwnershipFilter.MINE -> OwnershipFilter.MINE
+            RepositoryOwnershipFilter.NOT_MINE -> OwnershipFilter.NOT_MINE
+            RepositoryOwnershipFilter.SHARED -> OwnershipFilter.SHARED
+            RepositoryOwnershipFilter.TRANSFER -> OwnershipFilter.TRANSFER
         }
     }
 
@@ -672,15 +714,6 @@ class TransactionsViewModel @Inject constructor(
             TransactionTab.YEAR -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 365)
             TransactionTab.ALL -> Pair(0L, now)
         }
-    }
-
-    private fun intersectRanges(
-        first: Pair<Long, Long>,
-        second: Pair<Long, Long>
-    ): Pair<Long, Long>? {
-        val start = maxOf(first.first, second.first)
-        val end = minOf(first.second, second.second)
-        return if (start < end) start to end else null
     }
 
     private fun applyAmountConstraints(

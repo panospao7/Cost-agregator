@@ -29,10 +29,14 @@ import androidx.core.content.ContextCompat
 import androidx.activity.viewModels
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
+import com.google.gson.Gson
 import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
+import com.yourname.expensetracker.data.database.entity.SplitShare
+import com.yourname.expensetracker.data.database.entity.SplitTemplate
 import com.yourname.expensetracker.ui.components.AppNavigationBar
 import com.yourname.expensetracker.ui.components.NotificationPermissionDialog
 import com.yourname.expensetracker.ui.screens.assistant.AssistantSheet
@@ -68,6 +72,7 @@ import com.yourname.expensetracker.ui.screens.tax.TaxConfigurationScreen
 import com.yourname.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
+import com.yourname.expensetracker.ui.navigation.NavigationResult
 import com.yourname.expensetracker.ui.navigation.ProvideNavigationController
 import com.yourname.expensetracker.ui.navigation.LocalNavigationController
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
@@ -78,6 +83,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -91,6 +97,12 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var actionRegistry: ContextualActionRegistry
+
+    @Inject
+    lateinit var expenseDao: ExpenseDao
+
+    @Inject
+    lateinit var gson: Gson
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -112,7 +124,12 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        MainScreen(mainViewModel, actionRegistry)
+                        MainScreen(
+                            mainViewModel = mainViewModel,
+                            actionRegistry = actionRegistry,
+                            expenseDao = expenseDao,
+                            gson = gson
+                        )
                     }
                 }
             }
@@ -165,11 +182,65 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private data class PersistedVisualSplit(
+    val splitType: SplitTemplate.SplitType,
+    val shares: List<SplitShare>
+)
+
+private suspend fun applyVisualSplitToExpense(
+    expenseDao: ExpenseDao,
+    gson: Gson,
+    expenseId: Long,
+    shares: List<SplitShare>,
+    splitType: SplitTemplate.SplitType,
+    templateId: Long?
+): Boolean {
+    val expense = expenseDao.getById(expenseId) ?: return false
+    val sanitizedShares = shares
+        .map { it.copy(participantName = it.participantName.trim()) }
+        .sortedBy { it.participantIndex }
+
+    if (sanitizedShares.isEmpty()) return false
+
+    val myShare = sanitizedShares.first()
+    val sharedWithName = sanitizedShares
+        .drop(1)
+        .joinToString(", ") { it.participantName }
+        .takeIf { it.isNotBlank() }
+
+    expenseDao.insertAll(
+        listOf(
+            expense.copy(
+                isNotMine = false,
+                ownerName = null,
+                isSharedExpense = sanitizedShares.size > 1,
+                sharedWithName = sharedWithName,
+                mySharePercentage = myShare.percentage
+                    ?.takeIf { it.isFinite() }
+                    ?.roundToInt()
+                    ?.coerceIn(0, 100),
+                myShareAmount = myShare.amount?.takeIf { it.isFinite() },
+                splitTemplateId = templateId,
+                splitVisualization = gson.toJson(
+                    PersistedVisualSplit(
+                        splitType = splitType,
+                        shares = sanitizedShares
+                    )
+                )
+            )
+        )
+    )
+
+    return true
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     mainViewModel: MainViewModel,
-    actionRegistry: ContextualActionRegistry
+    actionRegistry: ContextualActionRegistry,
+    expenseDao: ExpenseDao,
+    gson: Gson
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
 
@@ -258,6 +329,17 @@ fun MainScreen(
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(navigation) {
+        navigation.navigationResults.collect { result ->
+            when (result) {
+                is NavigationResult.VisualSplitApplied -> {
+                    snackbarHostState.showSnackbar("Split applied")
+                }
+            }
+        }
+    }
     
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -375,6 +457,9 @@ fun MainScreen(
                     1 -> TransactionsScreen(
                         onNavigateToAnalytics = { navigation.navigateToTab(4) },
                         onAddExpense = { navigation.navigateTo(NavigationDestination.AddExpense) },
+                        onOpenVisualSplit = { expense ->
+                            navigation.navigateTo(NavigationDestination.VisualSplitEditor.forExpense(expense))
+                        },
                         initialFilter = activeTransactionFilter
                     )
                     2 -> ReviewScreen()
@@ -561,23 +646,54 @@ fun MainScreen(
                         onNavigateBack = { navigation.navigateBack() },
                         onCreateTemplate = {
                             // Navigate to split editor to create template
-                            navigation.navigateTo(NavigationDestination.VisualSplitEditor())
+                            navigation.navigateTo(NavigationDestination.VisualSplitEditor.forTemplateCreation())
                         },
                         onEditTemplate = { template ->
                             // Navigate to editor with template ID for editing
-                            navigation.navigateTo(NavigationDestination.VisualSplitEditor(templateId = template.id))
+                            navigation.navigateTo(NavigationDestination.VisualSplitEditor.forTemplateEdit(template.id))
                         }
                     )
                 }
                 is NavigationDestination.VisualSplitEditor -> {
                     VisualSplitEditorScreen(
-                        totalAmount = currentDestination.expenseAmount ?: currentDestination.expense?.amount ?: 0.0,
-                        currencyCode = currentDestination.expenseCurrency ?: currentDestination.expense?.currency ?: "EUR",
-                        expenseId = currentDestination.expenseId ?: currentDestination.expense?.id,
+                        totalAmount = currentDestination.resolvedExpenseAmount ?: 0.0,
+                        currencyCode = currentDestination.resolvedExpenseCurrency ?: "EUR",
+                        expenseId = currentDestination.resolvedExpenseId,
                         templateId = currentDestination.templateId,
                         onSplitComplete = { shares, splitType ->
-                            // Handle split completion
-                            navigation.navigateBack()
+                            val targetExpenseId = currentDestination.resolvedExpenseId
+                            coroutineScope.launch {
+                                val applied = if (targetExpenseId == null) {
+                                    true
+                                } else {
+                                    runCatching {
+                                        applyVisualSplitToExpense(
+                                            expenseDao = expenseDao,
+                                            gson = gson,
+                                            expenseId = targetExpenseId,
+                                            shares = shares,
+                                            splitType = splitType,
+                                            templateId = currentDestination.templateId
+                                        )
+                                    }.onFailure { error ->
+                                        Timber.e(error, "Failed to apply visual split for expenseId=%s", targetExpenseId)
+                                    }.getOrDefault(false)
+                                }
+
+                                if (!applied) {
+                                    snackbarHostState.showSnackbar("Unable to apply split")
+                                    return@launch
+                                }
+
+                                navigation.deliverResult(
+                                    NavigationResult.VisualSplitApplied(
+                                        expenseId = targetExpenseId,
+                                        shares = shares,
+                                        splitType = splitType
+                                    )
+                                )
+                                navigation.navigateBack()
+                            }
                         },
                         onSaveAsTemplate = { name, shares, splitType ->
                             // Handle save as template

@@ -10,9 +10,13 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -143,6 +147,35 @@ class CarbonFootprintViewModelTest : ViewModelTestUtils() {
             assertFalse(awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test
+    fun `latest load request wins when stale result completes last`() = runTest(testDispatcher) {
+        val staleResult = CompletableDeferred<CarbonFootprintCalculator.CarbonFootprintReport>()
+        val staleReport = carbonReport(totalEmissionsKg = 90.0, dailyAverageKg = 3.0, periodDays = 30)
+        val latestReport = carbonReport(totalEmissionsKg = 14.0, dailyAverageKg = 2.0, periodDays = 7)
+        val start30 = fixedNow - (30 * TimePeriodUtils.DAY_IN_MILLIS)
+        val start7 = fixedNow - (7 * TimePeriodUtils.DAY_IN_MILLIS)
+
+        coEvery { calculator.calculateCarbonFootprint(start30, fixedNow) } coAnswers {
+            withContext(NonCancellable) { staleResult.await() }
+        }
+        coEvery { calculator.calculateCarbonFootprint(start7, fixedNow) } returns latestReport
+
+        viewModel.loadReport(30)
+        runCurrent()
+
+        viewModel.loadReport(7)
+        advanceUntilIdle()
+
+        assertEquals(latestReport, viewModel.report.value)
+        assertFalse(viewModel.isLoading.value)
+
+        staleResult.complete(staleReport)
+        advanceUntilIdle()
+
+        assertEquals(latestReport, viewModel.report.value)
+        assertFalse(viewModel.isLoading.value)
     }
 
     private fun carbonReport(

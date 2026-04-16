@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.assistant
 
 import android.app.Application
 import app.cash.turbine.test
+import com.yourname.expensetracker.domain.ai.model.AiChatMessage
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiCapabilityRuntimeStatus
 import com.yourname.expensetracker.domain.ai.model.AiRoute
@@ -24,6 +25,7 @@ import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigati
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.util.ViewModelTestUtils
+import io.mockk.capture
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -316,6 +318,76 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         coVerify { aiChatRepository.appendMessage(5L, AssistantMessageRole.USER, AssistantMessageKind.QUERY, any(), null) }
         coVerify { aiChatRepository.appendMessage(5L, AssistantMessageRole.ASSISTANT, AssistantMessageKind.RESULT, any(), any()) }
         assertEquals(5L, viewModel.uiState.value.currentSessionId)
+    }
+
+    @Test
+    fun `clarification reply keeps conversation history when history enabled`() = runTest(testDispatcher) {
+        every { aiSettingsRepository.settings() } returns flowOf(
+            AiSettings(
+                aiEnabled = true,
+                assistantEnabled = true,
+                queryInterpretationEnabled = true,
+                storeConversationHistory = true
+            )
+        )
+        viewModel = AssistantViewModel(
+            application,
+            aiSettingsRepository,
+            aiChatRepository,
+            getAiRuntimeStatusUseCase,
+            interpretFinancialQueryUseCase,
+            executeFinancialQueryUseCase,
+            mapFinancialQueryToNavigationUseCase
+        )
+
+        val expectedHistory = listOf(
+            AiChatMessage(
+                id = 1L,
+                sessionId = 5L,
+                role = AssistantMessageRole.USER,
+                kind = AssistantMessageKind.QUERY,
+                text = "compare spending",
+                createdAt = 100L
+            ),
+            AiChatMessage(
+                id = 2L,
+                sessionId = 5L,
+                role = AssistantMessageRole.ASSISTANT,
+                kind = AssistantMessageKind.CLARIFICATION,
+                text = "Which month?",
+                createdAt = 101L
+            )
+        )
+        val capturedHistories = mutableListOf<List<AiChatMessage>>()
+        val intent = FinancialQueryIntent(
+            rawQuery = "This month",
+            normalizedQuery = "this month",
+            filters = ExpenseQueryFilters(),
+            metric = QueryMetric.TOTAL
+        )
+
+        coEvery { aiChatRepository.createSession(any()) } returns 5L
+        every { aiChatRepository.observeMessages(5L) } returns flowOf(expectedHistory)
+        coEvery { interpretFinancialQueryUseCase(any(), capture(capturedHistories)) } returnsMany listOf(
+            FinancialQueryInterpretationResult.Clarification(
+                prompt = "Which month?",
+                options = listOf("This month", "Last month")
+            ),
+            FinancialQueryInterpretationResult.Structured(intent)
+        )
+        coEvery { executeFinancialQueryUseCase(intent) } returns FinancialQueryResult.Summary(
+            title = UiText.DynamicString("Total spending"),
+            primaryText = "42.00 EUR"
+        )
+        every { mapFinancialQueryToNavigationUseCase(intent) } returns null
+
+        viewModel.submitQuery("compare spending")
+        advanceUntilIdle()
+        viewModel.onClarificationSelected("This month")
+        advanceUntilIdle()
+
+        assertEquals(2, capturedHistories.size)
+        assertEquals(expectedHistory, capturedHistories[1])
     }
 
     @Test

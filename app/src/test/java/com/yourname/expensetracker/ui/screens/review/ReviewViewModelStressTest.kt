@@ -183,6 +183,91 @@ class ReviewViewModelStressTest {
         assertNotNull(viewModel.errorMessage.value)
     }
 
+    @Test
+    fun `stress - approveReviewWithEdits short-circuits bulk updates on duplicate`() = runTest {
+        coEvery {
+            reviewQueueRepository.approveReview(
+                reviewId = 90L,
+                finalAmount = 12.0,
+                finalMerchant = "Edited",
+                finalCategoryId = 5L,
+                finalDate = 1000L,
+                finalType = null,
+                finalLatitude = null,
+                finalLongitude = null,
+                finalAddress = null,
+                finalPlaceId = null
+            )
+        } returns Result.Duplicate
+
+        viewModel.approveReviewWithEdits(
+            reviewId = 90L,
+            finalAmount = 12.0,
+            finalMerchant = "Edited",
+            finalCategoryId = 5L,
+            finalDate = 1000L,
+            finalType = null,
+            applyToAll = true,
+            approveAllPending = true
+        )
+
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { reviewQueueRepository.getReviewById(90L) }
+        coVerify(exactly = 0) { reviewQueueRepository.getPendingReviewsByMerchant(any()) }
+        coVerify(exactly = 0) { expenseRepository.updateExpenseCategoryBulk(any(), any()) }
+        coVerify(exactly = 0) { expenseRepository.updateExpenseMerchantBulk(any(), any()) }
+        assertEquals("Duplicate transaction detected", viewModel.errorMessage.value)
+    }
+
+    @Test
+    fun `stress - approveReviewWithEdits threads place id to repository`() = runTest {
+        coEvery {
+            reviewQueueRepository.approveReview(
+                reviewId = 91L,
+                finalAmount = 20.0,
+                finalMerchant = "Merchant",
+                finalCategoryId = 2L,
+                finalDate = 2000L,
+                finalType = null,
+                finalLatitude = 37.98,
+                finalLongitude = 23.72,
+                finalAddress = "Athens",
+                finalPlaceId = "N123"
+            )
+        } returns Result.Success(91L)
+
+        viewModel.approveReviewWithEdits(
+            reviewId = 91L,
+            finalAmount = 20.0,
+            finalMerchant = "Merchant",
+            finalCategoryId = 2L,
+            finalDate = 2000L,
+            finalType = null,
+            finalLatitude = 37.98,
+            finalLongitude = 23.72,
+            finalAddress = "Athens",
+            finalPlaceId = "N123"
+        )
+
+        advanceUntilIdle()
+
+        coVerify {
+            reviewQueueRepository.approveReview(
+                reviewId = 91L,
+                finalAmount = 20.0,
+                finalMerchant = "Merchant",
+                finalCategoryId = 2L,
+                finalDate = 2000L,
+                finalType = null,
+                finalLatitude = 37.98,
+                finalLongitude = 23.72,
+                finalAddress = "Athens",
+                finalPlaceId = "N123"
+            )
+        }
+    }
+
     // ============================================================================
     // SECTION 3: REJECT REVIEW
     // ============================================================================
@@ -898,10 +983,12 @@ class ReviewViewModelStressTest {
                 finalAmount = null,
                 finalMerchant = null,
                 finalCategoryId = 4L,
+                finalDate = null,
                 finalType = null,
                 finalLatitude = null,
                 finalLongitude = null,
-                finalAddress = null
+                finalAddress = null,
+                finalPlaceId = null
             )
         } returns Result.Success(20L)
         coEvery { aiArtifactRepository.getLatest("pending_review:72", AiCapability.CATEGORIZATION_FALLBACK) } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
@@ -956,10 +1043,12 @@ class ReviewViewModelStressTest {
                 finalAmount = null,
                 finalMerchant = null,
                 finalCategoryId = 4L,
+                finalDate = null,
                 finalType = null,
                 finalLatitude = null,
                 finalLongitude = null,
-                finalAddress = null
+                finalAddress = null,
+                finalPlaceId = null
             )
         }
         coVerify { aiArtifactRepository.markApplied(21L) }
@@ -984,10 +1073,12 @@ class ReviewViewModelStressTest {
                 finalAmount = null,
                 finalMerchant = null,
                 finalCategoryId = 4L,
+                finalDate = null,
                 finalType = null,
                 finalLatitude = null,
                 finalLongitude = null,
-                finalAddress = null
+                finalAddress = null,
+                finalPlaceId = null
             )
         } returns Result.Success(20L)
         coEvery { aiArtifactRepository.getLatest("pending_review:73", AiCapability.CATEGORIZATION_FALLBACK) } returns com.yourname.expensetracker.domain.dto.AiArtifactRecord(
@@ -1112,10 +1203,12 @@ class ReviewViewModelStressTest {
                 finalAmount = any(),
                 finalMerchant = any(),
                 finalCategoryId = any(),
+                finalDate = any(),
                 finalType = any(),
                 finalLatitude = any(),
                 finalLongitude = any(),
-                finalAddress = any()
+                finalAddress = any(),
+                finalPlaceId = any()
             )
         }
     }

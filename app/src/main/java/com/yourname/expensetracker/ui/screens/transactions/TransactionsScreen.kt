@@ -55,6 +55,9 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.formattedTime
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
+import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.OwnershipFilter
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.TransactionTab
@@ -87,7 +90,8 @@ fun TransactionsScreen(
     viewModel: TransactionsViewModel = hiltViewModel(),
     initialFilter: TransactionFilter? = null,
     onNavigateToAnalytics: () -> Unit = {},
-    onAddExpense: () -> Unit = {}
+    onAddExpense: () -> Unit = {},
+    onOpenVisualSplit: (Expense) -> Unit = {}
 ) {
     val transactions by viewModel.transactions.collectAsState()
     val groupedTransactions by viewModel.groupedTransactions.collectAsState()
@@ -98,6 +102,7 @@ fun TransactionsScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
     val isLoadingMore by viewModel.isLoadingMoreState.collectAsState()
+    val hasReachedEnd by viewModel.hasReachedEnd.collectAsState()
     val tabCounts by viewModel.tabTransactionCounts.collectAsState()
     val ownershipFilter by viewModel.ownershipFilter.collectAsState()
     val sortOrder by viewModel.sortOrder.collectAsState()
@@ -162,7 +167,8 @@ fun TransactionsScreen(
             selectedTab == TransactionTab.ALL && 
             lastVisibleItem >= totalItems - 5 && 
             totalItems > 0 &&
-            !isLoadingMore
+            !isLoadingMore &&
+            !hasReachedEnd
         }
     }
     
@@ -506,6 +512,21 @@ fun TransactionsScreen(
                                     )
                                 }
                             }
+                        } else if (selectedTab == TransactionTab.ALL && hasReachedEnd && transactions.isNotEmpty()) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 20.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "You've reached the end",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = SemanticColors.TextMuted
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -562,14 +583,13 @@ fun TransactionsScreen(
                 referenceNowMs = viewModel.referenceNow(),
                 onDismiss = { showFilterSheet = false },
                 onApply = { filter, ownership ->
-                    if (filter != null) {
+                    if (filter != null || ownership != OwnershipFilter.ALL) {
                         viewModel.applyFilter(
-                            filter.copy(ownership = ownership.toRepositoryOwnershipFilter())
+                            (filter ?: TransactionFilter()).copy(ownership = ownership.toRepositoryOwnershipFilter())
                         )
                     } else {
                         viewModel.clearFilter()
                     }
-                    viewModel.setOwnershipFilter(ownership)
                     showFilterSheet = false
                 },
                 onClear = {
@@ -617,10 +637,16 @@ fun TransactionsScreen(
             EditOwnershipDialog(
                 expense = expenseToEditOwnership!!,
                 onDismiss = { expenseToEditOwnership = null },
+                onOpenVisualSplit = { expense ->
+                    expenseToEditOwnership = null
+                    onOpenVisualSplit(expense)
+                },
                 onSave = { isNotMine, ownerName, isShared, sharedWith, sharePercent, shareAmount ->
                     expenseToEditOwnership?.let { expense ->
-                        viewModel.updateNotMineDetails(expense, isNotMine, ownerName)
-                        viewModel.updateSharedExpenseDetails(expense, isShared, sharedWith, sharePercent, shareAmount)
+                        val finalIsNotMine = isNotMine
+                        val finalIsShared = isShared && !finalIsNotMine
+                        viewModel.updateNotMineDetails(expense, finalIsNotMine, ownerName)
+                        viewModel.updateSharedExpenseDetails(expense, finalIsShared, sharedWith, sharePercent, shareAmount)
                     }
                     expenseToEditOwnership = null
                 }
@@ -760,6 +786,10 @@ private fun DateHeader(
     totalAmount: Double,
     itemCount: Int
 ) {
+    val defaultCurrencySymbol = remember {
+        SupportedCurrency.fromCode(CurrencyConverter.DEFAULT_BASE_CURRENCY)?.symbol
+            ?: CurrencyConverter.DEFAULT_BASE_CURRENCY
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -801,7 +831,7 @@ private fun DateHeader(
                     color = if (totalAmount < 0) SemanticColors.DangerRed.copy(alpha = 0.1f) else SemanticColors.SuccessGreen.copy(alpha = 0.1f)
                 ) {
                     Text(
-                        text = "€${String.format(java.util.Locale.getDefault(), "%.2f", kotlin.math.abs(totalAmount))}",
+                        text = AmountUtils.formatAmount(kotlin.math.abs(totalAmount), defaultCurrencySymbol),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (totalAmount < 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen,
@@ -1541,6 +1571,10 @@ fun ChangeTypeDialog(
     var transferDirection by remember { mutableStateOf(currentTransferDirection) }
     var transferAccountName by remember { mutableStateOf(currentTransferAccountName.orEmpty()) }
     val transferAccountNameTrimmed = transferAccountName.trim()
+    val hasTransferMetadataChange = currentType == TransactionType.TRANSFER && selectedType == TransactionType.TRANSFER && (
+        transferDirection != currentTransferDirection ||
+            transferAccountNameTrimmed != currentTransferAccountName.orEmpty().trim()
+        )
     val transferMetadataValid = selectedType != TransactionType.TRANSFER ||
         (transferDirection != null && transferAccountNameTrimmed.isNotBlank())
 
@@ -1656,7 +1690,7 @@ fun ChangeTypeDialog(
         confirmButton = {
             Button(
                 onClick = { onConfirm(selectedType, transferDirection, transferAccountNameTrimmed) },
-                enabled = selectedType != currentType && transferMetadataValid,
+                enabled = (selectedType != currentType || hasTransferMetadataChange) && transferMetadataValid,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = SemanticColors.PrimaryIndigo
                 )
@@ -1676,6 +1710,7 @@ fun ChangeTypeDialog(
 fun EditOwnershipDialog(
     expense: Expense,
     onDismiss: () -> Unit,
+    onOpenVisualSplit: (Expense) -> Unit,
     onSave: (isNotMine: Boolean, ownerName: String, isShared: Boolean, sharedWithName: String, sharePercentage: String, shareAmount: String) -> Unit
 ) {
     var isNotMine by remember { mutableStateOf(expense.isNotMine) }
@@ -1684,6 +1719,7 @@ fun EditOwnershipDialog(
     var sharedWithName by remember { mutableStateOf(expense.sharedWithName ?: "") }
     var mySharePercentage by remember { mutableStateOf(expense.mySharePercentage?.toString() ?: "") }
     var myShareAmount by remember { mutableStateOf(expense.myShareAmount?.toString() ?: "") }
+    val canOpenVisualSplit = expense.id > 0L
     val parsedSharePercentage = mySharePercentage.toIntOrNull()
     val isSharePercentageInvalid = isSharedExpense && mySharePercentage.isNotBlank() &&
         (parsedSharePercentage == null || parsedSharePercentage !in 0..100)
@@ -1710,7 +1746,12 @@ fun EditOwnershipDialog(
                     Text(stringResource(R.string.transactions_not_mine_label))
                     Switch(
                         checked = isNotMine,
-                        onCheckedChange = { isNotMine = it }
+                        onCheckedChange = {
+                            isNotMine = it
+                            if (it) {
+                                isSharedExpense = false
+                            }
+                        }
                     )
                 }
                 if (isNotMine) {
@@ -1739,10 +1780,24 @@ fun EditOwnershipDialog(
                     Text(stringResource(R.string.transactions_split_with_someone))
                     Switch(
                         checked = isSharedExpense,
-                        onCheckedChange = { isSharedExpense = it }
+                        onCheckedChange = {
+                            isSharedExpense = it
+                            if (it) {
+                                isNotMine = false
+                            }
+                        }
                     )
                 }
                 if (isSharedExpense) {
+                    TextButton(
+                        onClick = { onOpenVisualSplit(expense) },
+                        enabled = canOpenVisualSplit,
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Icon(Icons.Rounded.PieChart, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.feature_visual_split))
+                    }
                     OutlinedTextField(
                         value = sharedWithName,
                         onValueChange = { sharedWithName = it },

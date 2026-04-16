@@ -166,7 +166,7 @@ data class FeatureConfig(
                 titleRes = R.string.feature_visual_split,
                 icon = Icons.Rounded.PieChart,
                 color = Color(0xFF9C27B0),
-                destination = NavigationDestination.VisualSplitEditor(),
+                destination = NavigationDestination.VisualSplitEditor.forTemplateCreation(),
                 descriptionRes = R.string.feature_visual_split_desc
             ),
             FeatureConfig(
@@ -259,4 +259,3 @@ fun FeatureConfig.title(): String = stringResource(titleRes)
  */
 @Composable
 fun FeatureConfig.description(): String? = descriptionRes?.let { stringResource(it) }
-

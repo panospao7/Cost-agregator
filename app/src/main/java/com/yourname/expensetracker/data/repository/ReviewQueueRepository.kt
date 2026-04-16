@@ -87,7 +87,8 @@ class ReviewQueueRepository @Inject constructor(
         finalType: TransactionType? = null,
         finalLatitude: Double? = null,
         finalLongitude: Double? = null,
-        finalAddress: String? = null
+        finalAddress: String? = null,
+        finalPlaceId: String? = null
     ): Result<Long> {
         val review = pendingReviewDao.getById(reviewId)
             ?: return Result.Error(message = ERROR_REVIEW_NOT_FOUND)
@@ -108,6 +109,20 @@ class ReviewQueueRepository @Inject constructor(
 
         val notification = review.rawNotificationId?.let { rawNotificationDao.getById(it) }
         val transactionDate: Long = finalDate ?: review.suggestedDate ?: notification?.timestamp ?: review.createdAt
+        val transferMetadataAllowed =
+            type == TransactionType.TRANSFER || type == TransactionType.DEPOSIT
+        val transferDirection = if (transferMetadataAllowed) {
+            runCatching {
+                review.suggestedDirection?.let(TransferDirection::valueOf)
+            }.getOrNull()
+        } else {
+            null
+        }
+        val transferAccountName = if (transferMetadataAllowed) {
+            review.suggestedAccountName
+        } else {
+            null
+        }
 
         val expense = Expense(
             amount = amount,
@@ -129,6 +144,8 @@ class ReviewQueueRepository @Inject constructor(
             dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
                 amount, merchant, transactionDate, review.suggestedCurrency, type
             ),
+            transferDirection = transferDirection,
+            transferAccountName = transferAccountName,
             // Prefer user-provided location, fall back to review-captured GPS
             latitude = finalLatitude ?: review.suggestedLatitude,
             longitude = finalLongitude ?: review.suggestedLongitude,
@@ -137,6 +154,7 @@ class ReviewQueueRepository @Inject constructor(
                 review.suggestedLatitude != null -> AppConfig.Location.SOURCE_DEVICE_GPS
                 else -> null
             },
+            placeId = finalPlaceId,
             resolvedAddress = finalAddress
         )
 

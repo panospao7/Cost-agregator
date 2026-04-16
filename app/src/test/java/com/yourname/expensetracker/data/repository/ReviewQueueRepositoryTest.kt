@@ -114,6 +114,58 @@ class ReviewQueueRepositoryTest {
     }
 
     @Test
+    fun `approveReview preserves transfer and place metadata on success`() = runTest {
+        val reviewId = 15L
+        val pendingReview = PendingReview(
+            id = reviewId,
+            rawNotificationId = 10L,
+            suggestedAmount = 50.0,
+            suggestedCurrency = "EUR",
+            suggestedMerchant = "Savings Transfer",
+            suggestedType = "TRANSFER",
+            suggestedCategoryId = 1L,
+            confidence = 0.8f,
+            packageName = "com.test.app",
+            notificationTitle = "Transfer",
+            notificationText = "Moved 50",
+            suggestedDirection = TransferDirection.OUTGOING.name,
+            suggestedAccountName = "Emergency Fund",
+            suggestedLatitude = 37.9838,
+            suggestedLongitude = 23.7275
+        )
+
+        coEvery { pendingReviewDao.getById(reviewId) } returns pendingReview
+        coEvery {
+            pendingReviewDao.transitionStatus(
+                reviewId,
+                PendingReviewStatus.PENDING,
+                PendingReviewStatus.PROCESSING
+            )
+        } returns 1
+        coEvery { expenseDao.insertAtomic(any()) } returns 150L
+
+        val expenseSlot = slot<Expense>()
+        coEvery { expenseDao.insertAtomic(capture(expenseSlot)) } returns 150L
+
+        val result = repository.approveReview(
+            reviewId = reviewId,
+            finalLatitude = 38.0,
+            finalLongitude = 23.8,
+            finalAddress = "Athens Center",
+            finalPlaceId = "N999"
+        )
+
+        assertTrue(result is Result.Success)
+        assertEquals(TransferDirection.OUTGOING, expenseSlot.captured.transferDirection)
+        assertEquals("Emergency Fund", expenseSlot.captured.transferAccountName)
+        assertEquals(38.0, expenseSlot.captured.latitude!!, 0.0)
+        assertEquals(23.8, expenseSlot.captured.longitude!!, 0.0)
+        assertEquals("USER_MANUAL", expenseSlot.captured.locationSource)
+        assertEquals("N999", expenseSlot.captured.placeId)
+        assertEquals("Athens Center", expenseSlot.captured.resolvedAddress)
+    }
+
+    @Test
     fun `approveReview returns Duplicate result if canonical policy detects duplicate`() = runTest {
         // Arrange
         val reviewId = 2L

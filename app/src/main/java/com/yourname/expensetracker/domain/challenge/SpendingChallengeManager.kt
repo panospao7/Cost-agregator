@@ -20,6 +20,17 @@ class SpendingChallengeManager @Inject constructor(
     private val savingsGoalRepository: SavingsGoalRepository,
     private val timeProvider: TimeProvider
 ) {
+
+    /**
+     * There is currently no persisted challenge repository/canonical source in the codebase.
+     * Return an explicit blocked state so the UI does not present an empty list as real data.
+     */
+    suspend fun getActiveChallengesSnapshot(): ActiveChallengesSnapshot = withContext(Dispatchers.IO) {
+        ActiveChallengesSnapshot(
+            challenges = emptyList(),
+            unavailableReason = ACTIVE_CHALLENGES_UNAVAILABLE_REASON
+        )
+    }
     
     /**
      * Check if user has a no-spend streak today.
@@ -78,7 +89,10 @@ class SpendingChallengeManager @Inject constructor(
     }
     
     /**
-     * Create a spending challenge.
+     * Create a spending challenge in memory only.
+     *
+     * Note: there is no persisted active-challenge source yet, so created challenges cannot
+     * currently be reloaded into the challenges screen after creation.
      */
     fun createChallenge(
         name: String,
@@ -176,7 +190,17 @@ class SpendingChallengeManager @Inject constructor(
         
         total / 30.0
     }
+
+    companion object {
+        const val ACTIVE_CHALLENGES_UNAVAILABLE_REASON =
+            "Active challenges cannot be loaded yet because challenge creation is not backed by persisted storage in this build."
+    }
 }
+
+data class ActiveChallengesSnapshot(
+    val challenges: List<SpendingChallenge>,
+    val unavailableReason: String? = null
+)
 
 data class NoSpendStatus(
     val hasNoSpendToday: Boolean,

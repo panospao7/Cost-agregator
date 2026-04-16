@@ -154,7 +154,11 @@ private fun destinationFromSaveToken(token: String): NavigationDestination? {
         val templateId = token.substringAfter(':', "")
             .takeIf { it.isNotBlank() }
             ?.toLongOrNull()
-        return NavigationDestination.VisualSplitEditor(templateId = templateId)
+        return if (templateId != null) {
+            NavigationDestination.VisualSplitEditor.forTemplateEdit(templateId)
+        } else {
+            NavigationDestination.VisualSplitEditor.forTemplateCreation()
+        }
     }
 
     val (baseToken, params) = parseSaveToken(token)
@@ -229,6 +233,8 @@ class NavigationController(
     private val backStack = ArrayDeque(initialBackStack)
     private val _navigationEvents = MutableSharedFlow<NavigationEvent>(extraBufferCapacity = 1)
     val navigationEvents: SharedFlow<NavigationEvent> = _navigationEvents.asSharedFlow()
+    private val _navigationResults = MutableSharedFlow<NavigationResult>(extraBufferCapacity = 1)
+    val navigationResults: SharedFlow<NavigationResult> = _navigationResults.asSharedFlow()
     
     // Track the previous main tab to return to when navigating back from feature screens
     var previousMainTab: Int? = initialPreviousMainTab
@@ -258,6 +264,10 @@ class NavigationController(
         currentDestination.value = destination
         _navigationEvents.tryEmit(NavigationEvent.NavigateTo(destination))
         notifyStateChanged()
+    }
+
+    fun deliverResult(result: NavigationResult) {
+        _navigationResults.tryEmit(result)
     }
     
     /**

@@ -279,7 +279,8 @@ class ReviewViewModel @Inject constructor(
         approveAllPending: Boolean = false,
         finalLatitude: Double? = null,
         finalLongitude: Double? = null,
-        finalAddress: String? = null
+        finalAddress: String? = null,
+        finalPlaceId: String? = null
     ) {
         viewModelScope.launch {
             val result = reviewQueueRepository.approveReview(
@@ -291,9 +292,11 @@ class ReviewViewModel @Inject constructor(
                 finalType = finalType,
                 finalLatitude = finalLatitude,
                 finalLongitude = finalLongitude,
-                finalAddress = finalAddress
+                finalAddress = finalAddress,
+                finalPlaceId = finalPlaceId
             )
             handleResult(result, "Failed to approve edits")
+            if (result !is Result.Success) return@launch
 
             if (applyToAll && (finalCategoryId != null || finalMerchant != null)) {
                 try {
@@ -327,19 +330,20 @@ class ReviewViewModel @Inject constructor(
                         val identicalPending = reviewQueueRepository.getPendingReviewsByMerchant(searchMerchant)
                         for (pending in identicalPending) {
                             if (pending.id != reviewId) {
-                                reviewQueueRepository.approveReview(
-                                    reviewId = pending.id,
-                                    finalAmount = null, // Keep original amounts for identical transactions
-                                    finalMerchant = finalMerchant,
-                                    finalCategoryId = finalCategoryId,
-                                    finalDate = finalDate,
-                                    finalType = finalType,
-                                    finalLatitude = finalLatitude,
-                                    finalLongitude = finalLongitude,
-                                    finalAddress = finalAddress
-                                )
-                            }
-                        }
+                                 reviewQueueRepository.approveReview(
+                                     reviewId = pending.id,
+                                     finalAmount = null, // Keep original amounts for identical transactions
+                                     finalMerchant = finalMerchant,
+                                     finalCategoryId = finalCategoryId,
+                                     finalDate = finalDate,
+                                     finalType = finalType,
+                                     finalLatitude = finalLatitude,
+                                     finalLongitude = finalLongitude,
+                                     finalAddress = finalAddress,
+                                     finalPlaceId = finalPlaceId
+                                 )
+                             }
+                         }
                     }
                 } catch (e: Exception) {
                     Timber.e(e, "Failed to apply bulk approval")
