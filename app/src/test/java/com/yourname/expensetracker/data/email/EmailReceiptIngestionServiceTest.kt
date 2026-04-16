@@ -356,6 +356,8 @@ class EmailReceiptIngestionServiceTest {
         assertEquals(200L, (result as EmailReceiptResult.Duplicate).existingReceiptId)
 
         // Crucial: no ScannedReceipt row or Expense row must have been created
+        coVerify(exactly = 1) { emailReceiptDao.getByMessageId("msg-known-1") }
+        coVerify(exactly = 0) { emailReceiptDao.getByFingerprint(any()) }
         coVerify(exactly = 0) { scannedReceiptDao.insert(any()) }
         coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
         coVerify(exactly = 0) { emailReceiptDao.insertOrIgnore(any()) }
@@ -394,6 +396,7 @@ class EmailReceiptIngestionServiceTest {
 
         // getByMessageId must NOT have been called (blank ids are excluded from the guard)
         coVerify(exactly = 0) { emailReceiptDao.getByMessageId(any()) }
+        coVerify(exactly = 1) { emailReceiptDao.getByFingerprint(any()) }
         // Normal pipeline must still have run
         coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }
         coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
@@ -428,6 +431,7 @@ class EmailReceiptIngestionServiceTest {
 
         assertTrue("Expected Success for whitespace messageId but got $result", result is EmailReceiptResult.Success)
         coVerify(exactly = 0) { emailReceiptDao.getByMessageId(any()) }
+        coVerify(exactly = 1) { emailReceiptDao.getByFingerprint(any()) }
     }
 
     @Test
@@ -537,6 +541,40 @@ class EmailReceiptIngestionServiceTest {
         // No new ScannedReceipt or Expense created on the second call.
         coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }
         coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
+    }
+
+    @Test
+    fun `processEmailReceipt returns ParseError when expense creation yields no ids`() = runTest {
+        every { amazonParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Amazon",
+            amount = 18.25,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "ORD-NO-EXPENSE",
+            confidence = 0.9
+        )
+
+        coEvery { emailReceiptDao.getByMessageId("msg-no-expense") } returns null
+        coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
+        coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns emptyList()
+        coEvery { scannedReceiptDao.insert(any()) } returns 702L
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        coEvery { expenseDao.insertAtomic(any()) } returns -1L
+
+        val result = service.processEmailReceipt(
+            emailBody = "Order Total: \$18.25 Order # ORD-NO-EXPENSE",
+            sender = "auto-confirm@amazon.com",
+            subject = "Your Amazon order",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-no-expense"
+        )
+
+        assertTrue("Expected ParseError when expense creation fails but got $result", result is EmailReceiptResult.ParseError)
+        coVerify(exactly = 1) { scannedReceiptDao.insert(any()) }
+        coVerify(exactly = 1) { emailReceiptDao.insertOrIgnore(any()) }
+        coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
+        coVerify(exactly = 0) { scannedReceiptDao.update(any()) }
     }
 
     companion object {

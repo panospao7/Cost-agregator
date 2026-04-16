@@ -1,8 +1,7 @@
 package com.yourname.expensetracker.data.email.provider
 
 import timber.log.Timber
-import java.text.SimpleDateFormat
-import java.util.Locale
+import java.util.regex.Matcher
 import java.util.regex.Pattern
 
 /**
@@ -21,13 +20,13 @@ class AmazonReceiptParser : BaseEmailParser() {
 
         private val ORDER_PATTERNS = listOf(
             // Order total patterns
-            Pattern.compile("""Order Total:\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Grand Total:\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Total:\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Order Total:\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Grand Total:\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Total:\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
             // Alternative format
-            Pattern.compile("""(?:Order Total|Grand Total|Total)\\s+([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""(?:Order Total|Grand Total|Total)\s+([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
             // HTML formatted
-            Pattern.compile("""order-total[^>]*>[^<]*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE)
+            Pattern.compile("""order-total[^>]*>[^<]*([^<]{1,32})""", Pattern.CASE_INSENSITIVE)
         )
 
         private val ORDER_NUMBER_PATTERNS = listOf(
@@ -37,10 +36,10 @@ class AmazonReceiptParser : BaseEmailParser() {
         )
 
         private val DATE_PATTERNS = listOf(
-            Pattern.compile("""Order Date:\\s*([A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4})"""),
-            Pattern.compile("""Placed on:\\s*([A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4})"""),
-            Pattern.compile("""(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\\s+([A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4})"""),
-            Pattern.compile("""\\d{1,2}\\s+[A-Za-z]+\\s+\\d{4}""")
+            Pattern.compile("""Order Date:\s*([\p{L}]+\s+\d{1,2},?\s+\d{4})"""),
+            Pattern.compile("""Placed on:\s*([\p{L}]+\s+\d{1,2},?\s+\d{4})"""),
+            Pattern.compile("""(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+([\p{L}]+\s+\d{1,2},?\s+\d{4})"""),
+            Pattern.compile("""\d{1,2}\s+[\p{L}]+\s+\d{4}""")
         )
 
         private val ITEM_PATTERN = Pattern.compile(
@@ -106,20 +105,18 @@ class AmazonReceiptParser : BaseEmailParser() {
         for (pattern in ORDER_PATTERNS) {
             val matcher = pattern.matcher(text)
             if (matcher.find()) {
-                val amountStr = matcher.group(1).replace(",", "")
-                return amountStr.toDoubleOrNull()
+                parseLocalizedAmount(matcher.group(1))?.let { return it }
             }
         }
         
         // Fallback: look for any reasonable total amount near keywords
         val fallbackPattern = Pattern.compile(
-            """(?:total|grand\\s+total|order\\s+total)[^\\d]{0,20}([0-9,]+\\.[0-9]{2})""",
+            """(?:total|grand\s+total|order\s+total)[^\d]{0,20}([^\n]{1,32})""",
             Pattern.CASE_INSENSITIVE
         )
         val fallbackMatcher = fallbackPattern.matcher(text)
         if (fallbackMatcher.find()) {
-            val amountStr = fallbackMatcher.group(1).replace(",", "")
-            return amountStr.toDoubleOrNull()
+            return parseLocalizedAmount(fallbackMatcher.group(1))
         }
         
         return null
@@ -139,11 +136,20 @@ class AmazonReceiptParser : BaseEmailParser() {
         for (pattern in DATE_PATTERNS) {
             val matcher = pattern.matcher(text)
             if (matcher.find()) {
-                val dateStr = matcher.group(1)
-                return parseAmazonDate(dateStr)
+                extractMatchedDateText(matcher)?.let(::parseLocalizedDate)?.let { return it }
             }
         }
         return null
+    }
+
+    private fun extractMatchedDateText(matcher: Matcher): String? {
+        val dateText = if (matcher.groupCount() >= 1) {
+            matcher.group(1)?.takeIf { it.isNotBlank() } ?: matcher.group()
+        } else {
+            matcher.group()
+        }
+
+        return dateText?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     private fun detectCurrency(text: String): String {
@@ -190,24 +196,6 @@ class AmazonReceiptParser : BaseEmailParser() {
         }
         
         return items
-    }
-
-    private fun parseAmazonDate(dateStr: String): Long? {
-        val formats = listOf(
-            SimpleDateFormat("MMMM dd, yyyy", Locale.US),
-            SimpleDateFormat("MMM dd, yyyy", Locale.US),
-            SimpleDateFormat("dd MMMM yyyy", Locale.US),
-            SimpleDateFormat("dd MMM yyyy", Locale.US)
-        )
-        
-        for (format in formats) {
-            try {
-                return format.parse(dateStr)?.time
-            } catch (_: Exception) {
-                continue
-            }
-        }
-        return null
     }
 
     private fun calculateConfidence(

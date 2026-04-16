@@ -41,6 +41,41 @@ class GoogleWalletParserTest {
         assertNotNull(result)
         assertEquals(4.20, result!!.amount, 0.01)
         assertEquals("Coffee Island", result.merchant)
+        assertEquals(ParsedTransactionType.PURCHASE, result.type)
+    }
+
+    @Test
+    fun `parse outgoing p2p send as transfer`() {
+        val result = parser.parse(
+            title = "Google Pay",
+            text = "Sent €18.00 to Alex Johnson",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.walletnfcrel"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(ParsedTransferDirection.OUTGOING, result.transferDirection)
+        assertEquals("Alex Johnson", result.merchant)
+        assertEquals("To: Alex Johnson", result.transferAccountName)
+    }
+
+    @Test
+    fun `parse incoming p2p receive as transfer`() {
+        val result = parser.parse(
+            title = "Google Pay",
+            text = "Received €12.00 from Maria",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.walletnfcrel"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(ParsedTransferDirection.INCOMING, result.transferDirection)
+        assertEquals("Maria", result.merchant)
+        assertEquals("From: Maria", result.transferAccountName)
     }
 
     @Test

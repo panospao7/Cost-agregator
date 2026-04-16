@@ -1,8 +1,7 @@
 package com.yourname.expensetracker.data.email.provider
 
 import timber.log.Timber
-import java.text.SimpleDateFormat
-import java.util.Locale
+import java.util.regex.Matcher
 import java.util.regex.Pattern
 
 /**
@@ -23,14 +22,14 @@ class AppleReceiptParser : BaseEmailParser() {
 
         // Amount patterns for Apple receipts
         private val AMOUNT_PATTERNS = listOf(
-            Pattern.compile("""Total\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Total Amount\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Amount\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Charged\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Price\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""([0-9,]+\\.[0-9]{2})\\s*(?:USD|EUR|GBP|\\$|€|£)""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Total\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Total Amount\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Amount\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Charged\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Price\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""([^\n]{1,32})\s*(?:USD|EUR|GBP|\$|€|£)""", Pattern.CASE_INSENSITIVE),
             // App Store specific pattern
-            Pattern.compile("""total-price[^>]*>\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE)
+            Pattern.compile("""total-price[^>]*>\s*([^<]{1,32})""", Pattern.CASE_INSENSITIVE)
         )
 
         // Order/Document ID patterns
@@ -44,11 +43,11 @@ class AppleReceiptParser : BaseEmailParser() {
 
         // Date patterns for Apple receipts
         private val DATE_PATTERNS = listOf(
-            Pattern.compile("""Date\\s*:?\\s*([A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Issue Date\\s*:?\\s*([A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Order Date\\s*:?\\s*([A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""\\d{1,2}\\s+[A-Za-z]+\\s+\\d{4}"""),
-            Pattern.compile("""[A-Za-z]+\\s+\\d{1,2},\\s+\\d{4}""")
+            Pattern.compile("""Date\s*:?\s*([\p{L}]+\s+\d{1,2},?\s+\d{4})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Issue Date\s*:?\s*([\p{L}]+\s+\d{1,2},?\s+\d{4})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Order Date\s*:?\s*([\p{L}]+\s+\d{1,2},?\s+\d{4})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""\d{1,2}\s+[\p{L}]+\s+\d{4}"""),
+            Pattern.compile("""[\p{L}]+\s+\d{1,2},\s+\d{4}""")
         )
 
         // App/item extraction patterns
@@ -136,20 +135,18 @@ class AppleReceiptParser : BaseEmailParser() {
         for (pattern in AMOUNT_PATTERNS) {
             val matcher = pattern.matcher(text)
             if (matcher.find()) {
-                val amountStr = matcher.group(1).replace(",", "")
-                return amountStr.toDoubleOrNull()
+                parseLocalizedAmount(matcher.group(1))?.let { return it }
             }
         }
         
         // Fallback: find any amount preceded by total/charged keywords
         val fallbackPattern = Pattern.compile(
-            """(?:total|charged|amount|price)[^\\d]{0,20}([0-9,]+\\.[0-9]{2})""",
+            """(?:total|charged|amount|price)[^\d]{0,20}([^\n]{1,32})""",
             Pattern.CASE_INSENSITIVE
         )
         val matcher = fallbackPattern.matcher(text)
         if (matcher.find()) {
-            val amountStr = matcher.group(1).replace(",", "")
-            return amountStr.toDoubleOrNull()
+            return parseLocalizedAmount(matcher.group(1))
         }
         
         return null
@@ -169,29 +166,20 @@ class AppleReceiptParser : BaseEmailParser() {
         for (pattern in DATE_PATTERNS) {
             val matcher = pattern.matcher(text)
             if (matcher.find()) {
-                val dateStr = matcher.group(1)
-                return parseAppleDate(dateStr)
+                extractMatchedDateText(matcher)?.let(::parseLocalizedDate)?.let { return it }
             }
         }
         return null
     }
 
-    private fun parseAppleDate(dateStr: String): Long? {
-        val formats = listOf(
-            SimpleDateFormat("MMMM dd, yyyy", Locale.US),
-            SimpleDateFormat("MMM dd, yyyy", Locale.US),
-            SimpleDateFormat("dd MMMM yyyy", Locale.US),
-            SimpleDateFormat("dd MMM yyyy", Locale.US)
-        )
-        
-        for (format in formats) {
-            try {
-                return format.parse(dateStr)?.time
-            } catch (_: Exception) {
-                continue
-            }
+    private fun extractMatchedDateText(matcher: Matcher): String? {
+        val dateText = if (matcher.groupCount() >= 1) {
+            matcher.group(1)?.takeIf { it.isNotBlank() } ?: matcher.group()
+        } else {
+            matcher.group()
         }
-        return null
+
+        return dateText?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     private fun detectCurrency(cleanedBody: String, rawBody: String): String {

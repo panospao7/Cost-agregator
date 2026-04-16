@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.email.provider
 
 import timber.log.Timber
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Locale
 import java.util.regex.Pattern
 
@@ -12,6 +13,8 @@ import java.util.regex.Pattern
 class UberReceiptParser : BaseEmailParser() {
 
     companion object {
+        private data class DatePattern(val pattern: Pattern, val dateGroup: Int = 1)
+
         private val UBER_SENDERS = listOf(
             "receipts@uber.com",
             "noreply@uber.com",
@@ -21,16 +24,16 @@ class UberReceiptParser : BaseEmailParser() {
 
         // Amount extraction patterns for different Uber receipt types
         private val RIDE_AMOUNT_PATTERNS = listOf(
-            Pattern.compile("""Total\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""You paid\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Charged\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Amount charged\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE)
+            Pattern.compile("""Total\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""You paid\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Charged\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Amount charged\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE)
         )
 
         private val EATS_AMOUNT_PATTERNS = listOf(
-            Pattern.compile("""Total\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Order Total\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""You paid\\s*[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""", Pattern.CASE_INSENSITIVE)
+            Pattern.compile("""Total\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Order Total\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""You paid\\s*:?[\\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE)
         )
 
         // Trip/Order ID patterns
@@ -42,11 +45,33 @@ class UberReceiptParser : BaseEmailParser() {
 
         // Date patterns specific to Uber receipts
         private val DATE_PATTERNS = listOf(
-            Pattern.compile("""(?:Trip|Order) date\\s*:?\\s*([A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\\s+([A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4})"""),
-            Pattern.compile("""\\d{1,2}:\\d{2}\\s+(AM|PM)?[^\\d]*([A-Za-z]+\\s+\\d{1,2})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""([A-Za-z]+\\s+\\d{1,2})\\s+at\\s+\\d""", Pattern.CASE_INSENSITIVE)
+            DatePattern(
+                Pattern.compile(
+                    """(?:Trip|Order) date\\s*:?\\s*([\\p{L}]+\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}\\s+[\\p{L}]+\\s+\\d{4})""",
+                    Pattern.CASE_INSENSITIVE
+                )
+            ),
+            DatePattern(
+                Pattern.compile(
+                    """(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\\s+([\\p{L}]+\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}\\s+[\\p{L}]+\\s+\\d{4})""",
+                    Pattern.CASE_INSENSITIVE
+                )
+            ),
+            DatePattern(
+                Pattern.compile(
+                    """\\d{1,2}:\\d{2}\\s+(?:AM|PM)?[^\\d]*([\\p{L}]+\\s+\\d{1,2}|\\d{1,2}\\s+[\\p{L}]+)""",
+                    Pattern.CASE_INSENSITIVE
+                )
+            ),
+            DatePattern(
+                Pattern.compile(
+                    """([\\p{L}]+\\s+\\d{1,2}|\\d{1,2}\\s+[\\p{L}]+)\\s+at\\s+\\d""",
+                    Pattern.CASE_INSENSITIVE
+                )
+            )
         )
+
+        private const val amountCapturePattern = "[€\\$£]?\\s*[0-9]+(?:[.,\\s\\u00A0\\u202F\\u2007][0-9]{3})*(?:[.,][0-9]{2})?\\s*(?:€|\\$|£|EUR|USD|GBP)?"
 
         // Currency detection
         private val CURRENCY_INDICATORS = mapOf(
@@ -123,37 +148,35 @@ class UberReceiptParser : BaseEmailParser() {
     }
 
     private fun extractRideAmount(text: String): Double? {
-        for (pattern in RIDE_AMOUNT_PATTERNS) {
-            val matcher = pattern.matcher(text)
-            if (matcher.find()) {
-                val amountStr = matcher.group(1).replace(",", "")
-                return amountStr.toDoubleOrNull()
-            }
-        }
+        extractAmountFromPatterns(text, RIDE_AMOUNT_PATTERNS)?.let { return it }
         
         // Fallback: look for amount near "total" keyword
         val fallbackPattern = Pattern.compile(
-            """total[^\\d]{0,30}([0-9,]+\\.[0-9]{2})""",
+            """total[^\\d]{0,30}(${amountCapturePattern})""",
             Pattern.CASE_INSENSITIVE
         )
         val matcher = fallbackPattern.matcher(text)
         if (matcher.find()) {
-            val amountStr = matcher.group(1).replace(",", "")
-            return amountStr.toDoubleOrNull()
+            return parseLocalizedAmount(matcher.group(1))
         }
         
         return null
     }
 
     private fun extractEatsAmount(text: String): Double? {
-        for (pattern in EATS_AMOUNT_PATTERNS) {
+        extractAmountFromPatterns(text, EATS_AMOUNT_PATTERNS)?.let { return it }
+        return extractRideAmount(text) // Fallback to ride patterns
+    }
+
+    private fun extractAmountFromPatterns(text: String, patterns: List<Pattern>): Double? {
+        for (pattern in patterns) {
             val matcher = pattern.matcher(text)
             if (matcher.find()) {
-                val amountStr = matcher.group(1).replace(",", "")
-                return amountStr.toDoubleOrNull()
+                parseLocalizedAmount(matcher.group(1))?.let { return it }
             }
         }
-        return extractRideAmount(text) // Fallback to ride patterns
+
+        return null
     }
 
     private fun extractTripId(text: String): String? {
@@ -167,10 +190,10 @@ class UberReceiptParser : BaseEmailParser() {
     }
 
     private fun extractDate(text: String): Long? {
-        for (pattern in DATE_PATTERNS) {
-            val matcher = pattern.matcher(text)
+        for (datePattern in DATE_PATTERNS) {
+            val matcher = datePattern.pattern.matcher(text)
             if (matcher.find()) {
-                val dateStr = matcher.group(1)
+                val dateStr = matcher.group(datePattern.dateGroup)
                 return parseUberDate(dateStr)
             }
         }
@@ -178,7 +201,9 @@ class UberReceiptParser : BaseEmailParser() {
     }
 
     private fun parseUberDate(dateStr: String): Long? {
-        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        parseDate(dateStr)?.let { return it }
+
+        val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         
         val formats = listOf(
             SimpleDateFormat("MMMM dd, yyyy", Locale.US),
@@ -191,10 +216,10 @@ class UberReceiptParser : BaseEmailParser() {
             try {
                 val parsed = format.parse(dateStr) ?: continue
                 // If no year, assume current year
-                val cal = java.util.Calendar.getInstance()
+                val cal = Calendar.getInstance()
                 cal.time = parsed
-                if (cal.get(java.util.Calendar.YEAR) == 1970) {
-                    cal.set(java.util.Calendar.YEAR, currentYear)
+                if (cal.get(Calendar.YEAR) == 1970) {
+                    cal.set(Calendar.YEAR, currentYear)
                 }
                 return cal.timeInMillis
             } catch (_: Exception) {

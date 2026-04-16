@@ -338,8 +338,11 @@ class NaturalLanguageSearchEngine @Inject constructor(
     // Voice Input Support
     fun isVoiceInputAvailable(): Boolean = speechInputGateway.isAvailable()
 
-    fun startVoiceInput(onResult: (String) -> Unit) {
-        speechInputGateway.startListening(onResult)
+    fun startVoiceInput(
+        onResult: (String) -> Unit,
+        onError: (SpeechInputError) -> Unit = {}
+    ) {
+        speechInputGateway.startListening(onResult, onError)
     }
 
     fun stopVoiceInput() {

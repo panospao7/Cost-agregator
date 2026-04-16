@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.email
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
@@ -47,7 +49,7 @@ sealed class EmailReceiptResult {
  * 5. Trigger existing receipt processing pipeline
  */
 @Singleton
-class EmailReceiptIngestionService @Inject constructor(
+class EmailReceiptIngestionService(
     private val receiptParser: ReceiptParser,
     private val processReceiptUseCase: ProcessReceiptUseCase,
     private val expenseDao: ExpenseDao,
@@ -55,8 +57,53 @@ class EmailReceiptIngestionService @Inject constructor(
     private val scannedReceiptDao: ScannedReceiptDao,
     private val merchantNormalizer: MerchantNormalizer,
     private val categorizationEngine: CategorizationEngine,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val transactionRunner: suspend (suspend () -> EmailReceiptResult) -> EmailReceiptResult
 ) {
+    @Inject
+    constructor(
+        receiptParser: ReceiptParser,
+        processReceiptUseCase: ProcessReceiptUseCase,
+        expenseDao: ExpenseDao,
+        emailReceiptDao: EmailReceiptDao,
+        scannedReceiptDao: ScannedReceiptDao,
+        merchantNormalizer: MerchantNormalizer,
+        categorizationEngine: CategorizationEngine,
+        timeProvider: TimeProvider,
+        database: AppDatabase
+    ) : this(
+        receiptParser = receiptParser,
+        processReceiptUseCase = processReceiptUseCase,
+        expenseDao = expenseDao,
+        emailReceiptDao = emailReceiptDao,
+        scannedReceiptDao = scannedReceiptDao,
+        merchantNormalizer = merchantNormalizer,
+        categorizationEngine = categorizationEngine,
+        timeProvider = timeProvider,
+        transactionRunner = { block -> database.withTransaction { block() } }
+    )
+
+    constructor(
+        receiptParser: ReceiptParser,
+        processReceiptUseCase: ProcessReceiptUseCase,
+        expenseDao: ExpenseDao,
+        emailReceiptDao: EmailReceiptDao,
+        scannedReceiptDao: ScannedReceiptDao,
+        merchantNormalizer: MerchantNormalizer,
+        categorizationEngine: CategorizationEngine,
+        timeProvider: TimeProvider
+    ) : this(
+        receiptParser = receiptParser,
+        processReceiptUseCase = processReceiptUseCase,
+        expenseDao = expenseDao,
+        emailReceiptDao = emailReceiptDao,
+        scannedReceiptDao = scannedReceiptDao,
+        merchantNormalizer = merchantNormalizer,
+        categorizationEngine = categorizationEngine,
+        timeProvider = timeProvider,
+        transactionRunner = { block -> block() }
+    )
+
     private val ingestionMutex = Mutex()
 
     // Provider parsers
@@ -95,41 +142,89 @@ class EmailReceiptIngestionService @Inject constructor(
                 return EmailReceiptResult.ParseError("Invalid receipt data: amount=${parsedReceipt.amount}, merchant=${parsedReceipt.merchant}")
             }
 
-            // Step 4a: If a nonblank messageId is provided, check it first before any
-            // side effects.  A nonblank messageId is globally unique (UNIQUE index on
-            // emailMessageId); finding it means we have already ingested this exact
-            // email, so we can return early without touching scanned_receipts or expenses.
-            // Blank messageIds are skipped here and fall through to the fingerprint path
-            // so that the existing behaviour for providers that omit message IDs is
-            // preserved unchanged.
-            if (messageId.isNotBlank()) {
-                val existingByMessageId = emailReceiptDao.getByMessageId(messageId)
-                if (existingByMessageId != null) {
-                    Timber.d("Duplicate email receipt by messageId=$messageId, existing receiptId=${existingByMessageId.receiptId}")
-                    return EmailReceiptResult.Duplicate(existingByMessageId.receiptId)
-                }
-            }
-
-            // Step 4b: Create fingerprint and check for duplicates
             val normalizedMerchant = merchantNormalizer.normalize(
                 parsedReceipt.merchant
             ).canonical.normalizedName
-            
-            val fingerprint = createFingerprint(normalizedMerchant, parsedReceipt.amount, parsedReceipt.date)
-            
-            val existing = emailReceiptDao.getByFingerprint(fingerprint)
-            if (existing != null) {
-                Timber.d("Duplicate email receipt found: ${existing.id}")
-                return EmailReceiptResult.Duplicate(existing.receiptId)
-            }
 
-            // Step 5: Also check for existing scanned receipt with same fingerprint
-            val existingScanned = findExistingScannedReceipt(fingerprint)
-            if (existingScanned != null) {
-                Timber.d("Matching scanned receipt found: ${existingScanned.id}")
-                // Still create email receipt source for tracking, but link to existing
+            val fingerprint = createFingerprint(normalizedMerchant, parsedReceipt.amount, parsedReceipt.date)
+
+            transactionRunner {
+                // Step 4a: If a nonblank messageId is provided, check it first before any
+                // side effects. A nonblank messageId is globally unique (UNIQUE index on
+                // emailMessageId); finding it means we have already ingested this exact
+                // email, so we can return early without touching scanned_receipts or expenses.
+                // Blank messageIds are skipped here and fall through to the fingerprint path
+                // so that the existing behaviour for providers that omit message IDs is
+                // preserved unchanged.
+                if (messageId.isNotBlank()) {
+                    val existingByMessageId = emailReceiptDao.getByMessageId(messageId)
+                    if (existingByMessageId != null) {
+                        Timber.d("Duplicate email receipt by messageId=$messageId, existing receiptId=${existingByMessageId.receiptId}")
+                        return@transactionRunner EmailReceiptResult.Duplicate(existingByMessageId.receiptId)
+                    }
+                }
+
+                // Step 4b: Create fingerprint and check for duplicates
+                val existing = emailReceiptDao.getByFingerprint(fingerprint)
+                if (existing != null) {
+                    Timber.d("Duplicate email receipt found: ${existing.id}")
+                    return@transactionRunner EmailReceiptResult.Duplicate(existing.receiptId)
+                }
+
+                // Step 5: Also check for existing scanned receipt with same fingerprint
+                val existingScanned = findExistingScannedReceipt(fingerprint)
+                if (existingScanned != null) {
+                    Timber.d("Matching scanned receipt found: ${existingScanned.id}")
+                    // Still create email receipt source for tracking, but link to existing
+                    val emailSource = EmailReceiptSource(
+                        receiptId = existingScanned.id,
+                        emailSender = sender,
+                        emailSubject = subject,
+                        emailMessageId = messageId.takeIf { it.isNotBlank() },
+                        parsedAt = timeProvider.now(),
+                        provider = provider,
+                        confidence = parsedReceipt.confidence,
+                        fingerprint = fingerprint
+                    )
+                    emailReceiptDao.insertOrIgnore(emailSource)
+                    return@transactionRunner EmailReceiptResult.Duplicate(existingScanned.id)
+                }
+
+                // Step 6: Create scanned receipt entity (minimal, since we have structured data)
+                val receiptItemsJson = if (parsedReceipt.items.isNotEmpty()) {
+                    receiptParser.lineItemsToJson(
+                        parsedReceipt.items.map {
+                            ReceiptParser.LineItem(
+                                description = it.description,
+                                quantity = it.quantity.toDouble(),
+                                unitPrice = it.unitPrice,
+                                totalPrice = it.totalPrice
+                            )
+                        }
+                    )
+                } else null
+
+                val scannedReceipt = ScannedReceipt(
+                    imagePath = null, // No image for email receipts
+                    rawOcrText = emailBody.take(5000), // Store snippet for reference
+                    parsedTotal = parsedReceipt.amount,
+                    parsedMerchant = normalizedMerchant,
+                    parsedDate = parsedReceipt.date,
+                    parsedItems = receiptItemsJson,
+                    parsedTaxAmount = null, // Email receipts usually don't show tax separately
+                    currency = parsedReceipt.currency,
+                    confidence = parsedReceipt.confidence.toFloat(),
+                    matchStatus = MatchStatus.UNMATCHED
+                )
+
+                val receiptId = scannedReceiptDao.insert(scannedReceipt)
+                if (receiptId <= 0) {
+                    return@transactionRunner EmailReceiptResult.ParseError("Failed to create receipt record")
+                }
+
+                // Step 7: Create email receipt source record
                 val emailSource = EmailReceiptSource(
-                    receiptId = existingScanned.id,
+                    receiptId = receiptId,
                     emailSender = sender,
                     emailSubject = subject,
                     emailMessageId = messageId.takeIf { it.isNotBlank() },
@@ -139,65 +234,26 @@ class EmailReceiptIngestionService @Inject constructor(
                     fingerprint = fingerprint
                 )
                 emailReceiptDao.insertOrIgnore(emailSource)
-                return EmailReceiptResult.Duplicate(existingScanned.id)
-            }
 
-            // Step 6: Create scanned receipt entity (minimal, since we have structured data)
-            val receiptItemsJson = if (parsedReceipt.items.isNotEmpty()) {
-                receiptParser.lineItemsToJson(
-                    parsedReceipt.items.map { 
-                        ReceiptParser.LineItem(
-                            description = it.description,
-                            quantity = it.quantity.toDouble(),
-                            unitPrice = it.unitPrice,
-                            totalPrice = it.totalPrice
-                        )
-                    }
+                // Step 8: Trigger expense creation through categorization engine
+                val expenseIds = createExpenseFromReceipt(
+                    receiptId = receiptId,
+                    merchant = normalizedMerchant,
+                    receipt = parsedReceipt
                 )
-            } else null
 
-            val scannedReceipt = ScannedReceipt(
-                imagePath = null, // No image for email receipts
-                rawOcrText = emailBody.take(5000), // Store snippet for reference
-                parsedTotal = parsedReceipt.amount,
-                parsedMerchant = normalizedMerchant,
-                parsedDate = parsedReceipt.date,
-                parsedItems = receiptItemsJson,
-                parsedTaxAmount = null, // Email receipts usually don't show tax separately
-                currency = parsedReceipt.currency,
-                confidence = parsedReceipt.confidence.toFloat(),
-                matchStatus = MatchStatus.UNMATCHED
-            )
+                if (expenseIds.isEmpty()) {
+                    throw EmailReceiptExpenseCreationException("Failed to create expense from email receipt: $receiptId")
+                }
 
-            val receiptId = scannedReceiptDao.insert(scannedReceipt)
-            if (receiptId <= 0) {
-                return EmailReceiptResult.ParseError("Failed to create receipt record")
+                Timber.i("Email receipt processed successfully: receiptId=$receiptId, expenseIds=$expenseIds, provider=$provider")
+
+                EmailReceiptResult.Success(receiptId, expenseIds)
             }
 
-            // Step 7: Create email receipt source record
-            val emailSource = EmailReceiptSource(
-                receiptId = receiptId,
-                emailSender = sender,
-                emailSubject = subject,
-                emailMessageId = messageId.takeIf { it.isNotBlank() },
-                parsedAt = timeProvider.now(),
-                provider = provider,
-                confidence = parsedReceipt.confidence,
-                fingerprint = fingerprint
-            )
-            emailReceiptDao.insertOrIgnore(emailSource)
-
-            // Step 8: Trigger expense creation through categorization engine
-            val expenseIds = createExpenseFromReceipt(
-                receiptId = receiptId,
-                merchant = normalizedMerchant,
-                receipt = parsedReceipt
-            )
-
-            Timber.i("Email receipt processed successfully: receiptId=$receiptId, expenseIds=$expenseIds, provider=$provider")
-            
-            return EmailReceiptResult.Success(receiptId, expenseIds)
-
+        } catch (e: EmailReceiptExpenseCreationException) {
+            Timber.w(e, "Failed to finalize email receipt ingestion from $sender")
+            return EmailReceiptResult.ParseError("Failed to create expense from receipt")
         } catch (e: Exception) {
             Timber.e(e, "Error processing email receipt from $sender")
             return EmailReceiptResult.ParseError("Processing error: ${e.message}")
@@ -294,52 +350,50 @@ class EmailReceiptIngestionService @Inject constructor(
         merchant: String,
         receipt: ParsedEmailReceipt
     ): List<Long> {
-        try {
-            // Use categorization engine to determine category
-            val categoryResult = categorizationEngine.categorize(merchant)
+        // Use categorization engine to determine category
+        val categoryResult = categorizationEngine.categorize(merchant)
 
-            val expense = Expense(
-                amount = receipt.amount,
-                currency = receipt.currency,
-                merchant = merchant,
-                merchantKey = MerchantKeyGenerator.generate(merchant),
-                transactionType = TransactionType.PURCHASE,
-                date = receipt.date,
-                categoryId = categoryResult.categoryId,
-                createdAt = timeProvider.now(),
-                notes = receipt.items
-                    .takeIf { it.isNotEmpty() }
-                    ?.joinToString(prefix = "Email receipt: ", separator = ", ") { it.description },
-                // Use type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows never
-                // collide on the persisted unique dedupeKey index (ISSUE-8 fix).
-                dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                    receipt.amount, merchant, receipt.date, receipt.currency, TransactionType.PURCHASE
-                )
+        val expense = Expense(
+            amount = receipt.amount,
+            currency = receipt.currency,
+            merchant = merchant,
+            merchantKey = MerchantKeyGenerator.generate(merchant),
+            transactionType = TransactionType.PURCHASE,
+            date = receipt.date,
+            categoryId = categoryResult.categoryId,
+            createdAt = timeProvider.now(),
+            notes = receipt.items
+                .takeIf { it.isNotEmpty() }
+                ?.joinToString(prefix = "Email receipt: ", separator = ", ") { it.description },
+            // Use type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows never
+            // collide on the persisted unique dedupeKey index (ISSUE-8 fix).
+            dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                receipt.amount, merchant, receipt.date, receipt.currency, TransactionType.PURCHASE
             )
+        )
 
-            val expenseId = expenseDao.insertAtomic(expense)
-            if (expenseId <= 0) {
-                Timber.w("Failed to insert expense for email receipt: $receiptId")
-                return emptyList()
-            }
-
-            val existingReceipt = scannedReceiptDao.getById(receiptId)
-            existingReceipt?.let { scanned ->
-                scannedReceiptDao.update(
-                    scanned.copy(
-                        expenseId = expenseId,
-                        matchStatus = MatchStatus.AUTO_MATCHED,
-                        matchConfidence = categoryResult.confidence.toFloat()
-                    )
-                )
-            }
-
-            return listOf(expenseId)
-        } catch (e: Exception) {
-            Timber.w(e, "Error creating expense from email receipt: $receiptId")
-            return emptyList()
+        val expenseId = expenseDao.insertAtomic(expense)
+        if (expenseId <= 0) {
+            Timber.w("Failed to insert expense for email receipt: $receiptId")
+            throw EmailReceiptExpenseCreationException("Failed to insert expense for email receipt: $receiptId")
         }
+
+        val existingReceipt = scannedReceiptDao.getById(receiptId)
+            ?: throw EmailReceiptExpenseCreationException("Created receipt missing before linkage: $receiptId")
+
+        scannedReceiptDao.update(
+            existingReceipt.copy(
+                expenseId = expenseId,
+                matchStatus = MatchStatus.AUTO_MATCHED,
+                matchConfidence = categoryResult.confidence.toFloat()
+            )
+        )
+
+        return listOf(expenseId)
     }
+
+    private class EmailReceiptExpenseCreationException(message: String, cause: Throwable? = null) :
+        IllegalStateException(message, cause)
 
     /**
      * Batch process multiple email receipts.

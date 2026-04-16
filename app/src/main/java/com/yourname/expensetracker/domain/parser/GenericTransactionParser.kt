@@ -44,11 +44,22 @@ class GenericTransactionParser @Inject constructor(
     private val depositSignals by lazy {
         listOf(
             // English deposit patterns
-            Pattern.compile("""(?:deposit|credited|received|incoming|transfer\s*received)[\p{L}]*\s*[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""(?:deposit|credited|refund(?:ed)?|top(?:-|\s)?up|added\s+money)[\p{L}\s]*[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE),
             // Greek deposit patterns
             Pattern.compile("""(?:κατάθεση|πίστωση|μισθοδοσία|επιστροφή)[\p{L}]*\s*[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
             // Salary patterns
             Pattern.compile("""(?:salary|wages|μισθ[όό]ς)[\p{L}]*\s*[€$£]?\s*\d""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
+        )
+    }
+
+    private val transferSignals by lazy {
+        listOf(
+            Pattern.compile("""transfer\s+(?:received|from|to|sent|in|out|inbound|outbound)""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""(?:incoming|outgoing)\s+transfer""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""received\s+[€$£]?\s*\d[\d.,]*.*\bfrom\b""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""sent\s+[€$£]?\s*\d[\d.,]*.*\bto\b""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""transferred\s+[€$£]?\s*\d[\d.,]*.*\b(?:to|from)\b""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""(?:έμβασμα|εμβασμα|μεταφορ[αά])""", Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE),
         )
     }
 
@@ -81,11 +92,12 @@ class GenericTransactionParser @Inject constructor(
         // 1. Check negative signals first
         if (negativeSignalsPattern.matcher(lowerFull).find()) return null
 
-        // 2. Check for DEPOSIT signals FIRST (high priority)
+        // 2. Check for transfer/deposit signals FIRST (high priority)
+        val hasTransferSignal = transferSignals.any { it.matcher(lowerFull).find() }
         val hasDepositSignal = depositSignals.any { it.matcher(lowerFull).find() }
 
-        // 3. If not deposit, require at least one STRONG transaction signal
-        if (!hasDepositSignal) {
+        // 3. If not transfer/deposit, require at least one STRONG transaction signal
+        if (!hasTransferSignal && !hasDepositSignal) {
             val hasStrongSignal = strongTransactionSignals.any { it.matcher(lowerFull).find() }
             if (!hasStrongSignal) return null
         }
@@ -100,7 +112,11 @@ class GenericTransactionParser @Inject constructor(
         val merchant = extractMerchant(fullText, title)
 
         // 7. Determine transaction type
-        val transactionType = if (hasDepositSignal) ParsedTransactionType.DEPOSIT else ParsedTransactionType.PURCHASE
+        val transactionType = when {
+            hasTransferSignal -> ParsedTransactionType.TRANSFER
+            hasDepositSignal -> ParsedTransactionType.DEPOSIT
+            else -> ParsedTransactionType.PURCHASE
+        }
         
         // 8. Detect transfer direction for deposits/transfers
         val direction = directionDetector.detectDirection(title, text, bigText, transactionType)

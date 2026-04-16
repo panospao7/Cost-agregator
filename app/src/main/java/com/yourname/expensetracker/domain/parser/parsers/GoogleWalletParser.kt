@@ -3,6 +3,8 @@ package com.yourname.expensetracker.domain.parser.parsers
 import com.yourname.expensetracker.domain.parser.AppNotificationParser
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
+import com.yourname.expensetracker.domain.parser.ParsedTransferDirection
+import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
 import java.util.regex.Pattern
 
 import com.yourname.expensetracker.domain.util.AmountUtils
@@ -14,6 +16,8 @@ class GoogleWalletParser @Inject constructor(
     private val currencyNormalizer: CurrencyNormalizer,
     private val merchantCleaner: MerchantCleaner
 ) : AppNotificationParser {
+
+    private val directionDetector = TransferDirectionDetector()
 
     override val supportedPackages = setOf(
         "com.google.android.apps.walletnfcrel",
@@ -37,10 +41,9 @@ class GoogleWalletParser @Inject constructor(
         "reward", "cashback available", "nearby", "suggest"
     )
 
-    // Deposit keywords for Google Pay
+    // Non-P2P money-in wording that should remain deposits.
     private val DEPOSIT_KEYWORDS = listOf(
-        "received", "credited", "deposit", "incoming transfer",
-        "sent to you", "paid you", "money received"
+        "credited", "deposit", "top up", "top-up", "added money"
     )
 
     override fun parse(
@@ -59,21 +62,38 @@ class GoogleWalletParser @Inject constructor(
 
         if (REJECT_PATTERNS.any { lowerFull.contains(it) }) return null
 
-        // Determine if this is a deposit or purchase
-        val isDeposit = DEPOSIT_KEYWORDS.any { lowerFull.contains(it) }
-
         // Extract amount from anywhere in the notification
         val amount = extractAmount(fullText) ?: return null
 
+        val transferDirection = detectP2pTransferDirection(title, text, bigText, lowerFull)
+        val isTransfer = transferDirection != null
+        val isDeposit = !isTransfer && DEPOSIT_KEYWORDS.any { lowerFull.contains(it) }
+
         // Extract merchant: usually the title IS the merchant, or text contains "at MERCHANT"
-        val merchant = extractMerchant(title, text, bigText, isDeposit)
+        val merchant = when {
+            isTransfer -> extractTransferCounterparty(title, text, bigText, transferDirection!!)
+            else -> extractMerchant(title, text, bigText, isDeposit)
+        }
 
         return ParsedTransaction(
             amount = amount.first,
             currency = amount.second,
             merchant = merchant,
-            type = if (isDeposit) ParsedTransactionType.DEPOSIT else ParsedTransactionType.PURCHASE,
-            confidence = 0.90f
+            type = when {
+                isTransfer -> ParsedTransactionType.TRANSFER
+                isDeposit -> ParsedTransactionType.DEPOSIT
+                else -> ParsedTransactionType.PURCHASE
+            },
+            confidence = 0.90f,
+            transferDirection = transferDirection,
+            transferAccountName = if (isTransfer) {
+                when (transferDirection) {
+                    ParsedTransferDirection.INCOMING -> "From: $merchant"
+                    ParsedTransferDirection.OUTGOING -> "To: $merchant"
+                }
+            } else {
+                null
+            }
         )
     }
 
@@ -127,5 +147,71 @@ class GoogleWalletParser @Inject constructor(
         }
 
         return "Unknown"
+    }
+
+    private fun detectP2pTransferDirection(
+        title: String?,
+        text: String?,
+        bigText: String?,
+        lowerFull: String
+    ): ParsedTransferDirection? {
+        val explicitDirection = when {
+            Regex("""\b(?:received|receive)\b.*\bfrom\b""", RegexOption.IGNORE_CASE).containsMatchIn(lowerFull) ||
+                Regex("""\b(?:sent|paid)\s+you\b""", RegexOption.IGNORE_CASE).containsMatchIn(lowerFull) ||
+                lowerFull.contains("sent to you") ||
+                lowerFull.contains("money received") -> ParsedTransferDirection.INCOMING
+
+            Regex("""\b(?:sent|send|paid)\b.*\bto\b""", RegexOption.IGNORE_CASE).containsMatchIn(lowerFull) ||
+                Regex("""\btransfer(?:red)?\b.*\bto\b""", RegexOption.IGNORE_CASE).containsMatchIn(lowerFull) -> ParsedTransferDirection.OUTGOING
+
+            else -> null
+        }
+
+        return explicitDirection ?: directionDetector.detectDirection(
+            title = title,
+            text = text,
+            bigText = bigText,
+            transactionType = ParsedTransactionType.TRANSFER
+        )?.takeIf {
+            lowerFull.contains("transfer") ||
+                lowerFull.contains("sent") ||
+                lowerFull.contains("received") ||
+                lowerFull.contains("paid you")
+        }
+    }
+
+    private fun extractTransferCounterparty(
+        title: String?,
+        text: String?,
+        bigText: String?,
+        direction: ParsedTransferDirection
+    ): String {
+        val combinedText = listOfNotNull(title, text, bigText).joinToString(" ")
+
+        val detectorName = directionDetector.extractAccountName(title, text, bigText)
+            ?.let { merchantCleaner.clean(it) }
+            ?.takeIf { it.isNotBlank() }
+        if (detectorName != null) {
+            return detectorName
+        }
+
+        val patterns = when (direction) {
+            ParsedTransferDirection.INCOMING -> listOf(
+                Pattern.compile("""(?:from|paid by)\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{3,30})""", Pattern.CASE_INSENSITIVE),
+                Pattern.compile("""([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{3,30})\s+(?:sent|paid)\s+you\b""", Pattern.CASE_INSENSITIVE)
+            )
+            ParsedTransferDirection.OUTGOING -> listOf(
+                Pattern.compile("""(?:to|sent to|paid to)\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]{3,30})""", Pattern.CASE_INSENSITIVE)
+            )
+        }
+
+        patterns.forEach { pattern ->
+            val matcher = pattern.matcher(combinedText)
+            if (matcher.find()) {
+                return merchantCleaner.clean(matcher.group(1))
+            }
+        }
+
+        return "Google Pay"
     }
 }
