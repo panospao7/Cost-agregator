@@ -3,14 +3,15 @@ package com.yourname.expensetracker.domain.savings
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
+import com.yourname.expensetracker.data.repository.AutomatedSavingsRuleStateRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.util.Calendar
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
@@ -47,17 +48,13 @@ class AutomatedSavingsRuleEngine @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
     private val savingsGoalRepository: SavingsGoalRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val ruleStateRepository: AutomatedSavingsRuleStateRepository
 ) {
-    private val monthlyCapMutex = Mutex()
-    private val monthToDateRuleTotals = mutableMapOf<String, Double>()
-
     suspend fun evaluateRules(
         expense: Expense,
         rules: List<AutomatedSavingsRule>
     ): List<RuleExecution> {
-        pruneOldMonthlyCapEntries(timeProvider.now())
-
         val executions = mutableListOf<RuleExecution>()
         
         for (rule in rules) {
@@ -92,8 +89,20 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         }
         
         val percentage = rule.percentage ?: 10.0
+        if (!percentage.isFinite() || percentage < 0.0) {
+            Timber.tag("AutomatedSavingsRuleEngine").w(
+                "Skipping PERCENTAGE_OF_INCOME rule %s due to invalid percentage=%s",
+                rule.id,
+                percentage
+            )
+            return null
+        }
+
         val normalizedIncome = expense.amount.coerceAtLeast(0.0)
         val amount = normalizedIncome * (percentage / 100.0)
+        if (!amount.isFinite() || amount <= 0.0) {
+            return null
+        }
         
         // Check minimum amount
         if (rule.minimumAmount != null && amount < rule.minimumAmount) {
@@ -216,8 +225,8 @@ class AutomatedSavingsRuleEngine @Inject constructor(
     ): RuleExecution? {
         // Check if this week had any discretionary spending
         val now = timeProvider.now()
-        val weekStart = now - (7L * 24 * 60 * 60 * 1000)
-        val weekExpenses = expenseRepository.getExpensesBetween(weekStart, now)
+        val (weekStart, weekEnd) = TimePeriodUtils.getWeekRange(now)
+        val weekExpenses = expenseRepository.getExpensesBetween(weekStart, weekEnd)
         val categoriesById = categoryRepository.getAll().associateBy { it.id }
         
         // Filter out essential spending (groceries, bills, etc.)
@@ -235,12 +244,27 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         // If no discretionary spending, award savings
         if (discretionarySpending < 5.0) {
             val rewardAmount = 10.0 // €10 reward for no-spend week
+            val reservationResult = ruleStateRepository.reserveWeeklyNoSpendRewardWithinMonthlyCap(
+                ruleStableKey = ruleStableKey(rule),
+                weekStart = weekStart,
+                yearMonth = buildMonthKey(now),
+                requestedAmount = rewardAmount,
+                maximumPerMonth = rule.maximumPerMonth
+            )
+            if (!reservationResult.reserved) {
+                return null
+            }
+            val reason = if (reservationResult.allowedAmount == rewardAmount) {
+                "No discretionary spending this week! 🎉"
+            } else {
+                "No discretionary spending this week! 🎉 (monthly cap applied)"
+            }
             
             return RuleExecution(
                 rule = rule,
-                amount = rewardAmount,
-                reason = "No discretionary spending this week! 🎉",
-                timestamp = timeProvider.now()
+                amount = reservationResult.allowedAmount,
+                reason = reason,
+                timestamp = now
             )
         }
         
@@ -252,34 +276,30 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         execution: RuleExecution?
     ): RuleExecution? {
         val pendingExecution = execution ?: return null
+        if (rule.ruleType == SavingsRuleType.WEEKLY_NO_SPEND) {
+            return pendingExecution
+        }
         val cap = rule.maximumPerMonth ?: return pendingExecution
-        if (cap <= 0.0) return null
+        if (!cap.isFinite() || cap <= 0.0) return null
 
-        return monthlyCapMutex.withLock {
-            val monthKey = buildMonthKey(pendingExecution.timestamp)
-            val key = "${ruleStableKey(rule)}-$monthKey"
-            val usedAmount = monthToDateRuleTotals[key] ?: 0.0
-            val remainingAllowance = cap - usedAmount
+        val allowedAmount = ruleStateRepository.consumeMonthlyAmountWithinCap(
+            ruleStableKey = ruleStableKey(rule),
+            yearMonth = buildMonthKey(pendingExecution.timestamp),
+            requestedAmount = pendingExecution.amount,
+            maximumPerMonth = cap
+        )
 
-            if (remainingAllowance <= 0.0) {
-                return@withLock null
-            }
+        if (allowedAmount <= 0.0) {
+            return null
+        }
 
-            val allowedAmount = minOf(pendingExecution.amount, remainingAllowance)
-            if (allowedAmount <= 0.0) {
-                return@withLock null
-            }
-
-            monthToDateRuleTotals[key] = usedAmount + allowedAmount
-
-            if (allowedAmount == pendingExecution.amount) {
-                pendingExecution
-            } else {
-                pendingExecution.copy(
-                    amount = allowedAmount,
-                    reason = "${pendingExecution.reason} (monthly cap applied)"
-                )
-            }
+        return if (allowedAmount == pendingExecution.amount) {
+            pendingExecution
+        } else {
+            pendingExecution.copy(
+                amount = allowedAmount,
+                reason = "${pendingExecution.reason} (monthly cap applied)"
+            )
         }
     }
 
@@ -293,16 +313,12 @@ class AutomatedSavingsRuleEngine @Inject constructor(
 
     private fun buildMonthKey(timestamp: Long): String {
         val calendar = Calendar.getInstance().apply { timeInMillis = timestamp }
-        return "${calendar.get(Calendar.YEAR)}-${calendar.get(Calendar.MONTH)}"
-    }
-
-    private suspend fun pruneOldMonthlyCapEntries(referenceTimestamp: Long) {
-        val currentMonthKey = buildMonthKey(referenceTimestamp)
-        monthlyCapMutex.withLock {
-            monthToDateRuleTotals.keys.removeAll { key ->
-                !key.endsWith("-$currentMonthKey")
-            }
-        }
+        return String.format(
+            Locale.US,
+            "%04d-%02d",
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH) + 1
+        )
     }
 
     private fun isEssentialCategory(

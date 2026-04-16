@@ -9,8 +9,10 @@ import com.yourname.expensetracker.data.database.entity.InvestmentValue
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
@@ -162,13 +164,107 @@ class InvestmentTrackerTest {
         assertThat(perf.gainLossPercent).isEqualTo(50.0)
     }
 
+    @Test
+    fun `gainLoss includes purchase fees in investment performance`() = runTest {
+        val investment = makeInvestment(
+            id = 6L,
+            currentPrice = 150.0,
+            purchasePrice = 100.0,
+            quantity = 2.0,
+            purchaseFees = 10.0
+        )
+        coEvery { investmentDao.getById(6L) } returns investment
+        coEvery { investmentValueDao.getValuesBetween(6L, any(), any()) } returns emptyList()
+        coEvery { investmentValueDao.getMaxPrice(6L, 0L) } returns null
+        coEvery { investmentValueDao.getMinPrice(6L, 0L) } returns null
+
+        val perf = tracker.getInvestmentPerformance(6L)!!
+
+        assertThat(perf.currentValue).isEqualTo(300.0)
+        assertThat(perf.gainLoss).isEqualTo(90.0)
+        assertThat(perf.gainLossPercent).isWithin(0.0001).of(42.857142857142854)
+    }
+
+    @Test
+    fun `portfolio summary includes purchase fees in total invested and gain loss`() = runTest {
+        val investments = listOf(
+            makeInvestment(
+                id = 7L,
+                currentPrice = 150.0,
+                purchasePrice = 100.0,
+                quantity = 2.0,
+                purchaseFees = 10.0
+            ),
+            makeInvestment(
+                id = 8L,
+                currentPrice = 75.0,
+                purchasePrice = 50.0,
+                quantity = 1.0,
+                purchaseFees = 5.0
+            )
+        )
+        every { investmentDao.getAllActiveInvestments() } returns flowOf(investments)
+
+        val summary = tracker.getPortfolioSummary()
+
+        assertThat(summary.totalValue).isEqualTo(375.0)
+        assertThat(summary.totalInvested).isEqualTo(265.0)
+        assertThat(summary.totalGainLoss).isEqualTo(110.0)
+        assertThat(summary.totalGainLossPercent).isWithin(0.0001).of(41.509433962264154)
+    }
+
+    @Test
+    fun `portfolio history collapses same-day snapshots to latest value per investment`() = runTest {
+        val investmentA = makeInvestment(id = 9L)
+        val investmentB = makeInvestment(id = 10L)
+        coEvery { investmentDao.getAllInvestments() } returns listOf(investmentA, investmentB)
+
+        coEvery { investmentValueDao.getValuesBetween(9L, any(), any()) } returns listOf(
+            InvestmentValue(
+                id = 20L,
+                investmentId = 9L,
+                price = 100.0,
+                totalValue = 100.0,
+                timestamp = 1_700_000_000_000L,
+                dayChange = 0.0,
+                dayChangePercent = 0.0
+            ),
+            InvestmentValue(
+                id = 21L,
+                investmentId = 9L,
+                price = 120.0,
+                totalValue = 120.0,
+                timestamp = 1_700_000_000_000L + 3_600_000L,
+                dayChange = 20.0,
+                dayChangePercent = 20.0
+            )
+        )
+        coEvery { investmentValueDao.getValuesBetween(10L, any(), any()) } returns listOf(
+            InvestmentValue(
+                id = 22L,
+                investmentId = 10L,
+                price = 50.0,
+                totalValue = 50.0,
+                timestamp = 1_700_000_000_000L + 1_800_000L,
+                dayChange = 0.0,
+                dayChangePercent = 0.0
+            )
+        )
+
+        val history = tracker.getPortfolioValueHistory(days = 30)
+
+        assertThat(history).hasSize(1)
+        assertThat(history.single().totalValue).isEqualTo(170.0)
+    }
+
     // ---- Helpers ----
 
     private fun makeInvestment(
         id: Long = 1L,
         currentPrice: Double = 100.0,
         purchasePrice: Double = 100.0,
-        quantity: Double = 1.0
+        quantity: Double = 1.0,
+        purchaseFees: Double = 0.0
     ) = Investment(
         id = id,
         name = "Test",
@@ -177,6 +273,7 @@ class InvestmentTrackerTest {
         purchasePrice = purchasePrice,
         quantity = quantity,
         purchaseDate = timeProvider.now() - 365L * 24 * 60 * 60 * 1000,
+        purchaseFees = purchaseFees,
         currentPrice = currentPrice
     )
 }

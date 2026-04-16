@@ -1,65 +1,114 @@
 package com.yourname.expensetracker.domain.savings
 
-import com.yourname.expensetracker.AnalyticsEngineTestBase
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import com.yourname.expensetracker.assertApproxEquals
-import com.yourname.expensetracker.domain.analytics.fixtures.GoldenDataSets
+import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
-import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import java.io.File
+import java.nio.file.Files
 
-class SavingsGamificationEngineTest : AnalyticsEngineTestBase() {
+class SavingsGamificationEngineTest {
 
     private lateinit var savingsGoalRepository: SavingsGoalRepository
+    private lateinit var contributionHistoryRepository: SavingsContributionHistoryRepository
+    private lateinit var timeProvider: FakeTimeProvider
     private lateinit var engine: SavingsGamificationEngine
+    private val scopes = mutableListOf<CoroutineScope>()
 
     @Before
-    override fun setUp() {
-        super.setUp()
+    fun setUp() {
         savingsGoalRepository = mockk(relaxed = true)
-
-        // Keep tests aligned with the shared golden reference date.
-        every { timeProvider.now() } returns GoldenDataSets.APRIL_1_2026
+        timeProvider = FakeTimeProvider.forDate(2026, 4, 1)
+        contributionHistoryRepository = createRepository(createStateFile(), timeProvider)
 
         engine = SavingsGamificationEngine(
             savingsGoalRepository = savingsGoalRepository,
+            contributionHistoryRepository = contributionHistoryRepository,
             timeProvider = timeProvider
         )
     }
 
-    @Test
-    fun `calculateStreak consecutive days of savings returns correct streak count`() = runTest {
-        val dayMs = 24L * 60 * 60 * 1000
-        val now = GoldenDataSets.APRIL_1_2026
+    @After
+    fun tearDown() {
+        scopes.forEach { it.cancel() }
+        scopes.clear()
+    }
 
-        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
+    @Test
+    fun `calculateStreak uses recorded contribution history for streak and month totals`() = runTest {
+        val march30 = FakeTimeProvider.forDate(2026, 3, 30, 8, 0).now()
+        val march31 = FakeTimeProvider.forDate(2026, 3, 31, 18, 0).now()
+        val april1Morning = FakeTimeProvider.forDate(2026, 4, 1, 9, 0).now()
+        val april1Evening = FakeTimeProvider.forDate(2026, 4, 1, 20, 0).now()
+
+        io.mockk.every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
+        contributionHistoryRepository.recordContribution(1L, 10.0, march30, "manual")
+        contributionHistoryRepository.recordContribution(1L, 12.0, march31, "manual")
+        contributionHistoryRepository.recordContribution(2L, 15.0, april1Morning, "manual")
+        contributionHistoryRepository.recordContribution(2L, 20.0, april1Evening, "sweep")
+
+        val streak = engine.calculateStreak()
+
+        assertEquals(3, streak.currentStreakDays)
+        assertEquals(3, streak.personalBestDays)
+        assertEquals(april1Evening, streak.lastSavingsDate)
+        assertEquals(2, streak.monthlyContributions)
+        assertApproxEquals(35.0, streak.totalContributedThisMonth, 0.0001)
+    }
+
+    @Test
+    fun `calculateStreak returns honest zero history for legacy balances without events`() = runTest {
+        io.mockk.every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
             listOf(
-                goal(id = 1L, currentAmount = 20.0, createdAt = now - dayMs),
-                goal(id = 2L, currentAmount = 30.0, createdAt = now - (2 * dayMs)),
-                goal(id = 3L, currentAmount = 50.0, createdAt = now - (3 * dayMs))
+                goal(id = 1L, currentAmount = 250.0, createdAt = FakeTimeProvider.forDate(2026, 3, 1).now())
             )
         )
 
         val streak = engine.calculateStreak()
 
-        assertEquals(5, streak.currentStreakDays)
-        assertEquals(30, streak.personalBestDays)
-        assertEquals(now - dayMs, streak.lastSavingsDate)
-        assertEquals(3, streak.monthlyContributions)
-        assertApproxEquals(100.0, streak.totalContributedThisMonth, 0.0001)
+        assertEquals(0, streak.currentStreakDays)
+        assertEquals(0, streak.personalBestDays)
+        assertNull(streak.lastSavingsDate)
+        assertEquals(0, streak.monthlyContributions)
+        assertApproxEquals(0.0, streak.totalContributedThisMonth, 0.0001)
+    }
+
+    @Test
+    fun `calculateStreak resets current streak when latest contribution is older than yesterday`() = runTest {
+        io.mockk.every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
+        contributionHistoryRepository.recordContribution(1L, 5.0, FakeTimeProvider.forDate(2026, 3, 20, 8, 0).now())
+        contributionHistoryRepository.recordContribution(1L, 5.0, FakeTimeProvider.forDate(2026, 3, 21, 8, 0).now())
+        contributionHistoryRepository.recordContribution(1L, 5.0, FakeTimeProvider.forDate(2026, 3, 22, 8, 0).now())
+        contributionHistoryRepository.recordContribution(1L, 5.0, FakeTimeProvider.forDate(2026, 3, 23, 8, 0).now())
+        contributionHistoryRepository.recordContribution(1L, 5.0, FakeTimeProvider.forDate(2026, 3, 24, 8, 0).now())
+
+        val streak = engine.calculateStreak()
+
+        assertEquals(0, streak.currentStreakDays)
+        assertEquals(5, streak.personalBestDays)
     }
 
     @Test
     fun `getAchievements milestones unlocked at thresholds 100 500 1000`() = runTest {
-        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
-            listOf(goal(id = 10L, currentAmount = 100.0, targetAmount = 2000.0, createdAt = march2026Start))
+        io.mockk.every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
+            listOf(goal(id = 10L, currentAmount = 100.0, targetAmount = 2000.0, createdAt = FakeTimeProvider.forDate(2026, 3, 1).now()))
         )
         val at100 = engine.getAchievements()
         val at100Century = achievement(at100, "century_saver")
@@ -71,8 +120,8 @@ class SavingsGamificationEngineTest : AnalyticsEngineTestBase() {
         assertFalse(at100Thousand.isUnlocked)
         assertApproxEquals(0.1, at100Thousand.progress, 0.0001)
 
-        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
-            listOf(goal(id = 11L, currentAmount = 500.0, targetAmount = 2000.0, createdAt = march2026Start))
+        io.mockk.every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
+            listOf(goal(id = 11L, currentAmount = 500.0, targetAmount = 2000.0, createdAt = FakeTimeProvider.forDate(2026, 3, 1).now()))
         )
         val at500 = engine.getAchievements()
         val at500Century = achievement(at500, "century_saver")
@@ -82,8 +131,8 @@ class SavingsGamificationEngineTest : AnalyticsEngineTestBase() {
         assertFalse(at500Thousand.isUnlocked)
         assertApproxEquals(0.5, at500Thousand.progress, 0.0001)
 
-        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
-            listOf(goal(id = 12L, currentAmount = 1000.0, targetAmount = 2000.0, createdAt = march2026Start))
+        io.mockk.every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
+            listOf(goal(id = 12L, currentAmount = 1000.0, targetAmount = 2000.0, createdAt = FakeTimeProvider.forDate(2026, 3, 1).now()))
         )
         val at1000 = engine.getAchievements()
         val at1000Century = achievement(at1000, "century_saver")
@@ -93,6 +142,34 @@ class SavingsGamificationEngineTest : AnalyticsEngineTestBase() {
         assertTrue(at1000Thousand.isUnlocked)
         assertNotNull(at1000Thousand.unlockedAt)
         assertApproxEquals(1.0, at1000Thousand.progress, 0.0001)
+    }
+
+    @Test
+    fun `getAchievements unlocks seven day streak from recorded history`() = runTest {
+        io.mockk.every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
+            listOf(goal(id = 20L, currentAmount = 40.0, createdAt = FakeTimeProvider.forDate(2026, 3, 1).now()))
+        )
+
+        for (day in 26..31) {
+            contributionHistoryRepository.recordContribution(
+                goalId = 20L,
+                amount = 5.0,
+                timestamp = FakeTimeProvider.forDate(2026, 3, day, 12, 0).now(),
+                source = "manual"
+            )
+        }
+        contributionHistoryRepository.recordContribution(
+            goalId = 20L,
+            amount = 5.0,
+            timestamp = FakeTimeProvider.forDate(2026, 4, 1, 12, 0).now(),
+            source = "manual"
+        )
+
+        val achievement = achievement(engine.getAchievements(), "saving_streak_7")
+
+        assertTrue(achievement.isUnlocked)
+        assertNotNull(achievement.unlockedAt)
+        assertApproxEquals(1.0, achievement.progress, 0.0001)
     }
 
     @Test
@@ -136,5 +213,22 @@ class SavingsGamificationEngineTest : AnalyticsEngineTestBase() {
             protectionLevel = GoalProtectionLevel.WARNING,
             createdAt = createdAt
         )
+    }
+
+    private fun createRepository(
+        stateFile: File,
+        timeProvider: FakeTimeProvider
+    ): SavingsContributionHistoryRepository {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        scopes += scope
+        val dataStore = PreferenceDataStoreFactory.create(
+            scope = scope,
+            produceFile = { stateFile }
+        )
+        return SavingsContributionHistoryRepository(dataStore, timeProvider)
+    }
+
+    private fun createStateFile(): File {
+        return Files.createTempFile("savings-gamification-history", ".preferences_pb").toFile()
     }
 }

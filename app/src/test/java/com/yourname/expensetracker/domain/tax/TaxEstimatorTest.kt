@@ -11,15 +11,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.Calendar
 
 /**
  * Tests for [TaxEstimator].
  *
- * A.9 Batch 4: Verifies that all aggregation paths use completeness-safe
- * aggregate/grouped SQL via [BusinessExpenseRepository] and
- * [ExpenseDao.getTotalSpentBetween] instead of formerly capped row scans,
- * removing hidden data truncation while preserving tax-policy assumptions
- * and output semantics.
+ * Verifies B.8 Batch 7 tax correctness fixes: cumulative progressive brackets,
+ * requested-period income alignment, business-only VAT scope, and real
+ * yearly income in tax summaries.
  */
 class TaxEstimatorTest : AnalyticsEngineTestBase() {
 
@@ -38,45 +37,29 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
     }
 
     // =========================================================================
-    // Core VAT estimation via aggregate SQL (A.9)
+    // Core VAT estimation
     // =========================================================================
 
     @Test
-    fun `estimateTaxes uses aggregate total for VAT calculation`() = runTest {
+    fun `estimateTaxes uses business-only deductible total for VAT calculation`() = runTest {
         val start = atDateTime(2026, 3, 1, 0, 0)
         val end = atDateTime(2026, 4, 1, 0, 0)
 
-        // A.9: mock the aggregate queries (replaces capped row scans)
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 1000.0
-        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 1240.0
 
         val taxConfig = GreeceTaxConfiguration() // 24% VAT
         val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, taxConfig)
 
-        // VAT = totalPurchaseSpend * (vatRate / (1 + vatRate)) = 1000 * (0.24 / 1.24)
-        val expectedVat = 1000.0 * (0.24 / 1.24)
+        val expectedVat = 1240.0 * (0.24 / 1.24)
         assertApproxEquals(expectedVat, estimate.estimatedVatPaid, 0.01)
+        coVerify(exactly = 0) { expenseDao.getTotalSpentBetween(any(), any()) }
     }
 
     @Test
-    fun `estimateTaxes with zero spending returns zero VAT`() = runTest {
+    fun `estimateTaxes with zero business spending returns zero VAT`() = runTest {
         val start = atDateTime(2026, 3, 1, 0, 0)
         val end = atDateTime(2026, 4, 1, 0, 0)
 
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 0.0
-        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
-
-        val estimate = taxEstimator.estimateTaxes(start, end, 30000.0)
-
-        assertApproxEquals(0.0, estimate.estimatedVatPaid, 0.001)
-    }
-
-    @Test
-    fun `estimateTaxes with null aggregate total treats as zero`() = runTest {
-        val start = atDateTime(2026, 3, 1, 0, 0)
-        val end = atDateTime(2026, 4, 1, 0, 0)
-
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns null
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
 
         val estimate = taxEstimator.estimateTaxes(start, end, 30000.0)
@@ -89,13 +72,11 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         val start = atDateTime(2026, 3, 1, 0, 0)
         val end = atDateTime(2026, 4, 1, 0, 0)
 
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 5000.0
-        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 5000.0
 
         val usConfig = UsTaxConfiguration() // 0% VAT
         val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, usConfig)
 
-        // US has no VAT, so vatPaid should be 0
         assertApproxEquals(0.0, estimate.estimatedVatPaid, 0.001)
     }
 
@@ -104,71 +85,66 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
     // =========================================================================
 
     @Test
-    fun `estimateTaxes calculates income tax with business deductions`() = runTest {
+    fun `estimateTaxes aligns income to requested monthly period`() = runTest {
+        val start = atDateTime(2026, 3, 1, 0, 0)
+        val end = atDateTime(2026, 4, 1, 0, 0)
+        val annualIncome = 12000.0
+
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
+
+        val estimate = taxEstimator.estimateTaxes(start, end, annualIncome, GreeceTaxConfiguration())
+
+        val periodFraction = periodYearFraction(start, end)
+        assertApproxEquals(annualIncome * periodFraction, estimate.estimatedIncome, 0.01)
+    }
+
+    @Test
+    fun `estimateTaxes calculates period aligned tax with business deductions`() = runTest {
         val start = atDateTime(2026, 3, 1, 0, 0)
         val end = atDateTime(2026, 4, 1, 0, 0)
         val annualIncome = 15000.0
 
-        // A.9: aggregate total replaces row-scan sum (200 + 300 = 500)
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 500.0
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 2000.0
 
         val taxConfig = GreeceTaxConfiguration()
         val estimate = taxEstimator.estimateTaxes(start, end, annualIncome, taxConfig)
 
-        // totalDeductible = 500 (from aggregate SQL)
+        val periodFraction = periodYearFraction(start, end)
+        val expectedIncome = annualIncome * periodFraction
+        val expectedTaxableIncome = maxOf(expectedIncome - 500.0, 0.0)
+        val expectedTax = progressiveTax(expectedTaxableIncome, taxConfig, periodFraction)
+
         assertApproxEquals(500.0, estimate.deductibleExpenses, 0.01)
-
-        // NOTE: monthsInPeriod computation has a known pre-existing Int-overflow
-        // bug (30*24*60*60*1000 > Int.MAX_VALUE).  The overflow causes
-        // monthsInPeriod to go negative, so the else-branch fires and
-        // monthlyIncome == estimatedAnnualIncome.  Fixing the overflow
-        // (30→30L) is deferred to a separate batch to avoid scope widening
-        // beyond A.9.
-        // monthlyIncome = estimatedAnnualIncome = 15000 (overflow path)
-        assertApproxEquals(15000.0, estimate.estimatedIncome, 0.01)
-
-        // taxableIncome = max(15000 - 500, 0) = 14500
-        assertApproxEquals(14500.0, estimate.taxableIncome, 0.01)
-
-        // 15000 annual income → bracket rate = 0.22 (medium bracket: 10000-20000)
-        // estimatedIncomeTax = 14500 * 0.22 = 3190
-        assertApproxEquals(3190.0, estimate.estimatedIncomeTax, 0.01)
-
-        // Verify aggregate path was used (not row scan)
+        assertApproxEquals(expectedIncome, estimate.estimatedIncome, 0.01)
+        assertApproxEquals(expectedTaxableIncome, estimate.taxableIncome, 0.01)
+        assertApproxEquals(expectedTax, estimate.estimatedIncomeTax, 0.01)
         coVerify(exactly = 1) { businessExpenseRepository.getTotalBusinessExpenses(start, end) }
         coVerify(exactly = 0) { businessExpenseRepository.getBusinessExpenses(any(), any()) }
     }
 
     @Test
-    fun `estimateTaxes uses low bracket for income under 10000`() = runTest {
+    fun `estimateTaxes applies progressive brackets cumulatively for full year`() = runTest {
         val start = atDateTime(2026, 1, 1, 0, 0)
-        val end = atDateTime(2026, 2, 1, 0, 0)
+        val end = atDateTime(2027, 1, 1, 0, 0)
 
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 500.0
-        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
-
-        val estimate = taxEstimator.estimateTaxes(start, end, 5000.0)
-
-        // 5000 annual income → bracket rate = 0.09 (low bracket: 0-10000)
-        // monthlyIncome = 5000/12 ≈ 416.67
-        // taxableIncome = 416.67 - 0 = 416.67
-        // estimatedIncomeTax = 416.67 * 0.09 ≈ 37.5
-        assertApproxEquals(0.09, estimate.estimatedIncomeTax / estimate.taxableIncome, 0.001)
-    }
-
-    @Test
-    fun `estimateTaxes uses high bracket for income over 20000`() = runTest {
-        val start = atDateTime(2026, 1, 1, 0, 0)
-        val end = atDateTime(2026, 2, 1, 0, 0)
-
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 1000.0
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
 
         val estimate = taxEstimator.estimateTaxes(start, end, 30000.0)
 
-        // 30000 annual income → bracket rate = 0.32 (high bracket: >20000)
-        assertApproxEquals(0.32, estimate.estimatedIncomeTax / estimate.taxableIncome, 0.001)
+        assertApproxEquals(30000.0, estimate.estimatedIncome, 0.01)
+        assertApproxEquals(6300.0, estimate.estimatedIncomeTax, 0.01)
+    }
+
+    @Test
+    fun `estimateTaxes keeps low income entirely in lowest bracket for full year`() = runTest {
+        val start = atDateTime(2026, 1, 1, 0, 0)
+        val end = atDateTime(2027, 1, 1, 0, 0)
+
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
+
+        val estimate = taxEstimator.estimateTaxes(start, end, 5000.0)
+
+        assertApproxEquals(450.0, estimate.estimatedIncomeTax, 0.01)
     }
 
     // =========================================================================
@@ -180,7 +156,6 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         val start = atDateTime(2026, 3, 1, 0, 0)
         val end = atDateTime(2026, 4, 1, 0, 0)
 
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 0.0
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
 
         val grEstimate = taxEstimator.estimateTaxes(start, end, 10000.0, GreeceTaxConfiguration())
@@ -195,7 +170,6 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         val start = atDateTime(2026, 3, 1, 0, 0)
         val end = atDateTime(2026, 4, 1, 0, 0)
 
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 0.0
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
 
         val estimate = taxEstimator.estimateTaxes(start, end, 10000.0)
@@ -213,10 +187,8 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         val start = atDateTime(2026, 3, 1, 0, 0)
         val end = atDateTime(2026, 4, 1, 0, 0)
 
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 0.0
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
 
-        // monthsInPeriod > 0, monthlyIncome = 0/12 = 0
         val estimate = taxEstimator.estimateTaxes(start, end, 0.0)
 
         assertApproxEquals(0.0, estimate.effectiveTaxRate, 0.001)
@@ -227,41 +199,30 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
     // =========================================================================
 
     @Test
-    fun `getTaxYearSummary categorizes business deductions`() = runTest {
-        val yearStart = atDateTime(2026, 1, 1, 0, 0)
-        // Match internal calendar: year=2026, month=11 (Dec), day=31, 23:59:59
-        val cal = java.util.Calendar.getInstance().apply {
-            set(2026, 11, 31, 23, 59, 59)
-        }
-        val yearEnd = cal.timeInMillis
-
-        // A.9: grouped aggregate SQL replaces row-scan grouping.
-        // BusinessCategoryTotal from ExpenseDao.getBusinessExpensesByCategory
-        // excludes null-category rows, so "Uncategorized" is computed as
-        // totalBusiness - sum(categorized).
+    fun `getTaxYearSummary uses real yearly income and categorizes business deductions`() = runTest {
         val categoryTotals = listOf(
             BusinessCategoryTotal(businessCategory = "Office Supplies", total = 100.0, count = 1),
             BusinessCategoryTotal(businessCategory = "Software", total = 250.0, count = 1)
         )
-        // Total includes the null-category row (50.0) that is excluded from grouping
-        coEvery { businessExpenseRepository.getTotalBusinessExpenses(any(), any()) } returns 400.0
+        coEvery { expenseDao.getTotalDepositsForPeriod(any(), any()) } returns 42000.0
+        coEvery { businessExpenseRepository.getTotalBusinessExpenses(any(), any()) } returns 6200.0
         coEvery { businessExpenseRepository.getExpensesByCategory(any(), any()) } returns categoryTotals
-        coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 5000.0
         coEvery { businessExpenseRepository.getTotalMileageDeduction(any(), any()) } returns 120.0
 
         val summary = taxEstimator.getTaxYearSummary(2026)
 
         assertEquals(2026, summary.year)
+        assertApproxEquals(42000.0, summary.totalIncome, 0.01)
+        assertApproxEquals(6200.0, summary.totalDeductibleExpenses, 0.01)
+        assertApproxEquals(6200.0 * (0.24 / 1.24), summary.totalVatPaid, 0.01)
+        assertApproxEquals(8100.0, summary.estimatedTaxOwed, 0.01)
         assertApproxEquals(120.0, summary.mileageDeduction, 0.01)
 
-        // Verify categorized deductions
         val deductions = summary.categorizedDeductions
         assertApproxEquals(100.0, deductions["Office Supplies"] ?: 0.0, 0.01)
         assertApproxEquals(250.0, deductions["Software"] ?: 0.0, 0.01)
-        // Uncategorized = totalBusiness(400) - categorizedSum(350) = 50
-        assertApproxEquals(50.0, deductions["Uncategorized"] ?: 0.0, 0.01)
+        assertApproxEquals(5850.0, deductions["Uncategorized"] ?: 0.0, 0.01)
 
-        // Verify grouped SQL path was used (not row scan)
         coVerify(exactly = 0) { businessExpenseRepository.getBusinessExpenses(any(), any()) }
         coVerify(atLeast = 1) { businessExpenseRepository.getExpensesByCategory(any(), any()) }
     }
@@ -275,9 +236,9 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
             BusinessCategoryTotal(businessCategory = "Uncategorized", total = 75.0, count = 3)
         )
         // Total 425 = Office(200) + explicit-Uncategorized(75) + null-category(150)
+        coEvery { expenseDao.getTotalDepositsForPeriod(any(), any()) } returns 30000.0
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(any(), any()) } returns 425.0
         coEvery { businessExpenseRepository.getExpensesByCategory(any(), any()) } returns categoryTotals
-        coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 1000.0
         coEvery { businessExpenseRepository.getTotalMileageDeduction(any(), any()) } returns 0.0
 
         val summary = taxEstimator.getTaxYearSummary(2026)
@@ -289,91 +250,40 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
     }
 
     // =========================================================================
-    // A.10 Batch 3: Transaction-type isolation (spending semantics)
+    // Business-only aggregate semantics
     // =========================================================================
 
-    /**
-     * A.10 Batch 3 — Proves that VAT calculation uses only the PURCHASE-filtered
-     * aggregate (getTotalSpentBetween), which has
-     * `WHERE transactionType = 'PURCHASE'` baked into the DAO SQL.
-     *
-     * Deposits, transfers, and withdrawals cannot inflate VAT because
-     * getTotalSpentBetween structurally excludes them.  This test locks
-     * the aggregate query path by verifying that only getTotalSpentBetween
-     * is called for the VAT total — not any row-level scan that might
-     * include other transaction types.
-     */
     @Test
-    fun `A10 Batch3 - VAT uses only PURCHASE-filtered aggregate path`() = runTest {
+    fun `business deductions use only PURCHASE-filtered aggregate`() = runTest {
         val start = atDateTime(2026, 3, 1, 0, 0)
         val end = atDateTime(2026, 4, 1, 0, 0)
 
-        // Only the PURCHASE-only aggregate returns a spend total
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 2400.0
-        coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 0.0
-
-        val taxConfig = GreeceTaxConfiguration() // 24% VAT
-        val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, taxConfig)
-
-        // VAT = 2400 * (0.24 / 1.24) ≈ 464.52
-        val expectedVat = 2400.0 * (0.24 / 1.24)
-        assertApproxEquals(expectedVat, estimate.estimatedVatPaid, 0.01)
-
-        // Verify only the PURCHASE-filtered aggregate was called
-        coVerify(exactly = 1) { expenseDao.getTotalSpentBetween(start, end) }
-        // No row-level reads that might include deposits/transfers
-        coVerify(exactly = 0) { expenseDao.getExpensesBetween(any(), any()) }
-    }
-
-    /**
-     * A.10 Batch 3 — Business deductions use getTotalBusinessExpenses which
-     * delegates to DAO getTotalBusinessExpensesBetween with
-     * `WHERE transactionType = 'PURCHASE'`.  Deposits/transfers/withdrawals
-     * cannot inflate deductions.
-     */
-    @Test
-    fun `A10 Batch3 - business deductions use only PURCHASE-filtered aggregate`() = runTest {
-        val start = atDateTime(2026, 3, 1, 0, 0)
-        val end = atDateTime(2026, 4, 1, 0, 0)
-
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 1000.0
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 300.0
 
         val estimate = taxEstimator.estimateTaxes(start, end, 20000.0)
 
         assertApproxEquals(300.0, estimate.deductibleExpenses, 0.01)
 
-        // Only the aggregate (PURCHASE-only) business expense path was used
         coVerify(exactly = 1) { businessExpenseRepository.getTotalBusinessExpenses(start, end) }
-        // No row-level scan
         coVerify(exactly = 0) { businessExpenseRepository.getBusinessExpenses(any(), any()) }
     }
 
-    /**
-     * A.10 Batch 3 — Combined: both VAT and deductions are computed from
-     * PURCHASE-only aggregates.  Non-PURCHASE types in the database do not
-     * affect income tax, VAT, or effective tax rate.
-     */
     @Test
-    fun `A10 Batch3 - non-PURCHASE types do not affect tax estimate`() = runTest {
+    fun `non-business purchases do not affect VAT estimate`() = runTest {
         val start = atDateTime(2026, 3, 1, 0, 0)
         val end = atDateTime(2026, 4, 1, 0, 0)
 
-        // The aggregate queries only return PURCHASE spend (filtered at SQL level)
-        coEvery { expenseDao.getTotalSpentBetween(start, end) } returns 5000.0
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(start, end) } returns 1000.0
 
         val estimate1 = taxEstimator.estimateTaxes(start, end, 25000.0)
-
-        // Run with exact same mock setup — demonstrates idempotency:
-        // even if the DB also had deposits/transfers, the aggregate queries
-        // exclude them, so the result is identical.
         val estimate2 = taxEstimator.estimateTaxes(start, end, 25000.0)
 
         assertApproxEquals(estimate1.estimatedVatPaid, estimate2.estimatedVatPaid, 0.001)
         assertApproxEquals(estimate1.deductibleExpenses, estimate2.deductibleExpenses, 0.001)
         assertApproxEquals(estimate1.estimatedIncomeTax, estimate2.estimatedIncomeTax, 0.001)
         assertApproxEquals(estimate1.effectiveTaxRate, estimate2.effectiveTaxRate, 0.001)
+        assertApproxEquals(1000.0 * (0.24 / 1.24), estimate1.estimatedVatPaid, 0.01)
+        coVerify(exactly = 0) { expenseDao.getTotalSpentBetween(any(), any()) }
     }
 
     // =========================================================================
@@ -381,15 +291,51 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
     // =========================================================================
 
     private fun atDateTime(year: Int, month: Int, day: Int, hour: Int, minute: Int): Long {
-        val calendar = java.util.Calendar.getInstance().apply {
-            set(java.util.Calendar.YEAR, year)
-            set(java.util.Calendar.MONTH, month - 1)
-            set(java.util.Calendar.DAY_OF_MONTH, day)
-            set(java.util.Calendar.HOUR_OF_DAY, hour)
-            set(java.util.Calendar.MINUTE, minute)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
+        val calendar = Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month - 1)
+            set(Calendar.DAY_OF_MONTH, day)
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
         }
         return calendar.timeInMillis
+    }
+
+    private fun periodYearFraction(startDate: Long, endDate: Long): Double {
+        if (endDate <= startDate) return 0.0
+
+        var cursor = startDate
+        var totalFraction = 0.0
+
+        while (cursor < endDate) {
+            val calendar = Calendar.getInstance().apply { timeInMillis = cursor }
+            val year = calendar.get(Calendar.YEAR)
+            val yearStart = atDateTime(year, 1, 1, 0, 0)
+            val nextYearStart = atDateTime(year + 1, 1, 1, 0, 0)
+            val segmentEnd = minOf(endDate, nextYearStart)
+
+            totalFraction += (segmentEnd - cursor).toDouble() / (nextYearStart - yearStart).toDouble()
+            cursor = segmentEnd
+        }
+
+        return totalFraction
+    }
+
+    private fun progressiveTax(
+        income: Double,
+        config: TaxConfiguration,
+        periodYearFraction: Double
+    ): Double {
+        if (income <= 0.0 || periodYearFraction <= 0.0) return 0.0
+
+        return config.getTaxBrackets()
+            .sortedBy { it.minIncome }
+            .sumOf { bracket ->
+                val lower = bracket.minIncome * periodYearFraction
+                val upper = bracket.maxIncome?.times(periodYearFraction) ?: Double.POSITIVE_INFINITY
+                maxOf(minOf(income, upper) - lower, 0.0) * bracket.rate
+            }
     }
 }

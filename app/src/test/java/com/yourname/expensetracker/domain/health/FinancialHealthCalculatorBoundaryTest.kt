@@ -53,8 +53,8 @@ class FinancialHealthCalculatorBoundaryTest {
         remainingAmount = amount * 0.5,
         percentUsed = 50.0,
         healthStatus = BudgetHealthStatus.ON_TRACK,
-        periodStart = 0L,
-        periodEnd = 0L
+        periodStart = Long.MIN_VALUE,
+        periodEnd = Long.MAX_VALUE
     )
 
     // ========================================================================

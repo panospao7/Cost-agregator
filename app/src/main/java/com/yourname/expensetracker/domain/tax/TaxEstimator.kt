@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,11 +24,9 @@ class TaxEstimator @Inject constructor(
     /**
      * Estimate taxes for a period using configured tax rates.
      *
-     * A.9 fix: VAT calculation now uses [ExpenseDao.getTotalSpentBetween] (aggregate
-     * SQL) instead of fetching individual rows through the capped
-     * [ExpenseDao.getExpensesBetween] (LIMIT 2000).  The VAT fraction is applied to
-     * the aggregate total, eliminating hidden data truncation while producing the
-     * same mathematical result: `SUM(effectiveAmount) * (vatRate / (1 + vatRate))`.
+     * B.8 Batch 7: deductible expenses and VAT both use business-only effective
+     * purchase aggregates, income is aligned to the requested period, and income
+     * tax brackets are applied cumulatively for the covered fraction of a tax year.
      * 
      * @param taxConfig The tax configuration to use (defaults to Greece if not specified)
      */
@@ -42,53 +41,101 @@ class TaxEstimator @Inject constructor(
         // ExpenseDao.getTotalBusinessExpensesBetween, eliminating hidden
         // data truncation while producing the same mathematical result.
         val totalDeductible = businessExpenseRepository.getTotalBusinessExpenses(startDate, endDate)
-        
-        // HIGH FIX: Calculate income tax bracket from configuration
-        val taxRate = calculateTaxRate(estimatedAnnualIncome, taxConfig)
-        
+
+        val periodYearFraction = calculatePeriodYearFraction(startDate, endDate)
+        val periodIncome = estimatedAnnualIncome * periodYearFraction
+
         // HIGH FIX: Use configured VAT rate
         val vatRate = taxConfig.getVatRate()
-        
-        // A.9: Aggregate SQL replaces capped row scan for VAT calculation.
-        // getTotalSpentBetween already filters for PURCHASE + isNotMine=0 and uses
-        // effective-amount SQL, matching the original per-row filter+sum semantics.
-        val totalPurchaseSpend = expenseDao.getTotalSpentBetween(startDate, endDate) ?: 0.0
-        val vatPaid = totalPurchaseSpend * (vatRate / (1 + vatRate))
-        
-        val monthsInPeriod = ((endDate - startDate).toDouble() / (30 * 24 * 60 * 60 * 1000))
-        val monthlyIncome = if (monthsInPeriod > 0) estimatedAnnualIncome / 12 else estimatedAnnualIncome
-        
-        val taxableIncome = maxOf(monthlyIncome - totalDeductible, 0.0)
-        val estimatedIncomeTax = taxableIncome * taxRate
+
+        // B.8 Batch 7: VAT must use business-only purchase spend, not all purchases.
+        val vatPaid = totalDeductible * (vatRate / (1 + vatRate))
+
+        val taxableIncome = maxOf(periodIncome - totalDeductible, 0.0)
+        val estimatedIncomeTax = calculateProgressiveTax(
+            income = taxableIncome,
+            taxConfig = taxConfig,
+            periodYearFraction = periodYearFraction
+        )
         
         TaxEstimate(
             startDate = startDate,
             endDate = endDate,
-            estimatedIncome = monthlyIncome,
+            estimatedIncome = periodIncome,
             deductibleExpenses = totalDeductible,
             taxableIncome = taxableIncome,
             estimatedIncomeTax = estimatedIncomeTax,
             estimatedVatPaid = vatPaid,
-            effectiveTaxRate = if (monthlyIncome > 0) (estimatedIncomeTax / monthlyIncome) * 100 else 0.0,
+            effectiveTaxRate = if (periodIncome > 0) (estimatedIncomeTax / periodIncome) * 100 else 0.0,
             notes = "Estimate using ${taxConfig.getCountryCode()} tax rates. Consult tax professional for accurate filing."
         )
     }
     
     /**
-     * HIGH FIX: Calculate tax rate based on income using configured brackets.
-     * Replaces hardcoded bracket logic.
+     * B.8 Batch 7: Apply configured brackets cumulatively, scaled to the
+     * requested period instead of using a single flat bracket rate.
      */
-    private fun calculateTaxRate(income: Double, taxConfig: TaxConfiguration): Double {
-        val brackets = taxConfig.getTaxBrackets()
-        
-        for (bracket in brackets) {
-            if (income >= bracket.minIncome && (bracket.maxIncome == null || income < bracket.maxIncome)) {
-                return bracket.rate
+    private fun calculateProgressiveTax(
+        income: Double,
+        taxConfig: TaxConfiguration,
+        periodYearFraction: Double
+    ): Double {
+        if (income <= 0.0 || periodYearFraction <= 0.0) return 0.0
+
+        var totalTax = 0.0
+        val scaledBrackets = taxConfig.getTaxBrackets().sortedBy { it.minIncome }
+
+        for (bracket in scaledBrackets) {
+            val lowerBound = bracket.minIncome * periodYearFraction
+            val upperBound = bracket.maxIncome?.times(periodYearFraction) ?: Double.POSITIVE_INFINITY
+
+            if (income <= lowerBound) {
+                break
+            }
+
+            val taxableAtRate = minOf(income, upperBound) - lowerBound
+            if (taxableAtRate > 0.0) {
+                totalTax += taxableAtRate * bracket.rate
             }
         }
-        
-        // Default to last bracket if above all
-        return brackets.lastOrNull()?.rate ?: 0.20
+
+        return totalTax
+    }
+
+    /**
+     * Converts a date range into the equivalent fraction of tax years covered,
+     * splitting across calendar years when needed.
+     */
+    private fun calculatePeriodYearFraction(startDate: Long, endDate: Long): Double {
+        if (endDate <= startDate) return 0.0
+
+        var cursor = startDate
+        var totalFraction = 0.0
+
+        while (cursor < endDate) {
+            val calendar = Calendar.getInstance().apply { timeInMillis = cursor }
+            val year = calendar.get(Calendar.YEAR)
+            val yearStart = startOfYear(year)
+            val nextYearStart = startOfYear(year + 1)
+            val segmentEnd = minOf(endDate, nextYearStart)
+            val yearDuration = nextYearStart - yearStart
+
+            if (yearDuration <= 0L || segmentEnd <= cursor) {
+                break
+            }
+
+            totalFraction += (segmentEnd - cursor).toDouble() / yearDuration.toDouble()
+            cursor = segmentEnd
+        }
+
+        return totalFraction
+    }
+
+    private fun startOfYear(year: Int): Long {
+        return Calendar.getInstance().apply {
+            set(year, Calendar.JANUARY, 1, 0, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
     }
     
     /**
@@ -100,13 +147,11 @@ class TaxEstimator @Inject constructor(
         year: Int,
         taxConfig: TaxConfiguration = TaxConfigurationFactory.getCurrentConfiguration()
     ): TaxYearSummary = withContext(Dispatchers.IO) {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.set(year, 0, 1, 0, 0, 0)
-        val yearStart = calendar.timeInMillis
-        calendar.set(year, 11, 31, 23, 59, 59)
-        val yearEnd = calendar.timeInMillis
-        
-        val estimate = estimateTaxes(yearStart, yearEnd, 30000.0, taxConfig) // Would get actual income
+        val yearStart = startOfYear(year)
+        val yearEnd = startOfYear(year + 1)
+        val totalIncome = expenseDao.getTotalDepositsForPeriod(yearStart, yearEnd)
+
+        val estimate = estimateTaxes(yearStart, yearEnd, totalIncome, taxConfig)
         
         // A.9: Grouped aggregate SQL replaces capped row scan for per-category
         // deduction breakdown.  getExpensesByCategory uses GROUP BY via
@@ -134,11 +179,11 @@ class TaxEstimator @Inject constructor(
         
         TaxYearSummary(
             year = year,
-            totalIncome = estimate.estimatedIncome * 12, // Annualized
+            totalIncome = estimate.estimatedIncome,
             totalDeductibleExpenses = estimate.deductibleExpenses,
-            totalVatPaid = estimate.estimatedVatPaid * 12, // Annualized
+            totalVatPaid = estimate.estimatedVatPaid,
             categorizedDeductions = categorizedDeductions,
-            estimatedTaxOwed = estimate.estimatedIncomeTax * 12, // Annualized
+            estimatedTaxOwed = estimate.estimatedIncomeTax,
             mileageDeduction = businessExpenseRepository.getTotalMileageDeduction(yearStart, yearEnd)
         )
     }

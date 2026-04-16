@@ -192,10 +192,73 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         assertTrue(result.safeAmount >= 0.0)
     }
 
-    private fun budgetStatus(remaining: Double): BudgetStatus {
+    @Test
+    fun `portfolio recommendations allocate one safe amount across multiple goals`() = runTest {
+        io.mockk.every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(remaining = 300.0))
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+
+        val goals = listOf(
+            SavingsGoal(id = 1L, name = "Emergency", targetAmount = 1000.0, currentAmount = 900.0),
+            SavingsGoal(id = 2L, name = "Vacation", targetAmount = 1000.0, currentAmount = 200.0)
+        )
+
+        val recommendations = engine.calculatePortfolioRecommendations(goals)
+
+        assertEquals(2, recommendations.size)
+        assertApproxEquals(60.0, recommendations.sumOf { it.recommendation.safeAmount }, 0.01)
+        assertApproxEquals(10.0, recommendations.first { it.goal.id == 1L }.recommendation.safeAmount, 0.01)
+        assertApproxEquals(50.0, recommendations.first { it.goal.id == 2L }.recommendation.safeAmount, 0.01)
+    }
+
+    @Test
+    fun `portfolio recommendations cap allocation at remaining gap`() = runTest {
+        io.mockk.every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(remaining = 2000.0))
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+
+        val goals = listOf(
+            SavingsGoal(id = 1L, name = "Laptop", targetAmount = 1000.0, currentAmount = 990.0),
+            SavingsGoal(id = 2L, name = "Trip", targetAmount = 1000.0, currentAmount = 995.0)
+        )
+
+        val recommendations = engine.calculatePortfolioRecommendations(goals)
+
+        assertApproxEquals(10.0, recommendations.first { it.goal.id == 1L }.recommendation.safeAmount, 0.01)
+        assertApproxEquals(5.0, recommendations.first { it.goal.id == 2L }.recommendation.safeAmount, 0.01)
+        assertApproxEquals(15.0, recommendations.sumOf { it.recommendation.safeAmount }, 0.01)
+    }
+
+    @Test
+    fun `budget surplus uses overall budget without stacking category budgets`() = runTest {
+        io.mockk.every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(
+                budgetStatus(remaining = 400.0, categoryId = null),
+                budgetStatus(remaining = 150.0, categoryId = 1L),
+                budgetStatus(remaining = 100.0, categoryId = 2L)
+            )
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+
+        val result = engine.calculateSafeToSaveAmount(
+            SavingsGoal(name = "Emergency", targetAmount = 5000.0, currentAmount = 1000.0)
+        )
+
+        assertApproxEquals(80.0, result.safeAmount, 0.01)
+    }
+
+    private fun budgetStatus(remaining: Double, categoryId: Long? = null): BudgetStatus {
         val budgetAmount = if (remaining > 0) remaining + 100 else 100.0
         return BudgetStatus(
-            budget = Budget(categoryId = null, amount = budgetAmount, period = BudgetPeriod.MONTHLY, startDate = now),
+            budget = Budget(categoryId = categoryId, amount = budgetAmount, period = BudgetPeriod.MONTHLY, startDate = now),
             category = null,
             spentAmount = (budgetAmount - remaining).coerceAtLeast(0.0),
             remainingAmount = remaining,

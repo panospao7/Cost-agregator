@@ -1,30 +1,11 @@
-# REVIEW-B7-export-backup-pipeline.md
+VERDICT: FAIL
 
-## VERDICT: ✅ PASS
+Issues:
+- [ISSUE-1] RESOLVED
+- [ISSUE-2] RESOLVED
+- [ISSUE-3] RESOLVED
+- [ISSUE-4] [MAJOR] Repository and UI accounting export paths still diverge on empty datasets: `AccountingExportRepository.exportExpenses()` fails fast with `No expenses found for selected date range`, but `ExportOptionsViewModel.generateExport()` treats the same empty Xero/QuickBooks/FreshBooks dataset as a successful header-only export - app/src/main/java/com/yourname/expensetracker/data/repository/AccountingExportRepository.kt; app/src/main/java/com/yourname/expensetracker/ui/screens/export/ExportOptionsViewModel.kt - Apply one shared empty-dataset rule before file creation/export for the overlapping accounting formats and lock it with a regression test.
 
-## ✅ Implemented Batches
-
-### Batch 1 - Export Transaction Model + Shared Mapper Foundation ✅
-- Extended ExportTransaction with currency, transactionType, sourceAccountName
-- Created shared ExpenseExportMapper using effectiveAmount, real currency, real transactionType
-- Created DeterministicExpenseExportPager as shared paging foundation
-- Created AccountingExportPolicy for mixed-currency/unsupported-type safety
-- Removed duplicate local Expense.toExportTransaction() helpers
-- Added tests for mapper, pager, and policy
-
-### Batch 2 - QuickBooks TRNS/SPL Account Semantics ✅
-- Fixed QuickBooks TRNS.ACCNT to use expense.sourceAccountName (funding/source from paymentMethod)
-- Fixed SPL.ACCNT to use category account
-- TRNS and SPL accounts are now properly separated
-- Added repository test proving separation
-
-### Batch 3 - Real PDF Accountant Report Output ✅
-- Added AccountantReportPdfExporter using Android PdfDocument
-- PDF now contains: title/period/timestamp, summary, per-currency totals, category breakdown, large transactions
-- AccountingExportRepository now writes real .pdf file bytes
-
-## Verification
-- `./gradlew.bat :app:compileDebugKotlin` ✅ BUILD SUCCESSFUL
-
-## Final Status
-**B.7: READY FOR COMMIT**
+Coverage:
+- Requirements met: no - the prior policy, pager, and regression-wiring gaps are fixed, but overlapping accounting export behavior is still not fully converged because empty datasets succeed in the UI path and fail in the repository path.
+- Testing adequate: no - `./gradlew.bat :app:compileDebugKotlin` passed, but `:app:testDebugUnitTest` is currently blocked by unrelated test compilation errors in `SmartReceiptAssistServiceTest.kt` and `WarrantyExpirationWorkerTest.kt`, so the added B.7 regression lane could not be fully re-executed end-to-end.

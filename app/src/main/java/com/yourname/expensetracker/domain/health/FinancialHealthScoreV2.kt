@@ -82,7 +82,7 @@ class FinancialHealthScoreV2 @Inject constructor(
             }
             
             // Get budget statuses
-            val budgetStatuses = budgetRepository.getBudgetStatuses().first()
+            val budgetStatuses = budgetRepository.getBudgetStatusesAt(resolveBudgetEvaluationTime(periodStart, periodEnd))
             val savingsGoals = savingsGoalRepository.getAllGoals().first()
             
             // Calculate individual component scores
@@ -328,6 +328,12 @@ class FinancialHealthScoreV2 @Inject constructor(
             .filter { it > 0.0 }
 
         return monthlyTotals.takeIf { it.isNotEmpty() }?.average()
+    }
+
+    private fun resolveBudgetEvaluationTime(periodStart: Long, periodEnd: Long): Long {
+        val now = timeProvider.now()
+        val latestInPeriod = if (periodEnd > periodStart) periodEnd - 1 else periodStart
+        return now.coerceIn(periodStart, latestInPeriod)
     }
     
     /**

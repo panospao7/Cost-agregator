@@ -11,17 +11,14 @@ import javax.inject.Singleton
 class ExportDataRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val expenseRepository: ExpenseRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val deterministicExpenseExportPager: DeterministicExpenseExportPager
 ) {
     suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense> =
         expenseRepository.getExpensesBetween(startDate, endDate)
 
-    suspend fun getExpensesBetweenPaged(
-        startDate: Long,
-        endDate: Long,
-        limit: Int,
-        offset: Int
-    ): List<Expense> = expenseRepository.getExpensesBetweenPagedForDeterministicExport(startDate, endDate, limit, offset)
+    suspend fun getExpensesBetweenForExport(startDate: Long, endDate: Long): List<Expense> =
+        deterministicExpenseExportPager.fetchAllBetween(startDate, endDate)
 
     suspend fun countExpensesBetween(startDate: Long, endDate: Long): Int =
         expenseRepository.countExpensesBetween(startDate, endDate)

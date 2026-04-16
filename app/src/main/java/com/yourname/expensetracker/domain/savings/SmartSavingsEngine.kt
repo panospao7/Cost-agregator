@@ -23,6 +23,11 @@ data class SavingsRecommendation(
     val source: RecommendationSource
 )
 
+data class GoalSavingsRecommendation(
+    val goal: SavingsGoal,
+    val recommendation: SavingsRecommendation
+)
+
 enum class RecommendationSource {
     BUDGET_SURPLUS,
     SPENDING_PACE,
@@ -45,44 +50,156 @@ class SmartSavingsEngine @Inject constructor(
         goal: SavingsGoal,
         timeHorizon: TimeHorizon = TimeHorizon.MONTH
     ): SavingsRecommendation {
-        // Get current financial state
+        return calculatePortfolioRecommendations(listOf(goal), timeHorizon)
+            .firstOrNull()
+            ?.recommendation
+            ?: SavingsRecommendation(
+                safeAmount = 0.0,
+                confidence = 0.40,
+                impact = generateImpactMessage(0.0, goal, timeHorizon),
+                source = RecommendationSource.BUDGET_SURPLUS
+            )
+    }
+
+    suspend fun calculatePortfolioRecommendations(
+        goals: List<SavingsGoal>,
+        timeHorizon: TimeHorizon = TimeHorizon.MONTH
+    ): List<GoalSavingsRecommendation> {
+        val incompleteGoals = goals.filter { goal ->
+            (goal.targetAmount - goal.currentAmount) > 0.0
+        }
+
+        if (incompleteGoals.isEmpty()) {
+            return emptyList()
+        }
+
+        val portfolioRecommendation = calculatePortfolioSafeToSaveAmount(
+            sampleGoal = incompleteGoals.first(),
+            timeHorizon = timeHorizon
+        )
+        val allocations = allocateAcrossGoals(incompleteGoals, portfolioRecommendation.safeAmount)
+
+        return incompleteGoals.mapIndexed { index, goal ->
+            val allocatedAmount = allocations.getOrElse(index) { 0.0 }
+            GoalSavingsRecommendation(
+                goal = goal,
+                recommendation = portfolioRecommendation.copy(
+                    safeAmount = allocatedAmount,
+                    impact = generateImpactMessage(allocatedAmount, goal, timeHorizon)
+                )
+            )
+        }
+    }
+    
+    private fun calculateBudgetSurplus(budgetStatuses: List<BudgetStatus>): Double {
+        val scopedStatuses = budgetStatuses
+            .let { allStatuses ->
+                val overallStatuses = allStatuses.filter { it.budget.categoryId == null }
+                if (overallStatuses.isNotEmpty()) overallStatuses else allStatuses
+            }
+            .filter { it.remainingAmount > 0.0 }
+
+        var totalSurplus = 0.0
+        for (status in scopedStatuses) {
+            // Only count 50% of surplus to be conservative
+            totalSurplus += status.remainingAmount * 0.5
+        }
+        return totalSurplus
+    }
+
+    private suspend fun calculatePortfolioSafeToSaveAmount(
+        sampleGoal: SavingsGoal,
+        timeHorizon: TimeHorizon
+    ): SavingsRecommendation {
         val now = timeProvider.now()
         val budgetStatuses = budgetRepository.getBudgetStatuses().first()
-        
-        // Calculate 1: Budget surplus
+
         val budgetSurplus = calculateBudgetSurplus(budgetStatuses)
-        
-        // Calculate 2: Spending pace analysis
         val spendingPace = analyzeSpendingPace(timeHorizon)
-        
-        // Calculate 3: Monte Carlo simulation
-        val monteCarloResult = runMonteCarloSimulation(goal, now, timeHorizon)
-        
-        // Combine recommendations with weights
+        val monteCarloResult = runMonteCarloSimulation(sampleGoal, now, timeHorizon)
         val safeAmount = calculateWeightedSafeAmount(
             budgetSurplus = budgetSurplus,
             spendingPace = spendingPace,
             monteCarloResult = monteCarloResult,
             timeHorizon = timeHorizon
         )
-        
+
         return SavingsRecommendation(
             safeAmount = safeAmount,
             confidence = calculateConfidence(budgetSurplus, spendingPace, monteCarloResult),
-            impact = generateImpactMessage(safeAmount, goal, timeHorizon),
+            impact = "Portfolio recommendation ready",
             source = determinePrimarySource(budgetSurplus, spendingPace, monteCarloResult)
         )
     }
-    
-    private fun calculateBudgetSurplus(budgetStatuses: List<BudgetStatus>): Double {
-        var totalSurplus = 0.0
-        for (status in budgetStatuses) {
-            if (status.remainingAmount > 0) {
-                // Only count 50% of surplus to be conservative
-                totalSurplus += status.remainingAmount * 0.5
-            }
+
+    private fun allocateAcrossGoals(
+        goals: List<SavingsGoal>,
+        totalSafeAmount: Double
+    ): List<Double> {
+        if (goals.isEmpty() || totalSafeAmount <= 0.0) {
+            return List(goals.size) { 0.0 }
         }
-        return totalSurplus
+
+        val allocations = MutableList(goals.size) { 0.0 }
+        val remainingGaps = goals
+            .map { (it.targetAmount - it.currentAmount).coerceAtLeast(0.0) }
+            .toMutableList()
+        val weights = goals.map { calculateAllocationWeight(it) }
+        var remainingSafeAmount = totalSafeAmount
+        val activeIndexes = goals.indices.toMutableSet()
+
+        while (remainingSafeAmount > 0.01 && activeIndexes.isNotEmpty()) {
+            val totalWeight = activeIndexes.sumOf { index -> weights[index] }
+            if (totalWeight <= 0.0) {
+                break
+            }
+
+            var allocatedThisRound = 0.0
+            val filledIndexes = mutableSetOf<Int>()
+            for (index in activeIndexes) {
+                val proposedAmount = remainingSafeAmount * (weights[index] / totalWeight)
+                val cappedAmount = minOf(proposedAmount, remainingGaps[index])
+                if (cappedAmount > 0.0) {
+                    allocations[index] += cappedAmount
+                    remainingGaps[index] -= cappedAmount
+                    allocatedThisRound += cappedAmount
+                }
+                if (remainingGaps[index] <= 0.01) {
+                    filledIndexes += index
+                }
+            }
+
+            if (allocatedThisRound <= 0.0) {
+                break
+            }
+
+            remainingSafeAmount -= allocatedThisRound
+            activeIndexes.removeAll(filledIndexes)
+        }
+
+        return allocations.mapIndexed { index, amount ->
+            amount.coerceAtMost((goals[index].targetAmount - goals[index].currentAmount).coerceAtLeast(0.0))
+        }
+    }
+
+    private fun calculateAllocationWeight(goal: SavingsGoal): Double {
+        val remainingGap = (goal.targetAmount - goal.currentAmount).coerceAtLeast(0.0)
+        if (remainingGap <= 0.0) {
+            return 0.0
+        }
+
+        val urgencyMultiplier = goal.targetDate?.let { targetDate ->
+            val millisUntilTarget = targetDate - timeProvider.now()
+            val daysUntilTarget = millisUntilTarget / (24.0 * 60 * 60 * 1000)
+            when {
+                daysUntilTarget <= 30.0 -> 2.0
+                daysUntilTarget <= 90.0 -> 1.5
+                daysUntilTarget <= 180.0 -> 1.25
+                else -> 1.0
+            }
+        } ?: 1.0
+
+        return remainingGap * urgencyMultiplier
     }
     
     private suspend fun analyzeSpendingPace(timeHorizon: TimeHorizon): Double {

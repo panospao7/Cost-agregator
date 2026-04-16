@@ -49,7 +49,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         healthScoreHistoryDao = mockk(relaxed = true)
 
         every { timeProvider.now() } returns now
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns emptyList()
         every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
@@ -77,8 +77,8 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             expense(1L, 1000.0, TransactionType.DEPOSIT, now - 10 * dayMs),
             expense(2L, 900.0, TransactionType.PURCHASE, now - 9 * dayMs)
         )
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(
-            listOf(budgetStatus(amount = 1000.0, spent = 1100.0))
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(
+            budgetStatus(amount = 1000.0, spent = 1100.0)
         )
         every { savingsGoalRepository.getAllGoals() } returns flowOf(
             listOf(goal(1L, target = 3000.0, current = 900.0))
@@ -100,8 +100,8 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             expense(2L, 500.0, TransactionType.PURCHASE, now - 9 * dayMs)
         )
         // Large budget headroom should NOT inflate runway score.
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(
-            listOf(budgetStatus(amount = 5000.0, spent = 500.0))
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(
+            budgetStatus(amount = 5000.0, spent = 500.0)
         )
         // Savings goals total currentAmount = 1000, stabilized monthly burn on day-15 ~= 1000 => 1 month => score 16
         every { savingsGoalRepository.getAllGoals() } returns flowOf(
@@ -185,8 +185,8 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             expense(1L, 1000.0, TransactionType.DEPOSIT, now - 5 * dayMs),
             expense(2L, 800.0, TransactionType.PURCHASE, now - 4 * dayMs)
         )
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(
-            listOf(budgetStatus(amount = 1000.0, spent = 800.0))
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(
+            budgetStatus(amount = 1000.0, spent = 800.0)
         )
         every { savingsGoalRepository.getAllGoals() } returns flowOf(
             listOf(goal(1L, target = 5000.0, current = 1200.0))
@@ -218,8 +218,8 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             expense(1L, 1000.0, TransactionType.DEPOSIT, now - 5 * dayMs),
             expense(2L, 100.0, TransactionType.PURCHASE, now - 4 * dayMs)
         )
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(
-            listOf(budgetStatus(amount = 1000.0, spent = 100.0))
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(
+            budgetStatus(amount = 1000.0, spent = 100.0)
         )
         every { savingsGoalRepository.getAllGoals() } returns flowOf(
             listOf(goal(1L, target = 5000.0, current = 2000.0))
@@ -277,7 +277,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
     @Test
     fun `calculateHealthScore edge case missing data uses neutral defaults`() = runTest {
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns emptyList()
         every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
 
@@ -288,6 +288,23 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         assertEquals(50, result.budgetAdherenceScore)
         assertEquals(75, result.billReliabilityScore)
         assertTrue(result.overallScore in 0..100)
+    }
+
+    @Test
+    fun `calculateHealthScore uses historical budget statuses for requested period end`() = runTest {
+        val periodStart = millis(2026, Calendar.FEBRUARY, 1)
+        val periodEnd = millis(2026, Calendar.FEBRUARY, 28)
+        val expectedEvaluationTime = periodEnd - 1
+
+        coEvery { budgetRepository.getBudgetStatusesAt(expectedEvaluationTime) } returns listOf(
+            budgetStatus(amount = 1000.0, spent = 1200.0)
+        )
+
+        val result = calculator.calculateHealthScore(periodStart, periodEnd)
+
+        assertEquals(80, result.budgetAdherenceScore)
+        coVerify(exactly = 1) { budgetRepository.getBudgetStatusesAt(expectedEvaluationTime) }
+        coVerify(exactly = 0) { budgetRepository.getBudgetStatusesAt(now) }
     }
 
     private fun FinancialHealthResult.toHistorySnapshot(overall: Int): HealthScoreHistory {

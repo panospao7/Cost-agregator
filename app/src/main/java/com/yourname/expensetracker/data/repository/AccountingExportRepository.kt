@@ -3,12 +3,10 @@ package com.yourname.expensetracker.data.repository
 import android.content.Context
 import android.net.Uri
 import androidx.core.content.FileProvider
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.export.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import androidx.annotation.VisibleForTesting
 import java.io.File
 import java.io.FileWriter
 import java.text.SimpleDateFormat
@@ -33,22 +31,14 @@ data class ExportResult(
 
 @Singleton
 class AccountingExportRepository @Inject constructor(
-    private val expenseRepository: ExpenseRepository,
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
+    private val deterministicExpenseExportPager: DeterministicExpenseExportPager,
+    private val accountingExportPolicy: AccountingExportPolicy,
     private val quickBooksExporter: QuickBooksIIFExporter,
     private val xeroExporter: XeroCSVExporter,
     private val freshBooksExporter: FreshBooksExporter,
     private val accountantReportPdfExporter: AccountantReportPdfExporter
 ) {
-    /**
-     * Page size used by the exhaustive-paging loop in [fetchAllForExport].
-     * Visible for testing so that unit tests can verify the paging contract
-     * without having to generate thousands of rows.
-     */
-    internal companion object {
-        const val EXPORT_PAGE_SIZE = 2000
-    }
-
     suspend fun exportExpenses(
         context: Context,
         startDate: Long,
@@ -60,12 +50,25 @@ class AccountingExportRepository @Inject constructor(
             // A.9 Batch 6: fetch via deterministic exhaustive paging so that
             // exports are never silently truncated and row ordering is stable
             // (date ASC, id ASC, merchant COLLATE NOCASE ASC).
-            val expenses = fetchAllForExport(startDate, endDate)
+            val expenses = deterministicExpenseExportPager.fetchAllBetween(startDate, endDate)
             
-            if (expenses.isEmpty()) {
+            if (expenses.isEmpty() && !format.allowsEmptyDataset()) {
                 return@withContext ExportResult(
                     success = false,
                     errorMessage = "No expenses found for selected date range"
+                )
+            }
+
+            val exportTransactions = if (format.requiresAccountingPolicy()) {
+                expenses.map { it.toExportTransaction() }
+            } else {
+                emptyList()
+            }
+
+            if (format.requiresAccountingPolicy() && exportTransactions.isNotEmpty()) {
+                accountingExportPolicy.validateAccountingDataset(
+                    exportTransactions,
+                    format.displayName()
                 )
             }
 
@@ -86,13 +89,13 @@ class AccountingExportRepository @Inject constructor(
 
             when (format) {
                 ExportFormat.QUICKBOOKS_IIF -> FileWriter(exportFile).use { writer ->
-                    writer.write(quickBooksExporter.export(expenses.map { it.toExportTransaction() }, categories))
+                    writer.write(quickBooksExporter.export(exportTransactions, categories))
                 }
                 ExportFormat.XERO_CSV -> FileWriter(exportFile).use { writer ->
-                    writer.write(xeroExporter.export(expenses.map { it.toExportTransaction() }, categories))
+                    writer.write(xeroExporter.export(exportTransactions, categories))
                 }
                 ExportFormat.FRESHBOOKS_CSV -> FileWriter(exportFile).use { writer ->
-                    writer.write(freshBooksExporter.export(expenses.map { it.toExportTransaction() }, categories))
+                    writer.write(freshBooksExporter.export(exportTransactions, categories))
                 }
                 ExportFormat.ACCOUNTANT_REPORT_PDF -> exportFile.outputStream().use { output ->
                     output.write(
@@ -125,30 +128,25 @@ class AccountingExportRepository @Inject constructor(
             )
         }
     }
+}
 
-    /**
-     * Fetches **all** expenses in the date range using deterministic exhaustive
-     * paging via [ExpenseRepository.getExpensesBetweenPagedForDeterministicExport].
-     *
-     * The underlying DAO query orders by `date ASC, id ASC, merchant COLLATE
-     * NOCASE ASC` which gives a stable, deterministic row order suitable for
-     * accounting exports.  Pages of [EXPORT_PAGE_SIZE] are fetched in a loop
-     * until a page returns fewer rows than the page size, guaranteeing that
-     * every matching row is included regardless of dataset size.
-     */
-    @VisibleForTesting
-    internal suspend fun fetchAllForExport(startDate: Long, endDate: Long): List<Expense> {
-        val result = mutableListOf<Expense>()
-        var offset = 0
-        while (true) {
-            val page = expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                startDate, endDate, EXPORT_PAGE_SIZE, offset
-            )
-            result.addAll(page)
-            if (page.size < EXPORT_PAGE_SIZE) break
-            offset += EXPORT_PAGE_SIZE
-        }
-        return result
-    }
+private fun ExportFormat.requiresAccountingPolicy(): Boolean = when (this) {
+    ExportFormat.QUICKBOOKS_IIF,
+    ExportFormat.XERO_CSV,
+    ExportFormat.FRESHBOOKS_CSV -> true
+    ExportFormat.ACCOUNTANT_REPORT_PDF -> false
+}
 
+private fun ExportFormat.allowsEmptyDataset(): Boolean = when (this) {
+    ExportFormat.QUICKBOOKS_IIF,
+    ExportFormat.XERO_CSV,
+    ExportFormat.FRESHBOOKS_CSV -> true
+    ExportFormat.ACCOUNTANT_REPORT_PDF -> false
+}
+
+private fun ExportFormat.displayName(): String = when (this) {
+    ExportFormat.QUICKBOOKS_IIF -> "QuickBooks"
+    ExportFormat.XERO_CSV -> "Xero"
+    ExportFormat.FRESHBOOKS_CSV -> "FreshBooks"
+    ExportFormat.ACCOUNTANT_REPORT_PDF -> "Accountant report"
 }

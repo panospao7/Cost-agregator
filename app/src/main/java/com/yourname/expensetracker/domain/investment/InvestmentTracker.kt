@@ -53,7 +53,7 @@ class InvestmentTracker @Inject constructor(
         
         for (investment in investments) {
             totalValue += investment.currentPrice * investment.quantity
-            totalInvested += investment.purchasePrice * investment.quantity
+            totalInvested += (investment.purchasePrice * investment.quantity) + investment.purchaseFees
         }
         
         val gainLoss = totalValue - totalInvested
@@ -85,7 +85,7 @@ class InvestmentTracker @Inject constructor(
             val investment = investmentDao.getById(investmentId) ?: return@withContext null
             
             val currentValue = investment.currentPrice * investment.quantity
-            val investedValue = investment.purchasePrice * investment.quantity
+            val investedValue = (investment.purchasePrice * investment.quantity) + investment.purchaseFees
             val gainLoss = currentValue - investedValue
             val gainLossPercent = if (investedValue > 0) (gainLoss / investedValue) * 100 else 0.0
             
@@ -214,10 +214,19 @@ class InvestmentTracker @Inject constructor(
             
             for (investment in investments) {
                 val values = investmentValueDao.getValuesBetween(investment.id, startDate, endDate)
+                val latestValueByDay = mutableMapOf<String, InvestmentValue>()
+
                 for (value in values) {
                     val dayKey = getDayKey(value.timestamp)
+                    val existingValue = latestValueByDay[dayKey]
+                    if (existingValue == null || value.timestamp >= existingValue.timestamp) {
+                        latestValueByDay[dayKey] = value
+                    }
+                }
+
+                for ((dayKey, latestValue) in latestValueByDay) {
                     val current = dayMap[dayKey] ?: 0.0
-                    dayMap[dayKey] = current + value.totalValue
+                    dayMap[dayKey] = current + latestValue.totalValue
                 }
             }
             

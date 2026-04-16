@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.savings
 
 import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
+import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.savings.RecommendationSource
 import com.yourname.expensetracker.domain.savings.SavingsAchievement
@@ -15,6 +16,7 @@ import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.coVerify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -29,6 +31,7 @@ import org.junit.Test
 class SavingsGoalsViewModelTest : ViewModelTestUtils() {
 
     private val savingsGoalRepository = mockk<SavingsGoalRepository>(relaxed = true)
+    private val savingsContributionHistoryRepository = mockk<SavingsContributionHistoryRepository>(relaxed = true)
     private val smartSavingsEngine = mockk<SmartSavingsEngine>(relaxed = true)
     private val gamificationEngine = mockk<SavingsGamificationEngine>(relaxed = true)
     private val lifestyleSavingsPromptUseCase = mockk<LifestyleSavingsPromptUseCase>(relaxed = true)
@@ -57,6 +60,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         )
         coEvery { gamificationEngine.getAchievements() } returns emptyList<SavingsAchievement>()
         coEvery { lifestyleSavingsPromptUseCase.evaluateAndPrompt() } returns null
+        coEvery { smartSavingsEngine.calculatePortfolioRecommendations(any(), any()) } returns emptyList()
         coEvery { smartSavingsEngine.calculateSafeToSaveAmount(any(), any()) } returns SavingsRecommendation(
             safeAmount = 0.0,
             confidence = 0.5,
@@ -184,6 +188,49 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
         assertFalse(state.isLoading)
     }
 
+    @Test
+    fun `loadGoals uses canonical portfolio recommendations without per goal duplication`() = runTest(testDispatcher) {
+        val goals = listOf(
+            createGoal(id = 1L, name = "Emergency", targetAmount = 1000.0, currentAmount = 200.0),
+            createGoal(id = 2L, name = "Vacation", targetAmount = 1500.0, currentAmount = 100.0)
+        )
+        configureRepositoryWithGoals(goals)
+        coEvery { smartSavingsEngine.calculatePortfolioRecommendations(goals, SmartSavingsEngine.TimeHorizon.MONTH) } returns listOf(
+            com.yourname.expensetracker.domain.savings.GoalSavingsRecommendation(
+                goal = goals[0],
+                recommendation = SavingsRecommendation(
+                    safeAmount = 25.0,
+                    confidence = 0.8,
+                    impact = "Good",
+                    source = RecommendationSource.BUDGET_SURPLUS
+                )
+            ),
+            com.yourname.expensetracker.domain.savings.GoalSavingsRecommendation(
+                goal = goals[1],
+                recommendation = SavingsRecommendation(
+                    safeAmount = 15.0,
+                    confidence = 0.7,
+                    impact = "Also good",
+                    source = RecommendationSource.SPENDING_PACE
+                )
+            )
+        )
+
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals(2, state.smartRecommendations.size)
+        assertEquals(25.0, state.smartRecommendations.first { it.goal.id == 1L }.recommendedAmount, 0.0001)
+        assertEquals(15.0, state.smartRecommendations.first { it.goal.id == 2L }.recommendedAmount, 0.0001)
+        coVerify(exactly = 1) {
+            smartSavingsEngine.calculatePortfolioRecommendations(goals, SmartSavingsEngine.TimeHorizon.MONTH)
+        }
+        coVerify(exactly = 0) {
+            smartSavingsEngine.calculateSafeToSaveAmount(any(), any())
+        }
+    }
+
     private fun configureRepositoryWithGoals(initialGoals: List<SavingsGoal>) {
         goalsFlow = MutableStateFlow(initialGoals)
 
@@ -221,6 +268,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     private fun createViewModel(): SavingsGoalsViewModel {
         return SavingsGoalsViewModel(
             savingsGoalRepository = savingsGoalRepository,
+            savingsContributionHistoryRepository = savingsContributionHistoryRepository,
             smartSavingsEngine = smartSavingsEngine,
             gamificationEngine = gamificationEngine,
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,

@@ -94,7 +94,12 @@ class FinancialHealthCalculator @Inject constructor(
         
         // Calculate base score components
         val budgetHealth = calculateBudgetHealthScore(budgetStatuses, todayExpenses)
-        val spendingControl = calculateDailySpendingControl(spentToday, budgetStatuses)
+        val spendingControl = calculateDailySpendingControl(
+            spentToday = spentToday,
+            budgetStatuses = budgetStatuses,
+            periodStart = todayStart,
+            periodEnd = todayEnd
+        )
         val cleanliness = calculateCleanlinessScore(pendingReviews)
         
         // Calculate bonus points
@@ -142,7 +147,13 @@ class FinancialHealthCalculator @Inject constructor(
         val volatility = calculateVolatility(dailySpending)
         
         val budgetHealth = calculateBudgetHealthScore(budgetStatuses, weekExpenses)
-        val spendingControl = calculateWeeklySpendingControl(spentThisWeek, budgetStatuses, volatility)
+        val spendingControl = calculateWeeklySpendingControl(
+            spentThisWeek = spentThisWeek,
+            budgetStatuses = budgetStatuses,
+            periodStart = weekStart,
+            periodEnd = weekEnd,
+            volatility = volatility
+        )
         val cleanliness = calculateCleanlinessScore(pendingReviews)
         
         val bonusPoints = calculateBonusPoints(
@@ -189,7 +200,13 @@ class FinancialHealthCalculator @Inject constructor(
         val volatility = calculateVolatility(dailySpending)
         
         val budgetHealth = calculateBudgetHealthScore(budgetStatuses, monthExpenses)
-        val spendingControl = calculateMonthlySpendingControl(spentThisMonth, budgetStatuses, volatility)
+        val spendingControl = calculateMonthlySpendingControl(
+            spentThisMonth = spentThisMonth,
+            budgetStatuses = budgetStatuses,
+            periodStart = monthStart,
+            periodEnd = monthEnd,
+            volatility = volatility
+        )
         val cleanliness = calculateCleanlinessScore(pendingReviews)
         
         val bonusPoints = calculateBonusPoints(
@@ -236,14 +253,16 @@ class FinancialHealthCalculator @Inject constructor(
 
     private fun calculateDailySpendingControl(
         spentToday: Double,
-        budgetStatuses: List<BudgetStatusSnapshot>
+        budgetStatuses: List<BudgetStatusSnapshot>,
+        periodStart: Long,
+        periodEnd: Long
     ): Int {
-        // Calculate daily budget target
-        val dailyBudget = if (budgetStatuses.isNotEmpty()) {
-            budgetStatuses.sumOf { it.budgetAmount } / 30.0 // Approximate daily budget
-        } else {
-            50.0 // Default daily target if no budgets
-        }
+        val dailyBudget = calculateNormalizedBudgetTarget(
+            budgetStatuses = budgetStatuses,
+            periodStart = periodStart,
+            periodEnd = periodEnd,
+            defaultTarget = 50.0
+        )
         
         val ratio = spentToday / dailyBudget
         
@@ -259,13 +278,16 @@ class FinancialHealthCalculator @Inject constructor(
     private fun calculateWeeklySpendingControl(
         spentThisWeek: Double,
         budgetStatuses: List<BudgetStatusSnapshot>,
+        periodStart: Long,
+        periodEnd: Long,
         volatility: Double
     ): Int {
-        val weeklyBudget = if (budgetStatuses.isNotEmpty()) {
-            budgetStatuses.sumOf { it.budgetAmount } / 4.0 // Weekly portion
-        } else {
-            350.0 // Default weekly target
-        }
+        val weeklyBudget = calculateNormalizedBudgetTarget(
+            budgetStatuses = budgetStatuses,
+            periodStart = periodStart,
+            periodEnd = periodEnd,
+            defaultTarget = 350.0
+        )
         
         val ratio = spentThisWeek / weeklyBudget
         val volatilityPenalty = if (volatility > 50) 5 else 0 // Penalty for high volatility
@@ -284,13 +306,16 @@ class FinancialHealthCalculator @Inject constructor(
     private fun calculateMonthlySpendingControl(
         spentThisMonth: Double,
         budgetStatuses: List<BudgetStatusSnapshot>,
+        periodStart: Long,
+        periodEnd: Long,
         volatility: Double
     ): Int {
-        val monthlyBudget = if (budgetStatuses.isNotEmpty()) {
-            budgetStatuses.sumOf { it.budgetAmount }
-        } else {
-            1500.0 // Default monthly target
-        }
+        val monthlyBudget = calculateNormalizedBudgetTarget(
+            budgetStatuses = budgetStatuses,
+            periodStart = periodStart,
+            periodEnd = periodEnd,
+            defaultTarget = 1500.0
+        )
         
         val ratio = spentThisMonth / monthlyBudget
         val volatilityPenalty = if (volatility > 50) 5 else 0
@@ -359,6 +384,44 @@ class FinancialHealthCalculator @Inject constructor(
             TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
             TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
         }
+
+    private fun calculateNormalizedBudgetTarget(
+        budgetStatuses: List<BudgetStatusSnapshot>,
+        periodStart: Long,
+        periodEnd: Long,
+        defaultTarget: Double
+    ): Double {
+        val scopedBudgets = budgetStatuses
+            .filter { it.budgetAmount > 0.0 }
+            .filter { rangesOverlap(it.periodStart, it.periodEnd, periodStart, periodEnd) }
+            .let { overlapping ->
+                val overallBudgets = overlapping.filter { it.budgetCategoryId == null }
+                if (overallBudgets.isNotEmpty()) overallBudgets else overlapping
+            }
+
+        if (scopedBudgets.isEmpty()) {
+            return defaultTarget
+        }
+
+        val normalizedTarget = scopedBudgets.sumOf { status ->
+            val overlapStart = maxOf(periodStart, status.periodStart)
+            val overlapEnd = minOf(periodEnd, status.periodEnd)
+            val overlapDuration = (overlapEnd - overlapStart).coerceAtLeast(0L)
+            val budgetWindowDuration = (status.periodEnd - status.periodStart).coerceAtLeast(1L)
+            status.budgetAmount * (overlapDuration.toDouble() / budgetWindowDuration.toDouble())
+        }
+
+        return normalizedTarget.takeIf { it > 0.0 } ?: defaultTarget
+    }
+
+    private fun rangesOverlap(
+        firstStart: Long,
+        firstEnd: Long,
+        secondStart: Long,
+        secondEnd: Long
+    ): Boolean {
+        return firstStart < secondEnd && secondStart < firstEnd
+    }
 
     private fun calculateVolatility(dailySpending: List<Double>): Double {
         if (dailySpending.isEmpty() || dailySpending.size < 2) return 0.0

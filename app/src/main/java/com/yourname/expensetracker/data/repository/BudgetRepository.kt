@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
+import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
@@ -59,69 +60,96 @@ class BudgetRepository @Inject constructor(
                 categoryDao.getAllFlow(),
                 expenseDao.getTotalSpentFlow().map { it ?: 0.0 }
             ) { budgets, categories, _ ->
-                val categoryMap = categories.associateBy { it.id }
-
-                budgets.map { budget ->
-                    val now = timeProvider.now()
-                    val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
-                    val window = PeriodRange(periodStart, periodEnd)
-
-                    // Use aggregate SQL queries instead of fetching raw rows.
-                    // getCategorySpentInPeriod / getTotalForPeriod already filter by
-                    // transactionType = 'PURCHASE' AND isNotMine = 0 and use effectiveAmount.
-                    val spent = getAggregateSpent(budget.categoryId, window.start, window.end)
-                    var limit = budget.amount
-
-                    // LOG-002: Implement Compounding Rollover - BUG-2 FIX
-                    if (budget.rollover) {
-                        val budgetFirstStart = budget.startDate
-                        val periods = mutableListOf<PeriodRange>()
-                        // Use explicit evaluation times so every completed anchored cycle is
-                        // visited in order, regardless of where "now" falls.  The anchor date
-                        // is always budget.startDate so the period arithmetic stays aligned to
-                        // the original anchor; the evaluation time advances to the *end* of
-                        // each completed window so the next call resolves the following cycle.
-                        var currentWindow = budgetCalculator.calculatePeriodWindowForTime(
-                            budget.period, budgetFirstStart, budgetFirstStart
-                        )
-                        while (currentWindow.end <= window.start) {
-                            periods.add(currentWindow)
-                            currentWindow = budgetCalculator.calculatePeriodWindowForTime(
-                                budget.period, budgetFirstStart, currentWindow.end
-                            )
-                        }
-                        var effectiveLimit = budget.amount
-                        for (period in periods) {
-                            val spentInPeriod = getAggregateSpent(budget.categoryId, period.start, period.end)
-                            val surplus = (effectiveLimit - spentInPeriod).coerceAtLeast(0.0)
-                            effectiveLimit = budget.amount + surplus
-                        }
-                        limit = effectiveLimit
-                    }
-
-                    val percent = if (limit > 0) (spent / limit).toFloat() else 0f
-                    val remaining = (limit - spent).coerceAtLeast(0.0)
-
-                    val health = when {
-                        percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
-                        percent >= budget.notifyAtCritical -> BudgetHealthStatus.CRITICAL
-                        percent >= budget.notifyAtWarning -> BudgetHealthStatus.WARNING
-                        else -> BudgetHealthStatus.ON_TRACK
-                    }
-
-                    BudgetStatus(
-                        budget = budget.copy(amount = limit), // Show effective limit
-                        category = categoryMap[budget.categoryId],
-                        spentAmount = spent,
-                        remainingAmount = remaining,
-                        percentUsed = percent,
-                        healthStatus = health,
-                        periodStart = periodStart,
-                        periodEnd = periodEnd
-                    )
-                }
+                deriveBudgetStatuses(
+                    budgets = budgets,
+                    categories = categories,
+                    evaluationTime = timeProvider.now()
+                )
             }
         }
+    }
+
+    suspend fun getBudgetStatusesAt(evaluationTime: Long): List<BudgetStatus> {
+        return deriveBudgetStatuses(
+            budgets = budgetDao.getActiveBudgets(),
+            categories = categoryDao.getAll(),
+            evaluationTime = evaluationTime
+        )
+    }
+
+    private suspend fun deriveBudgetStatuses(
+        budgets: List<Budget>,
+        categories: List<Category>,
+        evaluationTime: Long
+    ): List<BudgetStatus> {
+        val categoryMap = categories.associateBy { it.id }
+        return budgets.map { budget ->
+            createBudgetStatus(
+                budget = budget,
+                categoryMap = categoryMap,
+                evaluationTime = evaluationTime
+            )
+        }
+    }
+
+    private suspend fun createBudgetStatus(
+        budget: Budget,
+        categoryMap: Map<Long, Category>,
+        evaluationTime: Long
+    ): BudgetStatus {
+        val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, evaluationTime)
+        val window = PeriodRange(periodStart, periodEnd)
+
+        // Use aggregate SQL queries instead of fetching raw rows.
+        // getCategorySpentInPeriod / getTotalForPeriod already filter by
+        // transactionType = 'PURCHASE' AND isNotMine = 0 and use effectiveAmount.
+        val spent = getAggregateSpent(budget.categoryId, window.start, window.end)
+        var limit = budget.amount
+
+        // LOG-002: Implement Compounding Rollover - BUG-2 FIX
+        if (budget.rollover) {
+            val budgetFirstStart = budget.startDate
+            val periods = mutableListOf<PeriodRange>()
+            // Use explicit evaluation times so every completed anchored cycle is
+            // visited in order, regardless of where the evaluation time falls.
+            var currentWindow = budgetCalculator.calculatePeriodWindowForTime(
+                budget.period, budgetFirstStart, budgetFirstStart
+            )
+            while (currentWindow.end <= window.start) {
+                periods.add(currentWindow)
+                currentWindow = budgetCalculator.calculatePeriodWindowForTime(
+                    budget.period, budgetFirstStart, currentWindow.end
+                )
+            }
+            var effectiveLimit = budget.amount
+            for (period in periods) {
+                val spentInPeriod = getAggregateSpent(budget.categoryId, period.start, period.end)
+                val surplus = (effectiveLimit - spentInPeriod).coerceAtLeast(0.0)
+                effectiveLimit = budget.amount + surplus
+            }
+            limit = effectiveLimit
+        }
+
+        val percent = if (limit > 0) (spent / limit).toFloat() else 0f
+        val remaining = (limit - spent).coerceAtLeast(0.0)
+
+        val health = when {
+            percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
+            percent >= budget.notifyAtCritical -> BudgetHealthStatus.CRITICAL
+            percent >= budget.notifyAtWarning -> BudgetHealthStatus.WARNING
+            else -> BudgetHealthStatus.ON_TRACK
+        }
+
+        return BudgetStatus(
+            budget = budget.copy(amount = limit),
+            category = categoryMap[budget.categoryId],
+            spentAmount = spent,
+            remainingAmount = remaining,
+            percentUsed = percent,
+            healthStatus = health,
+            periodStart = periodStart,
+            periodEnd = periodEnd
+        )
     }
 
     /**

@@ -1,37 +1,56 @@
 package com.yourname.expensetracker.domain.savings
 
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.AutomatedSavingsRuleStateRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
-import com.yourname.expensetracker.domain.util.TimeProvider
-import io.mockk.every
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.mockk
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
-import org.junit.Assert.assertEquals
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import java.nio.file.Files
 
 class AutomatedSavingsRuleEngineGoldenTest {
 
     private lateinit var engine: AutomatedSavingsRuleEngine
+    private var stateScope: CoroutineScope? = null
 
     @Before
     fun setUp() {
         val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
         val categoryRepository = mockk<CategoryRepository>(relaxed = true)
         val savingsGoalRepository = mockk<SavingsGoalRepository>(relaxed = true)
-        val timeProvider = mockk<TimeProvider>(relaxed = true)
-        every { timeProvider.now() } returns 1_700_000_000_000L
+        val timeProvider = FakeTimeProvider(1_700_000_000_000L)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        stateScope = scope
+        val dataStore = PreferenceDataStoreFactory.create(
+            scope = scope,
+            produceFile = { Files.createTempFile("automated-savings-rule-engine-golden", ".preferences_pb").toFile() }
+        )
+        val stateRepository = AutomatedSavingsRuleStateRepository(dataStore, timeProvider)
 
         engine = AutomatedSavingsRuleEngine(
             expenseRepository = expenseRepository,
             categoryRepository = categoryRepository,
             savingsGoalRepository = savingsGoalRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            ruleStateRepository = stateRepository
         )
+    }
+
+    @After
+    fun tearDown() {
+        stateScope?.cancel()
     }
 
     @Test

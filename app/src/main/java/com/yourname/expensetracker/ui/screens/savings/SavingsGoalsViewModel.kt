@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
+import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.savings.*
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
@@ -42,6 +43,7 @@ data class SmartRecommendation(
 @HiltViewModel
 class SavingsGoalsViewModel @Inject constructor(
     private val savingsGoalRepository: SavingsGoalRepository,
+    private val savingsContributionHistoryRepository: SavingsContributionHistoryRepository,
     private val smartSavingsEngine: SmartSavingsEngine,
     private val gamificationEngine: SavingsGamificationEngine,
     private val lifestyleSavingsPromptUseCase: LifestyleSavingsPromptUseCase,
@@ -74,16 +76,18 @@ class SavingsGoalsViewModel @Inject constructor(
                     val level = gamificationEngine.calculateLevel(totalSaved)
                     val title = gamificationEngine.getLevelTitle(level)
                     
+                    val portfolioRecommendations = smartSavingsEngine.calculatePortfolioRecommendations(
+                        goals = goals,
+                        timeHorizon = SmartSavingsEngine.TimeHorizon.MONTH
+                    )
+
                     // Generate smart recommendations
-                    val recommendations = goals.mapNotNull { goal ->
-                        val rec = smartSavingsEngine.calculateSafeToSaveAmount(
-                            goal = goal,
-                            timeHorizon = SmartSavingsEngine.TimeHorizon.MONTH
-                        )
-                        
+                    val recommendations = portfolioRecommendations.mapNotNull { goalRecommendation ->
+                        val rec = goalRecommendation.recommendation
+
                         if (rec.safeAmount > 5.0) { // Only show meaningful recommendations
                             SmartRecommendation(
-                                goal = goal,
+                                goal = goalRecommendation.goal,
                                 recommendedAmount = rec.safeAmount,
                                 confidence = rec.confidence,
                                 impact = rec.impact,
@@ -160,7 +164,17 @@ class SavingsGoalsViewModel @Inject constructor(
             
             // Apply allocations to goals atomically — no read-modify-write race
             for (allocation in recommendation.goalAllocations) {
-                savingsGoalRepository.addToGoalAmount(allocation.goalId, allocation.suggestedAllocation)
+                val wasAdded = savingsGoalRepository.addToGoalAmount(
+                    allocation.goalId,
+                    allocation.suggestedAllocation
+                )
+                if (wasAdded) {
+                    savingsContributionHistoryRepository.recordContribution(
+                        goalId = allocation.goalId,
+                        amount = allocation.suggestedAllocation,
+                        source = "sweep"
+                    )
+                }
             }
             
             // Clear the recommendation
@@ -209,8 +223,15 @@ class SavingsGoalsViewModel @Inject constructor(
 
     fun contributeToGoal(goalId: Long, amount: Double) {
         viewModelScope.launch {
-            savingsGoalRepository.addToGoalAmount(goalId, amount)
-            loadGamification()
+            val wasAdded = savingsGoalRepository.addToGoalAmount(goalId, amount)
+            if (wasAdded) {
+                savingsContributionHistoryRepository.recordContribution(
+                    goalId = goalId,
+                    amount = amount,
+                    source = "manual"
+                )
+                loadGamification()
+            }
         }
     }
 

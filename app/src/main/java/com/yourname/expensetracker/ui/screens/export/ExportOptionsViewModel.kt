@@ -4,9 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.ExportDataRepository
+import com.yourname.expensetracker.domain.export.AccountingExportPolicy
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
+import com.yourname.expensetracker.domain.export.ExportTransaction
 import com.yourname.expensetracker.domain.export.toExportTransaction
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -52,11 +54,11 @@ data class ExportFormat(
 @HiltViewModel
 class ExportOptionsViewModel @Inject constructor(
     private val exportDataRepository: ExportDataRepository,
+    private val accountingExportPolicy: AccountingExportPolicy,
     private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     companion object {
-        private const val PAGE_SIZE = 500
         private const val PREVIEW_MAX_CHARS = 500
     }
 
@@ -112,20 +114,40 @@ class ExportOptionsViewModel @Inject constructor(
                 val categories = withContext(Dispatchers.IO) { exportDataRepository.getCategoryNameMap() }
                 val extension = extensionFor(_uiState.value.selectedFormat)
                 val exportFile = exportDataRepository.createExportFile(extension, timeProvider.now())
-                val rowCount = withContext(Dispatchers.IO) {
-                    exportDataRepository.countExpensesBetween(_uiState.value.startDate, _uiState.value.endDate)
+                val expenses = withContext(Dispatchers.IO) {
+                    exportDataRepository.getExpensesBetweenForExport(
+                        _uiState.value.startDate,
+                        _uiState.value.endDate
+                    )
                 }
 
+                if (expenses.isEmpty() && !_uiState.value.selectedFormat.allowsEmptyDataset()) {
+                    throw IllegalArgumentException("No expenses found for selected date range")
+                }
+
+                val rowCount = expenses.size
+
                 val previewCollector = PreviewCollector(PREVIEW_MAX_CHARS)
+                val accountingTransactions = mutableListOf<ExportTransaction>()
+
+                if (_uiState.value.selectedFormat.requiresAccountingPolicy()) {
+                    accountingTransactions += expenses.map { it.toExportTransaction() }
+                    if (accountingTransactions.isNotEmpty()) {
+                        accountingExportPolicy.validateAccountingDataset(
+                            accountingTransactions,
+                            _uiState.value.selectedFormat.accountingExportDisplayName()
+                        )
+                    }
+                }
 
                 withContext(Dispatchers.IO) {
                     exportFile.writer().use { writer ->
                         when (_uiState.value.selectedFormat) {
-                            "json" -> streamJsonExport(writer, categories, rowCount, previewCollector)
-                            "xero" -> streamXeroExport(writer, categories, previewCollector)
-                            "quickbooks" -> streamQuickBooksExport(writer, categories, previewCollector)
-                            "freshbooks" -> streamFreshBooksExport(writer, categories, previewCollector)
-                            else -> streamGenericCsvExport(writer, categories, previewCollector)
+                            "json" -> streamJsonExport(writer, expenses, categories, rowCount, previewCollector)
+                            "xero" -> streamXeroExport(writer, expenses, categories, previewCollector)
+                            "quickbooks" -> streamQuickBooksExport(writer, expenses, categories, previewCollector)
+                            "freshbooks" -> streamFreshBooksExport(writer, expenses, categories, previewCollector)
+                            else -> streamGenericCsvExport(writer, expenses, categories, previewCollector)
                         }
                     }
                 }
@@ -142,7 +164,7 @@ class ExportOptionsViewModel @Inject constructor(
                 Timber.e(e, "Failed generating export")
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Failed to generate export: ${e.message}"
+                    error = e.toUserMessage()
                 )
             }
         }
@@ -150,6 +172,7 @@ class ExportOptionsViewModel @Inject constructor(
 
     private suspend fun streamGenericCsvExport(
         writer: Appendable,
+        expenses: List<Expense>,
         categories: Map<Long, String>,
         preview: PreviewCollector
     ) {
@@ -159,24 +182,23 @@ class ExportOptionsViewModel @Inject constructor(
         writer.append(header)
         preview.append(header)
 
-        forEachExpensePage { page ->
-            page.forEach { expense ->
-                val line = buildString {
-                    val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
-                    val merchant = escapeCsv(expense.merchant)
-                    val amount = expense.amount
-                    val category = escapeCsv(categories[expense.categoryId] ?: "Uncategorized")
-                    val notes = escapeCsv(expense.notes ?: "")
-                    append("$date,$merchant,$amount,$category,$notes,${expense.id}\n")
-                }
-                writer.append(line)
-                preview.append(line)
+        expenses.forEach { expense ->
+            val line = buildString {
+                val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
+                val merchant = escapeCsv(expense.merchant)
+                val amount = expense.amount
+                val category = escapeCsv(categories[expense.categoryId] ?: "Uncategorized")
+                val notes = escapeCsv(expense.notes ?: "")
+                append("$date,$merchant,$amount,$category,$notes,${expense.id}\n")
             }
+            writer.append(line)
+            preview.append(line)
         }
     }
 
     private suspend fun streamJsonExport(
         writer: Appendable,
+        expenses: List<Expense>,
         categories: Map<Long, String>,
         rowCount: Int,
         preview: PreviewCollector
@@ -202,31 +224,29 @@ class ExportOptionsViewModel @Inject constructor(
         preview.append(prefix)
 
         var first = true
-        forEachExpensePage { page ->
-            page.forEach { expense ->
-                val row = buildString {
-                    if (!first) append(',')
-                    first = false
+        expenses.forEach { expense ->
+            val row = buildString {
+                if (!first) append(',')
+                first = false
 
-                    val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
-                    val category = categories[expense.categoryId] ?: "Uncategorized"
+                val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
+                val category = categories[expense.categoryId] ?: "Uncategorized"
 
-                    append("{")
-                    append("\"id\":").append(expense.id).append(',')
-                    append("\"date\":\"").append(escapeJson(date)).append("\",")
-                    append("\"timestamp\":").append(expense.date).append(',')
-                    append("\"merchant\":\"").append(escapeJson(expense.merchant)).append("\",")
-                    append("\"amount\":").append(formatJsonNumber(expense.amount)).append(',')
-                    append("\"currency\":\"").append(escapeJson(expense.currency)).append("\",")
-                    append("\"category\":\"").append(escapeJson(category)).append("\",")
-                    append("\"notes\":")
-                    if (expense.notes == null) append("null")
-                    else append("\"").append(escapeJson(expense.notes)).append("\"")
-                    append("}")
-                }
-                writer.append(row)
-                preview.append(row)
+                append("{")
+                append("\"id\":").append(expense.id).append(',')
+                append("\"date\":\"").append(escapeJson(date)).append("\",")
+                append("\"timestamp\":").append(expense.date).append(',')
+                append("\"merchant\":\"").append(escapeJson(expense.merchant)).append("\",")
+                append("\"amount\":").append(formatJsonNumber(expense.amount)).append(',')
+                append("\"currency\":\"").append(escapeJson(expense.currency)).append("\",")
+                append("\"category\":\"").append(escapeJson(category)).append("\",")
+                append("\"notes\":")
+                if (expense.notes == null) append("null")
+                else append("\"").append(escapeJson(expense.notes)).append("\"")
+                append("}")
             }
+            writer.append(row)
+            preview.append(row)
         }
 
         writer.append("]}")
@@ -235,6 +255,7 @@ class ExportOptionsViewModel @Inject constructor(
 
     private suspend fun streamXeroExport(
         writer: Appendable,
+        expenses: List<Expense>,
         categories: Map<Long, String>,
         preview: PreviewCollector
     ) {
@@ -243,19 +264,18 @@ class ExportOptionsViewModel @Inject constructor(
         exporter.writeHeader(writer)
         preview.append(header)
 
-        forEachExpensePage { page ->
-            page.forEach { expense ->
-                val line = buildString {
-                    exporter.writeExpense(this, expense.toExportTransaction(), categories)
-                }
-                writer.append(line)
-                preview.append(line)
+        expenses.forEach { expense ->
+            val line = buildString {
+                exporter.writeExpense(this, expense.toExportTransaction(), categories)
             }
+            writer.append(line)
+            preview.append(line)
         }
     }
 
     private suspend fun streamQuickBooksExport(
         writer: Appendable,
+        expenses: List<Expense>,
         categories: Map<Long, String>,
         preview: PreviewCollector
     ) {
@@ -266,19 +286,18 @@ class ExportOptionsViewModel @Inject constructor(
         exporter.writeHeader(writer)
         preview.append(header)
 
-        forEachExpensePage { page ->
-            page.forEach { expense ->
-                val block = buildString {
-                    exporter.writeExpense(this, expense.toExportTransaction(), categories)
-                }
-                writer.append(block)
-                preview.append(block)
+        expenses.forEach { expense ->
+            val block = buildString {
+                exporter.writeExpense(this, expense.toExportTransaction(), categories)
             }
+            writer.append(block)
+            preview.append(block)
         }
     }
 
     private suspend fun streamFreshBooksExport(
         writer: Appendable,
+        expenses: List<Expense>,
         categories: Map<Long, String>,
         preview: PreviewCollector
     ) {
@@ -287,30 +306,12 @@ class ExportOptionsViewModel @Inject constructor(
         exporter.writeHeader(writer)
         preview.append(header)
 
-        forEachExpensePage { page ->
-            page.forEach { expense ->
-                val line = buildString {
-                    exporter.writeExpense(this, expense.toExportTransaction(), categories)
-                }
-                writer.append(line)
-                preview.append(line)
+        expenses.forEach { expense ->
+            val line = buildString {
+                exporter.writeExpense(this, expense.toExportTransaction(), categories)
             }
-        }
-    }
-
-    private suspend fun forEachExpensePage(block: (List<Expense>) -> Unit) {
-        var offset = 0
-        while (true) {
-            val page = exportDataRepository.getExpensesBetweenPaged(
-                _uiState.value.startDate,
-                _uiState.value.endDate,
-                PAGE_SIZE,
-                offset
-            )
-            if (page.isEmpty()) break
-            block(page)
-            offset += page.size
-            if (page.size < PAGE_SIZE) break
+            writer.append(line)
+            preview.append(line)
         }
     }
 
@@ -392,4 +393,23 @@ private class PreviewCollector(private val maxChars: Int) {
             truncated = true
         }
     }
+}
+
+private fun String.requiresAccountingPolicy(): Boolean = this == "xero" || this == "quickbooks" || this == "freshbooks"
+
+private fun String.allowsEmptyDataset(): Boolean = when (this) {
+    "csv", "json", "xero", "quickbooks", "freshbooks" -> true
+    else -> false
+}
+
+private fun String.accountingExportDisplayName(): String = when (this) {
+    "xero" -> "Xero"
+    "quickbooks" -> "QuickBooks"
+    "freshbooks" -> "FreshBooks"
+    else -> this
+}
+
+private fun Exception.toUserMessage(): String = when (this) {
+    is IllegalArgumentException -> message ?: "Export data is invalid for the selected format."
+    else -> "Failed to generate export: ${message ?: "Unknown error"}"
 }

@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.domain.savings
 
+import com.yourname.expensetracker.data.repository.SavingsContributionEvent
+import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
@@ -29,52 +32,24 @@ data class SavingsAchievement(
 @Singleton
 class SavingsGamificationEngine @Inject constructor(
     private val savingsGoalRepository: SavingsGoalRepository,
+    private val contributionHistoryRepository: SavingsContributionHistoryRepository,
     private val timeProvider: TimeProvider
 ) {
     suspend fun calculateStreak(userId: String = "default"): SavingsStreak {
-        val goals = savingsGoalRepository.observeSavingsGoals().first()
-        
-        // Find the most recent contribution across all goals
-        var lastContributionDate: Long? = null
-        var totalContributions = 0
-        var totalThisMonth = 0.0
-        
-        val now = timeProvider.now()
-        val monthStart = now - (30L * 24 * 60 * 60 * 1000)
-        
-        for (goal in goals) {
-            // Check if goal was recently updated (contribution made)
-            if (goal.currentAmount > 0) {
-                // In real implementation, would track contribution history
-                // For now, estimate based on goal creation date and current amount
-                if (goal.createdAt > monthStart) {
-                    totalThisMonth += goal.currentAmount
-                    totalContributions++
-                }
-                
-                if (lastContributionDate == null || goal.createdAt > lastContributionDate) {
-                    lastContributionDate = goal.createdAt
-                }
-            }
-        }
-        
-        // Calculate current streak (simplified)
-        val currentStreak = if (lastContributionDate != null) {
-            val daysSinceLastContribution = (now - lastContributionDate) / (24 * 60 * 60 * 1000)
-            if (daysSinceLastContribution <= 1) 5 else 0 // Placeholder logic
-        } else 0
-        
+        val contributionMetrics = analyzeContributionHistory()
+
         return SavingsStreak(
-            currentStreakDays = currentStreak,
-            personalBestDays = 30, // Would be stored and retrieved
-            lastSavingsDate = lastContributionDate,
-            monthlyContributions = totalContributions,
-            totalContributedThisMonth = totalThisMonth
+            currentStreakDays = contributionMetrics.currentStreakDays,
+            personalBestDays = contributionMetrics.personalBestDays,
+            lastSavingsDate = contributionMetrics.lastSavingsDate,
+            monthlyContributions = contributionMetrics.monthlyContributions,
+            totalContributedThisMonth = contributionMetrics.totalContributedThisMonth
         )
     }
     
     suspend fun getAchievements(userId: String = "default"): List<SavingsAchievement> {
         val goals = savingsGoalRepository.observeSavingsGoals().first()
+        val contributionMetrics = analyzeContributionHistory()
         
         var totalSaved = 0.0
         for (goal in goals) {
@@ -104,9 +79,13 @@ class SavingsGamificationEngine @Inject constructor(
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_WEEK_WARRIOR),
                 description = "Save for 7 consecutive days",
                 icon = "🔥",
-                isUnlocked = false, // Would track daily
-                unlockedAt = null,
-                progress = 0.3,
+                isUnlocked = contributionMetrics.sevenDayStreakUnlockedAt != null,
+                unlockedAt = contributionMetrics.sevenDayStreakUnlockedAt,
+                progress = if (contributionMetrics.sevenDayStreakUnlockedAt != null) {
+                    1.0
+                } else {
+                    (contributionMetrics.currentStreakDays / 7.0).coerceIn(0.0, 1.0)
+                },
                 requirement = "7 day streak"
             ),
             SavingsAchievement(
@@ -158,4 +137,121 @@ class SavingsGamificationEngine @Inject constructor(
             else -> "Savings Legend"
         }
     }
+
+    private suspend fun analyzeContributionHistory(): ContributionMetrics {
+        val now = timeProvider.now()
+        val contributions = contributionHistoryRepository.getAllContributions()
+        if (contributions.isEmpty()) {
+            return ContributionMetrics()
+        }
+
+        val sortedContributions = contributions.sortedBy { it.timestamp }
+        val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(now)
+        val currentMonthContributions = sortedContributions.filter {
+            it.timestamp >= monthStart && it.timestamp < monthEnd
+        }
+        val contributionDays = sortedContributions
+            .map { TimePeriodUtils.getStartOfDay(it.timestamp) }
+            .distinct()
+            .sorted()
+
+        return ContributionMetrics(
+            currentStreakDays = calculateCurrentStreakDays(contributionDays, now),
+            personalBestDays = calculatePersonalBestDays(contributionDays),
+            lastSavingsDate = sortedContributions.lastOrNull()?.timestamp,
+            monthlyContributions = currentMonthContributions.size,
+            totalContributedThisMonth = currentMonthContributions.sumOf { it.amount },
+            sevenDayStreakUnlockedAt = findStreakUnlockedAt(sortedContributions, 7)
+        )
+    }
+
+    private fun calculateCurrentStreakDays(contributionDays: List<Long>, referenceTime: Long): Int {
+        if (contributionDays.isEmpty()) return 0
+
+        val today = TimePeriodUtils.getStartOfDay(referenceTime)
+        val yesterday = TimePeriodUtils.addDays(today, -1)
+        val latestContributionDay = contributionDays.last()
+        if (latestContributionDay < yesterday) return 0
+
+        var streak = 1
+        var expectedPreviousDay = TimePeriodUtils.addDays(latestContributionDay, -1)
+
+        for (index in contributionDays.lastIndex - 1 downTo 0) {
+            val currentDay = contributionDays[index]
+            if (currentDay == expectedPreviousDay) {
+                streak++
+                expectedPreviousDay = TimePeriodUtils.addDays(expectedPreviousDay, -1)
+            } else if (currentDay < expectedPreviousDay) {
+                break
+            }
+        }
+
+        return streak
+    }
+
+    private fun calculatePersonalBestDays(contributionDays: List<Long>): Int {
+        if (contributionDays.isEmpty()) return 0
+
+        var best = 1
+        var current = 1
+
+        for (index in 1 until contributionDays.size) {
+            current = if (contributionDays[index] == TimePeriodUtils.addDays(contributionDays[index - 1], 1)) {
+                current + 1
+            } else {
+                1
+            }
+            best = maxOf(best, current)
+        }
+
+        return best
+    }
+
+    private fun findStreakUnlockedAt(
+        contributions: List<SavingsContributionEvent>,
+        targetDays: Int
+    ): Long? {
+        if (targetDays <= 0 || contributions.isEmpty()) return null
+
+        val latestTimestampByDay = linkedMapOf<Long, Long>()
+        for (contribution in contributions) {
+            val contributionDay = TimePeriodUtils.getStartOfDay(contribution.timestamp)
+            val currentLatest = latestTimestampByDay[contributionDay]
+            if (currentLatest == null || contribution.timestamp > currentLatest) {
+                latestTimestampByDay[contributionDay] = contribution.timestamp
+            }
+        }
+
+        val contributionDays = latestTimestampByDay.keys.sorted()
+        var runLength = 0
+        var previousDay: Long? = null
+
+        for (contributionDay in contributionDays) {
+            runLength = if (
+                previousDay != null &&
+                contributionDay == TimePeriodUtils.addDays(previousDay, 1)
+            ) {
+                runLength + 1
+            } else {
+                1
+            }
+
+            if (runLength >= targetDays) {
+                return latestTimestampByDay[contributionDay]
+            }
+
+            previousDay = contributionDay
+        }
+
+        return null
+    }
+
+    private data class ContributionMetrics(
+        val currentStreakDays: Int = 0,
+        val personalBestDays: Int = 0,
+        val lastSavingsDate: Long? = null,
+        val monthlyContributions: Int = 0,
+        val totalContributedThisMonth: Double = 0.0,
+        val sevenDayStreakUnlockedAt: Long? = null
+    )
 }

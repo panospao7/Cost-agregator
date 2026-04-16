@@ -7,6 +7,8 @@ import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.export.AccountantReportPdfExporter
+import com.yourname.expensetracker.domain.export.AccountingExportPolicy
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
@@ -16,7 +18,6 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
-import kotlinx.coroutines.flow.flowOf
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -36,12 +37,13 @@ import java.time.ZoneId
  * 1. Deterministic export row order (date ASC, id ASC, merchant COLLATE NOCASE ASC).
  * 2. No silent truncation — pages are fetched until exhausted.
  *
- * All paging tests below exercise the real production [AccountingExportRepository.fetchAllForExport]
- * method (exposed as `internal` for testability) rather than re-implementing the loop in test code.
+ * All paging tests below exercise the real production [DeterministicExpenseExportPager.fetchAllBetween]
+ * method rather than re-implementing the loop in test code.
  */
 class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
 
     private lateinit var expenseRepository: ExpenseRepository
+    private lateinit var deterministicExpenseExportPager: DeterministicExpenseExportPager
     private lateinit var repository: AccountingExportRepository
 
     /** Temp directory used as a fake [Context.getCacheDir] for production-path tests. */
@@ -51,13 +53,16 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     override fun setUp() {
         super.setUp()
         expenseRepository = mockk(relaxed = true)
+        deterministicExpenseExportPager = DeterministicExpenseExportPager(expenseRepository)
 
         repository = AccountingExportRepository(
-            expenseRepository = expenseRepository,
             categoryRepository = categoryRepository,
+            deterministicExpenseExportPager = deterministicExpenseExportPager,
+            accountingExportPolicy = AccountingExportPolicy(),
             quickBooksExporter = QuickBooksIIFExporter(),
             xeroExporter = XeroCSVExporter(),
-            freshBooksExporter = FreshBooksExporter()
+            freshBooksExporter = FreshBooksExporter(),
+            accountantReportPdfExporter = AccountantReportPdfExporter()
         )
 
         tempCacheDir = createTempDir("export_test_cache")
@@ -92,7 +97,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     // ── Exhaustive paging contract tests ───────────────────────────────────
 
     /**
-     * When the dataset is smaller than [AccountingExportRepository.EXPORT_PAGE_SIZE],
+     * When the dataset is smaller than [DeterministicExpenseExportPager.EXPORT_PAGE_SIZE],
      * only a single page request should be made (offset = 0), and the result
      * should contain every row.
      */
@@ -114,12 +119,12 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
 
         coEvery {
             expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start, end, AccountingExportRepository.EXPORT_PAGE_SIZE, 0
+                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, 0
             )
         } returns expenses
 
         // Exercise the real production paging loop
-        val result = repository.fetchAllForExport(start, end)
+        val result = deterministicExpenseExportPager.fetchAllBetween(start, end)
 
         assertEquals(100, result.size)
         assertEquals(1L, result.first().id)
@@ -128,7 +133,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         // Only one page call should have been made (sub-page-size result terminates the loop)
         coVerify(exactly = 1) {
             expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start, end, AccountingExportRepository.EXPORT_PAGE_SIZE, 0
+                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, 0
             )
         }
         // Verify the old uncapped getExpensesBetween is NOT called
@@ -137,7 +142,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
 
     /**
      * A.9 Batch 6 regression: export must include all expenses even when
-     * the count exceeds [AccountingExportRepository.EXPORT_PAGE_SIZE].
+     * the count exceeds [DeterministicExpenseExportPager.EXPORT_PAGE_SIZE].
      *
      * This test simulates 2 full pages + 1 partial page (2000 + 2000 + 500 = 4500 rows)
      * and verifies that the production exhaustive paging loop fetches all 3 pages.
@@ -146,7 +151,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     fun `fetchAllForExport multi page - exhaustive paging returns all rows`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
-        val pageSize = AccountingExportRepository.EXPORT_PAGE_SIZE
+        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
 
         val allExpenses = (1..4500).map { i ->
             Expense(
@@ -175,7 +180,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         } returns allExpenses.subList(2 * pageSize, allExpenses.size)
 
         // Exercise the real production paging loop
-        val result = repository.fetchAllForExport(start, end)
+        val result = deterministicExpenseExportPager.fetchAllBetween(start, end)
 
         assertEquals("All 4500 rows must be returned across 3 pages", 4500, result.size)
         assertEquals("First row id must be 1", 1L, result.first().id)
@@ -207,19 +212,19 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
 
         coEvery {
             expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start, end, AccountingExportRepository.EXPORT_PAGE_SIZE, 0
+                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, 0
             )
         } returns emptyList()
 
         // Exercise the real production paging loop
-        val result = repository.fetchAllForExport(start, end)
+        val result = deterministicExpenseExportPager.fetchAllBetween(start, end)
 
         assertTrue(result.isEmpty())
 
         // Only one page call should have been made (empty result terminates the loop)
         coVerify(exactly = 1) {
             expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start, end, AccountingExportRepository.EXPORT_PAGE_SIZE, 0
+                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, 0
             )
         }
     }
@@ -227,13 +232,13 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     /**
      * Boundary condition: exactly [EXPORT_PAGE_SIZE] rows triggers a second
      * page call (which returns empty) to confirm exhaustion, and the result
-     * still contains exactly [EXPORT_PAGE_SIZE] rows.
+     * still contains exactly [DeterministicExpenseExportPager.EXPORT_PAGE_SIZE] rows.
      */
     @Test
     fun `fetchAllForExport exact page boundary triggers termination call`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
-        val pageSize = AccountingExportRepository.EXPORT_PAGE_SIZE
+        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
 
         val expenses = (1..pageSize).map { i ->
             Expense(
@@ -257,7 +262,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         } returns emptyList()
 
         // Exercise the real production paging loop
-        val result = repository.fetchAllForExport(start, end)
+        val result = deterministicExpenseExportPager.fetchAllBetween(start, end)
 
         assertEquals(pageSize, result.size)
         assertEquals(1L, result.first().id)
@@ -312,12 +317,12 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
 
         coEvery {
             expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start, end, AccountingExportRepository.EXPORT_PAGE_SIZE, 0
+                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, 0
             )
         } returns expenses
 
         // Exercise the real production paging loop
-        val result = repository.fetchAllForExport(start, end)
+        val result = deterministicExpenseExportPager.fetchAllBetween(start, end)
 
         assertEquals(3, result.size)
         assertEquals("CoffeeShop", result[0].merchant)
@@ -340,7 +345,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     fun `exportExpenses multi-page Xero CSV contains all rows end-to-end`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
-        val pageSize = AccountingExportRepository.EXPORT_PAGE_SIZE
+        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
         val totalRows = pageSize * 2 + 500  // 4500
 
         val allExpenses = (1..totalRows).map { i ->
@@ -419,7 +424,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     fun `exportExpenses multi-page QuickBooks IIF contains all rows end-to-end`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
-        val pageSize = AccountingExportRepository.EXPORT_PAGE_SIZE
+        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
         val totalRows = pageSize  // exact boundary
 
         val allExpenses = (1..totalRows).map { i ->
@@ -487,7 +492,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             expenseRepository.getExpensesBetweenPagedForDeterministicExport(
                 start,
                 end,
-                AccountingExportRepository.EXPORT_PAGE_SIZE,
+                DeterministicExpenseExportPager.EXPORT_PAGE_SIZE,
                 0
             )
         } returns listOf(expense)
@@ -507,33 +512,154 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     }
 
     /**
-     * Batch 6 production-path: [exportExpenses] with an empty dataset returns
-     * [ExportResult.success] == false with an appropriate error message, and
-     * only one paged call is issued (no old path).
+     * ISSUE-4 regression: accounting exports must treat an empty dataset the
+     * same way as the UI path and emit a header-only file instead of failing.
      */
     @Test
-    fun `exportExpenses empty dataset returns failure via production path`() = runTest {
+    fun `exportExpenses empty accounting dataset writes header only export`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
 
         coEvery {
             expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start, end, AccountingExportRepository.EXPORT_PAGE_SIZE, 0
+                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, 0
             )
         } returns emptyList()
 
         val ctx = fakeContext()
         val result = repository.exportExpenses(ctx, start, end, ExportFormat.FRESHBOOKS_CSV)
 
-        assertTrue("Empty export must report failure", !result.success)
-        assertNotNull("Error message must be present", result.errorMessage)
+        assertTrue("Empty accounting export must succeed", result.success)
         assertEquals(0, result.recordCount)
+        assertNotNull("Header-only export must still produce a file", result.filePath)
+        val exportedFile = File(result.filePath!!)
+        assertTrue("Header-only export file must exist", exportedFile.exists())
+        assertEquals(listOf("date,description,amount,category,vendor"), exportedFile.readLines())
 
         // Only one paged call — loop terminated immediately
         coVerify(exactly = 1) {
             expenseRepository.getExpensesBetweenPagedForDeterministicExport(any(), any(), any(), any())
         }
         coVerify(exactly = 0) { expenseRepository.getExpensesBetween(any(), any()) }
+    }
+
+    @Test
+    fun `exportExpenses rejects mixed currency accounting dataset`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val expenses = listOf(
+            Expense(
+                id = 1L,
+                amount = 25.0,
+                currency = "EUR",
+                merchant = "Cafe",
+                transactionType = TransactionType.PURCHASE,
+                date = start + 1_000L,
+                categoryId = 1L
+            ),
+            Expense(
+                id = 2L,
+                amount = 40.0,
+                currency = "USD",
+                merchant = "Taxi",
+                transactionType = TransactionType.PURCHASE,
+                date = start + 2_000L,
+                categoryId = 2L
+            )
+        )
+
+        coEvery {
+            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
+                start,
+                end,
+                DeterministicExpenseExportPager.EXPORT_PAGE_SIZE,
+                0
+            )
+        } returns expenses
+
+        val result = repository.exportExpenses(fakeContext(), start, end, ExportFormat.XERO_CSV)
+
+        assertTrue("Mixed-currency accounting export must fail", !result.success)
+        assertTrue(result.errorMessage.orEmpty().contains("single-currency dataset"))
+        assertEquals(0, result.recordCount)
+    }
+
+    @Test
+    fun `exportExpenses rejects non purchase accounting dataset`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val expenses = listOf(
+            Expense(
+                id = 1L,
+                amount = 75.0,
+                merchant = "ATM",
+                transactionType = TransactionType.WITHDRAWAL,
+                date = start + 1_000L,
+                categoryId = 1L
+            )
+        )
+
+        coEvery {
+            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
+                start,
+                end,
+                DeterministicExpenseExportPager.EXPORT_PAGE_SIZE,
+                0
+            )
+        } returns expenses
+
+        val result = repository.exportExpenses(fakeContext(), start, end, ExportFormat.QUICKBOOKS_IIF)
+
+        assertTrue("Non-PURCHASE accounting export must fail", !result.success)
+        assertTrue(result.errorMessage.orEmpty().contains("PURCHASE transactions only"))
+        assertTrue(result.errorMessage.orEmpty().contains("WITHDRAWAL"))
+        assertEquals(0, result.recordCount)
+    }
+
+    @Test
+    fun `exportExpenses accountant report pdf writes pdf output`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val expenses = listOf(
+            Expense(
+                id = 1L,
+                amount = 650.0,
+                currency = "EUR",
+                merchant = "Laptop Store",
+                transactionType = TransactionType.PURCHASE,
+                date = start + 1_000L,
+                categoryId = 1L
+            ),
+            Expense(
+                id = 2L,
+                amount = 85.0,
+                currency = "USD",
+                merchant = "Client Lunch",
+                transactionType = TransactionType.TRANSFER,
+                date = start + 2_000L,
+                categoryId = 2L
+            )
+        )
+
+        coEvery {
+            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
+                start,
+                end,
+                DeterministicExpenseExportPager.EXPORT_PAGE_SIZE,
+                0
+            )
+        } returns expenses
+
+        val result = repository.exportExpenses(fakeContext(), start, end, ExportFormat.ACCOUNTANT_REPORT_PDF)
+
+        assertTrue("PDF export must succeed", result.success)
+        assertEquals(expenses.size, result.recordCount)
+        assertTrue(result.filePath.orEmpty().endsWith(".pdf"))
+
+        val pdfBytes = File(result.filePath!!).readBytes()
+        assertTrue("PDF file must not be empty", pdfBytes.isNotEmpty())
+        val header = pdfBytes.copyOfRange(0, minOf(4, pdfBytes.size)).toString(Charsets.US_ASCII)
+        assertEquals("%PDF", header)
     }
 
     /**
@@ -545,7 +671,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     fun `exportExpenses multi-page FreshBooks CSV contains all rows end-to-end`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
-        val pageSize = AccountingExportRepository.EXPORT_PAGE_SIZE
+        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
         val totalRows = pageSize + 7  // slight overflow onto page 2
 
         val allExpenses = (1..totalRows).map { i ->

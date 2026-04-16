@@ -1,10 +1,14 @@
 package com.yourname.expensetracker.di
 
+import android.content.Context
+import com.yourname.expensetracker.data.repository.AutomatedSavingsRuleStateRepository
+import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
 import com.yourname.expensetracker.domain.savings.*
 import com.yourname.expensetracker.domain.savings.SavingsGoalRepository as DomainSavingsGoalRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
@@ -34,25 +38,49 @@ object SavingsModule {
     
     @Provides
     @Singleton
+    fun provideAutomatedSavingsRuleStateRepository(
+        @ApplicationContext context: Context,
+        timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+    ): AutomatedSavingsRuleStateRepository = AutomatedSavingsRuleStateRepository(
+        AutomatedSavingsRuleStateRepository.createDataStore(context),
+        timeProvider
+    )
+
+    @Provides
+    @Singleton
+    fun provideSavingsContributionHistoryRepository(
+        @ApplicationContext context: Context,
+        timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+    ): SavingsContributionHistoryRepository = SavingsContributionHistoryRepository(
+        SavingsContributionHistoryRepository.createDataStore(context),
+        timeProvider
+    )
+
+    @Provides
+    @Singleton
     fun provideAutomatedSavingsRuleEngine(
         expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
         categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
         savingsGoalRepository: com.yourname.expensetracker.data.repository.SavingsGoalRepository,
-        timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+        timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
+        ruleStateRepository: AutomatedSavingsRuleStateRepository
     ): AutomatedSavingsRuleEngine = AutomatedSavingsRuleEngine(
         expenseRepository,
         categoryRepository,
         savingsGoalRepository,
-        timeProvider
+        timeProvider,
+        ruleStateRepository
     )
     
     @Provides
     @Singleton
     fun provideSavingsGamificationEngine(
         savingsGoalRepository: DomainSavingsGoalRepository,
+        savingsContributionHistoryRepository: SavingsContributionHistoryRepository,
         timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
     ): SavingsGamificationEngine = SavingsGamificationEngine(
         savingsGoalRepository,
+        savingsContributionHistoryRepository,
         timeProvider
     )
 }
