@@ -1,13 +1,14 @@
 package com.yourname.expensetracker.domain.groups
 
 import com.yourname.expensetracker.data.database.entity.GroupExpense
-import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.data.database.entity.GroupMember
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupsRepository
+import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -41,143 +42,104 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
         categoryId: Long? = null,
         userId: String = "default"
     ): BudgetSpendBreakdown = withContext(Dispatchers.IO) {
-        try {
-            val allPeriodExpenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
-            val expenseCategoryMap = allPeriodExpenses.associateBy { it.id }
+        val allPeriodExpenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
+        val expenseCategoryMap = allPeriodExpenses.associateBy { it.id }
+        val activeGroups = groupsRepository.getActiveGroupsWithDetails()
 
-            // Get personal (non-shared) expenses for the period
-            val personalExpenses = allPeriodExpenses
-                .filter { expense ->
-                    // Filter out shared expenses linked to group expenses
-                    !expense.isSharedExpense &&
-                    !expense.isNotMine &&
-                    expense.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE &&
-                    (categoryId == null || expense.categoryId == categoryId)
-                }
-
-            val totalPersonalSpend = personalExpenses.sumOf { it.amount }
-
-            // Get all active groups with details
-            val activeGroups = groupsRepository.getActiveGroupsWithDetails()
-
-            var totalSharedSpend = 0.0
-            var totalReimbursed = 0.0
-
-            // Process each group
-            for (groupAggregate in activeGroups) {
-                val members = groupAggregate.members
-                val expenses = groupAggregate.expenses
-
-                // Find current user member in this group
-                val currentUserMember = members.find { it.isCurrentUser }
-                    ?: continue // Skip if current user not in this group
-
-                // Filter expenses for the period
-                val periodExpenses = expenses.filter {
+        val inScopeGroupExpenses = activeGroups.mapNotNull { groupAggregate ->
+            val currentUserMember = groupAggregate.members.find { it.isCurrentUser } ?: return@mapNotNull null
+            InScopeGroupExpenses(
+                currentUserMember = currentUserMember,
+                members = groupAggregate.members,
+                expenses = groupAggregate.expenses.filter {
                     it.date >= periodStart && it.date < periodEnd &&
-                    (categoryId == null || it.expenseId?.let { expId ->
-                        expenseCategoryMap[expId]?.categoryId
-                    } == categoryId)
+                        (categoryId == null || it.expenseId?.let { expenseId ->
+                            expenseCategoryMap[expenseId]?.categoryId
+                        } == categoryId)
                 }
-
-                for (groupExpense in periodExpenses) {
-                    // Calculate my share of this expense
-                    val myShare = calculateMyShare(groupExpense, members, currentUserMember.id)
-                    totalSharedSpend += myShare
-
-                    // Track reimbursements for informational breakdown only (not budget offset)
-                    if (groupExpense.isReimbursable && groupExpense.paidById == currentUserMember.id) {
-                        totalReimbursed += groupExpense.reimbursedAmount.coerceAtLeast(0.0)
-                    }
-                }
-            }
-
-            // Accrual accounting for budgets: count what the user owes (their share), not cash reimbursements.
-            val netSharedLiability = totalSharedSpend
-            val effectiveBudgetSpend = totalPersonalSpend + totalSharedSpend
-
-            BudgetSpendBreakdown(
-                totalPersonalSpend = totalPersonalSpend,
-                totalSharedSpend = totalSharedSpend,
-                totalReimbursed = totalReimbursed,
-                netSharedLiability = netSharedLiability,
-                effectiveBudgetSpend = effectiveBudgetSpend
-            )
-        } catch (e: Exception) {
-            Timber.e(e, "Error calculating effective budget spend")
-            // Return zeroed breakdown on error
-            BudgetSpendBreakdown(
-                totalPersonalSpend = 0.0,
-                totalSharedSpend = 0.0,
-                totalReimbursed = 0.0,
-                netSharedLiability = 0.0,
-                effectiveBudgetSpend = 0.0
             )
         }
-    }
 
-    /**
-     * Calculate the user's share of a group expense.
-     */
-    private fun calculateMyShare(
-        expense: GroupExpense,
-        members: List<com.yourname.expensetracker.data.database.entity.GroupMember>,
-        currentUserMemberId: Long
-    ): Double {
-        return when (expense.splitType) {
-            SplitType.EQUAL -> {
-                if (members.isEmpty()) 0.0
-                else expense.totalAmount / members.size
-            }
-            SplitType.CUSTOM_AMOUNT -> {
-                parseCustomSplits(expense.customSplitsJson)[currentUserMemberId] ?: 0.0
-            }
-            SplitType.CUSTOM_PERCENT -> {
-                val percentage = parseCustomSplits(expense.customSplitsJson)[currentUserMemberId] ?: 0.0
-                expense.totalAmount * (percentage / 100.0)
-            }
-            SplitType.UNEQUAL -> {
-                parseCustomSplits(expense.customSplitsJson)[currentUserMemberId] ?: 0.0
-            }
+        val linkedExpenseIds = inScopeGroupExpenses
+            .flatMap { scope -> scope.expenses.mapNotNull { it.expenseId } }
+            .toSet()
+
+        val personalExpenses = allPeriodExpenses.filter { expense ->
+            !expense.isSharedExpense &&
+                !expense.isNotMine &&
+                expense.transactionType == TransactionType.PURCHASE &&
+                expense.id !in linkedExpenseIds &&
+                (categoryId == null || expense.categoryId == categoryId)
         }
-    }
 
-    /**
-     * Parse custom splits JSON string.
-     * Format: "memberId:amount,memberId:amount"
-     */
-    private fun parseCustomSplits(splitsString: String?): Map<Long, Double> {
-        if (splitsString.isNullOrBlank()) return emptyMap()
+        val totalPersonalSpend = personalExpenses.sumOf { it.amount }
+        var totalSharedSpend = 0.0
+        var totalReimbursed = 0.0
 
-        val result = mutableMapOf<Long, Double>()
-        val pairs = splitsString.split(",")
-        for (pair in pairs) {
-            val parts = pair.split(":")
-            if (parts.size == 2) {
-                val memberId = parts[0].toLongOrNull()
-                val amount = parts[1].toDoubleOrNull()
-                if (memberId != null && amount != null) {
-                    result[memberId] = amount
+        for (scope in inScopeGroupExpenses) {
+            for (groupExpense in scope.expenses) {
+                if (SplitCalculator.isMemberParticipatingInSplit(
+                        expense = groupExpense,
+                        members = scope.members,
+                        memberId = scope.currentUserMember.id
+                    )) {
+                    totalSharedSpend += SplitCalculator.calculateMemberShare(
+                        expense = groupExpense,
+                        members = scope.members,
+                        memberId = scope.currentUserMember.id
+                    )
+                }
+
+                if (groupExpense.isReimbursable && groupExpense.paidById == scope.currentUserMember.id) {
+                    totalReimbursed += groupExpense.reimbursedAmount.coerceAtLeast(0.0)
                 }
             }
         }
-        return result
+
+        val netSharedLiability = totalSharedSpend
+        val effectiveBudgetSpend = totalPersonalSpend + totalSharedSpend
+
+        BudgetSpendBreakdown(
+            totalPersonalSpend = totalPersonalSpend,
+            totalSharedSpend = totalSharedSpend,
+            totalReimbursed = totalReimbursed,
+            netSharedLiability = netSharedLiability,
+            effectiveBudgetSpend = effectiveBudgetSpend
+        )
     }
 
     /**
      * Check if an expense is fully settled (all reimbursements complete).
      */
-    fun isExpenseFullySettled(expense: GroupExpense, members: List<com.yourname.expensetracker.data.database.entity.GroupMember>): Boolean {
+    fun isExpenseFullySettled(expense: GroupExpense, members: List<GroupMember>): Boolean {
         if (!expense.isReimbursable) return true // Non-reimbursable expenses are always "settled"
         if (expense.settledAt != null) return true // Explicitly marked as settled
 
         // Check if total reimbursed equals what others owe
-        val myShare = expense.myShareAmount ?: (expense.totalAmount / members.size)
-        val expectedReimbursement = expense.totalAmount - myShare
+        val payerShare = if (SplitCalculator.isMemberParticipatingInSplit(
+                expense = expense,
+                members = members,
+                memberId = expense.paidById
+            )) {
+            SplitCalculator.calculateMemberShare(
+                expense = expense,
+                members = members,
+                memberId = expense.paidById
+            )
+        } else {
+            0.0
+        }
+        val expectedReimbursement = expense.totalAmount - payerShare
 
         return expense.reimbursedAmount >= expectedReimbursement
     }
 }
+
+private data class InScopeGroupExpenses(
+    val currentUserMember: GroupMember,
+    val members: List<GroupMember>,
+    val expenses: List<GroupExpense>
+)
 
 /**
  * Breakdown of budget spend components.

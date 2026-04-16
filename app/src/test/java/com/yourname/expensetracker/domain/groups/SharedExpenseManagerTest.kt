@@ -168,6 +168,46 @@ class SharedExpenseManagerTest {
     }
 
     @Test
+    fun `calculateBalances uses joinedAt aware SplitCalculator for backdated equal splits`() = runTest(testDispatcher) {
+        val groupId = 2L
+        val expenseDate = 1_000L
+        val members = listOf(
+            SharedExpenseMember(id = 1L, groupId = groupId, name = "A", joinedAt = 500L),
+            SharedExpenseMember(id = 2L, groupId = groupId, name = "B", joinedAt = 900L),
+            SharedExpenseMember(id = 3L, groupId = groupId, name = "Late", joinedAt = 1_500L)
+        )
+        val expenses = listOf(
+            SharedGroupExpense(
+                id = 1L,
+                groupId = groupId,
+                expenseId = 201L,
+                paidById = 1L,
+                date = expenseDate,
+                description = "Dinner",
+                totalAmount = 90.0,
+                splitType = GroupSplitType.EQUAL
+            )
+        )
+
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(groupId) } returns members
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(groupId) } returns expenses
+
+        val balances = manager.calculateBalances(groupId)
+
+        assertApproxEquals(90.0, balances[1L]?.paid ?: 0.0, 0.01)
+        assertApproxEquals(45.0, balances[1L]?.shouldPay ?: 0.0, 0.01)
+        assertApproxEquals(45.0, balances[1L]?.netBalance ?: 0.0, 0.01)
+
+        assertApproxEquals(0.0, balances[2L]?.paid ?: 1.0, 0.01)
+        assertApproxEquals(45.0, balances[2L]?.shouldPay ?: 0.0, 0.01)
+        assertApproxEquals(-45.0, balances[2L]?.netBalance ?: 0.0, 0.01)
+
+        assertApproxEquals(0.0, balances[3L]?.paid ?: 1.0, 0.01)
+        assertApproxEquals(0.0, balances[3L]?.shouldPay ?: 1.0, 0.01)
+        assertApproxEquals(0.0, balances[3L]?.netBalance ?: 1.0, 0.01)
+    }
+
+    @Test
     fun `removeMember returns member not found when member is absent`() = runTest(testDispatcher) {
         val member = SharedExpenseMember(id = 99L, groupId = 5L, name = "Ghost")
         coEvery { sharedExpenseDataPort.getGroupMembersOnce(5L) } returns listOf(
@@ -235,6 +275,34 @@ class SharedExpenseManagerTest {
     }
 
     @Test
+    fun `removeMember blocks deletion when equal split expense is on or after joinedAt`() = runTest(testDispatcher) {
+        val joinedAt = 1_700_000_000_000L
+        val target = SharedExpenseMember(id = 2L, groupId = 10L, name = "B", joinedAt = joinedAt)
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(10L) } returns listOf(
+            SharedExpenseMember(id = 1L, groupId = 10L, name = "A", joinedAt = joinedAt - 10_000L),
+            target
+        )
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(10L) } returns listOf(
+            SharedGroupExpense(
+                id = 1L,
+                groupId = 10L,
+                expenseId = 24L,
+                paidById = 1L,
+                date = joinedAt,
+                description = "equal",
+                totalAmount = 30.0,
+                splitType = GroupSplitType.EQUAL
+            )
+        )
+
+        val result = manager.removeMember(target)
+
+        assertTrue(result is RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits)
+        result as RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits
+        assertEquals(1, result.expenseCount)
+    }
+
+    @Test
     fun `removeMember succeeds when member has no paid expenses and no split references`() = runTest(testDispatcher) {
         val target = SharedExpenseMember(id = 2L, groupId = 11L, name = "B")
         coEvery { sharedExpenseDataPort.getGroupMembersOnce(11L) } returns listOf(
@@ -242,6 +310,33 @@ class SharedExpenseManagerTest {
             target
         )
         coEvery { sharedExpenseDataPort.getGroupExpensesOnce(11L) } returns emptyList()
+
+        val result = manager.removeMember(target)
+
+        assertTrue(result is RemoveSharedExpenseMemberResult.Success)
+        coVerify(exactly = 1) { sharedExpenseDataPort.removeMember(target) }
+    }
+
+    @Test
+    fun `removeMember ignores equal split expenses before joinedAt`() = runTest(testDispatcher) {
+        val joinedAt = 1_700_000_000_000L
+        val target = SharedExpenseMember(id = 2L, groupId = 12L, name = "B", joinedAt = joinedAt)
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(12L) } returns listOf(
+            SharedExpenseMember(id = 1L, groupId = 12L, name = "A", joinedAt = joinedAt - 10_000L),
+            target
+        )
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(12L) } returns listOf(
+            SharedGroupExpense(
+                id = 1L,
+                groupId = 12L,
+                expenseId = 25L,
+                paidById = 1L,
+                date = joinedAt - 1L,
+                description = "equal",
+                totalAmount = 30.0,
+                splitType = GroupSplitType.EQUAL
+            )
+        )
 
         val result = manager.removeMember(target)
 

@@ -10,7 +10,6 @@ import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.IoDispatcher
-import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
 import com.yourname.expensetracker.domain.logic.CustomSplitMode
 import com.yourname.expensetracker.domain.logic.CustomSplitParser
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
@@ -170,13 +169,10 @@ class GroupsRepositoryImpl @Inject constructor(
                 return@withContext DeleteGroupMemberResult.Error("Member does not belong to this group")
             }
 
-            val preflightSplitReferenceCount = countSplitReferences(groupId, memberId)
+            val preflightSplitReferenceCount = countSplitReferences(groupId, preflightMember)
             if (preflightSplitReferenceCount > 0) {
                 return@withContext DeleteGroupMemberResult.CannotDeleteMemberReferencedInSplits(preflightSplitReferenceCount)
             }
-
-            val memberPrefixPattern = "${memberId}:%"
-            val memberMiddlePattern = "%,${memberId}:%"
 
             database.withTransaction {
                 val member = memberDao.getById(memberId)
@@ -191,16 +187,9 @@ class GroupsRepositoryImpl @Inject constructor(
                     return@withTransaction DeleteGroupMemberResult.CannotDeleteMemberWithExpenses(expenseCount)
                 }
 
-                val transactionalSplitReferenceCount = groupExpenseDao.countPotentialSplitReferences(
-                    groupId = groupId,
-                    memberPrefixPattern = memberPrefixPattern,
-                    memberMiddlePattern = memberMiddlePattern
-                )
-                if (transactionalSplitReferenceCount > 0) {
-                    val splitReferenceCount = countSplitReferences(groupId, memberId)
-                    if (splitReferenceCount > 0) {
-                        return@withTransaction DeleteGroupMemberResult.CannotDeleteMemberReferencedInSplits(splitReferenceCount)
-                    }
+                val splitReferenceCount = countSplitReferences(groupId, member)
+                if (splitReferenceCount > 0) {
+                    return@withTransaction DeleteGroupMemberResult.CannotDeleteMemberReferencedInSplits(splitReferenceCount)
                 }
 
                 memberDao.delete(member)
@@ -211,7 +200,8 @@ class GroupsRepositoryImpl @Inject constructor(
             if (expenseCount > 0) {
                 DeleteGroupMemberResult.CannotDeleteMemberWithExpenses(expenseCount)
             } else {
-                val splitReferenceCount = countSplitReferences(groupId, memberId)
+                val member = memberDao.getById(memberId)
+                val splitReferenceCount = member?.let { countSplitReferences(groupId, it) } ?: 0
                 if (splitReferenceCount > 0) {
                     DeleteGroupMemberResult.CannotDeleteMemberReferencedInSplits(splitReferenceCount)
                 } else {
@@ -223,33 +213,34 @@ class GroupsRepositoryImpl @Inject constructor(
         }
     }
 
-    private suspend fun countSplitReferences(groupId: Long, memberId: Long): Int {
+    private suspend fun countSplitReferences(groupId: Long, member: GroupMember): Int {
         val memberIds = memberDao.getAllForGroup(groupId).map { it.id }.toSet()
         if (memberIds.isEmpty()) return 0
 
         return groupExpenseDao.getExpensesForGroupOnce(groupId)
             .filter { expense ->
-                if (expense.customSplitsJson.isNullOrBlank()) {
-                    false
-                } else {
-                    val parseResult = when (expense.splitType) {
-                        SplitType.CUSTOM_AMOUNT,
-                        SplitType.CUSTOM_PERCENT,
-                        SplitType.UNEQUAL -> CustomSplitParser.parseAndValidate(
-                            splitsString = expense.customSplitsJson,
-                            splitType = expense.splitType.toCustomSplitMode(),
-                            totalAmount = expense.totalAmount,
-                            groupMemberIds = memberIds
-                        )
+                when (expense.splitType) {
+                    SplitType.EQUAL -> expense.date >= member.joinedAt
+                    SplitType.CUSTOM_AMOUNT,
+                    SplitType.CUSTOM_PERCENT,
+                    SplitType.UNEQUAL -> {
+                        if (expense.customSplitsJson.isNullOrBlank()) {
+                            false
+                        } else {
+                            val parseResult = CustomSplitParser.parseAndValidate(
+                                splitsString = expense.customSplitsJson,
+                                splitType = expense.splitType.toCustomSplitMode(),
+                                totalAmount = expense.totalAmount,
+                                groupMemberIds = memberIds
+                            )
 
-                        SplitType.EQUAL -> CustomSplitParseResult.Invalid("No custom split for equal mode")
+                            CustomSplitParser.referencesMember(
+                                splitsString = expense.customSplitsJson,
+                                memberId = member.id,
+                                parseResult = parseResult
+                            )
+                        }
                     }
-
-                    CustomSplitParser.referencesMember(
-                        splitsString = expense.customSplitsJson,
-                        memberId = memberId,
-                        parseResult = parseResult
-                    )
                 }
             }
             .size

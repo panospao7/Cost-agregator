@@ -15,9 +15,9 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
-import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import kotlin.test.assertFailsWith
 
 class SharedExpenseBudgetOffsetEngineTest {
 
@@ -39,13 +39,13 @@ class SharedExpenseBudgetOffsetEngineTest {
     }
 
     @Test
-    fun `calculateEffectiveBudgetSpend uses accrual math personal plus myShare`() = runTest {
+    fun `calculateEffectiveBudgetSpend excludes linked legacy system expense from personal spend`() = runTest {
         val periodStart = FIXED_NOW - 30L * DAY_MS
         val periodEnd = FIXED_NOW
 
         val personalFood = expense(id = 1L, amount = 100.0, categoryId = 1L, isShared = false)
         val personalTravel = expense(id = 2L, amount = 50.0, categoryId = 2L, isShared = false)
-        val linkedSharedExpense = expense(id = 3L, amount = 120.0, categoryId = 1L, isShared = true)
+        val linkedSharedExpense = expense(id = 3L, amount = 120.0, categoryId = 1L, isShared = false)
 
         coEvery { expenseRepository.getExpensesBetween(periodStart, periodEnd) } returns
             listOf(personalFood, personalTravel, linkedSharedExpense)
@@ -81,6 +81,42 @@ class SharedExpenseBudgetOffsetEngineTest {
         assertApproxEquals(20.0, result.totalReimbursed, 0.0001)
         assertApproxEquals(60.0, result.netSharedLiability, 0.0001)
         assertApproxEquals(210.0, result.effectiveBudgetSpend, 0.0001)
+    }
+
+    @Test
+    fun `calculateEffectiveBudgetSpend uses SplitCalculator fallback for malformed custom splits`() = runTest {
+        val periodStart = FIXED_NOW - 7L * DAY_MS
+        val periodEnd = FIXED_NOW
+
+        coEvery { expenseRepository.getExpensesBetween(periodStart, periodEnd) } returns emptyList()
+        coEvery { groupsRepository.getActiveGroupsWithDetails() } returns listOf(
+            groupAggregate(
+                groupId = 10L,
+                members = listOf(
+                    GroupMember(id = 100L, groupId = 10L, name = "Me", isCurrentUser = true),
+                    GroupMember(id = 101L, groupId = 10L, name = "Alex", isCurrentUser = false)
+                ),
+                expenses = listOf(
+                    GroupExpense(
+                        id = 701L,
+                        groupId = 10L,
+                        expenseId = null,
+                        paidById = 101L,
+                        date = periodStart + DAY_MS,
+                        description = "Broken custom split",
+                        totalAmount = 90.0,
+                        splitType = SplitType.CUSTOM_AMOUNT,
+                        customSplitsJson = "100:bad-data"
+                    )
+                )
+            )
+        )
+
+        val result = engine.calculateEffectiveBudgetSpend(periodStart, periodEnd)
+
+        assertApproxEquals(0.0, result.totalPersonalSpend, 0.0)
+        assertApproxEquals(45.0, result.totalSharedSpend, 0.0001)
+        assertApproxEquals(45.0, result.effectiveBudgetSpend, 0.0001)
     }
 
     @Test
@@ -250,6 +286,18 @@ class SharedExpenseBudgetOffsetEngineTest {
         assertApproxEquals(0.0, result.totalReimbursed, 0.0)
         assertApproxEquals(0.0, result.netSharedLiability, 0.0)
         assertApproxEquals(0.0, result.effectiveBudgetSpend, 0.0)
+    }
+
+    @Test
+    fun `calculateEffectiveBudgetSpend propagates repository failures`() = runTest {
+        val periodStart = FIXED_NOW - 5L * DAY_MS
+        val periodEnd = FIXED_NOW
+
+        coEvery { expenseRepository.getExpensesBetween(periodStart, periodEnd) } throws IllegalStateException("boom")
+
+        assertFailsWith<IllegalStateException> {
+            engine.calculateEffectiveBudgetSpend(periodStart, periodEnd)
+        }
     }
 
     private fun groupAggregate(

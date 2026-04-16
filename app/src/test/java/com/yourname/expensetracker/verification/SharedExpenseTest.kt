@@ -254,11 +254,39 @@ class SharedExpenseTest {
     }
 
     @Test
-    fun `removeMember allows deletion when member has no payer or split references`() = kotlinx.coroutines.test.runTest {
-        val memberToDelete = members3[1]
-        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members3
+    fun `removeMember blocks deletion when equal split expense is on or after joinedAt`() = kotlinx.coroutines.test.runTest {
+        val joinedAt = 1_700_000_000_000L
+        val members = listOf(
+            SharedExpenseMember(id = 1L, groupId = 1L, name = "Alice", joinedAt = joinedAt - 10_000L),
+            SharedExpenseMember(id = 2L, groupId = 1L, name = "Bob", joinedAt = joinedAt),
+            SharedExpenseMember(id = 3L, groupId = 1L, name = "Carol", joinedAt = joinedAt - 10_000L)
+        )
+        val memberToDelete = members[1]
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members
         coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
-            expense(total = 30.0, paidBy = members3[0].id, splitType = GroupSplitType.EQUAL)
+            expense(total = 30.0, paidBy = members[0].id, splitType = GroupSplitType.EQUAL, date = joinedAt)
+        )
+
+        val result = manager.removeMember(memberToDelete)
+
+        assertTrue(result is RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits)
+        result as RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits
+        assertEquals(1, result.expenseCount)
+        coVerify(exactly = 0) { sharedExpenseDataPort.removeMember(any()) }
+    }
+
+    @Test
+    fun `removeMember allows deletion when equal split expense is before joinedAt`() = kotlinx.coroutines.test.runTest {
+        val joinedAt = 1_700_000_000_000L
+        val members = listOf(
+            SharedExpenseMember(id = 1L, groupId = 1L, name = "Alice", joinedAt = joinedAt - 10_000L),
+            SharedExpenseMember(id = 2L, groupId = 1L, name = "Bob", joinedAt = joinedAt),
+            SharedExpenseMember(id = 3L, groupId = 1L, name = "Carol", joinedAt = joinedAt - 10_000L)
+        )
+        val memberToDelete = members[1]
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members
+        coEvery { sharedExpenseDataPort.getGroupExpensesOnce(1L) } returns listOf(
+            expense(total = 30.0, paidBy = members[0].id, splitType = GroupSplitType.EQUAL, date = joinedAt - 1L)
         )
 
         val result = manager.removeMember(memberToDelete)
@@ -292,13 +320,14 @@ class SharedExpenseTest {
         total: Double,
         paidBy: Long,
         splitType: GroupSplitType,
-        customSplits: String? = null
+        customSplits: String? = null,
+        date: Long = 1_700_000_000_000
     ) = SharedGroupExpense(
         id = 1L,
         groupId = 1L,
         expenseId = null,
         paidById = paidBy,
-        date = 1_700_000_000_000,
+        date = date,
         description = "test",
         totalAmount = total,
         splitType = splitType,

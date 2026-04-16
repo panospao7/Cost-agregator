@@ -11,17 +11,23 @@ import org.junit.Test
 class SplitCalculatorStressTest {
 
     @Test
-    fun `int overflow for 25 million amount documents broken behavior from toCents int conversion`() {
+    fun `large equal split above int cent range stays positive finite and sums correctly`() {
         val members = members(1L, 2L)
         val expense = groupExpense(totalAmount = 25_000_000.00, paidById = 1L)
 
         val splits = SplitCalculator.calculateSplitAmounts(expense, members)
 
         val sum = splits.values.sum()
-        assertApproxEquals(-8_974_836.48, splits[1L] ?: 0.0, 0.01)
-        assertApproxEquals(-8_974_836.48, splits[2L] ?: 0.0, 0.01)
-        assertApproxEquals(-17_949_672.96, sum, 0.01)
-        assertFalse(SplitCalculator.validateSplits(splits, 25_000_000.00))
+        splits.values.forEach { share ->
+            assertFalse(share.isNaN())
+            assertFalse(share.isInfinite())
+            assertFalse(share < 0.0)
+        }
+        assertApproxEquals(12_500_000.00, splits[1L] ?: 0.0, 0.01)
+        assertApproxEquals(12_500_000.00, splits[2L] ?: 0.0, 0.01)
+        assertApproxEquals(25_000_000.00, sum, 0.01)
+        assertFalse(sum.isNaN())
+        assertFalse(sum.isInfinite())
     }
 
     @Test

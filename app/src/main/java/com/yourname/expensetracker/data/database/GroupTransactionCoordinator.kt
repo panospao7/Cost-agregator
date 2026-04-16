@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator as DomainCoordinator
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
+import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -47,6 +48,11 @@ class GroupTransactionCoordinator @Inject constructor(
     private val expenseDao: ExpenseDao,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : DomainCoordinator {
+
+    private companion object {
+        const val INVALID_EQUAL_SPLIT_MESSAGE =
+            "Equal split is invalid for the selected date because the payer is excluded or no participant qualifies"
+    }
     
     // ==================== Interface Implementation ====================
     
@@ -144,6 +150,21 @@ class GroupTransactionCoordinator @Inject constructor(
                 return@withContext GroupExpenseCreationResult.Error("Payer is not a member of this group")
             }
 
+            validateExpenseParticipants(
+                groupId = groupId,
+                linkedExpenseId = null,
+                description = description,
+                amount = amount,
+                paidById = paidById,
+                currency = currency ?: group.defaultCurrency,
+                splitType = splitType,
+                customSplitsJson = null,
+                date = date,
+                members = members
+            )?.let { validationError ->
+                return@withContext validationError
+            }
+
             val expenseCurrency = currency ?: group.defaultCurrency
             
             // Create the group expense (without system link - expenseId is null for standalone)
@@ -204,6 +225,39 @@ class GroupTransactionCoordinator @Inject constructor(
                     return@withTransaction GroupExpenseCreationResult.Error("Payer is not a member of this group")
                 }
 
+                validateExpenseParticipants(
+                    groupId = groupId,
+                    linkedExpenseId = systemExpenseId,
+                    description = description,
+                    amount = amount,
+                    paidById = paidById,
+                    currency = currency ?: group.defaultCurrency,
+                    splitType = splitType,
+                    customSplitsJson = customSplitsJson,
+                    date = date,
+                    members = members
+                )?.let { validationError ->
+                    return@withTransaction validationError
+                }
+
+                val currentUserShare = resolveCurrentUserShare(
+                    groupId = groupId,
+                    linkedExpenseId = systemExpenseId,
+                    description = description,
+                    amount = amount,
+                    paidById = paidById,
+                    currency = currency ?: group.defaultCurrency,
+                    splitType = splitType,
+                    customSplitsJson = customSplitsJson,
+                    date = date,
+                    members = members
+                ) ?: return@withTransaction GroupExpenseCreationResult.Error(
+                    "Current user member not found or share could not be calculated"
+                )
+
+                val existingExpense = expenseDao.getById(systemExpenseId)
+                    ?: return@withTransaction GroupExpenseCreationResult.Error("Linked system expense not found")
+
                 val expenseCurrency = currency ?: group.defaultCurrency
 
                 // Create the group expense with system link
@@ -224,6 +278,11 @@ class GroupTransactionCoordinator @Inject constructor(
                 if (groupExpenseId <= 0) {
                     return@withTransaction GroupExpenseCreationResult.Error("Failed to create group expense")
                 }
+
+                normalizeLinkedSystemExpense(
+                    expense = existingExpense,
+                    myShareAmount = currentUserShare
+                )
 
                 GroupExpenseCreationResult.Success(
                     groupExpenseId = groupExpenseId,
@@ -325,9 +384,39 @@ class GroupTransactionCoordinator @Inject constructor(
                     return@withTransaction GroupExpenseCreationResult.Error("Payer is not a member of this group")
                 }
 
+                validateExpenseParticipants(
+                    groupId = groupId,
+                    linkedExpenseId = null,
+                    description = description,
+                    amount = amount,
+                    paidById = paidById,
+                    currency = group.defaultCurrency,
+                    splitType = splitType,
+                    customSplitsJson = customSplitsJson,
+                    date = date,
+                    members = members
+                )?.let { validationError ->
+                    return@withTransaction validationError
+                }
+
                 val payer = members.first { it.id == paidById }
 
                 val expenseCurrency = group.defaultCurrency
+
+                val currentUserShare = resolveCurrentUserShare(
+                    groupId = groupId,
+                    linkedExpenseId = null,
+                    description = description,
+                    amount = amount,
+                    paidById = paidById,
+                    currency = expenseCurrency,
+                    splitType = splitType,
+                    customSplitsJson = customSplitsJson,
+                    date = date,
+                    members = members
+                ) ?: return@withTransaction GroupExpenseCreationResult.Error(
+                    "Current user member not found or share could not be calculated"
+                )
 
                 // 3. Create system expense with type-aware dedupe key
                 // (mirrors ManualExpenseRepository's safe-insert semantics
@@ -342,6 +431,8 @@ class GroupTransactionCoordinator @Inject constructor(
                     date = date,
                     isManualEntry = true,
                     notes = notes ?: "Group expense via ${payer.name}",
+                    isSharedExpense = true,
+                    myShareAmount = currentUserShare,
                     createdAt = System.currentTimeMillis(),
                     dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
                         amount = amount,
@@ -419,6 +510,87 @@ class GroupTransactionCoordinator @Inject constructor(
             // Delete group last (parent table)
             val group = groupDao.getGroupById(groupId)
             group?.let { groupDao.delete(it) }
+        }
+    }
+
+    private suspend fun normalizeLinkedSystemExpense(
+        expense: Expense,
+        myShareAmount: Double
+    ) {
+        expenseDao.updateIsNotMine(expense.id, false)
+        expenseDao.updateIsSharedExpense(expense.id, true)
+        expenseDao.updateMySharePercentage(expense.id, null)
+        expenseDao.updateMyShareAmount(expense.id, myShareAmount)
+    }
+
+    private fun resolveCurrentUserShare(
+        groupId: Long,
+        linkedExpenseId: Long?,
+        description: String,
+        amount: Double,
+        paidById: Long,
+        currency: String,
+        splitType: SplitType,
+        customSplitsJson: String?,
+        date: Long,
+        members: List<GroupMember>
+    ): Double? {
+        val currentUserMember = members.singleOrNull { it.isCurrentUser } ?: return null
+        val expenseForSplit = GroupExpense(
+            groupId = groupId,
+            expenseId = linkedExpenseId,
+            description = description,
+            totalAmount = amount,
+            paidById = paidById,
+            date = date,
+            currency = currency,
+            splitType = splitType,
+            customSplitsJson = customSplitsJson
+        )
+        if (!SplitCalculator.isMemberParticipatingInSplit(
+                expense = expenseForSplit,
+                members = members,
+                memberId = currentUserMember.id
+            )) {
+            return 0.0
+        }
+        val currentUserShare = SplitCalculator.calculateMemberShare(
+            expense = expenseForSplit,
+            members = members,
+            memberId = currentUserMember.id
+        )
+        return currentUserShare.takeIf { it.isFinite() && it >= 0.0 }
+    }
+
+    private fun validateExpenseParticipants(
+        groupId: Long,
+        linkedExpenseId: Long?,
+        description: String,
+        amount: Double,
+        paidById: Long,
+        currency: String,
+        splitType: SplitType,
+        customSplitsJson: String?,
+        date: Long,
+        members: List<GroupMember>
+    ): GroupExpenseCreationResult.Error? {
+        val expenseForValidation = GroupExpense(
+            groupId = groupId,
+            expenseId = linkedExpenseId,
+            description = description,
+            totalAmount = amount,
+            paidById = paidById,
+            date = date,
+            currency = currency,
+            splitType = splitType,
+            customSplitsJson = customSplitsJson
+        )
+
+        return SplitCalculator.validateExpenseParticipants(
+            expense = expenseForValidation,
+            members = members
+        )?.let {
+            GroupExpenseCreationResult.Error(INVALID_EQUAL_SPLIT_MESSAGE)
         }
     }
 }

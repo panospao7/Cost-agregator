@@ -123,6 +123,75 @@ class GroupsRepositoryImplTest {
     }
 
     @Test
+    fun `member delete blocks equal split expenses on or after joinedAt`() = runTest(testDispatcher) {
+        val groupId = 56L
+        val memberId = 10L
+        val joinedAt = 1_700_000_000_000L
+        val targetMember = GroupMember(id = memberId, groupId = groupId, name = "Alice", joinedAt = joinedAt)
+
+        coEvery { memberDao.getById(memberId) } returns targetMember
+        coEvery { memberDao.getAllForGroup(groupId) } returns listOf(
+            targetMember,
+            GroupMember(id = 20L, groupId = groupId, name = "Bob", joinedAt = joinedAt - 10_000L)
+        )
+        coEvery { groupExpenseDao.countExpensesPaidByMember(groupId, memberId) } returns 0
+        coEvery { groupExpenseDao.getExpensesForGroupOnce(groupId) } returns listOf(
+            GroupExpense(
+                id = 1000L,
+                groupId = groupId,
+                expenseId = 43L,
+                paidById = 20L,
+                date = joinedAt,
+                description = "Dinner",
+                totalAmount = 100.0,
+                currency = "EUR",
+                splitType = SplitType.EQUAL,
+                customSplitsJson = null
+            )
+        )
+
+        val result = repository.deleteMember(groupId = groupId, memberId = memberId)
+
+        assertTrue(result is DeleteGroupMemberResult.CannotDeleteMemberReferencedInSplits)
+        assertEquals(1, (result as DeleteGroupMemberResult.CannotDeleteMemberReferencedInSplits).expenseCount)
+        coVerify(exactly = 0) { memberDao.delete(any()) }
+    }
+
+    @Test
+    fun `member delete ignores equal split expenses before joinedAt`() = runTest(testDispatcher) {
+        val groupId = 57L
+        val memberId = 10L
+        val joinedAt = 1_700_000_000_000L
+        val targetMember = GroupMember(id = memberId, groupId = groupId, name = "Alice", joinedAt = joinedAt)
+
+        coEvery { memberDao.getById(memberId) } returns targetMember
+        coEvery { memberDao.getAllForGroup(groupId) } returns listOf(
+            targetMember,
+            GroupMember(id = 20L, groupId = groupId, name = "Bob", joinedAt = joinedAt - 10_000L)
+        )
+        coEvery { groupExpenseDao.countExpensesPaidByMember(groupId, memberId) } returns 0
+        coEvery { groupExpenseDao.getExpensesForGroupOnce(groupId) } returns listOf(
+            GroupExpense(
+                id = 1001L,
+                groupId = groupId,
+                expenseId = 44L,
+                paidById = 20L,
+                date = joinedAt - 1L,
+                description = "Older dinner",
+                totalAmount = 100.0,
+                currency = "EUR",
+                splitType = SplitType.EQUAL,
+                customSplitsJson = null
+            )
+        )
+
+        val result = repository.deleteMember(groupId = groupId, memberId = memberId)
+
+        assertTrue(result is DeleteGroupMemberResult.Success)
+        coVerify(exactly = 1) { memberDao.delete(targetMember) }
+    }
+
+    @Test
     fun `add expense to group links correctly`() = runTest(testDispatcher) {
         val groupId = 7L
         val amount = 123.45

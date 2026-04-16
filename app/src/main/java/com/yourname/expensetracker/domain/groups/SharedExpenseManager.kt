@@ -1,19 +1,19 @@
 package com.yourname.expensetracker.domain.groups
 
+import com.yourname.expensetracker.data.database.entity.GroupExpense
+import com.yourname.expensetracker.data.database.entity.GroupMember
+import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.domain.logic.CustomSplitMode
 import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
 import com.yourname.expensetracker.domain.logic.CustomSplitParser
+import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
-import timber.log.Timber
-import java.math.BigDecimal
-import java.math.RoundingMode
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.floor
 
 /**
  * Domain service for shared-expense operations.
@@ -102,7 +102,7 @@ class SharedExpenseManager @Inject constructor(
                 val splitReferenceCount = countSplitReferences(
                     expenses = expenses,
                     groupMemberIds = members.map { it.id }.toSet(),
-                    memberId = member.id
+                    member = member
                 )
                 if (splitReferenceCount > 0) {
                     return@withContext RemoveSharedExpenseMemberResult.CannotDeleteMemberReferencedInSplits(splitReferenceCount)
@@ -211,6 +211,9 @@ class SharedExpenseManager @Inject constructor(
         withContext(ioDispatcher) {
             val members = sharedExpenseDataPort.getGroupMembersOnce(groupId)
             val expenses = sharedExpenseDataPort.getGroupExpensesOnce(groupId)
+            val splitMembers = members.map { it.toGroupMember() }
+            val splitExpenses = expenses.map { it.toGroupExpense() }
+            val netBalances = SplitCalculator.calculateBalances(splitExpenses, splitMembers)
 
             val paidCentsByMember = members
                 .associate { it.id to 0L }
@@ -228,8 +231,8 @@ class SharedExpenseManager @Inject constructor(
             }
 
             // Calculate how much each member should pay
-            for (expense in expenses) {
-                val splits = calculateSplits(expense, members)
+            for (expense in splitExpenses) {
+                val splits = SplitCalculator.calculateSplitAmounts(expense, splitMembers)
                 for ((memberId, amount) in splits) {
                     if (shouldPayCentsByMember.containsKey(memberId)) {
                         shouldPayCentsByMember[memberId] =
@@ -243,7 +246,7 @@ class SharedExpenseManager @Inject constructor(
             for (member in members) {
                 val paidCents = paidCentsByMember[member.id] ?: 0L
                 val shouldPayCents = shouldPayCentsByMember[member.id] ?: 0L
-                val netCents = paidCents - shouldPayCents
+                val netCents = toCents(netBalances[member.id] ?: 0.0)
 
                 result[member.id] = MemberBalance(
                     memberId = member.id,
@@ -256,173 +259,57 @@ class SharedExpenseManager @Inject constructor(
 
             result
         }
-    
-    /**
-     * Calculate splits for an expense based on its split type.
-     */
-    private fun calculateSplits(expense: SharedGroupExpense, members: List<SharedExpenseMember>): Map<Long, Double> {
-        if (members.isEmpty()) return emptyMap()
-
-        return when (expense.splitType) {
-            GroupSplitType.EQUAL -> {
-                calculateEqualSplit(expense.totalAmount, members)
-            }
-            GroupSplitType.CUSTOM_AMOUNT -> {
-                when (val parseResult = parseCustomSplits(expense, members)) {
-                    is CustomSplitParseResult.Valid -> members.associate { member ->
-                        member.id to (parseResult.splits[member.id] ?: 0.0)
-                    }
-
-                    is CustomSplitParseResult.Invalid -> {
-                        Timber.w(
-                            "Invalid custom amount splits for expenseId=%s. Falling back to equal split. reason=%s",
-                            expense.id,
-                            parseResult.reason
-                        )
-                        calculateEqualSplit(expense.totalAmount, members)
-                    }
-                }
-            }
-            GroupSplitType.CUSTOM_PERCENT -> {
-                when (val parseResult = parseCustomSplits(expense, members)) {
-                    is CustomSplitParseResult.Valid -> percentageToAmountSplit(
-                        totalAmount = expense.totalAmount,
-                        percentages = parseResult.splits,
-                        members = members
-                    )
-
-                    is CustomSplitParseResult.Invalid -> {
-                        Timber.w(
-                            "Invalid custom percent splits for expenseId=%s. Falling back to equal split. reason=%s",
-                            expense.id,
-                            parseResult.reason
-                        )
-                        calculateEqualSplit(expense.totalAmount, members)
-                    }
-                }
-            }
-            GroupSplitType.UNEQUAL -> {
-                when (val parseResult = parseCustomSplits(expense, members)) {
-                    is CustomSplitParseResult.Valid -> members.associate { member ->
-                        member.id to (parseResult.splits[member.id] ?: 0.0)
-                    }
-
-                    is CustomSplitParseResult.Invalid -> {
-                        Timber.w(
-                            "Invalid unequal splits for expenseId=%s. Falling back to equal split. reason=%s",
-                            expense.id,
-                            parseResult.reason
-                        )
-                        calculateEqualSplit(expense.totalAmount, members)
-                    }
-                }
-            }
-        }
-    }
-    
-    /**
-     * Parse and validate custom split payloads.
-     */
-    private fun parseCustomSplits(
-        expense: SharedGroupExpense,
-        members: List<SharedExpenseMember>
-    ): CustomSplitParseResult {
-        return CustomSplitParser.parseAndValidate(
-            splitsString = expense.customSplitsSerialized,
-            splitType = expense.splitType.toCustomSplitMode(),
-            totalAmount = expense.totalAmount,
-            groupMemberIds = members.map { it.id }.toSet()
-        )
-    }
-
-    private fun calculateEqualSplit(
-        totalAmount: Double,
-        members: List<SharedExpenseMember>
-    ): Map<Long, Double> {
-        if (members.isEmpty()) return emptyMap()
-
-        val totalCents = toCents(totalAmount)
-        val memberCount = members.size.toLong()
-        val baseCents = totalCents / memberCount
-        val remainder = totalCents % memberCount
-
-        return members.mapIndexed { index, member ->
-            val cents = baseCents + if (index.toLong() < remainder) 1L else 0L
-            member.id to fromCents(cents)
-        }.toMap()
-    }
-
-    private fun percentageToAmountSplit(
-        totalAmount: Double,
-        percentages: Map<Long, Double>,
-        members: List<SharedExpenseMember>
-    ): Map<Long, Double> {
-        data class PercentageShare(
-            val memberId: Long,
-            val order: Int,
-            val baseCents: Long,
-            val fractionalPart: Double
-        )
-
-        val totalCents = toCents(totalAmount)
-        val shares = members.mapIndexed { index, member ->
-            val percent = percentages[member.id] ?: 0.0
-            val rawCents = totalCents * (percent / 100.0)
-            val base = floor(rawCents).toLong()
-            PercentageShare(
-                memberId = member.id,
-                order = index,
-                baseCents = base,
-                fractionalPart = rawCents - base
-            )
-        }
-
-        val centsByMember = shares.associate { it.memberId to it.baseCents }.toMutableMap()
-        val baseTotal = shares.sumOf { it.baseCents }
-        var remainder = totalCents - baseTotal
-
-        if (remainder > 0) {
-            val sortedByFraction = shares
-                .sortedWith(compareByDescending<PercentageShare> { it.fractionalPart }.thenBy { it.order })
-            var index = 0
-            while (remainder > 0 && sortedByFraction.isNotEmpty()) {
-                val memberId = sortedByFraction[index % sortedByFraction.size].memberId
-                centsByMember[memberId] = (centsByMember[memberId] ?: 0L) + 1L
-                remainder--
-                index++
-            }
-        } else if (remainder < 0) {
-            val sortedBySmallestFraction = shares
-                .sortedWith(compareBy<PercentageShare> { it.fractionalPart }.thenBy { it.order })
-            var toRemove = -remainder
-            var index = 0
-            while (toRemove > 0 && sortedBySmallestFraction.isNotEmpty()) {
-                val memberId = sortedBySmallestFraction[index % sortedBySmallestFraction.size].memberId
-                val current = centsByMember[memberId] ?: 0L
-                if (current > 0) {
-                    centsByMember[memberId] = current - 1
-                    toRemove--
-                }
-                index++
-            }
-        }
-
-        return members.associate { member ->
-            member.id to fromCents(centsByMember[member.id] ?: 0L)
-        }
-    }
 
     private fun toCents(amount: Double): Long {
-        return BigDecimal.valueOf(amount)
-            .setScale(2, RoundingMode.HALF_UP)
+        return java.math.BigDecimal.valueOf(amount)
+            .setScale(2, java.math.RoundingMode.HALF_UP)
             .movePointRight(2)
             .toLong()
     }
 
     private fun fromCents(cents: Long): Double {
-        return BigDecimal.valueOf(cents)
+        return java.math.BigDecimal.valueOf(cents)
             .movePointLeft(2)
             .toDouble()
+    }
+
+    private fun SharedExpenseMember.toGroupMember(): GroupMember {
+        return GroupMember(
+            id = id,
+            groupId = groupId,
+            name = name,
+            email = email,
+            isCurrentUser = isCurrentUser,
+            joinedAt = joinedAt
+        )
+    }
+
+    private fun SharedGroupExpense.toGroupExpense(): GroupExpense {
+        return GroupExpense(
+            id = id,
+            groupId = groupId,
+            expenseId = expenseId,
+            paidById = paidById,
+            date = date,
+            description = description,
+            totalAmount = totalAmount,
+            currency = currency,
+            splitType = splitType.toSplitType(),
+            customSplitsJson = customSplitsSerialized,
+            isReimbursable = isReimbursable,
+            reimbursedAmount = reimbursedAmount,
+            settledAt = settledAt,
+            myShareAmount = myShareAmount
+        )
+    }
+
+    private fun GroupSplitType.toSplitType(): SplitType {
+        return when (this) {
+            GroupSplitType.EQUAL -> SplitType.EQUAL
+            GroupSplitType.CUSTOM_AMOUNT -> SplitType.CUSTOM_AMOUNT
+            GroupSplitType.CUSTOM_PERCENT -> SplitType.CUSTOM_PERCENT
+            GroupSplitType.UNEQUAL -> SplitType.UNEQUAL
+        }
     }
 
     private fun GroupSplitType.toCustomSplitMode(): CustomSplitMode {
@@ -437,33 +324,34 @@ class SharedExpenseManager @Inject constructor(
     private fun countSplitReferences(
         expenses: List<SharedGroupExpense>,
         groupMemberIds: Set<Long>,
-        memberId: Long
+        member: SharedExpenseMember
     ): Int {
         if (groupMemberIds.isEmpty()) return 0
 
         return expenses
             .filter { expense ->
-                if (expense.customSplitsSerialized.isNullOrBlank()) {
-                    false
-                } else {
-                    val parseResult = when (expense.splitType) {
-                        GroupSplitType.CUSTOM_AMOUNT,
-                        GroupSplitType.CUSTOM_PERCENT,
-                        GroupSplitType.UNEQUAL -> CustomSplitParser.parseAndValidate(
-                            splitsString = expense.customSplitsSerialized,
-                            splitType = expense.splitType.toCustomSplitMode(),
-                            totalAmount = expense.totalAmount,
-                            groupMemberIds = groupMemberIds
-                        )
+                when (expense.splitType) {
+                    GroupSplitType.EQUAL -> expense.date >= member.joinedAt
+                    GroupSplitType.CUSTOM_AMOUNT,
+                    GroupSplitType.CUSTOM_PERCENT,
+                    GroupSplitType.UNEQUAL -> {
+                        if (expense.customSplitsSerialized.isNullOrBlank()) {
+                            false
+                        } else {
+                            val parseResult = CustomSplitParser.parseAndValidate(
+                                splitsString = expense.customSplitsSerialized,
+                                splitType = expense.splitType.toCustomSplitMode(),
+                                totalAmount = expense.totalAmount,
+                                groupMemberIds = groupMemberIds
+                            )
 
-                        GroupSplitType.EQUAL -> CustomSplitParseResult.Invalid("No custom split for equal mode")
+                            CustomSplitParser.referencesMember(
+                                splitsString = expense.customSplitsSerialized,
+                                memberId = member.id,
+                                parseResult = parseResult
+                            )
+                        }
                     }
-
-                    CustomSplitParser.referencesMember(
-                        splitsString = expense.customSplitsSerialized,
-                        memberId = memberId,
-                        parseResult = parseResult
-                    )
                 }
             }
             .size

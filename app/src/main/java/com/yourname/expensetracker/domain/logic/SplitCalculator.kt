@@ -25,14 +25,74 @@ object SplitCalculator {
         expense: GroupExpense,
         members: List<GroupMember>
     ): Map<Long, Double> {
-        if (members.isEmpty()) return emptyMap()
+        val splitValidationError = validateExpenseParticipants(expense, members)
+        if (splitValidationError != null) {
+            Timber.w(
+                "Invalid split participants for expenseId=%s splitType=%s. Returning empty split. reason=%s",
+                expense.id,
+                expense.splitType,
+                splitValidationError
+            )
+            return emptyMap()
+        }
+
+        val splitParticipants = getSplitParticipants(expense, members)
+        if (splitParticipants.isEmpty()) return emptyMap()
 
         return when (expense.splitType) {
-            SplitType.EQUAL -> calculateEqualSplit(expense.totalAmount, members)
-            SplitType.CUSTOM_PERCENT -> calculatePercentageSplit(expense, members)
-            SplitType.CUSTOM_AMOUNT -> calculateAmountSplit(expense, members)
-            SplitType.UNEQUAL -> calculateUnequalSplit(expense, members)
+            SplitType.EQUAL -> calculateEqualSplit(expense.totalAmount, splitParticipants)
+            SplitType.CUSTOM_PERCENT -> calculatePercentageSplit(expense, splitParticipants)
+            SplitType.CUSTOM_AMOUNT -> calculateAmountSplit(expense, splitParticipants)
+            SplitType.UNEQUAL -> calculateUnequalSplit(expense, splitParticipants)
         }
+    }
+
+    /**
+     * Returns the members that participate in this expense split.
+     * Equal splits only include members who had already joined when the expense happened.
+     */
+    fun getSplitParticipants(
+        expense: GroupExpense,
+        members: List<GroupMember>
+    ): List<GroupMember> {
+        if (members.isEmpty()) return emptyList()
+
+        return when (expense.splitType) {
+            SplitType.EQUAL -> members.filter { it.joinedAt <= expense.date }
+            SplitType.CUSTOM_PERCENT,
+            SplitType.CUSTOM_AMOUNT,
+            SplitType.UNEQUAL -> members
+        }
+    }
+
+    fun isMemberParticipatingInSplit(
+        expense: GroupExpense,
+        members: List<GroupMember>,
+        memberId: Long
+    ): Boolean {
+        return getSplitParticipants(expense, members).any { it.id == memberId }
+    }
+
+    /**
+     * Validates whether an expense has a coherent participant set for persistence/calculation.
+     * Equal splits require at least one historical participant and must include the payer.
+     */
+    fun validateExpenseParticipants(
+        expense: GroupExpense,
+        members: List<GroupMember>
+    ): String? {
+        if (expense.splitType != SplitType.EQUAL) return null
+
+        val splitParticipants = getSplitParticipants(expense, members)
+        if (splitParticipants.isEmpty()) {
+            return "Equal splits require at least one participant who joined on or before the expense date"
+        }
+
+        if (splitParticipants.none { it.id == expense.paidById }) {
+            return "Equal splits require the payer to have joined on or before the expense date"
+        }
+
+        return null
     }
     
     /**
@@ -46,12 +106,12 @@ object SplitCalculator {
         if (members.isEmpty()) return emptyMap()
 
         val totalCents = toCents(totalAmount)
-        val memberCount = members.size.coerceAtLeast(1)
+        val memberCount = members.size.coerceAtLeast(1).toLong()
         val baseCents = totalCents / memberCount
         val remainder = totalCents % memberCount
 
         return members.mapIndexed { index, member ->
-            val memberCents = baseCents + if (index < remainder) 1 else 0
+            val memberCents = baseCents + if (index.toLong() < remainder) 1L else 0L
             member.id to fromCents(memberCents)
         }.toMap()
     }
@@ -172,7 +232,7 @@ object SplitCalculator {
         data class PercentageShare(
             val memberId: Long,
             val order: Int,
-            val baseCents: Int,
+            val baseCents: Long,
             val fractionalPart: Double
         )
 
@@ -182,7 +242,7 @@ object SplitCalculator {
         val shares = members.mapIndexed { index, member ->
             val percent = percentages[member.id] ?: 0.0
             val rawCents = totalCents * (percent / 100.0)
-            val base = floor(rawCents).toInt()
+            val base = floor(rawCents).toLong()
             PercentageShare(
                 memberId = member.id,
                 order = index,
@@ -201,7 +261,7 @@ object SplitCalculator {
             var index = 0
             while (remainder > 0 && byLargestFraction.isNotEmpty()) {
                 val target = byLargestFraction[index % byLargestFraction.size].memberId
-                centsByMember[target] = (centsByMember[target] ?: 0) + 1
+                centsByMember[target] = (centsByMember[target] ?: 0L) + 1L
                 remainder--
                 index++
             }
@@ -212,7 +272,7 @@ object SplitCalculator {
             var index = 0
             while (remainingToRemove > 0 && bySmallestFraction.isNotEmpty()) {
                 val target = bySmallestFraction[index % bySmallestFraction.size].memberId
-                val current = centsByMember[target] ?: 0
+                val current = centsByMember[target] ?: 0L
                 if (current > 0) {
                     centsByMember[target] = current - 1
                     remainingToRemove--
@@ -222,19 +282,27 @@ object SplitCalculator {
         }
 
         return members.associate { member ->
-            member.id to fromCents(centsByMember[member.id] ?: 0)
+            member.id to fromCents(centsByMember[member.id] ?: 0L)
         }
     }
 
-    private fun toCents(amount: Double): Int {
+    fun calculateMemberShare(
+        expense: GroupExpense,
+        members: List<GroupMember>,
+        memberId: Long
+    ): Double {
+        return calculateSplitAmounts(expense, members)[memberId] ?: 0.0
+    }
+
+    private fun toCents(amount: Double): Long {
         return BigDecimal.valueOf(amount)
             .setScale(2, RoundingMode.HALF_UP)
             .movePointRight(2)
-            .toInt()
+            .longValueExact()
     }
 
-    private fun fromCents(cents: Int): Double {
-        return BigDecimal.valueOf(cents.toLong())
+    private fun fromCents(cents: Long): Double {
+        return BigDecimal.valueOf(cents)
             .movePointLeft(2)
             .toDouble()
     }

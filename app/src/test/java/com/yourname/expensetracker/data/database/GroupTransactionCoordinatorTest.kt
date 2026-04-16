@@ -33,6 +33,8 @@ import org.robolectric.annotation.Config
 import java.io.IOException
 import java.sql.SQLException
 
+private const val TEST_DATE = 1_710_000_000_000L
+
 /**
  * CRITICAL TESTS (CRITICAL-2): GroupTransactionCoordinator
  * 
@@ -464,6 +466,42 @@ class GroupTransactionCoordinatorTest {
     }
 
     @Test
+    fun `createSystemExpenseAndLinkToGroup stores current user share on linked system expense`() = runTest {
+        val group = ExpenseGroup(name = "Shared Link Group", defaultCurrency = "EUR")
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = group,
+            members = listOf(
+                GroupMember(groupId = 0, name = "Alice", isCurrentUser = true),
+                GroupMember(groupId = 0, name = "Bob")
+            )
+        )
+        val members = memberDao.getMembersForGroup(groupId).first()
+        val bobId = members.first { it.name == "Bob" }.id
+
+        val result = coordinator.createSystemExpenseAndLinkToGroup(
+            groupId = groupId,
+            description = "Team Dinner",
+            amount = 75.0,
+            paidById = bobId,
+            currency = "EUR",
+            splitType = SplitType.EQUAL,
+            date = TEST_DATE,
+            transactionType = TransactionType.PURCHASE,
+            notes = null
+        )
+
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+        val success = result as GroupExpenseCreationResult.Success
+        val linkedExpense = expenseDao.getById(success.expenseId)
+
+        assertThat(linkedExpense).isNotNull()
+        assertThat(linkedExpense!!.isSharedExpense).isTrue()
+        assertThat(linkedExpense.isNotMine).isFalse()
+        assertThat(linkedExpense.myShareAmount).isEqualTo(37.5)
+        assertThat(linkedExpense.effectiveAmount).isEqualTo(37.5)
+    }
+
+    @Test
     fun `createSystemExpenseAndLinkToGroup fails for inactive group`() = runTest {
         // Arrange - Create then archive group
         val group = ExpenseGroup(name = "Archived Group")
@@ -592,5 +630,104 @@ class GroupTransactionCoordinatorTest {
         val success = result as GroupExpenseCreationResult.Success
         assertThat(success.groupExpenseId).isGreaterThan(0)
         assertThat(success.expenseId).isEqualTo(systemExpenseId)
+    }
+
+    @Test
+    fun `addExpenseWithLink normalizes linked existing expense ownership fields`() = runTest {
+        val group = ExpenseGroup(name = "Existing Link Group", defaultCurrency = "EUR")
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = group,
+            members = listOf(
+                GroupMember(groupId = 0, name = "Alice", isCurrentUser = true),
+                GroupMember(groupId = 0, name = "Bob"),
+                GroupMember(groupId = 0, name = "Charlie")
+            )
+        )
+        val members = memberDao.getMembersForGroup(groupId).first()
+        val bobId = members.first { it.name == "Bob" }.id
+
+        val systemExpenseId = expenseDao.insert(
+            Expense(
+                amount = 90.0,
+                merchant = "Groceries",
+                transactionType = TransactionType.PURCHASE,
+                date = TEST_DATE,
+                isSharedExpense = false,
+                mySharePercentage = 50,
+                myShareAmount = null
+            )
+        )
+
+        val result = coordinator.addExpenseWithLink(
+            groupId = groupId,
+            systemExpenseId = systemExpenseId,
+            description = "Groceries",
+            amount = 90.0,
+            paidById = bobId,
+            currency = "EUR",
+            splitType = SplitType.CUSTOM_AMOUNT,
+            customSplitsJson = members.joinToString(",") { member ->
+                when (member.name) {
+                    "Alice" -> "${member.id}:15.0"
+                    "Bob" -> "${member.id}:45.0"
+                    else -> "${member.id}:30.0"
+                }
+            },
+            date = TEST_DATE
+        )
+
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+        val linkedExpense = expenseDao.getById(systemExpenseId)
+
+        assertThat(linkedExpense).isNotNull()
+        assertThat(linkedExpense!!.isSharedExpense).isTrue()
+        assertThat(linkedExpense.isNotMine).isFalse()
+        assertThat(linkedExpense.mySharePercentage).isNull()
+        assertThat(linkedExpense.myShareAmount).isEqualTo(15.0)
+        assertThat(linkedExpense.effectiveAmount).isEqualTo(15.0)
+    }
+
+    @Test
+    fun `addExpenseWithLink fails closed when current user member is missing and rolls back`() = runTest {
+        val group = ExpenseGroup(name = "No Current User Group", defaultCurrency = "EUR")
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = group,
+            members = listOf(
+                GroupMember(groupId = 0, name = "Alice"),
+                GroupMember(groupId = 0, name = "Bob")
+            )
+        )
+        val members = memberDao.getMembersForGroup(groupId).first()
+        val payerId = members.first().id
+
+        val systemExpenseId = expenseDao.insert(
+            Expense(
+                amount = 40.0,
+                merchant = "Museum",
+                transactionType = TransactionType.PURCHASE,
+                date = TEST_DATE
+            )
+        )
+
+        val beforeLink = expenseDao.getById(systemExpenseId)
+
+        val result = coordinator.addExpenseWithLink(
+            groupId = groupId,
+            systemExpenseId = systemExpenseId,
+            description = "Museum",
+            amount = 40.0,
+            paidById = payerId,
+            currency = "EUR",
+            splitType = SplitType.EQUAL,
+            customSplitsJson = null,
+            date = TEST_DATE
+        )
+
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
+        assertThat((result as GroupExpenseCreationResult.Error).message).contains("Current user")
+        assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).isEmpty()
+
+        val afterFailure = expenseDao.getById(systemExpenseId)
+        assertThat(afterFailure).isEqualTo(beforeLink)
     }
 }

@@ -8,27 +8,28 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
  * Single source of truth for monthly cost conversions and next date calculations.
  */
 object RecurrenceCalculator {
-    
+
     /**
-     * Multipliers for converting various frequencies to monthly equivalent.
-     * Based on standard approximations:
-     * - WEEKLY: 52 weeks / 12 months = 4.33
-     * - BIWEEKLY: 26 bi-weeks / 12 months = 2.17
-     * - MONTHLY: 1.0
-     * - QUARTERLY: 1/3 = 0.33
-     * - SEMI_ANNUALLY: 1/6 = 0.17
-     * - ANNUALLY: 1/12 = 0.08
-     * - IRREGULAR: treated as monthly (1.0)
+     * Normalize a due date to date-only semantics at local midnight.
      */
-    private val MONTHLY_MULTIPLIERS = mapOf(
-        RecurrenceFrequency.WEEKLY to 4.33,
-        RecurrenceFrequency.BIWEEKLY to 2.17,
-        RecurrenceFrequency.MONTHLY to 1.0,
-        RecurrenceFrequency.QUARTERLY to 1.0 / 3.0,
-        RecurrenceFrequency.SEMI_ANNUALLY to 1.0 / 6.0,
-        RecurrenceFrequency.ANNUALLY to 1.0 / 12.0,
-        RecurrenceFrequency.IRREGULAR to 1.0
-    )
+    fun normalizeToDateOnly(timestamp: Long): Long {
+        return TimePeriodUtils.getStartOfDay(timestamp)
+    }
+
+    /**
+     * Canonical multiplier for converting a recurrence period into its monthly equivalent.
+     */
+    fun monthlyMultiplier(frequency: RecurrenceFrequency): Double {
+        return when (frequency) {
+            RecurrenceFrequency.WEEKLY -> 4.33
+            RecurrenceFrequency.BIWEEKLY -> 2.17
+            RecurrenceFrequency.MONTHLY -> 1.0
+            RecurrenceFrequency.QUARTERLY -> 1.0 / 3.0
+            RecurrenceFrequency.SEMI_ANNUALLY -> 1.0 / 6.0
+            RecurrenceFrequency.ANNUALLY -> 1.0 / 12.0
+            RecurrenceFrequency.IRREGULAR -> 1.0
+        }
+    }
     
     /**
      * Convert any frequency amount to monthly equivalent.
@@ -38,8 +39,7 @@ object RecurrenceCalculator {
      * @return Monthly equivalent amount
      */
     fun toMonthlyAmount(amount: Double, frequency: RecurrenceFrequency): Double {
-        val multiplier = MONTHLY_MULTIPLIERS[frequency] ?: 1.0
-        return amount * multiplier
+        return amount * monthlyMultiplier(frequency)
     }
     
     /**
@@ -51,7 +51,7 @@ object RecurrenceCalculator {
      * @return Amount per period for the given frequency
      */
     fun fromMonthlyAmount(monthlyAmount: Double, frequency: RecurrenceFrequency): Double {
-        val multiplier = MONTHLY_MULTIPLIERS[frequency] ?: 1.0
+        val multiplier = monthlyMultiplier(frequency)
         return if (multiplier > 0) monthlyAmount / multiplier else monthlyAmount
     }
     
@@ -63,18 +63,20 @@ object RecurrenceCalculator {
      * @return Next due date in milliseconds
      */
     fun calculateNextDate(currentDate: Long, frequency: RecurrenceFrequency): Long {
-        return when (frequency) {
-            RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(currentDate, 7)
-            RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(currentDate, 14)
-            RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(currentDate, 1)
-            RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(currentDate, 3)
-            RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(currentDate, 6)
-            RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(currentDate, 1)
+        val normalizedCurrentDate = normalizeToDateOnly(currentDate)
+        val nextDate = when (frequency) {
+            RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(normalizedCurrentDate, 7)
+            RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(normalizedCurrentDate, 14)
+            RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(normalizedCurrentDate, 1)
+            RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(normalizedCurrentDate, 3)
+            RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(normalizedCurrentDate, 6)
+            RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(normalizedCurrentDate, 1)
             RecurrenceFrequency.IRREGULAR -> {
                 // For irregular expenses, keep the same date or add 1 month as default
-                TimePeriodUtils.addMonths(currentDate, 1)
+                TimePeriodUtils.addMonths(normalizedCurrentDate, 1)
             }
         }
+        return normalizeToDateOnly(nextDate)
     }
     
     /**
@@ -85,17 +87,19 @@ object RecurrenceCalculator {
      * @return Previous due date in milliseconds
      */
     fun calculatePreviousDate(currentDate: Long, frequency: RecurrenceFrequency): Long {
-        return when (frequency) {
-            RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(currentDate, -7)
-            RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(currentDate, -14)
-            RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(currentDate, -1)
-            RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(currentDate, -3)
-            RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(currentDate, -6)
-            RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(currentDate, -1)
+        val normalizedCurrentDate = normalizeToDateOnly(currentDate)
+        val previousDate = when (frequency) {
+            RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(normalizedCurrentDate, -7)
+            RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(normalizedCurrentDate, -14)
+            RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(normalizedCurrentDate, -1)
+            RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(normalizedCurrentDate, -3)
+            RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(normalizedCurrentDate, -6)
+            RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(normalizedCurrentDate, -1)
             RecurrenceFrequency.IRREGULAR -> {
-                TimePeriodUtils.addMonths(currentDate, -1)
+                TimePeriodUtils.addMonths(normalizedCurrentDate, -1)
             }
         }
+        return normalizeToDateOnly(previousDate)
     }
     
     /**

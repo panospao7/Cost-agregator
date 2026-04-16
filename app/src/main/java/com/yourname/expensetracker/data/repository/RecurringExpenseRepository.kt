@@ -2,11 +2,9 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import kotlinx.coroutines.flow.Flow
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,7 +21,8 @@ class RecurringExpenseRepository @Inject constructor(
             currency: String = "EUR",
             note: String? = null
         ): ManualRecurringExpense {
-            val nextDate = calculateNextDate(lastDate, frequency)
+            val normalizedLastDate = RecurrenceCalculator.normalizeToDateOnly(lastDate)
+            val nextDate = RecurrenceCalculator.calculateNextDate(normalizedLastDate, frequency)
 
             return ManualRecurringExpense(
                 merchant = merchant,
@@ -33,25 +32,6 @@ class RecurringExpenseRepository @Inject constructor(
                 nextDate = nextDate,
                 note = note ?: "Created from manual entry"
             )
-        }
-
-        private fun calculateNextDate(lastDate: Long, frequency: RecurrenceFrequency): Long {
-            val lastLocalDate = Instant.ofEpochMilli(lastDate)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate()
-
-            val nextLocalDate = when (frequency) {
-                RecurrenceFrequency.WEEKLY -> lastLocalDate.plusWeeks(1)
-                RecurrenceFrequency.BIWEEKLY -> lastLocalDate.plusWeeks(2)
-                RecurrenceFrequency.MONTHLY -> lastLocalDate.plusMonths(1)
-                RecurrenceFrequency.QUARTERLY -> lastLocalDate.plusMonths(3)
-                RecurrenceFrequency.SEMI_ANNUALLY -> lastLocalDate.plusMonths(6)
-                RecurrenceFrequency.ANNUALLY -> lastLocalDate.plusYears(1)
-                RecurrenceFrequency.IRREGULAR -> lastLocalDate
-                else -> lastLocalDate.plusDays(frequency.days.toLong())
-            }
-
-            return nextLocalDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         }
     }
 

@@ -2,8 +2,8 @@ package com.yourname.expensetracker.domain.reminder
 
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
-import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -37,7 +37,10 @@ class BillReminderManagerTest {
 
         manager.markBillPaid(1L)
 
-        assertEquals(TimePeriodUtils.addYears(expense.nextDate, 1), updatedSlot.captured.nextDate)
+        assertEquals(
+            RecurrenceCalculator.calculateNextDate(expense.nextDate, expense.frequency),
+            updatedSlot.captured.nextDate
+        )
         assertEquals(RecurrenceFrequency.ANNUALLY, updatedSlot.captured.frequency)
     }
 
@@ -50,7 +53,10 @@ class BillReminderManagerTest {
 
         manager.markBillPaid(2L)
 
-        assertEquals(TimePeriodUtils.addMonths(expense.nextDate, 6), updatedSlot.captured.nextDate)
+        assertEquals(
+            RecurrenceCalculator.calculateNextDate(expense.nextDate, expense.frequency),
+            updatedSlot.captured.nextDate
+        )
         assertEquals(RecurrenceFrequency.SEMI_ANNUALLY, updatedSlot.captured.frequency)
     }
 
@@ -63,7 +69,10 @@ class BillReminderManagerTest {
 
         manager.markBillPaid(3L)
 
-        assertEquals(TimePeriodUtils.addMonths(expense.nextDate, 1), updatedSlot.captured.nextDate)
+        assertEquals(
+            RecurrenceCalculator.calculateNextDate(expense.nextDate, expense.frequency),
+            updatedSlot.captured.nextDate
+        )
         assertEquals(RecurrenceFrequency.IRREGULAR, updatedSlot.captured.frequency)
     }
 
@@ -77,7 +86,15 @@ class BillReminderManagerTest {
 
         val total = manager.getMonthlyBillsTotal()
 
-        assertEquals(245.0, total, 0.0001)
+        val expected = listOf(
+            1200.0 to RecurrenceFrequency.ANNUALLY,
+            600.0 to RecurrenceFrequency.SEMI_ANNUALLY,
+            45.0 to RecurrenceFrequency.IRREGULAR
+        ).sumOf { (amount, frequency) ->
+            RecurrenceCalculator.toMonthlyAmount(amount, frequency)
+        }
+
+        assertEquals(expected, total, 0.0001)
         coVerify(exactly = 1) { recurringExpenseRepository.getAll() }
     }
 
