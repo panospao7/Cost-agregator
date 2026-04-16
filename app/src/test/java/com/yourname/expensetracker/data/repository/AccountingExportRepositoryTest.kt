@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.core.content.FileProvider
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
@@ -465,6 +466,44 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, pageSize)
         }
         coVerify(exactly = 0) { expenseRepository.getExpensesBetween(any(), any()) }
+    }
+
+    @Test
+    fun `exportExpenses QuickBooks IIF uses funding account on TRNS and category on SPL`() = runTest {
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+        val expense = Expense(
+            id = 1L,
+            amount = 42.5,
+            merchant = "Office Depot",
+            transactionType = TransactionType.PURCHASE,
+            date = start + 1_000L,
+            categoryId = 2L,
+            paymentMethod = PaymentMethod.CASH,
+            notes = "Paper"
+        )
+
+        coEvery {
+            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
+                start,
+                end,
+                AccountingExportRepository.EXPORT_PAGE_SIZE,
+                0
+            )
+        } returns listOf(expense)
+
+        val ctx = fakeContext()
+        val result = repository.exportExpenses(ctx, start, end, ExportFormat.QUICKBOOKS_IIF)
+
+        assertTrue("exportExpenses must succeed", result.success)
+
+        val lines = File(result.filePath!!).readLines()
+        val trnsLine = lines.first { it.startsWith("TRNS\t") }
+        val splLine = lines.first { it.startsWith("SPL\t") }
+
+        assertEquals("Cash", trnsLine.split("\t")[2])
+        assertEquals("Groceries", splLine.split("\t")[2])
+        assertTrue("TRNS and SPL accounts must stay separated", trnsLine.split("\t")[2] != splLine.split("\t")[2])
     }
 
     /**

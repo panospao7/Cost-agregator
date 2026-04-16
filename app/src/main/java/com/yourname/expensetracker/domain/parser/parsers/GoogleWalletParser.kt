@@ -35,6 +35,24 @@ class GoogleWalletParser @Inject constructor(
         Pattern.compile("""(?:at|to)\s+([A-Za-zΑ-Ωα-ω0-9\s&'.,-]+)""", Pattern.CASE_INSENSITIVE)
     }
 
+    private val peerHandlePattern = """@[A-Za-z0-9._-]+"""
+
+    private val personLikeCounterpartyPattern =
+        """($peerHandlePattern|[A-Za-zΑ-Ωα-ω][A-Za-zΑ-Ωα-ω'.-]*(?:\s+[A-Za-zΑ-Ωα-ω][A-Za-zΑ-Ωα-ω'.-]*){0,2}|(?:my\s+)?(?:friend|contact|mom|dad|mother|father|brother|sister|wife|husband|partner|roommate|buddy|family|colleague|someone\s+you\s+know))"""
+
+    private val incomingP2pPatterns by lazy {
+        listOf(
+            Pattern.compile("""(?:from|paid by)\s+$personLikeCounterpartyPattern""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""$personLikeCounterpartyPattern\s+(?:sent|paid)\s+you\b""", Pattern.CASE_INSENSITIVE)
+        )
+    }
+
+    private val outgoingP2pPatterns by lazy {
+        listOf(
+            Pattern.compile("""(?:to|sent to|paid to)\s+$personLikeCounterpartyPattern""", Pattern.CASE_INSENSITIVE)
+        )
+    }
+
     // Things that are NOT transactions
     private val REJECT_PATTERNS = listOf(
         "add a card", "set up", "tap to pay", "loyalty", "offer",
@@ -44,6 +62,28 @@ class GoogleWalletParser @Inject constructor(
     // Non-P2P money-in wording that should remain deposits.
     private val DEPOSIT_KEYWORDS = listOf(
         "credited", "deposit", "top up", "top-up", "added money"
+    )
+
+    private val P2P_KEYWORDS = listOf(
+        "friend", "contact", "mom", "dad", "mother", "father",
+        "brother", "sister", "wife", "husband", "partner", "roommate",
+        "buddy", "family", "colleague", "someone you know"
+    )
+
+    private val PAYMENT_APP_INDICATORS = listOf(
+        "paypal", "venmo", "cash app", "cashapp", "zelle",
+        "wise", "revolut", "apple cash"
+    )
+
+    private val PURCHASE_CONTEXT_KEYWORDS = listOf(
+        "mastercard", "visa", "amex", "card", "purchase", "transaction",
+        "order", "subscription", "bill", "checkout"
+    )
+
+    private val MERCHANT_LIKE_KEYWORDS = listOf(
+        "store", "shop", "market", "mart", "cafe", "coffee", "restaurant",
+        "hotel", "pharmacy", "bakery", "bar", "grill", "pizza", "burger",
+        "station", "fuel", "supermarket", "mall"
     )
 
     override fun parse(
@@ -65,7 +105,7 @@ class GoogleWalletParser @Inject constructor(
         // Extract amount from anywhere in the notification
         val amount = extractAmount(fullText) ?: return null
 
-        val transferDirection = detectP2pTransferDirection(title, text, bigText, lowerFull)
+        val transferDirection = detectP2pTransferDirection(title, text, bigText, fullText, lowerFull)
         val isTransfer = transferDirection != null
         val isDeposit = !isTransfer && DEPOSIT_KEYWORDS.any { lowerFull.contains(it) }
 
@@ -153,31 +193,167 @@ class GoogleWalletParser @Inject constructor(
         title: String?,
         text: String?,
         bigText: String?,
+        fullText: String,
         lowerFull: String
     ): ParsedTransferDirection? {
+        val incomingCounterparty = extractExplicitP2pCounterparty(fullText, ParsedTransferDirection.INCOMING)
+        val outgoingCounterparty = extractExplicitP2pCounterparty(fullText, ParsedTransferDirection.OUTGOING)
+
         val explicitDirection = when {
             Regex("""\b(?:received|receive)\b.*\bfrom\b""", RegexOption.IGNORE_CASE).containsMatchIn(lowerFull) ||
                 Regex("""\b(?:sent|paid)\s+you\b""", RegexOption.IGNORE_CASE).containsMatchIn(lowerFull) ||
-                lowerFull.contains("sent to you") ||
-                lowerFull.contains("money received") -> ParsedTransferDirection.INCOMING
+                lowerFull.contains("sent to you") -> ParsedTransferDirection.INCOMING
 
+            else -> null
+        }?.takeIf {
+            hasExplicitP2pCue(title, lowerFull, incomingCounterparty, ParsedTransferDirection.INCOMING)
+        } ?: when {
             Regex("""\b(?:sent|send|paid)\b.*\bto\b""", RegexOption.IGNORE_CASE).containsMatchIn(lowerFull) ||
                 Regex("""\btransfer(?:red)?\b.*\bto\b""", RegexOption.IGNORE_CASE).containsMatchIn(lowerFull) -> ParsedTransferDirection.OUTGOING
 
             else -> null
+        }?.takeIf {
+            hasExplicitP2pCue(title, lowerFull, outgoingCounterparty, ParsedTransferDirection.OUTGOING)
         }
 
+        val detectorAccountName = directionDetector.extractAccountName(title, text, bigText)
         return explicitDirection ?: directionDetector.detectDirection(
             title = title,
             text = text,
             bigText = bigText,
             transactionType = ParsedTransactionType.TRANSFER
-        )?.takeIf {
-            lowerFull.contains("transfer") ||
-                lowerFull.contains("sent") ||
-                lowerFull.contains("received") ||
-                lowerFull.contains("paid you")
+        )?.takeIf { detectedDirection ->
+            hasExplicitP2pCue(
+                title = title,
+                lowerFull = lowerFull,
+                counterparty = extractExplicitP2pCounterparty(fullText, detectedDirection) ?: detectorAccountName,
+                direction = detectedDirection
+            )
         }
+    }
+
+    private fun extractExplicitP2pCounterparty(
+        fullText: String,
+        direction: ParsedTransferDirection
+    ): String? {
+        val patterns = when (direction) {
+            ParsedTransferDirection.INCOMING -> incomingP2pPatterns
+            ParsedTransferDirection.OUTGOING -> outgoingP2pPatterns
+        }
+
+        patterns.forEach { pattern ->
+            val matcher = pattern.matcher(fullText)
+            if (matcher.find()) {
+                return matcher.group(1)?.trim()
+            }
+        }
+
+        return null
+    }
+
+    private fun hasExplicitP2pCue(
+        title: String?,
+        lowerFull: String,
+        counterparty: String?,
+        direction: ParsedTransferDirection
+    ): Boolean {
+        if (direction == ParsedTransferDirection.INCOMING &&
+            (lowerFull.contains("paid you") || lowerFull.contains("sent to you"))
+        ) {
+            return true
+        }
+
+        val cleanedCounterparty = counterparty
+            ?.let { merchantCleaner.clean(it) }
+            ?.trim()
+            ?.trimEnd(',', '.', ':', ';', '-', '–', '—')
+            .orEmpty()
+
+        if (hasPeerHandleCue(lowerFull) || hasPeerHandleCue(cleanedCounterparty)) {
+            return true
+        }
+
+        if (direction == ParsedTransferDirection.OUTGOING) {
+            return hasOutgoingPeerTransferMarker(lowerFull, cleanedCounterparty)
+        }
+
+        if (P2P_KEYWORDS.any { lowerFull.contains(it) } ||
+            PAYMENT_APP_INDICATORS.any { lowerFull.contains(it) }
+        ) {
+            return true
+        }
+
+        if (PURCHASE_CONTEXT_KEYWORDS.any { lowerFull.contains(it) }) {
+            return false
+        }
+
+        if (cleanedCounterparty.isBlank()) {
+            return false
+        }
+
+        val cleanedTitle = title?.let { merchantCleaner.clean(it) }?.trim().orEmpty()
+        if (cleanedTitle.isNotBlank() &&
+            !isWalletOrPaymentTitle(cleanedTitle) &&
+            cleanedTitle.equals(cleanedCounterparty, ignoreCase = true)
+        ) {
+            return false
+        }
+
+        val allowSingleWordName = !(direction == ParsedTransferDirection.OUTGOING &&
+            lowerFull.contains("paid") &&
+            P2P_KEYWORDS.none { lowerFull.contains(it) })
+
+        return looksLikeExplicitPersonName(cleanedCounterparty, allowSingleWordName)
+    }
+
+    private fun hasOutgoingPeerTransferMarker(lowerFull: String, cleanedCounterparty: String): Boolean {
+        if (P2P_KEYWORDS.any { lowerFull.contains(it) || cleanedCounterparty.contains(it, ignoreCase = true) }) {
+            return true
+        }
+
+        if (PAYMENT_APP_INDICATORS.any { lowerFull.contains(it) || cleanedCounterparty.contains(it, ignoreCase = true) }) {
+            return true
+        }
+
+        return false
+    }
+
+    private fun hasPeerHandleCue(value: String): Boolean {
+        return Regex("""(?:^|\s)$peerHandlePattern\b""").containsMatchIn(value)
+    }
+
+    private fun isWalletOrPaymentTitle(title: String): Boolean {
+        val lowerTitle = title.lowercase()
+        return listOf("google pay", "google wallet", "wallet", "payment", "transaction").any {
+            lowerTitle.contains(it)
+        }
+    }
+
+    private fun looksLikeExplicitPersonName(value: String, allowSingleWordName: Boolean): Boolean {
+        val normalized = value.trim()
+        if (normalized.isBlank()) {
+            return false
+        }
+
+        val lowerValue = normalized.lowercase()
+        if (P2P_KEYWORDS.any { lowerValue.contains(it) }) {
+            return true
+        }
+
+        if (MERCHANT_LIKE_KEYWORDS.any { lowerValue.contains(it) }) {
+            return false
+        }
+
+        val parts = normalized.split(Regex("""\s+""")).filter { it.isNotBlank() }
+        if (parts.isEmpty() || parts.size > 3) {
+            return false
+        }
+
+        if (!allowSingleWordName && parts.size < 2) {
+            return false
+        }
+
+        return parts.all { it.matches(Regex("""[A-Za-zΑ-Ωα-ω][A-Za-zΑ-Ωα-ω'.-]+""")) }
     }
 
     private fun extractTransferCounterparty(

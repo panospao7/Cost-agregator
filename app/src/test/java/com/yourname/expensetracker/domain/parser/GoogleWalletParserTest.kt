@@ -79,6 +79,38 @@ class GoogleWalletParserTest {
     }
 
     @Test
+    fun `keep paid to merchant wording as purchase`() {
+        val result = parser.parse(
+            title = "Google Pay",
+            text = "Paid €18.00 to Coffee Island with Mastercard ••1234",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.walletnfcrel"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertNull(result.transferDirection)
+        assertEquals("Coffee Island with Mastercard", result.merchant)
+    }
+
+    @Test
+    fun `parse paid to friend wording as transfer`() {
+        val result = parser.parse(
+            title = "Google Pay",
+            text = "Paid €18.00 to friend Alex",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.walletnfcrel"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.TRANSFER, result!!.type)
+        assertEquals(ParsedTransferDirection.OUTGOING, result.transferDirection)
+        assertEquals("friend Alex", result.merchant)
+    }
+
+    @Test
     fun `title is merchant when no at-pattern in text`() {
         val result = parser.parse(
             title = "COFFEE ISLAND",

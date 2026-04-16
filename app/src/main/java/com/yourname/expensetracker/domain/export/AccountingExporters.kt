@@ -27,13 +27,14 @@ class QuickBooksIIFExporter {
 
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
-        val account = categories[expense.categoryId] ?: "Uncategorized"
+        val fundingAccount = expense.sourceAccountName
+        val categoryAccount = categories[expense.categoryId] ?: "Uncategorized"
         val amount = expense.amount
         val memo = escapeIifField(expense.notes ?: "")
         val name = escapeIifField(expense.merchant)
 
-        writer.append("TRNS\t${escapeIifField(date)}\t${escapeIifField(account)}\t$amount\t$memo\t$name\t\n")
-        writer.append("SPL\t${escapeIifField(date)}\t${escapeIifField(account)}\t-$amount\t$memo\t$name\t\n")
+        writer.append("TRNS\t${escapeIifField(date)}\t${escapeIifField(fundingAccount)}\t$amount\t$memo\t$name\t\n")
+        writer.append("SPL\t${escapeIifField(date)}\t${escapeIifField(categoryAccount)}\t-$amount\t$memo\t$name\t\n")
         writer.append("ENDTRNS\n")
     }
 

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.export
 
 import com.google.common.truth.Truth.assertThat
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import org.junit.Test
 import java.util.Date
 import org.junit.Ignore
@@ -388,7 +389,10 @@ class CsvEscapingTest {
             amount = amount,
             date = date,
             categoryId = categoryId,
-            notes = notes
+            notes = notes,
+            currency = "EUR",
+            transactionType = TransactionType.PURCHASE,
+            sourceAccountName = "Cash"
         )
     }
 }

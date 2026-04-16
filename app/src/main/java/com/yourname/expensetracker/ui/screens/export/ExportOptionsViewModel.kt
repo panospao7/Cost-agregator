@@ -4,10 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.ExportDataRepository
-import com.yourname.expensetracker.domain.export.ExportTransaction
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
+import com.yourname.expensetracker.domain.export.toExportTransaction
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -392,15 +392,4 @@ private class PreviewCollector(private val maxChars: Int) {
             truncated = true
         }
     }
-}
-
-private fun Expense.toExportTransaction(): ExportTransaction {
-    return ExportTransaction(
-        id = id,
-        date = date,
-        amount = amount,
-        merchant = merchant,
-        notes = notes,
-        categoryId = categoryId
-    )
 }
