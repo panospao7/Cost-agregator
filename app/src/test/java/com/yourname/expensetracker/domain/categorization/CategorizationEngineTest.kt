@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.domain.categorization.MatchType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
@@ -25,6 +26,7 @@ class CategorizationEngineTest {
     private val greeklishNormalizer = mockk<GreeklishNormalizer>(relaxed = true)
     private val semanticMatcher = mockk<SemanticKeywordMatcher>(relaxed = true)
     private val contextEngine = mockk<ContextualInferenceEngine>(relaxed = true)
+    private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private lateinit var engine: CategorizationEngine
 
     @Before
@@ -39,6 +41,7 @@ class CategorizationEngineTest {
             )
         }
         every { categoryRepositoryProvider.get() } returns categoryRepository
+        every { timeProvider.now() } returns 1_710_000_000_000L
         coEvery { categoryRepository.getAll() } returns emptyList()
         engine = CategorizationEngine(
             merchantCategoryRepository,
@@ -47,7 +50,8 @@ class CategorizationEngineTest {
             canonicalizer,
             greeklishNormalizer,
             semanticMatcher,
-            contextEngine
+            contextEngine,
+            timeProvider
         )
     }
 

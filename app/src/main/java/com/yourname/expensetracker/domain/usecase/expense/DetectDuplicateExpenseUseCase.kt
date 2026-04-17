@@ -67,6 +67,8 @@ class DetectDuplicateExpenseUseCase @Inject constructor(
             merchant = merchant,
             date = date,
             expenses = nearbyExpenses,
+            currency = currency,
+            transactionType = transactionType,
             timeWindowMs = effectiveWindowMs
         )
 

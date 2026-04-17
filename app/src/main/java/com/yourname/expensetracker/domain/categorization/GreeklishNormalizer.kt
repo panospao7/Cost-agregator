@@ -158,9 +158,11 @@ class GreeklishNormalizer @Inject constructor() {
         val variations = mutableSetOf(normalized)
         
         KNOWN_VARIATIONS.forEach { (canonical, alts) ->
-            if (normalized == canonical || normalized in alts) {
-                variations.add(canonical)
-                variations.addAll(alts.map { normalize(it) })
+            val normalizedCanonical = normalize(canonical)
+            val normalizedAlternatives = alts.map { normalize(it) }
+            if (normalized == normalizedCanonical || normalized in normalizedAlternatives) {
+                variations.add(normalizedCanonical)
+                variations.addAll(normalizedAlternatives)
             }
         }
         

@@ -54,6 +54,8 @@ class DetectDuplicateExpenseUseCaseTest : AnalyticsEngineTestBase() {
                 merchant = "Coffee Shop",
                 date = date,
                 expenses = any(),
+                currency = "EUR",
+                transactionType = TransactionType.UNKNOWN,
                 timeWindowMs = any()
             )
         } returns existing
@@ -82,6 +84,8 @@ class DetectDuplicateExpenseUseCaseTest : AnalyticsEngineTestBase() {
                 merchant = any(),
                 date = any(),
                 expenses = any(),
+                currency = any(),
+                transactionType = any(),
                 timeWindowMs = any()
             )
         } returns null
@@ -97,7 +101,17 @@ class DetectDuplicateExpenseUseCaseTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseRepository.getDuplicateCandidatesInWindow(any(), any(), any(), any(), any())
         } returns emptyList()
-        coEvery { crossSourceDeduplication.findExpenseDuplicate(any(), any(), any(), any(), any()) } returns null
+        coEvery {
+            crossSourceDeduplication.findExpenseDuplicate(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+            )
+        } returns null
 
         useCase(
             amount = 10.0,
@@ -124,12 +138,32 @@ class DetectDuplicateExpenseUseCaseTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseRepository.getDuplicateCandidatesInWindow(any(), any(), any(), any(), any())
         } returns emptyList()
-        coEvery { crossSourceDeduplication.findExpenseDuplicate(any(), any(), any(), any(), any()) } returns null
+        coEvery {
+            crossSourceDeduplication.findExpenseDuplicate(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+            )
+        } returns null
 
         val result = useCase(amount = 1.0, merchant = "", date = 1_700_000_000_000L, currency = "EUR")
 
         assertTrue(result is DuplicateCheckResult.None)
-        coVerify(exactly = 1) { crossSourceDeduplication.findExpenseDuplicate(any(), any(), any(), emptyList(), any()) }
+        coVerify(exactly = 1) {
+            crossSourceDeduplication.findExpenseDuplicate(
+                any(),
+                any(),
+                any(),
+                emptyList(),
+                any(),
+                any(),
+                any()
+            )
+        }
     }
 
     @Test
@@ -138,7 +172,17 @@ class DetectDuplicateExpenseUseCaseTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseRepository.getDuplicateCandidatesInWindow(any(), any(), any(), any(), any())
         } returns emptyList()
-        coEvery { crossSourceDeduplication.findExpenseDuplicate(any(), any(), any(), any(), any()) } returns null
+        coEvery {
+            crossSourceDeduplication.findExpenseDuplicate(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+            )
+        } returns null
 
         useCase(
             amount = 20.0,

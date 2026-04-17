@@ -49,7 +49,7 @@ object CategoryKeywords {
             // Semantic Keywords (food-related)
             "espresso" to 0.95, "cappuccino" to 0.95, "freddo" to 0.95,
             "latte" to 0.95, "mocha" to 0.95,
-            "barista" to 0.85, "roaster" to 0.85, "roasters" to 0.85,
+            "barista" to 0.85, "roasters" to 0.85,
             "brew" to 0.85, "brewing" to 0.85,
             "bean" to 0.75, "blend" to 0.75, "grind" to 0.75, "drip" to 0.75,
             "juice" to 0.90, "smoothie" to 0.90, "tea" to 0.90, "matcha" to 0.90,

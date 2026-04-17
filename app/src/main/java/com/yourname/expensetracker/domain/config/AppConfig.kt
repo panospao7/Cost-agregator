@@ -52,7 +52,7 @@ object AppConfig {
         const val NOMINATIM_MIN_INTERVAL_MS = 1_100L  // 1.1 sec → safe under 1 req/sec policy
 
         /** User-Agent header required by Nominatim usage policy. */
-        const val NOMINATIM_USER_AGENT = "ExpenseTrackerApp/1.0 (Android; panospao777@gmail.com)"
+        const val NOMINATIM_USER_AGENT = "ExpenseTracker/Android"
 
         /** Nominatim base URL. */
         const val NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"

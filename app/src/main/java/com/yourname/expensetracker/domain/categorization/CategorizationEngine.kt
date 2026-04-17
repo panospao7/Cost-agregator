@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
@@ -58,7 +59,8 @@ class CategorizationEngine @Inject constructor(
     private val canonicalizer: MerchantCanonicalizer,
     private val greeklishNormalizer: GreeklishNormalizer,
     private val semanticMatcher: SemanticKeywordMatcher,
-    private val contextEngine: ContextualInferenceEngine
+    private val contextEngine: ContextualInferenceEngine,
+    private val timeProvider: TimeProvider
 ) {
     private val cacheMutex = Mutex()
     private var cachedMappings: List<MerchantCategory>? = null
@@ -410,7 +412,7 @@ class CategorizationEngine @Inject constructor(
 
     private suspend fun getCacheData(): CacheData {
         return cacheMutex.withLock {
-            val now = System.currentTimeMillis()
+            val now = timeProvider.now()
             if (cachedMappings == null || now - lastCacheTime > CACHE_EXPIRY_MS) {
                 val all = merchantCategoryRepository.getAll()
                 cachedMappings = all.sortedByDescending { it.merchantPattern.length }

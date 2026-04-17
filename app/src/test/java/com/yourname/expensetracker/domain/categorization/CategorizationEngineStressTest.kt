@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.MatchType as MLMatchTy
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.async
@@ -41,6 +42,7 @@ class CategorizationEngineStressTest {
     private val greeklishNormalizer = mockk<GreeklishNormalizer>(relaxed = true)
     private val semanticMatcher = mockk<SemanticKeywordMatcher>(relaxed = true)
     private val contextEngine = mockk<ContextualInferenceEngine>(relaxed = true)
+    private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private lateinit var engine: CategorizationEngine
 
     @Before
@@ -56,6 +58,7 @@ class CategorizationEngineStressTest {
             )
         }
         every { categoryRepositoryProvider.get() } returns categoryRepository
+        every { timeProvider.now() } returns 1_710_000_000_000L
         coEvery { categoryRepository.getAll() } returns emptyList()
         
         engine = CategorizationEngine(
@@ -65,7 +68,8 @@ class CategorizationEngineStressTest {
             canonicalizer,
             greeklishNormalizer,
             semanticMatcher,
-            contextEngine
+            contextEngine,
+            timeProvider
         )
     }
 

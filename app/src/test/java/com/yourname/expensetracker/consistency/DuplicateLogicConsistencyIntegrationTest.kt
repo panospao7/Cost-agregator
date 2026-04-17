@@ -38,7 +38,14 @@ class DuplicateLogicConsistencyIntegrationTest {
         val expense = createExpense(1, amount, merchant, date)
         val expenses = listOf(expense)
 
-        val duplicate = deduplication.findExpenseDuplicate(amount, merchant, date, expenses)
+        val duplicate = deduplication.findExpenseDuplicate(
+            amount = amount,
+            merchant = merchant,
+            date = date,
+            expenses = expenses,
+            currency = "EUR",
+            transactionType = TransactionType.PURCHASE
+        )
         assertNotNull(duplicate)
         assertEquals(expense.id, duplicate!!.id)
     }
@@ -51,7 +58,14 @@ class DuplicateLogicConsistencyIntegrationTest {
         val expense = createExpense(1, 30.00, merchant, date)
         val expenses = listOf(expense)
 
-        val duplicate = deduplication.findExpenseDuplicate(amount, merchant, date, expenses)
+        val duplicate = deduplication.findExpenseDuplicate(
+            amount = amount,
+            merchant = merchant,
+            date = date,
+            expenses = expenses,
+            currency = "EUR",
+            transactionType = TransactionType.PURCHASE
+        )
         assertNull(duplicate)
     }
 
@@ -63,7 +77,14 @@ class DuplicateLogicConsistencyIntegrationTest {
         val expense = createExpense(1, amount, "McDonald's", date)
         val expenses = listOf(expense)
 
-        val duplicate = deduplication.findExpenseDuplicate(amount, merchant, date, expenses)
+        val duplicate = deduplication.findExpenseDuplicate(
+            amount = amount,
+            merchant = merchant,
+            date = date,
+            expenses = expenses,
+            currency = "EUR",
+            transactionType = TransactionType.PURCHASE
+        )
         assertNull(duplicate)
     }
 
@@ -75,7 +96,14 @@ class DuplicateLogicConsistencyIntegrationTest {
         val expense = createExpense(1, amount, merchant, date - (25 * 60 * 60 * 1000)) // 25h ago
         val expenses = listOf(expense)
 
-        val duplicate = deduplication.findExpenseDuplicate(amount, merchant, date, expenses)
+        val duplicate = deduplication.findExpenseDuplicate(
+            amount = amount,
+            merchant = merchant,
+            date = date,
+            expenses = expenses,
+            currency = "EUR",
+            transactionType = TransactionType.PURCHASE
+        )
         assertNull(duplicate)
     }
 
@@ -256,7 +284,14 @@ class DuplicateLogicConsistencyIntegrationTest {
         val expense = createExpense(1, 25.505, merchant, date)
         val expenses = listOf(expense)
 
-        val duplicate = deduplication.findExpenseDuplicate(amount, merchant, date, expenses)
+        val duplicate = deduplication.findExpenseDuplicate(
+            amount = amount,
+            merchant = merchant,
+            date = date,
+            expenses = expenses,
+            currency = "EUR",
+            transactionType = TransactionType.PURCHASE
+        )
         assertNotNull("Amount within 0.01 should match", duplicate)
     }
 
@@ -268,7 +303,14 @@ class DuplicateLogicConsistencyIntegrationTest {
         val expense = createExpense(1, 25.52, merchant, date) // 0.02 diff
         val expenses = listOf(expense)
 
-        val duplicate = deduplication.findExpenseDuplicate(amount, merchant, date, expenses)
+        val duplicate = deduplication.findExpenseDuplicate(
+            amount = amount,
+            merchant = merchant,
+            date = date,
+            expenses = expenses,
+            currency = "EUR",
+            transactionType = TransactionType.PURCHASE
+        )
         assertNull("Amount outside 0.01 tolerance should not match", duplicate)
     }
 
@@ -280,7 +322,14 @@ class DuplicateLogicConsistencyIntegrationTest {
         val expenses = listOf(expense)
 
         // "Starbucks" should match "Starbucks Coffee" (contains)
-        val duplicate = deduplication.findExpenseDuplicate(amount, "Starbucks", date, expenses)
+        val duplicate = deduplication.findExpenseDuplicate(
+            amount = amount,
+            merchant = "Starbucks",
+            date = date,
+            expenses = expenses,
+            currency = "EUR",
+            transactionType = TransactionType.PURCHASE
+        )
         assertNotNull("Merchant similarity should match Starbucks vs Starbucks Coffee", duplicate)
     }
 
@@ -327,9 +376,23 @@ class DuplicateLogicConsistencyIntegrationTest {
         val expense = createExpense(1, amount, merchant, date)
         val expenses = listOf(expense)
 
-        val first = deduplication.findExpenseDuplicate(amount, merchant, date, expenses)
+        val first = deduplication.findExpenseDuplicate(
+            amount = amount,
+            merchant = merchant,
+            date = date,
+            expenses = expenses,
+            currency = "EUR",
+            transactionType = TransactionType.PURCHASE
+        )
         repeat(99) {
-            val dup = deduplication.findExpenseDuplicate(amount, merchant, date, expenses)
+            val dup = deduplication.findExpenseDuplicate(
+                amount = amount,
+                merchant = merchant,
+                date = date,
+                expenses = expenses,
+                currency = "EUR",
+                transactionType = TransactionType.PURCHASE
+            )
             assertEquals(first?.id, dup?.id)
         }
     }

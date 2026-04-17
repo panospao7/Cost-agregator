@@ -4,6 +4,8 @@ package com.yourname.expensetracker.domain.util
  * Utility functions for calculating string distances and similarities.
  */
 object StringDistanceUtils {
+    private val STRIP_NOISE_REGEX = Regex("[^\\p{L}0-9]")
+    private val STRIP_EMOJI_REGEX = Regex("[\\p{So}]+")
 
     /**
      * Calculate Levenshtein distance between two strings.
@@ -121,10 +123,8 @@ object StringDistanceUtils {
         
         // Strip out non-alphabetic noise before checking distance to prevent geometric shapes,
         // emojis, and symbols from skewing the distance (e.g. "Starbucks" vs "Starbucks😀").
-        val stripNoise = Regex("[^\\p{L}0-9]")
-        val stripEmoji = Regex("[\\p{So}]+")
-        val cleanedOcr = ocrString.replace(stripEmoji, "").replace(stripNoise, "").trim().uppercase()
-        val cleanedTarget = targetAnchor.replace(stripEmoji, "").replace(stripNoise, "").trim().uppercase()
+        val cleanedOcr = ocrString.replace(STRIP_EMOJI_REGEX, "").replace(STRIP_NOISE_REGEX, "").trim().uppercase()
+        val cleanedTarget = targetAnchor.replace(STRIP_EMOJI_REGEX, "").replace(STRIP_NOISE_REGEX, "").trim().uppercase()
         
         return levenshteinDistance(cleanedOcr, cleanedTarget) <= maxDistance
     }

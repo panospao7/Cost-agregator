@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.intelligence
 
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.ai.model.DuplicateCheckCandidate
 import com.yourname.expensetracker.domain.ai.service.SemanticDuplicateDetector
@@ -151,6 +152,8 @@ class CrossSourceDeduplication @Inject constructor(
      * @param merchant Merchant name
      * @param date Transaction date
      * @param expenses List of recent expenses to check against
+     * @param currency ISO-4217 currency code of the new transaction
+     * @param transactionType Transaction type of the new transaction
      * @param timeWindowMs Optional time window override (default uses canonical policy window)
      * @param latitude Optional latitude of the new transaction (for proximity scoring)
      * @param longitude Optional longitude of the new transaction (for proximity scoring)
@@ -160,23 +163,29 @@ class CrossSourceDeduplication @Inject constructor(
         amount: Double,
         merchant: String,
         date: Long,
-        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        expenses: List<Expense>,
+        currency: String,
+        transactionType: TransactionType = TransactionType.UNKNOWN,
         timeWindowMs: Long = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
         latitude: Double? = null,
         longitude: Double? = null
-    ): com.yourname.expensetracker.data.database.entity.Expense? {
+    ): Expense? {
         val normalizedMerchant = DuplicateDetectionPolicy.normalizeMerchant(merchant)
 
-        // Collect all candidates that pass the hard filters (date, amount, merchant)
+        // Collect all candidates that pass the hard filters (date, amount, currency,
+        // type, merchant) then use the policy's deterministic tie-break ranking.
         // then use the policy's deterministic tie-break ranking.
-        val scoredCandidates = mutableListOf<DuplicateDetectionPolicy.ScoredCandidate<com.yourname.expensetracker.data.database.entity.Expense>>()
+        val scoredCandidates = mutableListOf<DuplicateDetectionPolicy.ScoredCandidate<Expense>>()
 
         for (expense in expenses) {
-            // Check date is within window
-            if (!DuplicateDetectionPolicy.isWithinWindow(date, expense.date, timeWindowMs)) continue
-
-            // Check amount matches within shared tolerance
-            if (!DuplicateDetectionPolicy.areAmountsEqual(amount, expense.amount)) continue
+            if (!DuplicateDetectionPolicy.isEligibleCandidate(
+                    newAmount = amount,
+                    newCurrency = currency,
+                    newType = transactionType,
+                    newDate = date,
+                    existing = expense,
+                    windowMs = timeWindowMs
+                )) continue
 
             // Check merchant similarity
             val expenseMerchant = DuplicateDetectionPolicy.normalizeMerchant(expense.merchant)

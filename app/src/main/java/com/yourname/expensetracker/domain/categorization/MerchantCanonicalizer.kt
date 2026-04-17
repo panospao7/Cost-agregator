@@ -11,6 +11,9 @@ data class CanonicalResult(
 
 @Singleton
 class MerchantCanonicalizer @Inject constructor() {
+    companion object {
+        private const val MIN_REMAINING_STEM_LENGTH = 3
+    }
     
     private val LOCATION_SUFFIXES = listOf(
         // Longer suffixes first to avoid partial matches
@@ -72,6 +75,9 @@ class MerchantCanonicalizer @Inject constructor() {
             for (prefix in BUSINESS_TYPE_PREFIXES) {
                 if (normalized.startsWith("$prefix ") || normalized.startsWith("$prefix-")) {
                     val prefixToRemove = if (normalized.startsWith("$prefix ")) "$prefix " else "$prefix-"
+                    if (normalized.length <= prefixToRemove.length + MIN_REMAINING_STEM_LENGTH) {
+                        continue
+                    }
                     normalized = normalized.removePrefix(prefixToRemove).trim()
                     strippedParts.add(prefix)
                     strippedPrefix = true
@@ -109,7 +115,7 @@ class MerchantCanonicalizer @Inject constructor() {
                 val pattern = Regex("""(?:^|\s)$escapedSuffix[\s\.]*$""", RegexOption.IGNORE_CASE)
                 if (pattern.containsMatchIn(normalized)) {
                     val afterStrip = normalized.replace(pattern, "").trim()
-                    if (afterStrip.isNotEmpty()) {
+                    if (afterStrip.length >= MIN_REMAINING_STEM_LENGTH) {
                         // Don't strip "company"/"corporation" if it would leave a single word (e.g. "My Company AE" -> "my company")
                         if (suffix in listOf("company", "corporation") && afterStrip.split(" ").size < 2) continue
                         normalized = afterStrip
