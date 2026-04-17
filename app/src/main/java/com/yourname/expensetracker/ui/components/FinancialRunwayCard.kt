@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.clip
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
@@ -150,7 +151,7 @@ fun FinancialRunwayCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        "€${String.format("%.0f", discretionaryRemaining)}",
+                        CurrencyFormatter.format(discretionaryRemaining, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.TextPrimary
@@ -163,7 +164,7 @@ fun FinancialRunwayCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        "€${String.format("%.1f", averageDailyDiscretionarySpend)}",
+                        CurrencyFormatter.format(averageDailyDiscretionarySpend),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.TextPrimary
@@ -176,7 +177,7 @@ fun FinancialRunwayCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        "€${String.format("%.0f", monthlyIncome)}",
+                        CurrencyFormatter.format(monthlyIncome, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.SuccessGreen
@@ -196,7 +197,7 @@ fun FinancialRunwayCard(
                             color = SemanticColors.WarningOrange.copy(alpha = 0.1f)
                         ) {
                             Text(
-                                "€${String.format("%.0f", committedExpenses)} committed",
+                                "${CurrencyFormatter.format(committedExpenses, showCents = false)} committed",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.WarningOrange,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -209,7 +210,7 @@ fun FinancialRunwayCard(
                             color = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f)
                         ) {
                             Text(
-                                "€${String.format("%.0f", likelyExpenses)} planned",
+                                "${CurrencyFormatter.format(likelyExpenses, showCents = false)} planned",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.PrimaryIndigo,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)

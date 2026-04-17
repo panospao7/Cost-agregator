@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.analytics.TransactionPercentiles
 import com.yourname.expensetracker.ui.components.AmountText
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
@@ -129,7 +130,7 @@ private fun PercentileColumn(
         )
         
         Text(
-            text = "€${String.format("%.0f", value)}",
+            text = CurrencyFormatter.format(value, showCents = false),
             style = when {
                 isPrimary -> MaterialTheme.typography.titleMedium
                 isSecondary -> MaterialTheme.typography.bodyLarge
@@ -235,7 +236,7 @@ fun TransactionHistogramChart(
                         
                         // X-axis label (amount range)
                         Text(
-                            text = "€${String.format("%.0f", bin.rangeStart)}",
+                            text = CurrencyFormatter.format(bin.rangeStart, showCents = false),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center

@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 
 /**
  * Retro Arcade style Category Breakdown Sheet.
@@ -378,7 +379,7 @@ private fun RetroCategoryBreakdownRow(
                 ) {
                     // Amount
                     Text(
-                        text = "€${String.format("%.0f", breakdown.totalAmount)}",
+                        text = CurrencyFormatter.format(breakdown.totalAmount, showCents = false),
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold

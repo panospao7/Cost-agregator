@@ -58,7 +58,7 @@ internal fun buildCompletedSplitShares(
 @Composable
 fun VisualSplitEditorScreen(
     totalAmount: Double,
-    currencyCode: String = "EUR",
+    currencyCode: String = defaultCurrencyCode(),
     expenseId: Long? = null,
     templateId: Long? = null,
     onSplitComplete: (List<SplitShare>, SplitTemplate.SplitType) -> Unit,
@@ -652,8 +652,13 @@ private fun sanitizeColorHex(rawColor: String?, fallback: String = DEFAULT_SPLIT
 }
 
 private fun buildCurrencyFormat(currencyCode: String): NumberFormat {
-    val fallbackCurrency = Currency.getInstance("EUR")
+    val fallbackCurrency = Currency.getInstance(defaultCurrencyCode())
     return NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
         currency = runCatching { Currency.getInstance(currencyCode) }.getOrDefault(fallbackCurrency)
     }
+}
+
+private fun defaultCurrencyCode(): String {
+    return runCatching { Currency.getInstance(Locale.getDefault()).currencyCode }
+        .getOrDefault("EUR")
 }

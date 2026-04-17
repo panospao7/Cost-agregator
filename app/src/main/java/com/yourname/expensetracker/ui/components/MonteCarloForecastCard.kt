@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
 import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
@@ -104,7 +105,7 @@ fun MonteCarloForecastCard(
                             color = SemanticColors.TextSecondary
                         )
             Text(
-                text = "€${String.format("%.0f", result.percentile50)}",
+                text = CurrencyFormatter.format(result.percentile50, showCents = false),
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.ExtraBold,
                 color = SemanticColors.TextPrimary
@@ -147,7 +148,7 @@ fun MonteCarloForecastCard(
                             color = probabilityColor ?: SemanticColors.TextPrimary
                         )
                         Text(
-                            "of €${String.format("%.0f", result.budgetAmount)}",
+                            "of ${CurrencyFormatter.format(result.budgetAmount, showCents = false)}",
                             style = MaterialTheme.typography.labelSmall,
                             color = SemanticColors.TextMuted
                         )
@@ -170,7 +171,7 @@ fun MonteCarloForecastCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        "€${String.format("%.0f", result.spentToDate)}",
+                        CurrencyFormatter.format(result.spentToDate, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.TextPrimary
@@ -185,7 +186,7 @@ fun MonteCarloForecastCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        "€${String.format("%.0f", result.knownUpcoming)}",
+                        CurrencyFormatter.format(result.knownUpcoming, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.WarningOrange

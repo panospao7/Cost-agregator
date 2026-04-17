@@ -221,7 +221,7 @@ fun SpendingMapScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Focused location",
+                                    text = stringResource(R.string.map_focused_location),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary

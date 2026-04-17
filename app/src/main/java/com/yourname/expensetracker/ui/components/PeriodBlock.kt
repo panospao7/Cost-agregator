@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.domain.model.PeriodStatus
 import com.yourname.expensetracker.domain.model.PeriodTotal
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
@@ -60,7 +61,7 @@ fun PeriodBlock(
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "€${String.format("%.0f", period.totalAmount)}",
+                text = CurrencyFormatter.format(period.totalAmount, showCents = false),
                 style = MaterialTheme.typography.labelSmall,
                 color = Color.White,
                 fontWeight = FontWeight.ExtraBold,

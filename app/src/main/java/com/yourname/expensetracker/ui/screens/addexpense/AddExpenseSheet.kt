@@ -41,12 +41,12 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.time.format.DateTimeFormatter
 import java.time.Instant
 import java.time.ZoneId
 import java.util.*
-import java.util.Currency
 
 @Composable
 private fun getTransactionTypeLabel(type: TransactionType): String {
@@ -190,8 +190,13 @@ fun AddExpenseSheet(
                     isError = state.amountError != null,
                     supportingText = state.amountError?.let { { Text(it) } },
                     leadingIcon = {
+                        val currencySymbol = remember {
+                            CurrencyFormatter.format(0.0, showCents = false)
+                                .replace(Regex("[0-9\\s.,]"), "")
+                                .ifBlank { CurrencyFormatter.format(1.0, showCents = false).replace(Regex("[0-9\\s.,]"), "") }
+                        }
                         Text(
-                            text = Currency.getInstance("EUR").symbol,
+                            text = currencySymbol,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )

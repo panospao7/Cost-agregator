@@ -77,8 +77,16 @@
     <string name="label_beta">Beta</string>
     <string name="label_percent">%</string>
     <string name="label_none">None</string>
+    <string name="unknown">Unknown</string>
     <string name="label_retro">retro</string>
     <string name="label_modern">modern</string>
+    <string name="day_monday">Monday</string>
+    <string name="day_tuesday">Tuesday</string>
+    <string name="day_wednesday">Wednesday</string>
+    <string name="day_thursday">Thursday</string>
+    <string name="day_friday">Friday</string>
+    <string name="day_saturday">Saturday</string>
+    <string name="day_sunday">Sunday</string>
     
     <!-- Legacy Names for Backward Compatibility -->
     <string name="amount_label">Amount (€)</string>
@@ -975,6 +983,8 @@
     <string name="forecast_percentile_p10">P10</string>
     <string name="forecast_percentile_p50">P50</string>
     <string name="forecast_percentile_p90">P90</string>
+    <string name="forecast_timeline_summary_with_budget">Forecast timeline. Current spending %1$s, projected month-end %2$s, minimum %3$s, maximum %4$s, budget limit %5$s.</string>
+    <string name="forecast_timeline_summary_without_budget">Forecast timeline. Current spending %1$s, projected month-end %2$s, minimum %3$s, maximum %4$s. %5$s.</string>
     
     <!-- Forecast Timeline -->
     <string name="forecast_trajectory_title">FORECAST TRAJECTORY</string>
@@ -1551,6 +1561,7 @@
     <string name="map_pin_expense_title">Pin expense</string>
     <string name="map_source_format">Source: %1$s</string>
     <string name="map_top_spending_places">Top spending places</string>
+    <string name="map_focused_location">Focused location</string>
     <string name="map_filter_date_range">Date range</string>
     <string name="map_filter_clear">Clear filters</string>
     <string name="map_filter_all_dates">All</string>
@@ -1918,6 +1929,9 @@
     <string name="analytics_insights">Insights</string>
     <string name="analytics_top_categories">Top Categories</string>
     <string name="analytics_percent_of_total_simple_format">%1$s%% of total</string>
+    <string name="analytics_high_spending_description">You\'ve spent %1$.1f%% of your income this period</string>
+    <string name="analytics_weekend_spending_description">Your weekend spending is higher than average weekday spending</string>
+    <string name="analytics_great_savings_description">You\'re saving %1$.1f%% of your income!</string>
     <string name="visual_split_amount_prefix_format">= %1$s</string>
     <string name="bill_reminders_title">Bill Reminders</string>
     <string name="bill_reminders_expected_monthly">Expected Monthly Bills</string>

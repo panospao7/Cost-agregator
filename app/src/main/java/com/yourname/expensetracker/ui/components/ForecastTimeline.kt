@@ -122,13 +122,24 @@ fun ForecastTimeline(
         val maxPoint = allPoints.maxOrNull() ?: 0.0
         val currentPoint = pastPoints.lastOrNull() ?: 0.0
         val projectedEnd = projectedPoints.lastOrNull() ?: currentPoint
-        val chartSummary = remember(minPoint, maxPoint, currentPoint, projectedEnd, hasValidBudget, budgetLimit, noBudgetSetText) {
-            val baseSummary = "Forecast timeline. Current spending ${CurrencyFormatter.format(currentPoint, showCents = false)}, projected month-end ${CurrencyFormatter.format(projectedEnd, showCents = false)}, minimum ${CurrencyFormatter.format(minPoint, showCents = false)}, maximum ${CurrencyFormatter.format(maxPoint, showCents = false)}"
-            if (hasValidBudget) {
-                "$baseSummary, budget limit ${CurrencyFormatter.format(budgetLimit, showCents = false)}."
-            } else {
-                "$baseSummary. $noBudgetSetText."
-            }
+        val chartSummary = if (hasValidBudget) {
+            stringResource(
+                R.string.forecast_timeline_summary_with_budget,
+                CurrencyFormatter.format(currentPoint, showCents = false),
+                CurrencyFormatter.format(projectedEnd, showCents = false),
+                CurrencyFormatter.format(minPoint, showCents = false),
+                CurrencyFormatter.format(maxPoint, showCents = false),
+                CurrencyFormatter.format(budgetLimit, showCents = false)
+            )
+        } else {
+            stringResource(
+                R.string.forecast_timeline_summary_without_budget,
+                CurrencyFormatter.format(currentPoint, showCents = false),
+                CurrencyFormatter.format(projectedEnd, showCents = false),
+                CurrencyFormatter.format(minPoint, showCents = false),
+                CurrencyFormatter.format(maxPoint, showCents = false),
+                noBudgetSetText
+            )
         }
 
         Chart(

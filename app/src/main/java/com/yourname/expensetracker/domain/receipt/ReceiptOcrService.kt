@@ -17,6 +17,7 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -631,9 +632,11 @@ class ReceiptOcrService @Inject constructor(
      * Safe to call multiple times; a new recognizer will be created lazily on next OCR request.
      */
     fun close() {
-        synchronized(this) {
-            recognizer?.close()
-            recognizer = null
+        runBlocking {
+            recognizerMutex.withLock {
+                recognizer?.close()
+                recognizer = null
+            }
         }
     }
 

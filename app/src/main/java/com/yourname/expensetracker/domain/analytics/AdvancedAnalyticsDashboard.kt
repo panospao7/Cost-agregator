@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -23,7 +25,7 @@ data class AnalyticsDashboardData(
 
 data class DashboardCategoryBreakdown(
     val categoryId: Long,
-    val categoryName: String,
+    val categoryName: UiText,
     val amount: Double,
     val percentage: Double,
     val changeFromLastPeriod: Double
@@ -43,7 +45,7 @@ data class MonthlyDataPoint(
 
 data class DayOfWeekSpending(
     val dayOfWeek: Int, // 1 = Monday, 7 = Sunday
-    val dayName: String,
+    val dayName: UiText,
     val averageSpending: Double,
     val transactionCount: Int
 )
@@ -51,7 +53,7 @@ data class DayOfWeekSpending(
 data class DashboardInsight(
     val type: DashboardInsightType,
     val title: UiText,
-    val description: String,
+    val description: UiText,
     val severity: DashboardInsightSeverity
 )
 
@@ -75,6 +77,7 @@ enum class DashboardInsightSeverity {
 class AdvancedAnalyticsDashboard @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val expenseRepository: ExpenseRepository,
+    private val categoryRepository: CategoryRepository,
     private val timeProvider: TimeProvider
 ) {
     
@@ -83,6 +86,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         endDate: Long
     ): AnalyticsDashboardData = withContext(Dispatchers.IO) {
         val expenses = expenseRepository.getExpensesBetween(startDate, endDate)
+        val categoryNamesById = categoryRepository.getAll().associate { it.id to it.name }
         
         // Calculate totals
         var totalSpent = 0.0
@@ -103,7 +107,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             totalSpent = totalSpent,
             totalIncome = totalIncome,
             netCashflow = totalIncome - totalSpent,
-            topCategories = getTopCategories(expenses),
+            topCategories = getTopCategories(expenses, categoryNamesById),
             topMerchants = getTopMerchants(expenses),
             monthlyTrend = getMonthlyTrend(startDate, endDate),
             weeklyPattern = getWeeklyPattern(expenses),
@@ -111,7 +115,10 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         )
     }
     
-    private fun getTopCategories(expenses: List<com.yourname.expensetracker.data.database.entity.Expense>): List<DashboardCategoryBreakdown> {
+    private fun getTopCategories(
+        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        categoryNamesById: Map<Long, String>
+    ): List<DashboardCategoryBreakdown> {
         val categoryMap = mutableMapOf<Long?, Double>()
         val categoryCount = mutableMapOf<Long?, Int>()
         
@@ -130,7 +137,10 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         return categoryMap.map { (catId, amount) ->
             DashboardCategoryBreakdown(
                 categoryId = catId ?: 0L,
-                categoryName = "Category $catId", // Would fetch actual name
+                categoryName = catId
+                    ?.let(categoryNamesById::get)
+                    ?.let(UiText::DynamicString)
+                    ?: UiText.StringResource(R.string.unknown),
                 amount = amount,
                 percentage = if (total > 0) (amount / total) * 100 else 0.0,
                 changeFromLastPeriod = 0.0 // Would calculate from historical
@@ -214,14 +224,14 @@ class AdvancedAnalyticsDashboard @Inject constructor(
     
     private fun getWeeklyPattern(expenses: List<com.yourname.expensetracker.data.database.entity.Expense>): List<DayOfWeekSpending> {
         val dayMap = mutableMapOf<Int, MutableList<Double>>()
-        val dayNames = mapOf(
-            1 to "Monday",
-            2 to "Tuesday",
-            3 to "Wednesday",
-            4 to "Thursday",
-            5 to "Friday",
-            6 to "Saturday",
-            7 to "Sunday"
+        val dayNames = mapOf<Int, UiText>(
+            1 to UiText.StringResource(R.string.day_monday),
+            2 to UiText.StringResource(R.string.day_tuesday),
+            3 to UiText.StringResource(R.string.day_wednesday),
+            4 to UiText.StringResource(R.string.day_thursday),
+            5 to UiText.StringResource(R.string.day_friday),
+            6 to UiText.StringResource(R.string.day_saturday),
+            7 to UiText.StringResource(R.string.day_sunday)
         )
         
         val calendar = java.util.Calendar.getInstance()
@@ -242,7 +252,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             val amounts = dayMap[day] ?: emptyList()
             DayOfWeekSpending(
                 dayOfWeek = day,
-                dayName = dayNames[day] ?: "Unknown",
+                dayName = dayNames[day] ?: UiText.StringResource(R.string.unknown),
                 averageSpending = if (amounts.isNotEmpty()) amounts.average() else 0.0,
                 transactionCount = amounts.size
             )
@@ -262,7 +272,10 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                 DashboardInsight(
                     type = DashboardInsightType.BUDGET_WARNING,
                     title = UiText.fromKey("domain_analytics_high_spending"),
-                    description = "You've spent ${String.format("%.1f", (totalSpent/totalIncome)*100)}% of your income this period",
+                    description = UiText.StringResource(
+                        R.string.analytics_high_spending_description,
+                        listOf((totalSpent / totalIncome) * 100)
+                    ),
                     severity = DashboardInsightSeverity.WARNING
                 )
             )
@@ -290,7 +303,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                 DashboardInsight(
                     type = DashboardInsightType.SPENDING_PATTERN,
                     title = UiText.fromKey("domain_analytics_weekend_high"),
-                    description = "Your weekend spending is higher than average weekday spending",
+                    description = UiText.StringResource(R.string.analytics_weekend_spending_description),
                     severity = DashboardInsightSeverity.INFO
                 )
             )
@@ -304,7 +317,10 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                     DashboardInsight(
                         type = DashboardInsightType.SAVINGS_OPPORTUNITY,
                         title = UiText.fromKey("domain_analytics_great_savings"),
-                        description = "You're saving ${String.format("%.1f", savingsRate)}% of your income!",
+                        description = UiText.StringResource(
+                            R.string.analytics_great_savings_description,
+                            listOf(savingsRate)
+                        ),
                         severity = DashboardInsightSeverity.INFO
                     )
                 )

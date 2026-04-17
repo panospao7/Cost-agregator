@@ -28,6 +28,7 @@ import com.yourname.expensetracker.domain.model.PeriodTotal
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.PeriodType
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 
 /**
  * Retro Arcade Stage Select style Totals Dashboard.
@@ -451,7 +452,7 @@ private fun RetroStageCard(
             
             // Amount (score)
             Text(
-                text = "€${String.format("%.0f", period.totalAmount)}",
+                text = CurrencyFormatter.format(period.totalAmount, showCents = false),
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold
@@ -767,10 +768,10 @@ private fun RetroStageDialog(
                     Spacer(modifier = Modifier.height(12.dp))
                     
                     // Comparison stats
-                    RetroStatRowTotals("STAGE BUDGET", "€${String.format("%.2f", averageAmount)}", RetroColorsTotals.NeonCyan)
+                    RetroStatRowTotals("STAGE BUDGET", CurrencyFormatter.format(averageAmount), RetroColorsTotals.NeonCyan)
                     Spacer(modifier = Modifier.height(4.dp))
                     val diff = period.totalAmount - averageAmount
-                    val diffText = if (diff >= 0) "+€${String.format("%.2f", diff)}" else "-€${String.format("%.2f", kotlin.math.abs(diff))}"
+                    val diffText = CurrencyFormatter.formatWithSign(diff)
                     val diffColor = if (diff > 0) RetroColorsTotals.NeonRed else if (diff < 0) RetroColorsTotals.NeonGreen else RetroColorsTotals.NeonWhite
                     RetroStatRowTotals("DIFFERENCE", diffText, diffColor)
                 }

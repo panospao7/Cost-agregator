@@ -48,6 +48,7 @@ import java.util.Locale
 import javax.inject.Inject
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import timber.log.Timber
 
 @HiltViewModel
@@ -338,7 +339,7 @@ fun PlannedExpenseItem(
                 )
                 // Remember expensive string calculations
                 val amountAndPriority = remember(expense.amount, expense.priority) {
-                    "€${String.format("%.2f", expense.amount)} • ${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }}"
+                    "${CurrencyFormatter.format(expense.amount)} • ${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }}"
                 }
                 Text(
                     text = amountAndPriority,

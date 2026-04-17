@@ -197,7 +197,7 @@ private fun InsightCard(insight: DashboardInsight) {
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    text = insight.description,
+                    text = insight.description.asString(),
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
@@ -221,7 +221,7 @@ private fun CategoryCard(category: com.yourname.expensetracker.domain.analytics.
         ) {
             Column {
                 Text(
-                    text = category.categoryName,
+                    text = category.categoryName.asString(),
                     style = MaterialTheme.typography.titleLarge
                 )
                 Text(

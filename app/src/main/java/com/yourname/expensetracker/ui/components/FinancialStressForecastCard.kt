@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.domain.forecasting.StressForecastResult
 import com.yourname.expensetracker.domain.forecasting.StressHorizon
 import com.yourname.expensetracker.domain.forecasting.StressRiskLevel
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.SimpleDateFormat
 import java.util.*
@@ -192,7 +193,7 @@ private fun HorizonDetailView(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "€${String.format("%.0f", horizon.projectedBalance)}",
+                    text = CurrencyFormatter.format(horizon.projectedBalance, showCents = false),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = if (horizon.projectedBalance < 0) SemanticColors.DangerRed else SemanticColors.TextPrimary
@@ -237,7 +238,7 @@ private fun HorizonDetailView(
                     Text("⚠️", fontSize = 14.sp)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Min projected: €${String.format("%.0f", horizon.minProjectedBalance)}",
+                        text = "Min projected: ${CurrencyFormatter.format(horizon.minProjectedBalance, showCents = false)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.DangerRed
                     )
@@ -253,17 +254,17 @@ private fun HorizonDetailView(
         ) {
             BreakdownItem(
                 label = "Recurring",
-                value = "-€${String.format("%.0f", horizon.recurringObligations)}",
+                value = "-${CurrencyFormatter.format(horizon.recurringObligations, showCents = false)}",
                 color = SemanticColors.WarningOrange
             )
             BreakdownItem(
                 label = "Income",
-                value = "+€${String.format("%.0f", horizon.expectedIncome)}",
+                value = "+${CurrencyFormatter.format(horizon.expectedIncome, showCents = false)}",
                 color = SemanticColors.SuccessGreen
             )
             BreakdownItem(
                 label = "Buffer",
-                value = "€${String.format("%.0f", horizon.discretionaryBuffer)}",
+                value = CurrencyFormatter.format(horizon.discretionaryBuffer, showCents = false),
                 color = SemanticColors.PrimaryIndigo
             )
         }
