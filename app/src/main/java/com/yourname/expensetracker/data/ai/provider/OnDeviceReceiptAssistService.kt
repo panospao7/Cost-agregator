@@ -6,6 +6,7 @@ import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
 import com.google.mlkit.genai.prompt.ImagePart
 import com.google.mlkit.genai.prompt.TextPart
+import com.yourname.expensetracker.data.ai.provider.internal.CloudJsonParser
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.AiServiceError
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
@@ -122,6 +123,11 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
         val imagePath = input.imagePath ?: return null
         val file = File(imagePath)
         if (!file.exists() || !file.isFile) return null
+        val fileSize = file.length()
+        if (fileSize > MAX_INLINE_IMAGE_BYTES) {
+            Timber.d("OnDeviceReceiptAssistService: receipt image too large to attach (%d bytes)", fileSize)
+            return null
+        }
         val bytes = runCatching { file.readBytes() }.getOrNull() ?: return null
         if (bytes.isEmpty()) return null
         return runCatching { ImagePart(bytes) }
@@ -130,7 +136,7 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
     }
 
     internal fun parseResponse(text: String): ReceiptAssistSuggestion? {
-        val jsonText = extractFirstJsonObject(text.trim()) ?: return null
+        val jsonText = CloudJsonParser.extractFirstJsonObject(text.trim()) ?: return null
         return try {
             val suggestion = JSONObject(jsonText)
             ReceiptAssistSuggestion(
@@ -144,13 +150,6 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
             Timber.w(e, "OnDeviceReceiptAssistService: JSON parse failure")
             null
         }
-    }
-
-    private fun extractFirstJsonObject(text: String): String? {
-        val start = text.indexOf('{')
-        val end = text.lastIndexOf('}')
-        if (start == -1 || end <= start) return null
-        return text.substring(start, end + 1)
     }
 
     private fun JSONObject.toSuggestedStringOrNull(): SuggestedValue<String>? {
@@ -191,5 +190,9 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
                 optString(index).trim().takeIf { it.isNotBlank() }?.let(::add)
             }
         }
+    }
+
+    private companion object {
+        private const val MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
     }
 }

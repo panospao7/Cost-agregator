@@ -10,6 +10,9 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
@@ -22,30 +25,32 @@ class GetAiRuntimeStatusUseCase @Inject constructor(
 
     suspend operator fun invoke(
         capabilities: List<AiCapability>
-    ): AiRuntimeStatusSummary {
+    ): AiRuntimeStatusSummary = coroutineScope {
         val settings = aiSettingsRepository.settings().first()
         val statuses = capabilities.map { capability ->
-            val status = aiEnvironmentMonitor.getOnDeviceModelStatus(capability)
-            val onDeviceMessage = status.toRuntimeStatusMessage(capability.runtimeLabel())
-            val routeDecision = aiCapabilityRouter.decide(capability, settings, status)
-            AiCapabilityRuntimeStatus(
-                capability = capability,
-                status = status,
-                message = runtimeMessageFor(routeDecision.route, routeDecision.reason, onDeviceMessage),
-                actionLabel = routeActionLabel(routeDecision.route, status),
-                route = routeDecision.route,
-                routeReason = routeDecision.reason,
-                providerName = routeDecision.providerName,
-                modelName = routeDecision.modelName,
-                onDeviceMessage = onDeviceMessage
-            )
-        }
+            async {
+                val status = aiEnvironmentMonitor.getOnDeviceModelStatus(capability)
+                val onDeviceMessage = status.toRuntimeStatusMessage(capability.runtimeLabel())
+                val routeDecision = aiCapabilityRouter.decide(capability, settings, status)
+                AiCapabilityRuntimeStatus(
+                    capability = capability,
+                    status = status,
+                    message = runtimeMessageFor(routeDecision.route, routeDecision.reason, onDeviceMessage),
+                    actionLabel = routeActionLabel(routeDecision.route, status),
+                    route = routeDecision.route,
+                    routeReason = routeDecision.reason,
+                    providerName = routeDecision.providerName,
+                    modelName = routeDecision.modelName,
+                    onDeviceMessage = onDeviceMessage
+                )
+            }
+        }.awaitAll()
 
         val highestPriorityMessage = statuses
             .firstOrNull { it.message != null }
             ?.message
 
-        return AiRuntimeStatusSummary(
+        AiRuntimeStatusSummary(
             capabilities = statuses,
             highestPriorityMessage = highestPriorityMessage,
             networkAvailable = aiEnvironmentMonitor.isNetworkAvailable(),

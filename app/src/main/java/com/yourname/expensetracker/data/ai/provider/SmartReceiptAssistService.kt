@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -41,8 +42,8 @@ class SmartReceiptAssistService @Inject constructor(
     private val aiPolicy: AiPolicy
 ) : ReceiptAssistService {
 
-    override fun usedImageInput(input: ReceiptAssistInput): Boolean {
-        return input.isImageAnalysisMode && input.imagePath != null && input.imageMimeType != null
+    override fun usedImageInput(input: ReceiptAssistInput): Boolean = runBlocking {
+        executeWithFallback(input).actualUsedImageInput()
     }
 
     data class AttemptDetails(
@@ -72,6 +73,12 @@ class SmartReceiptAssistService @Inject constructor(
     )
 
     override suspend fun suggest(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> {
+        return executeWithFallback(input)
+    }
+
+    private suspend fun executeWithFallback(
+        input: ReceiptAssistInput
+    ): AiServiceResult<ReceiptAssistSuggestion> {
         val settings = aiSettingsRepository.settings().first()
         val routeDecision = aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, settings)
         val attempts = mutableListOf<AttemptDetails>()
@@ -84,7 +91,10 @@ class SmartReceiptAssistService @Inject constructor(
             val fallbackResult = noOpReceiptAssistService.suggest(input)
             attempts.add(fallbackResult.toAttemptDetails(5, AttemptMethod.DETERMINISTIC_FALLBACK))
             logAttemptSummary(input.receiptId, attempts)
-            return fallbackResult.withExecutionMetadata(usedImageInput = false, attempts = attempts)
+            return fallbackResult.withExecutionMetadata(
+                usedImageInput = fallbackResult.actualUsedImageInput(),
+                attempts = attempts
+            )
         }
 
         val routeViability = resolveRouteViability(settings, routeDecision.route)
@@ -94,8 +104,10 @@ class SmartReceiptAssistService @Inject constructor(
             attempts.add(result.toAttemptDetails(plan.attemptNumber, plan.method))
 
             if (result is AiServiceResult.Success && isGoodResult(result.value)) {
-                val usedImageInput = result.value.usedImageInput
-                return result.withExecutionMetadata(usedImageInput = usedImageInput, attempts = attempts)
+                return result.withExecutionMetadata(
+                    usedImageInput = result.actualUsedImageInput(),
+                    attempts = attempts
+                )
             }
         }
 
@@ -106,7 +118,10 @@ class SmartReceiptAssistService @Inject constructor(
 
         logAttemptSummary(input.receiptId, attempts)
 
-        return fallbackResult.withExecutionMetadata(usedImageInput = false, attempts = attempts)
+        return fallbackResult.withExecutionMetadata(
+            usedImageInput = fallbackResult.actualUsedImageInput(),
+            attempts = attempts
+        )
     }
 
     private fun orderedAttemptsFor(route: AiRoute): List<AttemptPlan> {
@@ -294,6 +309,10 @@ class SmartReceiptAssistService @Inject constructor(
             )
             is AiServiceResult.Failure -> this
         }
+    }
+
+    private fun AiServiceResult<ReceiptAssistSuggestion>.actualUsedImageInput(): Boolean {
+        return (this as? AiServiceResult.Success)?.value?.usedImageInput == true
     }
 
     private fun AttemptDetails.toDomainAttemptDetail(): ReceiptAssistAttemptDetail {

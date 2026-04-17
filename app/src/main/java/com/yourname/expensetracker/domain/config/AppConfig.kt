@@ -160,6 +160,7 @@ object AppConfig {
         const val RECEIPT_ASSIST_MAX_OUTPUT_TOKENS = 384
         const val CATEGORIZATION_ASSIST_MAX_OUTPUT_TOKENS = 220
         const val DEDUPE_JUDGE_MAX_OUTPUT_TOKENS = 220
+        const val CLOUD_RECEIPT_ITEM_MAX_TOKENS = 300
 
         // On-device (Gemini Nano) constants
         const val ON_DEVICE_CATEGORIZATION_TEMPERATURE = 0.1f

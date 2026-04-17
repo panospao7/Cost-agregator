@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
+import com.yourname.expensetracker.data.ai.provider.internal.CloudJsonParser
 import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
@@ -311,12 +312,13 @@ class CloudReceiptAssistService @Inject constructor(
         val mimeType = input.imageMimeType ?: return null
         val file = File(imagePath)
         if (!file.exists()) return null
-        val bytes = runCatching { file.readBytes() }.getOrNull() ?: return null
-        if (bytes.isEmpty()) return null
-        if (bytes.size > MAX_INLINE_IMAGE_BYTES) {
-            Timber.d("CloudReceiptAssistService: receipt image too large for inline upload (%d bytes)", bytes.size)
+        val fileSize = file.length()
+        if (fileSize > MAX_INLINE_IMAGE_BYTES) {
+            Timber.d("CloudReceiptAssistService: receipt image too large for inline upload (%d bytes)", fileSize)
             return null
         }
+        val bytes = runCatching { file.readBytes() }.getOrNull() ?: return null
+        if (bytes.isEmpty()) return null
 
         return JSONObject().put(
             "inlineData",
@@ -338,7 +340,7 @@ class CloudReceiptAssistService @Inject constructor(
             ?.trim()
             ?: return null
 
-        val jsonText = extractFirstJsonObject(text) ?: return null
+        val jsonText = CloudJsonParser.extractFirstJsonObject(text) ?: return null
         val suggestion = JSONObject(jsonText)
 
         return ReceiptAssistSuggestion(
@@ -348,58 +350,6 @@ class CloudReceiptAssistService @Inject constructor(
             taxAmount = suggestion.optJSONObject("taxAmount")?.toSuggestedDoubleOrNull(),
             notes = suggestion.optJSONArray("notes").toStringList()
         )
-    }
-
-    private fun extractFirstJsonObject(text: String): String? {
-        extractFencedJsonObject(text)?.let { return it }
-
-        var start = -1
-        var depth = 0
-        var inString = false
-        var isEscaped = false
-
-        for (index in text.indices) {
-            val ch = text[index]
-
-            if (start == -1) {
-                if (ch == '{') {
-                    start = index
-                    depth = 1
-                }
-                continue
-            }
-
-            if (inString) {
-                if (isEscaped) {
-                    isEscaped = false
-                } else if (ch == '\\') {
-                    isEscaped = true
-                } else if (ch == '"') {
-                    inString = false
-                }
-                continue
-            }
-
-            when (ch) {
-                '"' -> inString = true
-                '{' -> depth++
-                '}' -> {
-                    depth--
-                    if (depth == 0) {
-                        return text.substring(start, index + 1)
-                    }
-                }
-            }
-        }
-
-        return null
-    }
-
-    private fun extractFencedJsonObject(text: String): String? {
-        val fencedMatch = JSON_FENCE_REGEX.find(text) ?: return null
-        val fencedBody = fencedMatch.groupValues.getOrNull(1)?.trim().orEmpty()
-        if (fencedBody.isBlank()) return null
-        return extractFirstJsonObject(fencedBody)
     }
 
     private fun JSONObject.toSuggestedStringOrNull(): SuggestedValue<String>? {
@@ -474,7 +424,6 @@ class CloudReceiptAssistService @Inject constructor(
     private companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private const val MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
-        private val JSON_FENCE_REGEX = Regex("""```(?:json)?\s*([\s\S]*?)\s*```""", RegexOption.IGNORE_CASE)
     }
 
     private data class RequestPayload(

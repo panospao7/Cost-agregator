@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInpu
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
 import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -186,7 +187,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
             } else {
                 item.description
             }
-            "- $safeDescription: €${item.totalPrice}"
+            "- $safeDescription: ${CurrencyFormatter.format(item.totalPrice, input.currency)}"
         }
         
         return """
@@ -246,7 +247,7 @@ Output JSON format:
             ))
             put("generationConfig", JSONObject().apply {
                 put("temperature", 0.1)
-                put("maxOutputTokens", AppConfig.Ai.ON_DEVICE_RECEIPT_ITEM_MAX_TOKENS)
+                put("maxOutputTokens", AppConfig.Ai.CLOUD_RECEIPT_ITEM_MAX_TOKENS)
                 put("responseMimeType", "application/json")
             })
         }.toString()

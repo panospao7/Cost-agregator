@@ -20,6 +20,7 @@ import io.mockk.match
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -359,6 +360,60 @@ class SmartReceiptAssistServiceTest {
         coVerify(exactly = 0) { cloudReceiptAssistService.suggest(any()) }
         coVerify(exactly = 2) { onDeviceReceiptAssistService.suggest(any()) }
         coVerify(exactly = 1) { noOpReceiptAssistService.suggest(any()) }
+    }
+
+    @Test
+    fun `usedImageInput reflects the selected execution result`() {
+        val cloudReceiptAssistService = mockk<CloudReceiptAssistService>()
+        val onDeviceReceiptAssistService = mockk<OnDeviceReceiptAssistService>()
+        val noOpReceiptAssistService = mockk<NoOpReceiptAssistService>()
+        val aiCapabilityRouter = mockk<AiCapabilityRouter>()
+        val aiSettingsRepository = mockk<AiSettingsRepository>()
+        val aiPolicy = mockk<AiPolicy>()
+
+        val settings = defaultSettings()
+        every { aiSettingsRepository.settings() } returns flowOf(settings)
+        every {
+            aiCapabilityRouter.decide(
+                AiCapability.RECEIPT_EXTRACTION,
+                match { it.preferredMode == settings.preferredMode },
+                any()
+            )
+        } returns AiRouteDecision(
+            route = AiRoute.ON_DEVICE,
+            reason = "On-device preferred"
+        )
+        every {
+            aiCapabilityRouter.decide(
+                AiCapability.RECEIPT_EXTRACTION,
+                match { it.preferredMode.name == "CLOUD" },
+                any()
+            )
+        } returns AiRouteDecision(
+            route = AiRoute.DETERMINISTIC_FALLBACK,
+            reason = "Cloud unavailable"
+        )
+
+        coEvery {
+            onDeviceReceiptAssistService.suggest(any())
+        } returns AiServiceResult.Success(
+            ReceiptAssistSuggestion(
+                total = SuggestedValue(value = 12.34, confidence = 0.95f),
+                usedImageInput = true
+            )
+        )
+
+        val service = SmartReceiptAssistService(
+            cloudReceiptAssistService,
+            onDeviceReceiptAssistService,
+            noOpReceiptAssistService,
+            aiCapabilityRouter,
+            aiSettingsRepository,
+            aiPolicy
+        )
+
+        assertTrue(service.usedImageInput(defaultInput()))
+        assertFalse(service.usedImageInput(defaultInput().copy(isImageAnalysisMode = false)))
     }
 
     private fun successfulSuggestionResult(): AiServiceResult.Success<ReceiptAssistSuggestion> {
