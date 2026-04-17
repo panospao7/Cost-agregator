@@ -188,6 +188,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         dashboardEngine = AdvancedAnalyticsDashboard(
             expenseDao = expenseDao,
             expenseRepository = repository,
+            categoryRepository = categoryRepository,
             timeProvider = timeProvider
         )
 

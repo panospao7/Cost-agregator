@@ -86,6 +86,12 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         endDate: Long
     ): AnalyticsDashboardData = withContext(Dispatchers.IO) {
         val expenses = expenseRepository.getExpensesBetween(startDate, endDate)
+        val comparisonExpenses = if (endDate > startDate) {
+            val comparisonStart = startDate - (endDate - startDate)
+            expenseRepository.getExpensesBetween(comparisonStart, startDate)
+        } else {
+            emptyList()
+        }
         val categoryNamesById = categoryRepository.getAll().associate { it.id to it.name }
         
         // Calculate totals
@@ -107,7 +113,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             totalSpent = totalSpent,
             totalIncome = totalIncome,
             netCashflow = totalIncome - totalSpent,
-            topCategories = getTopCategories(expenses, categoryNamesById),
+            topCategories = getTopCategories(expenses, comparisonExpenses, categoryNamesById),
             topMerchants = getTopMerchants(expenses),
             monthlyTrend = getMonthlyTrend(startDate, endDate),
             weeklyPattern = getWeeklyPattern(expenses),
@@ -117,24 +123,14 @@ class AdvancedAnalyticsDashboard @Inject constructor(
     
     private fun getTopCategories(
         expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        comparisonExpenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
         categoryNamesById: Map<Long, String>
     ): List<DashboardCategoryBreakdown> {
-        val categoryMap = mutableMapOf<Long?, Double>()
-        val categoryCount = mutableMapOf<Long?, Int>()
+        val currentTotals = calculateCategoryTotals(expenses)
+        val previousTotals = calculateCategoryTotals(comparisonExpenses)
+        val total = currentTotals.values.sum()
         
-        for (expense in expenses) {
-            if (expense.transactionType.name == "PURCHASE") {
-                val current = categoryMap[expense.categoryId] ?: 0.0
-                categoryMap[expense.categoryId] = current + expense.effectiveAmount
-                
-                val count = categoryCount[expense.categoryId] ?: 0
-                categoryCount[expense.categoryId] = count + 1
-            }
-        }
-        
-        val total = categoryMap.values.sum()
-        
-        return categoryMap.map { (catId, amount) ->
+        return currentTotals.map { (catId, amount) ->
             DashboardCategoryBreakdown(
                 categoryId = catId ?: 0L,
                 categoryName = catId
@@ -143,7 +139,10 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                     ?: UiText.StringResource(R.string.unknown),
                 amount = amount,
                 percentage = if (total > 0) (amount / total) * 100 else 0.0,
-                changeFromLastPeriod = 0.0 // Would calculate from historical
+                changeFromLastPeriod = calculateChangeFromLastPeriod(
+                    currentAmount = amount,
+                    previousAmount = previousTotals[catId] ?: 0.0
+                )
             )
         }.sortedByDescending { it.amount }.take(5)
     }
@@ -169,6 +168,10 @@ class AdvancedAnalyticsDashboard @Inject constructor(
     
     private suspend fun getMonthlyTrend(startDate: Long, endDate: Long): List<MonthlyDataPoint> {
         val result = mutableListOf<MonthlyDataPoint>()
+        if (endDate <= startDate) return result
+
+        val monthlyBuckets = expenseRepository.getExpensesBetween(startDate, endDate)
+            .groupBy(::buildMonthKey)
 
         val startYear = TimePeriodUtils.getYear(startDate)
         val startMonth = TimePeriodUtils.getMonth(startDate)
@@ -197,7 +200,9 @@ class AdvancedAnalyticsDashboard @Inject constructor(
 
             val monthKey = "$currentYear-${(currentMonth + 1).toString().padStart(2, '0')}"
 
-            val expenses = expenseRepository.getExpensesBetween(bucketStart, bucketEnd)
+            val expenses = monthlyBuckets[monthKey].orEmpty().filter {
+                it.date >= bucketStart && it.date < bucketEnd
+            }
 
             var spending = 0.0
             var income = 0.0
@@ -220,6 +225,35 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         }
 
         return result
+    }
+
+    private fun calculateCategoryTotals(
+        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>
+    ): Map<Long?, Double> {
+        val categoryMap = mutableMapOf<Long?, Double>()
+
+        for (expense in expenses) {
+            if (expense.transactionType.name == "PURCHASE") {
+                val current = categoryMap[expense.categoryId] ?: 0.0
+                categoryMap[expense.categoryId] = current + expense.effectiveAmount
+            }
+        }
+
+        return categoryMap
+    }
+
+    private fun calculateChangeFromLastPeriod(currentAmount: Double, previousAmount: Double): Double {
+        return when {
+            previousAmount > 0.0 -> ((currentAmount - previousAmount) / previousAmount) * 100.0
+            currentAmount > 0.0 -> 100.0
+            else -> 0.0
+        }
+    }
+
+    private fun buildMonthKey(expense: com.yourname.expensetracker.data.database.entity.Expense): String {
+        val year = TimePeriodUtils.getYear(expense.date)
+        val month = TimePeriodUtils.getMonth(expense.date) + 1
+        return String.format("%04d-%02d", year, month)
     }
     
     private fun getWeeklyPattern(expenses: List<com.yourname.expensetracker.data.database.entity.Expense>): List<DayOfWeekSpending> {

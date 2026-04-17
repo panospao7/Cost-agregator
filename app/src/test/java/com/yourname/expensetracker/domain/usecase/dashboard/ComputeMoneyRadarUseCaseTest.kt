@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.AnomalyAlertDao
 import com.yourname.expensetracker.data.database.entity.AnomalyAlert
@@ -21,6 +22,7 @@ import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact
 import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier
 import com.yourname.expensetracker.domain.usecase.budget.GetMonteCarloBudgetImpactUseCase
@@ -113,9 +115,24 @@ class ComputeMoneyRadarUseCaseTest {
         // Weighted = 80*0.4 + 60*0.3 + 100*0.3 = 80
         assertEquals(80, result.urgencyScore)
         assertEquals(UrgencyLevel.RED, result.urgencyLevel)
-        assertTrue(result.topReasons.any { it.contains("3 bills due") })
-        assertTrue(result.topReasons.any { it.contains("2 unusual charges") })
-        assertTrue(result.topReasons.any { it.contains("Critical budget overrun risk") })
+        assertTrue(result.topReasons.any {
+            it == UiText.StringResource(
+                R.string.money_radar_reason_multiple_bills_due_format,
+                listOf(3, 7)
+            )
+        })
+        assertTrue(result.topReasons.any {
+            it == UiText.StringResource(
+                R.string.money_radar_reason_multiple_anomalies_format,
+                listOf(2)
+            )
+        })
+        assertTrue(result.topReasons.any {
+            it == UiText.StringResource(
+                R.string.money_radar_reason_budget_risk_critical_format,
+                listOf(80)
+            )
+        })
         assertTrue(result.primaryCta is MoneyRadarAction.AdjustBudget)
     }
 
@@ -213,7 +230,10 @@ class ComputeMoneyRadarUseCaseTest {
         assertEquals(emptyList<UpcomingBill>(), result.dueBills)
         assertEquals(emptyList<AnomalyAlertSummary>(), result.anomalyAlerts)
         assertNull(result.budgetRisk)
-        assertEquals(listOf("Your finances look healthy"), result.topReasons)
+        assertEquals(
+            listOf(UiText.StringResource(R.string.money_radar_reason_finances_healthy)),
+            result.topReasons
+        )
         assertNull(result.primaryCta)
 
         coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any()) }

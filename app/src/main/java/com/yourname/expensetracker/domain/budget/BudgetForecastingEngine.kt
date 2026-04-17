@@ -37,6 +37,7 @@ class BudgetForecastingEngine @Inject constructor(
         const val CONFIDENCE_THRESHOLD_HIGH = 0.8
         const val CONFIDENCE_THRESHOLD_MEDIUM = 0.6
         private const val MILLIS_PER_DAY = 24 * 60 * 60 * 1000.0
+        private const val DESIRED_HISTORY_MONTHS = 4.0
     }
 
     /**
@@ -114,11 +115,9 @@ class BudgetForecastingEngine @Inject constructor(
      * [getMonthlySpendingTotalsBetween] return pre-grouped monthly totals
      * computed with the effective-amount formula, preserving A.1 semantics.
      *
-     * Sparse-history parity: only months that the SQL aggregate actually
-     * returns are used as buckets.  Gap months with no qualifying rows are
-     * **not** synthesized, preserving the same semantics as the pre-A.9
-     * grouped-row code path where only months containing expense rows
-     * produced buckets.
+     * Gap months within the lookback window are synthesized as explicit
+     * zero-spend buckets so averages and trends are not skewed upward when
+     * a user simply had no spending in a month.
      */
     private suspend fun getHistoricalSpendingData(budget: Budget): HistoricalData {
         val now = timeProvider.now()
@@ -138,12 +137,15 @@ class BudgetForecastingEngine @Inject constructor(
             )
         }
         
-        // Use only the month keys actually returned by SQL — no gap-month
-        // infill.  This preserves pre-A.9 sparse-history semantics where
-        // only months with qualifying expense rows produced buckets.
+        val lookbackMonthKeys = buildMonthKeyRange(
+            startMonthKey = formatMonthKey(threeMonthsAgo),
+            endMonthKey = formatMonthKey(now)
+        )
+
+        val totalsByMonth = monthlyTotals.associate { it.monthKey to it.total }
         val monthlySpending = linkedMapOf<String, Double>()
-        for (row in monthlyTotals) {
-            monthlySpending[row.monthKey] = row.total
+        for (monthKey in lookbackMonthKeys) {
+            monthlySpending[monthKey] = totalsByMonth[monthKey] ?: 0.0
         }
         
         // Calculate statistics
@@ -195,6 +197,7 @@ class BudgetForecastingEngine @Inject constructor(
             averageMonthly = average,
             standardDeviation = standardDeviation,
             monthsOfHistory = monthlySpending.size,
+            observedMonthCount = monthlyTotals.size,
             trend = trend
         )
     }
@@ -220,7 +223,7 @@ class BudgetForecastingEngine @Inject constructor(
         
         // Add seasonal adjustment (if we have enough history)
         if (historicalData.monthsOfHistory >= 6) {
-            val seasonalFactor = calculateSeasonalFactor(historicalData)
+            val seasonalFactor = calculateSeasonalFactor()
             prediction *= seasonalFactor
         }
         
@@ -231,10 +234,9 @@ class BudgetForecastingEngine @Inject constructor(
      * Calculate confidence score based on data quality.
      */
     private fun calculateConfidence(historicalData: HistoricalData): Double {
-        var confidence = 0.5 // Base confidence
-        
-        // More data = higher confidence
-        confidence += min(historicalData.monthsOfHistory / 12.0, 0.3)
+        val historyCompleteness = (historicalData.observedMonthCount / DESIRED_HISTORY_MONTHS)
+            .coerceIn(0.0, 1.0)
+        var confidence = historyCompleteness * 0.8
         
         // Lower variance = higher confidence
         val coefficientOfVariation = if (historicalData.averageMonthly > 0) {
@@ -309,16 +311,7 @@ class BudgetForecastingEngine @Inject constructor(
     /**
      * Calculate seasonal adjustment factor.
      */
-    private fun calculateSeasonalFactor(historicalData: HistoricalData): Double {
-        val calendar = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        val currentMonth = calendar.get(Calendar.MONTH)
-        
-        // Simple seasonal factor (can be expanded)
-        // December tends to have higher spending
-        if (currentMonth == Calendar.DECEMBER) {
-            return 1.2
-        }
-        
+    private fun calculateSeasonalFactor(): Double {
         return 1.0
     }
     
@@ -356,6 +349,48 @@ class BudgetForecastingEngine @Inject constructor(
         // accuracy = 1 - (|predicted - actual| / predicted)
         // This is a simplified accuracy metric
     }
+
+    private fun buildMonthKeyRange(startMonthKey: String, endMonthKey: String): List<String> {
+        val cursor = parseMonthKey(startMonthKey)
+        val end = parseMonthKey(endMonthKey)
+        val monthKeys = mutableListOf<String>()
+
+        while (!cursor.after(end)) {
+            monthKeys.add(formatMonthKey(cursor))
+            cursor.add(Calendar.MONTH, 1)
+        }
+
+        return monthKeys
+    }
+
+    private fun parseMonthKey(monthKey: String): Calendar {
+        val parts = monthKey.split("-")
+        require(parts.size == 2) { "Unexpected month key: $monthKey" }
+
+        val year = parts[0].toInt()
+        val month = parts[1].toInt()
+        require(month in 1..12) { "Unexpected month key: $monthKey" }
+
+        return Calendar.getInstance().apply {
+            clear()
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month - 1)
+            set(Calendar.DAY_OF_MONTH, 1)
+        }
+    }
+
+    private fun formatMonthKey(timestamp: Long): String {
+        return Calendar.getInstance().run {
+            timeInMillis = timestamp
+            formatMonthKey(this)
+        }
+    }
+
+    private fun formatMonthKey(calendar: Calendar): String {
+        val year = calendar.get(Calendar.YEAR)
+        val month = calendar.get(Calendar.MONTH) + 1
+        return String.format("%04d-%02d", year, month)
+    }
 }
 
 /**
@@ -366,6 +401,7 @@ private data class HistoricalData(
     val averageMonthly: Double,
     val standardDeviation: Double,
     val monthsOfHistory: Int,
+    val observedMonthCount: Int,
     val trend: SpendingTrend
 )
 

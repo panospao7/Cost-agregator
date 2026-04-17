@@ -530,6 +530,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         val dashboard = AdvancedAnalyticsDashboard(
             expenseDao = expenseDao,
             expenseRepository = expenseRepository,
+            categoryRepository = categoryRepository,
             timeProvider = timeProvider
         ).generateDashboardData(start, end).totalSpent
 

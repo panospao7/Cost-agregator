@@ -26,6 +26,7 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
         dashboard = AdvancedAnalyticsDashboard(
             expenseDao = expenseDao,
             expenseRepository = expenseRepository,
+            categoryRepository = categoryRepository,
             timeProvider = timeProvider
         )
     }

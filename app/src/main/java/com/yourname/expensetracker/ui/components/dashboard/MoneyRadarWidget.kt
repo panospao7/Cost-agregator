@@ -26,6 +26,7 @@ import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.Ri
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.usecase.dashboard.*
 import com.yourname.expensetracker.ui.components.BentoCard
+import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.SimpleDateFormat
 import java.util.*
@@ -61,10 +62,12 @@ fun MoneyRadarWidget(
         targetValue = urgencyColor,
         label = "urgency_color"
     )
+
+    val topConcernText = data.topReasons.firstOrNull()?.asString()
     
     val widgetDesc = buildString {
         append("Money Radar: $urgencyLabel. Score ${data.urgencyScore} out of 100. ")
-        data.topReasons.firstOrNull()?.let { append("Top concern: $it. ") }
+        topConcernText?.let { append("Top concern: $it. ") }
         append("Tap for details.")
     }
     
@@ -182,7 +185,7 @@ fun MoneyRadarWidget(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = reason,
+                                text = reason.asString(),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (index == 0) SemanticColors.TextPrimary else SemanticColors.TextSecondary,
                                 fontWeight = if (index == 0) FontWeight.Medium else FontWeight.Normal

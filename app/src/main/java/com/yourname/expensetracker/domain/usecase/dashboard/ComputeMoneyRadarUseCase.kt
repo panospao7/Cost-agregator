@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.dao.AnomalyAlertDao
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
@@ -10,6 +12,8 @@ import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.Ri
 import com.yourname.expensetracker.domain.usecase.budget.GetMonteCarloBudgetImpactUseCase
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
@@ -33,7 +37,7 @@ data class MoneyRadarData(
     val dueBills: List<UpcomingBill>,
     val anomalyAlerts: List<AnomalyAlertSummary>,
     val budgetRisk: BudgetRiskInfo?,
-    val topReasons: List<String>,
+    val topReasons: List<UiText>,
     val primaryCta: MoneyRadarAction?
 )
 
@@ -132,16 +136,20 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     /**
      * Compute the Money Radar widget data.
      */
-    suspend fun compute(): MoneyRadarData {
+    suspend fun compute(): MoneyRadarData = coroutineScope {
         val now = timeProvider.now()
         
         // Gather all data in parallel where possible
-        val dueBills = getDueBills(now)
-        val anomalyAlerts = getUnresolvedAnomalies(now)
-        val budgetRisk = getBudgetRisk()
+        val dueBillsDeferred = async { getDueBills(now) }
+        val anomalyAlertsDeferred = async { getUnresolvedAnomalies(now) }
+        val budgetRiskDeferred = async { getBudgetRisk(now) }
+
+        val dueBills = dueBillsDeferred.await()
+        val anomalyAlerts = anomalyAlertsDeferred.await()
+        val budgetRisk = budgetRiskDeferred.await()
         
         // Calculate urgency score using weighted factors
-        val dueBillsScore = calculateDueBillsScore(dueBills)
+        val dueBillsScore = calculateDueBillsScore(dueBills, now)
         val anomalyScore = calculateAnomalyScore(anomalyAlerts)
         val budgetRiskScore = calculateBudgetRiskScore(budgetRisk)
         
@@ -166,7 +174,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
         Timber.d("Money Radar computed: score=$urgencyScore, level=$urgencyLevel, " +
                 "bills=${dueBills.size}, anomalies=${anomalyAlerts.size}, risk=$budgetRisk")
         
-        return MoneyRadarData(
+        MoneyRadarData(
             urgencyScore = urgencyScore,
             urgencyLevel = urgencyLevel,
             dueBills = dueBills,
@@ -234,10 +242,8 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     /**
      * Get budget risk information using Monte Carlo simulation.
      */
-    private suspend fun getBudgetRisk(): BudgetRiskInfo? {
+    private suspend fun getBudgetRisk(now: Long): BudgetRiskInfo? {
         return try {
-            val now = timeProvider.now()
-
             // Get monthly budget
             val budgetStatuses = budgetRepository.getBudgetStatuses().first()
             val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
@@ -299,7 +305,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     /**
      * Calculate due bills score (0-100 before weighting).
      */
-    private suspend fun calculateDueBillsScore(dueBills: List<UpcomingBill>): Int {
+    private suspend fun calculateDueBillsScore(dueBills: List<UpcomingBill>, now: Long): Int {
         if (dueBills.isEmpty()) return BILLS_SCORE_0
         
         val baseScore = when (dueBills.size) {
@@ -308,7 +314,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
         }
         
         // Check for any large bill (>50% of monthly income)
-        val monthlyIncome = getMonthlyIncome()
+        val monthlyIncome = getMonthlyIncome(now)
         val hasLargeBill = if (monthlyIncome > 0) {
             dueBills.any { it.amount > monthlyIncome * LARGE_BILL_THRESHOLD_PERCENT }
         } else false
@@ -368,10 +374,10 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     /**
      * Get monthly income (deposits) for large bill threshold calculation.
      */
-    private suspend fun getMonthlyIncome(): Double {
+    private suspend fun getMonthlyIncome(now: Long): Double {
         return try {
-            val (monthStart, _) = TimePeriodUtils.getMonthRange(timeProvider.now())
-            expenseRepository.getTotalDepositsForPeriod(monthStart, timeProvider.now())
+            val (monthStart, _) = TimePeriodUtils.getMonthRange(now)
+            expenseRepository.getTotalDepositsForPeriod(monthStart, now)
         } catch (e: Exception) {
             0.0
         }
@@ -385,34 +391,56 @@ class ComputeMoneyRadarUseCase @Inject constructor(
         anomalies: List<AnomalyAlertSummary>,
         budgetRisk: BudgetRiskInfo?,
         urgencyScore: Int
-    ): List<String> {
-        val reasons = mutableListOf<String>()
+    ): List<UiText> {
+        val reasons = mutableListOf<UiText>()
         
         // Add reasons in priority order
         if (dueBills.isNotEmpty()) {
             val billText = if (dueBills.size == 1) {
-                "1 bill due soon: ${dueBills.first().merchant}"
+                UiText.StringResource(
+                    R.string.money_radar_reason_single_bill_due_format,
+                    listOf(dueBills.first().merchant)
+                )
             } else {
-                "${dueBills.size} bills due in next ${BILL_WINDOW_DAYS} days"
+                UiText.StringResource(
+                    R.string.money_radar_reason_multiple_bills_due_format,
+                    listOf(dueBills.size, BILL_WINDOW_DAYS)
+                )
             }
             reasons.add(billText)
         }
         
         if (anomalies.isNotEmpty()) {
             val anomalyText = if (anomalies.size == 1) {
-                "Unusual charge detected: ${anomalies.first().merchant}"
+                UiText.StringResource(
+                    R.string.money_radar_reason_single_anomaly_format,
+                    listOf(anomalies.first().merchant)
+                )
             } else {
-                "${anomalies.size} unusual charges need review"
+                UiText.StringResource(
+                    R.string.money_radar_reason_multiple_anomalies_format,
+                    listOf(anomalies.size)
+                )
             }
             reasons.add(anomalyText)
         }
         
         budgetRisk?.let { risk ->
             if (risk.probabilityOfOverrun >= 0.25) {
+                val probabilityPercent = (risk.probabilityOfOverrun * 100).toInt()
                 val riskText = when (risk.riskTier) {
-                    RiskTier.CRITICAL -> "Critical budget overrun risk (${(risk.probabilityOfOverrun * 100).toInt()}%)"
-                    RiskTier.HIGH -> "High risk of exceeding budget (${(risk.probabilityOfOverrun * 100).toInt()}%)"
-                    RiskTier.MEDIUM -> "Possible budget overrun (${(risk.probabilityOfOverrun * 100).toInt()}%)"
+                    RiskTier.CRITICAL -> UiText.StringResource(
+                        R.string.money_radar_reason_budget_risk_critical_format,
+                        listOf(probabilityPercent)
+                    )
+                    RiskTier.HIGH -> UiText.StringResource(
+                        R.string.money_radar_reason_budget_risk_high_format,
+                        listOf(probabilityPercent)
+                    )
+                    RiskTier.MEDIUM -> UiText.StringResource(
+                        R.string.money_radar_reason_budget_risk_medium_format,
+                        listOf(probabilityPercent)
+                    )
                     RiskTier.LOW -> null
                 }
                 riskText?.let { reasons.add(it) }
@@ -422,9 +450,9 @@ class ComputeMoneyRadarUseCase @Inject constructor(
         // Add generic message if no specific reasons
         if (reasons.isEmpty()) {
             reasons.add(if (urgencyScore <= GREEN_THRESHOLD) {
-                "Your finances look healthy"
+                UiText.StringResource(R.string.money_radar_reason_finances_healthy)
             } else {
-                "Monitor your spending closely"
+                UiText.StringResource(R.string.money_radar_reason_monitor_spending)
             })
         }
         

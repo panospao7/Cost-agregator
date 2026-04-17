@@ -814,7 +814,16 @@
     <string name="widget_insight_spent_less_format">Spent %1$.0f less than last month so far.</string>
     <string name="widget_insight_spent_higher_format">Spending is %1$.0f higher than last month.</string>
     <string name="widget_insight_today_spent_format">Spent %1$.2f today across %2$d transactions.</string>
-    
+    <string name="money_radar_reason_single_bill_due_format">1 bill due soon: %1$s</string>
+    <string name="money_radar_reason_multiple_bills_due_format">%1$d bills due in next %2$d days</string>
+    <string name="money_radar_reason_single_anomaly_format">Unusual charge detected: %1$s</string>
+    <string name="money_radar_reason_multiple_anomalies_format">%1$d unusual charges need review</string>
+    <string name="money_radar_reason_budget_risk_critical_format">Critical budget overrun risk (%1$d%%)</string>
+    <string name="money_radar_reason_budget_risk_high_format">High risk of exceeding budget (%1$d%%)</string>
+    <string name="money_radar_reason_budget_risk_medium_format">Possible budget overrun (%1$d%%)</string>
+    <string name="money_radar_reason_finances_healthy">Your finances look healthy</string>
+    <string name="money_radar_reason_monitor_spending">Monitor your spending closely</string>
+
     <!-- Budget Analytics -->
     <string name="budget_block_party_title">BUDGET BLOCK PARTY</string>
     <string name="budget_target_breakdown">TARGET BREAKDOWN</string>
