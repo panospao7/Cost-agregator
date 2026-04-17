@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.location
 
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.floor
 
 /**
  * A spending place insight — summary of spending at a single location cluster.
@@ -53,8 +54,8 @@ class LocationInsightsEngine @Inject constructor() {
         val cells = HashMap<GridCell, Accumulator>()
 
         for (expense in expenses) {
-            val latBucket = (expense.latitude / CLUSTER_RADIUS_DEG).toLong()
-            val lonBucket = (expense.longitude / CLUSTER_RADIUS_DEG).toLong()
+            val latBucket = floor(expense.latitude / CLUSTER_RADIUS_DEG).toLong()
+            val lonBucket = floor(expense.longitude / CLUSTER_RADIUS_DEG).toLong()
             val cell = GridCell(latBucket, lonBucket)
             val acc = cells.getOrPut(cell) { Accumulator() }
             acc.totalSpend += expense.amount

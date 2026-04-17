@@ -49,6 +49,6 @@ interface ScannedReceiptDao {
     @Query("SELECT * FROM scanned_receipts WHERE matchStatus = 'SUGGESTED' ORDER BY createdAt DESC")
     suspend fun getReceiptsWithSuggestions(): List<ScannedReceipt>
 
-    @Query("SELECT * FROM scanned_receipts WHERE createdAt >= :since ORDER BY createdAt DESC")
-    suspend fun getRecentReceipts(since: Long): List<ScannedReceipt>
+    @Query("SELECT * FROM scanned_receipts WHERE createdAt >= :since ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun getRecentReceipts(since: Long, limit: Int = Int.MAX_VALUE): List<ScannedReceipt>
 }

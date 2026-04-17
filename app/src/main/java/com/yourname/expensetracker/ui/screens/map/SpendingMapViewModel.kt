@@ -46,6 +46,12 @@ data class MapCategoryFilterOption(
     val label: String
 )
 
+enum class DateRangePreset {
+    LAST_7_DAYS,
+    LAST_30_DAYS,
+    LAST_90_DAYS
+}
+
 data class SpendingMapState(
     val isLoading: Boolean = true,
     val locationPermissionGranted: Boolean = false,
@@ -74,6 +80,7 @@ data class SpendingMapState(
     val unlocatedExpenses: List<Expense> = emptyList(),
     val expenseToPin: Expense? = null,
     val selectedCategories: Set<String> = emptySet(),
+    val selectedDateRangePreset: DateRangePreset? = null,
     val dateRangeStartMs: Long? = null,
     val dateRangeEndMs: Long? = null,
     val availableCategories: List<MapCategoryFilterOption> = emptyList(),
@@ -434,6 +441,7 @@ class SpendingMapViewModel @Inject constructor(
         _state.update {
             it.copy(
                 selectedCategories = emptySet(),
+                selectedDateRangePreset = null,
                 dateRangeStartMs = null,
                 dateRangeEndMs = null,
                 highlightedMerchantQuery = null
@@ -448,8 +456,14 @@ class SpendingMapViewModel @Inject constructor(
         _state.update { it.copy(highlightedMerchantQuery = query?.trim()?.takeIf(String::isNotBlank)) }
     }
 
-    fun setDateRange(startMs: Long?, endMs: Long?) {
-        _state.update { it.copy(dateRangeStartMs = startMs, dateRangeEndMs = endMs) }
+    fun setDateRange(startMs: Long?, endMs: Long?, preset: DateRangePreset? = null) {
+        _state.update {
+            it.copy(
+                selectedDateRangePreset = preset,
+                dateRangeStartMs = startMs,
+                dateRangeEndMs = endMs
+            )
+        }
         viewModelScope.launch(Dispatchers.IO) {
             recomputeMapData(expenseRepository.getLocatedExpenses().first())
         }

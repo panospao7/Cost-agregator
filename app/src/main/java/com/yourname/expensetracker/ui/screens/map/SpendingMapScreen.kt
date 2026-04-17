@@ -240,7 +240,7 @@ fun SpendingMapScreen(
                     }
                 }
 
-                val now = remember { System.currentTimeMillis() }
+                val now = System.currentTimeMillis()
                 val sevenDaysStart = now - 7L * 86_400_000L
                 val thirtyDaysStart = now - 30L * 86_400_000L
                 val ninetyDaysStart = now - 90L * 86_400_000L
@@ -255,7 +255,7 @@ fun SpendingMapScreen(
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold
                     )
-                    if (state.selectedCategories.isNotEmpty() || state.dateRangeStartMs != null || state.dateRangeEndMs != null) {
+                    if (state.selectedCategories.isNotEmpty() || state.selectedDateRangePreset != null || state.dateRangeStartMs != null || state.dateRangeEndMs != null) {
                         TextButton(onClick = viewModel::clearFilters) {
                             Text(stringResource(R.string.map_filter_clear))
                         }
@@ -264,23 +264,23 @@ fun SpendingMapScreen(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
-                        selected = state.dateRangeStartMs == null && state.dateRangeEndMs == null,
-                        onClick = { viewModel.setDateRange(null, null) },
+                        selected = state.selectedDateRangePreset == null && state.dateRangeStartMs == null && state.dateRangeEndMs == null,
+                        onClick = { viewModel.setDateRange(null, null, null) },
                         label = { Text(stringResource(R.string.map_filter_all_dates)) }
                     )
                     FilterChip(
-                        selected = state.dateRangeStartMs == sevenDaysStart && state.dateRangeEndMs == now,
-                        onClick = { viewModel.setDateRange(sevenDaysStart, now) },
+                        selected = state.selectedDateRangePreset == DateRangePreset.LAST_7_DAYS,
+                        onClick = { viewModel.setDateRange(sevenDaysStart, now, DateRangePreset.LAST_7_DAYS) },
                         label = { Text(stringResource(R.string.map_filter_7_days)) }
                     )
                     FilterChip(
-                        selected = state.dateRangeStartMs == thirtyDaysStart && state.dateRangeEndMs == now,
-                        onClick = { viewModel.setDateRange(thirtyDaysStart, now) },
+                        selected = state.selectedDateRangePreset == DateRangePreset.LAST_30_DAYS,
+                        onClick = { viewModel.setDateRange(thirtyDaysStart, now, DateRangePreset.LAST_30_DAYS) },
                         label = { Text(stringResource(R.string.map_filter_30_days)) }
                     )
                     FilterChip(
-                        selected = state.dateRangeStartMs == ninetyDaysStart && state.dateRangeEndMs == now,
-                        onClick = { viewModel.setDateRange(ninetyDaysStart, now) },
+                        selected = state.selectedDateRangePreset == DateRangePreset.LAST_90_DAYS,
+                        onClick = { viewModel.setDateRange(ninetyDaysStart, now, DateRangePreset.LAST_90_DAYS) },
                         label = { Text(stringResource(R.string.map_filter_90_days)) }
                     )
                 }

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.location
 
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.floor
 import kotlin.math.ln
 
 /**
@@ -68,8 +69,8 @@ class SpendingHeatmapEngine @Inject constructor() {
         for (expense in expenses) {
             if (expense.amount <= 0.0) continue
 
-            val latBucket = (expense.latitude / CLUSTER_RADIUS_DEG).toLong()
-            val lonBucket = (expense.longitude / CLUSTER_RADIUS_DEG).toLong()
+            val latBucket = floor(expense.latitude / CLUSTER_RADIUS_DEG).toLong()
+            val lonBucket = floor(expense.longitude / CLUSTER_RADIUS_DEG).toLong()
             val cell = GridCell(latBucket, lonBucket)
             val acc = cells.getOrPut(cell) { Accumulator() }
             acc.totalSpend += expense.amount

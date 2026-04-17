@@ -71,7 +71,7 @@ class PriceProtectionTracker @Inject constructor(
         // Check if within price protection window (usually 14-30 days)
         val daysSincePurchase = ChronoUnit.DAYS.between(
             Instant.ofEpochMilli(receipt.createdAt),
-            Instant.now()
+            Instant.ofEpochMilli(timeProvider.now())
         )
         
         // Most retailers offer 14-30 day price protection
@@ -185,9 +185,10 @@ class PriceProtectionTracker @Inject constructor(
                         priceDropPercent = savingsPercent,
                         claimUrl = generateClaimUrl(item),
                         daysRemaining = ChronoUnit.DAYS.between(
-                            Instant.now(),
+                            Instant.ofEpochMilli(timeProvider.now()),
                             Instant.ofEpochMilli(item.purchaseDate).plus(30, ChronoUnit.DAYS)
-                        ).toInt()
+                        ).toInt(),
+                        isSimulated = true
                     )
                 } else null
             } else null
@@ -239,7 +240,8 @@ class PriceProtectionTracker @Inject constructor(
                     savings = item.price - betterDeal.price,
                     savingsPercent = ((item.price - betterDeal.price) / item.price * 100),
                     dealUrl = betterDeal.url,
-                    expiresAt = betterDeal.expiresAt
+                    expiresAt = betterDeal.expiresAt,
+                    isSimulated = true
                 )
             } else null
         }
@@ -253,7 +255,7 @@ class PriceProtectionTracker @Inject constructor(
                 merchant = "Competitor Store",
                 price = item.price * 0.85, // 15% cheaper
                 url = "https://example.com/deal",
-                expiresAt = System.currentTimeMillis() + (7 * 24 * 60 * 60 * 1000) // 7 days
+                expiresAt = timeProvider.now() + (7 * 24 * 60 * 60 * 1000) // 7 days
             )
         }
         return null
@@ -273,8 +275,9 @@ class PriceProtectionTracker @Inject constructor(
                 discount = 10.0,
                 discountType = DiscountType.PERCENTAGE,
                 minPurchase = 50.0,
-                expiresAt = System.currentTimeMillis() + (14 * 24 * 60 * 60 * 1000),
-                url = "https://example.com/coupons"
+                expiresAt = timeProvider.now() + (14 * 24 * 60 * 60 * 1000),
+                url = "https://example.com/coupons",
+                isSimulated = true
             )
         ).filter { it.merchant.contains(merchant, ignoreCase = true) || merchant.contains(it.merchant, ignoreCase = true) }
     }
@@ -352,7 +355,7 @@ class PriceProtectionTracker @Inject constructor(
     }
 
     suspend fun getDealsCouponsAndBenefits(): DealsAndBenefits {
-        val recentReceipts = receiptDao.getAll().take(20)
+        val recentReceipts = receiptDao.getRecentReceipts(since = 0L, limit = 20)
 
         val deals = mutableListOf<DealAlternative>()
         val coupons = mutableListOf<CouponMatch>()
@@ -411,7 +414,8 @@ class PriceProtectionTracker @Inject constructor(
         val priceDrop: Double,
         val priceDropPercent: Double,
         val claimUrl: String?,
-        val daysRemaining: Int
+        val daysRemaining: Int,
+        val isSimulated: Boolean = false
     )
     
     data class DealAlternative(
@@ -422,7 +426,8 @@ class PriceProtectionTracker @Inject constructor(
         val savings: Double,
         val savingsPercent: Double,
         val dealUrl: String,
-        val expiresAt: Long
+        val expiresAt: Long,
+        val isSimulated: Boolean = false
     )
     
     data class ExtractedItem(
@@ -447,7 +452,8 @@ class PriceProtectionTracker @Inject constructor(
         val discountType: DiscountType,
         val minPurchase: Double?,
         val expiresAt: Long,
-        val url: String
+        val url: String,
+        val isSimulated: Boolean = false
     )
     
     enum class DiscountType {

@@ -60,12 +60,12 @@ interface MerchantLocationDao {
     )
 
     /** Increment the hit counter for a global cached entry (areaKey = 'global'). */
-    @Query("UPDATE merchant_locations SET hitCount = hitCount + 1, lastResolvedAt = :now WHERE normalizedMerchantName = :key AND areaKey = 'global'")
-    suspend fun incrementHitCount(key: String, now: Long = System.currentTimeMillis())
+    @Query("UPDATE merchant_locations SET hitCount = hitCount + 1 WHERE normalizedMerchantName = :key AND areaKey = 'global'")
+    suspend fun incrementHitCount(key: String)
 
     /** Increment the hit counter for an area-scoped cached entry. */
-    @Query("UPDATE merchant_locations SET hitCount = hitCount + 1, lastResolvedAt = :now WHERE normalizedMerchantName = :key AND areaKey = :areaKey")
-    suspend fun incrementHitCountForArea(key: String, areaKey: String, now: Long = System.currentTimeMillis())
+    @Query("UPDATE merchant_locations SET hitCount = hitCount + 1 WHERE normalizedMerchantName = :key AND areaKey = :areaKey")
+    suspend fun incrementHitCountForArea(key: String, areaKey: String)
 
     /** Remove stale entries older than [cutoffMs]. Called by the backfill worker. */
     @Query("DELETE FROM merchant_locations WHERE lastResolvedAt < :cutoffMs")
@@ -107,6 +107,10 @@ interface MerchantLocationDao {
     /** All corrections regardless of area — used when no device location is available. */
     @Query("SELECT * FROM merchant_location_corrections WHERE normalizedMerchantName = :merchantKey ORDER BY createdAt DESC LIMIT 1")
     suspend fun getLatestCorrection(merchantKey: String): MerchantLocationCorrection?
+
+    /** Latest global correction only — used before any device-location lookup. */
+    @Query("SELECT * FROM merchant_location_corrections WHERE normalizedMerchantName = :merchantKey AND areaLatitude IS NULL AND areaLongitude IS NULL ORDER BY createdAt DESC LIMIT 1")
+    suspend fun getLatestGlobalCorrection(merchantKey: String): MerchantLocationCorrection?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCorrection(correction: MerchantLocationCorrection)

@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
@@ -117,6 +118,25 @@ class LocationResolverStressTest {
 
         val result = locationResolver.resolve("Shop", System.currentTimeMillis() - 60_000)
         assertTrue(result is LocationResolutionResult.Resolved)
+    }
+
+    @Test
+    fun `device coordinates trigger second correction lookup before geocoding`() = runBlocking {
+        coEvery { locationProvider.getLastKnownLocation() } returns (40.71 to -74.01)
+        coEvery { locationCachePort.getCorrection("Shop", null, null) } returns null
+        coEvery { locationCachePort.getCorrection("Shop", 40.71, -74.01) } returns correction(40.72, -74.02)
+
+        val result = locationResolver.resolve("Shop", System.currentTimeMillis() - 60_000, merchantKey = "Shop")
+
+        assertTrue(result is LocationResolutionResult.Resolved)
+        val resolved = result as LocationResolutionResult.Resolved
+        assertEquals(40.72, resolved.latitude, 0.0001)
+        coVerifyOrder {
+            locationCachePort.getCorrection("Shop", null, null)
+            locationProvider.getLastKnownLocation()
+            locationCachePort.getCorrection("Shop", 40.71, -74.01)
+        }
+        coVerify(exactly = 0) { geocodingService.search(any(), any(), any(), any(), any()) }
     }
 
     @Test

@@ -58,15 +58,24 @@ class LocationResolver @Inject constructor(
         // to avoid double-normalization; fall back to generating it from the raw name.
         val cacheKey = merchantKey ?: MerchantKeyGenerator.generate(rawMerchantName)
 
-        // ── Step 2: Get device location (if available) ─────────────────────────
-        val deviceLocation: Pair<Double, Double>? = locationProvider.getLastKnownLocation()
+        // ── Step 2: Compute recency, but defer device location lookup ──────────
         val isRecent = (System.currentTimeMillis() - transactionDateMs) < AppConfig.Location.RECENT_TRANSACTION_THRESHOLD_MS
+        var cachedDeviceLocation: Pair<Double, Double>? = null
+        var hasLoadedDeviceLocation = false
 
-        // ── Step 3: Check user corrections ────────────────────────────────────
+        suspend fun getDeviceLocation(): Pair<Double, Double>? {
+            if (!hasLoadedDeviceLocation) {
+                cachedDeviceLocation = locationProvider.getLastKnownLocation()
+                hasLoadedDeviceLocation = true
+            }
+            return cachedDeviceLocation
+        }
+
+        // ── Step 3: Check global user corrections first ───────────────────────
         val correction = locationCachePort.getCorrection(
             merchantName = cacheKey,
-            deviceLat = deviceLocation?.first,
-            deviceLon = deviceLocation?.second
+            deviceLat = null,
+            deviceLon = null
         )
         if (correction != null) {
             // HIGH-14 FIX: Anonymize merchant names in logs using hash
@@ -79,6 +88,29 @@ class LocationResolver @Inject constructor(
                 displayAddress = correction.displayAddress,
                 confidence = 1.0f
             )
+        }
+
+        // If device coordinates are available, run a second correction lookup
+        // before cache/geocoding so area-scoped manual corrections still take
+        // priority after device-location lookup was deferred.
+        val deviceLocation = getDeviceLocation()
+        if (deviceLocation != null) {
+            val areaScopedCorrection = locationCachePort.getCorrection(
+                merchantName = cacheKey,
+                deviceLat = deviceLocation.first,
+                deviceLon = deviceLocation.second
+            )
+            if (areaScopedCorrection != null) {
+                Log.d(TAG, "Area correction hit for merchant hash: ${cacheKey.anonymizeForLog()}")
+                return LocationResolutionResult.Resolved(
+                    latitude = areaScopedCorrection.correctedLatitude,
+                    longitude = areaScopedCorrection.correctedLongitude,
+                    source = AppConfig.Location.SOURCE_USER_MANUAL,
+                    osmId = areaScopedCorrection.osmId,
+                    displayAddress = areaScopedCorrection.displayAddress,
+                    confidence = 1.0f
+                )
+            }
         }
 
         // ── Step 4: History-biased lookup (Merchant Location Affinity) ──────────
@@ -154,15 +186,16 @@ class LocationResolver @Inject constructor(
         }
 
         // ── Step 5: Nominatim with GPS bias (recent transactions only) ─────────
-        if (isRecent && deviceLocation != null) {
+        val gpsBiasLocation = if (isRecent) deviceLocation else null
+        if (isRecent && gpsBiasLocation != null) {
             val result = geocode(
                 name = latinName,
-                biasLat = deviceLocation.first,
-                biasLon = deviceLocation.second
+                biasLat = gpsBiasLocation.first,
+                biasLon = gpsBiasLocation.second
             ).orElseGeocode(
                 name = cleanedName,  // retry with original Greek
-                biasLat = deviceLocation.first,
-                biasLon = deviceLocation.second
+                biasLat = gpsBiasLocation.first,
+                biasLon = gpsBiasLocation.second
             )
             when (result) {
                 is GeocodeAttempt.Found -> {
@@ -173,8 +206,8 @@ class LocationResolver @Inject constructor(
                         merchantName = cacheKey,
                         resolvedLat = resolved.latitude,
                         resolvedLon = resolved.longitude,
-                        fallbackLat = deviceLocation.first,
-                        fallbackLon = deviceLocation.second
+                        fallbackLat = gpsBiasLocation.first,
+                        fallbackLon = gpsBiasLocation.second
                     )
                     locationCachePort.saveLocation(cacheKey, resolved, areaKey)
                     return resolved
@@ -205,10 +238,11 @@ class LocationResolver @Inject constructor(
         }
 
         // ── Step 7: Overpass nearby POIs (requires device location) ───────────
-        if (deviceLocation != null) {
+        val overpassLocation = deviceLocation
+        if (overpassLocation != null) {
             val nearbyResult = nearbyPoiService.findNearby(
-                lat = deviceLocation.first,
-                lon = deviceLocation.second,
+                lat = overpassLocation.first,
+                lon = overpassLocation.second,
                 merchantName = cleanedName,
                 radiusMetres = AppConfig.Location.OVERPASS_SEARCH_RADIUS_M
             )

@@ -102,7 +102,7 @@ class MerchantLocationRepository @Inject constructor(
     ): MerchantLocationCorrection? {
         val key = normalizeKey(merchantName)
         if (deviceLat == null || deviceLon == null) {
-            return dao.getLatestCorrection(key)
+            return dao.getLatestGlobalCorrection(key)
         }
         val candidates = dao.getCorrectionCandidates(key, deviceLat, deviceLon)
         return candidates.firstOrNull { correction ->

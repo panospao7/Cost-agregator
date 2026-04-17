@@ -217,7 +217,8 @@ class PriceProtectionViewModelTest {
             priceDrop = dropAmount,
             priceDropPercent = percent,
             claimUrl = "https://example.com/claim",
-            daysRemaining = 20
+            daysRemaining = 20,
+            isSimulated = true
         )
     }
 }
