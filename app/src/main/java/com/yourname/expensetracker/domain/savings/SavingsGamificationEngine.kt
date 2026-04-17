@@ -50,6 +50,13 @@ class SavingsGamificationEngine @Inject constructor(
     suspend fun getAchievements(userId: String = "default"): List<SavingsAchievement> {
         val goals = savingsGoalRepository.observeSavingsGoals().first()
         val contributionMetrics = analyzeContributionHistory()
+        val sortedGoals = goals.sortedBy { it.createdAt }
+        val firstGoalUnlockedAt = sortedGoals.firstOrNull()?.createdAt
+        val totalSavedThresholds = resolveTotalSavedThresholdUnlocks(goals, contributionMetrics.contributions)
+        val bestProgressGoal = goals.maxByOrNull {
+            it.currentAmount / it.targetAmount.coerceAtLeast(0.01)
+        }
+        val goalCrusherUnlockedAt = resolveGoalCrusherUnlockedAt(goals, contributionMetrics.contributions)
         
         var totalSaved = 0.0
         for (goal in goals) {
@@ -70,7 +77,7 @@ class SavingsGamificationEngine @Inject constructor(
                 description = "Create your first savings goal",
                 icon = "🎯",
                 isUnlocked = goalCount >= 1,
-                unlockedAt = if (goalCount >= 1) timeProvider.now() else null,
+                unlockedAt = firstGoalUnlockedAt,
                 progress = if (goalCount >= 1) 1.0 else 0.0,
                 requirement = "Create 1 goal"
             ),
@@ -94,7 +101,7 @@ class SavingsGamificationEngine @Inject constructor(
                 description = "Save €100 total",
                 icon = "💯",
                 isUnlocked = totalSaved >= 100,
-                unlockedAt = if (totalSaved >= 100) timeProvider.now() else null,
+                unlockedAt = if (totalSaved >= 100) totalSavedThresholds[100.0] else null,
                 progress = (totalSaved / 100.0).coerceIn(0.0, 1.0),
                 requirement = "€100 saved"
             ),
@@ -104,9 +111,11 @@ class SavingsGamificationEngine @Inject constructor(
                 description = "Complete your first savings goal",
                 icon = "🏆",
                 isUnlocked = completedGoals >= 1,
-                unlockedAt = if (completedGoals >= 1) timeProvider.now() else null,
+                unlockedAt = if (completedGoals >= 1) goalCrusherUnlockedAt else null,
                 progress = if (completedGoals >= 1) 1.0 else 
-                    (goals.firstOrNull()?.let { it.currentAmount / it.targetAmount } ?: 0.0).coerceIn(0.0, 1.0),
+                    (bestProgressGoal?.let {
+                        it.currentAmount / it.targetAmount.coerceAtLeast(0.01)
+                    } ?: 0.0).coerceIn(0.0, 1.0),
                 requirement = "1 goal completed"
             ),
             SavingsAchievement(
@@ -115,7 +124,7 @@ class SavingsGamificationEngine @Inject constructor(
                 description = "Save €1,000 total",
                 icon = "💰",
                 isUnlocked = totalSaved >= 1000,
-                unlockedAt = if (totalSaved >= 1000) timeProvider.now() else null,
+                unlockedAt = if (totalSaved >= 1000) totalSavedThresholds[1000.0] else null,
                 progress = (totalSaved / 1000.0).coerceIn(0.0, 1.0),
                 requirement = "€1,000 saved"
             )
@@ -161,8 +170,55 @@ class SavingsGamificationEngine @Inject constructor(
             lastSavingsDate = sortedContributions.lastOrNull()?.timestamp,
             monthlyContributions = currentMonthContributions.size,
             totalContributedThisMonth = currentMonthContributions.sumOf { it.amount },
-            sevenDayStreakUnlockedAt = findStreakUnlockedAt(sortedContributions, 7)
+            sevenDayStreakUnlockedAt = findStreakUnlockedAt(sortedContributions, 7),
+            contributions = sortedContributions
         )
+    }
+
+    private fun resolveTotalSavedThresholdUnlocks(
+        goals: List<com.yourname.expensetracker.domain.model.SavingsGoal>,
+        contributions: List<SavingsContributionEvent>
+    ): Map<Double, Long?> {
+        val thresholds = listOf(100.0, 1000.0)
+        val unlocks = thresholds.associateWith { null as Long? }.toMutableMap()
+        var cumulativeSaved = 0.0
+
+        for (contribution in contributions.sortedBy { it.timestamp }) {
+            cumulativeSaved += contribution.amount
+            for (threshold in thresholds) {
+                if (unlocks[threshold] == null && cumulativeSaved >= threshold) {
+                    unlocks[threshold] = contribution.timestamp
+                }
+            }
+        }
+
+        val fallbackTimestamp = goals.minOfOrNull { it.createdAt }
+        return unlocks.mapValues { (_, unlockedAt) -> unlockedAt ?: fallbackTimestamp }
+    }
+
+    private fun resolveGoalCrusherUnlockedAt(
+        goals: List<com.yourname.expensetracker.domain.model.SavingsGoal>,
+        contributions: List<SavingsContributionEvent>
+    ): Long? {
+        val completedGoalIds = goals
+            .filter { it.currentAmount >= it.targetAmount }
+            .associateBy { it.id }
+
+        if (completedGoalIds.isEmpty()) {
+            return null
+        }
+
+        val cumulativeByGoal = mutableMapOf<Long, Double>()
+        for (contribution in contributions.sortedBy { it.timestamp }) {
+            val goal = completedGoalIds[contribution.goalId] ?: continue
+            val updatedAmount = (cumulativeByGoal[goal.id] ?: 0.0) + contribution.amount
+            cumulativeByGoal[goal.id] = updatedAmount
+            if (updatedAmount >= goal.targetAmount.coerceAtLeast(0.01)) {
+                return contribution.timestamp
+            }
+        }
+
+        return completedGoalIds.values.minOfOrNull { it.createdAt }
     }
 
     private fun calculateCurrentStreakDays(contributionDays: List<Long>, referenceTime: Long): Int {
@@ -252,6 +308,7 @@ class SavingsGamificationEngine @Inject constructor(
         val lastSavingsDate: Long? = null,
         val monthlyContributions: Int = 0,
         val totalContributedThisMonth: Double = 0.0,
-        val sevenDayStreakUnlockedAt: Long? = null
+        val sevenDayStreakUnlockedAt: Long? = null,
+        val contributions: List<SavingsContributionEvent> = emptyList()
     )
 }

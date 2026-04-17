@@ -41,8 +41,8 @@ class InvestmentTrackerTest {
     fun `allTimeHigh and allTimeLow query from epoch 0, not 30-day window`() = runTest {
         val investment = makeInvestment(id = 1L, currentPrice = 150.0, purchasePrice = 100.0)
         coEvery { investmentDao.getById(1L) } returns investment
-        // Recent 30-day window returns an empty list (no recent history)
-        coEvery { investmentValueDao.getValuesBetween(1L, any(), any()) } returns emptyList()
+        coEvery { investmentValueDao.getLatestValueBefore(1L, any()) } returns null
+        coEvery { investmentValueDao.getLatestValue(1L) } returns null
         // All-time queries return values from months ago
         coEvery { investmentValueDao.getMaxPrice(1L, 0L) } returns 200.0
         coEvery { investmentValueDao.getMinPrice(1L, 0L) } returns 50.0
@@ -60,7 +60,8 @@ class InvestmentTrackerTest {
     fun `allTimeHigh is null when no historical values exist`() = runTest {
         val investment = makeInvestment(id = 2L)
         coEvery { investmentDao.getById(2L) } returns investment
-        coEvery { investmentValueDao.getValuesBetween(2L, any(), any()) } returns emptyList()
+        coEvery { investmentValueDao.getLatestValueBefore(2L, any()) } returns null
+        coEvery { investmentValueDao.getLatestValue(2L) } returns null
         coEvery { investmentValueDao.getMaxPrice(2L, 0L) } returns null
         coEvery { investmentValueDao.getMinPrice(2L, 0L) } returns null
 
@@ -70,67 +71,41 @@ class InvestmentTrackerTest {
         assertThat(perf.allTimeLow).isNull()
     }
 
-    /**
-     * B.4 ISSUE-2: getValuesBetween is ORDER BY timestamp ASC, so the last element
-     * is the most-recent sample.  This test uses THREE in-window values at distinct
-     * timestamps and verifies that dayChange comes from the LAST (newest) one, not
-     * the first (oldest) one.
-     */
     @Test
-    fun `dayChange uses the LATEST in-window value when multiple samples exist`() = runTest {
+    fun `dayChange uses previous day close snapshot`() = runTest {
         val investment = makeInvestment(id = 3L, currentPrice = 120.0, purchasePrice = 100.0)
         coEvery { investmentDao.getById(3L) } returns investment
 
         val now = timeProvider.now()
-        // ASC order: oldest → middle → newest (as the DAO returns them)
-        val oldestValue = InvestmentValue(
-            id = 10,
-            investmentId = 3L,
-            price = 110.0,
-            totalValue = 110.0,
-            timestamp = now - 72_000_000L,   // 20 hours ago
-            dayChange = -5.0,                // wrong value – must NOT be chosen
-            dayChangePercent = -4.3
-        )
-        val middleValue = InvestmentValue(
-            id = 11,
-            investmentId = 3L,
-            price = 115.0,
-            totalValue = 115.0,
-            timestamp = now - 36_000_000L,   // 10 hours ago
-            dayChange = 3.0,                 // wrong value – must NOT be chosen
-            dayChangePercent = 2.7
-        )
-        val newestValue = InvestmentValue(
+        val previousDayClose = InvestmentValue(
             id = 12,
             investmentId = 3L,
             price = 118.0,
             totalValue = 118.0,
-            timestamp = now - 3_600_000L,    // 1 hour ago – the latest sample
+            timestamp = now - 86_400_000L,
             dayChange = 2.0,
             dayChangePercent = 1.7
         )
-        // DAO returns values in ASC timestamp order (oldest first, newest last)
-        coEvery { investmentValueDao.getValuesBetween(3L, any(), any()) } returns
-                listOf(oldestValue, middleValue, newestValue)
+        coEvery { investmentValueDao.getLatestValueBefore(3L, any()) } returns previousDayClose
+        coEvery { investmentValueDao.getLatestValue(3L) } returns previousDayClose
         coEvery { investmentValueDao.getMaxPrice(3L, 0L) } returns 130.0
         coEvery { investmentValueDao.getMinPrice(3L, 0L) } returns 80.0
 
         val perf = tracker.getInvestmentPerformance(3L)!!
 
-        // Must reflect the NEWEST entry, not the oldest
         assertThat(perf.dayChange).isEqualTo(2.0)
-        assertThat(perf.dayChangePercent).isEqualTo(1.7)
-        // All-time values must still be from full history
+        assertThat(perf.dayChangePercent).isWithin(0.0001).of((2.0 / 118.0) * 100)
         assertThat(perf.allTimeHigh).isEqualTo(130.0)
         assertThat(perf.allTimeLow).isEqualTo(80.0)
+        coVerify { investmentValueDao.getLatestValueBefore(3L, any()) }
     }
 
     @Test
     fun `dayChange is null when no in-window values exist`() = runTest {
         val investment = makeInvestment(id = 5L, currentPrice = 120.0, purchasePrice = 100.0)
         coEvery { investmentDao.getById(5L) } returns investment
-        coEvery { investmentValueDao.getValuesBetween(5L, any(), any()) } returns emptyList()
+        coEvery { investmentValueDao.getLatestValueBefore(5L, any()) } returns null
+        coEvery { investmentValueDao.getLatestValue(5L) } returns null
         coEvery { investmentValueDao.getMaxPrice(5L, 0L) } returns null
         coEvery { investmentValueDao.getMinPrice(5L, 0L) } returns null
 
@@ -153,7 +128,8 @@ class InvestmentTrackerTest {
     fun `gainLoss calculated correctly`() = runTest {
         val investment = makeInvestment(id = 4L, currentPrice = 150.0, purchasePrice = 100.0, quantity = 2.0)
         coEvery { investmentDao.getById(4L) } returns investment
-        coEvery { investmentValueDao.getValuesBetween(4L, any(), any()) } returns emptyList()
+        coEvery { investmentValueDao.getLatestValueBefore(4L, any()) } returns null
+        coEvery { investmentValueDao.getLatestValue(4L) } returns null
         coEvery { investmentValueDao.getMaxPrice(4L, 0L) } returns null
         coEvery { investmentValueDao.getMinPrice(4L, 0L) } returns null
 
@@ -174,7 +150,8 @@ class InvestmentTrackerTest {
             purchaseFees = 10.0
         )
         coEvery { investmentDao.getById(6L) } returns investment
-        coEvery { investmentValueDao.getValuesBetween(6L, any(), any()) } returns emptyList()
+        coEvery { investmentValueDao.getLatestValueBefore(6L, any()) } returns null
+        coEvery { investmentValueDao.getLatestValue(6L) } returns null
         coEvery { investmentValueDao.getMaxPrice(6L, 0L) } returns null
         coEvery { investmentValueDao.getMinPrice(6L, 0L) } returns null
 
@@ -219,7 +196,7 @@ class InvestmentTrackerTest {
         val investmentB = makeInvestment(id = 10L)
         coEvery { investmentDao.getAllInvestments() } returns listOf(investmentA, investmentB)
 
-        coEvery { investmentValueDao.getValuesBetween(9L, any(), any()) } returns listOf(
+        coEvery { investmentValueDao.getPortfolioHistoryBatch(listOf(9L, 10L), any(), any()) } returns listOf(
             InvestmentValue(
                 id = 20L,
                 investmentId = 9L,
@@ -237,9 +214,7 @@ class InvestmentTrackerTest {
                 timestamp = 1_700_000_000_000L + 3_600_000L,
                 dayChange = 20.0,
                 dayChangePercent = 20.0
-            )
-        )
-        coEvery { investmentValueDao.getValuesBetween(10L, any(), any()) } returns listOf(
+            ),
             InvestmentValue(
                 id = 22L,
                 investmentId = 10L,
@@ -255,6 +230,7 @@ class InvestmentTrackerTest {
 
         assertThat(history).hasSize(1)
         assertThat(history.single().totalValue).isEqualTo(170.0)
+        coVerify(exactly = 1) { investmentValueDao.getPortfolioHistoryBatch(listOf(9L, 10L), any(), any()) }
     }
 
     // ---- Helpers ----

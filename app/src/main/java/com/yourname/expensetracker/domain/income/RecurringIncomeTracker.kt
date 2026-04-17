@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -33,15 +34,19 @@ class RecurringIncomeTracker @Inject constructor(
             DomainTransactionType.DEPOSIT.name
         )
         
-        // Group by merchant/payer
-        val merchantGroups = deposits.groupBy { it.merchant }
+        // Group by normalized merchant/payer key
+        val merchantGroups = deposits.groupBy { MerchantKeyGenerator.generate(it.merchant) }
         
         val recurring = mutableListOf<RecurringIncome>()
         
-        for ((merchant, transactions) in merchantGroups) {
+        for ((_, transactions) in merchantGroups) {
             if (transactions.size >= 2) { // At least 2 occurrences
                 val sorted = transactions.sortedBy { it.date }
                 val intervals = mutableListOf<Long>()
+                val merchant = sorted.groupBy { it.merchant }
+                    .maxByOrNull { it.value.size }
+                    ?.key
+                    ?: sorted.first().merchant
                 
                 // Calculate intervals between transactions
                 for (i in 1 until sorted.size) {
@@ -158,6 +163,7 @@ class RecurringIncomeTracker @Inject constructor(
         calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
         calendar.set(java.util.Calendar.MINUTE, 0)
         calendar.set(java.util.Calendar.SECOND, 0)
+        calendar.set(java.util.Calendar.MILLISECOND, 0)
         return calendar.timeInMillis
     }
 

@@ -93,7 +93,7 @@ class FinancialHealthCalculator @Inject constructor(
         val spentToday = todaySpending.sumOf { it.effectiveAmount }
         
         // Calculate base score components
-        val budgetHealth = calculateBudgetHealthScore(budgetStatuses, todayExpenses)
+        val budgetHealth = calculateBudgetHealthScore(budgetStatuses)
         val spendingControl = calculateDailySpendingControl(
             spentToday = spentToday,
             budgetStatuses = budgetStatuses,
@@ -104,7 +104,7 @@ class FinancialHealthCalculator @Inject constructor(
         
         // Calculate bonus points
         val bonusPoints = calculateBonusPoints(
-            noSpendStreak = if (spentToday == 0.0) noSpendStreak + 1 else 0,
+            noSpendStreak = if (spentToday == 0.0) noSpendStreak else 0,
             streak = streak,
             allBudgetsOnTrack = budgetStatuses.all { it.healthStatus == BudgetHealthStatus.ON_TRACK }
         )
@@ -146,7 +146,7 @@ class FinancialHealthCalculator @Inject constructor(
         
         val volatility = calculateVolatility(dailySpending)
         
-        val budgetHealth = calculateBudgetHealthScore(budgetStatuses, weekExpenses)
+        val budgetHealth = calculateBudgetHealthScore(budgetStatuses)
         val spendingControl = calculateWeeklySpendingControl(
             spentThisWeek = spentThisWeek,
             budgetStatuses = budgetStatuses,
@@ -199,7 +199,7 @@ class FinancialHealthCalculator @Inject constructor(
         
         val volatility = calculateVolatility(dailySpending)
         
-        val budgetHealth = calculateBudgetHealthScore(budgetStatuses, monthExpenses)
+        val budgetHealth = calculateBudgetHealthScore(budgetStatuses)
         val spendingControl = calculateMonthlySpendingControl(
             spentThisMonth = spentThisMonth,
             budgetStatuses = budgetStatuses,
@@ -230,8 +230,7 @@ class FinancialHealthCalculator @Inject constructor(
     }
 
     private fun calculateBudgetHealthScore(
-        budgetStatuses: List<BudgetStatusSnapshot>,
-        periodExpenses: List<Expense>
+        budgetStatuses: List<BudgetStatusSnapshot>
     ): Int {
         if (budgetStatuses.isEmpty()) return 25 // Default if no budgets set
         

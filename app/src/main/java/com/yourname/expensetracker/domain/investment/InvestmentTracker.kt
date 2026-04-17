@@ -9,11 +9,9 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.abs
 
 data class PortfolioSummary(
     val totalValue: Double,
@@ -89,19 +87,12 @@ class InvestmentTracker @Inject constructor(
             val gainLoss = currentValue - investedValue
             val gainLossPercent = if (investedValue > 0) (gainLoss / investedValue) * 100 else 0.0
             
-            // Get historical values for day change
             val now = timeProvider.now()
-            val thirtyDaysAgo = now - (30L * 24 * 60 * 60 * 1000)
-            val recentValues = investmentValueDao.getValuesBetween(
-                investmentId, 
-                thirtyDaysAgo, 
-                now
-            )
-            
-            // ASC-ordered list: last element is the most-recent sample in the window.
-            val latestRecentValue = recentValues.lastOrNull()
-            val dayChange = latestRecentValue?.dayChange
-            val dayChangePercent = latestRecentValue?.dayChangePercent
+            val previousDayClose = getPreviousDayCloseSnapshot(investmentId, now)
+            val dayChange = previousDayClose?.let { investment.currentPrice - it.price }
+            val dayChangePercent = previousDayClose?.let {
+                if (it.price > 0.0) ((investment.currentPrice - it.price) / it.price) * 100 else 0.0
+            }
             
             // True all-time high/low: query from epoch 0 (all recorded history)
             val allTimeHigh = investmentValueDao.getMaxPrice(investmentId, 0L)
@@ -126,11 +117,10 @@ class InvestmentTracker @Inject constructor(
         val investment = investmentDao.getById(investmentId) ?: return@withContext
         val timestamp = timeProvider.now()
         
-        // Calculate day change
-        val latestValue = investmentValueDao.getLatestValue(investmentId)
-        val dayChange = latestValue?.let { newPrice - it.price }
-        val dayChangePercent = latestValue?.let { 
-            if (it.price > 0) ((newPrice - it.price) / it.price) * 100 else 0.0 
+        val previousDayClose = getPreviousDayCloseSnapshot(investmentId, timestamp)
+        val dayChange = previousDayClose?.let { newPrice - it.price }
+        val dayChangePercent = previousDayClose?.let {
+            if (it.price > 0.0) ((newPrice - it.price) / it.price) * 100 else 0.0
         }
         
         // Update investment
@@ -187,7 +177,7 @@ class InvestmentTracker @Inject constructor(
      */
     suspend fun getTopPerformers(count: Int = 5): Pair<List<InvestmentPerformance>, List<InvestmentPerformance>> = 
         withContext(Dispatchers.IO) {
-            val investments = investmentDao.getAllInvestments()
+            val investments = investmentDao.getAllActiveInvestments().first()
             val performances = investments.mapNotNull { getInvestmentPerformance(it.id) }
             
             val sortedByPerformance = performances.sortedByDescending { it.gainLossPercent }
@@ -211,9 +201,17 @@ class InvestmentTracker @Inject constructor(
             
             // Group by day
             val dayMap = mutableMapOf<String, Double>()
-            
+
+            val investmentIds = investments.map { it.id }
+            val valuesByInvestment = if (investmentIds.isEmpty()) {
+                emptyMap<Long, List<InvestmentValue>>()
+            } else {
+                investmentValueDao.getPortfolioHistoryBatch(investmentIds, startDate, endDate)
+                    .groupBy { it.investmentId }
+            }
+
             for (investment in investments) {
-                val values = investmentValueDao.getValuesBetween(investment.id, startDate, endDate)
+                val values = valuesByInvestment[investment.id].orEmpty()
                 val latestValueByDay = mutableMapOf<String, InvestmentValue>()
 
                 for (value in values) {
@@ -236,6 +234,21 @@ class InvestmentTracker @Inject constructor(
             
             result
         }
+
+    private suspend fun getPreviousDayCloseSnapshot(investmentId: Long, referenceTime: Long): InvestmentValue? {
+        val currentDayStart = getStartOfDay(referenceTime)
+        return investmentValueDao.getLatestValueBefore(investmentId, currentDayStart)
+    }
+
+    private fun getStartOfDay(timestamp: Long): Long {
+        val calendar = java.util.Calendar.getInstance()
+        calendar.timeInMillis = timestamp
+        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        calendar.set(java.util.Calendar.MINUTE, 0)
+        calendar.set(java.util.Calendar.SECOND, 0)
+        calendar.set(java.util.Calendar.MILLISECOND, 0)
+        return calendar.timeInMillis
+    }
     
     private fun getDayKey(timestamp: Long): String {
         val calendar = java.util.Calendar.getInstance()

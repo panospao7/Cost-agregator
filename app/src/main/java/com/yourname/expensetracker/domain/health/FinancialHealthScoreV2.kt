@@ -105,7 +105,7 @@ class FinancialHealthScoreV2 @Inject constructor(
             ).toInt().coerceIn(0, 100)
             
             // Determine trend by comparing to previous score
-            val trend = determineTrend(overallScore)
+            val trend = determineTrend(overallScore, periodStart, periodEnd)
             
             // Generate recommendation based on scores
             val recommendation = generateRecommendation(
@@ -373,8 +373,8 @@ class FinancialHealthScoreV2 @Inject constructor(
     /**
      * Calculate Bill Reliability Score (20% weight)
      * 
-     * Analyzes recurring expense patterns to determine on-time payment rate.
-     * Uses detected recurring patterns and their confidence scores.
+     * Uses recurring-pattern cadence only as a weak proxy for timing consistency.
+     * It does not treat pattern-detection confidence as payment reliability.
      */
     private suspend fun calculateBillReliabilityScore(
         expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
@@ -389,24 +389,23 @@ class FinancialHealthScoreV2 @Inject constructor(
                 return 75 // Default good score if no recurring patterns detected
             }
             
-            // Calculate reliability based on pattern confidence and consistency
+            val relevantPatterns = patterns.filter { pattern ->
+                pattern.previousDates.isNotEmpty() &&
+                    pattern.previousDates.last() < periodEnd &&
+                    pattern.nextExpectedDate > periodStart
+            }
+
+            if (relevantPatterns.isEmpty()) {
+                return 75
+            }
+
             var totalWeight = 0.0
             var weightedReliability = 0.0
             
-            for (pattern in patterns) {
-                // High confidence patterns (>90%) indicate reliable payment history
-                val patternReliability = when {
-                    pattern.confidence >= 0.95f -> 1.0
-                    pattern.confidence >= 0.90f -> 0.95
-                    pattern.confidence >= 0.80f -> 0.85
-                    pattern.confidence >= 0.70f -> 0.75
-                    pattern.confidence >= 0.50f -> 0.60
-                    else -> 0.40
-                }
-                
-                // Weight by average amount (larger bills matter more)
+            for (pattern in relevantPatterns) {
+                val cadenceReliability = calculatePatternTimingReliability(pattern)
                 val weight = pattern.averageAmount
-                weightedReliability += patternReliability * weight
+                weightedReliability += cadenceReliability * weight
                 totalWeight += weight
             }
             
@@ -425,10 +424,14 @@ class FinancialHealthScoreV2 @Inject constructor(
     }
     
     /**
-     * Determine the trend direction by comparing to the most recent historical score.
+     * Determine the trend direction by comparing to the most recent completed period.
      */
-    private suspend fun determineTrend(currentScore: Int): HealthTrend {
-        val previousRecord = healthScoreHistoryDao.getMostRecent()
+    private suspend fun determineTrend(
+        currentScore: Int,
+        currentPeriodStart: Long,
+        currentPeriodEnd: Long
+    ): HealthTrend {
+        val previousRecord = healthScoreHistoryDao.getMostRecentBefore(currentPeriodStart, currentPeriodEnd)
         
         return if (previousRecord != null) {
             val difference = currentScore - previousRecord.overallScore
@@ -439,6 +442,34 @@ class FinancialHealthScoreV2 @Inject constructor(
             }
         } else {
             HealthTrend.STABLE // No previous data
+        }
+    }
+
+    private fun calculatePatternTimingReliability(
+        pattern: com.yourname.expensetracker.domain.model.RecurringPattern
+    ): Double {
+        val previousDates = pattern.previousDates.sorted()
+        if (previousDates.size < 2) {
+            return 0.75
+        }
+
+        val intervals = buildList {
+            for (index in 1 until previousDates.size) {
+                add(TimePeriodUtils.daysBetween(previousDates[index - 1], previousDates[index]).toDouble())
+            }
+        }
+        val expectedIntervalDays = pattern.frequency.days.toDouble().takeIf { it > 0.0 }
+            ?: return 0.75
+        val averageDeviationDays = intervals
+            .map { kotlin.math.abs(it - expectedIntervalDays) }
+            .average()
+
+        return when {
+            averageDeviationDays <= 1.0 -> 1.0
+            averageDeviationDays <= 3.0 -> 0.9
+            averageDeviationDays <= 7.0 -> 0.75
+            averageDeviationDays <= 14.0 -> 0.6
+            else -> 0.45
         }
     }
     

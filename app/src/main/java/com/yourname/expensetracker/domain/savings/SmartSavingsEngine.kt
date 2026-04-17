@@ -46,6 +46,10 @@ class SmartSavingsEngine @Inject constructor(
     private val savingsGoalRepository: SavingsGoalRepository,
     private val timeProvider: TimeProvider
 ) {
+    companion object {
+        private const val DAY_IN_MILLIS = 24 * 60 * 60 * 1000L
+    }
+
     suspend fun calculateSafeToSaveAmount(
         goal: SavingsGoal,
         timeHorizon: TimeHorizon = TimeHorizon.MONTH
@@ -258,23 +262,22 @@ class SmartSavingsEngine @Inject constructor(
     }
     
     private suspend fun runMonteCarloSimulation(
-        goal: SavingsGoal,
+        _goal: SavingsGoal,
         now: Long,
         timeHorizon: TimeHorizon
     ): Double {
-        // Calculate current spending to date
+        val simulationConfig = getSimulationConfig(timeHorizon)
         val monthStart = TimePeriodUtils.getStartOfMonth(now)
-        
-        val expenses = expenseRepository.getExpensesBetween(monthStart, now)
-        val spentToDate = expenses
+        val monthExpenses = expenseRepository.getExpensesBetween(monthStart, now)
+        val monthPurchases = monthExpenses
             .asSequence()
             .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
-            .sumOf { it.effectiveAmount }
+            .toList()
+        val monthSpentToDate = monthPurchases.sumOf { it.effectiveAmount }
 
-        // Derive monthly discretionary baseline from recent real spending
-        val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
+        val lookbackStart = now - (simulationConfig.lookbackDays * DAY_IN_MILLIS)
         val categoriesById = categoryRepository.getAll().associateBy { it.id }
-        val historicalPurchases = expenseRepository.getExpensesBetween(threeMonthsAgo, now)
+        val historicalPurchases = expenseRepository.getExpensesBetween(lookbackStart, now)
             .asSequence()
             .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
             .toList()
@@ -284,35 +287,60 @@ class SmartSavingsEngine @Inject constructor(
                 isDiscretionaryCategory(it.categoryId, categoriesById)
             }
             .sumOf { it.effectiveAmount }
-        val monthlyDiscretionary = if (historicalPurchases.isNotEmpty()) {
-            discretionaryHistoricalTotal / 3.0
+        val endOfLastCompleteMonth = TimePeriodUtils.getStartOfMonth(now) - 1L
+        val lookbackMonthCount = countCalendarMonthsInRange(
+            startInclusive = lookbackStart,
+            endInclusive = endOfLastCompleteMonth
+        )
+        val monthlyDiscretionary = if (lookbackMonthCount > 0) {
+            discretionaryHistoricalTotal / lookbackMonthCount.toDouble()
         } else {
-            500.0
+            simulationConfig.fallbackMonthlyDiscretionary
         }
-        
-        // Assume no known upcoming expenses for this calculation
+
+        val averageHistoricalDailySpending = if (historicalPurchases.isNotEmpty()) {
+            historicalPurchases.sumOf { it.effectiveAmount } / simulationConfig.lookbackDays.toDouble()
+        } else {
+            0.0
+        }
+
         val knownUpcoming = 0.0
-        
-        // Run Monte Carlo
-        val result = monteCarloSimulator.simulate(
-            spentToDate = spentToDate,
+        val monthlyResult = monteCarloSimulator.simulate(
+            spentToDate = monthSpentToDate,
             knownUpcoming = knownUpcoming,
             budgetAmount = null // No budget constraint
         )
-        
-        return result?.percentile50?.let { projectedSpending ->
-            val horizonMultiplier = when (timeHorizon) {
-                TimeHorizon.WEEK -> 0.25
-                TimeHorizon.MONTH -> 1.0
-                TimeHorizon.QUARTER -> 3.0
-            }
 
-            // If projected spending is under control, suggest saving 20% of discretionary
-            val discretionary = monthlyDiscretionary * horizonMultiplier
-            val projectedHorizonSpending = projectedSpending * horizonMultiplier
-            val remaining = discretionary - (projectedHorizonSpending * 0.3) // 30% of projected horizon spending
-            if (remaining > 0) remaining * 0.2 else 0.0
-        } ?: 0.0
+        val projectedHorizonSpending = when (timeHorizon) {
+            TimeHorizon.WEEK -> simulateWeeklyProjectedSpending(now, averageHistoricalDailySpending)
+            TimeHorizon.MONTH -> monthlyResult?.percentile50
+                ?: simulateProjectedSpendingForRange(
+                    periodStart = monthStart,
+                    periodEnd = TimePeriodUtils.getEndOfMonth(now),
+                    now = now,
+                    averageHistoricalDailySpending = averageHistoricalDailySpending
+                )
+            TimeHorizon.QUARTER -> simulateProjectedSpendingForRange(
+                periodStart = TimePeriodUtils.getStartOfQuarter(now),
+                periodEnd = TimePeriodUtils.getEndOfQuarter(now),
+                now = now,
+                averageHistoricalDailySpending = averageHistoricalDailySpending
+            )
+        }
+
+        val horizonDiscretionary = when (timeHorizon) {
+            TimeHorizon.WEEK -> monthlyDiscretionary / TimePeriodUtils.getDaysInMonth(now) * 7.0
+            TimeHorizon.MONTH -> monthlyDiscretionary
+            TimeHorizon.QUARTER -> monthlyDiscretionary * countCalendarMonthsInRange(
+                TimePeriodUtils.getStartOfQuarter(now),
+                TimePeriodUtils.getEndOfQuarter(now) - 1
+            )
+        }
+
+        val remaining = horizonDiscretionary -
+            (projectedHorizonSpending * simulationConfig.projectedSpendingRiskBufferRatio)
+
+        return if (remaining > 0.0) remaining * simulationConfig.safeToSaveRatio else 0.0
     }
     
     private fun calculateWeightedSafeAmount(
@@ -413,7 +441,75 @@ class SmartSavingsEngine @Inject constructor(
         val monteCarloWeight: Double,
         val cap: Double
     )
-    
+
+    private data class HorizonSimulationConfig(
+        val lookbackDays: Long,
+        val projectedSpendingRiskBufferRatio: Double,
+        val safeToSaveRatio: Double,
+        val fallbackMonthlyDiscretionary: Double
+    )
+
+    private fun getSimulationConfig(timeHorizon: TimeHorizon): HorizonSimulationConfig {
+        return when (timeHorizon) {
+            TimeHorizon.WEEK -> HorizonSimulationConfig(
+                lookbackDays = 28L,
+                projectedSpendingRiskBufferRatio = 0.30,
+                safeToSaveRatio = 0.20,
+                fallbackMonthlyDiscretionary = 500.0
+            )
+            TimeHorizon.MONTH -> HorizonSimulationConfig(
+                lookbackDays = 90L,
+                projectedSpendingRiskBufferRatio = 0.30,
+                safeToSaveRatio = 0.20,
+                fallbackMonthlyDiscretionary = 500.0
+            )
+            TimeHorizon.QUARTER -> HorizonSimulationConfig(
+                lookbackDays = 365L,
+                projectedSpendingRiskBufferRatio = 0.30,
+                safeToSaveRatio = 0.20,
+                fallbackMonthlyDiscretionary = 500.0
+            )
+        }
+    }
+
+    private suspend fun simulateWeeklyProjectedSpending(
+        now: Long,
+        averageHistoricalDailySpending: Double
+    ): Double {
+        return simulateProjectedSpendingForRange(
+            periodStart = TimePeriodUtils.getStartOfWeek(now),
+            periodEnd = TimePeriodUtils.getEndOfWeek(now),
+            now = now,
+            averageHistoricalDailySpending = averageHistoricalDailySpending
+        )
+    }
+
+    private suspend fun simulateProjectedSpendingForRange(
+        periodStart: Long,
+        periodEnd: Long,
+        now: Long,
+        averageHistoricalDailySpending: Double
+    ): Double {
+        val purchases = expenseRepository.getExpensesBetween(periodStart, now)
+            .asSequence()
+            .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
+            .toList()
+        val spentToDate = purchases.sumOf { it.effectiveAmount }
+        val remainingDays = ((periodEnd - now).coerceAtLeast(0L)).toDouble() / DAY_IN_MILLIS.toDouble()
+        return spentToDate + (averageHistoricalDailySpending * remainingDays)
+    }
+
+    private fun countCalendarMonthsInRange(startInclusive: Long, endInclusive: Long): Int {
+        if (endInclusive < startInclusive) return 0
+
+        val startYear = TimePeriodUtils.getYear(startInclusive)
+        val startMonth = TimePeriodUtils.getMonth(startInclusive)
+        val endYear = TimePeriodUtils.getYear(endInclusive)
+        val endMonth = TimePeriodUtils.getMonth(endInclusive)
+
+        return ((endYear - startYear) * 12 + (endMonth - startMonth) + 1).coerceAtLeast(1)
+    }
+
     enum class TimeHorizon {
         WEEK, MONTH, QUARTER
     }

@@ -42,6 +42,9 @@ interface HealthScoreHistoryDao {
      */
     @Query("SELECT * FROM health_score_history ORDER BY calculatedAt DESC LIMIT 1")
     suspend fun getMostRecent(): HealthScoreHistory?
+
+    @Query("SELECT * FROM health_score_history WHERE NOT (periodStart = :periodStart AND periodEnd = :periodEnd) AND periodEnd <= :periodStart ORDER BY periodEnd DESC, calculatedAt DESC LIMIT 1")
+    suspend fun getMostRecentBefore(periodStart: Long, periodEnd: Long): HealthScoreHistory?
     
     /**
      * Get health score history for a specific time period.
