@@ -18,7 +18,9 @@ import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.receipt.ReceiptSource
 import com.yourname.expensetracker.domain.usecase.receipt.ProcessReceiptUseCase
+import com.yourname.expensetracker.domain.usecase.receipt.ProcessedReceipt
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.sync.Mutex
@@ -235,10 +237,24 @@ class EmailReceiptIngestionService(
                 )
                 emailReceiptDao.insertOrIgnore(emailSource)
 
-                // Step 8: Trigger expense creation through categorization engine
+                // Step 8: Route email receipts through the shared receipt processing pipeline
+                val processedReceipt = processReceiptUseCase(
+                    ReceiptSource.ParsedContent(
+                        rawText = emailBody,
+                        merchant = parsedReceipt.merchant,
+                        amount = parsedReceipt.amount,
+                        date = parsedReceipt.date
+                    )
+                ).getOrElse { error ->
+                    throw EmailReceiptExpenseCreationException(
+                        message = "Failed to process email receipt through receipt pipeline: $receiptId",
+                        cause = error
+                    )
+                }
+
                 val expenseIds = createExpenseFromReceipt(
                     receiptId = receiptId,
-                    merchant = normalizedMerchant,
+                    processedReceipt = processedReceipt,
                     receipt = parsedReceipt
                 )
 
@@ -347,20 +363,17 @@ class EmailReceiptIngestionService(
      */
     private suspend fun createExpenseFromReceipt(
         receiptId: Long,
-        merchant: String,
+        processedReceipt: ProcessedReceipt,
         receipt: ParsedEmailReceipt
     ): List<Long> {
-        // Use categorization engine to determine category
-        val categoryResult = categorizationEngine.categorize(merchant)
-
         val expense = Expense(
-            amount = receipt.amount,
+            amount = processedReceipt.amount,
             currency = receipt.currency,
-            merchant = merchant,
-            merchantKey = MerchantKeyGenerator.generate(merchant),
+            merchant = processedReceipt.merchant,
+            merchantKey = MerchantKeyGenerator.generate(processedReceipt.merchant),
             transactionType = TransactionType.PURCHASE,
-            date = receipt.date,
-            categoryId = categoryResult.categoryId,
+            date = processedReceipt.date ?: receipt.date,
+            categoryId = processedReceipt.categoryId,
             createdAt = timeProvider.now(),
             notes = receipt.items
                 .takeIf { it.isNotEmpty() }
@@ -368,7 +381,11 @@ class EmailReceiptIngestionService(
             // Use type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows never
             // collide on the persisted unique dedupeKey index (ISSUE-8 fix).
             dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                receipt.amount, merchant, receipt.date, receipt.currency, TransactionType.PURCHASE
+                processedReceipt.amount,
+                processedReceipt.merchant,
+                processedReceipt.date ?: receipt.date,
+                receipt.currency,
+                TransactionType.PURCHASE
             )
         )
 
@@ -385,7 +402,7 @@ class EmailReceiptIngestionService(
             existingReceipt.copy(
                 expenseId = expenseId,
                 matchStatus = MatchStatus.AUTO_MATCHED,
-                matchConfidence = categoryResult.confidence.toFloat()
+                matchConfidence = processedReceipt.categoryConfidence
             )
         )
 

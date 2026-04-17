@@ -12,6 +12,12 @@ import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import timber.log.Timber
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
+import java.time.format.ResolverStyle
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -230,33 +236,80 @@ class GenericTransactionParser @Inject constructor(
             val groups = match.groupValues
             if (groups.size < 4) continue
             try {
-                val (day, month, year) = when {
-                    groups[1].length == 4 -> Triple(groups[3].toInt(), groups[2].toInt(), groups[1].toInt())  // ISO yyyy-MM-dd
-                    groups[3].length == 4 -> Triple(groups[1].toInt(), groups[2].toInt(), groups[3].toInt())  // dd/MM/yyyy
+                val parsedDate = when {
+                    groups[1].length == 4 -> parseStrictLocalDate(
+                        dateText = "%04d-%02d-%02d".format(
+                            groups[1].toInt(),
+                            groups[2].toInt(),
+                            groups[3].toInt()
+                        ),
+                        formatter = DateTimeFormatter.ofPattern("uuuu-MM-dd").withResolverStyle(ResolverStyle.STRICT)
+                    )
+
+                    groups[3].length == 4 -> parseStrictLocalDate(
+                        dateText = "%02d/%02d/%04d".format(
+                            groups[1].toInt(),
+                            groups[2].toInt(),
+                            groups[3].toInt()
+                        ),
+                        formatter = DateTimeFormatter.ofPattern("dd/MM/uuuu").withResolverStyle(ResolverStyle.STRICT)
+                    )
+
                     groups[3].length == 2 -> {
-                        val y = groups[3].toInt()
-                        Triple(groups[1].toInt(), groups[2].toInt(), if (y < 50) 2000 + y else 1900 + y)
+                        val year = groups[3].toInt()
+                        parseStrictLocalDate(
+                            dateText = "%02d/%02d/%04d".format(
+                                groups[1].toInt(),
+                                groups[2].toInt(),
+                                if (year < 50) 2000 + year else 1900 + year
+                            ),
+                            formatter = DateTimeFormatter.ofPattern("dd/MM/uuuu").withResolverStyle(ResolverStyle.STRICT)
+                        )
                     }
+
                     groups[2].matches(Regex("""[A-Za-z]+""")) -> {
-                        val m = months.indexOf(groups[2].take(3).lowercase()) + 1
-                        if (m in 1..12) Triple(groups[1].toInt(), m, groups[3].toInt()) else continue
+                        val monthToken = groups[2].take(3).lowercase(Locale.ENGLISH)
+                        if (monthToken !in months) {
+                            null
+                        } else {
+                            parseStrictLocalDate(
+                                dateText = "%02d %s %04d".format(
+                                    groups[1].toInt(),
+                                    monthToken.replaceFirstChar { it.titlecase(Locale.ENGLISH) },
+                                    groups[3].toInt()
+                                ),
+                                formatter = DateTimeFormatter.ofPattern("dd MMM uuuu", Locale.ENGLISH)
+                                    .withResolverStyle(ResolverStyle.STRICT)
+                            )
+                        }
                     }
-                    else -> continue
+
+                    else -> null
                 }
-                val cal = java.util.Calendar.getInstance()
-                cal.set(java.util.Calendar.YEAR, year)
-                cal.set(java.util.Calendar.MONTH, month - 1)
-                cal.set(java.util.Calendar.DAY_OF_MONTH, day.coerceIn(1, cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)))
-                cal.set(java.util.Calendar.HOUR_OF_DAY, 12)
-                cal.set(java.util.Calendar.MINUTE, 0)
-                cal.set(java.util.Calendar.SECOND, 0)
-                cal.set(java.util.Calendar.MILLISECOND, 0)
-                val ts = cal.timeInMillis
+
+                val ts = parsedDate
+                    ?.atTime(12, 0)
+                    ?.atZone(ZoneId.systemDefault())
+                    ?.toInstant()
+                    ?.toEpochMilli()
+                    ?: continue
+
                 if (ts in 1..(System.currentTimeMillis() + 86_400_000)) return ts
-            } catch (e: Exception) { 
+            } catch (e: Exception) {
                 Timber.w(e, "Failed to parse date from pattern")
             }
         }
         return null
+    }
+
+    private fun parseStrictLocalDate(
+        dateText: String,
+        formatter: DateTimeFormatter
+    ): LocalDate? {
+        return try {
+            LocalDate.parse(dateText, formatter)
+        } catch (_: DateTimeParseException) {
+            null
+        }
     }
 }

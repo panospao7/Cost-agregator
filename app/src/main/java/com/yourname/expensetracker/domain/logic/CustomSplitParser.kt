@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.logic
 
-import kotlin.math.abs
+import java.math.BigDecimal
 
 enum class CustomSplitMode {
     EQUAL,
@@ -23,8 +23,8 @@ sealed class CustomSplitParseResult {
  * Payload format: "memberId:value,memberId:value"
  */
 object CustomSplitParser {
-    private const val AMOUNT_TOLERANCE = 0.01
-    private const val PERCENT_TOLERANCE = 0.1
+    private const val MINOR_UNIT_SCALE = 2
+    private const val HUNDRED_PERCENT_IN_BASIS_POINTS = 10_000L
 
     fun parseAndValidate(
         splitsString: String?,
@@ -48,7 +48,17 @@ object CustomSplitParser {
             return CustomSplitParseResult.Invalid("Total amount must be finite")
         }
 
+        val expectedTotalMinorUnits = when (splitType) {
+            CustomSplitMode.CUSTOM_AMOUNT,
+            CustomSplitMode.UNEQUAL -> totalAmount.toMinorUnitsOrNull()
+                ?: return CustomSplitParseResult.Invalid("Total amount must be representable in cents")
+
+            CustomSplitMode.CUSTOM_PERCENT,
+            CustomSplitMode.EQUAL -> null
+        }
+
         val parsed = linkedMapOf<Long, Double>()
+        val parsedMinorUnits = linkedMapOf<Long, Long>()
         val tokens = splitsString.split(',')
         for (token in tokens) {
             val pair = token.trim()
@@ -73,11 +83,14 @@ object CustomSplitParser {
                     parsedSplits = parsed
                 )
 
-            val value = parts[1].trim().toDoubleOrNull()
+            val rawValue = parts[1].trim()
+            val preciseValue = rawValue.toBigDecimalOrNull()
                 ?: return CustomSplitParseResult.Invalid(
                     reason = "Invalid split value in split pair: $pair",
                     parsedSplits = parsed
                 )
+
+            val value = preciseValue.toDouble()
 
             if (!value.isFinite()) {
                 return CustomSplitParseResult.Invalid(
@@ -107,7 +120,25 @@ object CustomSplitParser {
                 )
             }
 
+            val minorUnits = when (splitType) {
+                CustomSplitMode.CUSTOM_PERCENT -> preciseValue.toMinorUnitsOrNull()
+                    ?: return CustomSplitParseResult.Invalid(
+                        reason = "Split percentage for memberId=$memberId must be representable in basis points",
+                        parsedSplits = parsed
+                    )
+
+                CustomSplitMode.CUSTOM_AMOUNT,
+                CustomSplitMode.UNEQUAL -> preciseValue.toMinorUnitsOrNull()
+                    ?: return CustomSplitParseResult.Invalid(
+                        reason = "Split amount for memberId=$memberId must not contain fractional cents",
+                        parsedSplits = parsed
+                    )
+
+                CustomSplitMode.EQUAL -> null
+            }
+
             parsed[memberId] = value
+            minorUnits?.let { parsedMinorUnits[memberId] = it }
         }
 
         if (parsed.keys != groupMemberIds) {
@@ -119,10 +150,10 @@ object CustomSplitParser {
 
         return when (splitType) {
             CustomSplitMode.CUSTOM_PERCENT -> {
-                val percentTotal = parsed.values.sum()
-                if (abs(percentTotal - 100.0) > PERCENT_TOLERANCE) {
+                val percentTotal = parsedMinorUnits.values.sum()
+                if (percentTotal != HUNDRED_PERCENT_IN_BASIS_POINTS) {
                     CustomSplitParseResult.Invalid(
-                        reason = "Custom percentages must sum to ~100 (actual=$percentTotal)",
+                        reason = "Custom percentages must sum to 100.00 (actual=${percentTotal.toDisplayAmount()})",
                         parsedSplits = parsed
                     )
                 } else {
@@ -132,10 +163,10 @@ object CustomSplitParser {
 
             CustomSplitMode.CUSTOM_AMOUNT,
             CustomSplitMode.UNEQUAL -> {
-                val splitTotal = parsed.values.sum()
-                if (abs(splitTotal - totalAmount) > AMOUNT_TOLERANCE) {
+                val splitTotal = parsedMinorUnits.values.sum()
+                if (splitTotal != expectedTotalMinorUnits) {
                     CustomSplitParseResult.Invalid(
-                        reason = "Custom split amounts must sum to totalAmount=$totalAmount (actual=$splitTotal)",
+                        reason = "Custom split amounts must sum to totalAmount=${totalAmount.toMoneyString()} (actual=${splitTotal.toDisplayAmount()})",
                         parsedSplits = parsed
                     )
                 } else {
@@ -145,6 +176,28 @@ object CustomSplitParser {
 
             CustomSplitMode.EQUAL -> CustomSplitParseResult.Invalid("EQUAL split type does not require custom splits")
         }
+    }
+
+    private fun BigDecimal.toMinorUnitsOrNull(): Long? {
+        val scaled = movePointRight(MINOR_UNIT_SCALE).stripTrailingZeros()
+        if (scaled.scale() > 0) return null
+        return scaled.longValueExact()
+    }
+
+    private fun Double.toMinorUnitsOrNull(): Long? {
+        return BigDecimal.valueOf(this).toMinorUnitsOrNull()
+    }
+
+    private fun Long.toDisplayAmount(): String {
+        return BigDecimal.valueOf(this)
+            .movePointLeft(MINOR_UNIT_SCALE)
+            .toPlainString()
+    }
+
+    private fun Double.toMoneyString(): String {
+        return BigDecimal.valueOf(this)
+            .setScale(MINOR_UNIT_SCALE)
+            .toPlainString()
     }
 
     /**

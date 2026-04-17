@@ -15,7 +15,7 @@ class CurrencyNormalizer @Inject constructor() {
     fun normalize(raw: String?): String {
         if (raw.isNullOrBlank()) return "EUR"
 
-        val cleaned = raw.trim().uppercase(Locale.getDefault())
+        val cleaned = raw.trim().uppercase(Locale.ROOT)
 
         return when (cleaned) {
             "€", "EUR", "EURO", "E" -> "EUR"

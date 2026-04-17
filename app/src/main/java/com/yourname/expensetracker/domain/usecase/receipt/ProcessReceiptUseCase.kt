@@ -20,26 +20,46 @@ class ProcessReceiptUseCase @Inject constructor(
 ) {
     suspend operator fun invoke(source: ReceiptSource): Result<ProcessedReceipt> {
         return try {
-            val ocrResult = when (source) {
-                is ReceiptSource.UriRef -> ocrService.processUri(source.value)
+            val processedSource = when (source) {
+                is ReceiptSource.UriRef -> {
+                    val ocrResult = ocrService.processUri(source.value)
+                    val parsed = receiptParser.parse(ocrResult.fullText)
+                    SourceProcessingResult(
+                        merchant = parsed.merchantName,
+                        amount = parsed.total,
+                        date = parsed.date,
+                        imagePath = ocrResult.savedImagePath,
+                        warrantyResult = ocrResult.warrantyExtractionResult
+                    )
+                }
+
+                is ReceiptSource.ParsedContent -> {
+                    val parsed = receiptParser.parse(source.rawText)
+                    SourceProcessingResult(
+                        merchant = source.merchant ?: parsed.merchantName,
+                        amount = source.amount ?: parsed.total,
+                        date = source.date ?: parsed.date,
+                        imagePath = source.imagePath,
+                        warrantyResult = null
+                    )
+                }
             }
-            
-            val parsed = receiptParser.parse(ocrResult.fullText)
-            
+
             val normalizedMerchant = merchantNormalizer.normalize(
-                parsed.merchantName ?: "Unknown"
+                processedSource.merchant ?: "Unknown"
             ).canonical.normalizedName
-            
+
             val result = categorizationEngine.categorize(normalizedMerchant)
-            
+
             Result.success(ProcessedReceipt(
                 merchant = normalizedMerchant,
-                amount = parsed.total ?: 0.0,
+                amount = processedSource.amount ?: 0.0,
                 categoryId = result.categoryId,
-                date = parsed.date,
-                imagePath = ocrResult.savedImagePath,
+                categoryConfidence = result.confidence.toFloat(),
+                date = processedSource.date,
+                imagePath = processedSource.imagePath,
                 // F1: Pass through warranty extraction result if available
-                warrantyResult = ocrResult.warrantyExtractionResult
+                warrantyResult = processedSource.warrantyResult
             ))
         } catch (e: Exception) {
             Result.failure(e)
@@ -47,10 +67,19 @@ class ProcessReceiptUseCase @Inject constructor(
     }
 }
 
+private data class SourceProcessingResult(
+    val merchant: String?,
+    val amount: Double?,
+    val date: Long?,
+    val imagePath: String,
+    val warrantyResult: WarrantyCreationResult?
+)
+
 data class ProcessedReceipt(
     val merchant: String,
     val amount: Double,
     val categoryId: Long?,
+    val categoryConfidence: Float,
     val date: Long?,
     val imagePath: String,
     // F1: Warranty extraction result
