@@ -8,7 +8,12 @@ data class FinancialForecast(
     val confidence: Double, // 0.0 - 1.0
     val components: ForecastComponents,
     val actionableInsights: List<String>
-)
+) {
+    init {
+        require(confidence.isFinite() && confidence in 0.0..1.0) { "confidence must be between 0 and 1" }
+        require(actionableInsights.none { it.isBlank() }) { "actionableInsights cannot contain blank entries" }
+    }
+}
 
 enum class ForecastHorizon(val days: Int, val displayName: String) {
     NEXT_7_DAYS(7, "Next 7 Days"),
@@ -31,7 +36,17 @@ data class ForecastComponents(
     val predictedDiscretionary: Double, // Habit-based predicted spending
     val discretionaryBudget: Double,   // "Safe-to-Spend"
     val riskLevel: RiskLevel
-)
+) {
+    init {
+        require(goalReserves.isFinite() && goalReserves >= 0.0) { "goalReserves must be a non-negative finite number" }
+        require(pastSpendingPoints.all { it.isFinite() }) { "pastSpendingPoints must contain only finite values" }
+        require(projectedSpendingPoints.all { it.isFinite() }) { "projectedSpendingPoints must contain only finite values" }
+        require(totalCommitted.isFinite()) { "totalCommitted must be finite" }
+        require(totalLikely.isFinite()) { "totalLikely must be finite" }
+        require(predictedDiscretionary.isFinite()) { "predictedDiscretionary must be finite" }
+        require(discretionaryBudget.isFinite()) { "discretionaryBudget must be finite" }
+    }
+}
 
 enum class RiskLevel {
     LOW,
@@ -46,10 +61,21 @@ data class WeatherNarrative(
     val headline: String,
     val summary: String,
     val details: List<NarrativeSection> = emptyList()
-)
+) {
+    init {
+        require(icon.isNotBlank()) { "icon cannot be blank" }
+        require(headline.isNotBlank()) { "headline cannot be blank" }
+        require(summary.isNotBlank()) { "summary cannot be blank" }
+    }
+}
 
 data class NarrativeSection(
     val title: UiText,
     val icon: String,
     val items: List<String>
-)
+) {
+    init {
+        require(icon.isNotBlank()) { "icon cannot be blank" }
+        require(items.none { it.isBlank() }) { "items cannot contain blank entries" }
+    }
+}

@@ -15,6 +15,7 @@ import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator as DomainCoordinator
+import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
@@ -225,6 +226,13 @@ class GroupTransactionCoordinator @Inject constructor(
                     return@withTransaction GroupExpenseCreationResult.Error("Payer is not a member of this group")
                 }
 
+                validateCustomSplitPayloadFormat(
+                    splitType = splitType,
+                    customSplitsJson = customSplitsJson
+                )?.let { validationError ->
+                    return@withTransaction validationError
+                }
+
                 validateExpenseParticipants(
                     groupId = groupId,
                     linkedExpenseId = systemExpenseId,
@@ -382,6 +390,13 @@ class GroupTransactionCoordinator @Inject constructor(
                 val members = memberDao.getAllForGroup(groupId)
                 if (members.none { it.id == paidById }) {
                     return@withTransaction GroupExpenseCreationResult.Error("Payer is not a member of this group")
+                }
+
+                validateCustomSplitPayloadFormat(
+                    splitType = splitType,
+                    customSplitsJson = customSplitsJson
+                )?.let { validationError ->
+                    return@withTransaction validationError
                 }
 
                 validateExpenseParticipants(
@@ -592,5 +607,20 @@ class GroupTransactionCoordinator @Inject constructor(
         )?.let {
             GroupExpenseCreationResult.Error(INVALID_EQUAL_SPLIT_MESSAGE)
         }
+    }
+
+    private fun validateCustomSplitPayloadFormat(
+        splitType: SplitType,
+        customSplitsJson: String?
+    ): GroupExpenseCreationResult.Error? {
+        if (splitType == SplitType.EQUAL) {
+            return null
+        }
+
+        if (!CustomSplitJsonCodec.isCanonicalJsonPayload(customSplitsJson)) {
+            return GroupExpenseCreationResult.Error("Custom split payload must be valid JSON")
+        }
+
+        return null
     }
 }

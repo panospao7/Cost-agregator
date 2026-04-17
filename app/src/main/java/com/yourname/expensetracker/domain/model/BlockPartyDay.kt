@@ -24,7 +24,19 @@ data class TransactionSummary(
     val isSharedExpense: Boolean = false,
     val myShareAmount: Double? = null,
     val mySharePercentage: Int? = null
-)
+) {
+    init {
+        require(amount.isFinite()) { "amount must be finite" }
+        require(effectiveAmount.isFinite()) { "effectiveAmount must be finite" }
+        require(merchant.isNotBlank()) { "merchant cannot be blank" }
+        require(myShareAmount == null || (myShareAmount.isFinite() && myShareAmount >= 0.0)) {
+            "myShareAmount must be a non-negative finite number"
+        }
+        require(mySharePercentage == null || mySharePercentage in 0..100) {
+            "mySharePercentage must be between 0 and 100"
+        }
+    }
+}
 
 data class BlockPartyDay(
     val dayOfMonth: Int,
@@ -39,7 +51,18 @@ data class BlockPartyDay(
     val recurringItems: List<String>,
     val plannedItems: List<String>,
     val topTransactions: List<TransactionSummary>
-)
+) {
+    init {
+        require(dayOfMonth in 1..31) { "dayOfMonth must be between 1 and 31" }
+        require(actualSpent.isFinite()) { "actualSpent must be finite" }
+        require(targetBudget.isFinite() && targetBudget >= 0.0) { "targetBudget must be a non-negative finite number" }
+        require(baseTarget.isFinite() && baseTarget >= 0.0) { "baseTarget must be a non-negative finite number" }
+        require(recurringImpact.isFinite()) { "recurringImpact must be finite" }
+        require(plannedImpact.isFinite()) { "plannedImpact must be finite" }
+        require(recurringItems.none { it.isBlank() }) { "recurringItems cannot contain blank entries" }
+        require(plannedItems.none { it.isBlank() }) { "plannedItems cannot contain blank entries" }
+    }
+}
 
 enum class BlockPartyStatus {
     UNDER_BUDGET,

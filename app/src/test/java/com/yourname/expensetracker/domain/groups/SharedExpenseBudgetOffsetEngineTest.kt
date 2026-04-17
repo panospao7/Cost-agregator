@@ -10,10 +10,10 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupDetailsAggregate
 import com.yourname.expensetracker.data.repository.GroupsRepository
-import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
@@ -23,8 +23,6 @@ class SharedExpenseBudgetOffsetEngineTest {
 
     private val groupsRepository = mockk<GroupsRepository>()
     private val expenseRepository = mockk<ExpenseRepository>()
-    private val sharedExpenseManager = mockk<SharedExpenseManager>(relaxed = true)
-    private val timeProvider = FakeTimeProvider(FIXED_NOW)
 
     private lateinit var engine: SharedExpenseBudgetOffsetEngine
 
@@ -33,8 +31,7 @@ class SharedExpenseBudgetOffsetEngineTest {
         engine = SharedExpenseBudgetOffsetEngine(
             groupsRepository = groupsRepository,
             expenseRepository = expenseRepository,
-            sharedExpenseManager = sharedExpenseManager,
-            timeProvider = timeProvider
+            ioDispatcher = Dispatchers.Unconfined
         )
     }
 

@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.repository.GroupDetailsAggregate
 import com.yourname.expensetracker.data.repository.GroupsRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.groups.usecase.AddGroupMemberUseCase
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
 import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupUseCase
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -33,6 +34,7 @@ import org.junit.Test
 class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
 
     private val groupsRepository = mockk<GroupsRepository>(relaxed = true)
+    private val addGroupMemberUseCase = mockk<AddGroupMemberUseCase>(relaxed = true)
     private val addGroupExpenseUseCase = mockk<AddGroupExpenseUseCase>(relaxed = true)
     private val deleteGroupUseCase = mockk<DeleteGroupUseCase>(relaxed = true)
     private val manualExpenseRepository = mockk<ManualExpenseRepository>(relaxed = true).also { mock ->
@@ -404,6 +406,7 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
     private fun createViewModel(): SharedExpenseGroupsViewModel {
         return SharedExpenseGroupsViewModel(
             groupsRepository = groupsRepository,
+            addGroupMemberUseCase = addGroupMemberUseCase,
             addGroupExpenseUseCase = addGroupExpenseUseCase,
             deleteGroupUseCase = deleteGroupUseCase,
             manualExpenseRepository = manualExpenseRepository,

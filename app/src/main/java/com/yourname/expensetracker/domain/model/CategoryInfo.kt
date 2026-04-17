@@ -6,4 +6,10 @@ data class CategoryInfo(
     val icon: String,
     val color: String,
     val isIncome: Boolean = false
-)
+) {
+    init {
+        require(name.isNotBlank()) { "name cannot be blank" }
+        require(icon.isNotBlank()) { "icon cannot be blank" }
+        require(color.isNotBlank()) { "color cannot be blank" }
+    }
+}

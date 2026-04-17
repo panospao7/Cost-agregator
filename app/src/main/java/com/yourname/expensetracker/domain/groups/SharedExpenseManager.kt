@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.groups
 import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.logic.CustomSplitMode
 import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
 import com.yourname.expensetracker.domain.logic.CustomSplitParser
@@ -57,7 +58,7 @@ class SharedExpenseManager @Inject constructor(
             SharedExpenseMember(
                 groupId = 0, // Will be replaced by actual groupId in transaction
                 name = name,
-                isCurrentUser = (name == currentUserName),
+                isCurrentUser = name.equals(currentUserName, ignoreCase = true),
                 joinedAt = membersJoinedAt
             )
         }
@@ -138,22 +139,20 @@ class SharedExpenseManager @Inject constructor(
             }
         }
 
-        val rawCustomSplitsSerialized = customSplits?.let { map ->
-            // Format: "memberId:amount,memberId:amount"
-            map.entries.joinToString(",") { "${it.key}:${it.value}" }
-        }
-
         val customSplitsSerialized = if (splitType == GroupSplitType.EQUAL) {
             null
         } else {
+            val canonicalCustomSplitsJson = customSplits?.let { splits ->
+                CustomSplitJsonCodec.toCanonicalJson(splits)
+            }
             val groupMemberIds = sharedExpenseDataPort.getGroupMembersOnce(groupId).map { it.id }.toSet()
             when (val validation = parseCustomSplitsForValidation(
-                splitsString = rawCustomSplitsSerialized,
+                splitsString = canonicalCustomSplitsJson,
                 splitType = splitType,
                 totalAmount = totalAmount,
                 groupMemberIds = groupMemberIds
             )) {
-                is CustomSplitParseResult.Valid -> rawCustomSplitsSerialized
+                is CustomSplitParseResult.Valid -> canonicalCustomSplitsJson
                 is CustomSplitParseResult.Invalid -> {
                     throw IllegalArgumentException("Invalid custom splits: ${validation.reason}")
                 }

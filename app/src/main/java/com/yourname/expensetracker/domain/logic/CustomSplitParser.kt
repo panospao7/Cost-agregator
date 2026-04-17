@@ -20,7 +20,8 @@ sealed class CustomSplitParseResult {
 /**
  * Strict parser/validator for custom split payloads.
  *
- * Payload format: "memberId:value,memberId:value"
+ * Supports canonical JSON payloads for persistence and the legacy
+ * "memberId:value,memberId:value" format for backwards-compatible reads.
  */
 object CustomSplitParser {
     private const val MINOR_UNIT_SCALE = 2
@@ -57,40 +58,25 @@ object CustomSplitParser {
             CustomSplitMode.EQUAL -> null
         }
 
-        val parsed = linkedMapOf<Long, Double>()
+        val parsed = when {
+            splitsString.trim().startsWith("{") -> {
+                CustomSplitJsonCodec.parseCanonicalJsonOrNull(splitsString)
+                    ?: return CustomSplitParseResult.Invalid(
+                        reason = "Custom split payload must be valid canonical JSON"
+                    )
+            }
+
+            else -> when (val legacyParse = parseLegacyPayload(splitsString)) {
+                is CustomSplitParseResult.Valid -> legacyParse.splits
+                is CustomSplitParseResult.Invalid -> {
+                    return legacyParse
+                }
+            }
+        }
+
         val parsedMinorUnits = linkedMapOf<Long, Long>()
-        val tokens = splitsString.split(',')
-        for (token in tokens) {
-            val pair = token.trim()
-            if (pair.isBlank()) {
-                return CustomSplitParseResult.Invalid(
-                    reason = "Malformed custom split entry",
-                    parsedSplits = parsed
-                )
-            }
-
-            val parts = pair.split(':', limit = 2)
-            if (parts.size != 2 || parts[0].isBlank() || parts[1].isBlank()) {
-                return CustomSplitParseResult.Invalid(
-                    reason = "Malformed custom split pair: $pair",
-                    parsedSplits = parsed
-                )
-            }
-
-            val memberId = parts[0].trim().toLongOrNull()
-                ?: return CustomSplitParseResult.Invalid(
-                    reason = "Invalid memberId in split pair: $pair",
-                    parsedSplits = parsed
-                )
-
-            val rawValue = parts[1].trim()
-            val preciseValue = rawValue.toBigDecimalOrNull()
-                ?: return CustomSplitParseResult.Invalid(
-                    reason = "Invalid split value in split pair: $pair",
-                    parsedSplits = parsed
-                )
-
-            val value = preciseValue.toDouble()
+        for ((memberId, value) in parsed) {
+            val preciseValue = BigDecimal.valueOf(value)
 
             if (!value.isFinite()) {
                 return CustomSplitParseResult.Invalid(
@@ -102,13 +88,6 @@ object CustomSplitParser {
             if (memberId !in groupMemberIds) {
                 return CustomSplitParseResult.Invalid(
                     reason = "Split references unknown memberId=$memberId",
-                    parsedSplits = parsed
-                )
-            }
-
-            if (parsed.containsKey(memberId)) {
-                return CustomSplitParseResult.Invalid(
-                    reason = "Duplicate split entry for memberId=$memberId",
                     parsedSplits = parsed
                 )
             }
@@ -137,7 +116,6 @@ object CustomSplitParser {
                 CustomSplitMode.EQUAL -> null
             }
 
-            parsed[memberId] = value
             minorUnits?.let { parsedMinorUnits[memberId] = it }
         }
 
@@ -217,7 +195,56 @@ object CustomSplitParser {
 
         if (splitsString.isNullOrBlank()) return false
 
+        CustomSplitJsonCodec.parseCanonicalJsonOrNull(splitsString)?.let { jsonSplits ->
+            return memberId in jsonSplits.keys
+        }
+
         val pattern = Regex("(^|,)\\s*${Regex.escape(memberId.toString())}\\s*:")
         return pattern.containsMatchIn(splitsString)
+    }
+
+    private fun parseLegacyPayload(splitsString: String): CustomSplitParseResult {
+        val parsed = linkedMapOf<Long, Double>()
+        val tokens = splitsString.split(',')
+        for (token in tokens) {
+            val pair = token.trim()
+            if (pair.isBlank()) {
+                return CustomSplitParseResult.Invalid(
+                    reason = "Malformed custom split entry",
+                    parsedSplits = parsed
+                )
+            }
+
+            val parts = pair.split(':', limit = 2)
+            if (parts.size != 2 || parts[0].isBlank() || parts[1].isBlank()) {
+                return CustomSplitParseResult.Invalid(
+                    reason = "Malformed custom split pair: $pair",
+                    parsedSplits = parsed
+                )
+            }
+
+            val memberId = parts[0].trim().toLongOrNull()
+                ?: return CustomSplitParseResult.Invalid(
+                    reason = "Invalid memberId in split pair: $pair",
+                    parsedSplits = parsed
+                )
+
+            if (parsed.containsKey(memberId)) {
+                return CustomSplitParseResult.Invalid(
+                    reason = "Duplicate split entry for memberId=$memberId",
+                    parsedSplits = parsed
+                )
+            }
+
+            val value = parts[1].trim().toBigDecimalOrNull()?.toDouble()
+                ?: return CustomSplitParseResult.Invalid(
+                    reason = "Invalid split value in split pair: $pair",
+                    parsedSplits = parsed
+                )
+
+            parsed[memberId] = value
+        }
+
+        return CustomSplitParseResult.Valid(parsed)
     }
 }

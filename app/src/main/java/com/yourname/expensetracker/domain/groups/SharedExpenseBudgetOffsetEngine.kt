@@ -6,8 +6,8 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupsRepository
 import com.yourname.expensetracker.domain.logic.SplitCalculator
-import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.Dispatchers
+import com.yourname.expensetracker.di.IoDispatcher
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -24,24 +24,25 @@ import javax.inject.Singleton
 class SharedExpenseBudgetOffsetEngine @Inject constructor(
     private val groupsRepository: GroupsRepository,
     private val expenseRepository: ExpenseRepository,
-    private val sharedExpenseManager: SharedExpenseManager,
-    private val timeProvider: TimeProvider
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
+    private companion object {
+        private const val SETTLEMENT_EPSILON = 0.01
+    }
+
     /**
      * Calculate the effective budget spend for a period on an accrual basis.
      *
      * @param periodStart Start of the period (inclusive) in milliseconds
      * @param periodEnd End of the period (exclusive) in milliseconds
      * @param categoryId Optional category filter (null for all categories)
-     * @param userId User identifier for current user (default "default")
      * @return BudgetSpendBreakdown with detailed breakdown of spend components
      */
     suspend fun calculateEffectiveBudgetSpend(
         periodStart: Long,
         periodEnd: Long,
-        categoryId: Long? = null,
-        userId: String = "default"
-    ): BudgetSpendBreakdown = withContext(Dispatchers.IO) {
+        categoryId: Long? = null
+    ): BudgetSpendBreakdown = withContext(ioDispatcher) {
         val allPeriodExpenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
         val expenseCategoryMap = allPeriodExpenses.associateBy { it.id }
         val activeGroups = groupsRepository.getActiveGroupsWithDetails()
@@ -131,7 +132,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
         }
         val expectedReimbursement = expense.totalAmount - payerShare
 
-        return expense.reimbursedAmount >= expectedReimbursement
+        return expense.reimbursedAmount + SETTLEMENT_EPSILON >= expectedReimbursement
     }
 }
 

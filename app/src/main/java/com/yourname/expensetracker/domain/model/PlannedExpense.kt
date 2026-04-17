@@ -8,7 +8,12 @@ data class PlannedExpense(
     val categoryId: Long?,
     val isRecurring: Boolean,
     val priority: PlannedExpensePriority
-)
+) {
+    init {
+        require(description.isNotBlank()) { "description cannot be blank" }
+        require(amount.isFinite() && amount > 0.0) { "amount must be a positive finite number" }
+    }
+}
 
 enum class PlannedExpensePriority {
     MUST,

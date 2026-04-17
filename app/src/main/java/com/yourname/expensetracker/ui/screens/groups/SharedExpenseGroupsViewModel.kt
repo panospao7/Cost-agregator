@@ -15,16 +15,16 @@ import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
 import com.yourname.expensetracker.domain.logic.CustomSplitParser
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.groups.usecase.AddGroupMemberUseCase
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
 import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupUseCase
+import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.logic.SplitCalculator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.math.BigDecimal
-import java.math.RoundingMode
 import javax.inject.Inject
 
 /**
@@ -57,6 +57,7 @@ data class GroupExpenseWithDetails(
 @HiltViewModel
 class SharedExpenseGroupsViewModel @Inject constructor(
     private val groupsRepository: GroupsRepository,
+    private val addGroupMemberUseCase: AddGroupMemberUseCase,
     private val addGroupExpenseUseCase: AddGroupExpenseUseCase,
     private val deleteGroupUseCase: DeleteGroupUseCase,
     private val manualExpenseRepository: ManualExpenseRepository,
@@ -165,20 +166,20 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     fun addMember(groupId: Long, name: String, email: String?) {
         viewModelScope.launch {
             try {
-                val memberId = groupsRepository.addMember(
+                when (val result = addGroupMemberUseCase(
                     groupId = groupId,
                     name = name,
                     email = email,
                     isCurrentUser = false
-                )
-                
-                if (memberId != null && memberId > 0) {
-                    loadGroups()
-                    _uiState.value = _uiState.value.copy(addingMember = false)
-                } else {
-                    _uiState.value = _uiState.value.copy(
-                        error = "Failed to add member: Invalid group or member"
-                    )
+                )) {
+                    is AddGroupMemberUseCase.Result.Success -> {
+                        loadGroups()
+                        _uiState.value = _uiState.value.copy(addingMember = false)
+                    }
+
+                    is AddGroupMemberUseCase.Result.Error -> {
+                        _uiState.value = _uiState.value.copy(error = result.message)
+                    }
                 }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -353,12 +354,11 @@ class SharedExpenseGroupsViewModel @Inject constructor(
             return CustomSplitPayload.Invalid("Custom split values must be finite numbers")
         }
 
-        val serialized = customSplits
-            .toList()
-            .sortedBy { it.first }
-            .joinToString(",") { (memberId, value) ->
-                "$memberId:${value.toCanonicalSplitString()}"
-            }
+        val serialized = try {
+            CustomSplitJsonCodec.toCanonicalJson(customSplits)
+        } catch (e: IllegalArgumentException) {
+            return CustomSplitPayload.Invalid(e.message ?: "Invalid custom split payload")
+        }
 
         return when (val parseResult = CustomSplitParser.parseAndValidate(
             splitsString = serialized,
@@ -378,13 +378,6 @@ class SharedExpenseGroupsViewModel @Inject constructor(
             SplitType.CUSTOM_PERCENT -> CustomSplitMode.CUSTOM_PERCENT
             SplitType.UNEQUAL -> CustomSplitMode.UNEQUAL
         }
-    }
-
-    private fun Double.toCanonicalSplitString(): String {
-        return BigDecimal.valueOf(this)
-            .setScale(6, RoundingMode.HALF_UP)
-            .stripTrailingZeros()
-            .toPlainString()
     }
 
     private sealed class CustomSplitPayload {

@@ -13,4 +13,12 @@ data class PeriodTotal(
     val startDateMs: Long,
     val endDateMs: Long,
     val status: PeriodStatus
-)
+) {
+    init {
+        require(periodLabel.isNotBlank()) { "periodLabel cannot be blank" }
+        require(periodKey.isNotBlank()) { "periodKey cannot be blank" }
+        require(totalAmount.isFinite()) { "totalAmount must be finite" }
+        require(transactionCount >= 0) { "transactionCount cannot be negative" }
+        require(endDateMs >= startDateMs) { "endDateMs must be greater than or equal to startDateMs" }
+    }
+}
