@@ -65,7 +65,8 @@ interface WarrantyDao {
         FROM warranties w
         LEFT JOIN expenses e ON e.id = w.expenseId
         WHERE w.status = 'ACTIVE'
+        AND w.warrantyEndDate > :currentTime
         """
     )
-    suspend fun getTotalProtectedValue(): Double?
+    suspend fun getTotalProtectedValue(currentTime: Long): Double?
 }

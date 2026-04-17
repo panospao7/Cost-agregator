@@ -3,8 +3,9 @@ package com.yourname.expensetracker.domain.challenge
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.repository.SpendingChallengeRepository
+import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -16,10 +17,11 @@ import javax.inject.Singleton
 class SpendingChallengeManager @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val spendingChallengeRepository: SpendingChallengeRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
 
-    suspend fun getActiveChallengesSnapshot(): ActiveChallengesSnapshot = withContext(Dispatchers.IO) {
+    suspend fun getActiveChallengesSnapshot(): ActiveChallengesSnapshot = withContext(ioDispatcher) {
         val now = timeProvider.now()
         val completedChallengeIds = mutableListOf<Long>()
 
@@ -46,7 +48,7 @@ class SpendingChallengeManager @Inject constructor(
     /**
      * Check if user has a no-spend streak today.
      */
-    suspend fun checkNoSpendStreak(): NoSpendStatus = withContext(Dispatchers.IO) {
+    suspend fun checkNoSpendStreak(): NoSpendStatus = withContext(ioDispatcher) {
         val today = timeProvider.now()
         val startOfDay = getStartOfDay(today)
         val endOfDay = startOfDay + DAY_MS
@@ -87,7 +89,7 @@ class SpendingChallengeManager @Inject constructor(
         durationDays: Int,
         targetAmount: Double? = null,
         categoryId: Long? = null
-    ): SpendingChallenge = withContext(Dispatchers.IO) {
+    ): SpendingChallenge = withContext(ioDispatcher) {
         require(durationDays > 0) { "durationDays must be greater than 0" }
         require(name.isNotBlank()) { "name must not be blank" }
         if (type == ChallengeType.CATEGORY_SPECIFIC) {
@@ -122,7 +124,7 @@ class SpendingChallengeManager @Inject constructor(
     /**
      * Get challenge progress.
      */
-    suspend fun getChallengeProgress(challenge: SpendingChallenge): ChallengeProgress = withContext(Dispatchers.IO) {
+    suspend fun getChallengeProgress(challenge: SpendingChallenge): ChallengeProgress = withContext(ioDispatcher) {
         val now = timeProvider.now()
         val evaluationEnd = minOf(now, challenge.endDate)
         val spent = getSpentForChallengeRange(
@@ -224,7 +226,7 @@ class SpendingChallengeManager @Inject constructor(
         }
     }
 
-    private suspend fun calculateAverageDailySpend(): Double = withContext(Dispatchers.IO) {
+    private suspend fun calculateAverageDailySpend(): Double = withContext(ioDispatcher) {
         val now = timeProvider.now()
         val thirtyDaysAgo = now - (30 * DAY_MS)
         val total = expenseDao.getTotalSpentBetween(thirtyDaysAgo, now) ?: 0.0

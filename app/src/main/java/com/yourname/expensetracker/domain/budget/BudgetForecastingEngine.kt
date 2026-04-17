@@ -8,8 +8,9 @@ import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.Calendar
@@ -28,7 +29,8 @@ class BudgetForecastingEngine @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val budgetRepository: BudgetRepository,
     private val budgetForecastDao: BudgetForecastDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     private val budgetCalculator = BudgetCalculator(timeProvider)
 
@@ -46,7 +48,7 @@ class BudgetForecastingEngine @Inject constructor(
     suspend fun generateForecast(
         budget: Budget,
         forecastPeriodDays: Int = 30
-    ): BudgetForecast = withContext(Dispatchers.IO) {
+    ): BudgetForecast = withContext(ioDispatcher) {
         val now = timeProvider.now()
         
         // Calculate active budget period window and elapsed segment for spent-to-date.
@@ -338,7 +340,7 @@ class BudgetForecastingEngine @Inject constructor(
     suspend fun updateForecastAccuracy(
         forecastId: Long,
         actualSpending: Double
-    ) = withContext(Dispatchers.IO) {
+    ) = withContext(ioDispatcher) {
         val forecast = budgetForecastDao.getForecastsForBudget(forecastId).let { flow ->
             // Get the specific forecast - this is a Flow so we'd need to collect it
             // Simplified for now

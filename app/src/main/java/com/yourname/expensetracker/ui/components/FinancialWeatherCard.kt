@@ -439,7 +439,7 @@ fun DetailSection(section: com.yourname.expensetracker.domain.model.NarrativeSec
                     modifier = Modifier.padding(end = 8.dp)
                 )
                 Text(
-                    text = item,
+                    text = item.asString(),
                     style = MaterialTheme.typography.bodySmall,
                     color = SemanticColors.TextPrimary,
                     lineHeight = 16.sp

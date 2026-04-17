@@ -3,8 +3,9 @@ package com.yourname.expensetracker.domain.budget
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -17,7 +18,8 @@ class SharedBudgetManager @Inject constructor(
     private val budgetRepository: BudgetRepository,
     private val expenseDao: ExpenseDao,
     private val budgetCalculator: BudgetCalculator,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     
     /**
@@ -36,7 +38,7 @@ class SharedBudgetManager @Inject constructor(
     suspend fun getSharedBudgetProgress(
         budgetId: Long,
         memberIds: List<String>
-    ): SharedBudgetProgress = withContext(Dispatchers.IO) {
+    ): SharedBudgetProgress = withContext(ioDispatcher) {
         val budget = budgetRepository.getById(budgetId) ?: throw IllegalArgumentException("Budget not found")
         val now = timeProvider.now()
         val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
@@ -76,7 +78,7 @@ class SharedBudgetManager @Inject constructor(
     suspend fun getMemberContributions(
         budgetId: Long,
         memberIds: List<String>
-    ): List<MemberContribution> = withContext(Dispatchers.IO) {
+    ): List<MemberContribution> = withContext(ioDispatcher) {
         // Simplified implementation - would need member tracking on expenses
         memberIds.map { memberId ->
             MemberContribution(

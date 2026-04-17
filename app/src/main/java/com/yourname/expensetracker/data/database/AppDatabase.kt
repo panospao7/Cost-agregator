@@ -61,7 +61,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
         EmailReceiptSource::class,
         SpendingChallengeEntity::class
     ],
-    version = 80,
+    version = 81,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -5201,6 +5201,17 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_80_81 = object : androidx.room.migration.Migration(80, 81) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "DROP INDEX IF EXISTS index_return_windows_expenseId"
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_return_windows_expenseId ON return_windows (expenseId)"
+                )
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -5297,7 +5308,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_76_77,
             MIGRATION_77_78,
             MIGRATION_78_79,
-            MIGRATION_79_80
+            MIGRATION_79_80,
+            MIGRATION_80_81
         )
     }
 }

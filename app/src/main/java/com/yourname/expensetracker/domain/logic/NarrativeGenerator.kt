@@ -91,7 +91,9 @@ class NarrativeGenerator @Inject constructor() {
                     icon = "🚨",
                     items = criticalBudgets.map { 
                         val name = it.categoryName ?: "Total Budget"
-                        "$name is ${it.healthStatus.name}: €${String.format(java.util.Locale.US, "%.0f", it.spentAmount)} spent"
+                        UiText.from(
+                            "$name is ${it.healthStatus.name}: €${String.format(java.util.Locale.US, "%.0f", it.spentAmount)} spent"
+                        )
                     }
                 )
             )
@@ -100,7 +102,7 @@ class NarrativeGenerator @Inject constructor() {
                 NarrativeSection(
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_BUDGET_HEALTH),
                     icon = "✅",
-                    items = listOf("All active budgets are currently on track")
+                    items = listOf(UiText.from("All active budgets are currently on track"))
                 )
             )
         }
@@ -111,7 +113,11 @@ class NarrativeGenerator @Inject constructor() {
                 NarrativeSection(
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_GOAL_RESERVES),
                     icon = "⛨",
-                    items = listOf("€${String.format(java.util.Locale.US, "%.0f", components.goalReserves)} locked for high-priority savings")
+                    items = listOf(
+                        UiText.from(
+                            "€${String.format(java.util.Locale.US, "%.0f", components.goalReserves)} locked for high-priority savings"
+                        )
+                    )
                 )
             )
         }
@@ -128,7 +134,9 @@ class NarrativeGenerator @Inject constructor() {
                     icon = "🎯",
                     items = importantPlans.map { 
                         val priorityLabel = if (it.priority == PlannedExpensePriority.MUST) "Must" else "Likely"
-                        "${it.description}: €${String.format(java.util.Locale.US, "%.0f", it.amount)} ($priorityLabel)"
+                        UiText.from(
+                            "${it.description}: €${String.format(java.util.Locale.US, "%.0f", it.amount)} ($priorityLabel)"
+                        )
                     }
                 )
             )
@@ -141,7 +149,9 @@ class NarrativeGenerator @Inject constructor() {
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_PREDICTED_ACTIVITY),
                     icon = "📈",
                     items = listOf(
-                        "Habit-based forecast: €${String.format(java.util.Locale.US, "%.0f", components.predictedDiscretionary)} likely spending based on your typical month."
+                        UiText.from(
+                            "Habit-based forecast: €${String.format(java.util.Locale.US, "%.0f", components.predictedDiscretionary)} likely spending based on your typical month."
+                        )
                     )
                 )
             )

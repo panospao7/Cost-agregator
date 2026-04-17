@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.AiChatMessageDao
 import com.yourname.expensetracker.data.database.dao.AiChatSessionDao
 import com.yourname.expensetracker.data.database.entity.AiChatMessageEntity
@@ -19,6 +21,7 @@ import javax.inject.Singleton
 
 @Singleton
 class AiChatRepositoryImpl @Inject constructor(
+    private val database: AppDatabase,
     private val sessionDao: AiChatSessionDao,
     private val messageDao: AiChatMessageDao,
     private val aiSettingsRepository: AiSettingsRepository,
@@ -61,18 +64,20 @@ class AiChatRepositoryImpl @Inject constructor(
         if (!shouldPersistHistory()) return null
 
         val now = timeProvider.now()
-        val messageId = messageDao.insert(
-            AiChatMessageEntity(
-                sessionId = sessionId,
-                role = role,
-                kind = kind,
-                text = text,
-                payloadJson = payloadJson,
-                createdAt = now
+        return database.withTransaction {
+            val messageId = messageDao.insert(
+                AiChatMessageEntity(
+                    sessionId = sessionId,
+                    role = role,
+                    kind = kind,
+                    text = text,
+                    payloadJson = payloadJson,
+                    createdAt = now
+                )
             )
-        )
-        sessionDao.updateLastTouched(sessionId, now)
-        return messageId
+            sessionDao.updateLastTouched(sessionId, now)
+            messageId
+        }
     }
 
     override suspend fun clearSession(sessionId: Long) {

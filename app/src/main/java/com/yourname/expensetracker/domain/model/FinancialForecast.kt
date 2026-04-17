@@ -72,10 +72,12 @@ data class WeatherNarrative(
 data class NarrativeSection(
     val title: UiText,
     val icon: String,
-    val items: List<String>
+    val items: List<UiText>
 ) {
     init {
         require(icon.isNotBlank()) { "icon cannot be blank" }
-        require(items.none { it.isBlank() }) { "items cannot contain blank entries" }
+        require(items.none { item -> (item as? UiText.DynamicString)?.value?.isBlank() == true }) {
+            "items cannot contain blank entries"
+        }
     }
 }

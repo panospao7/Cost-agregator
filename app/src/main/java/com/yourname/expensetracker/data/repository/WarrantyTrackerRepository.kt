@@ -86,7 +86,8 @@ class WarrantyTrackerRepository @Inject constructor(
 
     suspend fun getActiveWarrantyCount(): Int = warrantyDao.getActiveWarrantyCount(timeProvider.now())
     
-    suspend fun getTotalProtectedValue(): Double = warrantyDao.getTotalProtectedValue() ?: 0.0
+    suspend fun getTotalProtectedValue(): Double =
+        warrantyDao.getTotalProtectedValue(timeProvider.now()) ?: 0.0
     
     // Return window operations
     fun getAllReturnWindows(): Flow<List<ReturnWindow>> = returnWindowDao.getAllReturnWindows()

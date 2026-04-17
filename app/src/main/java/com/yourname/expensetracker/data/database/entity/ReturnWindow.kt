@@ -24,7 +24,7 @@ import androidx.room.PrimaryKey
     ],
     indices = [
         Index(value = ["receiptId"]),
-        Index(value = ["expenseId"]),
+        Index(value = ["expenseId"], unique = true),
         Index(value = ["returnDeadline"]),
         Index(value = ["status"])
     ]
