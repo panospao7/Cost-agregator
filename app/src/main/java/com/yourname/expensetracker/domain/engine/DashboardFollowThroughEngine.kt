@@ -96,7 +96,7 @@ class DashboardFollowThroughEngine @Inject constructor(
             
             // Sort by priority and take top 5
             recommendations
-                .sortedWith(compareByDescending<DashboardFollowThroughRecommendation> { it.priority.rank() })
+                .sortedWith(compareByDescending<DashboardFollowThroughRecommendation> { it.priority.rank })
                 .take(MAX_RECOMMENDATIONS)
         }
     }
@@ -251,13 +251,6 @@ class DashboardFollowThroughEngine @Inject constructor(
             sourceArtifactId = aiArtifact?.id?.toString() ?: ""
         )
     }
-
-    private fun RecommendationPriority.rank(): Int = when (this) {
-        RecommendationPriority.HIGH -> 3
-        RecommendationPriority.MEDIUM -> 2
-        RecommendationPriority.LOW -> 1
-    }
-
     // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
     private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
         when (this) {

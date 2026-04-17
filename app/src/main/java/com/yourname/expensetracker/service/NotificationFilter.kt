@@ -50,7 +50,10 @@ object NotificationFilter {
         "com.google.android.youtube"
     )
 
-    private val REGEX_CURRENCY = Regex("""[€$£¥]|(EUR|USD|GBP|CHF)""")
+    private val REGEX_CURRENCY = Regex(
+        pattern = """[€$£¥]|(EUR|USD|GBP|CHF)""",
+        options = setOf(RegexOption.IGNORE_CASE)
+    )
     private val REGEX_AMOUNT = Regex("""\d+[.,]\d{2}""")
 
     private val FINANCIAL_KEYWORDS = setOf(

@@ -25,7 +25,7 @@ class RecommendationDeduplicator @Inject constructor(
      * Remove duplicate recommendations from the list.
      *
      * **Algorithm**:
-     * 1. Compute signature for each recommendation (navTarget + filterCriteria + category)
+     * 1. Compute signature for each recommendation (navTarget + filterCriteria)
      * 2. Keep first occurrence of each signature (preserves priority order)
      * 3. Log deduplications for observability
      *
@@ -62,14 +62,13 @@ class RecommendationDeduplicator @Inject constructor(
      *
      * **Signature Components**:
      * - Navigation target (e.g., "TRANSACTION_LIST", "CATEGORY_DETAIL")
-     * - Category (if applicable)
-     * - Filter criteria hash (categoryId, merchantName, dateRange from JSON)
+      * - Filter criteria hash (categoryId, merchantName, dateRange from JSON)
      *
      * **Examples**:
-     * - High-Amount: `TRANSACTION_LIST:GENERAL:cat=5,minAmount=100.0`
-     * - Category: `CATEGORY_DETAIL:5:cat=5,dateRange=1234567890-1234567899`
-     * - Merchant: `TRANSACTION_LIST:FOOD:merchant=Amazon`
-     * - Recent: `TRANSACTION_LIST:GENERAL:dateRange=1234567890-1234567899`
+      * - High-Amount: `TRANSACTION_LIST:cat=5,minAmount=100.0`
+      * - Category: `CATEGORY_DETAIL:cat=5,dateRange=1234567890-1234567899`
+      * - Merchant: `TRANSACTION_LIST:merchant=Amazon`
+      * - Recent: `TRANSACTION_LIST:dateRange=1234567890-1234567899`
      *
      * @param rec Recommendation to compute signature for
      * @return String signature uniquely identifying the recommendation target
@@ -80,10 +79,7 @@ class RecommendationDeduplicator @Inject constructor(
         // 1. Navigation target (primary key)
         parts.add(rec.navigationTarget)
 
-        // 2. Category (for grouping recommendations by category)
-        parts.add(rec.category)
-
-        // 3. Filter criteria signature (extract key fields from JSON)
+        // 2. Filter criteria signature (extract key fields from JSON)
         val filter = filterSerializer.deserialize(rec.filterCriteria)
         if (filter != null) {
             val filterParts = mutableListOf<String>()

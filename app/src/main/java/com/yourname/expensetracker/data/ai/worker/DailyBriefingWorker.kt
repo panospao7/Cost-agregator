@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUs
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
+import com.yourname.expensetracker.domain.util.NotificationIdGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -50,6 +51,7 @@ class DailyBriefingWorker @AssistedInject constructor(
         return try {
             val startedAt = timeProvider.now()
             val dateKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(startedAt))
+            val notificationId = NotificationIdGenerator.forGeneral(dateKey.hashCode().toLong())
             withTimeout(BRIEFING_PIPELINE_TIMEOUT_MS) {
                 val processedData = dashboardDataProvider
                     .getProcessedDataFlow(analyticsRepository)
@@ -57,7 +59,8 @@ class DailyBriefingWorker @AssistedInject constructor(
                 generateDashboardBriefingUseCase(processedData, startedAt)
                 deliverProactiveBriefingNotificationUseCase(
                     dateKey = dateKey,
-                    startedAt = startedAt
+                    startedAt = startedAt,
+                    notificationId = notificationId
                 )
             }
             Timber.d("DailyBriefingWorker: completed successfully.")

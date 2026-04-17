@@ -212,6 +212,7 @@ class BankApiIntegration @Inject constructor(
      * Check if sync is needed based on frequency.
      */
     fun shouldSync(connection: BankConnection): Boolean {
+        if (!connection.isActive || !connection.isConnected) return false
         if (!connection.autoSync) return false
         
         val lastSync = connection.lastSync ?: return true

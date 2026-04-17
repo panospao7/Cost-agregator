@@ -23,7 +23,7 @@ class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
 ) {
 
-    suspend operator fun invoke(dateKey: String, startedAt: Long) {
+    suspend operator fun invoke(dateKey: String, startedAt: Long, notificationId: Int) {
         val settings = aiSettingsRepository.settings().first()
         if (!settings.aiEnabled || !settings.dashboardBriefingEnabled || !settings.proactiveBriefingsEnabled) {
             return
@@ -42,7 +42,7 @@ class DeliverProactiveBriefingNotificationUseCase @Inject constructor(
 
         val summary = artifact.summaryText?.trim()?.takeIf { it.isNotBlank() } ?: return
         val deliveryResult = notificationService.sendAiBriefingReadyWithResult(
-            notificationId = targetKey.hashCode(),
+            notificationId = notificationId,
             title = BRIEFING_NOTIFICATION_TITLE,
             message = summary.take(180),
             targetKey = targetKey

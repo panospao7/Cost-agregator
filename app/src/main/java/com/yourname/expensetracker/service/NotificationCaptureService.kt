@@ -85,7 +85,7 @@ class NotificationCaptureService : NotificationListenerService() {
         private const val DEDUP_WINDOW_MS = 5000L
         private const val CACHE_CLEANUP_THRESHOLD = 50
         private const val CACHE_MAX_AGE_MS = 60_000L
-        private const val RESTART_INTERVAL_MS = 60_000L // Restart every minute to keep service alive
+        private const val RESTART_INTERVAL_MS = 900_000L // Restart no more than every 15 minutes
         
     }
 

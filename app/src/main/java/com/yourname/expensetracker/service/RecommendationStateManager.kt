@@ -3,6 +3,7 @@ package com.yourname.expensetracker.service
 import com.yourname.expensetracker.data.repository.RecommendationRepository
 import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +44,7 @@ import javax.inject.Singleton
 @Singleton
 class RecommendationStateManager @Inject constructor(
     private val repository: RecommendationRepository,
+    private val timeProvider: TimeProvider,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
     /**
@@ -117,11 +119,11 @@ class RecommendationStateManager @Inject constructor(
                 repository.expireOld(userId)
                 val active = repository.getActiveForUser(userId)
 
-                val nowMillis = System.currentTimeMillis()
+                val nowMillis = timeProvider.now()
                 val validRecommendations = active
                     .filter { it.isActive(nowMillis) }
                     .sortedWith(
-                        compareByDescending<DashboardFollowThroughRecommendation> { it.priority }
+                        compareByDescending<DashboardFollowThroughRecommendation> { it.priority.rank }
                             .thenByDescending { it.createdAt }
                     )
                     .take(5)

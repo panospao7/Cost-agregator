@@ -40,6 +40,7 @@ import org.junit.Test
 class RecommendationStateManagerTest {
 
     private lateinit var repository: RecommendationRepository
+    private lateinit var timeProvider: TimeProvider
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var applicationScope: TestScope
     private lateinit var manager: RecommendationStateManager
@@ -53,12 +54,12 @@ class RecommendationStateManagerTest {
         repository = mockk(relaxed = true)
 
         // Prevent NPE from RecommendationRepository's default-param accessing timeProvider
-        val timeProviderMock = mockk<TimeProvider>(relaxed = true)
-        every { timeProviderMock.now() } returns nowMillis
+        timeProvider = mockk(relaxed = true)
+        every { timeProvider.now() } returns nowMillis
         try {
             RecommendationRepository::class.java.getDeclaredField("timeProvider").apply {
                 isAccessible = true
-                set(repository, timeProviderMock)
+                set(repository, timeProvider)
             }
         } catch (_: NoSuchFieldException) {
             // Field may not exist; safe to ignore
@@ -67,6 +68,7 @@ class RecommendationStateManagerTest {
         applicationScope = TestScope(testDispatcher)
         manager = RecommendationStateManager(
             repository = repository,
+            timeProvider = timeProvider,
             applicationScope = applicationScope
         )
     }
@@ -156,9 +158,7 @@ class RecommendationStateManagerTest {
 
         val published = manager.recommendations.value
         assertEquals(5, published.size)
-        // compareByDescending on enum ordinal puts LOW (ordinal 2) before HIGH (ordinal 0)
-        // — this mirrors production sorting by enum natural order descending.
-        assertTrue(published[0].priority == RecommendationPriority.LOW)
+        assertTrue(published[0].priority == RecommendationPriority.HIGH)
     }
 
     @Test

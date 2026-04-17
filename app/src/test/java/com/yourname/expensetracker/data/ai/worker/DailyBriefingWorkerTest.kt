@@ -79,7 +79,7 @@ class DailyBriefingWorkerTest {
         assertEquals(Result.success(), result)
         coVerify(exactly = 1) { generateDashboardBriefingUseCase(processed, 1000L) }
         coVerify(exactly = 1) {
-            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any())
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any())
         }
     }
 
@@ -113,7 +113,7 @@ class DailyBriefingWorkerTest {
 
         assertEquals(Result.retry(), result)
         coVerify(exactly = 0) {
-            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any())
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any())
         }
     }
 
@@ -129,7 +129,7 @@ class DailyBriefingWorkerTest {
 
         assertEquals(Result.retry(), result)
         coVerify(exactly = 0) {
-            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any())
+            deliverProactiveBriefingNotificationUseCase(dateKey = any(), startedAt = any(), notificationId = any())
         }
     }
 

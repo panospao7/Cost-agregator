@@ -126,14 +126,14 @@ class RecommendationRepository @Inject constructor(
     }
     
     /**
-     * Compute signature for database entity (navTarget + category + filter criteria hash).
+     * Compute signature for database entity (navTarget + filter criteria hash).
      */
     private fun computeSignature(entity: RecommendationEntity): String {
         return deduplicator.computeSignature(entity.toDomain())
     }
 
     private fun activeRecommendationComparator(): Comparator<RecommendationEntity> {
-        return compareByDescending<RecommendationEntity> { it.priority.rank() }
+        return compareByDescending<RecommendationEntity> { it.priority.rank }
             .thenByDescending { it.createdAt }
             .thenBy { it.id }
     }
@@ -245,11 +245,5 @@ class RecommendationRepository @Inject constructor(
             sourceArtifactId = sourceArtifactId,
             status = status
         )
-    }
-
-    private fun RecommendationPriority.rank(): Int = when (this) {
-        RecommendationPriority.HIGH -> 3
-        RecommendationPriority.MEDIUM -> 2
-        RecommendationPriority.LOW -> 1
     }
 }

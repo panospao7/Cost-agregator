@@ -57,6 +57,17 @@ class RecommendationDeduplicatorTest {
     }
 
     @Test
+    fun `deduplicate ignores category when filter target is otherwise identical`() {
+        val rec1 = createRecommendation("1", "TRANSACTION_LIST", "{\"categoryId\":5}", "FOOD")
+        val rec2 = createRecommendation("2", "TRANSACTION_LIST", "{\"categoryId\":5}", "TRANSPORT")
+
+        val deduplicated = deduplicator.deduplicate(listOf(rec1, rec2))
+
+        assertEquals("Should deduplicate recommendations that differ only by category", 1, deduplicated.size)
+        assertEquals("1", deduplicated[0].id)
+    }
+
+    @Test
     fun `deduplicate preserves different merchants`() {
         val rec1 = createRecommendation("1", "TRANSACTION_LIST", "{\"merchantName\":\"Amazon\"}", "cat:1")
         val rec2 = createRecommendation("2", "TRANSACTION_LIST", "{\"merchantName\":\"Walmart\"}", "cat:1")

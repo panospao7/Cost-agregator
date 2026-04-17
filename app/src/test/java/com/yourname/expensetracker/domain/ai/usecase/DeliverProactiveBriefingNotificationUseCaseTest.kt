@@ -67,11 +67,11 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
             aiArtifactRepository.getLatest("dashboard_home:2026-03-17", AiCapability.DASHBOARD_BRIEFING)
         } returns briefingArtifact(updatedAt = 1_100L)
 
-        useCase(dateKey = "2026-03-17", startedAt = 1_000L)
+        useCase(dateKey = "2026-03-17", startedAt = 1_000L, notificationId = 40123)
 
         verify {
             notificationService.sendAiBriefingReadyWithResult(
-                notificationId = any(),
+                notificationId = 40123,
                 title = "Your AI briefing is ready",
                 message = any(),
                 targetKey = "dashboard_home:2026-03-17"
@@ -99,11 +99,11 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
             notificationService.sendAiBriefingReadyWithResult(any(), any(), any(), any())
         } returns DeliveryResult.NOT_DELIVERED
 
-        useCase(dateKey = "2026-03-17", startedAt = 1_000L)
+        useCase(dateKey = "2026-03-17", startedAt = 1_000L, notificationId = 40123)
 
         verify(exactly = 1) {
             notificationService.sendAiBriefingReadyWithResult(
-                notificationId = any(),
+                notificationId = 40123,
                 title = "Your AI briefing is ready",
                 message = any(),
                 targetKey = "dashboard_home:2026-03-17"
@@ -132,7 +132,7 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
             aiArtifactRepository.getLatest("dashboard_home:2026-03-17", AiCapability.DASHBOARD_BRIEFING)
         } returns briefingArtifact(updatedAt = 900L)
 
-        useCase(dateKey = "2026-03-17", startedAt = 1_000L)
+        useCase(dateKey = "2026-03-17", startedAt = 1_000L, notificationId = 40123)
 
         verify(exactly = 0) { notificationService.sendAiBriefingReadyWithResult(any(), any(), any(), any()) }
     }
@@ -147,7 +147,7 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
             )
         )
 
-        useCase(dateKey = "2026-03-17", startedAt = 1_000L)
+        useCase(dateKey = "2026-03-17", startedAt = 1_000L, notificationId = 40123)
 
         coVerify(exactly = 0) { aiArtifactRepository.getLatest(any(), any()) }
         verify(exactly = 0) { notificationService.sendAiBriefingReadyWithResult(any(), any(), any(), any()) }
@@ -165,7 +165,7 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         coEvery { aiEngagementRepository.getLastDeliveredDashboardBriefingKey() } returns "dashboard_home:2026-03-17"
         coEvery { aiEngagementRepository.getLastOpenedDashboardBriefingKey() } returns null
 
-        useCase(dateKey = "2026-03-17", startedAt = 1_000L)
+        useCase(dateKey = "2026-03-17", startedAt = 1_000L, notificationId = 40123)
 
         coVerify(exactly = 0) { aiArtifactRepository.getLatest(any(), any()) }
         verify(exactly = 0) { notificationService.sendAiBriefingReadyWithResult(any(), any(), any(), any()) }
@@ -183,7 +183,7 @@ class DeliverProactiveBriefingNotificationUseCaseTest {
         coEvery { aiEngagementRepository.getLastDeliveredDashboardBriefingKey() } returns null
         coEvery { aiEngagementRepository.getLastOpenedDashboardBriefingKey() } returns "dashboard_home:2026-03-17"
 
-        useCase(dateKey = "2026-03-17", startedAt = 1_000L)
+        useCase(dateKey = "2026-03-17", startedAt = 1_000L, notificationId = 40123)
 
         coVerify(exactly = 0) { aiArtifactRepository.getLatest(any(), any()) }
         verify(exactly = 0) { notificationService.sendAiBriefingReadyWithResult(any(), any(), any(), any()) }

@@ -43,8 +43,7 @@ class RecommendationRepositoryTest {
         Dispatchers.setMain(testDispatcher)
         dao = mockk()
         timeProvider = FakeTimeProvider(1_700_000_000_000L)
-        val filterSerializer = mockk<TransactionFilterSerializer>()
-        every { filterSerializer.deserialize(any()) } returns null
+        val filterSerializer = TransactionFilterSerializer()
         deduplicator = RecommendationDeduplicator(filterSerializer)
         repository = RecommendationRepository(dao, deduplicator, timeProvider, testDispatcher)
     }
@@ -125,16 +124,16 @@ class RecommendationRepositoryTest {
     fun `saveAll enforces max 5 limit`() = runTest {
         val userId = "user123"
         
-        // Create 8 recommendations with different priorities and unique categories for distinct signatures
+        // Create 8 recommendations with unique filter targets so dedup does not collapse them
         val recommendations = listOf(
-            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_1"),
-            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_2"),
-            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_3"),
-            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_4"),
-            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_5"),
-            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_6"),
-            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_7"),
-            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_8")
+            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_1", filterCriteria = merchantFilter("merchant_1")),
+            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_2", filterCriteria = merchantFilter("merchant_2")),
+            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_3", filterCriteria = merchantFilter("merchant_3")),
+            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_4", filterCriteria = merchantFilter("merchant_4")),
+            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_5", filterCriteria = merchantFilter("merchant_5")),
+            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_6", filterCriteria = merchantFilter("merchant_6")),
+            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_7", filterCriteria = merchantFilter("merchant_7")),
+            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_8", filterCriteria = merchantFilter("merchant_8"))
         )
 
         coEvery { dao.getAllActiveByUser(userId, any()) } returns emptyList()
@@ -156,14 +155,14 @@ class RecommendationRepositoryTest {
     fun `saveAll prioritizes HIGH over MEDIUM over LOW`() = runTest {
         val userId = "user123"
         
-        // Create recommendations with mixed priorities and unique categories for distinct signatures
+        // Create recommendations with mixed priorities and unique filter targets
         val recommendations = listOf(
-            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_1"),
-            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_2"),
-            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_3"),
-            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_4"),
-            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_5"),
-            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_6")
+            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_1", filterCriteria = merchantFilter("merchant_1")),
+            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_2", filterCriteria = merchantFilter("merchant_2")),
+            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_3", filterCriteria = merchantFilter("merchant_3")),
+            createRecommendation(userId = userId, priority = RecommendationPriority.LOW, category = "CAT_4", filterCriteria = merchantFilter("merchant_4")),
+            createRecommendation(userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_5", filterCriteria = merchantFilter("merchant_5")),
+            createRecommendation(userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_6", filterCriteria = merchantFilter("merchant_6"))
         )
 
         coEvery { dao.getAllActiveByUser(userId, any()) } returns emptyList()
@@ -188,16 +187,16 @@ class RecommendationRepositoryTest {
     fun `saveAll merges with existing active set and archives overflow deterministically`() = runTest {
         val userId = "user123"
         val existing = listOf(
-            createRecommendationEntity(id = "existing_high_old", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_E1", createdAt = 100L),
-            createRecommendationEntity(id = "existing_medium_old", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_E2", createdAt = 90L),
-            createRecommendationEntity(id = "existing_low_old", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_E3", createdAt = 80L),
-            createRecommendationEntity(id = "existing_high_newer", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_E4", createdAt = 110L),
-            createRecommendationEntity(id = "existing_medium_newer", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_E5", createdAt = 105L)
+            createRecommendationEntity(id = "existing_high_old", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_E1", createdAt = 100L, filterCriteria = merchantFilter("existing_1")),
+            createRecommendationEntity(id = "existing_medium_old", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_E2", createdAt = 90L, filterCriteria = merchantFilter("existing_2")),
+            createRecommendationEntity(id = "existing_low_old", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_E3", createdAt = 80L, filterCriteria = merchantFilter("existing_3")),
+            createRecommendationEntity(id = "existing_high_newer", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_E4", createdAt = 110L, filterCriteria = merchantFilter("existing_4")),
+            createRecommendationEntity(id = "existing_medium_newer", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_E5", createdAt = 105L, filterCriteria = merchantFilter("existing_5"))
         )
         val incoming = listOf(
-            createRecommendation(id = "new_high_best", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_N1", createdAt = 120L),
-            createRecommendation(id = "new_medium_mid", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_N2", createdAt = 115L),
-            createRecommendation(id = "new_low_recent", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_N3", createdAt = 130L)
+            createRecommendation(id = "new_high_best", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_N1", createdAt = 120L, filterCriteria = merchantFilter("new_1")),
+            createRecommendation(id = "new_medium_mid", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_N2", createdAt = 115L, filterCriteria = merchantFilter("new_2")),
+            createRecommendation(id = "new_low_recent", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_N3", createdAt = 130L, filterCriteria = merchantFilter("new_3"))
         )
 
         coEvery { dao.getAllActiveByUser(userId, any()) } returns existing
@@ -232,17 +231,17 @@ class RecommendationRepositoryTest {
     fun `saveAll prunes existing overflow even when incoming batch is fully duplicate`() = runTest {
         val userId = "user123"
         val existing = listOf(
-            createRecommendationEntity(id = "existing_1", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_1", createdAt = 200L),
-            createRecommendationEntity(id = "existing_2", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_2", createdAt = 190L),
-            createRecommendationEntity(id = "existing_3", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_3", createdAt = 180L),
-            createRecommendationEntity(id = "existing_4", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_4", createdAt = 170L),
-            createRecommendationEntity(id = "existing_5", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_5", createdAt = 160L),
-            createRecommendationEntity(id = "existing_6", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_6", createdAt = 150L),
-            createRecommendationEntity(id = "existing_7", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_7", createdAt = 140L)
+            createRecommendationEntity(id = "existing_1", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_1", createdAt = 200L, filterCriteria = merchantFilter("merchant_1")),
+            createRecommendationEntity(id = "existing_2", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_2", createdAt = 190L, filterCriteria = merchantFilter("merchant_2")),
+            createRecommendationEntity(id = "existing_3", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_3", createdAt = 180L, filterCriteria = merchantFilter("merchant_3")),
+            createRecommendationEntity(id = "existing_4", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_4", createdAt = 170L, filterCriteria = merchantFilter("merchant_4")),
+            createRecommendationEntity(id = "existing_5", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_5", createdAt = 160L, filterCriteria = merchantFilter("merchant_5")),
+            createRecommendationEntity(id = "existing_6", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_6", createdAt = 150L, filterCriteria = merchantFilter("merchant_6")),
+            createRecommendationEntity(id = "existing_7", userId = userId, priority = RecommendationPriority.LOW, category = "CAT_7", createdAt = 140L, filterCriteria = merchantFilter("merchant_7"))
         )
         val duplicateIncoming = listOf(
-            createRecommendation(id = "duplicate_1", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_1"),
-            createRecommendation(id = "duplicate_2", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_3")
+            createRecommendation(id = "duplicate_1", userId = userId, priority = RecommendationPriority.HIGH, category = "CAT_1", filterCriteria = merchantFilter("merchant_1")),
+            createRecommendation(id = "duplicate_2", userId = userId, priority = RecommendationPriority.MEDIUM, category = "CAT_3", filterCriteria = merchantFilter("merchant_3"))
         )
 
         coEvery { dao.getAllActiveByUser(userId, any()) } returns existing
@@ -369,6 +368,7 @@ class RecommendationRepositoryTest {
         priority: RecommendationPriority = RecommendationPriority.MEDIUM,
         status: RecommendationStatus = RecommendationStatus.ACTIVE,
         category: String = "GENERAL",
+        filterCriteria: String = "{}",
         createdAt: Long = 1_000L,
         updatedAt: Long = createdAt
     ): DashboardFollowThroughRecommendation {
@@ -377,7 +377,7 @@ class RecommendationRepositoryTest {
             userId = userId,
             recommendationText = recommendationText,
             navigationTarget = "TRANSACTION_LIST",
-            filterCriteria = "{}",
+            filterCriteria = filterCriteria,
             createdAt = createdAt,
             updatedAt = updatedAt,
             priority = priority,
@@ -394,6 +394,7 @@ class RecommendationRepositoryTest {
         priority: RecommendationPriority = RecommendationPriority.MEDIUM,
         status: RecommendationStatus = RecommendationStatus.ACTIVE,
         category: String = "GENERAL",
+        filterCriteria: String = "{}",
         createdAt: Long = 1_000L,
         updatedAt: Long = createdAt,
         dismissedAt: Long? = null,
@@ -404,7 +405,7 @@ class RecommendationRepositoryTest {
             userId = userId,
             recommendationText = recommendationText,
             navigationTarget = "TRANSACTION_LIST",
-            filterCriteria = "{}",
+            filterCriteria = filterCriteria,
             createdAt = createdAt,
             updatedAt = updatedAt,
             dismissedAt = dismissedAt,
@@ -414,5 +415,9 @@ class RecommendationRepositoryTest {
             sourceArtifactId = "",
             status = status
         )
+    }
+
+    private fun merchantFilter(merchantName: String): String {
+        return "{\"version\":1,\"merchantName\":\"$merchantName\"}"
     }
 }

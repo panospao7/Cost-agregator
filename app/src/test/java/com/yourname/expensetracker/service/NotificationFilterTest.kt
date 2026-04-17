@@ -230,4 +230,14 @@ class NotificationFilterTest {
             ""
         ))
     }
+
+    @Test
+    fun `discovery mode - lowercase currency code captures`() {
+        assertTrue(NotificationFilter.shouldCapture(
+            "com.lowercase.currency",
+            "Payment",
+            "Amount 12,50 eur",
+            ""
+        ))
+    }
 }
