@@ -18,6 +18,7 @@ import org.junit.Test
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
+import java.util.Base64
 import java.util.concurrent.atomic.AtomicInteger
 
 class CloudReceiptAssistServiceTest {
@@ -137,6 +138,42 @@ class CloudReceiptAssistServiceTest {
     }
 
     @Test
+    fun `buildRequestBodyForTest suppresses inline image when redaction is required`() {
+        val settingsRepository = mockk<AiSettingsRepository>()
+        every { settingsRepository.settings() } returns flowOf(AiSettings())
+        val service = CloudReceiptAssistService(settingsRepository, createMockKeyStorage())
+        val imageFile = kotlin.io.path.createTempFile(suffix = ".png").toFile().apply {
+            writeBytes(Base64.getDecoder().decode(ONE_BY_ONE_PNG_BASE64))
+        }
+
+        try {
+            val requestBody = service.buildRequestBodyForTest(
+                ReceiptAssistInput(
+                    receiptId = 1L,
+                    rawOcrText = "OCR",
+                    imagePath = imageFile.absolutePath,
+                    imageMimeType = "image/png",
+                    isImageAnalysisMode = true,
+                    redactBeforeCloud = true,
+                    parsedMerchant = null,
+                    parsedTotal = null,
+                    parsedDate = null,
+                    parsedTaxAmount = null,
+                    currency = "EUR",
+                    lineItemsJson = null,
+                    currentTimeMs = 1L
+                ),
+                allowImage = true
+            )
+
+            assertFalse(requestBody.contains("inlineData"))
+            assertTrue(requestBody.contains("No receipt image available"))
+        } finally {
+            imageFile.delete()
+        }
+    }
+
+    @Test
     fun `suggest retries transient http failures and succeeds on later attempt`() {
         val settingsRepository = mockk<AiSettingsRepository>()
         every { settingsRepository.settings() } returns flowOf(AiSettings())
@@ -212,5 +249,10 @@ class CloudReceiptAssistServiceTest {
         assertTrue(requestBody.contains("merchant_"))
         assertTrue(requestBody.contains("[REDACTED_EMAIL]"))
         assertTrue(requestBody.contains("[REDACTED_CARD]"))
+    }
+
+    private companion object {
+        private const val ONE_BY_ONE_PNG_BASE64 =
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nX4QAAAAASUVORK5CYII="
     }
 }

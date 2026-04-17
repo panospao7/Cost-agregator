@@ -13,10 +13,10 @@ import javax.inject.Inject
  * Builds AI input for receipt analysis with image as primary source.
  * 
  * Key changes for image-aware AI:
- * 1. Always includes the receipt image for AI analysis (primary source)
+ * 1. Includes the receipt image when a valid local file exists
  * 2. OCR text becomes secondary context, not primary input
- * 3. Supports redaction of sensitive text while keeping image
- * 4. Flags indicate vision analysis mode for AI service
+ * 3. Cloud providers may still suppress image upload when redaction is required
+ * 4. Flags indicate vision analysis mode for image-capable AI services
  */
 class ReceiptAssistInputBuilder @Inject constructor(
     private val aiPolicy: AiPolicy,
@@ -26,8 +26,8 @@ class ReceiptAssistInputBuilder @Inject constructor(
     fun build(receipt: ScannedReceipt, settings: AiSettings): ReceiptAssistInput {
         val shouldRedact = aiPolicy.shouldRedact(settings, AiCapability.RECEIPT_EXTRACTION)
         
-        // For image-aware AI, we always include the image path
-        // The AI service will decide whether to use vision API based on this
+        // Keep image metadata whenever a local receipt image exists.
+        // Individual providers decide whether they can safely use it.
         val hasValidImage = !receipt.imagePath.isNullOrBlank()
         
         // Get image mime type if we have a valid image
@@ -39,15 +39,17 @@ class ReceiptAssistInputBuilder @Inject constructor(
         // Even if redacting, we keep the image - AI can still analyze it
         val sanitizedOcrText = sanitizeOcrText(receipt.rawOcrText, shouldRedact)
         
-        // Determine analysis mode
-        val isImageAnalysisMode = hasValidImage && settings.receiptImageCloudEnabled
+        // Determine analysis mode independently from cloud image upload settings.
+        // On-device receipt assist can still use the image even when cloud image
+        // upload is disabled or suppressed for privacy.
+        val isImageAnalysisMode = hasValidImage
 
         return ReceiptAssistInput(
             receiptId = receipt.id,
-            // NEW: Always include image path if available (primary analysis source)
+            // Include image path if available; providers may still gate usage.
             imagePath = receipt.imagePath?.takeIf { it.isNotBlank() },
             imageMimeType = imageMimeType,
-            // NEW: Flag to indicate AI should use vision analysis
+            // Flag to indicate image-capable AI can attempt vision analysis
             isImageAnalysisMode = isImageAnalysisMode,
             redactBeforeCloud = shouldRedact,
             // OCR text is now secondary context

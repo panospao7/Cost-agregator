@@ -4,6 +4,7 @@ import com.google.mlkit.genai.common.GenAiException
 import com.google.mlkit.genai.prompt.GenerateContentRequest
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
+import com.google.mlkit.genai.prompt.ImagePart
 import com.google.mlkit.genai.prompt.TextPart
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.AiServiceError
@@ -15,6 +16,7 @@ import com.yourname.expensetracker.domain.config.AppConfig
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -31,6 +33,9 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
         }
     }
 
+    override fun usedImageInput(input: ReceiptAssistInput): Boolean =
+        buildImagePart(input) != null
+
     override suspend fun suggest(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> {
         return try {
             val model = getOrCreateModel()
@@ -40,7 +45,7 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
                 ?: return AiServiceResult.Failure(AiServiceError.ParseError("Empty response"))
             val parsed = parseResponse(text)
                 ?: return AiServiceResult.Failure(AiServiceError.ParseError("No usable suggestion in response"))
-            AiServiceResult.Success(parsed)
+            AiServiceResult.Success(parsed.copy(usedImageInput = request.image != null))
         } catch (e: GenAiException) {
             Timber.w(e, "OnDeviceReceiptAssistService: GenAI error (code=%d)", e.errorCode)
             AiServiceResult.Failure(AiServiceError.Unknown("GenAI error code=${e.errorCode}"))
@@ -52,11 +57,18 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
 
     private fun buildRequest(input: ReceiptAssistInput): GenerateContentRequest {
         val prompt = buildPrompt(input)
-        val builder = GenerateContentRequest.builder(TextPart(prompt))
+        val imagePart = buildImagePart(input)
+        val builder = if (imagePart != null) {
+            GenerateContentRequest.builder(imagePart, TextPart(prompt))
+        } else {
+            GenerateContentRequest.builder(TextPart(prompt))
+        }
         builder.temperature = AppConfig.Ai.ON_DEVICE_RECEIPT_TEMPERATURE
         builder.maxOutputTokens = AppConfig.Ai.ON_DEVICE_RECEIPT_MAX_TOKENS
         return builder.build()
     }
+
+    internal fun buildRequestForTest(input: ReceiptAssistInput): GenerateContentRequest = buildRequest(input)
 
     internal fun buildPrompt(input: ReceiptAssistInput): String {
         return buildString {
@@ -103,6 +115,18 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
                     "\"notes\":[\"short note\"]}"
             )
         }
+    }
+
+    private fun buildImagePart(input: ReceiptAssistInput): ImagePart? {
+        if (!input.isImageAnalysisMode) return null
+        val imagePath = input.imagePath ?: return null
+        val file = File(imagePath)
+        if (!file.exists() || !file.isFile) return null
+        val bytes = runCatching { file.readBytes() }.getOrNull() ?: return null
+        if (bytes.isEmpty()) return null
+        return runCatching { ImagePart(bytes) }
+            .onFailure { Timber.w(it, "OnDeviceReceiptAssistService: unable to attach receipt image") }
+            .getOrNull()
     }
 
     internal fun parseResponse(text: String): ReceiptAssistSuggestion? {

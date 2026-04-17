@@ -63,7 +63,7 @@ class CloudReceiptAssistService @Inject constructor(
         get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
     override fun usedImageInput(input: ReceiptAssistInput): Boolean =
-        input.imagePath != null && input.imageMimeType != null
+        input.imagePath != null && input.imageMimeType != null && !input.redactBeforeCloud
 
     override suspend fun suggest(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> {
         if (apiKey.isBlank()) {
@@ -303,6 +303,10 @@ class CloudReceiptAssistService @Inject constructor(
 
     private fun buildImageInlineData(input: ReceiptAssistInput, allowImage: Boolean): JSONObject? {
         if (!allowImage) return null
+        if (input.redactBeforeCloud) {
+            Timber.d("CloudReceiptAssistService: suppressing cloud image upload because redaction is required")
+            return null
+        }
         val imagePath = input.imagePath ?: return null
         val mimeType = input.imageMimeType ?: return null
         val file = File(imagePath)

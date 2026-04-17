@@ -102,6 +102,26 @@ class ReceiptMatchingWorkerTest {
         coVerify(exactly = 0) { matcher.findBestMatch(any()) }
     }
 
+    @Test
+    fun `worker stops retrying malformed receipt failures`() = runTest {
+        coEvery { receiptRepository.getUnmatchedReceipts() } throws IllegalArgumentException("malformed receipt data")
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.failure(), result)
+        coVerify(exactly = 0) { matcher.findBestMatch(any()) }
+    }
+
+    @Test
+    fun `worker stops retrying logical conflicts`() = runTest {
+        coEvery { receiptRepository.getUnmatchedReceipts() } throws IllegalStateException("receipt matching conflict")
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.failure(), result)
+        coVerify(exactly = 0) { matcher.findBestMatch(any()) }
+    }
+
     private fun sampleReceipt(id: Long): ScannedReceipt {
         return ScannedReceipt(
             id = id,

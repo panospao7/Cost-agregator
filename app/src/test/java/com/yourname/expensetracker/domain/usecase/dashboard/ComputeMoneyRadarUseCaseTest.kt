@@ -108,9 +108,10 @@ class ComputeMoneyRadarUseCaseTest {
 
         val result = useCase.compute()
 
-        // Due bills: 3 with large-bill bonus => 80, anomalies: 2 => 60, budget risk: 80
-        // Weighted = 80*0.4 + 60*0.3 + 80*0.3 = 74
-        assertEquals(74, result.urgencyScore)
+        // Due bills: 3 with large-bill bonus => 80, anomalies: 2 => 60,
+        // budget risk: probability 80 + magnitude 10 + critical 20 => capped at 100.
+        // Weighted = 80*0.4 + 60*0.3 + 100*0.3 = 80
+        assertEquals(80, result.urgencyScore)
         assertEquals(UrgencyLevel.RED, result.urgencyLevel)
         assertTrue(result.topReasons.any { it.contains("3 bills due") })
         assertTrue(result.topReasons.any { it.contains("2 unusual charges") })
@@ -216,6 +217,81 @@ class ComputeMoneyRadarUseCaseTest {
         assertNull(result.primaryCta)
 
         coVerify(exactly = 0) { monteCarloSimulator.simulate(any(), any(), any()) }
+    }
+
+    @Test
+    fun `compute excludes future dated purchases from spent to date`() = runTest {
+        coEvery { recurringExpenseEngine.getPatterns() } returns emptyList()
+        coEvery { anomalyAlertDao.getActiveAlerts() } returns emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
+            expense(300.0, TransactionType.PURCHASE, now - dayMs),
+            expense(999.0, TransactionType.PURCHASE, now + dayMs)
+        )
+        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 1000.0
+
+        var capturedSpentToDate = -1.0
+        val mcResult = monteCarloResult(probabilityUnderBudget = 0.5)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } answers {
+            capturedSpentToDate = firstArg()
+            mcResult
+        }
+        every { getMonteCarloBudgetImpact(any(), any()) } returns Result.Success(
+            MonteCarloBudgetImpact(
+                budgetAmount = 1000.0,
+                p50Forecast = 980.0,
+                expectedOverrun = 10.0,
+                probabilityOfOverrun = 0.4,
+                riskTier = RiskTier.MEDIUM,
+                displayMessage = "Possible overrun",
+                formattedOverrun = "€10.00"
+            )
+        )
+
+        useCase.compute()
+
+        assertApproxEquals(300.0, capturedSpentToDate, 0.0001)
+    }
+
+    @Test
+    fun `compute budget urgency changes with magnitude and risk tier`() = runTest {
+        coEvery { recurringExpenseEngine.getPatterns() } returns emptyList()
+        coEvery { anomalyAlertDao.getActiveAlerts() } returns emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
+            expense(300.0, TransactionType.PURCHASE, now - dayMs)
+        )
+        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 1000.0
+        val mcResult = monteCarloResult(probabilityUnderBudget = 0.6)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns mcResult
+
+        every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(
+            MonteCarloBudgetImpact(
+                budgetAmount = 1000.0,
+                p50Forecast = 1000.0,
+                expectedOverrun = 5.0,
+                probabilityOfOverrun = 0.4,
+                riskTier = RiskTier.LOW,
+                displayMessage = "Low",
+                formattedOverrun = "€5.00"
+            )
+        ) andThen Result.Success(
+            MonteCarloBudgetImpact(
+                budgetAmount = 1000.0,
+                p50Forecast = 1300.0,
+                expectedOverrun = 250.0,
+                probabilityOfOverrun = 0.4,
+                riskTier = RiskTier.CRITICAL,
+                displayMessage = "Critical",
+                formattedOverrun = "€250.00"
+            )
+        )
+
+        val lowRisk = useCase.compute()
+        val highRisk = useCase.compute()
+
+        assertTrue(highRisk.urgencyScore > lowRisk.urgencyScore)
+        assertTrue(highRisk.urgencyLevel >= lowRisk.urgencyLevel)
     }
 
     private fun recurring(merchant: String, amount: Double, date: Long): RecurringPattern {

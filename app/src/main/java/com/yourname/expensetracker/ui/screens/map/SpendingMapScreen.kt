@@ -35,6 +35,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -49,14 +50,13 @@ import com.yourname.expensetracker.ui.components.NearbyShopSuggestionCard
 import com.yourname.expensetracker.ui.components.PlaceInsightCard
 import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
-import java.text.NumberFormat
-import java.util.Locale
 import kotlin.math.max
 
 /**
@@ -73,11 +73,16 @@ import kotlin.math.max
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SpendingMapScreen(
+    initialLocationQuery: String? = null,
     viewModel: SpendingMapViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(initialLocationQuery) {
+        viewModel.focusOnMerchant(initialLocationQuery)
+    }
 
     // ── Permission launcher ───────────────────────────────────────────────────
     val locationPermissionLauncher = rememberLauncherForActivityResult(
@@ -202,6 +207,39 @@ fun SpendingMapScreen(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                state.highlightedMerchantQuery?.let { highlightedMerchant ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Focused location",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = highlightedMerchant,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            TextButton(onClick = { viewModel.focusOnMerchant(null) }) {
+                                Text(stringResource(R.string.action_close))
+                            }
+                        }
+                    }
+                }
+
                 val now = remember { System.currentTimeMillis() }
                 val sevenDaysStart = now - 7L * 86_400_000L
                 val thirtyDaysStart = now - 30L * 86_400_000L
@@ -555,8 +593,6 @@ private fun MarkerDetailCard(
     onCorrectPin: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val fmt = NumberFormat.getCurrencyInstance(Locale("el", "GR"))
-
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -571,7 +607,7 @@ private fun MarkerDetailCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = marker.merchant, style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        text = fmt.format(marker.amount),
+                        text = CurrencyFormatter.format(marker.amount),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -655,7 +691,6 @@ private fun UnlocatedExpensesPanel(
     onPinClick: (Expense) -> Unit
 ) {
     var expanded by remember { mutableStateOf(true) }
-    val fmt = NumberFormat.getCurrencyInstance(Locale("el", "GR"))
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -717,7 +752,7 @@ private fun UnlocatedExpensesPanel(
                                 )
                             }
                             Text(
-                                text = fmt.format(expense.amount),
+                                text = CurrencyFormatter.format(expense.amount, expense.currency),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -769,8 +804,6 @@ private fun PinExpenseSheet(
     deviceLat: Double? = null,
     deviceLon: Double? = null
 ) {
-    val fmt = NumberFormat.getCurrencyInstance(Locale("el", "GR"))
-
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -786,7 +819,7 @@ private fun PinExpenseSheet(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "${expense.merchant} · ${fmt.format(expense.amount)}",
+                text = "${expense.merchant} · ${CurrencyFormatter.format(expense.amount, expense.currency)}",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

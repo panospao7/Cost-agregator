@@ -53,6 +53,9 @@ interface WarrantyDao {
         updatedAt: Long
     )
 
+    @Query("UPDATE warranties SET status = 'EXPIRED', updatedAt = :updatedAt WHERE warrantyEndDate < :currentTime AND status = 'ACTIVE'")
+    suspend fun markExpiredWarranties(currentTime: Long, updatedAt: Long): Int
+
     @Query("SELECT COUNT(*) FROM warranties WHERE status = 'ACTIVE' AND warrantyEndDate > :currentTime")
     suspend fun getActiveWarrantyCount(currentTime: Long): Int
 

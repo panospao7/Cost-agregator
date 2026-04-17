@@ -84,9 +84,12 @@ class NavigationTargetResolverImpl @Inject constructor(
         val range = filter.dateRange ?: return "month"
         val spanDays = ((range.second - range.first).coerceAtLeast(0L)) / (24L * 60 * 60 * 1000)
         return when {
+            spanDays <= 1 -> "today"
             spanDays <= 8 -> "week"
             spanDays <= 32 -> "month"
-            else -> "custom"
+            spanDays <= 95 -> "quarter"
+            spanDays <= 366 -> "year"
+            else -> "all"
         }
     }
 }

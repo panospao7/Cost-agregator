@@ -56,10 +56,10 @@ import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.formattedTime
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
-import com.yourname.expensetracker.domain.currency.SupportedCurrency
-import com.yourname.expensetracker.domain.util.AmountUtils
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.OwnershipFilter
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsViewModel.TransactionTab
 import com.yourname.expensetracker.ui.theme.Dimens
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -89,6 +89,7 @@ private fun OwnershipFilter.toRepositoryOwnershipFilter(): com.yourname.expenset
 fun TransactionsScreen(
     viewModel: TransactionsViewModel = hiltViewModel(),
     initialFilter: TransactionFilter? = null,
+    highlightedExpenseId: Long? = null,
     onNavigateToAnalytics: () -> Unit = {},
     onAddExpense: () -> Unit = {},
     onOpenVisualSplit: (Expense) -> Unit = {}
@@ -467,7 +468,7 @@ fun TransactionsScreen(
                             stickyHeader {
                                 DateHeader(
                                     date = dateString,
-                                    totalAmount = items.sumOf { it.expense.effectiveAmount },
+                                    totalAmount = items.sumOf { it.expense.signedEffectiveAmount() },
                                     itemCount = items.size
                                 )
                             }
@@ -480,6 +481,7 @@ fun TransactionsScreen(
                             ) { item ->
                                 TransactionItem(
                                     transaction = item,
+                                    isHighlighted = highlightedExpenseId == item.expense.id,
                                     onDelete = { expenseToDelete = item.expense },
                                     onEditCategory = { expenseToCategorize = item.expense },
                                     onMarkRecurring = { expenseToRecurring = item.expense },
@@ -786,10 +788,6 @@ private fun DateHeader(
     totalAmount: Double,
     itemCount: Int
 ) {
-    val defaultCurrencySymbol = remember {
-        SupportedCurrency.fromCode(CurrencyConverter.DEFAULT_BASE_CURRENCY)?.symbol
-            ?: CurrencyConverter.DEFAULT_BASE_CURRENCY
-    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -828,13 +826,21 @@ private fun DateHeader(
                 
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = if (totalAmount < 0) SemanticColors.DangerRed.copy(alpha = 0.1f) else SemanticColors.SuccessGreen.copy(alpha = 0.1f)
+                    color = when {
+                        totalAmount < 0 -> SemanticColors.DangerRed.copy(alpha = 0.1f)
+                        totalAmount > 0 -> SemanticColors.SuccessGreen.copy(alpha = 0.1f)
+                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    }
                 ) {
                     Text(
-                        text = AmountUtils.formatAmount(kotlin.math.abs(totalAmount), defaultCurrencySymbol),
+                        text = CurrencyFormatter.formatWithSign(totalAmount, CurrencyConverter.DEFAULT_BASE_CURRENCY),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
-                        color = if (totalAmount < 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen,
+                        color = when {
+                            totalAmount < 0 -> SemanticColors.DangerRed
+                            totalAmount > 0 -> SemanticColors.SuccessGreen
+                            else -> SemanticColors.TextSecondary
+                        },
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
@@ -850,6 +856,7 @@ private fun DateHeader(
 @Composable
 private fun TransactionItem(
     transaction: ExpenseWithCategory,
+    isHighlighted: Boolean,
     onDelete: () -> Unit,
     onEditCategory: () -> Unit,
     onMarkRecurring: () -> Unit,
@@ -906,7 +913,11 @@ private fun TransactionItem(
             .padding(horizontal = 12.dp, vertical = 4.dp),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            containerColor = if (isHighlighted) {
+                SemanticColors.PrimaryIndigo.copy(alpha = 0.16f)
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            }
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
@@ -1231,6 +1242,26 @@ private fun TransactionItem(
                 }
             }
         }
+    }
+}
+
+private fun Expense.signedEffectiveAmount(): Double {
+    return when (transactionType.toDomainType()) {
+        DomainTransactionType.PURCHASE,
+        DomainTransactionType.WITHDRAWAL -> -effectiveAmount
+        DomainTransactionType.DEPOSIT -> effectiveAmount
+        DomainTransactionType.TRANSFER,
+        DomainTransactionType.UNKNOWN -> 0.0
+    }
+}
+
+private fun TransactionType.toDomainType(): DomainTransactionType {
+    return when (this) {
+        TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+        TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+        TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+        TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+        TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
     }
 }
 

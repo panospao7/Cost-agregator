@@ -16,7 +16,7 @@ data class WarrantyExtractionInput(
  */
 data class WarrantyExtractionResult(
     val productName: String,
-    val warrantyMonths: Int,
+    val warrantyMonths: Int?,
     val warrantyType: String,
     val supportPhone: String?,
     val supportEmail: String?,

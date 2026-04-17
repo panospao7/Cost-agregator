@@ -3145,4 +3145,31 @@ class DatabaseMigrationTest {
 
         db.close()
     }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_79_to_80_creates_spending_challenges_table() {
+        assumeTrue(hasSchema(79) && hasSchema(80))
+
+        var db = helper.createDatabase(testDb, 79)
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            80,
+            true,
+            AppDatabase.MIGRATION_79_80
+        )
+
+        assertTrue(
+            "spending_challenges table should exist after 79→80 migration",
+            db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='spending_challenges'").use { it.moveToFirst() }
+        )
+        assertTrue(
+            "index_spending_challenges_isActive_endDate should exist after 79→80 migration",
+            hasIndex(db, "index_spending_challenges_isActive_endDate")
+        )
+
+        db.close()
+    }
 }

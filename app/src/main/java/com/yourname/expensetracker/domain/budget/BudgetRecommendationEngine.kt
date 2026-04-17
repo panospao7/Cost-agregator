@@ -63,7 +63,7 @@ class BudgetRecommendationEngine @Inject constructor() {
                     description = "You're at risk of exceeding your budget. Consider cutting non-essential expenses for the remainder of the period.",
                     priority = if (forecast.overspendProbability > 0.8) RecommendationPriority.CRITICAL 
                              else RecommendationPriority.HIGH,
-                    potentialSavings = forecast.predictedSpending - remaining
+                    potentialSavings = (forecast.predictedSpending - remaining).coerceAtLeast(0.0)
                 )
             )
             

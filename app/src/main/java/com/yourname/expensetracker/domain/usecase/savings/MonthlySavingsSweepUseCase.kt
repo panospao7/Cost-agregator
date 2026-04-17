@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.usecase.savings
 
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
+import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
@@ -34,6 +36,8 @@ class MonthlySavingsSweepUseCase @Inject constructor(
     private val budgetRepository: BudgetRepository,
     private val savingsGoalRepository: SavingsGoalRepository,
     private val expenseRepository: ExpenseRepository,
+    private val recurringExpenseRepository: RecurringExpenseRepository,
+    private val plannedExpenseRepository: PlannedExpenseRepository,
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
     private val timeProvider: TimeProvider
 ) {
@@ -104,11 +108,12 @@ class MonthlySavingsSweepUseCase @Inject constructor(
 
         // Calculate spent to date for Monte Carlo
         val spentToDate = calculateSpentToDate(monthStart.timeInMillis, now)
+        val knownUpcoming = calculateKnownUpcomingObligations(now, nextMonthStart.timeInMillis)
 
         // Run Monte Carlo simulation
         val monteCarloResult = monteCarloSimulator.simulate(
             spentToDate = spentToDate,
-            knownUpcoming = 0.0, // No known upcoming for sweep calculation
+            knownUpcoming = knownUpcoming,
             budgetAmount = totalBudgeted
         )
 
@@ -202,6 +207,21 @@ class MonthlySavingsSweepUseCase @Inject constructor(
             .sumOf { it.effectiveAmount }
     }
 
+    private suspend fun calculateKnownUpcomingObligations(now: Long, monthEndExclusive: Long): Double {
+        val recurringUpcoming = recurringExpenseRepository.getAllFlow().first()
+            .filter { it.nextDate in now until monthEndExclusive }
+            .sumOf { it.amount }
+
+        val plannedUpcoming = plannedExpenseRepository.getAllPlannedExpenses().first()
+            .filter {
+                it.date in now until monthEndExclusive &&
+                    it.priority == com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST
+            }
+            .sumOf { it.amount }
+
+        return recurringUpcoming + plannedUpcoming
+    }
+
     /**
      * Calculate risk buffer from Monte Carlo uncertainty.
      * Uses the spread between p75 and p50 as a conservative uncertainty buffer.
@@ -234,64 +254,73 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         safeSweepAmount: Double,
         goals: List<com.yourname.expensetracker.data.database.entity.SavingsGoal>
     ): List<GoalAllocation> {
-        // Calculate urgency for each goal
-        val goalUrgencies = goals.map { goal ->
-            val progress = goal.currentAmount / goal.targetAmount
-            val urgency = (1.0 - progress).coerceIn(0.0, 1.0)
-            goal to urgency
-        }
+        data class GoalAllocationState(
+            val goal: com.yourname.expensetracker.data.database.entity.SavingsGoal,
+            val urgency: Double,
+            val remainingGap: Double,
+            var allocated: Double = 0.0
+        )
 
-        val totalUrgency = goalUrgencies.sumOf { it.second }
-
-        if (totalUrgency == 0.0) {
-            // Equal distribution if all goals have 0 urgency (shouldn't happen with filtering)
-            val equalShare = safeSweepAmount / goals.size
-            return goals.map { goal ->
-                GoalAllocation(
-                    goalId = goal.id,
-                    goalName = goal.name,
-                    currentProgress = goal.currentAmount,
-                    targetAmount = goal.targetAmount,
-                    suggestedAllocation = equalShare,
-                    allocationPercentage = 1.0 / goals.size
-                )
-            }
-        }
-
-        // Distribute based on urgency
-        val allocations = mutableListOf<GoalAllocation>()
-        var allocatedTotal = 0.0
-
-        for ((index, pair) in goalUrgencies.withIndex()) {
-            val (goal, urgency) = pair
-            val isLast = index == goalUrgencies.size - 1
-
-            val percentage = urgency / totalUrgency
-            val allocation = if (isLast) {
-                // Ensure we use exactly the full amount (avoid rounding errors)
-                safeSweepAmount - allocatedTotal
-            } else {
-                val amount = safeSweepAmount * percentage
-                // Cap individual allocations to prevent over-concentration
-                val maxAllocation = safeSweepAmount * MAX_SINGLE_ALLOCATION_PERCENT
-                amount.coerceAtMost(maxAllocation)
-            }
-
-            allocatedTotal += allocation
-
-            allocations.add(
-                GoalAllocation(
-                    goalId = goal.id,
-                    goalName = goal.name,
-                    currentProgress = goal.currentAmount,
-                    targetAmount = goal.targetAmount,
-                    suggestedAllocation = allocation,
-                    allocationPercentage = percentage
-                )
+        val states = goals.map { goal ->
+            val remainingGap = (goal.targetAmount - goal.currentAmount).coerceAtLeast(0.0)
+            val progress = if (goal.targetAmount > 0.0) goal.currentAmount / goal.targetAmount else 0.0
+            GoalAllocationState(
+                goal = goal,
+                urgency = (1.0 - progress).coerceIn(0.0, 1.0),
+                remainingGap = remainingGap
             )
-        }
+        }.filter { it.remainingGap > 0.0 }
 
-        return allocations.sortedByDescending { it.allocationPercentage }
+        if (states.isEmpty()) return emptyList()
+
+        val maxAllocation = safeSweepAmount * MAX_SINGLE_ALLOCATION_PERCENT
+        var remainingSweep = safeSweepAmount
+        var madeProgress: Boolean
+
+        do {
+            madeProgress = false
+            val openStates = states.filter {
+                it.remainingGap - it.allocated > 0.0 &&
+                    maxAllocation - it.allocated > 0.0
+            }
+            if (openStates.isEmpty() || remainingSweep <= 0.0) break
+
+            val totalUrgency = openStates.sumOf { it.urgency }
+            val equalWeight = if (openStates.isNotEmpty()) 1.0 / openStates.size else 0.0
+
+            openStates.forEachIndexed { index, state ->
+                if (remainingSweep <= 0.0) return@forEachIndexed
+
+                val weight = if (totalUrgency > 0.0) state.urgency / totalUrgency else equalWeight
+                val provisionalShare = if (index == openStates.lastIndex) {
+                    remainingSweep
+                } else {
+                    remainingSweep * weight
+                }
+                val gapCapped = provisionalShare.coerceAtMost(state.remainingGap - state.allocated)
+                val concentrationCapped = gapCapped.coerceAtMost(maxAllocation - state.allocated)
+
+                if (concentrationCapped > 0.0) {
+                    state.allocated += concentrationCapped
+                    remainingSweep -= concentrationCapped
+                    madeProgress = true
+                }
+            }
+        } while (madeProgress)
+
+        return states
+            .filter { it.allocated > 0.0 }
+            .map { state ->
+                GoalAllocation(
+                    goalId = state.goal.id,
+                    goalName = state.goal.name,
+                    currentProgress = state.goal.currentAmount,
+                    targetAmount = state.goal.targetAmount,
+                    suggestedAllocation = state.allocated,
+                    allocationPercentage = if (safeSweepAmount > 0.0) state.allocated / safeSweepAmount else 0.0
+                )
+            }
+            .sortedByDescending { it.suggestedAllocation }
     }
 
     /**

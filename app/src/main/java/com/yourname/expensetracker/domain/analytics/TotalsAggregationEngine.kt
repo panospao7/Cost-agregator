@@ -13,6 +13,9 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
@@ -37,19 +40,25 @@ class TotalsAggregationEngine @Inject constructor(
             val monthlyTotals = expenseRepository.getMonthlyTotalsForPeriod(startMs, endMs)
             val average = getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
 
-            monthlyTotals.map { monthly ->
-                val date = java.time.Instant.ofEpochMilli(monthly.startDate)
-                    .atZone(java.time.ZoneId.systemDefault())
-                    .toLocalDate()
+            val totalsByKey = monthlyTotals.associateBy { it.monthKey }
+            (1..12).map { month ->
+                val monthStart = LocalDate.of(year, month, 1)
+                    .atStartOfDay(systemZoneId())
+                    .toInstant()
+                    .toEpochMilli()
+                val monthEnd = TimePeriodUtils.getEndOfMonth(monthStart)
+                val periodKey = "%04d-%02d".format(year, month)
+                val monthly = totalsByKey[periodKey]
+                val total = monthly?.total ?: 0.0
                 PeriodTotal(
-                    periodLabel = MONTH_FORMAT.format(date),
-                    periodKey = monthly.monthKey,
-                    totalAmount = monthly.total,
-                    transactionCount = monthly.txCount,
+                    periodLabel = MONTH_FORMAT.format(toLocalDate(monthStart)),
+                    periodKey = periodKey,
+                    totalAmount = total,
+                    transactionCount = monthly?.txCount ?: 0,
                     periodType = PeriodType.MONTH,
-                    startDateMs = monthly.startDate,
-                    endDateMs = monthly.endDate,
-                    status = getPeriodStatus(monthly.total, average)
+                    startDateMs = monthly?.startDate ?: monthStart,
+                    endDateMs = monthly?.endDate ?: monthEnd,
+                    status = getPeriodStatus(total, average)
                 )
             }
         } catch (e: Exception) {
@@ -66,37 +75,36 @@ class TotalsAggregationEngine @Inject constructor(
 
             // Include ALL weeks that touch this month (have at least one day in the month)
             // This ensures no expenses are lost at month boundaries
-            val monthWeeks = weeklyTotals.filter { weekly ->
-                // Week touches month if: weekStart < monthEnd AND weekEnd > monthStart
-                weekly.startDate < monthEndMs && weekly.endDate > monthStartMs
-            }
+            val totalsByStart = weeklyTotals
+                .filter { weekly -> weekly.startDate < monthEndMs && weekly.endDate > monthStartMs }
+                .associateBy { TimePeriodUtils.getStartOfWeek(it.startDate) }
 
-            monthWeeks.mapIndexed { index, weekly ->
+            generateWeekStarts(monthStartMs, monthEndMs).mapIndexed { index, weekStart ->
+                val weekEnd = TimePeriodUtils.addDays(weekStart, 7)
+                val weekly = totalsByStart[weekStart]
                 // Check if this is a partial week (spans month boundary)
-                val weekStartMonday = TimePeriodUtils.getStartOfWeek(weekly.startDate)
-                val isPartialWeek = weekStartMonday < monthStartMs || weekly.endDate > monthEndMs
+                val isPartialWeek = weekStart < monthStartMs || weekEnd > monthEndMs
                 
                 // Format label: W1, W2, etc. Partial weeks show date range
                 val weekLabel = if (isPartialWeek) {
                     val dateFormat = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
-                    val startStr = dateFormat.format(java.time.Instant.ofEpochMilli(maxOf(weekly.startDate, monthStartMs))
-                        .atZone(java.time.ZoneId.systemDefault()).toLocalDate())
-                    val endStr = dateFormat.format(java.time.Instant.ofEpochMilli(minOf(weekly.endDate, monthEndMs - 1))
-                        .atZone(java.time.ZoneId.systemDefault()).toLocalDate())
+                    val startStr = dateFormat.format(toLocalDate(maxOf(weekStart, monthStartMs)))
+                    val endStr = dateFormat.format(toLocalDate(TimePeriodUtils.addDays(minOf(weekEnd, monthEndMs), -1)))
                     "W${index + 1} ($startStr-$endStr)"
                 } else {
                     "W${index + 1}"
                 }
+                val total = weekly?.total ?: 0.0
                 
                 PeriodTotal(
                     periodLabel = weekLabel,
-                    periodKey = weekly.weekKey,
-                    totalAmount = weekly.total,
-                    transactionCount = weekly.txCount,
+                    periodKey = weekly?.weekKey ?: weekKey(weekStart),
+                    totalAmount = total,
+                    transactionCount = weekly?.txCount ?: 0,
                     periodType = PeriodType.WEEK,
-                    startDateMs = weekly.startDate,
-                    endDateMs = weekly.endDate,
-                    status = getPeriodStatus(weekly.total, average)
+                    startDateMs = weekStart,
+                    endDateMs = weekEnd,
+                    status = getPeriodStatus(total, average)
                 )
             }
         } catch (e: Exception) {
@@ -111,21 +119,7 @@ class TotalsAggregationEngine @Inject constructor(
             val dailyTotals = expenseRepository.getDailyTotalsWithDatesForPeriod(startMs, endMs)
             val average = getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
-            dailyTotals.map { daily ->
-                val date = java.time.Instant.ofEpochMilli(daily.startDate)
-                    .atZone(java.time.ZoneId.systemDefault())
-                    .toLocalDate()
-                PeriodTotal(
-                    periodLabel = DAY_FORMAT.format(date),
-                    periodKey = daily.dayEpoch.toString(),
-                    totalAmount = daily.total,
-                    transactionCount = daily.txCount,
-                    periodType = PeriodType.DAY,
-                    startDateMs = daily.startDate,
-                    endDateMs = daily.endDate,
-                    status = getPeriodStatus(daily.total, average)
-                )
-            }
+            buildDailyPeriodTotals(startMs, endMs, dailyTotals, average)
         } catch (e: Exception) {
             Timber.tag("TotalsAggregationEngine").e(e, "Error getting daily totals for $year week $weekOfYear")
             emptyList()
@@ -141,21 +135,7 @@ class TotalsAggregationEngine @Inject constructor(
             val dailyTotals = expenseRepository.getDailyTotalsWithDatesForPeriod(startMs, endMs)
             val average = getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
-            dailyTotals.map { daily ->
-                val date = java.time.Instant.ofEpochMilli(daily.startDate)
-                    .atZone(java.time.ZoneId.systemDefault())
-                    .toLocalDate()
-                PeriodTotal(
-                    periodLabel = DAY_FORMAT.format(date),
-                    periodKey = daily.dayEpoch.toString(),
-                    totalAmount = daily.total,
-                    transactionCount = daily.txCount,
-                    periodType = PeriodType.DAY,
-                    startDateMs = daily.startDate,
-                    endDateMs = daily.endDate,
-                    status = getPeriodStatus(daily.total, average)
-                )
-            }
+            buildDailyPeriodTotals(startMs, endMs, dailyTotals, average)
         } catch (e: Exception) {
             Timber.tag("TotalsAggregationEngine").e(e, "Error getting daily totals for range $startMs to $endMs")
             emptyList()
@@ -326,4 +306,71 @@ class TotalsAggregationEngine @Inject constructor(
         val weekStart = TimePeriodUtils.addDays(weekOneStart, (weekOfYear - 1) * 7)
         return weekStart to TimePeriodUtils.addDays(weekStart, 7)
     }
+
+    private fun buildDailyPeriodTotals(
+        startMs: Long,
+        endMs: Long,
+        dailyTotals: List<com.yourname.expensetracker.data.database.dao.DailyTotal>,
+        average: Double
+    ): List<PeriodTotal> {
+        val totalsByStart = dailyTotals.associateBy { TimePeriodUtils.getStartOfDay(it.startDate) }
+        return generateDayStarts(startMs, endMs).map { dayStart ->
+            val dayEnd = TimePeriodUtils.getEndOfDay(dayStart)
+            val daily = totalsByStart[dayStart]
+            val total = daily?.total ?: 0.0
+            val date = toLocalDate(dayStart)
+            PeriodTotal(
+                periodLabel = DAY_FORMAT.format(date),
+                periodKey = dayKey(dayStart),
+                totalAmount = total,
+                transactionCount = daily?.txCount ?: 0,
+                periodType = PeriodType.DAY,
+                startDateMs = daily?.startDate ?: dayStart,
+                endDateMs = daily?.endDate ?: dayEnd,
+                status = getPeriodStatus(total, average)
+            )
+        }
+    }
+
+    private fun generateWeekStarts(monthStartMs: Long, monthEndMs: Long): List<Long> {
+        val starts = mutableListOf<Long>()
+        var cursor = TimePeriodUtils.getStartOfWeek(monthStartMs)
+        while (cursor < monthEndMs) {
+            starts.add(cursor)
+            cursor = TimePeriodUtils.addDays(cursor, 7)
+        }
+        return starts
+    }
+
+    private fun generateDayStarts(startMs: Long, endMs: Long): List<Long> {
+        val starts = mutableListOf<Long>()
+        var cursor = TimePeriodUtils.getStartOfDay(startMs)
+        val endDayStart = TimePeriodUtils.getStartOfDay(endMs)
+        val normalizedEnd = if (endMs > endDayStart) {
+            TimePeriodUtils.addDays(endDayStart, 1)
+        } else {
+            endDayStart
+        }
+        while (cursor < normalizedEnd) {
+            starts.add(cursor)
+            cursor = TimePeriodUtils.addDays(cursor, 1)
+        }
+        return starts
+    }
+
+    private fun weekKey(weekStart: Long): String {
+        val year = TimePeriodUtils.getYear(weekStart)
+        val week = TimePeriodUtils.getWeekOfYear(weekStart)
+        return "%04d-W%d".format(year, week)
+    }
+
+    private fun dayKey(dayStart: Long): String {
+        val date = toLocalDate(dayStart)
+        return "%04d%02d%02d".format(date.year, date.monthValue, date.dayOfMonth)
+    }
+
+    private fun toLocalDate(timestamp: Long): LocalDate =
+        Instant.ofEpochMilli(timestamp).atZone(systemZoneId()).toLocalDate()
+
+    private fun systemZoneId(): ZoneId = ZoneId.systemDefault()
 }

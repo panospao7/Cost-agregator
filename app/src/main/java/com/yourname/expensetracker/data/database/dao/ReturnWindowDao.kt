@@ -52,6 +52,9 @@ interface ReturnWindowDao {
         updatedAt: Long
     )
 
+    @Query("UPDATE return_windows SET status = 'EXPIRED', updatedAt = :updatedAt WHERE returnDeadline < :currentTime AND status = 'RETURNABLE'")
+    suspend fun markExpiredReturnWindows(currentTime: Long, updatedAt: Long): Int
+
     @Query("SELECT COUNT(*) FROM return_windows WHERE status = 'RETURNABLE' AND returnDeadline > :currentTime")
     suspend fun getActiveReturnWindowCount(currentTime: Long): Int
 }

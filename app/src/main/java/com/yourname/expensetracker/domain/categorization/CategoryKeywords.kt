@@ -5,6 +5,12 @@ data class KeywordCategory(
     val keywords: Map<String, Double>
 )
 
+data class OrderedKeywordEntry(
+    val categoryName: String,
+    val keyword: String,
+    val confidence: Double
+)
+
 object CategoryKeywords {
     
     val KEYWORDS = listOf(
@@ -65,7 +71,7 @@ object CategoryKeywords {
             "brasserie" to 0.95, "cantina" to 0.95,
             
             // Ambiguous (need context)
-            "roasters" to 0.70, "kitchen" to 0.65, "deli" to 0.80,
+            "kitchen" to 0.65, "deli" to 0.80,
             "house" to 0.40, "corner" to 0.40, "room" to 0.40,
             "lovers" to 0.30, "makers" to 0.30, "addicts" to 0.30,
             "project" to 0.30, "lab" to 0.30, "factory" to 0.30,
@@ -248,15 +254,60 @@ object CategoryKeywords {
         ))
     )
     
+    private val normalizedKeywords: List<KeywordCategory> = KEYWORDS.map { category ->
+        category.copy(keywords = normalizeKeywords(category.keywords))
+    }
+
     fun getKeywordsForCategory(categoryName: String): Map<String, Double> {
-        return KEYWORDS.find { it.categoryName == categoryName }?.keywords ?: emptyMap()
+        return normalizedKeywords.find { it.categoryName == categoryName }?.keywords ?: emptyMap()
     }
     
     fun getAllKeywords(): Map<String, Map<String, Double>> {
-        return KEYWORDS.associate { it.categoryName to it.keywords }
+        return normalizedKeywords.associate { it.categoryName to it.keywords }
     }
     
     fun getCategories(): List<String> {
-        return KEYWORDS.map { it.categoryName }
+        return normalizedKeywords.map { it.categoryName }
+    }
+
+    fun getOrderedKeywordEntries(): List<OrderedKeywordEntry> {
+        return normalizedKeywords
+            .flatMap { category ->
+                category.keywords.map { (keyword, confidence) ->
+                    OrderedKeywordEntry(
+                        categoryName = category.categoryName,
+                        keyword = keyword,
+                        confidence = confidence
+                    )
+                }
+            }
+            .sortedWith(
+                compareByDescending<OrderedKeywordEntry> { it.confidence }
+                    .thenByDescending { it.keyword.length }
+                    .thenBy { it.keyword }
+                    .thenBy { it.categoryName }
+            )
+    }
+
+    private fun normalizeKeywords(keywords: Map<String, Double>): Map<String, Double> {
+        return keywords.entries
+            .groupBy(
+                keySelector = { normalizeKeyword(it.key) },
+                valueTransform = { it.value }
+            )
+            .mapValues { (_, values) -> values.maxOrNull() ?: 0.0 }
+            .toList()
+            .sortedWith(
+                compareByDescending<Pair<String, Double>> { it.second }
+                    .thenByDescending { it.first.length }
+                    .thenBy { it.first }
+            )
+            .associateTo(linkedMapOf()) { (keyword, confidence) ->
+                keyword to confidence
+            }
+    }
+
+    private fun normalizeKeyword(keyword: String): String {
+        return keyword.trim().lowercase().replace("\\s+".toRegex(), " ")
     }
 }

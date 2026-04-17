@@ -238,13 +238,17 @@ class CloudWarrantyExtractionService @Inject constructor(
 
             val warrantyJson = JSONObject(jsonMatch)
             
-            if (!warrantyJson.optBoolean("hasWarranty", false)) {
+            val hasWarranty = warrantyJson.optBoolean("hasWarranty", false)
+            val returnDays = warrantyJson.optInt("returnDays", 0).takeIf { it > 0 }
+            val returnConditions = warrantyJson.optString("returnConditions").takeIf { it.isNotBlank() }
+            val warrantyMonths = warrantyJson.optInt("warrantyMonths", 0).takeIf { it > 0 }
+
+            if (!hasWarranty && returnDays == null && returnConditions == null) {
                 return null
             }
 
-            val warrantyMonths = warrantyJson.optInt("warrantyMonths", 0)
-            if (warrantyMonths <= 0) {
-                return null // No valid warranty duration
+            if (hasWarranty && warrantyMonths == null && returnDays == null && returnConditions == null) {
+                return null
             }
 
             WarrantyExtractionResult(
@@ -253,8 +257,8 @@ class CloudWarrantyExtractionService @Inject constructor(
                 warrantyMonths = warrantyMonths,
                 supportPhone = warrantyJson.optString("supportPhone").takeIf { it.isNotBlank() },
                 supportEmail = warrantyJson.optString("supportEmail").takeIf { it.isNotBlank() },
-                returnDays = warrantyJson.optInt("returnDays", 0).takeIf { it > 0 },
-                returnConditions = warrantyJson.optString("returnConditions").takeIf { it.isNotBlank() },
+                returnDays = returnDays,
+                returnConditions = returnConditions,
                 confidence = warrantyJson.optDouble("confidence", 0.0).toFloat()
             )
         } catch (e: Exception) {

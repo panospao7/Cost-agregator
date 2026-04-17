@@ -1102,6 +1102,23 @@ interface ExpenseDao {
     @Query("SELECT MIN(date) FROM expenses WHERE isNotMine = 0")
     suspend fun getOldestExpenseDate(): Long?
 
+    @Query(
+        """
+        SELECT CAST(strftime('%Y%m%d', date/1000, 'unixepoch', 'localtime') AS INTEGER) as dayEpoch,
+               MIN(date) as startDate,
+               MAX(date) as endDate,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
+               COUNT(*) as txCount
+        FROM expenses
+        WHERE ${SPENDING_TYPE_SQL}
+          AND date >= :startMs AND date < :endMs
+          AND isNotMine = 0
+        GROUP BY dayEpoch
+        ORDER BY dayEpoch ASC
+        """
+    )
+    suspend fun getSpendingDailyTotalsBetween(startMs: Long, endMs: Long): List<DailyTotal>
+
     // === Tier 1 & 2 Analytics Queries ===
 
     // Monthly total for a specific month range

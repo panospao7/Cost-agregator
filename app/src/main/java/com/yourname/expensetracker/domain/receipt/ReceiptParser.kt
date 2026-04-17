@@ -33,6 +33,7 @@ class ReceiptParser @Inject constructor(
         private val ANY_NONSPACE = Regex("""\S+""")
         private val TIME_PATTERN = Regex("""\b\d{1,2}:\d{2}(:\d{2})?\b""")
         private val CHANGE_PATTERN = Regex("""(CHANGE|ΡΕΣΤΑ|RESTA|ΑΛΛΑΓΗ)""")
+        private val QUANTITY_PREFIX_PATTERN = Regex("""^\d+\s*[xX*]\s*.+""")
     }
 
     data class ParsedReceipt(
@@ -621,6 +622,7 @@ class ReceiptParser @Inject constructor(
             val desc = matcher1.group(1)?.trim() ?: continue
             val price = matcher1.group(2)?.let { AmountUtils.parseAmount(it) } ?: continue
             if (skipLinePattern.containsMatchIn(desc)) continue
+            if (desc.matches(QUANTITY_PREFIX_PATTERN)) continue
             if (price <= 0 || price > 10000) continue
 
             items.add(
@@ -652,7 +654,36 @@ class ReceiptParser @Inject constructor(
             )
         }
 
-        return items
+        return deduplicateLineItems(items)
+    }
+
+    private fun deduplicateLineItems(items: List<LineItem>): List<LineItem> {
+        if (items.size < 2) return items
+
+        val uniqueItems = LinkedHashMap<String, LineItem>()
+        for (item in items) {
+            uniqueItems.putIfAbsent(item.deduplicationKey(), item)
+        }
+        return uniqueItems.values.toList()
+    }
+
+    private fun LineItem.deduplicationKey(): String {
+        val normalizedDescription = description
+            .uppercase(Locale.ROOT)
+            .replace(Regex("""[^\p{L}\p{N}]+"""), " ")
+            .trim()
+            .replace(Regex("""\s+"""), " ")
+
+        return listOf(
+            normalizedDescription,
+            quantity.normalizedNumberKey(),
+            totalPrice.normalizedNumberKey()
+        ).joinToString("|")
+    }
+
+    private fun Double?.normalizedNumberKey(): String {
+        val value = this ?: return "-"
+        return java.lang.String.format(Locale.US, "%.4f", value)
     }
 
     private fun detectCurrency(text: String): String {

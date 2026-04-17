@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.usecase.dashboard.*
 import com.yourname.expensetracker.ui.components.BentoCard
 import com.yourname.expensetracker.ui.theme.SemanticColors
@@ -398,7 +399,7 @@ private fun RadarPrimaryAction(
  * Helper to format amount with currency.
  */
 private fun formatAmount(amount: Double): String {
-    return "€${String.format("%.2f", amount)}"
+    return CurrencyFormatter.format(amount)
 }
 
 /**

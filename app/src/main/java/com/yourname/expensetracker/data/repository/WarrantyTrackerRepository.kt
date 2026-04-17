@@ -14,6 +14,8 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
@@ -105,6 +107,9 @@ class WarrantyTrackerRepository @Inject constructor(
     
     suspend fun addReturnWindow(returnWindow: ReturnWindow): Long = 
         returnWindowDao.insertReturnWindow(returnWindow)
+
+    suspend fun getReturnWindowByReceiptId(receiptId: Long): ReturnWindow? =
+        returnWindowDao.getReturnWindowByReceiptId(receiptId)
     
     suspend fun updateReturnWindow(returnWindow: ReturnWindow) = 
         returnWindowDao.updateReturnWindow(returnWindow)
@@ -118,9 +123,50 @@ class WarrantyTrackerRepository @Inject constructor(
         refundAmount = refundAmount,
         updatedAt = timeProvider.now()
     )
+
+    suspend fun reconcileExpiredItems(now: Long = timeProvider.now()): ExpiryReconciliationResult {
+        val expiredWarranties = warrantyDao.markExpiredWarranties(currentTime = now, updatedAt = now)
+        val expiredReturnWindows = returnWindowDao.markExpiredReturnWindows(currentTime = now, updatedAt = now)
+        return ExpiryReconciliationResult(
+            expiredWarrantyCount = expiredWarranties,
+            expiredReturnWindowCount = expiredReturnWindows
+        )
+    }
+
+    suspend fun upsertReturnWindowForReceipt(receiptId: Long, fallbackWarranty: Warranty? = null): Long? {
+        val receipt = scannedReceiptDao.getById(receiptId) ?: return null
+        val extractionResult = extractWarrantyResult(receipt)
+        val extractedWarranty = extractionResult?.toWarrantyEntityOrNull(receipt)
+        val resolvedWarranty = fallbackWarranty ?: extractedWarranty
+        val returnWindow = extractReturnWindow(receipt, resolvedWarranty, extractionResult) ?: return null
+        val existingReturnWindow = returnWindowDao.getReturnWindowByReceiptId(receiptId)
+
+        return if (existingReturnWindow == null) {
+            returnWindowDao.insertReturnWindow(returnWindow)
+        } else {
+            returnWindowDao.updateReturnWindow(
+                returnWindow.copy(
+                    id = existingReturnWindow.id,
+                    returnPolicyUrl = returnWindow.returnPolicyUrl ?: existingReturnWindow.returnPolicyUrl,
+                    returnConditions = returnWindow.returnConditions ?: existingReturnWindow.returnConditions,
+                    status = existingReturnWindow.status,
+                    returnedAt = existingReturnWindow.returnedAt,
+                    refundAmount = existingReturnWindow.refundAmount,
+                    createdAt = existingReturnWindow.createdAt,
+                    updatedAt = timeProvider.now()
+                )
+            )
+            existingReturnWindow.id
+        }
+    }
     
     // AI extraction
     suspend fun extractWarrantyFromReceipt(receipt: ScannedReceipt): Warranty? {
+        val extractionResult = extractWarrantyResult(receipt) ?: return null
+        return extractionResult.toWarrantyEntityOrNull(receipt)
+    }
+
+    private suspend fun extractWarrantyResult(receipt: ScannedReceipt): WarrantyExtractionResult? {
         val settings = aiSettingsRepository.settings().first()
         val routeDecision = aiCapabilityRouter.decide(AiCapability.WARRANTY_EXTRACTION, settings)
         Timber.d(
@@ -149,13 +195,13 @@ class WarrantyTrackerRepository @Inject constructor(
             currency = receipt.currency
         )
 
-        val extractionResult = cloudExtractionService.extractWarranty(input, shouldRedact) ?: return null
-        return extractionResult.toWarrantyEntity(receipt)
+        return cloudExtractionService.extractWarranty(input, shouldRedact)
     }
 
-    private fun WarrantyExtractionResult.toWarrantyEntity(receipt: ScannedReceipt): Warranty {
+    private fun WarrantyExtractionResult.toWarrantyEntityOrNull(receipt: ScannedReceipt): Warranty? {
+        val durationMonths = warrantyMonths ?: return null
         val purchaseDate = receipt.parsedDate ?: receipt.createdAt
-        val warrantyEndDate = purchaseDate + (warrantyMonths * 30L * 24 * 60 * 60 * 1000)
+        val warrantyEndDate = purchaseDate.toCalendarMonthEndDate(durationMonths)
 
         return Warranty(
             receiptId = receipt.id,
@@ -163,7 +209,7 @@ class WarrantyTrackerRepository @Inject constructor(
             productName = productName,
             merchantName = receipt.parsedMerchant ?: "Unknown",
             purchaseDate = purchaseDate,
-            warrantyDurationMonths = warrantyMonths,
+            warrantyDurationMonths = durationMonths,
             warrantyEndDate = warrantyEndDate,
             warrantyType = parseWarrantyType(warrantyType),
             supportPhone = supportPhone,
@@ -181,15 +227,13 @@ class WarrantyTrackerRepository @Inject constructor(
     }
     
     // Extract return window from warranty extraction result
-    suspend fun extractReturnWindow(receipt: ScannedReceipt, warranty: Warranty?): ReturnWindow? {
-        // Try to extract return policy from the same receipt
-        // For now, use common defaults based on merchant type
-        val returnDays = when {
-            receipt.parsedMerchant?.contains("Amazon", ignoreCase = true) == true -> 30
-            receipt.parsedMerchant?.contains("Best Buy", ignoreCase = true) == true -> 15
-            receipt.parsedMerchant?.contains("Apple", ignoreCase = true) == true -> 14
-            else -> 30 // Default
-        }
+    suspend fun extractReturnWindow(
+        receipt: ScannedReceipt,
+        warranty: Warranty?,
+        extractionResult: WarrantyExtractionResult? = null
+    ): ReturnWindow? {
+        val returnDays = extractionResult?.returnDays ?: defaultReturnDaysForMerchant(receipt.parsedMerchant)
+        if (returnDays <= 0) return null
         
         val purchaseDate = receipt.parsedDate ?: receipt.createdAt
         val purchaseStart = TimePeriodUtils.getStartOfDay(purchaseDate)
@@ -202,19 +246,43 @@ class WarrantyTrackerRepository @Inject constructor(
             merchantName = receipt.parsedMerchant ?: "Unknown",
             purchaseDate = purchaseDate,
             returnDays = returnDays,
-            returnDeadline = returnDeadline
+            returnDeadline = returnDeadline,
+            returnConditions = extractionResult?.returnConditions
         )
     }
     
     // Batch operations for receipt scanning
     suspend fun processReceiptForWarranty(receipt: ScannedReceipt): Pair<Warranty?, ReturnWindow?> {
-        val warranty = extractWarrantyFromReceipt(receipt)
-        val returnWindow = if (warranty != null) {
-            extractReturnWindow(receipt, warranty)
-        } else null
+        val extractionResult = extractWarrantyResult(receipt)
+        val warranty = extractionResult?.toWarrantyEntityOrNull(receipt)
+        val returnWindow = extractReturnWindow(receipt, warranty, extractionResult)
         
         return Pair(warranty, returnWindow)
     }
+
+    private fun defaultReturnDaysForMerchant(merchant: String?): Int {
+        return when {
+            merchant?.contains("Amazon", ignoreCase = true) == true -> 30
+            merchant?.contains("Best Buy", ignoreCase = true) == true -> 15
+            merchant?.contains("Apple", ignoreCase = true) == true -> 14
+            else -> 30
+        }
+    }
+
+    private fun Long.toCalendarMonthEndDate(durationMonths: Int): Long {
+        val zoneId = ZoneId.systemDefault()
+        val endDate = Instant.ofEpochMilli(this)
+            .atZone(zoneId)
+            .toLocalDate()
+            .plusMonths(durationMonths.toLong())
+
+        return endDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
+    }
+
+    data class ExpiryReconciliationResult(
+        val expiredWarrantyCount: Int,
+        val expiredReturnWindowCount: Int
+    )
 
     suspend fun createManualPlaceholderReceipt(
         merchantName: String,

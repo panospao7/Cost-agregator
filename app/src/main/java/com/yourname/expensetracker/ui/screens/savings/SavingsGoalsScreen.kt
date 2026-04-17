@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.savings.SavingsStreak
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.usecase.savings.GoalAllocation
 import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
 import kotlinx.coroutines.launch
@@ -191,7 +192,7 @@ fun SavingsGoalsScreen(
                 title = { Text("Contribute to ${recommendation.goal.name}?") },
                 text = {
                     Text(
-                        "Add €${String.format("%.2f", recommendation.recommendedAmount)} " +
+                        "Add ${CurrencyFormatter.format(recommendation.recommendedAmount)} " +
                                 "to this goal now?"
                     )
                 },
@@ -205,7 +206,7 @@ fun SavingsGoalsScreen(
                             recommendationToConfirm = null
                             scope.launch {
                                 snackbarHostState.showSnackbar(
-                                    message = "Saved €${String.format("%.2f", recommendation.recommendedAmount)}",
+                                    message = "Saved ${CurrencyFormatter.format(recommendation.recommendedAmount)}",
                                     withDismissAction = true
                                 )
                             }
@@ -268,7 +269,7 @@ private fun GamificationHeader(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = stringResource(R.string.savings_label_total_saved, String.format("%.2f", totalSaved)),
+                text = stringResource(R.string.savings_label_total_saved, CurrencyFormatter.format(totalSaved)),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
@@ -311,7 +312,7 @@ private fun SmartRecommendationCard(
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = stringResource(R.string.savings_safe_to_save, String.format("%.2f", rec.recommendedAmount)),
+                    text = stringResource(R.string.savings_safe_to_save, CurrencyFormatter.format(rec.recommendedAmount)),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
@@ -531,11 +532,11 @@ private fun GoalCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = stringResource(R.string.savings_amount_eur, String.format("%.2f", goal.currentAmount)),
+                    text = CurrencyFormatter.format(goal.currentAmount),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = stringResource(R.string.savings_of_target, String.format("%.2f", goal.targetAmount)),
+                    text = stringResource(R.string.savings_of_target, CurrencyFormatter.format(goal.targetAmount)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -698,7 +699,7 @@ private fun SweepRecommendationCard(
             
             // Safe to save amount
             Text(
-                text = "Safe to Save: €${String.format("%.2f", recommendation.safeSweepAmount)}",
+                text = "Safe to Save: ${CurrencyFormatter.format(recommendation.safeSweepAmount)}",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
@@ -708,8 +709,8 @@ private fun SweepRecommendationCard(
             
             // Underspend and buffer details
             Text(
-                text = "Underspend: €${String.format("%.2f", recommendation.totalUnderspend)} • " +
-                       "Buffer: €${String.format("%.2f", recommendation.riskBuffer)}",
+                text = "Underspend: ${CurrencyFormatter.format(recommendation.totalUnderspend)} • " +
+                       "Buffer: ${CurrencyFormatter.format(recommendation.riskBuffer)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
             )
@@ -794,7 +795,7 @@ private fun GoalAllocationRow(allocation: GoalAllocation) {
         }
         
         Text(
-            text = "+€${String.format("%.2f", allocation.suggestedAllocation)}",
+            text = "+${CurrencyFormatter.format(allocation.suggestedAllocation)}",
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary

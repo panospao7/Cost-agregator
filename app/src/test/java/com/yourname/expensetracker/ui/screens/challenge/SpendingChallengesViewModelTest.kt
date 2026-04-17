@@ -13,7 +13,6 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -50,21 +49,18 @@ class SpendingChallengesViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
-    fun `init marks active challenges unavailable when canonical source is missing`() = runTest(testDispatcher) {
+    fun `init keeps canonical source available when persisted source is empty`() = runTest(testDispatcher) {
         coEvery { challengeManager.getActiveChallengesSnapshot() } returns ActiveChallengesSnapshot(
             challenges = emptyList(),
-            unavailableReason = SpendingChallengeManager.ACTIVE_CHALLENGES_UNAVAILABLE_REASON
+            unavailableReason = null
         )
 
         viewModel = SpendingChallengesViewModel(challengeManager)
         advanceUntilIdle()
 
         assertTrue(viewModel.activeChallenges.value.isEmpty())
-        assertFalse(viewModel.challengesAvailability.value.hasCanonicalSource)
-        assertEquals(
-            SpendingChallengeManager.ACTIVE_CHALLENGES_UNAVAILABLE_REASON,
-            viewModel.challengesAvailability.value.unavailableReason
-        )
+        assertTrue(viewModel.challengesAvailability.value.hasCanonicalSource)
+        assertNull(viewModel.challengesAvailability.value.unavailableReason)
     }
 
     @Test
@@ -110,6 +106,11 @@ class SpendingChallengesViewModelTest : ViewModelTestUtils() {
         targetAmount = null,
         categoryId = null,
         isActive = true,
-        progress = 40.0
+        progress = 40.0,
+        baselineAmount = null,
+        baselineStartDate = null,
+        baselineEndDate = null,
+        createdAt = 1_700_000_000_000L,
+        updatedAt = 1_700_000_000_000L
     )
 }

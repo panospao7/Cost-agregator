@@ -15,8 +15,12 @@ sealed class NavigationDestination {
     
     // Main Tabs
     data object Home : NavigationDestination()
-    data object Transactions : NavigationDestination()
-    data object Analytics : NavigationDestination()
+    data class Transactions(
+        val initialExpenseId: Long? = null
+    ) : NavigationDestination()
+    data class Analytics(
+        val initialPeriod: String? = null
+    ) : NavigationDestination()
     data object Assistant : NavigationDestination()
     data object Review : NavigationDestination()
     data object Budget : NavigationDestination()
@@ -24,7 +28,9 @@ sealed class NavigationDestination {
         val categoryId: Long? = null,
         val categoryName: String? = null
     ) : NavigationDestination()
-    data object SpendingMap : NavigationDestination()
+    data class SpendingMap(
+        val initialLocationQuery: String? = null
+    ) : NavigationDestination()
     
     // Overlay Screens (previously boolean flags)
     data object AddExpense : NavigationDestination()

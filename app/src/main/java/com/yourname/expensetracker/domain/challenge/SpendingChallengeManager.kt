@@ -1,13 +1,11 @@
 package com.yourname.expensetracker.domain.challenge
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.data.database.dao.DailyTotal
+import com.yourname.expensetracker.data.repository.SpendingChallengeRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -17,151 +15,193 @@ import javax.inject.Singleton
 @Singleton
 class SpendingChallengeManager @Inject constructor(
     private val expenseDao: ExpenseDao,
-    private val savingsGoalRepository: SavingsGoalRepository,
+    private val spendingChallengeRepository: SpendingChallengeRepository,
     private val timeProvider: TimeProvider
 ) {
 
-    /**
-     * There is currently no persisted challenge repository/canonical source in the codebase.
-     * Return an explicit blocked state so the UI does not present an empty list as real data.
-     */
     suspend fun getActiveChallengesSnapshot(): ActiveChallengesSnapshot = withContext(Dispatchers.IO) {
+        val now = timeProvider.now()
+        val completedChallengeIds = mutableListOf<Long>()
+
+        val activeChallenges = spendingChallengeRepository.getActiveChallenges().mapNotNull { challenge ->
+            val progress = getChallengeProgress(challenge)
+            if (progress.isCompleted) {
+                completedChallengeIds += challenge.id
+                null
+            } else {
+                challenge.copy(progress = progress.progressPercent)
+            }
+        }
+
+        if (completedChallengeIds.isNotEmpty()) {
+            spendingChallengeRepository.deactivateChallenges(completedChallengeIds, now)
+        }
+
         ActiveChallengesSnapshot(
-            challenges = emptyList(),
-            unavailableReason = ACTIVE_CHALLENGES_UNAVAILABLE_REASON
+            challenges = activeChallenges,
+            unavailableReason = null
         )
     }
-    
+
     /**
      * Check if user has a no-spend streak today.
      */
     suspend fun checkNoSpendStreak(): NoSpendStatus = withContext(Dispatchers.IO) {
         val today = timeProvider.now()
         val startOfDay = getStartOfDay(today)
-        val endOfDay = startOfDay + (24 * 60 * 60 * 1000L)
-        
-        // Check if any expenses today
-        val todayExpenses = expenseDao.getExpensesBetween(startOfDay, endOfDay)
-        
-        // Check discretionary spending only
-        var discretionarySpent = 0.0
-        for (expense in todayExpenses) {
-            if (expense.transactionType.name == "PURCHASE") {
-                discretionarySpent += expense.effectiveAmount
-            }
-        }
-        
-        val hasNoSpend = discretionarySpent == 0.0
-        
-        // Calculate streak
+        val endOfDay = startOfDay + DAY_MS
+        val oldestExpenseDate = expenseDao.getOldestExpenseDate()
+        val rangeStart = oldestExpenseDate?.let(::getStartOfDay) ?: startOfDay
+
+        val spendingDays = expenseDao.getSpendingDailyTotalsBetween(rangeStart, endOfDay)
+        val spendingByDay = spendingDays.associateBy { getStartOfDay(it.startDate) }
+        val todaySpent = spendingByDay[startOfDay]?.total ?: 0.0
+        val hasNoSpend = todaySpent <= 0.0
+
+        val firstTrackedDay = spendingDays.firstOrNull()?.let { getStartOfDay(it.startDate) } ?: rangeStart
         var streakDays = if (hasNoSpend) 1 else 0
         if (hasNoSpend) {
-            // Check previous days
-            var checkDate = startOfDay - (24 * 60 * 60 * 1000L)
-            while (true) {
-                val dayStart = getStartOfDay(checkDate)
-                val dayEnd = dayStart + (24 * 60 * 60 * 1000L)
-                val dayExpenses = expenseDao.getExpensesBetween(dayStart, dayEnd)
-                
-                var daySpent = 0.0
-                for (expense in dayExpenses) {
-                    if (expense.transactionType.name == "PURCHASE") {
-                        daySpent += expense.effectiveAmount
-                    }
-                }
-                
-                if (daySpent == 0.0) {
-                    streakDays++
-                    checkDate -= (24 * 60 * 60 * 1000L)
-                } else {
-                    break
-                }
+            var checkDay = startOfDay - DAY_MS
+            while (checkDay >= firstTrackedDay) {
+                val spent = spendingByDay[checkDay]?.total ?: 0.0
+                if (spent > 0.0) break
+                streakDays++
+                checkDay -= DAY_MS
             }
         }
-        
+
+        val lastSpendDate = spendingDays.lastOrNull()?.let { getStartOfDay(it.startDate) } ?: today
+
         NoSpendStatus(
             hasNoSpendToday = hasNoSpend,
             currentStreakDays = streakDays,
-            lastSpendDate = if (!hasNoSpend) today else getLastSpendDate(startOfDay),
+            lastSpendDate = if (hasNoSpend) lastSpendDate else findLastSpendDate(spendingDays) ?: startOfDay,
             savedToday = if (hasNoSpend) calculateAverageDailySpend() else 0.0,
             achievementUnlocked = streakDays >= 7
         )
     }
-    
-    /**
-     * Create a spending challenge in memory only.
-     *
-     * Note: there is no persisted active-challenge source yet, so created challenges cannot
-     * currently be reloaded into the challenges screen after creation.
-     */
-    fun createChallenge(
+
+    suspend fun createChallenge(
         name: String,
         type: ChallengeType,
         durationDays: Int,
         targetAmount: Double? = null,
         categoryId: Long? = null
-    ): SpendingChallenge {
+    ): SpendingChallenge = withContext(Dispatchers.IO) {
+        require(durationDays > 0) { "durationDays must be greater than 0" }
+        require(name.isNotBlank()) { "name must not be blank" }
+        if (type == ChallengeType.CATEGORY_SPECIFIC) {
+            require(categoryId != null) { "CATEGORY_SPECIFIC challenges require a categoryId" }
+        }
+        if (type == ChallengeType.BUDGET_LIMIT || type == ChallengeType.CATEGORY_SPECIFIC) {
+            require(targetAmount != null && targetAmount > 0.0) {
+                "$type challenges require a positive targetAmount"
+            }
+        }
+
         val now = timeProvider.now()
-        return SpendingChallenge(
-            id = UUID.randomUUID().mostSignificantBits and Long.MAX_VALUE,
-            name = name,
-            type = type,
-            startDate = now,
-            endDate = now + (durationDays.toLong() * 24 * 60 * 60 * 1000L),
-            targetAmount = targetAmount,
-            categoryId = categoryId,
-            isActive = true,
-            progress = 0.0
+        val baseline = buildBaseline(type = type, durationDays = durationDays, categoryId = categoryId, now = now)
+        spendingChallengeRepository.saveChallenge(
+            SpendingChallenge(
+                id = 0,
+                name = name,
+                type = type,
+                startDate = now,
+                endDate = now + (durationDays.toLong() * DAY_MS),
+                targetAmount = targetAmount,
+                categoryId = categoryId,
+                isActive = true,
+                progress = 0.0,
+                baselineAmount = baseline?.amount,
+                baselineStartDate = baseline?.startDate,
+                baselineEndDate = baseline?.endDate
+            )
         )
     }
-    
+
     /**
      * Get challenge progress.
      */
     suspend fun getChallengeProgress(challenge: SpendingChallenge): ChallengeProgress = withContext(Dispatchers.IO) {
-        val expenses = expenseDao.getExpensesBetween(challenge.startDate, minOf(timeProvider.now(), challenge.endDate))
-        
-        var spent = 0.0
-        for (expense in expenses) {
-            if (challenge.categoryId == null || expense.categoryId == challenge.categoryId) {
-                if (expense.transactionType.name == "PURCHASE") {
-                    spent += expense.effectiveAmount
-                }
+        val now = timeProvider.now()
+        val evaluationEnd = minOf(now, challenge.endDate)
+        val spent = getSpentForChallengeRange(
+            startDate = challenge.startDate,
+            endDate = evaluationEnd,
+            categoryId = challenge.categoryId
+        )
+
+        val elapsedProgress = calculateElapsedProgress(challenge = challenge, now = now)
+        val daysRemaining = ((challenge.endDate - now) / DAY_MS).toInt().coerceAtLeast(0)
+
+        val (isCompleted, isSuccessful) = when (challenge.type) {
+            ChallengeType.NO_SPEND -> {
+                val failed = spent > 0.0
+                val completed = now >= challenge.endDate || failed
+                completed to (completed && !failed && now >= challenge.endDate)
             }
-        }
-        
-        val progress = when (challenge.type) {
-            ChallengeType.NO_SPEND -> if (spent == 0.0) 100.0 else 0.0
-            ChallengeType.BUDGET_LIMIT -> {
-                val target = challenge.targetAmount ?: 100.0
-                maxOf(0.0, (1 - (spent / target)) * 100)
-            }
-            ChallengeType.REDUCE_SPENDING -> {
-                val target = challenge.targetAmount ?: 100.0
-                maxOf(0.0, (1 - (spent / target)) * 100)
-            }
+
+            ChallengeType.BUDGET_LIMIT,
             ChallengeType.CATEGORY_SPECIFIC -> {
-                val target = challenge.targetAmount ?: 100.0
-                maxOf(0.0, (1 - (spent / target)) * 100)
+                val target = challenge.targetAmount
+                val failed = target != null && spent > target
+                val completed = now >= challenge.endDate || failed
+                completed to (completed && now >= challenge.endDate && target != null && spent <= target)
+            }
+
+            ChallengeType.REDUCE_SPENDING -> {
+                val allowedSpend = resolveReduceSpendingCap(challenge)
+                val failed = allowedSpend != null && spent > allowedSpend
+                val completed = now >= challenge.endDate || failed || allowedSpend == null
+                completed to (completed && now >= challenge.endDate && allowedSpend != null && spent <= allowedSpend)
             }
         }
-        
-        val daysRemaining = ((challenge.endDate - timeProvider.now()) / (24 * 60 * 60 * 1000L)).toInt().coerceAtLeast(0)
-        val isCompleted = timeProvider.now() >= challenge.endDate || progress >= 100.0
-        
+
         ChallengeProgress(
             challenge = challenge,
             amountSpent = spent,
-            progressPercent = progress,
+            progressPercent = if (isCompleted) 100.0 else elapsedProgress,
             daysRemaining = daysRemaining,
             isCompleted = isCompleted,
-            isSuccessful = when (challenge.type) {
-                ChallengeType.NO_SPEND -> spent == 0.0
-                else -> progress >= 100.0
-            }
+            isSuccessful = isSuccessful
         )
     }
-    
+
+    private suspend fun buildBaseline(
+        type: ChallengeType,
+        durationDays: Int,
+        categoryId: Long?,
+        now: Long
+    ): ChallengeBaseline? {
+        if (type != ChallengeType.REDUCE_SPENDING) return null
+
+        val baselineEnd = getStartOfDay(now)
+        val baselineStart = baselineEnd - durationDays.toLong() * DAY_MS
+        val baselineAmount = getSpentForChallengeRange(
+            startDate = baselineStart,
+            endDate = baselineEnd,
+            categoryId = categoryId
+        )
+
+        return ChallengeBaseline(
+            amount = baselineAmount,
+            startDate = baselineStart,
+            endDate = baselineEnd
+        )
+    }
+
+    private fun resolveReduceSpendingCap(challenge: SpendingChallenge): Double? {
+        val baselineAmount = challenge.baselineAmount ?: return null
+        val reductionAmount = challenge.targetAmount ?: 0.0
+        return (baselineAmount - reductionAmount).coerceAtLeast(0.0)
+    }
+
+    private fun calculateElapsedProgress(challenge: SpendingChallenge, now: Long): Double {
+        val duration = (challenge.endDate - challenge.startDate).coerceAtLeast(1L)
+        val elapsed = (minOf(now, challenge.endDate) - challenge.startDate).coerceAtLeast(0L)
+        return ((elapsed.toDouble() / duration.toDouble()) * 100.0).coerceIn(0.0, 100.0)
+    }
+
     private fun getStartOfDay(timestamp: Long): Long {
         val calendar = java.util.Calendar.getInstance()
         calendar.timeInMillis = timestamp
@@ -171,31 +211,40 @@ class SpendingChallengeManager @Inject constructor(
         calendar.set(java.util.Calendar.MILLISECOND, 0)
         return calendar.timeInMillis
     }
-    
-    private fun getLastSpendDate(before: Long): Long {
-        // Would search for last day with spending
-        return before - (24 * 60 * 60 * 1000L)
-    }
-    
-    private suspend fun calculateAverageDailySpend(): Double = withContext(Dispatchers.IO) {
-        val thirtyDaysAgo = timeProvider.now() - (30 * 24 * 60 * 60 * 1000L)
-        val expenses = expenseDao.getExpensesBetween(thirtyDaysAgo, timeProvider.now())
-        
-        var total = 0.0
-        for (expense in expenses) {
-            if (expense.transactionType.name == "PURCHASE") {
-                total += expense.effectiveAmount
-            }
+
+    private suspend fun getSpentForChallengeRange(
+        startDate: Long,
+        endDate: Long,
+        categoryId: Long?
+    ): Double {
+        return if (categoryId == null) {
+            expenseDao.getTotalSpentBetween(startDate, endDate) ?: 0.0
+        } else {
+            expenseDao.getCategorySpentInPeriod(categoryId, startDate, endDate)
         }
-        
+    }
+
+    private suspend fun calculateAverageDailySpend(): Double = withContext(Dispatchers.IO) {
+        val now = timeProvider.now()
+        val thirtyDaysAgo = now - (30 * DAY_MS)
+        val total = expenseDao.getTotalSpentBetween(thirtyDaysAgo, now) ?: 0.0
         total / 30.0
     }
 
+    private fun findLastSpendDate(spendingDays: List<DailyTotal>): Long? {
+        return spendingDays.lastOrNull { it.total > 0.0 }?.let { getStartOfDay(it.startDate) }
+    }
+
     companion object {
-        const val ACTIVE_CHALLENGES_UNAVAILABLE_REASON =
-            "Active challenges cannot be loaded yet because challenge creation is not backed by persisted storage in this build."
+        private const val DAY_MS = 24 * 60 * 60 * 1000L
     }
 }
+
+private data class ChallengeBaseline(
+    val amount: Double,
+    val startDate: Long,
+    val endDate: Long
+)
 
 data class ActiveChallengesSnapshot(
     val challenges: List<SpendingChallenge>,
@@ -219,14 +268,19 @@ data class SpendingChallenge(
     val targetAmount: Double?,
     val categoryId: Long?,
     val isActive: Boolean,
-    val progress: Double
+    val progress: Double,
+    val baselineAmount: Double? = null,
+    val baselineStartDate: Long? = null,
+    val baselineEndDate: Long? = null,
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L
 )
 
 enum class ChallengeType {
-    NO_SPEND,           // No spending at all
-    BUDGET_LIMIT,       // Stay under X amount
-    REDUCE_SPENDING,    // Spend less than previous period
-    CATEGORY_SPECIFIC   // Limit spending in specific category
+    NO_SPEND,
+    BUDGET_LIMIT,
+    REDUCE_SPENDING,
+    CATEGORY_SPECIFIC
 }
 
 data class ChallengeProgress(

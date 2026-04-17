@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.CategoryBreakdown
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 data class CategorySpending(
@@ -164,7 +165,7 @@ private fun CategoryRow(category: CategorySpending) {
                 }
 
                 Text(
-                    text = "€${String.format("%.2f", category.amount)}",
+                    text = CurrencyFormatter.format(category.amount),
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontWeight = FontWeight.Bold,
                         fontFeatureSettings = "tnum"

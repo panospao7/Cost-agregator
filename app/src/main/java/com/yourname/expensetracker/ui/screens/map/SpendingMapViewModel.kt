@@ -76,7 +76,8 @@ data class SpendingMapState(
     val selectedCategories: Set<String> = emptySet(),
     val dateRangeStartMs: Long? = null,
     val dateRangeEndMs: Long? = null,
-    val availableCategories: List<MapCategoryFilterOption> = emptyList()
+    val availableCategories: List<MapCategoryFilterOption> = emptyList(),
+    val highlightedMerchantQuery: String? = null
 )
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
@@ -434,12 +435,17 @@ class SpendingMapViewModel @Inject constructor(
             it.copy(
                 selectedCategories = emptySet(),
                 dateRangeStartMs = null,
-                dateRangeEndMs = null
+                dateRangeEndMs = null,
+                highlightedMerchantQuery = null
             )
         }
         viewModelScope.launch(Dispatchers.IO) {
             recomputeMapData(expenseRepository.getLocatedExpenses().first())
         }
+    }
+
+    fun focusOnMerchant(query: String?) {
+        _state.update { it.copy(highlightedMerchantQuery = query?.trim()?.takeIf(String::isNotBlank)) }
     }
 
     fun setDateRange(startMs: Long?, endMs: Long?) {

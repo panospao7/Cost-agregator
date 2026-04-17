@@ -29,6 +29,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         return try {
             Timber.d("Checking for expiring warranties...")
+            val reconciliationResult = warrantyRepository.reconcileExpiredItems()
             
             // Check warranties expiring in 7 days
             val expiringIn7Days = warrantyRepository.getWarrantiesExpiringSoon(7)
@@ -53,7 +54,11 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 )
             }
             
-            Timber.d("Warranty check complete. Found ${expiringIn7Days.size} expiring in 7 days, ${expiringIn30Days.size} in 30 days")
+            Timber.d(
+                "Warranty check complete. Expired ${reconciliationResult.expiredWarrantyCount} warranties, " +
+                    "${reconciliationResult.expiredReturnWindowCount} return windows; found ${expiringIn7Days.size} expiring in 7 days, " +
+                    "${expiringIn30Days.size} in 30 days"
+            )
             Result.success()
         } catch (e: CancellationException) {
             throw e

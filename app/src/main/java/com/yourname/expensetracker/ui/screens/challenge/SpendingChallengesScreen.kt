@@ -195,6 +195,7 @@ private fun ActiveChallengeCard(
     challenge: SpendingChallenge,
     modifier: Modifier = Modifier
 ) {
+    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     Card(modifier = modifier) {
         Column(
             modifier = Modifier
@@ -212,6 +213,37 @@ private fun ActiveChallengeCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            LinearProgressIndicator(
+                progress = { ((challenge.progress / 100.0).coerceIn(0.0, 1.0)).toFloat() },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text(
+                text = "${challenge.progress.toInt()}% through challenge window",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            challenge.targetAmount?.let { targetAmount ->
+                Text(
+                    text = when (challenge.type) {
+                        com.yourname.expensetracker.domain.challenge.ChallengeType.REDUCE_SPENDING -> {
+                            val baseline = challenge.baselineAmount?.let(currencyFormat::format)
+                            val reduction = currencyFormat.format(targetAmount)
+                            if (baseline != null) {
+                                "Baseline $baseline, reduce by $reduction"
+                            } else {
+                                "Reduce spend by $reduction"
+                            }
+                        }
+
+                        else -> "Target: ${currencyFormat.format(targetAmount)}"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }

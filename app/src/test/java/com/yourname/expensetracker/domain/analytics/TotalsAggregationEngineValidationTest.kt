@@ -114,10 +114,10 @@ class TotalsAggregationEngineValidationTest {
         val result = engine.getMonthlyTotals(2024)
         
         // Then: Verify totals match expected values
-        assertEquals(3, result.size)
-        assertEquals(1500.0, result[0].totalAmount, 0.01)
-        assertEquals(2000.0, result[1].totalAmount, 0.01)
-        assertEquals(1800.0, result[2].totalAmount, 0.01)
+        assertEquals(12, result.size)
+        assertEquals(1500.0, result.first { it.periodKey == "2024-01" }.totalAmount, 0.01)
+        assertEquals(2000.0, result.first { it.periodKey == "2024-02" }.totalAmount, 0.01)
+        assertEquals(1800.0, result.first { it.periodKey == "2024-03" }.totalAmount, 0.01)
         
         // Verify total sum
         val totalSum = result.sumOf { it.totalAmount }
@@ -163,10 +163,10 @@ class TotalsAggregationEngineValidationTest {
         val result = engine.getDailyTotalsForRange(startMs, endMs)
         
         // Then: Verify totals match expected values
-        assertEquals(3, result.size)
-        assertEquals(100.0, result[0].totalAmount, 0.01)
-        assertEquals(150.0, result[1].totalAmount, 0.01)
-        assertEquals(200.0, result[2].totalAmount, 0.01)
+        assertEquals(7, result.size)
+        assertEquals(100.0, result.first { it.startDateMs == createDate(2024, 4, 15) }.totalAmount, 0.01)
+        assertEquals(150.0, result.first { it.startDateMs == createDate(2024, 4, 16) }.totalAmount, 0.01)
+        assertEquals(200.0, result.first { it.startDateMs == createDate(2024, 4, 17) }.totalAmount, 0.01)
         
         // Verify total sum
         val totalSum = result.sumOf { it.totalAmount }
@@ -245,8 +245,9 @@ class TotalsAggregationEngineValidationTest {
         // When: Get monthly totals
         val result = engine.getMonthlyTotals(2024)
         
-        // Then: Should return empty list
-        assertTrue(result.isEmpty())
+        // Then: Should return explicit zero buckets
+        assertEquals(12, result.size)
+        assertTrue(result.all { it.totalAmount == 0.0 && it.transactionCount == 0 })
     }
 
     @Test

@@ -80,6 +80,10 @@ class GoogleWalletParser @Inject constructor(
         "order", "subscription", "bill", "checkout"
     )
 
+    private val EXPLICIT_P2P_ONLY_KEYWORDS = listOf(
+        "google pay", "gpay", "upi", "peer", "peer-to-peer", "p2p"
+    )
+
     private val MERCHANT_LIKE_KEYWORDS = listOf(
         "store", "shop", "market", "mart", "cafe", "coffee", "restaurant",
         "hotel", "pharmacy", "bakery", "bar", "grill", "pizza", "burger",
@@ -277,14 +281,20 @@ class GoogleWalletParser @Inject constructor(
             return hasOutgoingPeerTransferMarker(lowerFull, cleanedCounterparty)
         }
 
-        if (P2P_KEYWORDS.any { lowerFull.contains(it) } ||
-            PAYMENT_APP_INDICATORS.any { lowerFull.contains(it) }
+        if (PURCHASE_CONTEXT_KEYWORDS.any { lowerFull.contains(it) }) {
+            return false
+        }
+
+        if (EXPLICIT_P2P_ONLY_KEYWORDS.any { lowerFull.contains(it) } &&
+            looksLikeExplicitPersonName(cleanedCounterparty, allowSingleWordName = false)
         ) {
             return true
         }
 
-        if (PURCHASE_CONTEXT_KEYWORDS.any { lowerFull.contains(it) }) {
-            return false
+        if (P2P_KEYWORDS.any { lowerFull.contains(it) } ||
+            PAYMENT_APP_INDICATORS.any { lowerFull.contains(it) }
+        ) {
+            return true
         }
 
         if (cleanedCounterparty.isBlank()) {
@@ -307,12 +317,20 @@ class GoogleWalletParser @Inject constructor(
     }
 
     private fun hasOutgoingPeerTransferMarker(lowerFull: String, cleanedCounterparty: String): Boolean {
+        if (PURCHASE_CONTEXT_KEYWORDS.any { lowerFull.contains(it) || cleanedCounterparty.contains(it, ignoreCase = true) }) {
+            return false
+        }
+
         if (P2P_KEYWORDS.any { lowerFull.contains(it) || cleanedCounterparty.contains(it, ignoreCase = true) }) {
             return true
         }
 
         if (PAYMENT_APP_INDICATORS.any { lowerFull.contains(it) || cleanedCounterparty.contains(it, ignoreCase = true) }) {
             return true
+        }
+
+        if (EXPLICIT_P2P_ONLY_KEYWORDS.any { lowerFull.contains(it) || cleanedCounterparty.contains(it, ignoreCase = true) }) {
+            return looksLikeExplicitPersonName(cleanedCounterparty, allowSingleWordName = false)
         }
 
         return false

@@ -725,6 +725,32 @@ class MigrationContractTest {
         }
     }
 
+    @Test
+    fun migration_79_to_80_creates_spending_challenges_table() {
+        withTestDb("migration-contract-79-80.db", version = 79) { db ->
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS categories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    name TEXT NOT NULL,
+                    icon TEXT NOT NULL,
+                    color TEXT NOT NULL,
+                    isDefault INTEGER NOT NULL DEFAULT 0
+                )
+                """.trimIndent()
+            )
+
+            AppDatabase.MIGRATION_79_80.migrate(db)
+
+            db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='spending_challenges'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+            }
+            db.query("SELECT name FROM sqlite_master WHERE type='index' AND name='index_spending_challenges_isActive_endDate'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+            }
+        }
+    }
+
     private inline fun withTestDb(
         name: String,
         version: Int,

@@ -60,6 +60,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending as DomainCategorySpending
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.widget.model.WidgetStyle
 import com.yourname.expensetracker.domain.widget.model.StyledWidgets
 import com.yourname.expensetracker.service.NavigationAction
@@ -73,8 +74,8 @@ fun HomeScreen(
     onNavigateToReview: () -> Unit,
     onNavigateToRecurring: () -> Unit,
     onNavigateToTransactions: (TransactionFilter) -> Unit,
-    onNavigateToAnalytics: () -> Unit = {},
-    onNavigateToMap: () -> Unit = {},
+    onNavigateToAnalytics: (String?) -> Unit = {},
+    onNavigateToMap: (String?) -> Unit = {},
     onNavigateToBudgetDetail: (String) -> Unit = {},
     // Unified Feature Navigation - handles all 22 features from FeatureConfig
     onNavigateToFeature: (NavigationDestination) -> Unit = {},
@@ -88,9 +89,9 @@ fun HomeScreen(
         viewModel.navigationActions.collect { action ->
             when (action) {
                 is NavigationAction.ToTransactionList -> onNavigateToTransactions(action.filter)
-                is NavigationAction.ToAnalytics -> onNavigateToAnalytics()
+                is NavigationAction.ToAnalytics -> onNavigateToAnalytics(action.period)
                 is NavigationAction.ToBudgetDetail -> onNavigateToBudgetDetail(action.category)
-                is NavigationAction.ToMap -> onNavigateToMap()
+                is NavigationAction.ToMap -> onNavigateToMap(action.location)
                 NavigationAction.NoOp -> Unit
             }
         }
@@ -484,9 +485,9 @@ fun HomeScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        StatLabel(stringResource(R.string.widget_today), "€${String.format("%.2f", widget.todaySpent)}", modifier = Modifier.weight(1f))
-                                        StatLabel(stringResource(R.string.widget_week), "€${String.format("%.2f", widget.weekSpent)}", modifier = Modifier.weight(1f))
-                                        StatLabel(stringResource(R.string.widget_month), "€${String.format("%.2f", widget.monthSpent)}", modifier = Modifier.weight(1f))
+                                        StatLabel(stringResource(R.string.widget_today), CurrencyFormatter.format(widget.todaySpent), modifier = Modifier.weight(1f))
+                                        StatLabel(stringResource(R.string.widget_week), CurrencyFormatter.format(widget.weekSpent), modifier = Modifier.weight(1f))
+                                        StatLabel(stringResource(R.string.widget_month), CurrencyFormatter.format(widget.monthSpent), modifier = Modifier.weight(1f))
                                     }
                                 }
                             }
@@ -702,7 +703,7 @@ fun HomeScreen(
                                             is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.AdjustBudget -> {
                                                 if (action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.CRITICAL ||
                                                     action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.HIGH) {
-                                                    onNavigateToAnalytics()
+                                                    onNavigateToAnalytics("month")
                                                 }
                                             }
                                         }
@@ -1053,7 +1054,7 @@ fun CategorySpendingRow(item: DomainCategorySpending) {
         Spacer(modifier = Modifier.width(12.dp))
         Column(horizontalAlignment = Alignment.End) {
             Text(
-                "€${String.format("%.2f", item.total)}",
+                CurrencyFormatter.format(item.total),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -1118,7 +1119,7 @@ fun RecentExpenseRow(expense: DashboardExpense, categoryColor: Color? = null) {
             }
         }
         Text(
-            "€${String.format("%.2f", expense.amount)}",
+            CurrencyFormatter.format(expense.amount),
             fontWeight = FontWeight.Bold
         )
     }

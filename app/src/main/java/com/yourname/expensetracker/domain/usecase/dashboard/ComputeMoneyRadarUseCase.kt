@@ -252,7 +252,11 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             val expenses = expenseRepository.getExpensesSince(monthStart)
             
             val spentToDate = expenses
-                .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
+                .filter {
+                    it.transactionType.toDomain() == DomainTransactionType.PURCHASE &&
+                        !it.isNotMine &&
+                        it.date <= now
+                }
                 .sumOf { it.effectiveAmount }
             
             // Include known upcoming recurring obligations in next 7 days
@@ -336,13 +340,29 @@ class ComputeMoneyRadarUseCase @Inject constructor(
      */
     private fun calculateBudgetRiskScore(riskInfo: BudgetRiskInfo?): Int {
         if (riskInfo == null) return BUDGET_SCORE_P_UNDER_25
-        
-        return when {
+
+        val probabilityScore = when {
             riskInfo.probabilityOfOverrun >= 0.75 -> BUDGET_SCORE_P_OVER_75
             riskInfo.probabilityOfOverrun >= 0.50 -> BUDGET_SCORE_P_50_75
             riskInfo.probabilityOfOverrun >= 0.25 -> BUDGET_SCORE_P_25_50
             else -> BUDGET_SCORE_P_UNDER_25
         }
+
+        val magnitudeBonus = when {
+            riskInfo.expectedOverrun >= 200.0 -> 20
+            riskInfo.expectedOverrun >= 100.0 -> 10
+            riskInfo.expectedOverrun > 0.0 -> 5
+            else -> 0
+        }
+
+        val riskTierBonus = when (riskInfo.riskTier) {
+            RiskTier.LOW -> 0
+            RiskTier.MEDIUM -> 5
+            RiskTier.HIGH -> 10
+            RiskTier.CRITICAL -> 20
+        }
+
+        return (probabilityScore + magnitudeBonus + riskTierBonus).coerceAtMost(100)
     }
     
     /**

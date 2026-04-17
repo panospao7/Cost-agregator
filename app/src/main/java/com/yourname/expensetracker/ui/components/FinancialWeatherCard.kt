@@ -25,6 +25,7 @@ import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.ui.res.stringResource
@@ -320,7 +321,7 @@ fun ForecastMetric(label: String, amount: Double, color: Color) {
             letterSpacing = 0.5.sp
         )
         Text(
-            text = "€${String.format(Locale.US, "%.0f", amount)}",
+            text = CurrencyFormatter.format(amount, showCents = false),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             color = color
@@ -392,7 +393,7 @@ fun UpcomingRow(item: UpcomingItem) {
         }
         
         Text(
-            text = "€${String.format(Locale.US, "%.0f", item.amount)}",
+            text = CurrencyFormatter.format(item.amount, showCents = false),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
             color = SemanticColors.TextPrimary

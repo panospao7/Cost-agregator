@@ -20,6 +20,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import java.time.Instant
+import java.time.ZoneId
 
 class WarrantyTrackerRepositoryTest {
 
@@ -116,6 +118,41 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
+    fun `extractWarrantyFromReceipt uses calendar month addition for warranty end date`() = runTest {
+        val purchaseDate = Instant.parse("2024-01-31T00:00:00Z").toEpochMilli()
+        val receipt = ScannedReceipt(
+            id = 3,
+            imagePath = "/path/to/image.jpg",
+            rawOcrText = "Receipt text",
+            parsedTotal = 100.0,
+            parsedMerchant = "Calendar Store",
+            parsedDate = purchaseDate,
+            parsedItems = null,
+            parsedTaxAmount = null,
+            confidence = 0.95f
+        )
+        val extractionResult = WarrantyExtractionResult(
+            productName = "Camera",
+            warrantyMonths = 1,
+            warrantyType = "MANUFACTURER",
+            supportPhone = null,
+            supportEmail = null,
+            returnDays = null,
+            returnConditions = null,
+            confidence = 0.95f
+        )
+
+        coEvery { cloudExtractionService.extractWarranty(any(), false) } returns extractionResult
+
+        val result = repository.extractWarrantyFromReceipt(receipt)
+
+        val endDate = Instant.ofEpochMilli(result!!.warrantyEndDate).atZone(ZoneId.systemDefault()).toLocalDate()
+        assertEquals(2024, endDate.year)
+        assertEquals(2, endDate.monthValue)
+        assertEquals(29, endDate.dayOfMonth)
+    }
+
+    @Test
     fun `extractWarrantyFromReceipt skips cloud extraction when route is not cloud`() = runTest {
         val receipt = ScannedReceipt(
             id = 2,
@@ -208,5 +245,83 @@ class WarrantyTrackerRepositoryTest {
         
         assertNotNull(result)
         assertEquals(30, result?.returnDays)
+    }
+
+    @Test
+    fun `extractReturnWindow persists extracted return metadata`() = runTest {
+        val receipt = ScannedReceipt(
+            id = 4,
+            imagePath = "/path/to/image.jpg",
+            rawOcrText = "Receipt",
+            parsedTotal = 100.0,
+            parsedMerchant = "Policy Store",
+            parsedDate = 1_700_000_000_000L,
+            parsedItems = null,
+            parsedTaxAmount = null,
+            confidence = 0.9f
+        )
+        val extractionResult = WarrantyExtractionResult(
+            productName = "Sneakers",
+            warrantyMonths = null,
+            warrantyType = "MANUFACTURER",
+            supportPhone = null,
+            supportEmail = null,
+            returnDays = 45,
+            returnConditions = "Tags attached",
+            confidence = 0.8f
+        )
+
+        val result = repository.extractReturnWindow(receipt, null, extractionResult)
+
+        assertNotNull(result)
+        assertEquals(45, result?.returnDays)
+        assertEquals("Tags attached", result?.returnConditions)
+    }
+
+    @Test
+    fun `processReceiptForWarranty creates return window for return policy only extraction`() = runTest {
+        val receipt = ScannedReceipt(
+            id = 5,
+            imagePath = "/path/to/image.jpg",
+            rawOcrText = "Receipt text",
+            parsedTotal = 100.0,
+            parsedMerchant = "Returns Store",
+            parsedDate = 1_700_000_000_000L,
+            parsedItems = null,
+            parsedTaxAmount = null,
+            confidence = 0.95f
+        )
+        val extractionResult = WarrantyExtractionResult(
+            productName = "Jacket",
+            warrantyMonths = null,
+            warrantyType = "MANUFACTURER",
+            supportPhone = null,
+            supportEmail = null,
+            returnDays = 21,
+            returnConditions = "Receipt required",
+            confidence = 0.85f
+        )
+
+        coEvery { cloudExtractionService.extractWarranty(any(), false) } returns extractionResult
+
+        val result = repository.processReceiptForWarranty(receipt)
+
+        assertNull(result.first)
+        assertNotNull(result.second)
+        assertEquals(21, result.second?.returnDays)
+        assertEquals("Receipt required", result.second?.returnConditions)
+    }
+
+    @Test
+    fun `reconcileExpiredItems marks active records as expired`() = runTest {
+        coEvery { warrantyDao.markExpiredWarranties(any(), any()) } returns 2
+        coEvery { returnWindowDao.markExpiredReturnWindows(any(), any()) } returns 3
+
+        val result = repository.reconcileExpiredItems(1_700_000_000_000L)
+
+        assertEquals(2, result.expiredWarrantyCount)
+        assertEquals(3, result.expiredReturnWindowCount)
+        coVerify { warrantyDao.markExpiredWarranties(1_700_000_000_000L, 1_700_000_000_000L) }
+        coVerify { returnWindowDao.markExpiredReturnWindows(1_700_000_000_000L, 1_700_000_000_000L) }
     }
 }

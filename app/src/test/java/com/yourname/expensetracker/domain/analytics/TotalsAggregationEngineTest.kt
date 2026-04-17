@@ -37,7 +37,8 @@ class TotalsAggregationEngineTest {
 
         val result = engine.getMonthlyTotals(2026)
 
-        assertTrue(result.isEmpty())
+        assertEquals(12, result.size)
+        assertTrue(result.all { it.totalAmount == 0.0 && it.transactionCount == 0 })
     }
 
     @Test
@@ -60,8 +61,8 @@ class TotalsAggregationEngineTest {
 
         val result = engine.getMonthlyTotals(2026)
 
-        assertEquals(1, result.size)
-        val january = result[0]
+        assertEquals(12, result.size)
+        val january = result.first { it.periodKey == "2026-01" }
         assertEquals("2026-01", january.periodKey)
         assertEquals(150.0, january.totalAmount, 0.01)
         assertEquals(2, january.transactionCount)
@@ -77,7 +78,8 @@ class TotalsAggregationEngineTest {
 
         val result = engine.getWeeklyTotals(2026, 1)
 
-        assertTrue(result.isEmpty())
+        assertTrue(result.isNotEmpty())
+        assertTrue(result.all { it.totalAmount == 0.0 && it.transactionCount == 0 })
     }
 
     @Test
@@ -100,9 +102,8 @@ class TotalsAggregationEngineTest {
 
         val result = engine.getWeeklyTotals(2026, 1)
 
-        assertEquals(1, result.size)
-        val week1 = result[0]
-        assertEquals("W1", week1.periodLabel)
+        assertTrue(result.isNotEmpty())
+        val week1 = result.first { it.periodKey == "2026-W3" }
         assertEquals("2026-W3", week1.periodKey)
         assertEquals(300.0, week1.totalAmount, 0.01)
         assertEquals(5, week1.transactionCount)
@@ -118,7 +119,31 @@ class TotalsAggregationEngineTest {
 
         val result = engine.getDailyTotals(2026, 3)
 
-        assertTrue(result.isEmpty())
+        assertEquals(7, result.size)
+        assertTrue(result.all { it.totalAmount == 0.0 && it.transactionCount == 0 })
+    }
+
+    @Test
+    fun `getDailyTotalsForRange zero fills missing days`() = runTest {
+        val dayStart = getStartOfDay(2026, Calendar.JANUARY, 12)
+        val dayEnd = getEndOfDay(2026, Calendar.JANUARY, 12)
+        coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns listOf(
+            DailyTotal(
+                dayEpoch = 20260112L,
+                startDate = dayStart,
+                endDate = dayEnd,
+                total = 50.0,
+                txCount = 2
+            )
+        )
+        coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 25.0
+
+        val result = engine.getDailyTotalsForRange(dayStart, getEndOfDay(2026, Calendar.JANUARY, 14))
+
+        assertEquals(3, result.size)
+        assertEquals(50.0, result[0].totalAmount, 0.01)
+        assertEquals(0.0, result[1].totalAmount, 0.01)
+        assertEquals(0.0, result[2].totalAmount, 0.01)
     }
 
     @Test
@@ -141,8 +166,8 @@ class TotalsAggregationEngineTest {
 
         val result = engine.getDailyTotals(2026, 3)
 
-        assertEquals(1, result.size)
-        val day1 = result[0]
+        assertEquals(7, result.size)
+        val day1 = result.first { it.totalAmount == 50.0 }
         assertEquals(PeriodType.DAY, day1.periodType)
         assertEquals(50.0, day1.totalAmount, 0.01)
         assertEquals(3, day1.transactionCount)
@@ -325,10 +350,10 @@ class TotalsAggregationEngineTest {
 
         val result = engine.getWeeklyTotals(2026, 1)
 
-        assertEquals(3, result.size)
-        assertEquals("W1", result[0].periodLabel)
-        assertEquals("W2", result[1].periodLabel)
-        assertEquals("W3", result[2].periodLabel)
+        assertEquals(5, result.size)
+        assertEquals("W2", result.first { it.periodKey == "2026-W2" }.periodLabel)
+        assertEquals("W3", result.first { it.periodKey == "2026-W3" }.periodLabel)
+        assertEquals("W4", result.first { it.periodKey == "2026-W4" }.periodLabel)
     }
 
     // ========== A.10 Batch 7 — Purchase-only contract lock-in tests ==========
@@ -359,9 +384,10 @@ class TotalsAggregationEngineTest {
 
         val result = engine.getMonthlyTotals(2026)
 
-        assertEquals(1, result.size)
-        assertEquals(purchaseOnlyTotal, result[0].totalAmount, 0.01)
-        assertEquals(purchaseOnlyCount, result[0].transactionCount)
+        assertEquals(12, result.size)
+        val january = result.first { it.periodKey == "2026-01" }
+        assertEquals(purchaseOnlyTotal, january.totalAmount, 0.01)
+        assertEquals(purchaseOnlyCount, january.transactionCount)
     }
 
     @Test
@@ -452,10 +478,11 @@ class TotalsAggregationEngineTest {
 
         val result = engine.getWeeklyTotals(2026, 1)
 
-        assertEquals(1, result.size)
-        assertEquals(purchaseOnlyTotal, result[0].totalAmount, 0.01)
-        assertEquals(purchaseOnlyCount, result[0].transactionCount)
-        assertEquals(PeriodType.WEEK, result[0].periodType)
+        assertTrue(result.isNotEmpty())
+        val targetWeek = result.first { it.periodKey == "2026-W2" }
+        assertEquals(purchaseOnlyTotal, targetWeek.totalAmount, 0.01)
+        assertEquals(purchaseOnlyCount, targetWeek.transactionCount)
+        assertEquals(PeriodType.WEEK, targetWeek.periodType)
     }
 
     @Test
@@ -484,10 +511,11 @@ class TotalsAggregationEngineTest {
 
         val result = engine.getDailyTotals(2026, 3)
 
-        assertEquals(1, result.size)
-        assertEquals(purchaseOnlyTotal, result[0].totalAmount, 0.01)
-        assertEquals(purchaseOnlyCount, result[0].transactionCount)
-        assertEquals(PeriodType.DAY, result[0].periodType)
+        assertEquals(7, result.size)
+        val day = result.first { it.totalAmount == purchaseOnlyTotal }
+        assertEquals(purchaseOnlyTotal, day.totalAmount, 0.01)
+        assertEquals(purchaseOnlyCount, day.transactionCount)
+        assertEquals(PeriodType.DAY, day.periodType)
     }
 
     @Test

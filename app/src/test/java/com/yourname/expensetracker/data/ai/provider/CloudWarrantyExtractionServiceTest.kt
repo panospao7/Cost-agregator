@@ -135,4 +135,49 @@ class CloudWarrantyExtractionServiceTest {
 
         assertNull(result)
     }
+
+    @Test
+    fun `extractWarranty preserves return policy only responses without warranty months`() {
+        val returnPolicyBody = """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      {
+                        "text": "{\"hasWarranty\":false,\"productName\":\"Shoes\",\"returnDays\":30,\"returnConditions\":\"Unworn only\",\"confidence\":0.81}"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(returnPolicyBody.toResponseBody("application/json".toMediaType()))
+                    .build()
+            }
+            .build()
+
+        val service = CloudWarrantyExtractionService(
+            secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
+            client = client
+        )
+
+        val result = runBlocking {
+            service.extractWarranty(sampleInput(), shouldRedactBeforeCloud = false)
+        }
+
+        assertNotNull(result)
+        assertEquals(null, result?.warrantyMonths)
+        assertEquals(30, result?.returnDays)
+        assertEquals("Unworn only", result?.returnConditions)
+    }
 }

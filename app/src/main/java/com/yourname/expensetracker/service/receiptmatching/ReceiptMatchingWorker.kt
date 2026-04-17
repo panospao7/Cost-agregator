@@ -74,8 +74,24 @@ class ReceiptMatchingWorker @AssistedInject constructor(
             Result.success()
         } catch (e: Exception) {
             Timber.e(e, "Error in receipt matching worker")
-            Result.retry()
+            if (e.isPermanentReceiptMatchingFailure()) {
+                Result.failure()
+            } else {
+                Result.retry()
+            }
         }
+    }
+
+    private fun Throwable.isPermanentReceiptMatchingFailure(): Boolean {
+        if (this is IllegalArgumentException) return true
+        if (this !is IllegalStateException) return false
+
+        val normalizedMessage = message?.lowercase().orEmpty()
+        return normalizedMessage.contains("conflict") ||
+            normalizedMessage.contains("already matched") ||
+            normalizedMessage.contains("malformed") ||
+            normalizedMessage.contains("invalid") ||
+            normalizedMessage.contains("inconsistent")
     }
 
     companion object {

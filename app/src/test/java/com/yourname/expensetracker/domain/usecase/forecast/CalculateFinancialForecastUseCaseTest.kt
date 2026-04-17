@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.domain.usecase.forecast
 
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
 import com.yourname.expensetracker.data.database.entity.PlannedExpense
+import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -17,6 +19,7 @@ import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.RiskLevel
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
 import io.mockk.mockk
@@ -38,6 +41,7 @@ class CalculateFinancialForecastUseCaseTest {
     private lateinit var savingsGoalRepository: SavingsGoalRepository
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var synthesisEngine: SynthesisEngine
+    private lateinit var timeBoundaryTicker: TimeBoundaryTicker
     private lateinit var timeProvider: TimeProvider
 
     private lateinit var useCase: CalculateFinancialForecastUseCase
@@ -50,7 +54,10 @@ class CalculateFinancialForecastUseCaseTest {
         savingsGoalRepository = mockk()
         budgetRepository = mockk()
         synthesisEngine = mockk()
+        timeBoundaryTicker = mockk()
         timeProvider = mockk()
+
+        every { timeBoundaryTicker.dayBoundaryTicks() } returns flowOf(0L)
 
         useCase = CalculateFinancialForecastUseCase(
             expenseRepository = expenseRepository,
@@ -59,6 +66,7 @@ class CalculateFinancialForecastUseCaseTest {
             savingsGoalRepository = savingsGoalRepository,
             budgetRepository = budgetRepository,
             synthesisEngine = synthesisEngine,
+            timeBoundaryTicker = timeBoundaryTicker,
             timeProvider = timeProvider
         )
     }
@@ -164,6 +172,68 @@ class CalculateFinancialForecastUseCaseTest {
         assertEquals(PlannedExpensePriority.MUST, prioritiesById[must.id])
         assertEquals(PlannedExpensePriority.LIKELY, prioritiesById[likely.id])
         assertEquals(PlannedExpensePriority.OPTIONAL, prioritiesById[optional.id])
+    }
+
+    @Test
+    fun `invoke passes cumulative history real pace and mapped goal protection to synthesis`() = runTest {
+        val now = ms(2026, Calendar.JANUARY, 15, 12)
+        val monthStart = ms(2026, Calendar.JANUARY, 1, 0)
+        val previousMonthStart = ms(2025, Calendar.DECEMBER, 1, 0)
+
+        every { timeProvider.now() } returns now
+        every { expenseRepository.getAllExpenses() } returns flowOf(
+            listOf(
+                expense(amount = 10.0, type = TransactionType.PURCHASE, date = monthStart),
+                expense(amount = 15.0, type = TransactionType.PURCHASE, date = monthStart + DAY_MS),
+                expense(amount = 25.0, type = TransactionType.PURCHASE, date = monthStart + DAY_MS),
+                expense(amount = 31.0, type = TransactionType.PURCHASE, date = previousMonthStart + 2 * DAY_MS),
+                expense(amount = 31.0, type = TransactionType.PURCHASE, date = previousMonthStart + 8 * DAY_MS),
+                expense(amount = 31.0, type = TransactionType.PURCHASE, date = previousMonthStart + 15 * DAY_MS),
+                expense(amount = 31.0, type = TransactionType.PURCHASE, date = previousMonthStart + 22 * DAY_MS),
+                expense(amount = 31.0, type = TransactionType.PURCHASE, date = previousMonthStart + 28 * DAY_MS),
+                expense(amount = 999.0, type = TransactionType.PURCHASE, date = now + DAY_MS)
+            )
+        )
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every {
+            savingsGoalRepository.getAllGoals()
+        } returns flowOf(
+            listOf(
+                SavingsGoal(
+                    id = 1L,
+                    name = "Emergency",
+                    targetAmount = 1000.0,
+                    currentAmount = 100.0,
+                    targetDate = now + 10 * DAY_MS,
+                    protectionLevel = GoalProtectionLevel.STRICT,
+                    createdAt = now - DAY_MS
+                )
+            )
+        )
+
+        val capturedPast = slot<List<Double>>()
+        val capturedPace = slot<SpendingPace>()
+        val capturedGoals = slot<List<com.yourname.expensetracker.domain.model.SavingsGoal>>()
+        every {
+            synthesisEngine.synthesize(
+                pastSumDaily = capture(capturedPast),
+                recurringPatterns = any<List<RecurringPattern>>(),
+                plannedExpenses = any(),
+                savingsGoals = capture(capturedGoals),
+                budgetStatuses = any<List<BudgetStatusSnapshot>>(),
+                spendingPace = capture(capturedPace)
+            )
+        } returns dummyForecast(now)
+
+        useCase.invoke().first()
+
+        assertEquals(listOf(10.0, 50.0), capturedPast.captured.take(2))
+        assertEquals(com.yourname.expensetracker.domain.model.GoalProtectionLevel.STRICT, capturedGoals.captured.single().protectionLevel)
+        assertEquals(50.0, capturedPace.captured.currentMonthSpent, 0.0001)
+        assertEquals(155.0, capturedPace.captured.previousMonthTotal ?: 0.0, 0.0001)
+        assertEquals(com.yourname.expensetracker.domain.analytics.PaceStatus.UNDER_PACE, capturedPace.captured.paceStatus)
     }
 
     private fun expense(

@@ -186,6 +186,42 @@ class WarrantyTextExtractorTest {
         )
     }
 
+    @Test
+    fun `extract accepts receipts older than one year when date is still plausible`() {
+        val calendar = Calendar.getInstance().apply { add(Calendar.YEAR, -3) }
+        val dateStr = SimpleDateFormat("MMMM dd, yyyy", Locale.US).format(calendar.time)
+
+        val result = extractor.extract(
+            """
+                Merchant: Vintage Electronics
+                Product: Stereo Receiver
+                Purchase Date: $dateStr
+                3 Year Warranty
+            """.trimIndent()
+        )
+
+        assertNotNull(result.purchaseDate)
+        assertEquals(36, result.warrantyDurationMonths)
+        assertNotNull(result.warrantyEndDate)
+    }
+
+    @Test
+    fun `extract uses calendar month semantics for warranty end date`() {
+        val result = extractor.extract(
+            """
+                Merchant: Tech Store
+                Product: Laptop
+                Purchase Date: January 31, 2024
+                1 Month Warranty
+            """.trimIndent()
+        )
+
+        val endCal = Calendar.getInstance().apply { timeInMillis = result.warrantyEndDate!! }
+        assertEquals(2024, endCal.get(Calendar.YEAR))
+        assertEquals(Calendar.FEBRUARY, endCal.get(Calendar.MONTH))
+        assertEquals(29, endCal.get(Calendar.DAY_OF_MONTH))
+    }
+
     // -------------------------------------------------------------------------
     // Helper
     // -------------------------------------------------------------------------

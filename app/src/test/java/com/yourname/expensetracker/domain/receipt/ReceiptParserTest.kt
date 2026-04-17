@@ -253,4 +253,19 @@ class ReceiptParserTest {
         assertEquals(16, cal.get(Calendar.DAY_OF_MONTH))
     }
 
+    @Test
+    fun `quantity formatted line is not emitted twice when overlapping patterns match`() {
+        val input = """
+            STORE
+            2 x ΚΡΑΣΙ ΧΥΜΑ   7,60 €
+            TOTAL 7,60 €
+        """.trimIndent()
+
+        val result = parser.parse(input)
+
+        assertEquals(1, result.lineItems.size)
+        assertEquals("ΚΡΑΣΙ ΧΥΜΑ", result.lineItems.single().description)
+        assertEquals(2.0, result.lineItems.single().quantity ?: 0.0, 0.0)
+    }
+
 }

@@ -58,9 +58,10 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
         BudgetAdjustmentEvent::class,
         SpendingPersonalityProfileEntity::class,
         StressForecastSnapshot::class,
-        EmailReceiptSource::class
+        EmailReceiptSource::class,
+        SpendingChallengeEntity::class
     ],
-    version = 79,
+    version = 80,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -111,6 +112,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun stressForecastSnapshotDao(): StressForecastSnapshotDao
     abstract fun spendingPersonalityProfileDao(): SpendingPersonalityProfileDao
     abstract fun emailReceiptDao(): EmailReceiptDao
+    abstract fun spendingChallengeDao(): SpendingChallengeDao
 
     companion object {
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
@@ -5162,6 +5164,43 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_79_80 = object : androidx.room.migration.Migration(79, 80) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS spending_challenges (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        name TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        startDate INTEGER NOT NULL,
+                        endDate INTEGER NOT NULL,
+                        targetAmount REAL,
+                        categoryId INTEGER,
+                        isActive INTEGER NOT NULL DEFAULT 1,
+                        baselineAmount REAL,
+                        baselineStartDate INTEGER,
+                        baselineEndDate INTEGER,
+                        createdAt INTEGER NOT NULL DEFAULT 0,
+                        updatedAt INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_spending_challenges_categoryId ON spending_challenges (categoryId)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_spending_challenges_isActive ON spending_challenges (isActive)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_spending_challenges_endDate ON spending_challenges (endDate)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_spending_challenges_isActive_endDate ON spending_challenges (isActive, endDate)"
+                )
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -5257,7 +5296,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_75_76,
             MIGRATION_76_77,
             MIGRATION_77_78,
-            MIGRATION_78_79
+            MIGRATION_78_79,
+            MIGRATION_79_80
         )
     }
 }

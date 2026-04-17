@@ -177,6 +177,40 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
         assertTrue((result as WarrantyCreationResult.Failure).error.contains("Confidence too low", ignoreCase = true))
     }
 
+    @Test
+    fun `createWarrantyForReview promotes existing draft instead of inserting duplicate`() = runTest {
+        val receiptId = 2001L
+        val existingDraft = Warranty(
+            id = 91L,
+            receiptId = receiptId,
+            productName = "Unknown Product",
+            merchantName = "Unknown Merchant",
+            purchaseDate = FIXED_NOW - 5_000L,
+            warrantyDurationMonths = 12,
+            warrantyEndDate = FIXED_NOW + 10_000L,
+            status = WarrantyStatus.PENDING_REVIEW,
+            needsReview = true
+        )
+        val confirmedData = useCase.getExtractor().extract(
+            """
+                MERCHANT: REVIEW STORE
+                DATE: ${recentDate()}
+                PRODUCT: GAMING HEADSET PRO
+                WARRANTY: 24 MONTHS
+            """.trimIndent()
+        )
+
+        coEvery { warrantyTrackerRepository.getWarrantyByReceiptId(receiptId) } returns existingDraft
+        coEvery { warrantyTrackerRepository.updateWarranty(any()) } returns Unit
+
+        val result = useCase.createWarrantyForReview(receiptId, confirmedData)
+
+        assertTrue(result is WarrantyCreationResult.Success)
+        assertEquals(91L, (result as WarrantyCreationResult.Success).warrantyId)
+        coVerify(exactly = 1) { warrantyTrackerRepository.updateWarranty(match { it.id == 91L && !it.needsReview && it.status == WarrantyStatus.ACTIVE }) }
+        coVerify(exactly = 0) { warrantyTrackerRepository.addWarrantyIgnoreConflicts(any()) }
+    }
+
     private fun recentDate(): String {
         val cal = Calendar.getInstance().apply {
             timeInMillis = System.currentTimeMillis()

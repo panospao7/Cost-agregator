@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.receipt
 
 import java.time.LocalDate
+import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeFormatterBuilder
@@ -30,6 +31,10 @@ data class WarrantyExtractionData(
  * This is a lightweight, on-device extraction that doesn't require cloud AI.
  */
 class WarrantyTextExtractor {
+
+    private companion object {
+        private const val MAX_RECEIPT_AGE_YEARS = 50L
+    }
 
     /**
      * Immutable, thread-safe date formatters replacing the former SimpleDateFormat list.
@@ -180,10 +185,12 @@ class WarrantyTextExtractor {
      * Checks if the date is reasonable (not in the future, not too old).
      */
     private fun isReasonablePurchaseDate(timestamp: Long): Boolean {
-        val now = System.currentTimeMillis()
-        val oneYearAgo = now - (365L * 24 * 60 * 60 * 1000)
-        // Date should be within last year and not in the future
-        return timestamp in oneYearAgo..now
+        val zoneId = ZoneId.systemDefault()
+        val purchaseDate = Instant.ofEpochMilli(timestamp).atZone(zoneId).toLocalDate()
+        val today = LocalDate.now(zoneId)
+        val oldestAllowedDate = today.minusYears(MAX_RECEIPT_AGE_YEARS)
+
+        return !purchaseDate.isAfter(today) && !purchaseDate.isBefore(oldestAllowedDate)
     }
     
     /**
@@ -253,11 +260,14 @@ class WarrantyTextExtractor {
      */
     private fun calculateWarrantyEndDate(purchaseDate: Long?, durationMonths: Int?): Long? {
         if (purchaseDate == null || durationMonths == null) return null
-        
-        val calendar = Calendar.getInstance()
-        calendar.timeInMillis = purchaseDate
-        calendar.add(Calendar.MONTH, durationMonths)
-        return calendar.timeInMillis
+
+        val zoneId = ZoneId.systemDefault()
+        val endDate = Instant.ofEpochMilli(purchaseDate)
+            .atZone(zoneId)
+            .toLocalDate()
+            .plusMonths(durationMonths.toLong())
+
+        return endDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
     }
     
     /**

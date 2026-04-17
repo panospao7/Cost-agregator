@@ -54,7 +54,7 @@ class SpendingChallengesViewModel @Inject constructor(
                 val snapshot: ActiveChallengesSnapshot = challengeManager.getActiveChallengesSnapshot()
                 _activeChallenges.value = snapshot.challenges
                 _challengesAvailability.value = ChallengesAvailability(
-                    hasCanonicalSource = snapshot.unavailableReason == null,
+                    hasCanonicalSource = true,
                     unavailableReason = snapshot.unavailableReason
                 )
             } catch (e: Exception) {

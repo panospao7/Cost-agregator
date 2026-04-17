@@ -127,9 +127,9 @@ class TotalsAggregationEngineDeepTest {
         coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        assertTrue(engine.getMonthlyTotals(2026).isEmpty())
-        assertTrue(engine.getWeeklyTotals(2026, 1).isEmpty())
-        assertTrue(engine.getDailyTotals(2026, 1).isEmpty())
+        assertTrue(engine.getMonthlyTotals(2026).all { it.totalAmount == 0.0 && it.transactionCount == 0 })
+        assertTrue(engine.getWeeklyTotals(2026, 1).all { it.totalAmount == 0.0 && it.transactionCount == 0 })
+        assertTrue(engine.getDailyTotals(2026, 1).all { it.totalAmount == 0.0 && it.transactionCount == 0 })
         assertTrue(engine.getCategoryBreakdown(dateMs(2026, 4, 1), dateMs(2026, 5, 1), "Apr").isEmpty())
         assertApproxEquals(0.0, engine.getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false))
     }

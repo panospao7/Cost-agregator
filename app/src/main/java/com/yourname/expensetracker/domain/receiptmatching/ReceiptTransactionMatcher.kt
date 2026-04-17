@@ -1,12 +1,16 @@
 package com.yourname.expensetracker.domain.receiptmatching
 
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.text.Normalizer
+import java.util.Locale
 import kotlin.math.abs
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -55,7 +59,7 @@ class ReceiptTransactionMatcher @Inject constructor(
             ?: (System.currentTimeMillis() + (lookbackDays * 86400000))
         
         val candidates = expenseRepository.getExpensesBetween(startDate, endDate)
-            .filter { it.transactionType.name == "PURCHASE" || it.effectiveAmount > 0 }
+            .filter(::isReceiptCompatibleTransaction)
         
         if (candidates.isEmpty()) {
             return@withContext MatchResult.NoMatch
@@ -104,7 +108,7 @@ class ReceiptTransactionMatcher @Inject constructor(
         val dateScore = (1.0 - (dateDiffHours / 48.0)).coerceIn(0.0, 1.0)
         
         // 4. Transaction type (5% weight)
-        val typeScore = if (transaction.transactionType.name == "PURCHASE" || transaction.effectiveAmount > 0) {
+        val typeScore = if (isReceiptCompatibleTransaction(transaction)) {
             1.0
         } else {
             0.5
@@ -118,8 +122,17 @@ class ReceiptTransactionMatcher @Inject constructor(
     }
     
     private fun normalizeMerchant(merchant: String): String {
-        return merchant.lowercase()
-            .replace("[^a-z0-9]".toRegex(), "")
+        return Normalizer.normalize(merchant, Normalizer.Form.NFKD)
+            .lowercase(Locale.ROOT)
+            .replace("\\p{M}+".toRegex(), "")
+            .replace("[^\\p{L}\\p{N}]".toRegex(), "")
             .trim()
+    }
+
+    private fun isReceiptCompatibleTransaction(transaction: Expense): Boolean {
+        if (transaction.effectiveAmount <= 0.0) return false
+
+        return transaction.transactionType.name == ExpenseDao.SPENDING_TYPE &&
+            transaction.transactionType == TransactionType.PURCHASE
     }
 }

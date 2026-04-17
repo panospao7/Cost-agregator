@@ -54,6 +54,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.analytics.*
 import com.yourname.expensetracker.domain.location.AreaSpending
 import com.yourname.expensetracker.domain.location.TravelInsight
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.components.analytics.PersonalityProfileCard
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
@@ -69,10 +70,18 @@ private fun Double.toSafeChartAmount(): Float {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AnalyticsScreen(
+    initialPeriod: String? = null,
     onNavigateToTransactions: ((TransactionFilter) -> Unit)? = null,
     viewModel: AnalyticsViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
+
+    LaunchedEffect(initialPeriod) {
+        initialPeriod
+            ?.let(::parseTimePeriodOrNull)
+            ?.takeIf { it != state.selectedPeriod }
+            ?.let(viewModel::selectPeriod)
+    }
 
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
@@ -756,7 +765,10 @@ fun TotalSpentHero(state: AnalyticsState) {
             // Previous period comparison
             state.previousTotal?.let { prevTotal ->
                 Text(
-                    text = stringResource(R.string.analytics_vs_last_period_format, prevTotal),
+                    text = stringResource(
+                        R.string.analytics_vs_last_period_format,
+                        CurrencyFormatter.format(prevTotal, showCents = false)
+                    ),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
                 )
@@ -1131,7 +1143,7 @@ fun CategoryItem(item: CategoryBreakdown) {
         Column(modifier = Modifier.weight(1f)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(item.category.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Text("€${String.format("%.2f", item.total)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Text(CurrencyFormatter.format(item.total), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
             }
             Spacer(modifier = Modifier.height(6.dp))
             LinearProgressIndicator(
@@ -1178,7 +1190,7 @@ fun MerchantItem(item: MerchantBreakdown) {
                 Text(item.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 Text(stringResource(R.string.analytics_visits_avg_format, item.transactionCount, item.averageTransaction), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text("€${String.format("%.2f", item.totalSpent)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            Text(CurrencyFormatter.format(item.totalSpent), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -1217,7 +1229,7 @@ fun RecurringItem(item: RecurringCandidate) {
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text("€${String.format("%.2f", item.amount)}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                Text(CurrencyFormatter.format(item.amount), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                 Text(item.confidence.let { if (it > 0.8) "High confidence" else "Plausible" }, style = MaterialTheme.typography.labelSmall, color = if (item.confidence > 0.8) SemanticColors.SuccessGreen else MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -1265,7 +1277,7 @@ fun VelocityAnomalyCard(anomaly: VelocityAnomaly) {
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    "€${String.format("%.2f", anomaly.dayTotal)}",
+                    CurrencyFormatter.format(anomaly.dayTotal),
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Bold,
                     color = SemanticColors.DangerRed
@@ -1276,7 +1288,7 @@ fun VelocityAnomalyCard(anomaly: VelocityAnomaly) {
                     color = SemanticColors.DangerRed.copy(alpha = 0.8f)
                 )
                 Text(
-                    "vs. €${String.format("%.0f", anomaly.monthDailyAvg)}/day",
+                    "vs. ${CurrencyFormatter.format(anomaly.monthDailyAvg, showCents = false)}/day",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                 )
@@ -1311,7 +1323,7 @@ fun YearOverYearCard(yoy: YearOverYearComparison) {
                         color = currentYearColor
                     )
                     Text(
-                        "€${String.format("%.2f", yoy.currentYearTotal)}",
+                        CurrencyFormatter.format(yoy.currentYearTotal),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = currentYearColor
@@ -1339,7 +1351,7 @@ fun YearOverYearCard(yoy: YearOverYearComparison) {
                         color = priorYearColor
                     )
                     Text(
-                        "€${String.format("%.2f", yoy.priorYearTotal)}",
+                        CurrencyFormatter.format(yoy.priorYearTotal),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = priorYearColor
@@ -1442,7 +1454,7 @@ fun PostSalaryPatternCard(pattern: PostSalaryPattern) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        "€${String.format("%.0f", pattern.avgTotalSpentIn7Days)} in first 7 days",
+                        "${CurrencyFormatter.format(pattern.avgTotalSpentIn7Days, showCents = false)} in first 7 days",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -1485,7 +1497,7 @@ fun PostSalaryPatternCard(pattern: PostSalaryPattern) {
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(cat.categoryName, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                                Text("€${String.format("%.0f", cat.avgSpendAfterSalary)}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                Text(CurrencyFormatter.format(cat.avgSpendAfterSalary, showCents = false), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                             }
                             Spacer(modifier = Modifier.height(3.dp))
                             LinearProgressIndicator(
@@ -1545,7 +1557,7 @@ fun SuspectTransactionCard(item: SuspectTransaction) {
                 Text(dateLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
             }
             Text(
-                "€${String.format("%.2f", item.amount)}",
+                CurrencyFormatter.format(item.amount),
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.error
@@ -1578,13 +1590,13 @@ fun AreaSpendingItem(area: AreaSpending) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(area.areaName, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    "${area.transactionCount} transactions · avg €${String.format("%.0f", area.avgTransaction)}",
+                    "${area.transactionCount} transactions · avg ${CurrencyFormatter.format(area.avgTransaction, showCents = false)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Text(
-                "€${String.format("%.2f", area.totalSpend)}",
+                CurrencyFormatter.format(area.totalSpend),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Bold
@@ -1634,7 +1646,7 @@ fun TravelInsightCard(travel: TravelInsight) {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        "€${String.format("%.0f", spend)}",
+                        CurrencyFormatter.format(spend, showCents = false),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.width(56.dp)
@@ -1666,7 +1678,7 @@ fun TravelInsightCard(travel: TravelInsight) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            "€${String.format("%.0f", trip.totalSpend)}",
+                            CurrencyFormatter.format(trip.totalSpend, showCents = false),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -1674,5 +1686,17 @@ fun TravelInsightCard(travel: TravelInsight) {
                 }
             }
         }
+    }
+}
+
+private fun parseTimePeriodOrNull(value: String): TimePeriod? {
+    return when (value.trim().lowercase()) {
+        "today" -> TimePeriod.TODAY
+        "week" -> TimePeriod.WEEK
+        "month" -> TimePeriod.MONTH
+        "quarter" -> TimePeriod.QUARTER
+        "year" -> TimePeriod.YEAR
+        "all" -> TimePeriod.ALL
+        else -> null
     }
 }

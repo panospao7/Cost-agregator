@@ -94,8 +94,7 @@ class SmartReceiptAssistService @Inject constructor(
             attempts.add(result.toAttemptDetails(plan.attemptNumber, plan.method))
 
             if (result is AiServiceResult.Success && isGoodResult(result.value)) {
-                val usedImageInput = plan.method == AttemptMethod.CLOUD_VISION ||
-                    plan.method == AttemptMethod.ON_DEVICE_VISION
+                val usedImageInput = result.value.usedImageInput
                 return result.withExecutionMetadata(usedImageInput = usedImageInput, attempts = attempts)
             }
         }

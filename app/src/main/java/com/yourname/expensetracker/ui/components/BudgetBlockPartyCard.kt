@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.model.TransactionSummary
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import java.util.Date
 import java.util.Calendar
@@ -193,7 +194,7 @@ fun DayBlock(day: DayBudgetStatus, onClick: () -> Unit) {
         BlockStatus.NO_DATA -> "No spending data"
     }
     val isInteractive = day.status != BlockStatus.FUTURE
-    val blockDescription = "Day ${day.dayOfMonth}, $stateLabel. Spent €${String.format("%.2f", day.actualSpent)} of €${String.format("%.2f", day.targetBudget)} target."
+    val blockDescription = "Day ${day.dayOfMonth}, $stateLabel. Spent ${CurrencyFormatter.format(day.actualSpent)} of ${CurrencyFormatter.format(day.targetBudget)} target."
     val indicatorGlyph = when (day.status) {
         BlockStatus.UNDER_BUDGET -> "✓"
         BlockStatus.OVER_BUDGET -> "!"
@@ -303,7 +304,7 @@ fun DayAtAGlanceDialog(
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        text = (if (balance >= 0) "+" else "") + "€${String.format("%.2f", balance)}",
+                        text = (if (balance >= 0) "+" else "") + CurrencyFormatter.format(kotlin.math.abs(balance)),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
@@ -324,26 +325,26 @@ fun DayAtAGlanceDialog(
                 Column(Modifier.padding(12.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(stringResource(R.string.budget_base_allowance), color = SemanticColors.TextPrimary)
-                        Text("€${String.format("%.2f", day.baseTarget)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                        Text(CurrencyFormatter.format(day.baseTarget), fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                     }
                     if (day.recurringImpact > 0) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(stringResource(R.string.budget_recurring_format, day.recurringItems.joinToString(", ")), color = SemanticColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                            Text("+€${String.format("%.2f", day.recurringImpact)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                            Text("+${CurrencyFormatter.format(day.recurringImpact)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                         }
                     }
                     if (day.plannedImpact > 0) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(stringResource(R.string.budget_planned_format, day.plannedItems.joinToString(", ")), color = SemanticColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                            Text("+€${String.format("%.2f", day.plannedImpact)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                            Text("+${CurrencyFormatter.format(day.plannedImpact)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                         }
                     }
                     HorizontalDivider(Modifier.padding(vertical = 8.dp), color = SemanticColors.GlassBorder)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(stringResource(R.string.budget_total_target), fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
-                        Text("€${String.format("%.2f", day.targetBudget)}", fontWeight = FontWeight.Bold, color = SemanticColors.PrimaryIndigo)
+                        Text(CurrencyFormatter.format(day.targetBudget), fontWeight = FontWeight.Bold, color = SemanticColors.PrimaryIndigo)
                     }
                 }
             }
@@ -360,7 +361,7 @@ fun DayAtAGlanceDialog(
                 Column(Modifier.padding(12.dp)) {
                      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(stringResource(R.string.budget_total_spent), fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
-                        Text("€${String.format("%.2f", day.actualSpent)}", fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
+                        Text(CurrencyFormatter.format(day.actualSpent), fontWeight = FontWeight.Bold, color = SemanticColors.TextPrimary)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     if (day.topTransactions.isNotEmpty()) {
@@ -376,7 +377,7 @@ fun DayAtAGlanceDialog(
                                     modifier = Modifier.weight(1f),
                                     maxLines = 2
                                 )
-                                Text("€${String.format("%.2f", exp.amount)}", color = SemanticColors.TextPrimary, fontSize = 13.sp)
+                                Text(CurrencyFormatter.format(exp.amount), color = SemanticColors.TextPrimary, fontSize = 13.sp)
                             }
                         }
                     } else if (day.actualSpent > 0) {

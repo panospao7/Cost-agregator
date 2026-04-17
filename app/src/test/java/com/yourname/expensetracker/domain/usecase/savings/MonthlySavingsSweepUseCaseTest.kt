@@ -4,12 +4,17 @@ import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.database.entity.PlannedExpense
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
+import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
 import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
@@ -24,6 +29,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.Calendar
@@ -33,6 +39,8 @@ class MonthlySavingsSweepUseCaseTest {
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var savingsGoalRepository: SavingsGoalRepository
     private lateinit var expenseRepository: ExpenseRepository
+    private lateinit var recurringExpenseRepository: RecurringExpenseRepository
+    private lateinit var plannedExpenseRepository: PlannedExpenseRepository
     private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
     private lateinit var timeProvider: TimeProvider
 
@@ -46,12 +54,16 @@ class MonthlySavingsSweepUseCaseTest {
         budgetRepository = mockk()
         savingsGoalRepository = mockk()
         expenseRepository = mockk()
+        recurringExpenseRepository = mockk()
+        plannedExpenseRepository = mockk()
         monteCarloSimulator = mockk()
         timeProvider = mockk()
 
         every { timeProvider.now() } returns withinWindowNow
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
 
@@ -59,6 +71,8 @@ class MonthlySavingsSweepUseCaseTest {
             budgetRepository = budgetRepository,
             savingsGoalRepository = savingsGoalRepository,
             expenseRepository = expenseRepository,
+            recurringExpenseRepository = recurringExpenseRepository,
+            plannedExpenseRepository = plannedExpenseRepository,
             monteCarloSimulator = monteCarloSimulator,
             timeProvider = timeProvider
         )
@@ -173,6 +187,76 @@ class MonthlySavingsSweepUseCaseTest {
         val result = useCase.computeSweepRecommendation()
 
         assertNull(result)
+    }
+
+    @Test
+    fun `computeSweepRecommendation passes real upcoming obligations into Monte Carlo`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 700.0))
+        )
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(listOf(goal(1L, "Emergency", 1000.0, 100.0)))
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(
+            listOf(
+                ManualRecurringExpense(
+                    id = 1L,
+                    merchant = "Rent",
+                    amount = 120.0,
+                    currency = "EUR",
+                    frequency = RecurrenceFrequency.MONTHLY,
+                    nextDate = withinWindowNow + dayMs,
+                    note = null
+                )
+            )
+        )
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(
+            listOf(
+                PlannedExpense(
+                    id = 2L,
+                    description = "Insurance",
+                    amount = 80.0,
+                    date = withinWindowNow + 2 * dayMs,
+                    categoryId = null,
+                    isRecurring = false,
+                    priority = com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST
+                )
+            )
+        )
+
+        var knownUpcoming = -1.0
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } answers {
+            knownUpcoming = secondArg()
+            monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
+        }
+
+        useCase.computeSweepRecommendation()
+
+        assertApproxEquals(200.0, knownUpcoming, 0.01)
+    }
+
+    @Test
+    fun `computeSweepRecommendation caps allocations by remaining goal gap before concentration cap`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 800.0))
+        )
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+            listOf(
+                goal(1L, "Almost Done", target = 100.0, current = 90.0),
+                goal(2L, "Large Goal", target = 1000.0, current = 100.0)
+            )
+        )
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarlo(
+            p50 = 50.0,
+            p75 = 50.0,
+            confidence = 0.9
+        )
+
+        val result = useCase.computeSweepRecommendation()
+
+        assertNotNull(result)
+        val byId = result!!.goalAllocations.associateBy { it.goalId }
+        assertApproxEquals(10.0, byId.getValue(1L).suggestedAllocation, 0.01)
+        assertTrue(byId.getValue(2L).suggestedAllocation <= result.safeSweepAmount * MonthlySavingsSweepUseCase.MAX_SINGLE_ALLOCATION_PERCENT + 0.01)
+        assertTrue(byId.getValue(2L).suggestedAllocation <= 900.0)
     }
 
     private fun budgetStatus(

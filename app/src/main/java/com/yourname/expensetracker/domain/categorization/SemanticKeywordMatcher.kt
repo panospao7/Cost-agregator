@@ -21,7 +21,7 @@ class SemanticKeywordMatcher @Inject constructor(
     private val greeklishNormalizer: GreeklishNormalizer
 ) {
     
-    private val categoryKeywords = CategoryKeywords.getAllKeywords()
+    private val orderedKeywordEntries = CategoryKeywords.getOrderedKeywordEntries()
     
     private data class CompiledPattern(
         val regex: Regex,
@@ -52,8 +52,6 @@ class SemanticKeywordMatcher @Inject constructor(
         CompiledPattern(Regex(".*(gas|fuel|petrol)\\s+(station|market).*", RegexOption.IGNORE_CASE), "Transport", 0.90, ".*(gas|fuel|petrol)\\s+(station|market).*")
     )
     
-    private val compiledKeywords: Map<String, Map<String, Double>> = categoryKeywords
-    
     fun match(merchant: String, minConfidence: Double = 0.40): List<SemanticMatch> {
         val normalized = greeklishNormalizer.normalize(merchant).lowercase()
         val scores = mutableMapOf<String, MutableList<SemanticMatch>>()
@@ -75,29 +73,29 @@ class SemanticKeywordMatcher @Inject constructor(
             }
         }
         
-        categoryKeywords.forEach { (category, keywords) ->
-            keywords.forEach { (keyword, weight) ->
-                try {
-                    val wordBoundaryPattern = Regex("""\b${Regex.escape(keyword)}\b""", RegexOption.IGNORE_CASE)
-                    val matchResult = wordBoundaryPattern.find(normalized)
-                    
-                    if (matchResult != null) {
-                        val isAtStart = matchResult.range.first == 0
-                        val positionBoost = if (isAtStart) 0.10 else 0.0
-                        
-                        val finalWeight = minOf(weight + positionBoost, 0.98)
-                        
-                        val matches = scores.getOrPut(category) { mutableListOf() }
-                        matches.add(SemanticMatch(
-                            categoryName = category,
+        orderedKeywordEntries.forEach { entry ->
+            try {
+                val wordBoundaryPattern = Regex("""\b${Regex.escape(entry.keyword)}\b""", RegexOption.IGNORE_CASE)
+                val matchResult = wordBoundaryPattern.find(normalized)
+
+                if (matchResult != null) {
+                    val isAtStart = matchResult.range.first == 0
+                    val positionBoost = if (isAtStart) 0.10 else 0.0
+
+                    val finalWeight = minOf(entry.confidence + positionBoost, 0.98)
+
+                    val matches = scores.getOrPut(entry.categoryName) { mutableListOf() }
+                    matches.add(
+                        SemanticMatch(
+                            categoryName = entry.categoryName,
                             confidence = finalWeight,
-                            matchedKeyword = keyword,
+                            matchedKeyword = entry.keyword,
                             matchType = "keyword"
-                        ))
-                    }
-                } catch (e: Exception) {
-                    // Skip invalid keywords
+                        )
+                    )
                 }
+            } catch (e: Exception) {
+                // Skip invalid keywords
             }
         }
         
@@ -106,13 +104,14 @@ class SemanticKeywordMatcher @Inject constructor(
         }.filter { it.confidence >= minConfidence }
             .groupBy { it.categoryName }
             .map { (category, categoryMatches) ->
-                val bestMatch = categoryMatches.maxByOrNull { it.confidence }!!
+                val bestMatch = categoryMatches.maxWithOrNull(bestMatchComparator)!!
                 bestMatch
             }
-            // Tiebreaker: when confidences are equal, prefer category with more keyword matches (more specific)
             .sortedWith(
                 compareByDescending<SemanticMatch> { it.confidence }
+                    .thenByDescending { it.matchedKeyword.length }
                     .thenByDescending { m -> scores[m.categoryName]?.size ?: 0 }
+                    .thenBy { it.categoryName }
             )
     }
     
@@ -128,5 +127,14 @@ class SemanticKeywordMatcher @Inject constructor(
     
     fun getTopKeywords(merchant: String, limit: Int = 5): List<SemanticMatch> {
         return match(merchant, 0.30).take(limit)
+    }
+
+    private companion object {
+        val bestMatchComparator: Comparator<SemanticMatch> =
+            compareByDescending<SemanticMatch> { it.confidence }
+                .thenByDescending { it.matchedKeyword.length }
+                .thenByDescending { if (it.matchType == "keyword") 1 else 0 }
+                .thenBy { it.matchedKeyword }
+                .thenBy { it.categoryName }
     }
 }

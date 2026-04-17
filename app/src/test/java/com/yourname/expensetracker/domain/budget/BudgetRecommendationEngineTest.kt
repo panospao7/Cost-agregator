@@ -101,4 +101,21 @@ class BudgetRecommendationEngineTest {
         assertEquals("🔴", engine.getRiskEmoji(BudgetRecommendationRiskLevel.HIGH))
         assertEquals("🚨", engine.getRiskEmoji(BudgetRecommendationRiskLevel.CRITICAL))
     }
+
+    @Test
+    fun `generate recommendations clamps negative potential savings to zero`() {
+        val recommendations = engine.generateRecommendations(
+            budget = BudgetRecommendationBudget(amount = 1000.0),
+            forecast = BudgetRecommendationForecast(
+                predictedSpending = 50.0,
+                predictedRemaining = -10.0,
+                confidenceScore = 0.9,
+                riskLevel = BudgetRecommendationRiskLevel.HIGH,
+                overspendProbability = 0.9
+            ),
+            currentSpending = 950.0
+        )
+
+        assertEquals(0.0, recommendations.first { it.type == RecommendationType.REDUCE_SPENDING }.potentialSavings, 0.0)
+    }
 }

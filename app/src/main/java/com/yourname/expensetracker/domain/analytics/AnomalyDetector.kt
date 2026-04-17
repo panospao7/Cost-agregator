@@ -39,6 +39,7 @@ class AnomalyDetector @Inject constructor() {
 
         // IQR fence multiplier (Tukey's standard: 1.5 = mild outlier, 3.0 = extreme)
         private const val IQR_FENCE = 1.5
+        private const val ZERO_DISPERSION_MULTIPLIER = 3.0
 
         // Modified Z-score threshold (Iglewicz & Hoaglin recommend 3.5)
         private const val MAD_ZSCORE_THRESHOLD = 3.5
@@ -184,7 +185,15 @@ class AnomalyDetector @Inject constructor() {
         val q1 = percentile(sorted, 25.0)
         val q3 = percentile(sorted, 75.0)
         val iqr = q3 - q1
-        if (iqr == 0.0) return emptyList()
+        if (iqr == 0.0) {
+            return detectZeroDispersionOutliers(
+                expenses = expenses,
+                category = category,
+                categoryAvg = categoryAvg,
+                baseline = q3,
+                detectionMethod = AnomalyMethod.IQR
+            )
+        }
 
         val upperFence = q3 + IQR_FENCE * iqr
 
@@ -221,8 +230,15 @@ class AnomalyDetector @Inject constructor() {
         val absoluteDeviations = amounts.map { abs(it - median) }.sorted()
         val mad = percentile(absoluteDeviations, 50.0)
 
-        // If MAD is zero (all values identical), fall back — no outliers possible
-        if (mad == 0.0) return emptyList()
+        if (mad == 0.0) {
+            return detectZeroDispersionOutliers(
+                expenses = expenses,
+                category = category,
+                categoryAvg = categoryAvg,
+                baseline = median,
+                detectionMethod = AnomalyMethod.MAD
+            )
+        }
 
         return expenses.filter { expense ->
             val modifiedZ = MAD_SCALE * (expense.effectiveAmount - median) / mad
@@ -268,7 +284,17 @@ class AnomalyDetector @Inject constructor() {
             val q1 = percentile(amounts, 25.0)
             val q3 = percentile(amounts, 75.0)
             val iqr = q3 - q1
-            if (iqr == 0.0) continue
+            if (iqr == 0.0) {
+                result += detectZeroDispersionOutliers(
+                    expenses = contextExpenses,
+                    category = category,
+                    categoryAvg = categoryAvg,
+                    baseline = q3,
+                    detectionMethod = AnomalyMethod.CONTEXTUAL,
+                    contextualNote = "Unusual for a $day ${slot.label}"
+                )
+                continue
+            }
 
             val upperFence = q3 + IQR_FENCE * iqr
 
@@ -307,6 +333,32 @@ class AnomalyDetector @Inject constructor() {
         val upper = sorted[(index.toInt() + 1).coerceAtMost(sorted.size - 1)]
         val fraction = index - index.toInt()
         return lower + fraction * (upper - lower)
+    }
+
+    private fun detectZeroDispersionOutliers(
+        expenses: List<Expense>,
+        category: Category?,
+        categoryAvg: Double,
+        baseline: Double,
+        detectionMethod: AnomalyMethod,
+        contextualNote: String? = null
+    ): List<AnomalyTransaction> {
+        if (baseline <= 0.0) return emptyList()
+
+        val spikeThreshold = baseline * ZERO_DISPERSION_MULTIPLIER
+        return expenses
+            .filter { it.effectiveAmount > spikeThreshold }
+            .map { expense ->
+                AnomalyTransaction(
+                    expense = expense,
+                    merchantAvg = categoryAvg,
+                    deviationMultiple = if (baseline > 0) (expense.effectiveAmount / baseline).toFloat() else 0f,
+                    category = category,
+                    detectionMethod = detectionMethod,
+                    contextualNote = contextualNote,
+                    categoryAvg = categoryAvg
+                )
+            }
     }
 
     // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType

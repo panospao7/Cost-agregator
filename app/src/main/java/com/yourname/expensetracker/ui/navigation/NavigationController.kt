@@ -96,8 +96,14 @@ private fun parseSaveToken(token: String): Pair<String, Map<String, String>> {
 
 private fun NavigationDestination.toSaveToken(): String = when (this) {
     is NavigationDestination.Home -> "home"
-    is NavigationDestination.Transactions -> "transactions"
-    is NavigationDestination.Analytics -> "analytics"
+    is NavigationDestination.Transactions -> buildSaveToken(
+        base = "transactions",
+        params = mapOf("expenseId" to initialExpenseId?.toString())
+    )
+    is NavigationDestination.Analytics -> buildSaveToken(
+        base = "analytics",
+        params = mapOf("period" to initialPeriod)
+    )
     is NavigationDestination.Assistant -> "assistant"
     is NavigationDestination.Review -> "review"
     is NavigationDestination.Budget -> "budget"
@@ -108,7 +114,10 @@ private fun NavigationDestination.toSaveToken(): String = when (this) {
             "categoryName" to categoryName
         )
     )
-    is NavigationDestination.SpendingMap -> "spending_map"
+    is NavigationDestination.SpendingMap -> buildSaveToken(
+        base = "spending_map",
+        params = mapOf("location" to initialLocationQuery)
+    )
     is NavigationDestination.AddExpense -> "add_expense"
     is NavigationDestination.ScanReceipt -> "scan_receipt"
     is NavigationDestination.RecurringExpenses -> "recurring_expenses"
@@ -165,8 +174,12 @@ private fun destinationFromSaveToken(token: String): NavigationDestination? {
 
     return when {
         baseToken == "home" -> NavigationDestination.Home
-        baseToken == "transactions" -> NavigationDestination.Transactions
-        baseToken == "analytics" -> NavigationDestination.Analytics
+        baseToken == "transactions" -> NavigationDestination.Transactions(
+            initialExpenseId = params["expenseId"]?.toLongOrNull()
+        )
+        baseToken == "analytics" -> NavigationDestination.Analytics(
+            initialPeriod = params["period"]?.takeIf { it.isNotBlank() }
+        )
         baseToken == "assistant" -> NavigationDestination.Assistant
         baseToken == "review" -> NavigationDestination.Review
         baseToken == "budget" -> NavigationDestination.Budget
@@ -174,7 +187,9 @@ private fun destinationFromSaveToken(token: String): NavigationDestination? {
             categoryId = params["categoryId"]?.toLongOrNull(),
             categoryName = params["categoryName"]?.takeIf { it.isNotBlank() }
         )
-        baseToken == "spending_map" -> NavigationDestination.SpendingMap
+        baseToken == "spending_map" -> NavigationDestination.SpendingMap(
+            initialLocationQuery = params["location"]?.takeIf { it.isNotBlank() }
+        )
         baseToken == "add_expense" -> NavigationDestination.AddExpense
         baseToken == "scan_receipt" -> NavigationDestination.ScanReceipt
         baseToken == "recurring_expenses" -> NavigationDestination.RecurringExpenses
@@ -318,11 +333,11 @@ class NavigationController(
         clearBackStack()
         currentDestination.value = when (tabIndex) {
             0 -> NavigationDestination.Home
-            1 -> NavigationDestination.Transactions
+            1 -> NavigationDestination.Transactions()
             2 -> NavigationDestination.Review
             3 -> NavigationDestination.Budget
-            4 -> NavigationDestination.Analytics
-            5 -> NavigationDestination.SpendingMap
+            4 -> NavigationDestination.Analytics()
+            5 -> NavigationDestination.SpendingMap()
             else -> NavigationDestination.Home
         }
         _navigationEvents.tryEmit(NavigationEvent.NavigateTo(currentDestination.value))

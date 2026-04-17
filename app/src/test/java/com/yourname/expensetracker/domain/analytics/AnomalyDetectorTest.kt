@@ -104,6 +104,32 @@ class AnomalyDetectorTest {
         assertEquals(1, anomalies.count { it.expense.id == 199L })
     }
 
+    @Test
+    fun `zero dispersion baseline still flags obvious spike`() {
+        val month = monthPeriodFor(ms(2026, 4, 20))
+        val category = Category(id = 9L, name = "Food", icon = "fork", color = "#FFAA00")
+
+        val amounts = listOf(10.0, 10.0, 10.0, 10.0, 100.0)
+        val expenses = amounts.mapIndexed { idx, amount ->
+            Expense(
+                id = (idx + 1).toLong(),
+                amount = amount,
+                merchant = "Flat Baseline",
+                transactionType = TransactionType.PURCHASE,
+                date = ms(2026, 4, idx + 1),
+                categoryId = 9L
+            )
+        }
+
+        val anomalies = detector.detect(
+            monthPeriod = month,
+            categoryMap = mapOf(9L to category),
+            allExpenses = expenses
+        )
+
+        assertTrue("Flat baseline spike should be detected", anomalies.any { it.expense.id == 5L })
+    }
+
     private fun sharedExpense(id: Long, amount: Double, myShareAmount: Double, date: Long): Expense =
         Expense(
             id = id,

@@ -8,12 +8,14 @@ import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.data.database.entity.Warranty
+import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository.ExpiryReconciliationResult
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.service.NotificationService
-import io.mockk.capture
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -58,6 +60,7 @@ class WarrantyExpirationWorkerTest {
 
     @Test
     fun `expiring warranty triggers notification`() = runTest {
+        coEvery { warrantyRepository.reconcileExpiredItems() } returns ExpiryReconciliationResult(0, 0)
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns listOf(sampleWarranty(id = 1L))
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
 
@@ -69,6 +72,7 @@ class WarrantyExpirationWorkerTest {
 
     @Test
     fun `no expiring warranties sends no notification`() = runTest {
+        coEvery { warrantyRepository.reconcileExpiredItems() } returns ExpiryReconciliationResult(0, 0)
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns emptyList()
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
 
@@ -80,21 +84,22 @@ class WarrantyExpirationWorkerTest {
 
     @Test
     fun `worker returns success result`() = runTest {
+        coEvery { warrantyRepository.reconcileExpiredItems() } returns ExpiryReconciliationResult(1, 2)
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns emptyList()
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns listOf(sampleWarranty(id = 2L))
-        val notificationIds = mutableListOf<Int>()
-        every { notificationService.sendBudgetAlert(capture(notificationIds), any(), any()) } returns Unit
+        val notificationIdSlot = slot<Int>()
+        every { notificationService.sendBudgetAlert(capture(notificationIdSlot), any(), any()) } returns Unit
 
         val result = buildWorker().doWork()
 
         assertEquals(Result.success(), result)
-        assertThat(notificationIds).hasSize(1)
-        assertThat(notificationIds.single()).isLessThan(20000)
+        assertThat(notificationIdSlot.isCaptured).isTrue()
+        assertThat(notificationIdSlot.captured).isLessThan(20000)
     }
 
     @Test
     fun `worker handles exception gracefully`() = runTest {
-        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } throws IllegalStateException("db unavailable")
+        coEvery { warrantyRepository.reconcileExpiredItems() } throws IllegalStateException("db unavailable")
 
         val result = buildWorker().doWork()
 
@@ -104,7 +109,7 @@ class WarrantyExpirationWorkerTest {
 
     @Test
     fun `worker propagates CancellationException instead of returning retry`() = runTest {
-        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } throws CancellationException("cancelled")
+        coEvery { warrantyRepository.reconcileExpiredItems() } throws CancellationException("cancelled")
 
         try {
             buildWorker().doWork()
@@ -113,6 +118,18 @@ class WarrantyExpirationWorkerTest {
             // expected — cancellation must not be swallowed
         }
         verify(exactly = 0) { notificationService.sendBudgetAlert(any(), any(), any()) }
+    }
+
+    @Test
+    fun `worker reconciles expired items before notifications`() = runTest {
+        coEvery { warrantyRepository.reconcileExpiredItems() } returns ExpiryReconciliationResult(4, 5)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns emptyList()
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns emptyList()
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerify(exactly = 1) { warrantyRepository.reconcileExpiredItems() }
     }
 
     private fun sampleWarranty(id: Long): Warranty {

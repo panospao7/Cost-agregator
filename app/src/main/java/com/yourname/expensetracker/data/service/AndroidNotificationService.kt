@@ -143,7 +143,7 @@ class AndroidNotificationService @Inject constructor(
             return
         }
 
-        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://transaction/$expenseId")).apply {
+        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("expensetracker://activity?expenseId=$expenseId")).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingIntent = PendingIntent.getActivity(

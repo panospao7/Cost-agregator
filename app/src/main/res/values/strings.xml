@@ -1263,7 +1263,7 @@
     <string name="savings_section_recommendations">Smart Recommendations</string>
     <string name="savings_section_your_goals">Your Goals</string>
     <string name="savings_progress_percent_complete">%1$d%% complete</string>
-    <string name="savings_label_total_saved">Total Saved</string>
+    <string name="savings_label_total_saved">Total Saved %1$s</string>
     <string name="savings_done">Done</string>
     <string name="savings_action_add_goal">Add Goal</string>
     <string name="savings_action_save">Save</string>
@@ -1271,9 +1271,9 @@
     <string name="savings_empty_title">No savings goals yet</string>
     <string name="savings_empty_message">Create a goal and start saving!</string>
     <string name="savings_target_date">Target: %1$s</string>
-    <string name="savings_amount_eur">€%1$.2f</string>
-    <string name="savings_of_target">of €%1$.2f</string>
-    <string name="savings_safe_to_save">Safe to save €%1$.0f more</string>
+    <string name="savings_amount_eur">%1$s</string>
+    <string name="savings_of_target">of %1$s</string>
+    <string name="savings_safe_to_save">Safe to save %1$s more</string>
     
     <!-- Warranty Tracker -->
     <string name="screen_warranty_tracker">Warranty Tracker</string>
@@ -1743,7 +1743,7 @@
     <string name="analytics_budget_range_format">€%1$.0f / €%2$.0f</string>
     <string name="analytics_period_selector_cd_format">%1$s period, %2$s</string>
     <string name="analytics_total_transactions_format">%1$d transactions recorded in this period.</string>
-    <string name="analytics_vs_last_period_format">vs. €%1$.0f last period</string>
+    <string name="analytics_vs_last_period_format">vs. %1$s last period</string>
     <string name="analytics_change_percent_format">%1$s%2$.1f%% vs last period</string>
     <string name="analytics_change_increase">+</string>
     <string name="analytics_change_decrease"></string>

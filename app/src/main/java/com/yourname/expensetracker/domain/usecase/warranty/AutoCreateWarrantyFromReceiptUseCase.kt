@@ -8,7 +8,8 @@ import com.yourname.expensetracker.domain.receipt.WarrantyExtractionData
 import com.yourname.expensetracker.domain.receipt.WarrantyTextExtractor
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
-import java.util.Calendar
+import java.time.Instant
+import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -109,7 +110,16 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
         userModifiedData: WarrantyExtractionData? = null
     ): WarrantyCreationResult {
         val finalData = userModifiedData ?: extractionData
-        return createWarranty(receiptId, finalData, autoDetect = true, needsReview = false)
+        val existingWarranty = warrantyTrackerRepository.getWarrantyByReceiptId(receiptId)
+        return if (existingWarranty != null) {
+            if (existingWarranty.needsReview || existingWarranty.status == WarrantyStatus.PENDING_REVIEW) {
+                promoteReviewDraft(existingWarranty, finalData, autoDetect = true)
+            } else {
+                WarrantyCreationResult.AlreadyExists(existingWarranty.id)
+            }
+        } else {
+            createWarranty(receiptId, finalData, autoDetect = true, needsReview = false)
+        }
     }
 
     /**
@@ -175,6 +185,8 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
             }
             return WarrantyCreationResult.Failure("Failed to persist warranty")
         }
+
+        persistReturnWindow(receiptId, warranty.copy(id = warrantyId))
         
         Timber.tag(TAG).i(
             "Created warranty $warrantyId for receipt $receiptId " +
@@ -200,10 +212,7 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
 
         val purchaseDate = data.purchaseDate ?: now
         val durationMonths = data.warrantyDurationMonths ?: 12
-        val warrantyEndDate = data.warrantyEndDate ?: Calendar.getInstance().apply {
-            timeInMillis = purchaseDate
-            add(Calendar.MONTH, durationMonths)
-        }.timeInMillis
+        val warrantyEndDate = data.warrantyEndDate ?: calculateWarrantyEndDate(purchaseDate, durationMonths)
 
         val draftWarranty = Warranty(
             id = 0,
@@ -239,12 +248,69 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
             }
         }
 
+        persistReturnWindow(receiptId, draftWarranty.copy(id = insertedId))
+
         Timber.tag(TAG).i(
             "Created low-confidence review draft $insertedId for receipt $receiptId " +
             "(confidence=${data.confidence}%)"
         )
 
         return WarrantyCreationResult.Success(insertedId, data.confidence)
+    }
+
+    private suspend fun promoteReviewDraft(
+        existingWarranty: Warranty,
+        data: WarrantyExtractionData,
+        autoDetect: Boolean
+    ): WarrantyCreationResult {
+        val now = timeProvider.now()
+        val purchaseDate = data.purchaseDate ?: existingWarranty.purchaseDate
+        val durationMonths = data.warrantyDurationMonths ?: existingWarranty.warrantyDurationMonths
+        val warrantyEndDate = data.warrantyEndDate ?: calculateWarrantyEndDate(purchaseDate, durationMonths)
+
+        val updatedWarranty = existingWarranty.copy(
+            productName = data.productName?.takeIf { it.isNotBlank() } ?: existingWarranty.productName,
+            merchantName = data.merchantName?.takeIf { it.isNotBlank() } ?: existingWarranty.merchantName,
+            purchaseDate = purchaseDate,
+            warrantyDurationMonths = durationMonths,
+            warrantyEndDate = warrantyEndDate,
+            warrantyType = mapWarrantyType(data.warrantyType),
+            supportPhone = data.supportPhone ?: existingWarranty.supportPhone,
+            supportEmail = data.supportEmail ?: existingWarranty.supportEmail,
+            notes = if (autoDetect) "Auto-detected from receipt" else existingWarranty.notes,
+            status = WarrantyStatus.ACTIVE,
+            updatedAt = now,
+            autoDetected = autoDetect,
+            extractionConfidence = data.confidence,
+            extractionSource = "ocr",
+            needsReview = false
+        )
+
+        warrantyTrackerRepository.updateWarranty(updatedWarranty)
+        persistReturnWindow(existingWarranty.receiptId, updatedWarranty)
+        Timber.tag(TAG).i(
+            "Promoted review draft ${existingWarranty.id} for receipt ${existingWarranty.receiptId} " +
+                "(confidence=${data.confidence}%)"
+        )
+        return WarrantyCreationResult.Success(existingWarranty.id, data.confidence)
+    }
+
+    private suspend fun persistReturnWindow(receiptId: Long, warranty: Warranty) {
+        runCatching {
+            warrantyTrackerRepository.upsertReturnWindowForReceipt(receiptId, warranty)
+        }.onFailure { error ->
+            Timber.tag(TAG).w(error, "Failed to persist return window for receipt $receiptId")
+        }
+    }
+
+    private fun calculateWarrantyEndDate(purchaseDate: Long, durationMonths: Int): Long {
+        val zoneId = ZoneId.systemDefault()
+        val endDate = Instant.ofEpochMilli(purchaseDate)
+            .atZone(zoneId)
+            .toLocalDate()
+            .plusMonths(durationMonths.toLong())
+
+        return endDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
     }
 
     private fun mapWarrantyType(rawType: String?): WarrantyType {

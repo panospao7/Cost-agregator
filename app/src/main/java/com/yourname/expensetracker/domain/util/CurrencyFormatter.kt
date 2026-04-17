@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.util
 
+import java.text.NumberFormat
 import java.util.Currency
 import java.util.Locale
 
@@ -12,38 +13,40 @@ object CurrencyFormatter {
     private val DEFAULT_SYMBOL = "€"
 
     fun format(amount: Double, currencyCode: String = DEFAULT_CURRENCY, showCents: Boolean = true): String {
-        val symbol = getCurrencySymbol(currencyCode)
-        return if (showCents) {
-            "$symbol${String.format(Locale.US, "%.2f", amount)}"
-        } else {
-            "$symbol${String.format(Locale.US, "%.0f", amount)}"
-        }
+        return currencyNumberFormat(currencyCode, showCents).format(amount)
     }
 
     fun formatCompact(amount: Double, currencyCode: String = DEFAULT_CURRENCY): String {
         val symbol = getCurrencySymbol(currencyCode)
         return when {
-            amount >= 1_000_000 -> "$symbol${String.format(Locale.US, "%.1f", amount / 1_000_000)}M"
-            amount >= 1_000 -> "$symbol${String.format(Locale.US, "%.1f", amount / 1_000)}K"
+            amount >= 1_000_000 -> "$symbol${String.format(Locale.getDefault(), "%.1f", amount / 1_000_000)}M"
+            amount >= 1_000 -> "$symbol${String.format(Locale.getDefault(), "%.1f", amount / 1_000)}K"
             else -> format(amount, currencyCode)
         }
     }
 
     fun formatWithSign(amount: Double, currencyCode: String = DEFAULT_CURRENCY): String {
-        val symbol = getCurrencySymbol(currencyCode)
-        val formatted = String.format(Locale.US, "%.2f", kotlin.math.abs(amount))
-        return if (amount < 0) {
-            "-$symbol$formatted"
-        } else {
-            "+$symbol$formatted"
+        val absolute = format(kotlin.math.abs(amount), currencyCode)
+        return when {
+            amount < 0 -> "-$absolute"
+            amount > 0 -> "+$absolute"
+            else -> absolute
         }
     }
 
     private fun getCurrencySymbol(currencyCode: String): String {
         return try {
-            Currency.getInstance(currencyCode).symbol
+            Currency.getInstance(currencyCode).getSymbol(Locale.getDefault())
         } catch (e: Exception) {
             DEFAULT_SYMBOL
+        }
+    }
+
+    private fun currencyNumberFormat(currencyCode: String, showCents: Boolean): NumberFormat {
+        return NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
+            currency = runCatching { Currency.getInstance(currencyCode) }.getOrNull()
+            minimumFractionDigits = if (showCents) 2 else 0
+            maximumFractionDigits = if (showCents) 2 else 0
         }
     }
 }

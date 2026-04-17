@@ -82,7 +82,7 @@ class HomeScreenWidgetTest {
         assertTrue(source.contains("MoneyRadarAction.ViewBills"))
         assertTrue(source.contains("MoneyRadarAction.ReviewAnomalies"))
         assertTrue(source.contains("MoneyRadarAction.AdjustBudget"))
-        assertTrue(source.contains("onNavigateToAnalytics()"))
+        assertTrue(source.contains("onNavigateToAnalytics(\"month\")"))
 
         // Stress forecast recommendation routing
         assertTrue(source.contains("is DashboardWidget.FinancialStressForecast ->"))
@@ -101,8 +101,8 @@ class HomeScreenWidgetTest {
         assertTrue(source.contains("} ?: false"))
 
         // Missing handler defaults on HomeScreen params
-        assertTrue(source.contains("onNavigateToAnalytics: () -> Unit = {}"))
-        assertTrue(source.contains("onNavigateToMap: () -> Unit = {}"))
+        assertTrue(source.contains("onNavigateToAnalytics: (String?) -> Unit = {}"))
+        assertTrue(source.contains("onNavigateToMap: (String?) -> Unit = {}"))
         assertTrue(source.contains("onNavigateToBudgetDetail: (String) -> Unit = {}"))
         assertTrue(source.contains("onNavigateToFeature: (NavigationDestination) -> Unit = {}"))
 

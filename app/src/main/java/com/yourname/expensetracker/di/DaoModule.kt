@@ -217,4 +217,9 @@ object DaoModule {
     @Singleton
     fun provideSavingsSweepPlanDao(database: AppDatabase): SavingsSweepPlanDao =
         database.savingsSweepPlanDao()
+
+    @Provides
+    @Singleton
+    fun provideSpendingChallengeDao(database: AppDatabase): SpendingChallengeDao =
+        database.spendingChallengeDao()
 }

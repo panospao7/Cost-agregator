@@ -153,7 +153,7 @@ class MainActivity : ComponentActivity() {
 
         when (data.host) {
             "home", "dashboard" -> {
-                mainViewModel.navigateToTab(0)
+                mainViewModel.navigateTo(NavigationDestination.Home)
                 data.getQueryParameter("briefingKey")?.let { briefingKey ->
                     lifecycleScope.launch {
                         aiEngagementRepository.setLastOpenedDashboardBriefingKey(briefingKey)
@@ -164,17 +164,54 @@ class MainActivity : ComponentActivity() {
                     message = "dashboard deep link opened${data.getQueryParameter("briefingKey")?.let { " ($it)" } ?: ""}"
                 )
             }
-            "activity" -> mainViewModel.navigateToTab(1)
-            "review" -> mainViewModel.navigateToTab(2)
-            "plan" -> mainViewModel.navigateToTab(3)
+            "activity" -> {
+                val expenseId = data.getQueryParameter("expenseId")?.toLongOrNull()
+                if (expenseId != null) {
+                    lifecycleScope.launch {
+                        val expense = expenseDao.getById(expenseId)
+                        if (expense != null) {
+                            val calendar = java.util.Calendar.getInstance().apply {
+                                timeInMillis = expense.date
+                                set(java.util.Calendar.HOUR_OF_DAY, 0)
+                                set(java.util.Calendar.MINUTE, 0)
+                                set(java.util.Calendar.SECOND, 0)
+                                set(java.util.Calendar.MILLISECOND, 0)
+                            }
+                            val startOfDay = calendar.timeInMillis
+                            calendar.add(java.util.Calendar.DAY_OF_MONTH, 1)
+                            mainViewModel.navigateToTransactions(
+                                TransactionFilter(dateRange = startOfDay to calendar.timeInMillis)
+                            )
+                        } else {
+                            mainViewModel.navigateTo(NavigationDestination.Transactions(initialExpenseId = expenseId))
+                        }
+                    }
+                } else {
+                    mainViewModel.navigateTo(NavigationDestination.Transactions())
+                }
+            }
+            "review" -> mainViewModel.navigateTo(NavigationDestination.Review)
+            "plan" -> mainViewModel.navigateTo(NavigationDestination.Budget)
             "add" -> {
                 mainViewModel.triggerAddExpense()
             }
-            "analytics" -> mainViewModel.navigateToTab(4)
-            "map" -> mainViewModel.navigateToTab(5)
+            "analytics" -> {
+                mainViewModel.navigateTo(
+                    NavigationDestination.Analytics(
+                        initialPeriod = data.getQueryParameter("period")
+                    )
+                )
+            }
+            "map" -> {
+                mainViewModel.navigateTo(
+                    NavigationDestination.SpendingMap(
+                        initialLocationQuery = data.getQueryParameter("location")
+                    )
+                )
+            }
             else -> {
                 Timber.w("Ignoring unsupported deep link host: ${data.host}")
-                mainViewModel.navigateToTab(0)
+                mainViewModel.navigateTo(NavigationDestination.Home)
             }
         }
 
@@ -439,10 +476,14 @@ fun MainScreen(
                         onNavigateToRecurring = { navigation.navigateTo(NavigationDestination.RecurringExpenses) },
                         onNavigateToTransactions = { filter ->
                             activeTransactionFilter = filter
-                            navigation.navigateToTab(1)
+                            navigation.navigateTo(NavigationDestination.Transactions())
                         },
-                        onNavigateToAnalytics = { navigation.navigateToTab(4) },
-                        onNavigateToMap = { navigation.navigateToTab(5) },
+                        onNavigateToAnalytics = { period ->
+                            navigation.navigateTo(NavigationDestination.Analytics(initialPeriod = period))
+                        },
+                        onNavigateToMap = { location ->
+                            navigation.navigateTo(NavigationDestination.SpendingMap(initialLocationQuery = location))
+                        },
                         onNavigateToBudgetDetail = { category ->
                             navigation.navigateTo(
                                 NavigationDestination.BudgetDetail(
@@ -455,11 +496,12 @@ fun MainScreen(
                         onNavigateToFeature = { destination -> navigation.navigateTo(destination) }
                     )
                     1 -> TransactionsScreen(
-                        onNavigateToAnalytics = { navigation.navigateToTab(4) },
+                        onNavigateToAnalytics = { navigation.navigateTo(NavigationDestination.Analytics()) },
                         onAddExpense = { navigation.navigateTo(NavigationDestination.AddExpense) },
                         onOpenVisualSplit = { expense ->
                             navigation.navigateTo(NavigationDestination.VisualSplitEditor.forExpense(expense))
                         },
+                        highlightedExpenseId = (currentDestination as? NavigationDestination.Transactions)?.initialExpenseId,
                         initialFilter = activeTransactionFilter
                     )
                     2 -> ReviewScreen()
@@ -471,12 +513,15 @@ fun MainScreen(
                         }
                     )
                     4 -> com.yourname.expensetracker.ui.screens.analytics.AnalyticsScreen(
+                        initialPeriod = (currentDestination as? NavigationDestination.Analytics)?.initialPeriod,
                         onNavigateToTransactions = { filter ->
                             activeTransactionFilter = filter
-                            navigation.navigateToTab(1)
+                            navigation.navigateTo(NavigationDestination.Transactions())
                         }
                     )
-                    5 -> SpendingMapScreen()
+                    5 -> SpendingMapScreen(
+                        initialLocationQuery = (currentDestination as? NavigationDestination.SpendingMap)?.initialLocationQuery
+                    )
                 }
             }
 

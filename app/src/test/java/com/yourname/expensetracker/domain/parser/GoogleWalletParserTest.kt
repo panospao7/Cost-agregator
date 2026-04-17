@@ -95,6 +95,22 @@ class GoogleWalletParserTest {
     }
 
     @Test
+    fun `keep google pay merchant purchase wording as purchase`() {
+        val result = parser.parse(
+            title = "Google Pay",
+            text = "Paid €22.50 to Zara with Visa ••4321",
+            bigText = null,
+            subText = null,
+            packageName = "com.google.android.apps.walletnfcrel"
+        )
+
+        assertNotNull(result)
+        assertEquals(ParsedTransactionType.PURCHASE, result!!.type)
+        assertNull(result.transferDirection)
+        assertEquals("Zara with Visa", result.merchant)
+    }
+
+    @Test
     fun `parse paid to friend wording as transfer`() {
         val result = parser.parse(
             title = "Google Pay",

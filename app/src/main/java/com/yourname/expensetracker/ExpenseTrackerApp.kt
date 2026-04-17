@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
+import com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +72,9 @@ class ExpenseTrackerApp : Application(), Configuration.Provider {
 
         // Schedule the one-time merchantKey column backfill for pre-v32 rows
         MerchantKeyBackfillWorker.schedule(this)
+
+        // Reconcile expired warranties/return windows and keep reminder notifications active.
+        WarrantyExpirationWorker.schedule(this)
 
         // Keep proactive briefing work aligned with the current opt-in state.
         appScope.launch {
