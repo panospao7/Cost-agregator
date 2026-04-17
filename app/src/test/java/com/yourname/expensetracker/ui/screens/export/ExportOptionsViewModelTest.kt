@@ -4,6 +4,9 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExportDataRepository
 import com.yourname.expensetracker.domain.export.AccountingExportPolicy
+import com.yourname.expensetracker.domain.export.FreshBooksExporter
+import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
+import com.yourname.expensetracker.domain.export.XeroCSVExporter
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
@@ -37,7 +40,14 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
         coEvery { exportDataRepository.getCategoryNameMap() } returns emptyMap()
         every { exportDataRepository.createExportFile(any(), any()) } returns File("build/tmp/test_export.csv")
 
-        viewModel = ExportOptionsViewModel(exportDataRepository, AccountingExportPolicy(), timeProvider)
+        viewModel = ExportOptionsViewModel(
+            exportDataRepository = exportDataRepository,
+            accountingExportPolicy = AccountingExportPolicy(),
+            timeProvider = timeProvider,
+            xeroExporter = XeroCSVExporter(),
+            quickBooksExporter = QuickBooksIIFExporter(),
+            freshBooksExporter = FreshBooksExporter()
+        )
     }
 
     @Test
@@ -55,7 +65,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
         val state = viewModel.uiState.value
         assertTrue(state.exportSuccess)
         assertEquals(out.absolutePath, state.exportFilePath)
-        assertTrue((state.exportPreview ?: "").startsWith("Date,Merchant,Amount"))
+        assertTrue((state.exportPreview ?: "").startsWith("Date,Merchant,Amount,Currency"))
     }
 
     @Test
@@ -72,6 +82,7 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
 
         val preview = viewModel.uiState.value.exportPreview.orEmpty()
         assertTrue(preview.contains("'=SUM(A1:A2)"))
+        assertTrue(preview.contains(",EUR,"))
     }
 
     @Test

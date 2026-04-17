@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
 import com.yourname.expensetracker.domain.export.ExportTransaction
 import com.yourname.expensetracker.domain.export.toExportTransaction
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -55,7 +56,10 @@ data class ExportFormat(
 class ExportOptionsViewModel @Inject constructor(
     private val exportDataRepository: ExportDataRepository,
     private val accountingExportPolicy: AccountingExportPolicy,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val xeroExporter: XeroCSVExporter,
+    private val quickBooksExporter: QuickBooksIIFExporter,
+    private val freshBooksExporter: FreshBooksExporter
 ) : ViewModel() {
 
     companion object {
@@ -178,7 +182,7 @@ class ExportOptionsViewModel @Inject constructor(
     ) {
         val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
         val zoneId = ZoneId.systemDefault()
-        val header = "Date,Merchant,Amount,Category,Notes,ID\n"
+        val header = "Date,Merchant,Amount,Currency,Category,Notes,ID\n"
         writer.append(header)
         preview.append(header)
 
@@ -186,10 +190,11 @@ class ExportOptionsViewModel @Inject constructor(
             val line = buildString {
                 val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
                 val merchant = escapeCsv(expense.merchant)
-                val amount = expense.amount
+                val amount = escapeCsv(CurrencyFormatter.formatForExport(expense.amount))
+                val currency = escapeCsv(expense.currency)
                 val category = escapeCsv(categories[expense.categoryId] ?: "Uncategorized")
                 val notes = escapeCsv(expense.notes ?: "")
-                append("$date,$merchant,$amount,$category,$notes,${expense.id}\n")
+                append("$date,$merchant,$amount,$currency,$category,$notes,${expense.id}\n")
             }
             writer.append(line)
             preview.append(line)
@@ -259,14 +264,13 @@ class ExportOptionsViewModel @Inject constructor(
         categories: Map<Long, String>,
         preview: PreviewCollector
     ) {
-        val exporter = XeroCSVExporter()
         val header = "Date,Description,Amount,Account,Reference\n"
-        exporter.writeHeader(writer)
+        xeroExporter.writeHeader(writer)
         preview.append(header)
 
         expenses.forEach { expense ->
             val line = buildString {
-                exporter.writeExpense(this, expense.toExportTransaction(), categories)
+                xeroExporter.writeExpense(this, expense.toExportTransaction(), categories)
             }
             writer.append(line)
             preview.append(line)
@@ -279,16 +283,15 @@ class ExportOptionsViewModel @Inject constructor(
         categories: Map<Long, String>,
         preview: PreviewCollector
     ) {
-        val exporter = QuickBooksIIFExporter()
         val header = "!TRNS\tDATE\tACCNT\tAMOUNT\tMEMO\tNAME\tCLASS\n" +
             "!SPL\tDATE\tACCNT\tAMOUNT\tMEMO\tNAME\tCLASS\n" +
             "!ENDTRNS\n"
-        exporter.writeHeader(writer)
+        quickBooksExporter.writeHeader(writer)
         preview.append(header)
 
         expenses.forEach { expense ->
             val block = buildString {
-                exporter.writeExpense(this, expense.toExportTransaction(), categories)
+                quickBooksExporter.writeExpense(this, expense.toExportTransaction(), categories)
             }
             writer.append(block)
             preview.append(block)
@@ -301,14 +304,13 @@ class ExportOptionsViewModel @Inject constructor(
         categories: Map<Long, String>,
         preview: PreviewCollector
     ) {
-        val exporter = FreshBooksExporter()
         val header = "date,description,amount,category,vendor\n"
-        exporter.writeHeader(writer)
+        freshBooksExporter.writeHeader(writer)
         preview.append(header)
 
         expenses.forEach { expense ->
             val line = buildString {
-                exporter.writeExpense(this, expense.toExportTransaction(), categories)
+                freshBooksExporter.writeExpense(this, expense.toExportTransaction(), categories)
             }
             writer.append(line)
             preview.append(line)

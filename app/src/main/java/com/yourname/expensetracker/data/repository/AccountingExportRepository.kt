@@ -43,8 +43,7 @@ class AccountingExportRepository @Inject constructor(
         context: Context,
         startDate: Long,
         endDate: Long,
-        format: ExportFormat,
-        includeReceipts: Boolean = false
+        format: ExportFormat
     ): ExportResult = withContext(Dispatchers.IO) {
         try {
             // A.9 Batch 6: fetch via deterministic exhaustive paging so that

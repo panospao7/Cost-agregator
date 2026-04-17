@@ -34,6 +34,11 @@ object CurrencyFormatter {
         }
     }
 
+    fun formatForExport(amount: Double, locale: Locale = Locale.getDefault()): String {
+        val safeAmount = if (amount.isFinite()) amount else 0.0
+        return String.format(Locale.US, "%.2f", safeAmount)
+    }
+
     private fun getCurrencySymbol(currencyCode: String): String {
         return try {
             Currency.getInstance(currencyCode).getSymbol(Locale.getDefault())

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.export
 
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -29,12 +30,13 @@ class QuickBooksIIFExporter {
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val fundingAccount = expense.sourceAccountName
         val categoryAccount = categories[expense.categoryId] ?: "Uncategorized"
-        val amount = expense.amount
+        val amount = CurrencyFormatter.formatForExport(expense.amount)
+        val splitAmount = CurrencyFormatter.formatForExport(-expense.amount)
         val memo = escapeIifField(expense.notes ?: "")
         val name = escapeIifField(expense.merchant)
 
         writer.append("TRNS\t${escapeIifField(date)}\t${escapeIifField(fundingAccount)}\t$amount\t$memo\t$name\t\n")
-        writer.append("SPL\t${escapeIifField(date)}\t${escapeIifField(categoryAccount)}\t-$amount\t$memo\t$name\t\n")
+        writer.append("SPL\t${escapeIifField(date)}\t${escapeIifField(categoryAccount)}\t$splitAmount\t$memo\t$name\t\n")
         writer.append("ENDTRNS\n")
     }
 
@@ -64,7 +66,7 @@ class XeroCSVExporter {
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val description = escapeCsvField(expense.merchant)
-        val amount = expense.amount
+        val amount = escapeCsvField(CurrencyFormatter.formatForExport(expense.amount))
         val account = escapeCsvField(categories[expense.categoryId] ?: "Uncategorized")
         val reference = expense.id.toString()
 
@@ -115,7 +117,7 @@ class FreshBooksExporter {
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val description = escapeCsvField(expense.merchant)
-        val amount = expense.amount
+        val amount = escapeCsvField(CurrencyFormatter.formatForExport(expense.amount))
         val category = escapeCsvField(categories[expense.categoryId] ?: "Uncategorized")
         val vendor = escapeCsvField(expense.merchant)
 
