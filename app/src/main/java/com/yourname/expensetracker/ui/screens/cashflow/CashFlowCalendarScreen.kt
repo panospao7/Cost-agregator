@@ -23,6 +23,7 @@ import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
 import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.SimpleDateFormat
 import java.util.*
@@ -252,7 +253,7 @@ private fun DayCellView(
             if (dayCell.cashFlow != null) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "€${String.format("%.0f", dayCell.cashFlow.endingBalance)}",
+                    text = CurrencyFormatter.format(dayCell.cashFlow.endingBalance, showCents = false),
                     style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.Center
                 )
@@ -342,24 +343,24 @@ private fun DailyCashFlowDetails(
         val recurringTotal = cashFlow.predictedRecurring.sumOf { it.averageAmount }
 
         Text(
-            text = "Ending balance: €${String.format("%.2f", cashFlow.endingBalance)}",
+            text = "Ending balance: ${CurrencyFormatter.format(cashFlow.endingBalance)}",
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold
         )
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Income: €${String.format("%.2f", incomeTotal)}",
+            text = "Income: ${CurrencyFormatter.format(incomeTotal)}",
             style = MaterialTheme.typography.bodyMedium,
             color = SemanticColors.StatusGreen
         )
         Text(
-            text = "Expenses: €${String.format("%.2f", expensesTotal)}",
+            text = "Expenses: ${CurrencyFormatter.format(expensesTotal)}",
             style = MaterialTheme.typography.bodyMedium,
             color = SemanticColors.StatusRed
         )
         Text(
-            text = "Recurring: €${String.format("%.2f", recurringTotal)}",
+            text = "Recurring: ${CurrencyFormatter.format(recurringTotal)}",
             style = MaterialTheme.typography.bodyMedium,
             color = SemanticColors.StatusYellow
         )
@@ -370,7 +371,7 @@ private fun DailyCashFlowDetails(
             Text(text = "Income items", fontWeight = FontWeight.SemiBold)
             cashFlow.income.take(3).forEach { income ->
                 Text(
-                    text = "• ${income.merchant}: +€${String.format("%.2f", abs(income.amount))}",
+                    text = "• ${income.merchant}: +${CurrencyFormatter.format(abs(income.amount))}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -382,7 +383,7 @@ private fun DailyCashFlowDetails(
             Text(text = "Expense items", fontWeight = FontWeight.SemiBold)
             cashFlow.expenses.take(3).forEach { expense ->
                 Text(
-                    text = "• ${expense.merchant}: -€${String.format("%.2f", expense.amount)}",
+                    text = "• ${expense.merchant}: -${CurrencyFormatter.format(expense.amount)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -394,7 +395,7 @@ private fun DailyCashFlowDetails(
             Text(text = "Recurring items", fontWeight = FontWeight.SemiBold)
             cashFlow.predictedRecurring.take(3).forEach { recurring ->
                 Text(
-                    text = "• ${recurring.merchantName}: -€${String.format("%.2f", recurring.averageAmount)}",
+                    text = "• ${recurring.merchantName}: -${CurrencyFormatter.format(recurring.averageAmount)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -49,7 +49,9 @@ sealed class NavigationDestination {
     data object InvestmentPortfolio : NavigationDestination()
     data object BankConnections : NavigationDestination()
     data object BillReminders : NavigationDestination()
-    data object SpendingChallenges : NavigationDestination()
+    data class SpendingChallenges(
+        val showCreateDialog: Boolean = false
+    ) : NavigationDestination()
     data object AdvancedAnalytics : NavigationDestination()
     data object CashFlowCalendar : NavigationDestination()
     data object LifestyleInflation : NavigationDestination()
@@ -114,7 +116,7 @@ sealed class NavigationDestination {
             InvestmentPortfolio,
             BankConnections,
             BillReminders,
-            SpendingChallenges,
+            SpendingChallenges(),
             AdvancedAnalytics,
             CashFlowCalendar,
             LifestyleInflation,

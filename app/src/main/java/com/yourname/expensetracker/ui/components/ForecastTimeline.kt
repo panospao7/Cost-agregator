@@ -25,6 +25,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
@@ -122,9 +123,9 @@ fun ForecastTimeline(
         val currentPoint = pastPoints.lastOrNull() ?: 0.0
         val projectedEnd = projectedPoints.lastOrNull() ?: currentPoint
         val chartSummary = remember(minPoint, maxPoint, currentPoint, projectedEnd, hasValidBudget, budgetLimit, noBudgetSetText) {
-            val baseSummary = "Forecast timeline. Current spending €${String.format("%.0f", currentPoint)}, projected month-end €${String.format("%.0f", projectedEnd)}, minimum €${String.format("%.0f", minPoint)}, maximum €${String.format("%.0f", maxPoint)}"
+            val baseSummary = "Forecast timeline. Current spending ${CurrencyFormatter.format(currentPoint, showCents = false)}, projected month-end ${CurrencyFormatter.format(projectedEnd, showCents = false)}, minimum ${CurrencyFormatter.format(minPoint, showCents = false)}, maximum ${CurrencyFormatter.format(maxPoint, showCents = false)}"
             if (hasValidBudget) {
-                "$baseSummary, budget limit €${String.format("%.0f", budgetLimit)}."
+                "$baseSummary, budget limit ${CurrencyFormatter.format(budgetLimit, showCents = false)}."
             } else {
                 "$baseSummary. $noBudgetSetText."
             }

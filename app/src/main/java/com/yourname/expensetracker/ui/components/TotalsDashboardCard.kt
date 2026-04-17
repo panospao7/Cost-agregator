@@ -12,6 +12,7 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.model.PeriodStatus
 import com.yourname.expensetracker.domain.model.PeriodTotal
 import com.yourname.expensetracker.domain.model.PeriodType
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 enum class PeriodLevel {
@@ -149,7 +150,7 @@ private fun CurrentPeriodSummary(
                     color = SemanticColors.TextSecondary
                 )
                 Text(
-                    text = "€${String.format("%.2f", total)}",
+                    text = CurrencyFormatter.format(total),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = statusColor

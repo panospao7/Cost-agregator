@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.analytics.CategoryTrendDirection
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import androidx.compose.ui.res.stringResource
@@ -321,7 +322,7 @@ private fun RetroCategoryRow(
                     ) {
                         // Amount
                         Text(
-                            text = "€${String.format("%.0f", category.total)}",
+                            text = CurrencyFormatter.format(category.total, showCents = false),
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -477,7 +478,7 @@ private fun RetroCategoryDetailDialog(
                         )
                         
                         Text(
-                            text = "€${String.format("%.2f", category.total)}",
+                            text = CurrencyFormatter.format(category.total),
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -696,7 +697,7 @@ private fun RetroTransactionsSection(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "€${String.format("%.2f", expense.amount)}",
+                        text = CurrencyFormatter.format(expense.amount),
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
@@ -767,21 +768,25 @@ private fun RetroAnalyticsSection(
         )
         
         // Current stats
-        RetroStatRowCategories("THIS MONTH", "€${String.format("%.2f", category.total)}", RetroColorsCategories.NeonWhite)
+        RetroStatRowCategories("THIS MONTH", CurrencyFormatter.format(category.total), RetroColorsCategories.NeonWhite)
         
         if (trendInfo?.previousTotal != null) {
             Spacer(modifier = Modifier.height(4.dp))
             val change = category.total - trendInfo.previousTotal
-            val changeText = if (change >= 0) "+€${String.format("%.2f", change)}" else "-€${String.format("%.2f", kotlin.math.abs(change))}"
+            val changeText = if (change >= 0) {
+                "+${CurrencyFormatter.format(change)}"
+            } else {
+                "-${CurrencyFormatter.format(kotlin.math.abs(change))}"
+            }
             val changeColor = if (change > 0) RetroColorsCategories.NeonRed else if (change < 0) RetroColorsCategories.NeonGreen else RetroColorsCategories.NeonWhite
-            RetroStatRowCategories("LAST MONTH", "€${String.format("%.2f", trendInfo.previousTotal)}", RetroColorsCategories.NeonWhite.copy(alpha = 0.7f))
+            RetroStatRowCategories("LAST MONTH", CurrencyFormatter.format(trendInfo.previousTotal), RetroColorsCategories.NeonWhite.copy(alpha = 0.7f))
             Spacer(modifier = Modifier.height(4.dp))
             RetroStatRowCategories("CHANGE", changeText, changeColor)
         }
         
         if (trendInfo?.averageOverMonths != null) {
             Spacer(modifier = Modifier.height(4.dp))
-            RetroStatRowCategories("3-MO AVG", "€${String.format("%.2f", trendInfo.averageOverMonths)}", RetroColorsCategories.NeonCyan)
+            RetroStatRowCategories("3-MO AVG", CurrencyFormatter.format(trendInfo.averageOverMonths), RetroColorsCategories.NeonCyan)
         }
         
         Spacer(modifier = Modifier.height(8.dp))

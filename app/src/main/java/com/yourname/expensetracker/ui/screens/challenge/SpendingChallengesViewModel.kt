@@ -2,21 +2,38 @@ package com.yourname.expensetracker.ui.screens.challenge
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.domain.challenge.ChallengeType
 import com.yourname.expensetracker.domain.challenge.ActiveChallengesSnapshot
 import com.yourname.expensetracker.domain.challenge.NoSpendStatus
 import com.yourname.expensetracker.domain.challenge.SpendingChallenge
 import com.yourname.expensetracker.domain.challenge.SpendingChallengeManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class SpendingChallengesViewModel @Inject constructor(
-    private val challengeManager: SpendingChallengeManager
+    private val challengeManager: SpendingChallengeManager,
+    private val categoryRepository: CategoryRepository
 ) : ViewModel() {
+
+    data class CreateChallengeUiState(
+        val categories: List<Category> = emptyList(),
+        val isCreating: Boolean = false,
+        val errorMessage: String? = null
+    )
+
+    sealed interface CreateChallengeEvent {
+        data object Created : CreateChallengeEvent
+    }
 
     data class ChallengesAvailability(
         val hasCanonicalSource: Boolean,
@@ -31,10 +48,26 @@ class SpendingChallengesViewModel @Inject constructor(
 
     private val _challengesAvailability = MutableStateFlow(ChallengesAvailability(hasCanonicalSource = true))
     val challengesAvailability: StateFlow<ChallengesAvailability> = _challengesAvailability.asStateFlow()
+
+    private val _createChallengeUiState = MutableStateFlow(CreateChallengeUiState())
+    val createChallengeUiState: StateFlow<CreateChallengeUiState> = _createChallengeUiState.asStateFlow()
+
+    private val _createChallengeEvents = MutableSharedFlow<CreateChallengeEvent>(extraBufferCapacity = 1)
+    val createChallengeEvents: SharedFlow<CreateChallengeEvent> = _createChallengeEvents.asSharedFlow()
     
     init {
+        loadCategories()
         checkNoSpendStatus()
         loadActiveChallenges()
+    }
+
+    private fun loadCategories() {
+        viewModelScope.launch {
+            val categories = runCatching { categoryRepository.getAll() }
+                .getOrDefault(emptyList())
+                .sortedBy { it.name }
+            _createChallengeUiState.value = _createChallengeUiState.value.copy(categories = categories)
+        }
     }
     
     private fun checkNoSpendStatus() {
@@ -70,5 +103,43 @@ class SpendingChallengesViewModel @Inject constructor(
     fun refresh() {
         checkNoSpendStatus()
         loadActiveChallenges()
+    }
+
+    fun clearCreateChallengeError() {
+        _createChallengeUiState.value = _createChallengeUiState.value.copy(errorMessage = null)
+    }
+
+    fun createChallenge(
+        name: String,
+        type: ChallengeType,
+        durationDays: Int,
+        targetAmount: Double?,
+        categoryId: Long?
+    ) {
+        viewModelScope.launch {
+            _createChallengeUiState.value = _createChallengeUiState.value.copy(
+                isCreating = true,
+                errorMessage = null
+            )
+
+            runCatching {
+                challengeManager.createChallenge(
+                    name = name,
+                    type = type,
+                    durationDays = durationDays,
+                    targetAmount = targetAmount,
+                    categoryId = categoryId
+                )
+            }.onSuccess {
+                refresh()
+                _createChallengeEvents.tryEmit(CreateChallengeEvent.Created)
+            }.onFailure { error ->
+                _createChallengeUiState.value = _createChallengeUiState.value.copy(
+                    errorMessage = error.message ?: "Unable to create challenge."
+                )
+            }
+
+            _createChallengeUiState.value = _createChallengeUiState.value.copy(isCreating = false)
+        }
     }
 }

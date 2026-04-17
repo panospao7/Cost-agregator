@@ -662,10 +662,10 @@ fun MainScreen(
                 }
                 is NavigationDestination.SpendingChallenges -> {
                     SpendingChallengesScreen(
+                        initialShowCreateDialog = currentDestination.showCreateDialog,
                         onNavigateBack = { navigation.navigateBack() },
                         onCreateChallenge = { 
-                            // Show "Coming soon" since create challenge flow not implemented
-                            navigation.navigateBack()
+                            navigation.navigateTo(NavigationDestination.SpendingChallenges(showCreateDialog = true))
                         },
                         actionRegistry = actionRegistry
                     )

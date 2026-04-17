@@ -44,6 +44,7 @@ import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import com.yourname.expensetracker.domain.budget.CategoryBudgetRecommendation
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.ui.util.budgetScale
@@ -1137,7 +1138,7 @@ fun AutopilotRecommendationItem(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
-                        text = "€${String.format("%.0f", recommendation.currentBudget)}",
+                        text = CurrencyFormatter.format(recommendation.currentBudget, showCents = false),
                         style = MaterialTheme.typography.bodySmall,
                         textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1148,7 +1149,7 @@ fun AutopilotRecommendationItem(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "€${String.format("%.0f", recommendation.recommendedBudget)}",
+                        text = CurrencyFormatter.format(recommendation.recommendedBudget, showCents = false),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (recommendation.delta > 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen

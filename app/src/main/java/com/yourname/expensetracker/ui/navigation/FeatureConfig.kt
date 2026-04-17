@@ -126,7 +126,7 @@ data class FeatureConfig(
                 titleRes = R.string.feature_spending_challenges,
                 icon = Icons.Rounded.EmojiEvents,
                 color = Color(0xFFFF5722),
-                destination = NavigationDestination.SpendingChallenges,
+                destination = NavigationDestination.SpendingChallenges(),
                 descriptionRes = R.string.feature_spending_challenges_desc
             ),
             FeatureConfig(

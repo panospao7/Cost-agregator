@@ -132,7 +132,10 @@ private fun NavigationDestination.toSaveToken(): String = when (this) {
     is NavigationDestination.InvestmentPortfolio -> "investment_portfolio"
     is NavigationDestination.BankConnections -> "bank_connections"
     is NavigationDestination.BillReminders -> "bill_reminders"
-    is NavigationDestination.SpendingChallenges -> "spending_challenges"
+    is NavigationDestination.SpendingChallenges -> buildSaveToken(
+        base = "spending_challenges",
+        params = mapOf("create" to showCreateDialog.takeIf { it }?.toString())
+    )
     is NavigationDestination.AdvancedAnalytics -> "advanced_analytics"
     is NavigationDestination.CashFlowCalendar -> "cash_flow_calendar"
     is NavigationDestination.LifestyleInflation -> "lifestyle_inflation"
@@ -204,7 +207,9 @@ private fun destinationFromSaveToken(token: String): NavigationDestination? {
         baseToken == "investment_portfolio" -> NavigationDestination.InvestmentPortfolio
         baseToken == "bank_connections" -> NavigationDestination.BankConnections
         baseToken == "bill_reminders" -> NavigationDestination.BillReminders
-        baseToken == "spending_challenges" -> NavigationDestination.SpendingChallenges
+        baseToken == "spending_challenges" -> NavigationDestination.SpendingChallenges(
+            showCreateDialog = params["create"]?.toBooleanStrictOrNull() == true
+        )
         baseToken == "advanced_analytics" -> NavigationDestination.AdvancedAnalytics
         baseToken == "cash_flow_calendar" -> NavigationDestination.CashFlowCalendar
         baseToken == "lifestyle_inflation" -> NavigationDestination.LifestyleInflation
