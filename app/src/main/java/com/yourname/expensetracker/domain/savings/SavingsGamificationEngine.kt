@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.repository.SavingsContributionEvent
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
@@ -98,12 +99,12 @@ class SavingsGamificationEngine @Inject constructor(
             SavingsAchievement(
                 id = "century_saver",
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_CENTURY_CLUB),
-                description = "Save €100 total",
+                description = "Save ${CurrencyFormatter.format(100.0, showCents = false)} total",
                 icon = "💯",
                 isUnlocked = totalSaved >= 100,
                 unlockedAt = if (totalSaved >= 100) totalSavedThresholds[100.0] else null,
                 progress = (totalSaved / 100.0).coerceIn(0.0, 1.0),
-                requirement = "€100 saved"
+                requirement = "${CurrencyFormatter.format(100.0, showCents = false)} saved"
             ),
             SavingsAchievement(
                 id = "goal_crusher",
@@ -121,12 +122,12 @@ class SavingsGamificationEngine @Inject constructor(
             SavingsAchievement(
                 id = "thousand_saver",
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_GRAND_SAVER),
-                description = "Save €1,000 total",
+                description = "Save ${CurrencyFormatter.format(1000.0, showCents = false)} total",
                 icon = "💰",
                 isUnlocked = totalSaved >= 1000,
                 unlockedAt = if (totalSaved >= 1000) totalSavedThresholds[1000.0] else null,
                 progress = (totalSaved / 1000.0).coerceIn(0.0, 1.0),
-                requirement = "€1,000 saved"
+                requirement = "${CurrencyFormatter.format(1000.0, showCents = false)} saved"
             )
         )
     }

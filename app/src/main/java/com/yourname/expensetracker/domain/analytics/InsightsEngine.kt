@@ -11,6 +11,7 @@ import kotlinx.coroutines.coroutineScope
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -143,22 +144,22 @@ class InsightsEngine @Inject constructor(
         if (comparison.changePercentage != null) {
             if (comparison.changePercentage > 20) {
                 insights.add(
-                    SpendingInsight(
-                        InsightType.SPENDING_INCREASE, "📈",
-                        "Spending up ${comparison.changePercentage.toInt()}%",
-                        "€${fmt(comparison.currentTotal)} this month vs €${fmt(comparison.previousTotal ?: 0.0)} last month",
-                        (comparison.changePercentage / 100).coerceAtMost(1.0f).toFloat()
+                        SpendingInsight(
+                            InsightType.SPENDING_INCREASE, "📈",
+                            "Spending up ${comparison.changePercentage.toInt()}%",
+                        "${formatCurrency(comparison.currentTotal)} this month vs ${formatCurrency(comparison.previousTotal ?: 0.0)} last month",
+                            (comparison.changePercentage / 100).coerceAtMost(1.0f).toFloat()
+                        )
                     )
-                )
             } else if (comparison.changePercentage < -15) {
                 insights.add(
-                    SpendingInsight(
-                        InsightType.SPENDING_DECREASE, "📉",
-                        "Good job! Spending down ${(-comparison.changePercentage).toInt()}%",
-                        "You saved €${fmt((comparison.previousTotal ?: 0.0) - comparison.currentTotal)} compared to last month",
-                        0.3f
+                        SpendingInsight(
+                            InsightType.SPENDING_DECREASE, "📉",
+                            "Good job! Spending down ${(-comparison.changePercentage).toInt()}%",
+                        "You saved ${formatCurrency((comparison.previousTotal ?: 0.0) - comparison.currentTotal)} compared to last month",
+                            0.3f
+                        )
                     )
-                )
             }
         }
 
@@ -183,7 +184,7 @@ class InsightsEngine @Inject constructor(
                         SpendingInsight(
                             InsightType.CATEGORY_TREND, catInsight.category.icon,
                             "${catInsight.category.name} up ${catInsight.changeFromPrevious.toInt()}%",
-                            "€${fmt(catInsight.currentTotal)} vs €${fmt(catInsight.previousTotal ?: 0.0)}",
+                            "${formatCurrency(catInsight.currentTotal)} vs ${formatCurrency(catInsight.previousTotal ?: 0.0)}",
                             0.7f
                         )
                     )
@@ -198,7 +199,7 @@ class InsightsEngine @Inject constructor(
                         SpendingInsight(
                             InsightType.RECURRING_DETECTED, "🔄",
                             "Recurring: ${recurring.merchant}",
-                            "€${fmt(recurring.avgAmount)} ~every ${recurring.intervalDays} days",
+                            "${formatCurrency(recurring.avgAmount)} ~every ${recurring.intervalDays} days",
                             0.5f
                         )
                     )
@@ -212,7 +213,7 @@ class InsightsEngine @Inject constructor(
                 SpendingInsight(
                     InsightType.UNUSUAL_TRANSACTION, "⚡",
                     "Largest: ${largest.merchant}",
-                    "€${fmt(largest.effectiveAmount)} on ${formatDate(largest.date)}",
+                    "${formatCurrency(largest.effectiveAmount)} on ${formatDate(largest.date)}",
                     0.25f
                 )
             )
@@ -693,7 +694,7 @@ class InsightsEngine @Inject constructor(
         return buildSpendingPace(currentMonth, previousMonth, recentExpenses)
     }
 
-    private fun fmt(amount: Double): String = String.format(java.util.Locale.getDefault(), "%.2f", amount)
+    private fun formatCurrency(amount: Double): String = CurrencyFormatter.format(amount)
     
     private fun formatDate(dateMs: Long): String {
          return DateFormatterUtils.monthDay().format(java.util.Date(dateMs))

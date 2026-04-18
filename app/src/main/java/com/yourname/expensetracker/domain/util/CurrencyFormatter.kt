@@ -39,7 +39,7 @@ object CurrencyFormatter {
         return String.format(Locale.US, "%.2f", safeAmount)
     }
 
-    private fun getCurrencySymbol(currencyCode: String): String {
+    fun getCurrencySymbol(currencyCode: String = DEFAULT_CURRENCY): String {
         return try {
             Currency.getInstance(currencyCode).getSymbol(Locale.getDefault())
         } catch (e: Exception) {
@@ -49,7 +49,8 @@ object CurrencyFormatter {
 
     private fun currencyNumberFormat(currencyCode: String, showCents: Boolean): NumberFormat {
         return NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
-            currency = runCatching { Currency.getInstance(currencyCode) }.getOrNull()
+            currency = runCatching { Currency.getInstance(currencyCode) }
+                .getOrElse { Currency.getInstance(DEFAULT_CURRENCY) }
             minimumFractionDigits = if (showCents) 2 else 0
             maximumFractionDigits = if (showCents) 2 else 0
         }

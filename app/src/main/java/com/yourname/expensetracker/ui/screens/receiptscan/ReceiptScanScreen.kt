@@ -54,6 +54,7 @@ import coil.compose.AsyncImage
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.domain.ai.model.AiLoadState
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.ui.components.ai.CategoryAssistCard
 import com.yourname.expensetracker.ui.screens.addexpense.CategoryGrid
@@ -65,12 +66,11 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 import kotlinx.coroutines.delay
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.util.Currency
 import java.util.Date
 import android.provider.Settings
 
 private fun getCurrencySymbol(currencyCode: String?): String {
-    return try { Currency.getInstance(currencyCode ?: "EUR").symbol } catch(e: Exception) { "€" }
+    return CurrencyFormatter.getCurrencySymbol(currencyCode ?: "EUR")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -447,7 +447,7 @@ private fun ReviewStep(
                     HorizontalDivider()
                     preview.fieldSummaries.forEach { field ->
                         val renderedValue = when (field.label) {
-                            "Amount" -> "${getCurrencySymbol(parsed?.currency)}${field.value}"
+                            "Amount" -> CurrencyFormatter.format(preview.amount, parsed?.currency ?: "EUR")
                             "Date" -> DateFormatterUtils.shortDate().format(Date(preview.date))
                             else -> field.value
                         }
@@ -921,7 +921,7 @@ private fun ReviewStep(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "${getCurrencySymbol(parsed.currency)}${String.format("%.2f", item.totalPrice)}",
+                            CurrencyFormatter.format(item.totalPrice, parsed.currency),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
                         )
@@ -947,7 +947,7 @@ private fun ReviewStep(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            "${getCurrencySymbol(parsed.currency)}${String.format("%.2f", tax)}",
+                            CurrencyFormatter.format(tax, parsed.currency),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
