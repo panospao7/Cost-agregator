@@ -13,35 +13,36 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+sealed class AnalyticsUiState {
+    data object Loading : AnalyticsUiState()
+    data class Success(val data: AnalyticsDashboardData) : AnalyticsUiState()
+    data class Error(val message: String) : AnalyticsUiState()
+}
+
 @HiltViewModel
 class AdvancedAnalyticsViewModel @Inject constructor(
     private val analyticsDashboard: AdvancedAnalyticsDashboard,
     private val timeProvider: TimeProvider
 ) : ViewModel() {
-    
-    private val _dashboardData = MutableStateFlow<AnalyticsDashboardData?>(null)
-    val dashboardData: StateFlow<AnalyticsDashboardData?> = _dashboardData.asStateFlow()
-    
-    private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-    
+
+    private val _uiState = MutableStateFlow<AnalyticsUiState>(AnalyticsUiState.Loading)
+    val uiState: StateFlow<AnalyticsUiState> = _uiState.asStateFlow()
+
     init {
         loadDashboardData()
     }
-    
+
     private fun loadDashboardData() {
         viewModelScope.launch {
-            _isLoading.value = true
+            _uiState.value = AnalyticsUiState.Loading
             try {
                 val now = timeProvider.now()
                 val thirtyDaysAgo = TimePeriodUtils.addDays(now, -30)
-                
+
                 val data = analyticsDashboard.generateDashboardData(thirtyDaysAgo, now)
-                _dashboardData.value = data
+                _uiState.value = AnalyticsUiState.Success(data)
             } catch (e: Exception) {
-                _dashboardData.value = null
-            } finally {
-                _isLoading.value = false
+                _uiState.value = AnalyticsUiState.Error(e.message ?: "Load failed")
             }
         }
     }

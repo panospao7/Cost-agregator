@@ -65,6 +65,11 @@ data class ReviewQuickApprovePreview(
     val diagnostics: List<String>
 )
 
+sealed interface ReviewEvent {
+    data class ConsumePrefilledCategorySuggestion(val reviewId: Long) : ReviewEvent
+    data class ConsumePrefilledReceiptSuggestion(val reviewId: Long) : ReviewEvent
+}
+
 @HiltViewModel
 class ReviewViewModel @Inject constructor(
     private val repository: NotificationRepository,
@@ -592,13 +597,24 @@ class ReviewViewModel @Inject constructor(
         }
     }
 
-    fun consumePrefilledCategorySuggestion(reviewId: Long): Long? {
+    fun onEvent(event: ReviewEvent) {
+        when (event) {
+            is ReviewEvent.ConsumePrefilledCategorySuggestion -> {
+                consumePrefilledCategorySuggestion(event.reviewId)
+            }
+            is ReviewEvent.ConsumePrefilledReceiptSuggestion -> {
+                consumePrefilledReceiptSuggestion(event.reviewId)
+            }
+        }
+    }
+
+    private fun consumePrefilledCategorySuggestion(reviewId: Long): Long? {
         val value = _prefilledCategorySuggestions.value[reviewId]
         _prefilledCategorySuggestions.update { it - reviewId }
         return value
     }
 
-    fun consumePrefilledReceiptSuggestion(reviewId: Long): ReviewReceiptPrefill? {
+    private fun consumePrefilledReceiptSuggestion(reviewId: Long): ReviewReceiptPrefill? {
         val value = _prefilledReceiptSuggestions.value[reviewId]
         _prefilledReceiptSuggestions.update { it - reviewId }
         return value

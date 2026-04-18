@@ -13,7 +13,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsDashboard
 import com.yourname.expensetracker.domain.analytics.AnalyticsDashboardData
 import com.yourname.expensetracker.domain.analytics.DashboardInsight
 import androidx.compose.ui.res.stringResource
@@ -28,9 +27,8 @@ fun AdvancedAnalyticsScreen(
     onNavigateBack: () -> Unit,
     viewModel: AdvancedAnalyticsViewModel = hiltViewModel()
 ) {
-    val dashboardData by viewModel.dashboardData.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    
+    val uiState by viewModel.uiState.collectAsState()
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -48,12 +46,36 @@ fun AdvancedAnalyticsScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            if (isLoading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.align(Alignment.Center)
-                )
-            } else {
-                dashboardData?.let { data ->
+            when (val state = uiState) {
+                AnalyticsUiState.Loading -> {
+                    CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                }
+                is AnalyticsUiState.Error -> {
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.label_error),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = state.message,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Button(onClick = viewModel::refresh) {
+                            Text(stringResource(R.string.action_retry))
+                        }
+                    }
+                }
+                is AnalyticsUiState.Success -> {
+                    val data = state.data
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()

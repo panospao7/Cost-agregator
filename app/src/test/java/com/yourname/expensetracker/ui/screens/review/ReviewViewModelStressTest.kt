@@ -911,7 +911,9 @@ class ReviewViewModelStressTest {
         viewModel.applyCategorySuggestion(70L)
         advanceUntilIdle()
 
-        assertEquals(7L, viewModel.consumePrefilledCategorySuggestion(70L))
+        assertEquals(7L, viewModel.prefilledCategorySuggestions.value[70L])
+        viewModel.onEvent(ReviewEvent.ConsumePrefilledCategorySuggestion(70L))
+        assertNull(viewModel.prefilledCategorySuggestions.value[70L])
         coVerify { aiArtifactRepository.markApplied(10L) }
     }
 

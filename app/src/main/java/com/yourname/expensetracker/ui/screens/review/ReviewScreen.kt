@@ -75,6 +75,8 @@ fun ReviewScreen(
     val reviewCaptureAssistStates by viewModel.reviewCaptureAssistStates.collectAsState()
     val quickApprovePreview by viewModel.quickApprovePreview.collectAsState()
     val reviewQuickApproveEnabled by viewModel.reviewQuickApproveEnabled.collectAsState()
+    val prefilledCategorySuggestions by viewModel.prefilledCategorySuggestions.collectAsState()
+    val prefilledReceiptSuggestions by viewModel.prefilledReceiptSuggestions.collectAsState()
     var editingReview by remember { mutableStateOf<PendingReview?>(null) }
     var editingReviewReceipt by remember { mutableStateOf<PendingReviewWithReceipt?>(null) }
     var debugReview by remember { mutableStateOf<PendingReview?>(null) }
@@ -430,37 +432,54 @@ fun ReviewScreen(
         }
 
         editingReview?.let { review ->
-            val prefilledReceipt = viewModel.consumePrefilledReceiptSuggestion(review.id)
-            EditReviewDialog(
-                review = review,
-                receipt = editingReviewReceipt?.receipt,
-                categories = categories,
-                onDismiss = {
-                    editingReview = null
-                    editingReviewReceipt = null
-                },
-                onSave = { amount, merchant, categoryId, date, type, applyToAll, approveAllPending, lat, lon, address, osmId ->
-                    viewModel.approveReviewWithEdits(
-                        reviewId = review.id,
-                        finalAmount = amount,
-                        finalMerchant = merchant,
-                        finalCategoryId = categoryId,
-                        finalDate = date,
-                        finalType = type,
-                        applyToAll = applyToAll,
-                        approveAllPending = approveAllPending,
-                        finalLatitude = lat,
-                        finalLongitude = lon,
-                        finalAddress = address,
-                        finalPlaceId = osmId
-                    )
-                    editingReview = null
-                    editingReviewReceipt = null
-                },
-                initialCategoryIdOverride = viewModel.consumePrefilledCategorySuggestion(review.id),
-                initialReceiptPrefill = prefilledReceipt,
-                geocodingService = viewModel.geocodingService
-            )
+            var initialCategoryIdOverride by remember(review.id) { mutableStateOf<Long?>(null) }
+            var initialReceiptPrefill by remember(review.id) { mutableStateOf<ReviewReceiptPrefill?>(null) }
+            val prefilledCategoryId = prefilledCategorySuggestions[review.id]
+            val prefilledReceipt = prefilledReceiptSuggestions[review.id]
+
+            LaunchedEffect(review.id, prefilledCategoryId, prefilledReceipt) {
+                prefilledCategoryId?.let { categoryId ->
+                    initialCategoryIdOverride = categoryId
+                    viewModel.onEvent(ReviewEvent.ConsumePrefilledCategorySuggestion(review.id))
+                }
+                prefilledReceipt?.let { receiptPrefill ->
+                    initialReceiptPrefill = receiptPrefill
+                    viewModel.onEvent(ReviewEvent.ConsumePrefilledReceiptSuggestion(review.id))
+                }
+            }
+
+            key(initialCategoryIdOverride, initialReceiptPrefill) {
+                EditReviewDialog(
+                    review = review,
+                    receipt = editingReviewReceipt?.receipt,
+                    categories = categories,
+                    onDismiss = {
+                        editingReview = null
+                        editingReviewReceipt = null
+                    },
+                    onSave = { amount, merchant, categoryId, date, type, applyToAll, approveAllPending, lat, lon, address, osmId ->
+                        viewModel.approveReviewWithEdits(
+                            reviewId = review.id,
+                            finalAmount = amount,
+                            finalMerchant = merchant,
+                            finalCategoryId = categoryId,
+                            finalDate = date,
+                            finalType = type,
+                            applyToAll = applyToAll,
+                            approveAllPending = approveAllPending,
+                            finalLatitude = lat,
+                            finalLongitude = lon,
+                            finalAddress = address,
+                            finalPlaceId = osmId
+                        )
+                        editingReview = null
+                        editingReviewReceipt = null
+                    },
+                    initialCategoryIdOverride = initialCategoryIdOverride,
+                    initialReceiptPrefill = initialReceiptPrefill,
+                    geocodingService = viewModel.geocodingService
+                )
+            }
         }
 
         quickApprovePreview?.let { preview ->
