@@ -44,8 +44,8 @@ data class ReturnWindow(
     @ColumnInfo(defaultValue = "RETURNABLE") val status: ReturnStatus = ReturnStatus.RETURNABLE,
     val returnedAt: Long? = null,
     val refundAmount: Double? = null,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val createdAt: Long,
+    val updatedAt: Long
 )
 
 enum class ReturnStatus {

@@ -12,9 +12,11 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.logic.CustomSplitMode
 import com.yourname.expensetracker.domain.logic.CustomSplitParser
+import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator
+import com.yourname.expensetracker.domain.groups.Result
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -92,7 +94,7 @@ class GroupsRepositoryImpl @Inject constructor(
         name: String,
         email: String?,
         isCurrentUser: Boolean
-    ): Long? = withContext(ioDispatcher) {
+    ): Result<Unit, GroupValidationError> = withContext(ioDispatcher) {
         coordinator.addMemberToGroup(
             groupId = groupId,
             name = name,

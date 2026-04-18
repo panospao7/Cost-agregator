@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database
 
+import android.database.sqlite.SQLiteConstraintException
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
@@ -12,8 +13,10 @@ import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.groups.Result
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator as DomainCoordinator
 import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
@@ -102,13 +105,29 @@ class GroupTransactionCoordinator @Inject constructor(
         name: String,
         email: String?,
         isCurrentUser: Boolean
-    ): Long? = withContext(ioDispatcher) {
+    ): Result<Unit, GroupValidationError> = withContext(ioDispatcher) {
         try {
             database.withTransaction {
                 // Verify group exists and is active inside the transaction
                 val group = groupDao.getById(groupId)
                 if (group == null || !group.isActive) {
-                    return@withTransaction null
+                    return@withTransaction Result.Error(GroupValidationError.InvalidGroup)
+                }
+
+                val members = memberDao.getAllForGroup(groupId)
+                if (members.any { it.name.equals(name, ignoreCase = true) }) {
+                    val existingMember = members.first { it.name.equals(name, ignoreCase = true) }
+                    return@withTransaction Result.Error(
+                        GroupValidationError.UserAlreadyMember(existingMember.id)
+                    )
+                }
+
+                if (isCurrentUser) {
+                    memberDao.getCurrentUser(groupId)?.let { currentUser ->
+                        return@withTransaction Result.Error(
+                            GroupValidationError.CurrentUserAlreadyExists(currentUser.id)
+                        )
+                    }
                 }
 
                 val member = GroupMember(
@@ -119,9 +138,12 @@ class GroupTransactionCoordinator @Inject constructor(
                 )
 
                 memberDao.insert(member)
+                Result.Success(Unit)
             }
+        } catch (e: SQLiteConstraintException) {
+            Result.Error(mapAddMemberConstraintError(e, groupId, name))
         } catch (e: Exception) {
-            null
+            Result.Error(GroupValidationError.Unknown(e.message))
         }
     }
     
@@ -622,5 +644,31 @@ class GroupTransactionCoordinator @Inject constructor(
         }
 
         return null
+    }
+
+    private suspend fun mapAddMemberConstraintError(
+        exception: SQLiteConstraintException,
+        groupId: Long,
+        name: String
+    ): GroupValidationError {
+        val constraintMessage = exception.message.orEmpty()
+        return when {
+            "index_group_members_groupId_name" in constraintMessage ||
+                "group_members.groupId, group_members.name" in constraintMessage -> {
+                val existingMemberId = memberDao.getAllForGroup(groupId)
+                    .firstOrNull { it.name.equals(name, ignoreCase = true) }
+                    ?.id
+                    ?: 0L
+                GroupValidationError.UserAlreadyMember(existingMemberId)
+            }
+
+            "index_group_members_groupId_currentUser" in constraintMessage ||
+                "group_members.groupId" in constraintMessage && "isCurrentUser" in constraintMessage -> {
+                val currentUserId = memberDao.getCurrentUser(groupId)?.id ?: 0L
+                GroupValidationError.CurrentUserAlreadyExists(currentUserId)
+            }
+
+            else -> GroupValidationError.Unknown(exception.message)
+        }
     }
 }

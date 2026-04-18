@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
 import com.yourname.expensetracker.domain.logic.CustomSplitParser
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.groups.toUserMessage
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupMemberUseCase
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
 import com.yourname.expensetracker.domain.groups.usecase.DeleteGroupUseCase
@@ -178,7 +179,7 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                     }
 
                     is AddGroupMemberUseCase.Result.Error -> {
-                        _uiState.value = _uiState.value.copy(error = result.message)
+                        _uiState.value = _uiState.value.copy(error = result.error.toUserMessage())
                     }
                 }
             } catch (e: Exception) {

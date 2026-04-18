@@ -85,14 +85,14 @@ interface GroupTransactionCoordinator {
      * @param name Member name
      * @param email Optional member email
      * @param isCurrentUser Whether this member represents the current user
-     * @return Member ID or null if failed
+     * @return Success when inserted, otherwise a typed validation error
      */
     suspend fun addMemberToGroup(
         groupId: Long,
         name: String,
         email: String? = null,
         isCurrentUser: Boolean = false
-    ): Long?
+    ): Result<Unit, GroupValidationError>
     
     /**
      * Add an expense to a group.

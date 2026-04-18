@@ -5,8 +5,10 @@ import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.groups.Result
 
 data class GroupDetailsAggregate(
     val group: ExpenseGroup,
@@ -40,7 +42,7 @@ interface GroupsRepository {
         name: String,
         email: String?,
         isCurrentUser: Boolean = false
-    ): Long?
+    ): Result<Unit, GroupValidationError>
 
     suspend fun addExpenseWithLink(
         groupId: Long,

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.groups.usecase
 
 import com.yourname.expensetracker.data.repository.GroupsRepository
+import com.yourname.expensetracker.domain.groups.GroupValidationError
 import javax.inject.Inject
 
 class AddGroupMemberUseCase @Inject constructor(
@@ -8,8 +9,8 @@ class AddGroupMemberUseCase @Inject constructor(
 ) {
 
     sealed class Result {
-        data class Success(val memberId: Long) : Result()
-        data class Error(val message: String) : Result()
+        data object Success : Result()
+        data class Error(val error: GroupValidationError) : Result()
     }
 
     suspend operator fun invoke(
@@ -19,29 +20,26 @@ class AddGroupMemberUseCase @Inject constructor(
         isCurrentUser: Boolean = false
     ): Result {
         if (groupId <= 0L) {
-            return Result.Error("Invalid group")
+            return Result.Error(GroupValidationError.InvalidGroup)
         }
 
         val normalizedName = name.trim()
         if (normalizedName.isBlank()) {
-            return Result.Error("Member name cannot be blank")
+            return Result.Error(GroupValidationError.BlankMemberName)
         }
 
         val normalizedEmail = email
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
 
-        val memberId = groupsRepository.addMember(
+        return when (val result = groupsRepository.addMember(
             groupId = groupId,
             name = normalizedName,
             email = normalizedEmail,
             isCurrentUser = isCurrentUser
-        )
-
-        return if (memberId != null && memberId > 0L) {
-            Result.Success(memberId)
-        } else {
-            Result.Error("Failed to add member: Invalid group or member")
+        )) {
+            is com.yourname.expensetracker.domain.groups.Result.Success -> Result.Success
+            is com.yourname.expensetracker.domain.groups.Result.Error -> Result.Error(result.error)
         }
     }
 }

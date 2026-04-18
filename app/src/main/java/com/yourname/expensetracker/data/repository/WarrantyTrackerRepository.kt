@@ -91,6 +91,11 @@ class WarrantyTrackerRepository @Inject constructor(
     
     // Return window operations
     fun getAllReturnWindows(): Flow<List<ReturnWindow>> = returnWindowDao.getAllReturnWindows()
+
+    private data class ReturnWindowTimestamps(
+        val createdAt: Long,
+        val updatedAt: Long
+    )
     
     fun getActiveReturnWindows(): Flow<List<ReturnWindow>> =
         activeItemsTickerFlow().flatMapLatest {
@@ -106,14 +111,23 @@ class WarrantyTrackerRepository @Inject constructor(
         )
     }
     
-    suspend fun addReturnWindow(returnWindow: ReturnWindow): Long = 
-        returnWindowDao.insertReturnWindow(returnWindow)
+    suspend fun addReturnWindow(returnWindow: ReturnWindow): Long =
+        createReturnWindowTimestamps().let { timestamps ->
+            returnWindowDao.insertReturnWindow(
+                returnWindow.withTimestamps(
+                    createdAt = timestamps.createdAt,
+                    updatedAt = timestamps.updatedAt
+                )
+            )
+        }
 
     suspend fun getReturnWindowByReceiptId(receiptId: Long): ReturnWindow? =
         returnWindowDao.getReturnWindowByReceiptId(receiptId)
     
-    suspend fun updateReturnWindow(returnWindow: ReturnWindow) = 
-        returnWindowDao.updateReturnWindow(returnWindow)
+    suspend fun updateReturnWindow(returnWindow: ReturnWindow) =
+        returnWindowDao.updateReturnWindow(
+            returnWindow.copy(updatedAt = timeProvider.now())
+        )
     
     suspend fun markAsReturned(
         returnWindowId: Long, 
@@ -143,7 +157,13 @@ class WarrantyTrackerRepository @Inject constructor(
         val existingReturnWindow = returnWindowDao.getReturnWindowByReceiptId(receiptId)
 
         return if (existingReturnWindow == null) {
-            returnWindowDao.insertReturnWindow(returnWindow)
+            val timestamps = createReturnWindowTimestamps()
+            returnWindowDao.insertReturnWindow(
+                returnWindow.withTimestamps(
+                    createdAt = timestamps.createdAt,
+                    updatedAt = timestamps.updatedAt
+                )
+            )
         } else {
             returnWindowDao.updateReturnWindow(
                 returnWindow.copy(
@@ -239,6 +259,7 @@ class WarrantyTrackerRepository @Inject constructor(
         val purchaseDate = receipt.parsedDate ?: receipt.createdAt
         val purchaseStart = TimePeriodUtils.getStartOfDay(purchaseDate)
         val returnDeadline = TimePeriodUtils.addDays(purchaseStart, returnDays)
+        val timestamps = createReturnWindowTimestamps()
         
         return ReturnWindow(
             receiptId = receipt.id,
@@ -248,7 +269,9 @@ class WarrantyTrackerRepository @Inject constructor(
             purchaseDate = purchaseDate,
             returnDays = returnDays,
             returnDeadline = returnDeadline,
-            returnConditions = extractionResult?.returnConditions
+            returnConditions = extractionResult?.returnConditions,
+            createdAt = timestamps.createdAt,
+            updatedAt = timestamps.updatedAt
         )
     }
     
@@ -284,6 +307,21 @@ class WarrantyTrackerRepository @Inject constructor(
         val expiredWarrantyCount: Int,
         val expiredReturnWindowCount: Int
     )
+
+    private fun createReturnWindowTimestamps(): ReturnWindowTimestamps {
+        val now = timeProvider.now()
+        return ReturnWindowTimestamps(
+            createdAt = now,
+            updatedAt = now
+        )
+    }
+
+    private fun ReturnWindow.withTimestamps(createdAt: Long, updatedAt: Long): ReturnWindow {
+        return copy(
+            createdAt = createdAt,
+            updatedAt = updatedAt
+        )
+    }
 
     suspend fun createManualPlaceholderReceipt(
         merchantName: String,

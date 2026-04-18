@@ -15,6 +15,8 @@ import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.groups.GroupValidationError
+import com.yourname.expensetracker.domain.groups.Result
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -34,6 +36,12 @@ import java.io.IOException
 import java.sql.SQLException
 
 private const val TEST_DATE = 1_710_000_000_000L
+
+private val Result<*, *>.isSuccess: Boolean
+    get() = this is Result.Success
+
+private val Result<*, *>.isFailure: Boolean
+    get() = this is Result.Error
 
 /**
  * CRITICAL TESTS (CRITICAL-2): GroupTransactionCoordinator
@@ -569,11 +577,10 @@ class GroupTransactionCoordinatorTest {
         val groupId = coordinator.createGroupWithMembersAtomic(group, members)
 
         // Act - add member to valid active group
-        val memberId = coordinator.addMemberToGroup(groupId, "Bob", "bob@test.com", false)
+        val result = coordinator.addMemberToGroup(groupId, "Bob", "bob@test.com", false)
 
         // Assert
-        assertThat(memberId).isNotNull()
-        assertThat(memberId!!).isGreaterThan(0)
+        assertThat(result.isSuccess).isTrue()
 
         val savedMembers = memberDao.getMembersForGroup(groupId).first()
         assertThat(savedMembers).hasSize(2)
@@ -581,7 +588,7 @@ class GroupTransactionCoordinatorTest {
     }
 
     @Test
-    fun `addMemberToGroup returns null for inactive group`() = runTest {
+    fun `addMemberToGroup returns invalid group error for inactive group`() = runTest {
         // Arrange
         val group = ExpenseGroup(name = "Archive Test")
         val members = listOf(GroupMember(groupId = 0, name = "Alice"))
@@ -589,10 +596,13 @@ class GroupTransactionCoordinatorTest {
         groupDao.archiveGroup(groupId)
 
         // Act
-        val memberId = coordinator.addMemberToGroup(groupId, "Bob", null, false)
+        val result = coordinator.addMemberToGroup(groupId, "Bob", null, false)
 
         // Assert
-        assertThat(memberId).isNull()
+        assertThat(result.isFailure).isTrue()
+        assertThat(result).isInstanceOf(Result.Error::class.java)
+        val error = result as Result.Error
+        assertThat(error.error).isInstanceOf(GroupValidationError.InvalidGroup::class.java)
     }
 
     @Test
