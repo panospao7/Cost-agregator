@@ -46,7 +46,6 @@ import com.yourname.expensetracker.ui.components.health.HealthScoreWidget
 import com.yourname.expensetracker.ui.screens.receiptscan.ReceiptScanScreen
 import com.yourname.expensetracker.ui.components.PeriodLevel
 import com.yourname.expensetracker.ui.theme.SemanticColors
-import java.text.SimpleDateFormat
 import java.util.*
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -1075,7 +1074,7 @@ fun RecentExpenseRow(expense: DashboardExpense, categoryColor: Color? = null) {
         expense.merchant,
         if (expense.isManualEntry) manualEntryLabel else "",
         expense.amount,
-        DateFormatterUtils.monthDay().format(Date(expense.date))
+        DateFormatterUtils.formatTimestampJavaTime(expense.date, "MMM dd")
     )
     Row(
         modifier = Modifier
@@ -1112,7 +1111,7 @@ fun RecentExpenseRow(expense: DashboardExpense, categoryColor: Color? = null) {
                     }
                 }
                 Text(
-                    DateFormatterUtils.monthDay().format(Date(expense.date)),
+                    DateFormatterUtils.formatTimestampJavaTime(expense.date, "MMM dd"),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1315,7 +1314,7 @@ fun DateSelector(
                 color = SemanticColors.TextSecondary
             )
             Text(
-                DateFormatterUtils.fullDate().format(java.util.Date(dateMs)),
+                DateFormatterUtils.formatTimestampJavaTime(dateMs, "EEE, dd MMM yyyy"),
                 style = MaterialTheme.typography.bodyMedium,
                 color = SemanticColors.TextPrimary
             )

@@ -66,7 +66,6 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 import kotlinx.coroutines.delay
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.util.Date
 import android.provider.Settings
 
 private fun getCurrencySymbol(currencyCode: String?): String {
@@ -448,7 +447,7 @@ private fun ReviewStep(
                     preview.fieldSummaries.forEach { field ->
                         val renderedValue = when (field.label) {
                             "Amount" -> CurrencyFormatter.format(preview.amount, parsed?.currency ?: "EUR")
-                            "Date" -> DateFormatterUtils.shortDate().format(Date(preview.date))
+                            "Date" -> DateFormatterUtils.formatTimestampJavaTime(preview.date, "dd/MM/yyyy")
                             else -> field.value
                         }
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {

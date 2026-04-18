@@ -33,7 +33,6 @@ import com.yourname.expensetracker.domain.usecase.dashboard.CategorySpending
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.util.Date
 
 /**
  * Retro Arcade RPG Hybrid Top Categories Card.
@@ -707,7 +706,7 @@ private fun RetroTransactionsSection(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = stringResource(R.string.retro_date_format, DateFormatterUtils.monthDayShort().format(Date(expense.date))),
+                        text = stringResource(R.string.retro_date_format, DateFormatterUtils.formatTimestampJavaTime(expense.date, "MMM d")),
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                         ),

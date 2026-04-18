@@ -9,8 +9,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileWriter
-import java.text.SimpleDateFormat
-import java.util.*
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -75,7 +76,9 @@ class AccountingExportRepository @Inject constructor(
                 .associateBy({ it.id }, { it.name })
 
             // Generate export
-            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val timestamp = LocalDateTime.now().format(
+                DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss", Locale.US)
+            )
             val fileName = when (format) {
                 ExportFormat.QUICKBOOKS_IIF -> "expenses_quickbooks_$timestamp.iif"
                 ExportFormat.XERO_CSV -> "expenses_xero_$timestamp.csv"

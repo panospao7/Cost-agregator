@@ -20,7 +20,7 @@ data class DebugData(
         return buildString {
             appendLine("{")
             appendLine("  \"metadata\": {")
-            appendLine("    \"timestamp\": \"${DateFormatterUtils.isoTimestamp().format(java.util.Date())}\",")
+            appendLine("    \"timestamp\": \"${DateFormatterUtils.javaTimeIsoTimestamp()}\",")
             appendLine("    \"processingTimeMs\": $processingTimeMs,")
             appendLine("    \"parserUsed\": \"$parserUsed\"")
             appendLine("  },")

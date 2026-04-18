@@ -26,7 +26,6 @@ import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
-import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
@@ -336,7 +335,7 @@ fun UpcomingRow(item: UpcomingItem) {
     val dateLabel = when {
         daysUntil <= 0 -> "Today"
         daysUntil == 1 -> "Tomorrow"
-        else -> DateFormatterUtils.get("EEE, MMM d").format(Date(item.date))
+        else -> DateFormatterUtils.formatTimestampJavaTime(item.date, "EEE, MMM d")
     }
 
     Row(

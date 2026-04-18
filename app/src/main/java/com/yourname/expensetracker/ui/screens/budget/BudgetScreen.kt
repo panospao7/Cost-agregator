@@ -446,7 +446,6 @@ fun BudgetCard(
         )
     }
     
-    val rangeDateFormat = remember { DateFormatterUtils.monthDay() }
     val monthYearFormat = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()) }
     val periodMode = remember(status.budget.periodMode) { status.budget.periodMode.uppercase(Locale.getDefault()) }
     val periodLabel = remember(status.budget.period) {
@@ -454,13 +453,13 @@ fun BudgetCard(
     }
 
     val rangeStartLabel = remember(status.periodStart) {
-        rangeDateFormat.format(Date(status.periodStart))
+        DateFormatterUtils.formatTimestampJavaTime(status.periodStart, "MMM dd")
     }
     val displayEnd = remember(status.periodStart, status.periodEnd) {
         (status.periodEnd - 1L).coerceAtLeast(status.periodStart)
     }
     val rangeEndLabel = remember(displayEnd) {
-        rangeDateFormat.format(Date(displayEnd))
+        DateFormatterUtils.formatTimestampJavaTime(displayEnd, "MMM dd")
     }
     val periodDescription = remember(status.periodStart, status.periodEnd, status.budget.period, periodMode) {
         if (periodMode == "CALENDAR" && status.budget.period == BudgetPeriod.MONTHLY) {

@@ -12,7 +12,6 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
-import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
@@ -638,16 +637,14 @@ class InsightsEngine @Inject constructor(
         // Initialize all days with 0
         for (i in days - 1 downTo 0) {
             val dayTs = TimePeriodUtils.addDays(now, -i)
-            val key = DateFormatterUtils.dateKey().format(Date(dayTs))
+            val key = DateFormatterUtils.formatTimestampJavaTime(dayTs, "yyyy-MM-dd")
             result[key] = 0.0
         }
 
         // Fill in actual values - Optimized: reuse Date object
         val purchases = expenses.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE }
-        val dateObj = java.util.Date()
         for (expense in purchases) {
-            dateObj.time = expense.date
-            val key = DateFormatterUtils.dateKey().format(dateObj)
+            val key = DateFormatterUtils.formatTimestampJavaTime(expense.date, "yyyy-MM-dd")
             if (result.containsKey(key)) {
                 result[key] = (result[key] ?: 0.0) + expense.effectiveAmount
             }
@@ -697,7 +694,7 @@ class InsightsEngine @Inject constructor(
     private fun formatCurrency(amount: Double): String = CurrencyFormatter.format(amount)
     
     private fun formatDate(dateMs: Long): String {
-         return DateFormatterUtils.monthDay().format(java.util.Date(dateMs))
+         return DateFormatterUtils.formatTimestampJavaTime(dateMs, "MMM dd")
     }
 
     // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType

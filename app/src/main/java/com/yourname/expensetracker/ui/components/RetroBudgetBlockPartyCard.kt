@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
@@ -795,7 +796,7 @@ private fun RetroDayAtAGlanceDialog(
     onDismiss: () -> Unit,
     onViewTransactions: (() -> Unit)? = null
 ) {
-    val dateStr = com.yourname.expensetracker.domain.util.DateFormatterUtils.monthDay().format(java.util.Date(day.date))
+    val dateStr = DateFormatterUtils.formatTimestampJavaTime(day.date, "MMM dd")
     
     val statusColor = when (day.status) {
         BlockStatus.UNDER_BUDGET -> RetroColorsV2.NeonGreen

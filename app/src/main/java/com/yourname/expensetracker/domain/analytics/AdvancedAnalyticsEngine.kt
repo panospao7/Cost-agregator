@@ -18,7 +18,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import java.util.Calendar
-import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -81,14 +80,18 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val start = TimePeriodUtils.getStartOfWeek(referenceDate)
         val end = start + (7 * TimePeriodUtils.DAY_IN_MILLIS)
         
-        return Triple(start, end, "${DateFormatterUtils.monthDayShort().format(Date(start))} - ${DateFormatterUtils.monthDayShort().format(Date(end - 1))}")
+        return Triple(
+            start,
+            end,
+            "${DateFormatterUtils.formatTimestampJavaTime(start, "MMM d")} - ${DateFormatterUtils.formatTimestampJavaTime(end - 1, "MMM d")}"
+        )
     }
     
     private fun calculateMonthRange(referenceDate: Long): Triple<Long, Long, String> {
         val start = TimePeriodUtils.getStartOfMonth(referenceDate)
         val end = TimePeriodUtils.getEndOfMonth(start)
         
-        return Triple(start, end, DateFormatterUtils.monthYear().format(Date(start)))
+        return Triple(start, end, DateFormatterUtils.formatTimestampJavaTime(start, "MMMM yyyy"))
     }
     
     private fun calculateQuarterRange(referenceDate: Long): Triple<Long, Long, String> {

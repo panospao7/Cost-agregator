@@ -26,7 +26,6 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.model.TransactionSummary
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
-import java.util.Date
 import java.util.Calendar
 
 enum class BlockStatus {
@@ -246,7 +245,7 @@ fun DayAtAGlanceDialog(
     onDismiss: () -> Unit,
     onViewTransactions: (() -> Unit)? = null
 ) {
-    val dateStr = DateFormatterUtils.monthDay().format(Date(day.date))
+    val dateStr = DateFormatterUtils.formatTimestampJavaTime(day.date, "MMM dd")
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,

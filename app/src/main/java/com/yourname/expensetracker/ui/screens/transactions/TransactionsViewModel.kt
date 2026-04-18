@@ -769,7 +769,7 @@ class TransactionsViewModel @Inject constructor(
         
         return expenses
             .groupBy { item ->
-                DateFormatterUtils.fullDateWithDay().format(java.util.Date(item.expense.date))
+                DateFormatterUtils.formatTimestampJavaTime(item.expense.date, "EEEE, MMMM d, yyyy")
             }
     }
 }

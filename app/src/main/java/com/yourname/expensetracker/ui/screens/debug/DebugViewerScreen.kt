@@ -21,7 +21,6 @@ import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.debug.DebugIssue
 import com.yourname.expensetracker.domain.debug.IssueSeverity
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
-import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
@@ -608,6 +607,6 @@ private fun IssueCard(issue: DebugIssue, accentColor: Color) {
 }
 
 private fun formatDate(timestamp: Long): String {
-    return DateFormatterUtils.shortDateWithTime().format(Date(timestamp))
+    return DateFormatterUtils.formatTimestampJavaTime(timestamp, "dd/MM/yyyy HH:mm")
 }
 

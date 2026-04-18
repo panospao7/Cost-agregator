@@ -58,7 +58,6 @@ import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.routeDisplayText
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.ui.theme.SemanticColors
-import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -380,7 +379,7 @@ private fun RuntimeMetaCard(
                 Text(
                     text = stringResource(
                         R.string.ai_runtime_last_refreshed_format,
-                        DateFormatterUtils.timeWithSecondsAndDate().format(Date(lastRefreshedAt))
+                        DateFormatterUtils.formatTimestampJavaTime(lastRefreshedAt, "HH:mm:ss dd/MM")
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant

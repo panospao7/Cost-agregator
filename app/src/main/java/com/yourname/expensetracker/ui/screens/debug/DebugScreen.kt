@@ -236,7 +236,7 @@ fun DebugScreen(
                                 Text(
                                     stringResource(R.string.debug_last_start, 
                                         if (diagnosticsStats.lastRestartTime > 0) 
-                                            DateFormatterUtils.timeWithSecondsAndDate().format(Date(diagnosticsStats.lastRestartTime))
+                                            DateFormatterUtils.formatTimestampJavaTime(diagnosticsStats.lastRestartTime, "HH:mm:ss dd/MM")
                                         else stringResource(R.string.debug_status_active)
                                     ),
                                     style = MaterialTheme.typography.bodySmall,
@@ -245,7 +245,7 @@ fun DebugScreen(
                                 Text(
                                     stringResource(R.string.debug_last_kill,
                                         if (diagnosticsStats.lastKillTime > 0) 
-                                            DateFormatterUtils.timeWithSecondsAndDate().format(Date(diagnosticsStats.lastKillTime))
+                                            DateFormatterUtils.formatTimestampJavaTime(diagnosticsStats.lastKillTime, "HH:mm:ss dd/MM")
                                         else stringResource(R.string.debug_status_active)
                                     ),
                                     style = MaterialTheme.typography.bodySmall,
@@ -297,7 +297,7 @@ fun DebugScreen(
                         )
                         if (aiRuntimeMeta.lastRefreshedAt > 0L) {
                             Text(
-                                stringResource(R.string.debug_last_refreshed, DateFormatterUtils.timeWithSecondsAndDate().format(Date(aiRuntimeMeta.lastRefreshedAt))),
+                                stringResource(R.string.debug_last_refreshed, DateFormatterUtils.formatTimestampJavaTime(aiRuntimeMeta.lastRefreshedAt, "HH:mm:ss dd/MM")),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontSize = 10.sp
                             )
@@ -366,7 +366,7 @@ fun DebugScreen(
                             Spacer(modifier = Modifier.height(6.dp))
                             aiRuntimeEvents.take(8).forEach { event ->
                                 Text(
-                                    text = "${DateFormatterUtils.timeWithSecondsAndDate().format(Date(event.timestamp))} • ${event.type} • ${event.message}",
+                                    text = "${DateFormatterUtils.formatTimestampJavaTime(event.timestamp, "HH:mm:ss dd/MM")} • ${event.type} • ${event.message}",
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 10.sp
                                 )
@@ -902,7 +902,7 @@ fun NotificationCard(
                     fontSize = 14.sp
                 )
                 Text(
-                    text = DateFormatterUtils.timeWithSecondsAndDate().format(Date(notification.capturedAt)),
+                    text = DateFormatterUtils.formatTimestampJavaTime(notification.capturedAt, "HH:mm:ss dd/MM"),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
