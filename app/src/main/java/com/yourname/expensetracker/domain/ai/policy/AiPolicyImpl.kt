@@ -19,7 +19,7 @@ class AiPolicyImpl @Inject constructor() : AiPolicy {
             AiCapability.REVIEW_EXPLANATION -> settings.reviewExplanationEnabled
             AiCapability.QUERY_INTERPRETATION -> settings.queryInterpretationEnabled
             AiCapability.RECEIPT_EXTRACTION -> settings.receiptAssistEnabled
-            AiCapability.WARRANTY_EXTRACTION -> settings.receiptAssistEnabled
+            AiCapability.WARRANTY_EXTRACTION -> settings.warrantyExtractionEnabled
             AiCapability.CATEGORIZATION_FALLBACK -> settings.categorizationFallbackEnabled
             AiCapability.DEDUPE_JUDGE -> settings.dedupeJudgeEnabled
             AiCapability.LOCATION_SUMMARY -> settings.aiEnabled
@@ -38,7 +38,7 @@ class AiPolicyImpl @Inject constructor() : AiPolicy {
             AiCapability.REVIEW_EXPLANATION -> settings.reviewExplanationEnabled
             AiCapability.QUERY_INTERPRETATION -> settings.queryInterpretationEnabled
             AiCapability.RECEIPT_EXTRACTION -> settings.receiptAssistEnabled
-            AiCapability.WARRANTY_EXTRACTION -> settings.receiptAssistEnabled
+            AiCapability.WARRANTY_EXTRACTION -> settings.warrantyExtractionEnabled
             AiCapability.CATEGORIZATION_FALLBACK -> settings.categorizationFallbackEnabled
             AiCapability.DEDUPE_JUDGE -> settings.dedupeJudgeEnabled
             AiCapability.LOCATION_SUMMARY -> settings.aiEnabled

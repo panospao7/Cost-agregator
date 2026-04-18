@@ -213,6 +213,13 @@ fun AiSettingsScreen(
                         runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.RECEIPT_EXTRACTION },
                         cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
                     )
+                    CapabilityMatrixRow(
+                        label = stringResource(R.string.ai_capability_warranty_extraction),
+                        enabled = settings.warrantyExtractionEnabled,
+                        onEnabledChange = viewModel::setWarrantyExtractionEnabled,
+                        runtime = uiState.runtimeSummary.capabilities.find { it.capability == AiCapability.WARRANTY_EXTRACTION },
+                        cloudFallbackAvailable = settings.aiEnabled && settings.allowCloudAi
+                    )
                     ToggleRow(
                         stringResource(R.string.ai_toggle_receipt_image),
                         settings.receiptImageCloudEnabled,

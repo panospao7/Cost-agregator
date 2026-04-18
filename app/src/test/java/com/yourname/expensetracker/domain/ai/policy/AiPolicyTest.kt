@@ -66,12 +66,29 @@ class AiPolicyTest {
     }
 
     @Test
-    fun `canUseCloudFor warranty extraction follows receipt assist toggle`() {
-        val enabled = AiSettings(aiEnabled = true, allowCloudAi = true, receiptAssistEnabled = true)
-        val disabled = enabled.copy(receiptAssistEnabled = false)
+    fun `canUseCloudFor warranty extraction follows warranty extraction toggle`() {
+        val enabled = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            receiptAssistEnabled = true,
+            warrantyExtractionEnabled = true
+        )
+        val disabled = enabled.copy(warrantyExtractionEnabled = false)
 
         assertTrue(policy.canUseCloudFor(enabled, AiCapability.WARRANTY_EXTRACTION))
         assertFalse(policy.canUseCloudFor(disabled, AiCapability.WARRANTY_EXTRACTION))
+    }
+
+    @Test
+    fun `canUseCloudFor warranty extraction stays disabled when receipt assist is enabled`() {
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            receiptAssistEnabled = true,
+            warrantyExtractionEnabled = false
+        )
+
+        assertFalse(policy.canUseCloudFor(settings, AiCapability.WARRANTY_EXTRACTION))
     }
 
     @Test

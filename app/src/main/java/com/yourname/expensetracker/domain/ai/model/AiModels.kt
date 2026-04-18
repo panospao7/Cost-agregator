@@ -101,7 +101,8 @@ data class AiSettings(
     val redactBeforeCloud: Boolean = true,
     val wifiOnlyForCloud: Boolean = false,
     val storeConversationHistory: Boolean = false,
-    val preferredMode: AiMode = AiMode.AUTO
+    val preferredMode: AiMode = AiMode.AUTO,
+    val warrantyExtractionEnabled: Boolean = true
 )
 
 data class AiEngagementState(

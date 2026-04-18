@@ -2,21 +2,29 @@ package com.yourname.expensetracker.data.repository
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.IOException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
+import timber.log.Timber
 
-private val Context.aiDataStore: DataStore<Preferences> by preferencesDataStore(name = "ai_settings")
+private val Context.aiDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "ai_settings",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
+)
 
 @Singleton
 class AiSettingsRepositoryImpl @Inject constructor(
@@ -36,6 +44,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
         val DASHBOARD_BRIEFING_ENABLED  = booleanPreferencesKey("ai_dashboard_briefing_enabled")
         val REVIEW_EXPLANATION_ENABLED  = booleanPreferencesKey("ai_review_explanation_enabled")
         val RECEIPT_ASSIST_ENABLED      = booleanPreferencesKey("ai_receipt_assist_enabled")
+        val WARRANTY_EXTRACTION_ENABLED = booleanPreferencesKey("ai_warranty_extraction_enabled")
         val RECEIPT_IMAGE_CLOUD_ENABLED = booleanPreferencesKey("ai_receipt_image_cloud_enabled")
         val RECEIPT_ITEM_CATEGORIZATION_ENABLED = booleanPreferencesKey("ai_receipt_item_categorization_enabled")
         val CATEGORIZATION_FALLBACK_ENABLED = booleanPreferencesKey("ai_categorization_fallback_enabled")
@@ -54,7 +63,18 @@ class AiSettingsRepositoryImpl @Inject constructor(
     // -------------------------------------------------------------------------
 
     override fun settings(): Flow<AiSettings> =
-        context.aiDataStore.data.map { prefs -> prefs.toAiSettings() }
+        context.aiDataStore.data
+            .catch { error ->
+                when (error) {
+                    is IOException -> {
+                        Timber.e(error, "AI settings DataStore read failed; using empty preferences")
+                        emit(emptyPreferences())
+                    }
+
+                    else -> throw error
+                }
+            }
+            .map { prefs -> prefs.toAiSettings() }
 
     override suspend fun update(transform: (AiSettings) -> AiSettings) {
         context.aiDataStore.edit { prefs ->
@@ -68,6 +88,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
             prefs[Keys.DASHBOARD_BRIEFING_ENABLED] = updated.dashboardBriefingEnabled
             prefs[Keys.REVIEW_EXPLANATION_ENABLED] = updated.reviewExplanationEnabled
             prefs[Keys.RECEIPT_ASSIST_ENABLED]     = updated.receiptAssistEnabled
+            prefs[Keys.WARRANTY_EXTRACTION_ENABLED] = updated.warrantyExtractionEnabled
             prefs[Keys.RECEIPT_IMAGE_CLOUD_ENABLED] = updated.receiptImageCloudEnabled
             prefs[Keys.RECEIPT_ITEM_CATEGORIZATION_ENABLED] = updated.receiptItemCategorizationEnabled
             prefs[Keys.CATEGORIZATION_FALLBACK_ENABLED] = updated.categorizationFallbackEnabled
@@ -107,6 +128,7 @@ class AiSettingsRepositoryImpl @Inject constructor(
         storeConversationHistory  = this[Keys.STORE_CONVERSATION_HISTORY] ?: false,
         preferredMode             = this[Keys.PREFERRED_MODE]
             ?.let { runCatching { AiMode.valueOf(it) }.getOrNull() }
-            ?: AiMode.AUTO
+            ?: AiMode.AUTO,
+        warrantyExtractionEnabled = this[Keys.WARRANTY_EXTRACTION_ENABLED] ?: true
     )
 }

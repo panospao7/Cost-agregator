@@ -45,7 +45,14 @@ object CloudJsonParser {
                 '}' -> {
                     depth--
                     if (depth == 0) {
-                        return text.substring(start, index + 1)
+                        val candidate = text.substring(start, index + 1)
+                        val parsed = runCatching { JSONObject(candidate) }.getOrNull()
+                        if (parsed != null) {
+                            return candidate
+                        }
+                        start = -1
+                        inString = false
+                        isEscaped = false
                     }
                 }
             }
