@@ -82,7 +82,10 @@ class BankApiIntegration @Inject constructor(
     /**
      * Initiate OAuth connection flow (placeholder).
      */
+    @StubForDemo
     suspend fun initiateConnection(bankId: String): String? = withContext(Dispatchers.IO) {
+        requireStubMode()
+
         // In real implementation, this would:
         // 1. Generate OAuth state parameter
         // 2. Build authorization URL
@@ -101,10 +104,13 @@ class BankApiIntegration @Inject constructor(
     /**
      * Complete connection after OAuth callback (placeholder).
      */
+    @StubForDemo
     suspend fun completeConnection(
         bankId: String,
         authCode: String
     ): BankConnection? = withContext(Dispatchers.IO) {
+        requireStubMode()
+
         // In real implementation, this would:
         // 1. Exchange auth code for access token
         // 2. Get refresh token
@@ -129,10 +135,13 @@ class BankApiIntegration @Inject constructor(
     /**
      * Sync transactions from bank (placeholder).
      */
+    @StubForDemo
     suspend fun syncTransactions(
         connection: BankConnection,
         since: Long? = null
     ): SyncResult = withContext(Dispatchers.IO) {
+        requireStubMode()
+
         // In real implementation, this would:
         // 1. Check token validity and refresh if needed
         // 2. Call bank API to fetch transactions
@@ -194,7 +203,10 @@ class BankApiIntegration @Inject constructor(
     /**
      * Refresh access token (placeholder).
      */
+    @StubForDemo
     private suspend fun refreshToken(connection: BankConnection): Boolean {
+        requireStubMode()
+
         // In real implementation, this would use refresh_token to get new access_token
         val decryptedRefresh = BankTokenCipher.decryptIfNeeded(connection.refreshToken)
         if (decryptedRefresh == null) {
@@ -264,7 +276,10 @@ class BankApiIntegration @Inject constructor(
     /**
      * Generate mock transactions for demonstration.
      */
+    @StubForDemo
     private fun generateMockTransactions(bankId: String, since: Long?): List<BankTransaction> {
+        requireStubMode()
+
         val transactions = mutableListOf<BankTransaction>()
         val now = timeProvider.now()
         val startTime = since ?: (now - (7 * 24 * 60 * 60 * 1000L)) // Last 7 days if no since
@@ -291,6 +306,10 @@ class BankApiIntegration @Inject constructor(
         }
         
         return transactions
+    }
+
+    private fun requireStubMode() {
+        require(!BankApiConfig.isProduction) { "Bank integration not implemented" }
     }
 }
 

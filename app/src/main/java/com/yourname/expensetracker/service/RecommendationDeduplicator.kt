@@ -86,6 +86,7 @@ class RecommendationDeduplicator @Inject constructor(
             
             filter.categoryId?.let { filterParts.add("cat=$it") }
             filter.merchantName?.let { filterParts.add("merchant=$it") }
+            filter.ownership?.let { filterParts.add("ownership=${it.name}") }
             filter.minAmount?.let { filterParts.add("minAmount=$it") }
             filter.maxAmount?.let { filterParts.add("maxAmount=$it") }
             filter.dateRange?.let { (start, end) -> 
