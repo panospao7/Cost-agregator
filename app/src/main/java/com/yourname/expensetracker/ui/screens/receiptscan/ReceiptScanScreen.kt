@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
@@ -78,8 +79,8 @@ fun ReceiptScanScreen(
     onDismiss: () -> Unit,
     viewModel: ReceiptScanViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
-    val categories by viewModel.categories.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val categories by viewModel.categories.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scrollState = rememberScrollState()
     var showDebugViewer by remember { mutableStateOf(false) }
@@ -342,14 +343,14 @@ private fun CaptureStep(
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Text(
-                    text = "Camera permission denied",
+                    text = stringResource(R.string.receipt_camera_permission_denied_title),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Enable camera permission in app settings to capture receipts.",
+                    text = stringResource(R.string.receipt_camera_permission_denied_message),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
@@ -357,7 +358,7 @@ private fun CaptureStep(
                 OutlinedButton(onClick = onOpenSettings) {
                     Icon(Icons.Default.Settings, contentDescription = null)
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Open Settings")
+                    Text(stringResource(R.string.receipt_open_settings_button))
                 }
             }
         }
@@ -981,7 +982,7 @@ private fun ReviewStep(
                     viewModel.clearItemAnalysisError()
                     viewModel.analyzeReceiptItems()
                 }) {
-                    Text("Retry")
+                    Text(stringResource(R.string.receipt_item_analysis_retry_button))
                 }
             }
         }

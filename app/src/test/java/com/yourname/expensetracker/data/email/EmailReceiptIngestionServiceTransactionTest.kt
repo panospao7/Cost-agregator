@@ -25,7 +25,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [Config.OLDEST_SDK])
+@Config(sdk = [26])
 class EmailReceiptIngestionServiceTransactionTest {
 
     private lateinit var database: AppDatabase

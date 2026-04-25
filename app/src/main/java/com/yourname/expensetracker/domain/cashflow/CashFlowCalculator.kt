@@ -4,12 +4,10 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
-import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.flow.first
 import java.util.*
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -34,8 +32,7 @@ enum class CashFlowRiskLevel {
 @Singleton
 class CashFlowCalculator @Inject constructor(
     private val expenseRepository: ExpenseRepository,
-    private val recurringExpenseEngine: RecurringExpenseEngine,
-    private val recurringExpenseRepository: RecurringExpenseRepository,
+    private val recurringPatternsProvider: MergedRecurringPatternsProvider,
     private val timeProvider: TimeProvider
 ) {
     suspend fun calculateDailyCashFlow(
@@ -54,8 +51,7 @@ class CashFlowCalculator @Inject constructor(
         val historicalExpenses = expenseRepository.getExpensesBetween(startTime, endTime)
         
         // Get recurring patterns for prediction
-        val allExpensesFlow = expenseRepository.getAllExpenses().first()
-        val recurringPatterns = recurringExpenseEngine.getPatterns(allExpensesFlow)
+        val recurringPatterns = recurringPatternsProvider.getConfirmedPatterns()
         
         // Group historical expenses by day key (yyyy-MM-dd) to avoid cross-year collisions
         val expensesByDay = mutableMapOf<String, MutableList<Expense>>()
@@ -165,16 +161,16 @@ class CashFlowCalculator @Inject constructor(
     }
     
     suspend fun getUpcomingBills(daysAhead: Int): List<RecurringPattern> {
-        val allExpenses = expenseRepository.getAllExpenses().first()
-        val patterns = recurringExpenseEngine.getPatterns(allExpenses)
-        
+        val patterns = recurringPatternsProvider.getConfirmedPatterns()
+
         val now = timeProvider.now()
+        val startOfToday = TimePeriodUtils.getStartOfDay(now)
         val futureDayStart = TimePeriodUtils.getLastNDaysRange(now, -daysAhead).first
         val future = TimePeriodUtils.getEndOfDay(futureDayStart)
         
         val upcomingList = mutableListOf<RecurringPattern>()
         for (pattern in patterns) {
-            if (pattern.nextExpectedDate >= now && pattern.nextExpectedDate <= future) {
+            if (pattern.nextExpectedDate >= startOfToday && pattern.nextExpectedDate <= future) {
                 upcomingList.add(pattern)
             }
         }

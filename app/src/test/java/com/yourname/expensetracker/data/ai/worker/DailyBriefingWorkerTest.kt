@@ -6,6 +6,8 @@ import androidx.work.ListenableWorker.Result
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
+import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
@@ -94,6 +96,7 @@ class DailyBriefingWorkerTest {
         coVerify(exactly = 1) { generateDashboardBriefingUseCase(emptyProcessed, 1000L) }
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `worker returns success`() = runTest {
         coEvery { dashboardDataProvider.getProcessedDataFlow(analyticsRepository) } returns flowOf(sampleProcessedData())
@@ -156,8 +159,8 @@ class DailyBriefingWorkerTest {
                 pendingCount = 0,
                 weather = com.yourname.expensetracker.domain.model.dashboard.FinancialWeather(
                     state = com.yourname.expensetracker.domain.model.dashboard.WeatherState.UNKNOWN,
-                    headline = "",
-                    summary = "",
+                    headline = UiText.StringResource(R.string.domain_weather_headline_unavailable),
+                    summary = UiText.StringResource(R.string.domain_weather_summary_unavailable),
                     icon = "",
                     riskLevel = 0,
                     totalCommitted = 0.0,

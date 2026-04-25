@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.model.UpcomingItem
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
@@ -26,6 +27,7 @@ import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.util.*
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
@@ -37,8 +39,8 @@ import androidx.compose.material.icons.filled.EventNote
 @Composable
 fun FinancialWeatherCard(
     state: WeatherState,
-    headline: String,
-    summary: String,
+    headline: UiText,
+    summary: UiText,
     icon: String,
     totalCommitted: Double,
     totalLikely: Double,
@@ -46,6 +48,7 @@ fun FinancialWeatherCard(
     pastSpendingPoints: List<Double> = emptyList(),
     projectedSpendingPoints: List<Double> = emptyList(),
     upcomingItems: List<UpcomingItem> = emptyList(),
+    referenceNowMillis: Long,
     details: List<com.yourname.expensetracker.domain.model.NarrativeSection> = emptyList(),
     totalRecurringCount: Int = 0,
     onManageClick: () -> Unit = {},
@@ -137,7 +140,7 @@ fun FinancialWeatherCard(
                 )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = headline.uppercase(),
+                        text = headline.asString().uppercase(),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Black,
                         color = textColor
@@ -148,7 +151,7 @@ fun FinancialWeatherCard(
             Spacer(modifier = Modifier.height(16.dp))
             
             Text(
-                text = summary,
+                text = summary.asString(),
                 style = MaterialTheme.typography.bodyMedium,
                 color = SemanticColors.TextPrimary,
                 lineHeight = 20.sp
@@ -257,7 +260,7 @@ fun FinancialWeatherCard(
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 upcomingItems.take(3).forEach { item ->
-                    UpcomingRow(item)
+                    UpcomingRow(item = item, referenceNowMillis = referenceNowMillis)
                     Spacer(modifier = Modifier.height(12.dp))
                 }
             } else {
@@ -329,8 +332,11 @@ fun ForecastMetric(label: String, amount: Double, color: Color) {
 }
 
 @Composable
-fun UpcomingRow(item: UpcomingItem) {
-    val daysUntil = ((item.date - System.currentTimeMillis()) / (1000 * 60 * 60 * 24)).toInt()
+fun UpcomingRow(item: UpcomingItem, referenceNowMillis: Long) {
+    val daysUntil = TimePeriodUtils.daysBetween(
+        TimePeriodUtils.getStartOfDay(referenceNowMillis),
+        TimePeriodUtils.getStartOfDay(item.date)
+    )
     
     val dateLabel = when {
         daysUntil <= 0 -> "Today"

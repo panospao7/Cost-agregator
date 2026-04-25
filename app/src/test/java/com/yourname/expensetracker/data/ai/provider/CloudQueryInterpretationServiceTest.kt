@@ -21,9 +21,9 @@ import org.junit.Test
 
 class CloudQueryInterpretationServiceTest {
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `interpret returns unsupported safely when api key is absent`() {
-        // Mock SecureKeyStorage to return empty key
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
         every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns ""
         
@@ -44,6 +44,7 @@ class CloudQueryInterpretationServiceTest {
         assertTrue(result is FinancialQueryInterpretationResult.Unsupported)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `interpret does not return unsupported on successful cloud response`() {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)

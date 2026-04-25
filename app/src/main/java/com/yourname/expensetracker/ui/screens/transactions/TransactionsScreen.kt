@@ -643,15 +643,21 @@ fun TransactionsScreen(
                     expenseToEditOwnership = null
                     onOpenVisualSplit(expense)
                 },
-                onSave = { isNotMine, ownerName, isShared, sharedWith, sharePercent, shareAmount ->
-                    expenseToEditOwnership?.let { expense ->
-                        val finalIsNotMine = isNotMine
-                        val finalIsShared = isShared && !finalIsNotMine
-                        viewModel.updateNotMineDetails(expense, finalIsNotMine, ownerName)
-                        viewModel.updateSharedExpenseDetails(expense, finalIsShared, sharedWith, sharePercent, shareAmount)
-                    }
-                    expenseToEditOwnership = null
-                }
+        onSave = { isNotMine, ownerName, isShared, sharedWith, sharePercent, shareAmount ->
+            expenseToEditOwnership?.let { expense ->
+                val finalIsShared = isShared && !isNotMine
+                viewModel.updateOwnership(
+                    expense = expense,
+                    isNotMine = isNotMine,
+                    ownerName = ownerName,
+                    isSharedExpense = finalIsShared,
+                    sharedWithName = sharedWith,
+                    mySharePercentage = sharePercent,
+                    myShareAmount = shareAmount
+                )
+            }
+            expenseToEditOwnership = null
+        }
             )
         }
         

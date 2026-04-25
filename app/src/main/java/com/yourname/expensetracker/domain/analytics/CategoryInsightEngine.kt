@@ -1,8 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -14,12 +13,11 @@ class CategoryInsightEngine @Inject constructor() {
     companion object {
         private const val MAX_MISSING_CATEGORY_TRACKED = 100
 
-        private val FALLBACK_CATEGORY = Category(
+        private val FALLBACK_CATEGORY = AnalyticsCategoryRef(
             id = -1,
             name = "Uncategorized",
             icon = "❓",
-            color = "#9E9E9E",
-            isDefault = true
+            color = "#9E9E9E"
         )
     }
 
@@ -28,23 +26,21 @@ class CategoryInsightEngine @Inject constructor() {
     fun calculate(
         currentMonth: MonthPeriod,
         previousMonth: MonthPeriod?,
-        categoryMap: Map<Long, Category>,
-        allExpenses: List<Expense>
+        categoryMap: Map<Long, AnalyticsCategoryRef>,
+        allExpenses: List<ExpenseSnapshot>
     ): List<CategoryInsight> {
         val currentExpenses = allExpenses.filter { 
-            it.date != null &&
             it.date >= currentMonth.startMs && 
             it.date < currentMonth.endMs &&
-            it.transactionType.toDomain().isSpending && 
+            it.transactionType.isSpending && 
             !it.isNotMine 
         }
         
         val previousExpenses = previousMonth?.let { pm ->
             allExpenses.filter { 
-                it.date != null &&
                 it.date >= pm.startMs && 
                 it.date < pm.endMs &&
-                it.transactionType.toDomain().isSpending && 
+                it.transactionType.isSpending && 
                 !it.isNotMine 
             }
         }
@@ -81,15 +77,20 @@ class CategoryInsightEngine @Inject constructor() {
         }
         
         val categoryTotals = currentExpenses.groupBy { it.categoryId }
+        val previousTotalsByCategory: Map<Long?, Pair<Double, Int>> = previousExpenses
+            ?.groupBy { it.categoryId }
+            ?.mapValues { (_, expenses) ->
+                Pair(expenses.sumOf { it.effectiveAmount }, expenses.size)
+            }
+            ?: emptyMap()
         
         return categoryTotals.map { (categoryId, expenses) ->
             val category = categoryId?.let { categoryMap[it] } ?: FALLBACK_CATEGORY
             val currentTotal = expenses.sumOf { it.effectiveAmount }
             val currentCount = expenses.size
             
-            val previousCategoryExpenses = previousExpenses?.filter { it.categoryId == categoryId }
-            val previousTotal = previousCategoryExpenses?.sumOf { it.effectiveAmount }
-            val previousCount = previousCategoryExpenses?.size
+            val previousTotal = previousTotalsByCategory[categoryId]?.first
+            val previousCount = previousTotalsByCategory[categoryId]?.second
             
             val changeFromPrevious = if (previousTotal != null && previousTotal > 0) {
                 ((currentTotal - previousTotal) / previousTotal * 100).toFloat()
@@ -130,13 +131,4 @@ class CategoryInsightEngine @Inject constructor() {
         }
     }
 
-    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
-    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
-        when (this) {
-            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
-            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
-            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
-            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
-            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
-        }
 }

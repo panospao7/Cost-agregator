@@ -309,7 +309,7 @@ class MigrationContractTest {
                         receiptId INTEGER NOT NULL,
                         emailSender TEXT NOT NULL,
                         emailSubject TEXT NOT NULL,
-                        emailMessageId TEXT,
+                        emailMessageId TEXT DEFAULT NULL,
                         parsedAt INTEGER NOT NULL,
                         provider TEXT NOT NULL,
                         confidence REAL NOT NULL,
@@ -748,6 +748,105 @@ class MigrationContractTest {
             db.query("SELECT name FROM sqlite_master WHERE type='index' AND name='index_spending_challenges_isActive_endDate'").use { cursor ->
                 assertTrue(cursor.moveToFirst())
             }
+        }
+    }
+
+    @Test
+    fun migration_91_to_92_heals_email_receipt_sources_default_contract() {
+        withTestDb("migration-contract-91-92.db", version = 91) { db ->
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS scanned_receipts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    imagePath TEXT,
+                    rawOcrText TEXT NOT NULL DEFAULT '',
+                    parsedTotal REAL,
+                    parsedMerchant TEXT,
+                    parsedDate INTEGER,
+                    parsedItems TEXT,
+                    parsedTaxAmount REAL,
+                    currency TEXT NOT NULL DEFAULT 'EUR',
+                    confidence REAL NOT NULL DEFAULT 0,
+                    expenseId INTEGER,
+                    matchStatus TEXT NOT NULL DEFAULT 'UNMATCHED',
+                    matchConfidence REAL,
+                    suggestedExpenseId INTEGER,
+                    createdAt INTEGER NOT NULL DEFAULT 0,
+                    itemCategorizationStatus TEXT NOT NULL DEFAULT 'PENDING'
+                )
+                """.trimIndent()
+            )
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS email_receipt_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    receiptId INTEGER NOT NULL,
+                    emailSender TEXT NOT NULL,
+                    emailSubject TEXT NOT NULL,
+                    emailMessageId TEXT,
+                    parsedAt INTEGER NOT NULL,
+                    provider TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    fingerprint TEXT NOT NULL DEFAULT '',
+                    FOREIGN KEY(receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_receiptId ON email_receipt_sources (receiptId)")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageId ON email_receipt_sources (emailMessageId) WHERE emailMessageId IS NOT NULL")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_provider_parsedAt ON email_receipt_sources (provider, parsedAt)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_parsedAt ON email_receipt_sources (parsedAt)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_fingerprint ON email_receipt_sources (fingerprint)")
+
+            db.execSQL(
+                "INSERT INTO scanned_receipts (id, imagePath, rawOcrText, confidence, createdAt) VALUES (1, NULL, 'ocr', 0.9, 1705000000001)"
+            )
+            db.execSQL(
+                """
+                INSERT INTO email_receipt_sources (
+                    id, receiptId, emailSender, emailSubject, emailMessageId, parsedAt, provider, confidence, fingerprint
+                ) VALUES (1, 1, 'legacy@test.com', 'Legacy', '   ', 1705000000002, 'GMAIL', 0.8, 'fp-legacy')
+                """.trimIndent()
+            )
+
+            AppDatabase.MIGRATION_91_92.migrate(db)
+
+            db.query("PRAGMA table_info(email_receipt_sources)").use { cursor ->
+                val nameIndex = cursor.getColumnIndexOrThrow("name")
+                val defaultIndex = cursor.getColumnIndexOrThrow("dflt_value")
+                var sawEmailMessageId = false
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == "emailMessageId") {
+                        sawEmailMessageId = true
+                        assertEquals("NULL", cursor.getString(defaultIndex))
+                    }
+                }
+                assertTrue(sawEmailMessageId)
+            }
+
+            db.query("SELECT emailMessageId FROM email_receipt_sources WHERE id = 1").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue(cursor.isNull(0))
+            }
+
+            db.query("PRAGMA foreign_key_list(email_receipt_sources)").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("scanned_receipts", cursor.getString(cursor.getColumnIndexOrThrow("table")))
+                assertEquals("CASCADE", cursor.getString(cursor.getColumnIndexOrThrow("on_delete")))
+            }
+
+            fun indexExists(name: String): Boolean {
+                db.query("SELECT 1 FROM sqlite_master WHERE type='index' AND name='$name'").use {
+                    return it.moveToFirst()
+                }
+            }
+
+            assertTrue(indexExists("index_email_receipt_sources_receiptId"))
+            assertTrue(indexExists("index_email_receipt_sources_emailMessageId"))
+            assertTrue(indexExists("index_email_receipt_sources_provider_parsedAt"))
+            assertTrue(indexExists("index_email_receipt_sources_parsedAt"))
+            assertTrue(indexExists("index_email_receipt_fingerprint"))
         }
     }
 

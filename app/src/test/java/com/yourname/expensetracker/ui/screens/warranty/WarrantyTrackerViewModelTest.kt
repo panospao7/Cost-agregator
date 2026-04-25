@@ -162,6 +162,80 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
         coVerify(exactly = 1) { warrantyRepository.deleteWarranty(w1) }
     }
 
+    @Test
+    fun `auto detected filter chip toggles on and off`() = runTest(testDispatcher) {
+        val autoWarranty = warranty(
+            id = 31L,
+            product = "Camera",
+            warrantyEndDate = FIXED_NOW + 20 * DAY_MS
+        ).copy(autoDetected = true)
+        val manualWarranty = warranty(
+            id = 32L,
+            product = "Speaker",
+            warrantyEndDate = FIXED_NOW + 50 * DAY_MS
+        ).copy(autoDetected = false)
+
+        warrantiesFlow.value = listOf(autoWarranty, manualWarranty)
+        viewModel = WarrantyTrackerViewModel(warrantyRepository)
+        advanceUntilIdle()
+
+        viewModel.filterByAutoDetected()
+        advanceUntilIdle()
+        val enabledState = viewModel.state.value
+        assertTrue(enabledState.showAutoDetectedOnly)
+        assertEquals(listOf(autoWarranty.id), enabledState.warranties.map { it.id })
+
+        viewModel.filterByAutoDetected()
+        advanceUntilIdle()
+        val disabledState = viewModel.state.value
+        assertFalse(disabledState.showAutoDetectedOnly)
+        assertEquals(2, disabledState.warranties.size)
+    }
+
+    @Test
+    fun `auto detected filter remains mutually exclusive with other filters`() = runTest(testDispatcher) {
+        val activeAuto = warranty(
+            id = 41L,
+            product = "Router",
+            warrantyEndDate = FIXED_NOW + 12 * DAY_MS,
+            status = WarrantyStatus.ACTIVE
+        ).copy(autoDetected = true)
+        val expiredManual = warranty(
+            id = 42L,
+            product = "Mixer",
+            warrantyEndDate = FIXED_NOW - 2 * DAY_MS,
+            status = WarrantyStatus.EXPIRED
+        ).copy(autoDetected = false)
+        val reviewAuto = warranty(
+            id = 43L,
+            product = "Mic",
+            warrantyEndDate = FIXED_NOW + 40 * DAY_MS,
+            status = WarrantyStatus.ACTIVE
+        ).copy(autoDetected = true, needsReview = true)
+
+        warrantiesFlow.value = listOf(activeAuto, expiredManual, reviewAuto)
+        viewModel = WarrantyTrackerViewModel(warrantyRepository)
+        advanceUntilIdle()
+
+        viewModel.filterByStatus(WarrantyStatus.EXPIRED)
+        advanceUntilIdle()
+        assertEquals(WarrantyStatus.EXPIRED, viewModel.state.value.selectedFilter)
+
+        viewModel.filterByAutoDetected()
+        advanceUntilIdle()
+        val autoState = viewModel.state.value
+        assertTrue(autoState.showAutoDetectedOnly)
+        assertFalse(autoState.showNeedsReviewOnly)
+        assertEquals(null, autoState.selectedFilter)
+
+        viewModel.showNeedsReview()
+        advanceUntilIdle()
+        val reviewState = viewModel.state.value
+        assertTrue(reviewState.showNeedsReviewOnly)
+        assertFalse(reviewState.showAutoDetectedOnly)
+        assertEquals(null, reviewState.selectedFilter)
+    }
+
     private fun warranty(
         id: Long,
         product: String,

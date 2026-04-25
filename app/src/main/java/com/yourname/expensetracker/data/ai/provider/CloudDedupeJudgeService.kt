@@ -231,13 +231,17 @@ class CloudDedupeJudgeService @Inject constructor(
 
         val jsonText = extractFirstJsonObject(text) ?: return null
         val suggestion = JSONObject(jsonText)
+        val verdict = StrictAiJsonParsing.enumOrNull<DuplicateVerdict>(suggestion.optString("verdict"))
+            ?: return null
 
         return DedupeJudgeSuggestion(
-            verdict = DuplicateVerdict.valueOf(suggestion.optString("verdict")),
+            verdict = verdict,
             matchedTargetType = suggestion.optString("matchedTargetType").trim()
                 .takeIf { it.isNotBlank() && it != "null" }
-                ?.let { AiTargetType.valueOf(it) },
-            matchedTargetId = suggestion.optStrictLongStrictOrNull("matchedTargetId"),
+                ?.let { StrictAiJsonParsing.enumOrNull<AiTargetType>(it) },
+            matchedTargetId = StrictAiJsonParsing.run {
+                suggestion.positiveIdOrNull("matchedTargetId")
+            },
             confidence = suggestion.optFiniteDoubleStrictOrNull("confidence")?.toFloat(),
             rationale = suggestion.optString("rationale").trim().ifBlank { null }
         )
@@ -305,22 +309,6 @@ class CloudDedupeJudgeService @Inject constructor(
             throw JSONException("Non-finite numeric '$key': $value")
         }
         return value
-    }
-
-    private fun JSONObject.optStrictLongStrictOrNull(key: String): Long? {
-        if (!has(key) || isNull(key)) return null
-        val raw = opt(key)
-        val number = raw as? Number
-            ?: throw JSONException("Expected integer '$key' but was ${raw?.javaClass?.simpleName ?: "null"}")
-        val asDouble = number.toDouble()
-        if (!asDouble.isFinite()) {
-            throw JSONException("Non-finite integer '$key': $asDouble")
-        }
-        val asLong = number.toLong()
-        if (asLong.toDouble() != asDouble) {
-            throw JSONException("Expected whole-number '$key' but was $asDouble")
-        }
-        return asLong
     }
 
     private companion object {

@@ -40,14 +40,63 @@ class SharedExpenseDataPortAdapter @Inject constructor(
     }
 
     override suspend fun addMember(member: SharedExpenseMember): Long =
-        memberDao.insert(member.toEntity())
+        when (val result = transactionCoordinator.addMemberToGroup(
+            groupId = member.groupId,
+            name = member.name,
+            email = member.email,
+            isCurrentUser = member.isCurrentUser
+        )) {
+            is com.yourname.expensetracker.domain.groups.Result.Success -> {
+                memberDao.getAllForGroup(member.groupId)
+                    .firstOrNull {
+                        it.name.equals(member.name, ignoreCase = true) &&
+                            it.email == member.email &&
+                            it.isCurrentUser == member.isCurrentUser
+                    }
+                    ?.id
+                    ?: throw IllegalStateException("Member was validated but could not be resolved after insert")
+            }
+            is com.yourname.expensetracker.domain.groups.Result.Error -> {
+                throw IllegalArgumentException(result.error.toString())
+            }
+        }
 
     override suspend fun removeMember(member: SharedExpenseMember) {
         memberDao.delete(member.toEntity())
     }
 
-    override suspend fun addExpense(expense: SharedGroupExpense): Long =
-        groupExpenseDao.insert(expense.toEntity())
+    override suspend fun addExpense(expense: SharedGroupExpense): Long {
+        val result = if (expense.expenseId != null) {
+            transactionCoordinator.addExpenseWithLink(
+                groupId = expense.groupId,
+                systemExpenseId = expense.expenseId,
+                description = expense.description,
+                amount = expense.totalAmount,
+                paidById = expense.paidById,
+                currency = expense.currency,
+                splitType = expense.splitType.toEntity(),
+                customSplitsJson = expense.customSplitsSerialized,
+                date = expense.date
+            )
+        } else {
+            transactionCoordinator.addExpenseToGroup(
+                groupId = expense.groupId,
+                description = expense.description,
+                amount = expense.totalAmount,
+                paidById = expense.paidById,
+                currency = expense.currency,
+                splitType = expense.splitType.toEntity(),
+                date = expense.date
+            )
+        }
+
+        return when (result) {
+            is com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult.Success -> result.groupExpenseId
+            is com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult.Error -> {
+                throw IllegalArgumentException(result.message)
+            }
+        }
+    }
 
     override fun getAllGroups(): Flow<List<SharedExpenseGroup>> =
         groupDao.getAllFlow().map { groups -> groups.map { it.toDomain() } }

@@ -10,6 +10,8 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
+const val APP_DATABASE_SCHEMA_VERSION = 92
+
 @Database(
     entities = [
         RawNotification::class,
@@ -61,7 +63,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
         EmailReceiptSource::class,
         SpendingChallengeEntity::class
     ],
-    version = 81,
+    version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
 )
 @TypeConverters(com.yourname.expensetracker.data.database.converter.Converters::class)
@@ -115,6 +117,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun spendingChallengeDao(): SpendingChallengeDao
 
     companion object {
+        const val DATABASE_NAME = "expense_tracker_db"
+
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL(
@@ -2942,7 +2946,7 @@ abstract class AppDatabase : RoomDatabase() {
                         receiptId INTEGER NOT NULL,
                         emailSender TEXT NOT NULL,
                         emailSubject TEXT NOT NULL,
-                        emailMessageId TEXT,
+                        emailMessageId TEXT DEFAULT NULL,
                         parsedAt INTEGER NOT NULL,
                         provider TEXT NOT NULL,
                         confidence REAL NOT NULL,
@@ -3392,7 +3396,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 receiptId INTEGER NOT NULL,
                                 emailSender TEXT NOT NULL,
                                 emailSubject TEXT NOT NULL,
-                                emailMessageId TEXT,
+                                emailMessageId TEXT DEFAULT NULL,
                                 parsedAt INTEGER NOT NULL,
                                 provider TEXT NOT NULL,
                                 confidence REAL NOT NULL,
@@ -3671,7 +3675,7 @@ abstract class AppDatabase : RoomDatabase() {
                             receiptId INTEGER NOT NULL,
                             emailSender TEXT NOT NULL,
                             emailSubject TEXT NOT NULL,
-                            emailMessageId TEXT,
+                            emailMessageId TEXT DEFAULT NULL,
                             parsedAt INTEGER NOT NULL,
                             provider TEXT NOT NULL,
                             confidence REAL NOT NULL,
@@ -3734,15 +3738,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // Migration 70 -> 71: Group schema integrity — enforce deterministic uniqueness.
-        // - One current user per group: partial unique index on group_members(groupId)
-        //   WHERE isCurrentUser = 1. Duplicate current-user rows are demoted to
-        //   isCurrentUser = 0 (not deleted — they may be referenced by
-        //   group_expenses.paidById which has ON DELETE RESTRICT). The row with the
-        //   largest id per group is retained as isCurrentUser = 1.
-        // - One linked system expense per non-null expenseId in group_expenses: partial
-        //   unique index on group_expenses(expenseId) WHERE expenseId IS NOT NULL.
-        //   Duplicate rows are deduplicated first, keeping the row with the smallest id.
+        // Migration 70 -> 71: Group schema integrity — repair legacy duplicate data.
+        // - Duplicate current-user rows in group_members are demoted to isCurrentUser = 0
+        //   (not deleted — they may be referenced by group_expenses.paidById which has
+        //   ON DELETE RESTRICT). The row with the largest id per group is retained as
+        //   isCurrentUser = 1.
+        // - Legacy duplicate non-null expenseId links in group_expenses are deduplicated,
+        //   keeping the row with the smallest id.
         // Trigger-based paidById same-group enforcement is explicitly OUT OF SCOPE.
         val MIGRATION_70_71 = object : androidx.room.migration.Migration(70, 71) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -3769,15 +3771,7 @@ abstract class AppDatabase : RoomDatabase() {
                         """.trimIndent()
                     )
 
-                    // Partial unique index: at most one row with isCurrentUser = 1 per group.
-                    // Rows with isCurrentUser = 0 are unconstrained.
-                    database.execSQL(
-                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                            "index_group_members_groupId_currentUser " +
-                            "ON group_members (groupId) WHERE isCurrentUser = 1"
-                    )
-
-                    // ── 2. group_expenses: one linked expense per non-null expenseId ──
+                    // ── 2. group_expenses: heal legacy duplicate non-null expenseId rows ──
 
                     // Retention rule: among duplicate non-null expenseId rows, keep
                     // the one with the SMALLEST id.
@@ -3794,14 +3788,6 @@ abstract class AppDatabase : RoomDatabase() {
                         """.trimIndent()
                     )
 
-                    // Partial unique index: at most one row per non-null expenseId.
-                    // Rows with expenseId IS NULL are unconstrained (standalone group expenses).
-                    database.execSQL(
-                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                            "index_group_expenses_expenseId_unique " +
-                            "ON group_expenses (expenseId) WHERE expenseId IS NOT NULL"
-                    )
-
                     database.setTransactionSuccessful()
                 } finally {
                     database.endTransaction()
@@ -3815,8 +3801,6 @@ abstract class AppDatabase : RoomDatabase() {
         //  - Demote duplicate active overall budgets (categoryId IS NULL) and
         //    duplicate active per-category budgets, keeping the row with the
         //    largest id as active.
-        //  - Create two partial unique indexes to prevent future duplicates:
-        //    one for active overall budgets, one for active category budgets.
         //
         // Recurring:
         //  - Change the SQL DEFAULT for isSubscription from 1 to 0 on
@@ -3874,21 +3858,7 @@ abstract class AppDatabase : RoomDatabase() {
                             """.trimIndent()
                         )
 
-                        // ── 3. Budget: partial unique index for active overall ──────────
-                        database.execSQL(
-                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                                "index_budgets_active_overall " +
-                                "ON budgets (isActive) WHERE isActive = 1 AND categoryId IS NULL"
-                        )
-
-                        // ── 4. Budget: partial unique index for active per-category ─────
-                        database.execSQL(
-                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                                "index_budgets_active_category " +
-                                "ON budgets (categoryId) WHERE isActive = 1 AND categoryId IS NOT NULL"
-                        )
-
-                        // ── 5. Recurring: rebuild table to change isSubscription default ─
+                        // ── 3. Recurring: rebuild table to change isSubscription default ─
                         // FK enforcement is OFF, so dropping the old parent table will not
                         // cascade-delete rows in subscription_price_history or subscription_usage.
                         database.execSQL(
@@ -3934,7 +3904,7 @@ abstract class AppDatabase : RoomDatabase() {
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_isSubscription_isActive_nextDate ON manual_recurring_expenses (isSubscription, isActive, nextDate)")
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_manual_recurring_expenses_merchant ON manual_recurring_expenses (merchant)")
 
-                        // ── 6. Post-rebuild FK verification ─────────────────────────────
+                        // ── 4. Post-rebuild FK verification ─────────────────────────────
                         // Verify that no FK violations were introduced by the rebuild.
                         database.query("PRAGMA foreign_key_check").use { violations ->
                             if (violations.moveToFirst()) {
@@ -4178,13 +4148,11 @@ abstract class AppDatabase : RoomDatabase() {
         //    The emailMessageId unique index already exists (partial, WHERE NOT NULL).
         //
         // raw_notifications:
-        //  - Close NULL != NULL loophole on the 4-column unique index.
-        //  - Drop the old unique index and replace with two partial unique indexes:
-        //    (a) for rows where title AND text are NOT NULL (standard unique).
-        //    (b) for rows where title IS NULL AND text IS NULL (partial unique on
-        //        packageName+timestamp only).
-        //  - Dedup existing bad rows before adding partial indexes.
-        //  - Keep the old non-unique 4-column index for query coverage.
+        //  - Dedup legacy rows that slipped through the old 4-column unique index
+        //    because SQLite treats NULL != NULL.
+        //  - Drop any legacy unique / non-Room dedup indexes.
+        //  - Recreate only the Room-declared non-unique indexes so long-hop imports
+        //    validate cleanly at schema 74.
         //
         // anomaly_alerts:
         //  - Add FK from expenseId → expenses(id) ON DELETE CASCADE.
@@ -4269,7 +4237,7 @@ abstract class AppDatabase : RoomDatabase() {
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_lastSync ON bank_connections(lastSync)")
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_bank_connections_defaultCategoryId ON bank_connections(defaultCategoryId)")
 
-                        // ── 2. raw_notifications: close NULL loophole ─────────────────
+                        // ── 2. raw_notifications: dedup legacy rows, restore Room indexes ──
 
                         // Dedup rows with NULL title AND NULL text that share the same
                         // packageName+timestamp. Keep the row with the smallest id.
@@ -4314,47 +4282,34 @@ abstract class AppDatabase : RoomDatabase() {
                             """.trimIndent()
                         )
 
-                        // Drop the old non-covering unique index.
+                        // Drop legacy unique / non-Room indexes so schema 74 matches
+                        // the current Room-declared contract during long-hop imports.
                         database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_packageName_timestamp_title_text")
+                        database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_dedup_nonnull")
+                        database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_dedup_both_null")
+                        database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_dedup_title_null")
+                        database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_dedup_text_null")
 
-                        // Partial unique index: rows where BOTH title and text are NOT NULL.
-                        database.execSQL(
-                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                                "index_raw_notifications_dedup_nonnull " +
-                                "ON raw_notifications (packageName, timestamp, title, text) " +
-                                "WHERE title IS NOT NULL AND text IS NOT NULL"
-                        )
-
-                        // Partial unique index: rows where BOTH title and text are NULL.
-                        database.execSQL(
-                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                                "index_raw_notifications_dedup_both_null " +
-                                "ON raw_notifications (packageName, timestamp) " +
-                                "WHERE title IS NULL AND text IS NULL"
-                        )
-
-                        // Partial unique index: title IS NULL, text IS NOT NULL.
-                        database.execSQL(
-                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                                "index_raw_notifications_dedup_title_null " +
-                                "ON raw_notifications (packageName, timestamp, text) " +
-                                "WHERE title IS NULL AND text IS NOT NULL"
-                        )
-
-                        // Partial unique index: text IS NULL, title IS NOT NULL.
-                        database.execSQL(
-                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                                "index_raw_notifications_dedup_text_null " +
-                                "ON raw_notifications (packageName, timestamp, title) " +
-                                "WHERE text IS NULL AND title IS NOT NULL"
-                        )
-
-                        // Re-create a non-unique covering index for query performance
-                        // (replaces the dropped unique index for SELECT/ORDER BY coverage).
+                        // Recreate only the Room-declared non-unique indexes.
                         database.execSQL(
                             "CREATE INDEX IF NOT EXISTS " +
                                 "index_raw_notifications_packageName_timestamp_title_text " +
                                 "ON raw_notifications (packageName, timestamp, title, text)"
+                        )
+                        database.execSQL(
+                            "CREATE INDEX IF NOT EXISTS " +
+                                "index_raw_notifications_packageName_timestamp " +
+                                "ON raw_notifications (packageName, timestamp)"
+                        )
+                        database.execSQL(
+                            "CREATE INDEX IF NOT EXISTS " +
+                                "index_raw_notifications_capturedAt " +
+                                "ON raw_notifications (capturedAt)"
+                        )
+                        database.execSQL(
+                            "CREATE INDEX IF NOT EXISTS " +
+                                "index_raw_notifications_isRelevant " +
+                                "ON raw_notifications (isRelevant)"
                         )
 
                         // ── 3. anomaly_alerts: add FK to expenses ─────────────────────
@@ -4433,18 +4388,16 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // ── Migration 74 → 75 ───────────────────────────────────────────────────
-        // Batch 7: subscription_candidates + budget_forecasts uniqueness constraints.
+        // Batch 7: subscription_candidates healing + budget_forecasts healing.
         //
         //  subscription_candidates:
         //  - Dedup pending candidates with duplicate (canonicalMerchant, detectedInterval).
-        //  - Create partial unique index on (canonicalMerchant, detectedInterval)
-        //    WHERE isConverted = 0 AND userAction = 'pending'.
+        //  - Ensure only Room-declared indexes exist.
         //
         //  budget_forecasts:
         //  - Demote duplicate active forecasts for the same (budgetId, targetPeriodStart,
         //    targetPeriodEnd) by setting isActive = 0 on all but the latest (MAX id).
-        //  - Create partial unique index on (budgetId, targetPeriodStart, targetPeriodEnd)
-        //    WHERE isActive = 1.
+        //  - Ensure Room-declared indexes exist.
         val MIGRATION_74_75 = object : androidx.room.migration.Migration(74, 75) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.beginTransaction()
@@ -4467,12 +4420,15 @@ abstract class AppDatabase : RoomDatabase() {
                         """.trimIndent()
                     )
 
-                    // Create partial unique index to prevent future duplicates.
+                    database.execSQL("DROP INDEX IF EXISTS index_subscription_candidates_pending_merchant_interval")
                     database.execSQL(
-                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                            "index_subscription_candidates_pending_merchant_interval " +
-                            "ON subscription_candidates (canonicalMerchant, detectedInterval) " +
-                            "WHERE isConverted = 0 AND userAction = 'pending'"
+                        "CREATE INDEX IF NOT EXISTS index_subscription_candidates_canonicalMerchant ON subscription_candidates (canonicalMerchant)"
+                    )
+                    database.execSQL(
+                        "CREATE INDEX IF NOT EXISTS index_subscription_candidates_isConverted ON subscription_candidates (isConverted)"
+                    )
+                    database.execSQL(
+                        "CREATE INDEX IF NOT EXISTS index_subscription_candidates_confidence ON subscription_candidates (confidence)"
                     )
 
                     // ── 2. budget_forecasts: demote duplicate active forecasts ────
@@ -4494,12 +4450,14 @@ abstract class AppDatabase : RoomDatabase() {
                         """.trimIndent()
                     )
 
-                    // Create partial unique index to prevent future duplicates.
                     database.execSQL(
-                        "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                            "index_budget_forecasts_active_budget_period " +
-                            "ON budget_forecasts (budgetId, targetPeriodStart, targetPeriodEnd) " +
-                            "WHERE isActive = 1"
+                        "CREATE INDEX IF NOT EXISTS index_budget_forecasts_budgetId ON budget_forecasts (budgetId)"
+                    )
+                    database.execSQL(
+                        "CREATE INDEX IF NOT EXISTS index_budget_forecasts_forecastDate ON budget_forecasts (forecastDate)"
+                    )
+                    database.execSQL(
+                        "CREATE INDEX IF NOT EXISTS index_budget_forecasts_isActive ON budget_forecasts (isActive)"
                     )
 
                     database.setTransactionSuccessful()
@@ -4860,19 +4818,9 @@ abstract class AppDatabase : RoomDatabase() {
                         database.execSQL("DROP TABLE budgets")
                         database.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
 
-                        // Recreate budgets indexes (including partial unique indexes from B4)
+                        // Recreate Room-declared budgets indexes
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
-                        database.execSQL(
-                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                                "index_budgets_active_overall " +
-                                "ON budgets (isActive) WHERE isActive = 1 AND categoryId IS NULL"
-                        )
-                        database.execSQL(
-                            "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                                "index_budgets_active_category " +
-                                "ON budgets (categoryId) WHERE isActive = 1 AND categoryId IS NOT NULL"
-                        )
 
                         // ── 6. Post-rebuild FK verification ─────────────────────────────
                         database.query("PRAGMA foreign_key_check").use { violations ->
@@ -4894,29 +4842,26 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
-         * Callback that creates supplementary partial unique indexes on **fresh install**
-         * and applies CHECK constraints that Room annotations cannot express.
+          * Callback that creates supplementary partial unique indexes on **fresh install**
+          * (for tables where Room cannot express them) and applies CHECK constraints
+          * that Room annotations cannot express.
          *
          * Room's `@Index` annotation does not support `WHERE` clauses, so these
          * constraints must be applied via raw SQL after Room creates the schema.
          * Similarly, Room has no `@Check` annotation, so CHECK constraints are
          * added by rebuilding tables in this callback.
          *
-         * On upgrade paths the same indexes/constraints are created by the respective
-         * migrations ([MIGRATION_70_71] for group constraints, [MIGRATION_71_72] for
-         * budget constraints, [MIGRATION_73_74] for raw_notifications NULL-safety
-         * constraints, [MIGRATION_74_75] for subscription-candidate and budget-forecast
-         * constraints, [MIGRATION_75_76] for financial CHECK constraints and expense FK).
-         *
-         * Invariants enforced:
-         *  - At most one `isCurrentUser = 1` row per group in `group_members`.
-         *  - At most one row per non-null `expenseId` in `group_expenses`.
-         *  - At most one active overall budget (categoryId IS NULL, isActive = 1).
-         *  - At most one active budget per category (categoryId IS NOT NULL, isActive = 1).
-         *  - At most one raw_notification per (packageName, timestamp) combo per NULL pattern.
-         *  - At most one pending subscription candidate per (canonicalMerchant, detectedInterval).
-         *  - At most one active budget forecast per (budgetId, targetPeriodStart, targetPeriodEnd).
-         *  - savings_goals: targetAmount > 0, currentAmount >= 0.
+          * On upgrade paths the same indexes/constraints are created by the respective
+          * migrations where still part of the Room/runtime contract
+          * ([MIGRATION_70_71] for group_expenses/group_members data healing,
+          * [MIGRATION_74_75] for subscription-candidate and budget-forecast
+          * constraints, [MIGRATION_75_76] for financial CHECK constraints and expense FK).
+          * raw_notifications dedup indexes created here are runtime-only fresh-install
+          * constraints, not part of Room's exported schema contract.
+          *
+          * Invariants enforced:
+          *  - At most one raw_notification per (packageName, timestamp) combo per NULL pattern.
+          *  - savings_goals: targetAmount > 0, currentAmount >= 0.
          *  - mileage_tracking: distanceKm > 0, deductionRatePerKm >= 0, fuelCost >= 0,
          *    odometer ordering.
          *  - pending_reviews: suggestedAmount > 0, suggestedType ∈ known enum set.
@@ -4926,28 +4871,6 @@ abstract class AppDatabase : RoomDatabase() {
         val FRESH_INSTALL_CALLBACK = object : RoomDatabase.Callback() {
             override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 super.onCreate(db)
-                // B3: group constraints
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                        "index_group_members_groupId_currentUser " +
-                        "ON group_members (groupId) WHERE isCurrentUser = 1"
-                )
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                        "index_group_expenses_expenseId_unique " +
-                        "ON group_expenses (expenseId) WHERE expenseId IS NOT NULL"
-                )
-                // B4: budget constraints — one active overall, one active per category
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                        "index_budgets_active_overall " +
-                        "ON budgets (isActive) WHERE isActive = 1 AND categoryId IS NULL"
-                )
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                        "index_budgets_active_category " +
-                        "ON budgets (categoryId) WHERE isActive = 1 AND categoryId IS NOT NULL"
-                )
                 // B4 Batch 6: raw_notifications partial unique indexes to close NULL loophole.
                 db.execSQL(
                     "CREATE UNIQUE INDEX IF NOT EXISTS " +
@@ -4973,21 +4896,6 @@ abstract class AppDatabase : RoomDatabase() {
                         "ON raw_notifications (packageName, timestamp, title) " +
                         "WHERE text IS NULL AND title IS NOT NULL"
                 )
-                // B7: subscription_candidates — one pending candidate per merchant+interval
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                        "index_subscription_candidates_pending_merchant_interval " +
-                        "ON subscription_candidates (canonicalMerchant, detectedInterval) " +
-                        "WHERE isConverted = 0 AND userAction = 'pending'"
-                )
-                // B7: budget_forecasts — one active forecast per budget+period
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                        "index_budget_forecasts_active_budget_period " +
-                        "ON budget_forecasts (budgetId, targetPeriodStart, targetPeriodEnd) " +
-                        "WHERE isActive = 1"
-                )
-
                 // ── B8: CHECK constraints (table rebuilds — tables are empty on fresh install) ──
 
                 // savings_goals: targetAmount > 0, currentAmount >= 0
@@ -5080,7 +4988,7 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("INSERT INTO pending_reviews_new SELECT * FROM pending_reviews")
                 db.execSQL("DROP TABLE pending_reviews")
                 db.execSQL("ALTER TABLE pending_reviews_new RENAME TO pending_reviews")
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
@@ -5116,17 +5024,6 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
-                // Re-create B4 partial unique indexes (destroyed by the budgets rebuild above)
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                        "index_budgets_active_overall " +
-                        "ON budgets (isActive) WHERE isActive = 1 AND categoryId IS NULL"
-                )
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
-                        "index_budgets_active_category " +
-                        "ON budgets (categoryId) WHERE isActive = 1 AND categoryId IS NOT NULL"
-                )
             }
         }
 
@@ -5212,19 +5109,536 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_81_82 = object : androidx.room.migration.Migration(81, 82) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    DELETE FROM pending_reviews
+                    WHERE rawNotificationId IS NOT NULL
+                      AND id NOT IN (
+                          SELECT MAX(id)
+                          FROM pending_reviews
+                          WHERE rawNotificationId IS NOT NULL
+                          GROUP BY rawNotificationId
+                      )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "DROP INDEX IF EXISTS index_pending_reviews_rawNotificationId"
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)"
+                )
+            }
+        }
+
+        val MIGRATION_82_83 = object : androidx.room.migration.Migration(82, 83) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("UPDATE expenses SET ownerName = NULL WHERE isNotMine = 0")
+                database.execSQL(
+                    """
+                    UPDATE expenses
+                    SET isSharedExpense = 0,
+                        sharedWithName = NULL,
+                        mySharePercentage = NULL,
+                        myShareAmount = NULL
+                    WHERE isNotMine = 1 AND isSharedExpense = 1
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    UPDATE expenses
+                    SET sharedWithName = NULL,
+                        mySharePercentage = NULL,
+                        myShareAmount = NULL
+                    WHERE isSharedExpense = 0
+                    """.trimIndent()
+                )
+            }
+        }
+
+        val MIGRATION_83_84 = object : androidx.room.migration.Migration(83, 84) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                val fkWasEnabled = database.query("PRAGMA foreign_keys").use {
+                    it.moveToFirst(); it.getInt(0) == 1
+                }
+                if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                try {
+                    database.beginTransaction()
+                    try {
+                        // Drop legacy unique index if it survived from pre-73
+                        database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_packageName_timestamp_title_text")
+
+                        // Dedup rows with NULL title AND NULL text that share the same
+                        // packageName+timestamp. Keep the row with the smallest id.
+                        database.execSQL(
+                            """
+                            DELETE FROM raw_notifications
+                            WHERE title IS NULL AND text IS NULL
+                              AND id NOT IN (
+                                  SELECT MIN(id)
+                                  FROM raw_notifications
+                                  WHERE title IS NULL AND text IS NULL
+                                  GROUP BY packageName, timestamp
+                              )
+                            """.trimIndent()
+                        )
+
+                        // Also dedup rows with NULL title (text NOT NULL).
+                        database.execSQL(
+                            """
+                            DELETE FROM raw_notifications
+                            WHERE title IS NULL AND text IS NOT NULL
+                              AND id NOT IN (
+                                  SELECT MIN(id)
+                                  FROM raw_notifications
+                                  WHERE title IS NULL AND text IS NOT NULL
+                                  GROUP BY packageName, timestamp, text
+                              )
+                            """.trimIndent()
+                        )
+
+                        // Dedup rows with NULL text (title NOT NULL).
+                        database.execSQL(
+                            """
+                            DELETE FROM raw_notifications
+                            WHERE text IS NULL AND title IS NOT NULL
+                              AND id NOT IN (
+                                  SELECT MIN(id)
+                                  FROM raw_notifications
+                                  WHERE text IS NULL AND title IS NOT NULL
+                                  GROUP BY packageName, timestamp, title
+                              )
+                            """.trimIndent()
+                        )
+
+                        // Recreate as non-unique (matches current entity expectation)
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp_title_text ON raw_notifications (packageName, timestamp, title, text)")
+
+                        database.execSQL("ALTER TABLE exchange_rates RENAME TO exchange_rates_old")
+                        database.execSQL(
+                            """
+                            CREATE TABLE IF NOT EXISTS exchange_rates (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                fromCurrency TEXT NOT NULL,
+                                toCurrency TEXT NOT NULL,
+                                rate REAL NOT NULL,
+                                lastUpdated INTEGER NOT NULL,
+                                source TEXT NOT NULL DEFAULT 'manual'
+                            )
+                            """.trimIndent()
+                        )
+                        database.execSQL(
+                            """
+                            INSERT INTO exchange_rates (id, fromCurrency, toCurrency, rate, lastUpdated, source)
+                            SELECT id, fromCurrency, toCurrency, rate, lastUpdated, source
+                            FROM exchange_rates_old
+                            """.trimIndent()
+                        )
+                        database.execSQL("DROP TABLE exchange_rates_old")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_exchange_rates_fromCurrency_toCurrency ON exchange_rates (fromCurrency, toCurrency)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_exchange_rates_lastUpdated ON exchange_rates (lastUpdated)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_exchange_rates_toCurrency ON exchange_rates (toCurrency)")
+
+                        database.execSQL("ALTER TABLE budget_forecasts RENAME TO budget_forecasts_old")
+                        database.execSQL(
+                            """
+                            CREATE TABLE IF NOT EXISTS budget_forecasts (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                budgetId INTEGER NOT NULL,
+                                forecastDate INTEGER NOT NULL,
+                                targetPeriodStart INTEGER NOT NULL,
+                                targetPeriodEnd INTEGER NOT NULL,
+                                predictedSpending REAL NOT NULL,
+                                predictedRemaining REAL NOT NULL,
+                                confidenceScore REAL NOT NULL,
+                                riskLevel TEXT NOT NULL,
+                                overspendProbability REAL NOT NULL,
+                                recommendationsJson TEXT,
+                                actualSpending REAL,
+                                forecastAccuracy REAL,
+                                isActive INTEGER NOT NULL DEFAULT 1,
+                                createdAt INTEGER NOT NULL,
+                                FOREIGN KEY(budgetId) REFERENCES budgets(id) ON DELETE CASCADE
+                            )
+                            """.trimIndent()
+                        )
+                        database.execSQL(
+                            """
+                            INSERT INTO budget_forecasts (
+                                id,
+                                budgetId,
+                                forecastDate,
+                                targetPeriodStart,
+                                targetPeriodEnd,
+                                predictedSpending,
+                                predictedRemaining,
+                                confidenceScore,
+                                riskLevel,
+                                overspendProbability,
+                                recommendationsJson,
+                                actualSpending,
+                                forecastAccuracy,
+                                isActive,
+                                createdAt
+                            )
+                            SELECT
+                                id,
+                                budgetId,
+                                forecastDate,
+                                targetPeriodStart,
+                                targetPeriodEnd,
+                                predictedSpending,
+                                predictedRemaining,
+                                confidenceScore,
+                                riskLevel,
+                                overspendProbability,
+                                recommendationsJson,
+                                actualSpending,
+                                forecastAccuracy,
+                                isActive,
+                                createdAt
+                            FROM budget_forecasts_old
+                            """.trimIndent()
+                        )
+                        database.execSQL("DROP TABLE budget_forecasts_old")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_budgetId ON budget_forecasts (budgetId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_forecastDate ON budget_forecasts (forecastDate)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_isActive ON budget_forecasts (isActive)")
+
+                        database.execSQL("ALTER TABLE subscription_price_history RENAME TO subscription_price_history_old")
+                        database.execSQL(
+                            """
+                            CREATE TABLE IF NOT EXISTS subscription_price_history (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                subscriptionId INTEGER NOT NULL,
+                                amount REAL NOT NULL,
+                                currency TEXT NOT NULL DEFAULT 'EUR',
+                                recordedAt INTEGER NOT NULL,
+                                changeReason TEXT,
+                                FOREIGN KEY(subscriptionId) REFERENCES manual_recurring_expenses(id) ON DELETE CASCADE
+                            )
+                            """.trimIndent()
+                        )
+                        database.execSQL(
+                            """
+                            INSERT INTO subscription_price_history (id, subscriptionId, amount, currency, recordedAt, changeReason)
+                            SELECT id, subscriptionId, amount, currency, recordedAt, changeReason
+                            FROM subscription_price_history_old
+                            """.trimIndent()
+                        )
+                        database.execSQL("DROP TABLE subscription_price_history_old")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_subscription_price_history_subscriptionId_recordedAt ON subscription_price_history (subscriptionId, recordedAt)")
+
+                        // Ensure unique index on rawNotificationId (normally added in 81→82, but heal if missed)
+                        database.execSQL("DELETE FROM pending_reviews WHERE rawNotificationId IS NOT NULL AND id NOT IN (SELECT MAX(id) FROM pending_reviews WHERE rawNotificationId IS NOT NULL GROUP BY rawNotificationId)")
+                        database.execSQL("DROP INDEX IF EXISTS index_pending_reviews_rawNotificationId")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
+                } finally {
+                    if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
+                }
+            }
+        }
+
+        val MIGRATION_84_85 = object : androidx.room.migration.Migration(84, 85) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    // Drop non-entity partial dedup indexes if they exist.
+                    database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_dedup_nonnull")
+                    database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_dedup_both_null")
+                    database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_dedup_title_null")
+                    database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_dedup_text_null")
+
+                    // Recreate covering index as non-unique to match Room contract.
+                    database.execSQL("DROP INDEX IF EXISTS index_raw_notifications_packageName_timestamp_title_text")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp_title_text ON raw_notifications (packageName, timestamp, title, text)")
+
+                    // Ensure expected Room-declared indexes exist.
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp ON raw_notifications (packageName, timestamp)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_capturedAt ON raw_notifications (capturedAt)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_raw_notifications_isRelevant ON raw_notifications (isRelevant)")
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Healing migration 85 -> 86: rebuild budgets to restore Room-expected defaults.
+        val MIGRATION_85_86 = object : androidx.room.migration.Migration(85, 86) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    database.execSQL(
+                        """
+                        CREATE TABLE budgets_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            categoryId INTEGER,
+                            amount REAL NOT NULL,
+                            period TEXT NOT NULL,
+                            periodMode TEXT NOT NULL DEFAULT 'ROLLING',
+                            startDate INTEGER NOT NULL,
+                            isActive INTEGER NOT NULL DEFAULT 1,
+                            notifyAtWarning REAL NOT NULL DEFAULT 0.75,
+                            notifyAtCritical REAL NOT NULL DEFAULT 0.9,
+                            rollover INTEGER NOT NULL DEFAULT 0,
+                            createdAt INTEGER NOT NULL,
+                            lastWarningNotifiedAt INTEGER,
+                            lastCriticalNotifiedAt INTEGER,
+                            lastExceededNotifiedAt INTEGER,
+                            FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                        )
+                        """.trimIndent()
+                    )
+
+                    database.execSQL(
+                        """
+                        INSERT INTO budgets_new (
+                            id,
+                            categoryId,
+                            amount,
+                            period,
+                            periodMode,
+                            startDate,
+                            isActive,
+                            notifyAtWarning,
+                            notifyAtCritical,
+                            rollover,
+                            createdAt,
+                            lastWarningNotifiedAt,
+                            lastCriticalNotifiedAt,
+                            lastExceededNotifiedAt
+                        )
+                        SELECT
+                            id,
+                            categoryId,
+                            amount,
+                            period,
+                            periodMode,
+                            startDate,
+                            isActive,
+                            notifyAtWarning,
+                            notifyAtCritical,
+                            rollover,
+                            createdAt,
+                            lastWarningNotifiedAt,
+                            lastCriticalNotifiedAt,
+                            lastExceededNotifiedAt
+                        FROM budgets
+                        """.trimIndent()
+                    )
+
+                    database.execSQL("DROP TABLE budgets")
+                    database.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
+
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Healing migration 86 -> 87: remove non-entity budgets partial unique indexes
+        // so runtime schema exactly matches Room's expected budgets index set.
+        val MIGRATION_86_87 = object : androidx.room.migration.Migration(86, 87) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    database.execSQL("DROP INDEX IF EXISTS index_budgets_active_overall")
+                    database.execSQL("DROP INDEX IF EXISTS index_budgets_active_category")
+                    database.execSQL("DROP INDEX IF EXISTS index_budgets_categoryId")
+                    database.execSQL("DROP INDEX IF EXISTS index_budgets_isActive")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Healing migration 87 -> 88: remove non-Room group_members partial index
+        // so runtime schema exactly matches Room's expected index set.
+        val MIGRATION_87_88 = object : androidx.room.migration.Migration(87, 88) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    database.execSQL("DROP INDEX IF EXISTS index_group_members_groupId_currentUser")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members (groupId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId_isCurrentUser ON group_members (groupId, isCurrentUser)")
+                    database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_name ON group_members (groupId, name)")
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Healing migration 88 -> 89: remove non-Room group_expenses partial index
+        // so runtime schema exactly matches Room's expected index set.
+        val MIGRATION_88_89 = object : androidx.room.migration.Migration(88, 89) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    database.execSQL("DROP INDEX IF EXISTS index_group_expenses_expenseId_unique")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_groupId ON group_expenses (groupId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_expenseId ON group_expenses (expenseId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_paidById ON group_expenses (paidById)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_groupId_date ON group_expenses (groupId, date)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_group_expenses_isReimbursable ON group_expenses (isReimbursable)")
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Healing migration 89 -> 90: remove non-Room budget_forecasts partial index
+        // so runtime schema exactly matches Room's expected index set.
+        val MIGRATION_89_90 = object : androidx.room.migration.Migration(89, 90) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    database.execSQL("DROP INDEX IF EXISTS index_budget_forecasts_active_budget_period")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_budgetId ON budget_forecasts (budgetId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_forecastDate ON budget_forecasts (forecastDate)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_isActive ON budget_forecasts (isActive)")
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Healing migration 90 -> 91: remove non-Room subscription_candidates partial index
+        // so runtime schema exactly matches Room's expected index set.
+        val MIGRATION_90_91 = object : androidx.room.migration.Migration(90, 91) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    database.execSQL("DROP INDEX IF EXISTS index_subscription_candidates_pending_merchant_interval")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_subscription_candidates_canonicalMerchant ON subscription_candidates (canonicalMerchant)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_subscription_candidates_isConverted ON subscription_candidates (isConverted)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_subscription_candidates_confidence ON subscription_candidates (confidence)")
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
+        // Healing migration 91 -> 92: rebuild email_receipt_sources so legacy
+        // long-hop/import paths converge on Room's exact column default contract.
+        val MIGRATION_91_92 = object : androidx.room.migration.Migration(91, 92) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.beginTransaction()
+                try {
+                    database.execSQL(
+                        """
+                        CREATE TABLE email_receipt_sources_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            receiptId INTEGER NOT NULL,
+                            emailSender TEXT NOT NULL,
+                            emailSubject TEXT NOT NULL,
+                            emailMessageId TEXT DEFAULT NULL,
+                            parsedAt INTEGER NOT NULL,
+                            provider TEXT NOT NULL,
+                            confidence REAL NOT NULL,
+                            fingerprint TEXT NOT NULL DEFAULT '',
+                            FOREIGN KEY(receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE
+                        )
+                        """.trimIndent()
+                    )
+
+                    database.execSQL(
+                        """
+                        INSERT INTO email_receipt_sources_new (
+                            id, receiptId, emailSender, emailSubject, emailMessageId,
+                            parsedAt, provider, confidence, fingerprint
+                        )
+                        SELECT
+                            id,
+                            receiptId,
+                            emailSender,
+                            emailSubject,
+                            NULLIF(TRIM(emailMessageId), ''),
+                            parsedAt,
+                            provider,
+                            confidence,
+                            fingerprint
+                        FROM email_receipt_sources
+                        """.trimIndent()
+                    )
+
+                    database.execSQL("DROP TABLE email_receipt_sources")
+                    database.execSQL("ALTER TABLE email_receipt_sources_new RENAME TO email_receipt_sources")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_receiptId ON email_receipt_sources(receiptId)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_provider_parsedAt ON email_receipt_sources(provider, parsedAt)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_parsedAt ON email_receipt_sources(parsedAt)")
+                    database.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_fingerprint ON email_receipt_sources(fingerprint)")
+                    database.execSQL("DROP INDEX IF EXISTS index_email_receipt_sources_emailMessageId")
+                    database.execSQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageId ON email_receipt_sources(emailMessageId) WHERE emailMessageId IS NOT NULL"
+                    )
+
+                    database.setTransactionSuccessful()
+                } finally {
+                    database.endTransaction()
+                }
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
          *
          * Every test that needs a fresh `AppDatabase` **must** go through this
-         * factory so that partial unique indexes (Batch 3 through Batch 8) are
+         * factory so that supplementary indexes (Batch 3 through Batch 8) are
          * present, matching the production fresh-install path.
          */
         @JvmStatic
+        fun fileBuilder(
+            context: android.content.Context,
+            databaseName: String = DATABASE_NAME
+        ): androidx.room.RoomDatabase.Builder<AppDatabase> {
+            return configureBuilder(
+                Room.databaseBuilder(context, AppDatabase::class.java, databaseName)
+            )
+        }
+
+        @JvmStatic
         fun inMemoryBuilder(context: android.content.Context): androidx.room.RoomDatabase.Builder<AppDatabase> {
-            return Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
-                .addCallback(FRESH_INSTALL_CALLBACK)
+            return configureBuilder(
+                Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            )
                 .allowMainThreadQueries()
+        }
+
+        private fun configureBuilder(
+            builder: androidx.room.RoomDatabase.Builder<AppDatabase>
+        ): androidx.room.RoomDatabase.Builder<AppDatabase> {
+            return builder
+                .addMigrations(*ALL_MIGRATIONS)
+                .addCallback(FRESH_INSTALL_CALLBACK)
+                // ISSUE-1: Never destructively wipe user data on migration failures.
+                // Old schemas must be migrated explicitly or handled through backup/recovery UX.
+                .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
         }
 
         /**
@@ -5309,7 +5723,18 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_77_78,
             MIGRATION_78_79,
             MIGRATION_79_80,
-            MIGRATION_80_81
+            MIGRATION_80_81,
+            MIGRATION_81_82,
+            MIGRATION_82_83,
+            MIGRATION_83_84,
+            MIGRATION_84_85,
+            MIGRATION_85_86,
+            MIGRATION_86_87,
+            MIGRATION_87_88,
+            MIGRATION_88_89,
+            MIGRATION_89_90,
+            MIGRATION_90_91,
+            MIGRATION_91_92
         )
     }
 }

@@ -42,36 +42,42 @@ Index 4  Analytics/Insights  (AnalyticsScreen.kt)
 Index 5  Map/Spending Map    (SpendingMapScreen.kt)
 ```
 
-### 22 Feature Screens (Config-Driven)
+### Feature Screens (Config-Driven)
 Accessible from: Home widgets, Features Menu, or deep links
 
 ```
-1. SavingsGoals              (SavingsGoalsScreen)
-2. CarbonFootprint           (CarbonFootprintScreen)
-3. WarrantyTracker           (WarrantyTrackerScreen)
-4. PriceProtection           (PriceProtectionScreen)
-5. BillNegotiation           (BillNegotiationScreen)
-6. SmartSearch [NEW]         (NaturalLanguageSearchScreen)
-7. ReceiptMatching           (ReceiptMatchingScreen)
-8. InvestmentPortfolio       (InvestmentPortfolioScreen)
-9. BankConnections           (BankConnectionsScreen)
-10. BillReminders            (BillRemindersScreen)
-11. SpendingChallenges       (SpendingChallengesScreen)
-12. AdvancedAnalytics        (AdvancedAnalyticsScreen)
-13. CashFlowCalendar         (CashFlowCalendarScreen)
-14. LifestyleInflation       (LifestyleInflationScreen)
-15. SplitTemplates           (SplitTemplatesScreen)
-16. VisualSplitEditor        (VisualSplitEditorScreen)
-17. CurrencyManagement [NEW] (CurrencyManagementScreen)
-18. SubscriptionMgmt [NEW]   (SubscriptionManagementScreen)
-19. TaxConfiguration [NEW]   (TaxConfigurationScreen)
-20. ExportOptions [NEW]      (ExportOptionsScreen)
-21. RecurringExpenses        (RecurringExpensesScreen)
-22. SharedExpenseGroups [NEW](SharedExpenseGroupsScreen)
+SavingsGoals              (SavingsGoalsScreen)
+CarbonFootprint           (CarbonFootprintScreen)
+WarrantyTracker           (WarrantyTrackerScreen)
+PriceProtection           (PriceProtectionScreen)
+BillNegotiation           (BillNegotiationScreen)
+SmartSearch               (NaturalLanguageSearchScreen)
+ReceiptMatching           (ReceiptMatchingScreen)
+InvestmentPortfolio       (InvestmentPortfolioScreen)
+BankConnections           (BankConnectionsScreen)
+BillReminders             (BillRemindersScreen)
+SpendingChallenges        (SpendingChallengesScreen)
+AdvancedAnalytics         (AdvancedAnalyticsScreen)
+CashFlowCalendar          (CashFlowCalendarScreen)
+LifestyleInflation        (LifestyleInflationScreen)
+SplitTemplates            (SplitTemplatesScreen)
+VisualSplitEditor         (VisualSplitEditorScreen)
+CurrencyManagement        (CurrencyManagementScreen)
+SubscriptionManagement    (SubscriptionManagementScreen)
+TaxConfiguration          (TaxConfigurationScreen)
+ExportOptions             (ExportOptionsScreen)
+RecurringExpenses         (RecurringExpensesScreen)
+SharedExpenseGroups       (SharedExpenseGroupsScreen)
 
 Management Screens:
 - AiSettings                 (AiSettingsScreen)
 - CategoryManagement         (CategoryScreen)
+
+Debug / Support Screens:
+- DebugScreen                (DebugScreen)
+- CategorizationDebugScreen  (CategorizationDebugScreen)
+- DebugViewerScreen          (DebugViewerScreen)
+- DebugIssueDetector         (debug support)
 ```
 
 ### Overlay Screens (Modals/Sheets)
@@ -112,7 +118,9 @@ ui/MainActivity.kt                      ← App entry, tab routing, deep links
 ui/MainViewModel.kt                     ← Navigation requests, app state
 ui/navigation/NavigationDestination.kt  ← ALL navigation destinations (sealed class)
 ui/navigation/NavigationController.kt   ← Navigation state machine + back stack
-ui/navigation/FeatureConfig.kt          ← Feature menu configuration (22 features)
+ui/navigation/FeatureConfig.kt          ← Feature menu configuration
+ui/integration/FeatureIntegration.kt    ← Feature routing/integration
+ui/components/UiTextExtensions.kt      ← Text helpers and formatting
 
 ui/screens/home/HomeScreen.kt           ← Dashboard with widgets
 ui/screens/transactions/               ← Transaction list, filters, editing
@@ -193,6 +201,12 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 ### Navigation Components
 - AppNavigationBar (6 tabs)
 - AppFabMenu (FAB with submenu)
+
+### Support Components
+- FeatureIntegration
+- UiTextExtensions
+- EmptyStatePresentationModule
+- DefaultEmptyStateRegistryInitializer
 
 ### Dialogs/Sheets
 - CategoryBreakdownSheet
@@ -372,7 +386,7 @@ Scaffold(
 - ✅ State persistence
 
 ### Configuration-Driven Features
-- ✅ 22 features via FeatureConfig
+- ✅ Feature menu driven by FeatureConfig
 - ✅ Easy to add/remove features
 - ✅ Consistent menu presentation
 - ✅ Feature badges (New/Beta)
@@ -511,7 +525,7 @@ Column {
 
 ## 📝 SUMMARY
 
-**Total UI Files**: 128 (77 screens + 51 components)  
+**Total UI Files**: current UI inventory  
 **Architecture**: Pure Compose with type-safe navigation  
 **Color Scheme**: Midnight Navy with semantic tokens  
 **Features**: 22 config-driven features  

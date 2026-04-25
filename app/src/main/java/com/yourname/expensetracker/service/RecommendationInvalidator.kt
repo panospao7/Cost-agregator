@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.repository.RecommendationRepository
 import com.yourname.expensetracker.di.IoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -37,13 +38,13 @@ class RecommendationInvalidator @Inject constructor(
                 // Clear cache
                 cacheService.clearForUser(userId)
                 
-                // Expire old recommendations in database
-                repository.expireOld(userId)
+                // Expire all recommendations in database
+                repository.expireAll(userId)
                 
                 // Trigger state refresh
                 stateManager.refreshForUser(userId)
             } catch (e: Exception) {
-                // Log error but don't throw - invalidation is best-effort
+                Timber.e(e, "Failed to invalidate all recommendations for user=%s", userId)
             }
         }
     }
@@ -65,7 +66,7 @@ class RecommendationInvalidator @Inject constructor(
                 // Trigger state refresh to remove expired from UI
                 stateManager.refreshForUser(userId)
             } catch (e: Exception) {
-                // Log error but don't throw
+                Timber.e(e, "Failed to invalidate stale recommendations for user=%s", userId)
             }
         }
     }
@@ -85,7 +86,7 @@ class RecommendationInvalidator @Inject constructor(
                 // Clear from state
                 stateManager.clearForUser(userId)
             } catch (e: Exception) {
-                // Log error but don't throw
+                Timber.e(e, "Failed to clear recommendations for user=%s", userId)
             }
         }
     }
@@ -104,7 +105,7 @@ class RecommendationInvalidator @Inject constructor(
                 // Delete from database
                 repository.cleanupExpired()
             } catch (e: Exception) {
-                // Log error
+                Timber.e(e, "Failed to cleanup expired recommendations")
                 0
             }
         }

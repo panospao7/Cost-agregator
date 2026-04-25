@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.database.dao
 
 import org.junit.Assert.*
 import org.junit.Test
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.util.Calendar
 
 /**
@@ -31,6 +32,7 @@ class ExpenseDaoBoundaryConsistencyTest {
      * 2. Missing data when period boundaries don't align
      * 3. Analytics showing different totals than individual views
      */
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `document - queries using inclusive end date`() {
         // These queries use date <= :endMs or date <= :endDate
@@ -64,6 +66,7 @@ class ExpenseDaoBoundaryConsistencyTest {
         assertTrue(inclusiveQueries.isNotEmpty())
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `document - queries using exclusive end date`() {
         // These queries use date < :endMs
@@ -324,6 +327,7 @@ class ExpenseDaoBoundaryConsistencyTest {
     // SECTION 4: RECOMMENDATIONS
     // ============================================================================
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `recommendation - standardize on half-open intervals`() {
         // Recommended approach: [start, end)
@@ -366,6 +370,7 @@ class ExpenseDaoBoundaryConsistencyTest {
     /**
      * Lists all the functions that are affected by this bug
      */
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `affected - functions using inconsistent boundaries`() {
         // Functions that need fixing:
@@ -440,5 +445,17 @@ class ExpenseDaoBoundaryConsistencyTest {
         assertFalse(inJanuary)
         assertTrue(inFebruaryInclusive)
         assertFalse(inFebruaryExclusive)
+    }
+
+    @Test
+    fun `canonical week range from week key is monday start and next monday exclusive`() {
+        val key = "2026-01"
+        val (start, end) = TimePeriodUtils.getCanonicalWeekRangeFromKey(key)
+        val startCal = Calendar.getInstance().apply { timeInMillis = start }
+        val endCal = Calendar.getInstance().apply { timeInMillis = end }
+
+        assertEquals(Calendar.MONDAY, startCal.get(Calendar.DAY_OF_WEEK))
+        assertEquals(Calendar.MONDAY, endCal.get(Calendar.DAY_OF_WEEK))
+        assertEquals(7, TimePeriodUtils.daysBetween(start, end))
     }
 }

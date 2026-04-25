@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
@@ -21,7 +21,7 @@ class SpendingPaceCalculator @Inject constructor(
         currentMonthStart: Long,
         previousMonthStart: Long,
         previousMonthEnd: Long,
-        allExpenses: List<Expense>
+        allExpenses: List<ExpenseSnapshot>
     ): SpendingPace {
         val now = timeProvider.now()
         val currentMonthEnd = TimePeriodUtils.getEndOfMonth(currentMonthStart)
@@ -33,7 +33,7 @@ class SpendingPaceCalculator @Inject constructor(
             .filter { 
                 it.date >= currentMonthStart &&
                 it.date < currentWindowEnd &&
-                it.transactionType.toDomain() == DomainTransactionType.PURCHASE && 
+                it.transactionType == DomainTransactionType.PURCHASE && 
                 !it.isNotMine 
             }
             .sumOf { it.effectiveAmount }
@@ -42,12 +42,10 @@ class SpendingPaceCalculator @Inject constructor(
             .filter {
                 it.date >= previousMonthStart &&
                 it.date < previousMonthEnd &&
-                it.transactionType.toDomain() == DomainTransactionType.PURCHASE &&
+                it.transactionType == DomainTransactionType.PURCHASE &&
                 !it.isNotMine
             }
             .sumOf { it.effectiveAmount }
-
-        val projectedTotal = calculateProjectedTotal(monthSpent, currentDay, daysInMonth)
 
         // Canonical pace formula used across analytics engines:
         // pace% = (currentDailyRate / baselineDailyRate) * 100
@@ -56,6 +54,12 @@ class SpendingPaceCalculator @Inject constructor(
         val currentDailyRate = if (currentDay > 0) monthSpent / currentDay else 0.0
         val previousMonthDays = TimePeriodUtils.getDaysInMonth(previousMonthStart)
         val baselineDailyRate = if (previousMonthDays > 0) previousMonthSpent / previousMonthDays else 0.0
+        val projectedTotal = calculateProjectedTotal(
+            monthSpent = monthSpent,
+            daysElapsed = currentDay,
+            daysInMonth = daysInMonth,
+            baselineDailyRate = baselineDailyRate
+        )
 
         val hasBaseline = baselineDailyRate > 0.0
         val pacePercentage = if (hasBaseline) {
@@ -94,22 +98,16 @@ class SpendingPaceCalculator @Inject constructor(
         )
     }
     
-    private fun calculateProjectedTotal(monthSpent: Double, dayOfMonth: Int, daysInMonth: Int): Double {
-        if (dayOfMonth <= 0) return monthSpent
+    private fun calculateProjectedTotal(
+        monthSpent: Double,
+        daysElapsed: Int,
+        daysInMonth: Int,
+        baselineDailyRate: Double
+    ): Double = SpendingPaceProjection.calculateProjectedTotal(
+        monthSpent = monthSpent,
+        daysElapsed = daysElapsed,
+        daysInMonth = daysInMonth,
+        baselineDailyRate = baselineDailyRate
+    )
 
-        val weight = (dayOfMonth.toDouble() / 7.0).coerceIn(0.0, 1.0)
-        val linearProjection = monthSpent * daysInMonth.toDouble() / dayOfMonth
-        val conservativeEstimate = monthSpent * 3.0
-        return (weight * linearProjection) + ((1.0 - weight) * conservativeEstimate)
-    }
-
-    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
-    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
-        when (this) {
-            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
-            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
-            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
-            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
-            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
-        }
 }

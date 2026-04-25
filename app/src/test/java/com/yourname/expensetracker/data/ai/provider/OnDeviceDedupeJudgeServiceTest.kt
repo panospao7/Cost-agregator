@@ -79,4 +79,42 @@ class OnDeviceDedupeJudgeServiceTest {
     fun `parseResponse returns null for invalid text`() {
         assertNull(service.parseResponse("not json"))
     }
+
+    @Test
+    fun `parseResponse returns null for unknown verdict`() {
+        val result = service.parseResponse(
+            """{"verdict":"MAYBE","matchedTargetType":"EXPENSE","matchedTargetId":3,"confidence":0.8}"""
+        )
+
+        assertNull(result)
+    }
+
+    @Test
+    fun `parseResponse maps invalid matched target type to null`() {
+        val result = service.parseResponse(
+            """{"verdict":"UNCERTAIN","matchedTargetType":"OTHER","matchedTargetId":3,"confidence":0.4}"""
+        )
+
+        assertNotNull(result)
+        assertNull(result!!.matchedTargetType)
+    }
+
+    @Test
+    fun `parseResponse drops matchedTargetId when model emits zero`() {
+        val result = service.parseResponse(
+            """{"verdict":"LIKELY_DISTINCT","matchedTargetType":"EXPENSE","matchedTargetId":0,"confidence":0.7}"""
+        )
+
+        assertNotNull(result)
+        assertNull(result!!.matchedTargetId)
+    }
+
+    @Test
+    fun `parseResponse returns null for non-finite confidence`() {
+        val result = service.parseResponse(
+            """{"verdict":"LIKELY_DUPLICATE","matchedTargetType":"EXPENSE","matchedTargetId":3,"confidence":"NaN"}"""
+        )
+
+        assertNull(result)
+    }
 }

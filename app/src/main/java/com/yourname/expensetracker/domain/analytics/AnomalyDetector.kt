@@ -1,8 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -31,6 +30,17 @@ import kotlin.math.abs
  */
 @Singleton
 class AnomalyDetector @Inject constructor() {
+
+    private fun ExpenseSnapshot.toAnalyticsSummary(): AnalyticsTransactionSummary {
+        return AnalyticsTransactionSummary(
+            id = id,
+            amount = amount,
+            effectiveAmount = effectiveAmount,
+            merchant = merchant,
+            date = date,
+            categoryId = categoryId
+        )
+    }
 
     companion object {
         // Minimum samples required before any method runs for a group
@@ -95,14 +105,14 @@ class AnomalyDetector @Inject constructor() {
      */
     fun detect(
         monthPeriod: MonthPeriod,
-        categoryMap: Map<Long, Category>,
-        allExpenses: List<Expense>
+        categoryMap: Map<Long, AnalyticsCategoryRef>,
+        allExpenses: List<ExpenseSnapshot>
     ): List<AnomalyTransaction> {
 
         val monthExpenses = allExpenses.filter { expense ->
             expense.date >= monthPeriod.startMs &&
             expense.date < monthPeriod.endMs &&
-            expense.transactionType.toDomain() == DomainTransactionType.PURCHASE &&
+            expense.transactionType == DomainTransactionType.PURCHASE &&
             !expense.isNotMine
         }
 
@@ -176,9 +186,9 @@ class AnomalyDetector @Inject constructor() {
      * to the very outliers we are trying to detect.
      */
     private fun detectIqr(
-        expenses: List<Expense>,
+        expenses: List<ExpenseSnapshot>,
         amounts: List<Double>,
-        category: Category?,
+        category: AnalyticsCategoryRef?,
         categoryAvg: Double
     ): List<AnomalyTransaction> {
         val sorted = amounts.sorted()
@@ -199,7 +209,7 @@ class AnomalyDetector @Inject constructor() {
 
         return expenses.filter { it.effectiveAmount > upperFence }.map { expense ->
             AnomalyTransaction(
-                expense = expense,
+                expense = expense.toAnalyticsSummary(),
                 merchantAvg = categoryAvg,
                 deviationMultiple = if (categoryAvg > 0) (expense.effectiveAmount / categoryAvg).toFloat() else 0f,
                 category = category,
@@ -219,9 +229,9 @@ class AnomalyDetector @Inject constructor() {
      * harder to detect. Recommended by Iglewicz & Hoaglin (1993).
      */
     private fun detectMad(
-        expenses: List<Expense>,
+        expenses: List<ExpenseSnapshot>,
         amounts: List<Double>,
-        category: Category?,
+        category: AnalyticsCategoryRef?,
         categoryAvg: Double
     ): List<AnomalyTransaction> {
         val sorted = amounts.sorted()
@@ -245,7 +255,7 @@ class AnomalyDetector @Inject constructor() {
             modifiedZ > MAD_ZSCORE_THRESHOLD
         }.map { expense ->
             AnomalyTransaction(
-                expense = expense,
+                expense = expense.toAnalyticsSummary(),
                 merchantAvg = categoryAvg,
                 deviationMultiple = if (categoryAvg > 0) (expense.effectiveAmount / categoryAvg).toFloat() else 0f,
                 category = category,
@@ -265,8 +275,8 @@ class AnomalyDetector @Inject constructor() {
      * Requires at least [MIN_SAMPLES_CONTEXTUAL] entries per context group.
      */
     private fun detectContextual(
-        expenses: List<Expense>,
-        category: Category?,
+        expenses: List<ExpenseSnapshot>,
+        category: AnalyticsCategoryRef?,
         categoryAvg: Double
     ): List<AnomalyTransaction> {
         val result = mutableListOf<AnomalyTransaction>()
@@ -304,7 +314,7 @@ class AnomalyDetector @Inject constructor() {
                     val contextAvg = amounts.average()
                     result.add(
                         AnomalyTransaction(
-                            expense = expense,
+                            expense = expense.toAnalyticsSummary(),
                             merchantAvg = contextAvg,
                             deviationMultiple = if (contextAvg > 0) (expense.effectiveAmount / contextAvg).toFloat() else 0f,
                             category = category,
@@ -336,8 +346,8 @@ class AnomalyDetector @Inject constructor() {
     }
 
     private fun detectZeroDispersionOutliers(
-        expenses: List<Expense>,
-        category: Category?,
+        expenses: List<ExpenseSnapshot>,
+        category: AnalyticsCategoryRef?,
         categoryAvg: Double,
         baseline: Double,
         detectionMethod: AnomalyMethod,
@@ -350,7 +360,7 @@ class AnomalyDetector @Inject constructor() {
             .filter { it.effectiveAmount > spikeThreshold }
             .map { expense ->
                 AnomalyTransaction(
-                    expense = expense,
+                    expense = expense.toAnalyticsSummary(),
                     merchantAvg = categoryAvg,
                     deviationMultiple = if (baseline > 0) (expense.effectiveAmount / baseline).toFloat() else 0f,
                     category = category,
@@ -359,16 +369,7 @@ class AnomalyDetector @Inject constructor() {
                     categoryAvg = categoryAvg
                 )
             }
-    }
 
-    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
-    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
-        when (this) {
-            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
-            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
-            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
-            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
-            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
-        }
+}
 
 }

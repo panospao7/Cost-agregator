@@ -49,6 +49,7 @@ class CloudReceiptAssistServiceTest {
         currentTimeMs = 1L
     )
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `suggest returns null safely when api key is absent or request unsupported`() {
         val settingsRepository = mockk<AiSettingsRepository>()
@@ -78,6 +79,7 @@ class CloudReceiptAssistServiceTest {
         assertTrue(failure.error is AiServiceError.Disabled)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `usedImageInput only reports true when image metadata exists`() {
         val settingsRepository = mockk<AiSettingsRepository>()
@@ -103,6 +105,7 @@ class CloudReceiptAssistServiceTest {
         )
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `buildRequestBodyForTest includes inline image data when allowed`() {
         val settingsRepository = mockk<AiSettingsRepository>()
@@ -137,6 +140,7 @@ class CloudReceiptAssistServiceTest {
         }
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `buildRequestBodyForTest suppresses inline image when redaction is required`() {
         val settingsRepository = mockk<AiSettingsRepository>()
@@ -173,6 +177,7 @@ class CloudReceiptAssistServiceTest {
         }
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `suggest retries transient http failures and succeeds on later attempt`() {
         val settingsRepository = mockk<AiSettingsRepository>()
@@ -227,6 +232,7 @@ class CloudReceiptAssistServiceTest {
         assertEquals(2, attempts.get())
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `buildRequestBodyForTest redacts merchant and text when redactBeforeCloud enabled`() {
         val settingsRepository = mockk<AiSettingsRepository>()

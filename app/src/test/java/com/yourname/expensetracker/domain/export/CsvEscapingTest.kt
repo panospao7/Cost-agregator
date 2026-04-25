@@ -4,7 +4,6 @@ import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import org.junit.Test
 import java.util.Date
-import org.junit.Ignore
 
 /**
  * CRITICAL TEST (CRITICAL-4): CSV/IIF Field Escaping
@@ -136,7 +135,6 @@ class CsvEscapingTest {
         assertThat(result).contains("Normal notes text")
     }
 
-    @Ignore("IIF tab escaping behavior differs from test expectations")
     @Test
     fun `iif field with tab is replaced with space`() {
         val exporter = QuickBooksIIFExporter()
@@ -147,8 +145,9 @@ class CsvEscapingTest {
             mapOf()
         )
         
-        assertThat(result).contains("Note with tabs")
-        assertThat(result).doesNotContain("\t")
+        val trnsLine = result.lines().first { it.startsWith("TRNS\t") }
+
+        assertThat(trnsLine).contains("\tNote with tabs\t")
     }
 
     @Test
@@ -177,7 +176,6 @@ class CsvEscapingTest {
         assertThat(result).contains("NotewithCR")
     }
 
-    @Ignore("IIF special char escaping behavior differs from test expectations")
     @Test
     fun `iif field with all special chars is properly escaped`() {
         val exporter = QuickBooksIIFExporter()
@@ -188,7 +186,7 @@ class CsvEscapingTest {
             mapOf()
         )
         
-        assertThat(result).contains("Note   with   all")
+        assertThat(result).contains("Note  with  all")
     }
 
     @Test
@@ -288,7 +286,6 @@ class CsvEscapingTest {
         assertThat(result).containsMatch("SPL\\t.*\\t-100.0*\\t")
     }
 
-    @Ignore("CSV delimiter injection column count differs from test expectations")
     @Test
     fun `csv escaping prevents delimiter injection attack`() {
         val exporter = XeroCSVExporter()
@@ -303,7 +300,7 @@ class CsvEscapingTest {
         // Should be a single field, not multiple fields
         val lines = result.lines().filter { it.isNotEmpty() }
         val dataLine = lines[1] // First data line after header
-        val fields = dataLine.split(",")
+        val fields = parseCsvLine(dataLine)
         
         // Should have exactly 5 fields, not 8
         assertThat(fields.size).isEqualTo(5)
@@ -394,5 +391,34 @@ class CsvEscapingTest {
             transactionType = TransactionType.PURCHASE,
             sourceAccountName = "Cash"
         )
+    }
+
+    private fun parseCsvLine(line: String): List<String> {
+        val fields = mutableListOf<String>()
+        val current = StringBuilder()
+        var inQuotes = false
+        var i = 0
+
+        while (i < line.length) {
+            val ch = line[i]
+            when {
+                ch == '"' && inQuotes && i + 1 < line.length && line[i + 1] == '"' -> {
+                    current.append('"')
+                    i++
+                }
+
+                ch == '"' -> inQuotes = !inQuotes
+                ch == ',' && !inQuotes -> {
+                    fields.add(current.toString())
+                    current.clear()
+                }
+
+                else -> current.append(ch)
+            }
+            i++
+        }
+
+        fields.add(current.toString())
+        return fields
     }
 }

@@ -1,12 +1,11 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.assertApproxEquals
-import com.yourname.expensetracker.data.database.entity.Budget
-import com.yourname.expensetracker.data.database.entity.BudgetPeriod
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.model.BudgetSnapshot
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -46,8 +45,8 @@ class SpendingPersonalityClassifierTest {
         timeProvider = mockk(relaxed = true)
 
         every { timeProvider.now() } returns fixedNow
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
-        coEvery { budgetRepository.getActiveBudgets() } returns emptyList()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
+        coEvery { budgetRepository.getActiveBudgetSnapshots() } returns emptyList()
 
         classifier = SpendingPersonalityClassifier(
             expenseRepository = expenseRepository,
@@ -62,7 +61,7 @@ class SpendingPersonalityClassifierTest {
 
     @Test
     fun `classify returns insufficient profile when there are no transactions`() = runTest {
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
 
         val result = classifier.classify()
 
@@ -81,13 +80,51 @@ class SpendingPersonalityClassifierTest {
             merchant = "Cafe",
             date = millis(2026, Calendar.MARCH, 10, 10)
         )
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(singlePurchase)
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns listOf(singlePurchase)
 
         val result = classifier.classify()
 
         assertEquals(SpendingPersonalityType.BALANCED, result.personalityType)
         assertApproxEquals(0.0, result.confidence, 0.0)
         assertTrue(result.featureScores.isEmpty())
+    }
+
+    @Test
+    fun `classify uses snapshot repositories and returns sufficient profile with ten purchases`() = runTest {
+        val deposits = listOf(
+            deposit(id = 100L, amount = 2000.0, date = millis(2026, Calendar.JANUARY, 1, 9)),
+            deposit(id = 101L, amount = 2000.0, date = millis(2026, Calendar.FEBRUARY, 1, 9)),
+            deposit(id = 102L, amount = 2000.0, date = millis(2026, Calendar.MARCH, 1, 9))
+        )
+        val purchases = listOf(
+            purchase(id = 1L, amount = 100.0, merchant = "Grocer", date = millis(2026, Calendar.JANUARY, 1, 21), categoryId = 1L),
+            purchase(id = 2L, amount = 120.0, merchant = "Grocer", date = millis(2026, Calendar.JANUARY, 8, 10), categoryId = 1L),
+            purchase(id = 3L, amount = 90.0, merchant = "Fuel", date = millis(2026, Calendar.JANUARY, 15, 11), categoryId = 2L),
+            purchase(id = 4L, amount = 110.0, merchant = "Fuel", date = millis(2026, Calendar.JANUARY, 22, 20), categoryId = 2L),
+            purchase(id = 5L, amount = 80.0, merchant = "Market", date = millis(2026, Calendar.FEBRUARY, 2, 12), categoryId = 1L),
+            purchase(id = 6L, amount = 95.0, merchant = "Market", date = millis(2026, Calendar.FEBRUARY, 10, 18), categoryId = 1L),
+            purchase(id = 7L, amount = 105.0, merchant = "Utilities", date = millis(2026, Calendar.FEBRUARY, 16, 9), categoryId = 3L),
+            purchase(id = 8L, amount = 115.0, merchant = "Utilities", date = millis(2026, Calendar.FEBRUARY, 24, 19), categoryId = 3L),
+            purchase(id = 9L, amount = 98.0, merchant = "Grocer", date = millis(2026, Calendar.MARCH, 3, 10), categoryId = 1L),
+            purchase(id = 10L, amount = 102.0, merchant = "Fuel", date = millis(2026, Calendar.MARCH, 9, 11), categoryId = 2L)
+        )
+        val budgets = listOf(
+            BudgetSnapshot(categoryId = 1L, amount = 450.0),
+            BudgetSnapshot(categoryId = 2L, amount = 350.0),
+            BudgetSnapshot(categoryId = 3L, amount = 250.0)
+        )
+
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns (purchases + deposits)
+        coEvery { budgetRepository.getActiveBudgetSnapshots() } returns budgets
+
+        val result = classifier.classify()
+
+        assertTrue(result.personalityType in SpendingPersonalityType.values())
+        assertTrue(result.confidence in 0.0..1.0)
+        assertFalse(result.featureScores.isEmpty())
+        assertEquals(10.0 / 3.0, result.featureScores.getValue("transactionsPerMonth"), 0.0001)
+        assertEquals(fixedNow, result.lastUpdated)
+        assertEquals(3, result.coachingTips.size)
     }
 
     @Test
@@ -241,28 +278,14 @@ class SpendingPersonalityClassifierTest {
                 date = millis(2026, Calendar.JANUARY, 8, 11)
             )
         )
-        val income = Expense(
+        val income = deposit(
             id = 99L,
             amount = 1200.0,
-            merchant = "Salary",
-            transactionType = TransactionType.DEPOSIT,
             date = incomeDate
         )
         val budgets = listOf(
-            Budget(
-                id = 1L,
-                categoryId = 1L,
-                amount = 200.0,
-                period = BudgetPeriod.MONTHLY,
-                startDate = incomeDate
-            ),
-            Budget(
-                id = 2L,
-                categoryId = 2L,
-                amount = 100.0,
-                period = BudgetPeriod.MONTHLY,
-                startDate = incomeDate
-            )
+            BudgetSnapshot(categoryId = 1L, amount = 200.0),
+            BudgetSnapshot(categoryId = 2L, amount = 100.0)
         )
 
         val featureScores = invokeCalculateFeatureScores(
@@ -295,6 +318,50 @@ class SpendingPersonalityClassifierTest {
     }
 
     @Test
+    fun `calculateConfidence normalizes transactionsPerMonth so result remains in range`() {
+        val confidence = invokeCalculateConfidence(
+            transactionCount = 90,
+            featureScores = mapOf(
+                "impulseRatio" to 0.4,
+                "merchantDiversity" to 0.5,
+                "weekendSpendShare" to 0.2,
+                "nightSpendShare" to 0.2,
+                "variance" to 0.3,
+                "budgetAdherence" to 0.8,
+                "anomalyFrequency" to 0.1,
+                "categoryDiversity" to 0.5,
+                "avgTransactionSize" to 0.4,
+                "transactionsPerMonth" to 320.0
+            )
+        )
+
+        assertFalse(confidence.isNaN())
+        assertTrue(confidence in 0.0..1.0)
+    }
+
+    @Test
+    fun `calculateConfidence still computes from normalized scale features when transaction count key absent`() {
+        val confidence = invokeCalculateConfidence(
+            transactionCount = 60,
+            featureScores = mapOf(
+                "impulseRatio" to 0.2,
+                "merchantDiversity" to 0.6,
+                "weekendSpendShare" to 0.3,
+                "nightSpendShare" to 0.1,
+                "variance" to 0.4,
+                "budgetAdherence" to 0.7,
+                "anomalyFrequency" to 0.2,
+                "categoryDiversity" to 0.5,
+                "avgTransactionSize" to 0.35
+            )
+        )
+
+        assertFalse(confidence.isNaN())
+        assertTrue(confidence in 0.0..1.0)
+        assertTrue(confidence > 0.0)
+    }
+
+    @Test
     fun `generateCoachingTips returns non-empty type specific tips`() {
         val expectedKeywords = mapOf(
             SpendingPersonalityType.PLANNER to "budget",
@@ -318,9 +385,9 @@ class SpendingPersonalityClassifierTest {
 
     @Suppress("UNCHECKED_CAST")
     private fun invokeCalculateFeatureScores(
-        purchases: List<Expense>,
-        allExpenses: List<Expense>,
-        budgets: List<Budget>
+        purchases: List<ExpenseSnapshot>,
+        allExpenses: List<ExpenseSnapshot>,
+        budgets: List<BudgetSnapshot>
     ): Map<String, Double> {
         val method = SpendingPersonalityClassifier::class.java.getDeclaredMethod(
             "calculateFeatureScores",
@@ -375,14 +442,38 @@ class SpendingPersonalityClassifierTest {
         date: Long,
         merchantKey: String? = null,
         categoryId: Long? = null
-    ): Expense = Expense(
+    ): ExpenseSnapshot = ExpenseSnapshot(
         id = id,
         amount = amount,
+        effectiveAmount = amount,
+        currency = "EUR",
         merchant = merchant,
         merchantKey = merchantKey,
-        transactionType = TransactionType.PURCHASE,
+        transactionType = DomainTransactionType.PURCHASE,
         date = date,
-        categoryId = categoryId
+        categoryId = categoryId,
+        isNotMine = false,
+        transferDirection = null,
+        notes = null
+    )
+
+    private fun deposit(
+        id: Long,
+        amount: Double,
+        date: Long
+    ): ExpenseSnapshot = ExpenseSnapshot(
+        id = id,
+        amount = amount,
+        effectiveAmount = amount,
+        currency = "EUR",
+        merchant = "Salary",
+        merchantKey = "salary",
+        transactionType = DomainTransactionType.DEPOSIT,
+        date = date,
+        categoryId = null,
+        isNotMine = false,
+        transferDirection = null,
+        notes = null
     )
 
     private fun millis(year: Int, month: Int, day: Int, hour: Int = 0): Long {

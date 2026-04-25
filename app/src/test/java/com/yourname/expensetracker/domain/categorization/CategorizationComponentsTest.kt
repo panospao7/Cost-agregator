@@ -241,6 +241,19 @@ class SemanticKeywordMatcherTest {
         val results = matcher.match("Pizza and Coffee Shop", 0.30)
         assertTrue(results.isNotEmpty())
     }
+
+    @Test
+    fun `matches keyword with punctuation suffix`() {
+        val result = matcher.findBestMatch("Disney+ subscription", 0.20)
+        assertNotNull(result)
+    }
+
+    @Test
+    fun `matches hyphenated keyword`() {
+        val result = matcher.findBestMatch("e-food order", 0.20)
+        assertNotNull(result)
+        assertEquals("Food", result!!.categoryName)
+    }
 }
 
 class ContextualInferenceEngineTest {

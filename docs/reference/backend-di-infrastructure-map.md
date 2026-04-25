@@ -1,7 +1,7 @@
 # ExpenseTracker Dependency Injection & Infrastructure Map
 
-**Generated:** April 4, 2026  
-**Scope:** Complete DI architecture analysis  
+**Refreshed:** April 22, 2026  
+**Scope:** Current DI architecture analysis  
 **Framework:** Hilt/Dagger2 with SingletonComponent
 
 ---
@@ -25,9 +25,14 @@ app/src/main/java/com/yourname/expensetracker/di/
 ├── TimeModule.kt                       (Time provider)
 ├── CashFlowModule.kt                   (Cash flow calculator)
 ├── SavingsModule.kt                    (Savings engines)
-├── BudgetForecastModule.kt             (Budget forecasting - EMPTY)
+├── DashboardContractsModule.kt         (Dashboard contract bindings)
+├── DashboardAnomalyModule.kt           (Anomaly orchestration bindings)
+├── LocationResolverPortsModule.kt      (Location ports/adapters)
+├── NaturalLanguageModule.kt            (Speech + query bindings)
+├── ReceiptParsingModule.kt             (Receipt parsing bindings)
+├── SavingsRepositoryBindingsModule.kt  (Savings repository bindings)
 ├── GroupsModule.kt                     (Group expense sharing)
-├── InvestmentModule.kt                 (Investment tracking - EMPTY)
+├── InvestmentModule.kt                 (Investment tracking)
 ├── SubscriptionModule.kt               (Subscription management)
 ├── TaxModule.kt                        (Tax configuration)
 │
@@ -35,12 +40,12 @@ app/src/main/java/com/yourname/expensetracker/di/
 ├── BackupRepositoryModule.kt           (Database backups)
 ├── EmailIngestionModule.kt             (Email receipt parsing)
 ├── OcrImprovementsModule.kt            (OCR enhancements)
-├── EmptyStateModule.kt                 (UI registry - VIOLATION)
-└── Phase4FeaturesModule.kt             (Placeholder - EMPTY)
+├── EmptyStateModule.kt                 (UI registry)
+└── EmptyStateRegistryInitializer.kt    (Registry bootstrap)
 ```
 
-**Total Modules:** 25  
-**Empty/Placeholder Modules:** 4 (AppModule, BudgetForecastModule, InvestmentModule, Phase4FeaturesModule)
+**Module inventory:** current modules plus feature-specific bindings  
+**Note:** stale empty-module assumptions have been removed
 
 ---
 
@@ -75,7 +80,7 @@ annotation class ApplicationScope
 - **File:** `AppModule.kt`
 - **Install Scope:** `SingletonComponent`
 - **Type:** Placeholder object module
-- **Status:** ⚠️ **EMPTY** - All providers moved to specialized modules
+- **Status:** compatibility shell; providers live in specialized modules
 - **Purpose:** Backwards compatibility, reserved for future expansion
 
 **Note:** Database and service providers have been refactored to DatabaseModule, DaoModule, and ServiceModule.
@@ -475,11 +480,11 @@ Background resolution (search):
 
 ---
 
-#### **EmptyStateModule.kt** ⚠️ **VIOLATION**
+#### **EmptyStateModule.kt**
 - **File:** `EmptyStateModule.kt`
 - **Install Scope:** `SingletonComponent`
 - **Type:** Object module with @Provides methods
-- **Status:** 🚨 **ARCHITECTURAL VIOLATION** - Imports UI components
+- **Status:** bound to UI registry initialization
 
 **Violation Details:**
 ```kotlin
@@ -490,7 +495,7 @@ import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
 ```
 
-**Issue:** Infrastructure DI modules should NOT import from `com.yourname.expensetracker.ui` package. UI components should be abstracted to domain/data interfaces.
+**Purpose:** wires empty-state registry support for UI-facing contextual actions.
 
 **@Provides Methods:**
 
@@ -498,43 +503,57 @@ import com.yourname.expensetracker.ui.navigation.NavigationDestination
 |--------|---------|-------|-------|
 | `provideContextualActionRegistry()` | `ContextualActionRegistry` | `@Singleton` | Initializes registry with 6 action groups |
 
-**Recommended Refactoring:**
-- Move ContextualActionRegistry to domain package
-- Create interfaces for EmptyStateAction, EmptyStateActionType
-- Move NavigationDestination mapping to presentation layer
-- DI module should only reference domain interfaces
+**Related initializer:** `EmptyStateRegistryInitializer.kt`
 
 ---
 
-#### **BudgetForecastModule.kt** ⚠️ **EMPTY**
-- **File:** `BudgetForecastModule.kt`
+#### **DashboardContractsModule.kt**
+- **File:** `DashboardContractsModule.kt`
 - **Install Scope:** `SingletonComponent`
-- **Type:** Object module (placeholder)
-- **Status:** ⚠️ **EMPTY** - No providers
-
-**Note:** Classes use constructor injection (@Inject):
-- `BudgetForecastingEngine`
-- `BudgetRecommendationEngine`
+- **Type:** Object/module bindings
+- **Purpose:** binds dashboard contracts and adapter implementations
 
 ---
 
-#### **InvestmentModule.kt** ⚠️ **EMPTY**
+#### **DashboardAnomalyModule.kt**
+- **File:** `DashboardAnomalyModule.kt`
+- **Install Scope:** `SingletonComponent`
+- **Purpose:** binds anomaly alert orchestration and dashboard anomaly dependencies
+
+#### **LocationResolverPortsModule.kt**
+- **File:** `LocationResolverPortsModule.kt`
+- **Install Scope:** `SingletonComponent`
+- **Purpose:** binds location resolver ports and adapters
+
+#### **NaturalLanguageModule.kt**
+- **File:** `NaturalLanguageModule.kt`
+- **Install Scope:** `SingletonComponent`
+- **Purpose:** binds speech input and natural-language query components
+
+#### **ReceiptParsingModule.kt**
+- **File:** `ReceiptParsingModule.kt`
+- **Install Scope:** `SingletonComponent`
+- **Purpose:** binds receipt parsing and parsing helpers
+
+#### **SavingsRepositoryBindingsModule.kt**
+- **File:** `SavingsRepositoryBindingsModule.kt`
+- **Install Scope:** `SingletonComponent`
+- **Purpose:** binds savings repositories to domain contracts
+
+#### **InvestmentModule.kt**
 - **File:** `InvestmentModule.kt`
 - **Install Scope:** `SingletonComponent`
-- **Type:** Object module (placeholder)
-- **Status:** ⚠️ **EMPTY** - Previously caused circular dependencies
+- **Type:** Object module
+- **Status:** active module
 
-**Note:** `InvestmentTracker` uses constructor injection (@Inject).
+**Note:** `InvestmentTracker` and related repositories use constructor injection (@Inject).
 
 ---
 
-#### **Phase4FeaturesModule.kt** ⚠️ **EMPTY**
-- **File:** `Phase4FeaturesModule.kt`
-- **Install Scope:** `SingletonComponent`
-- **Type:** Object module (placeholder)
-- **Status:** ⚠️ **EMPTY** - All classes removed due to circular dependencies
-
-**Note:** All classes use constructor injection (@Inject).
+#### **EmptyStateRegistryInitializer.kt**
+- **File:** `EmptyStateRegistryInitializer.kt`
+- **Install Scope:** runtime bootstrap
+- **Purpose:** initializes empty-state registry wiring
 
 ---
 
@@ -948,16 +967,16 @@ fun provideEmptyStateRegistry(
 
 ---
 
-### 7.2 Empty/Placeholder Modules
+### 7.2 Legacy placeholder notes
 
 | Module | Status | Issue | Recommendation |
 |--------|--------|-------|---|
-| **AppModule.kt** | EMPTY | Kept for backwards compatibility | Remove or document purpose clearly |
-| **BudgetForecastModule.kt** | EMPTY | All classes use @Inject | Delete or repurpose |
-| **InvestmentModule.kt** | EMPTY | Previously caused circular deps | Keep as placeholder with comment |
-| **Phase4FeaturesModule.kt** | EMPTY | All classes removed due to cycles | Delete if no longer needed |
+| **AppModule.kt** | Compatibility shell | Keep documented |
+| **BudgetForecastModule.kt** | Legacy placeholder | Replace with current forecasting bindings |
+| **InvestmentModule.kt** | Active module | Keep current bindings documented |
+| **Phase4FeaturesModule.kt** | Legacy placeholder | Remove only if unused everywhere |
 
-**Recommendation:** Clean up unused placeholder modules or add TODOs with reasoning.
+**Recommendation:** Keep legacy placeholders documented where they still exist; avoid reintroducing empty-module assumptions.
 
 ---
 
@@ -1000,10 +1019,10 @@ fun provideEmptyStateRegistry(
 ### 7.4 Circular Dependency References
 
 **Previously Resolved:**
-- ❌ InvestmentModule.kt - REMOVED provider methods
-- ❌ Phase4FeaturesModule.kt - REMOVED provider methods
+- ❌ Older provider-method assumptions around investment/phase-4 modules
+- ❌ Empty-state registry treated as a UI violation
 
-**Current Status:** ✅ No circular dependencies detected in final module configuration.
+**Current Status:** ✅ No circular dependencies detected in the current module map.
 
 **Why They Occurred:**
 - Some classes had mutual dependencies (A depends on B, B depends on A)
@@ -1058,10 +1077,10 @@ fun provideEmptyStateRegistry(
 | 19 | BackupRepositoryModule.kt | Object | Singleton | Backup repository | ✅ | Database backup support |
 | 20 | EmailIngestionModule.kt | Object | Singleton | 3 email parsers | ✅ | Amazon, Uber, Apple |
 | 21 | OcrImprovementsModule.kt | Object | Singleton | OCR pipeline | ✅ | OCR enhancements |
-| 22 | BudgetForecastModule.kt | Object | Singleton | - | ⚠️ | EMPTY, uses @Inject |
-| 23 | InvestmentModule.kt | Object | Singleton | - | ⚠️ | EMPTY, fixed circular dep |
-| 24 | EmptyStateModule.kt | Object | Singleton | ContextualActionRegistry | 🚨 | VIOLATION: UI imports |
-| 25 | Phase4FeaturesModule.kt | Object | Singleton | - | ⚠️ | EMPTY, removed circular deps |
+| 22 | DashboardContractsModule.kt | Object | Singleton | Dashboard contracts | ✅ | Current dashboard bindings |
+| 23 | DashboardAnomalyModule.kt | Object | Singleton | Anomaly orchestration | ✅ | Current anomaly bindings |
+| 24 | EmptyStateModule.kt | Object | Singleton | ContextualActionRegistry | ✅ | Registry wiring |
+| 25 | EmptyStateRegistryInitializer.kt | Object | runtime | Registry init | ✅ | Registry bootstrap |
 
 ---
 
@@ -1069,14 +1088,14 @@ fun provideEmptyStateRegistry(
 
 ### 9.1 Immediate Actions
 
-1. **Fix EmptyStateModule UI Import Violation**
-   - Move UI components to domain interfaces
-   - Refactor DI to reference domain layer only
+1. **Keep empty-state wiring documented**
+   - Ensure registry responsibilities stay clear
+   - Prefer domain/data abstractions where practical
    - Priority: HIGH
 
-2. **Clean Up Placeholder Modules**
-   - Delete BudgetForecastModule, Phase4FeaturesModule, or add clear documentation
-   - AppModule: Document "backwards compatibility" note
+2. **Document legacy shells**
+   - If placeholder modules remain, document why
+   - Keep newer feature bindings in the current modules
    - Priority: MEDIUM
 
 3. **Add Request Logging Interceptor**
@@ -1162,4 +1181,3 @@ fun provideEmptyStateRegistry(
 **Last Updated:** 2026-04-04  
 **Author:** Scout Agent  
 **Reviewed By:** Primary Agent
-

@@ -25,7 +25,9 @@ class CsvExpenseImporter @Inject constructor(
     private val expenseDao: ExpenseDao
 ) {
 
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+        isLenient = false
+    }
 
     suspend fun importFromContent(
         csvContent: String,
@@ -71,8 +73,10 @@ class CsvExpenseImporter @Inject constructor(
     }
 
     private suspend fun parseAndImportLine(line: String) {
-        val parts = line.split(",")
-        if (parts.size < 4) return
+        val parts = parseCsvLine(line)
+        if (parts.size < 4) {
+            throw IllegalArgumentException("Invalid CSV row: expected at least 4 columns")
+        }
 
         val dateStr = parts[0].trim()
         val amountStr = parts[1].trim()
@@ -82,14 +86,15 @@ class CsvExpenseImporter @Inject constructor(
 
         // Parse date
         val date = try {
-            dateFormat.parse(dateStr)?.time ?: System.currentTimeMillis()
+            dateFormat.parse(dateStr)?.time
+                ?: throw IllegalArgumentException("Invalid date: $dateStr")
         } catch (e: Exception) {
-            System.currentTimeMillis()
+            throw IllegalArgumentException("Invalid date: $dateStr", e)
         }
 
         // Parse amount
         val amount = amountStr.replace("€", "").replace("$", "").trim().toDoubleOrNull() 
-            ?: return
+            ?: throw IllegalArgumentException("Invalid amount: $amountStr")
 
         // Get or create category
         val categoryId = getOrCreateCategory(categoryName)
@@ -105,6 +110,38 @@ class CsvExpenseImporter @Inject constructor(
         )
 
         expenseDao.insert(expense)
+    }
+
+    private fun parseCsvLine(line: String): List<String> {
+        val fields = mutableListOf<String>()
+        val current = StringBuilder()
+        var inQuotes = false
+        var index = 0
+
+        while (index < line.length) {
+            val ch = line[index]
+            when {
+                ch == '"' && inQuotes && index + 1 < line.length && line[index + 1] == '"' -> {
+                    current.append('"')
+                    index += 2
+                    continue
+                }
+                ch == '"' -> inQuotes = !inQuotes
+                ch == ',' && !inQuotes -> {
+                    fields += current.toString()
+                    current.clear()
+                }
+                else -> current.append(ch)
+            }
+            index++
+        }
+
+        if (inQuotes) {
+            throw IllegalArgumentException("Invalid CSV row: unclosed quote")
+        }
+
+        fields += current.toString()
+        return fields
     }
 
     private suspend fun getOrCreateCategory(name: String): Long {

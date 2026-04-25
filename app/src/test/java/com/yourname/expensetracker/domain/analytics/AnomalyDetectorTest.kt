@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,9 +19,9 @@ class AnomalyDetectorTest {
 
     @Test
     fun `shared expenses use effective amount for anomaly detection`() {
-        val now = System.currentTimeMillis()
+        val now = 1745270400000L
         val month = monthPeriodFor(now)
-        val category = Category(id = 1L, name = "Shared", icon = "group", color = "#FFFFFF")
+        val category = AnalyticsCategoryRef(id = 1L, name = "Shared", icon = "group", color = "#FFFFFF")
 
         val expenses = listOf(
             sharedExpense(id = 1, amount = 500.0, myShareAmount = 10.0, date = now - 1_000),
@@ -33,7 +35,7 @@ class AnomalyDetectorTest {
         val anomalies = detector.detect(
             monthPeriod = month,
             categoryMap = mapOf(1L to category),
-            allExpenses = expenses
+            allExpenses = expenses.map { it.toSnapshot() }
         )
 
         assertTrue("No anomaly expected when effective amounts are in-range", anomalies.isEmpty())
@@ -42,7 +44,7 @@ class AnomalyDetectorTest {
     @Test
     fun `anomaly_detector_false_positive_guard_on_tight_distribution`() {
         val month = monthPeriodFor(ms(2026, 4, 10))
-        val category = Category(id = 7L, name = "Groceries", icon = "cart", color = "#00FF00")
+        val category = AnalyticsCategoryRef(id = 7L, name = "Groceries", icon = "cart", color = "#00FF00")
 
         val amounts = listOf(100.0, 101.0, 99.5, 100.5, 99.8, 100.2, 101.1, 99.9)
         val expenses = amounts.mapIndexed { idx, amount ->
@@ -59,7 +61,7 @@ class AnomalyDetectorTest {
         val anomalies = detector.detect(
             monthPeriod = month,
             categoryMap = mapOf(7L to category),
-            allExpenses = expenses
+            allExpenses = expenses.map { it.toSnapshot() }
         )
 
         assertTrue("Tight distribution should not produce false positives", anomalies.isEmpty())
@@ -68,7 +70,7 @@ class AnomalyDetectorTest {
     @Test
     fun `anomaly_detector_false_negative_guard_for_extreme_contextual_outlier`() {
         val month = monthPeriodFor(ms(2026, 4, 15))
-        val category = Category(id = 8L, name = "Transport", icon = "bus", color = "#0000FF")
+        val category = AnalyticsCategoryRef(id = 8L, name = "Transport", icon = "bus", color = "#0000FF")
 
         // Four Wednesday-morning transactions in same context, one extreme outlier.
         val base = listOf(12.0, 13.0, 14.0)
@@ -97,7 +99,7 @@ class AnomalyDetectorTest {
         val anomalies = detector.detect(
             monthPeriod = month,
             categoryMap = mapOf(8L to category),
-            allExpenses = contextual
+            allExpenses = contextual.map { it.toSnapshot() }
         )
 
         assertTrue("Extreme contextual outlier should be detected", anomalies.any { it.expense.id == 199L })
@@ -107,7 +109,7 @@ class AnomalyDetectorTest {
     @Test
     fun `zero dispersion baseline still flags obvious spike`() {
         val month = monthPeriodFor(ms(2026, 4, 20))
-        val category = Category(id = 9L, name = "Food", icon = "fork", color = "#FFAA00")
+        val category = AnalyticsCategoryRef(id = 9L, name = "Food", icon = "fork", color = "#FFAA00")
 
         val amounts = listOf(10.0, 10.0, 10.0, 10.0, 100.0)
         val expenses = amounts.mapIndexed { idx, amount ->
@@ -124,7 +126,7 @@ class AnomalyDetectorTest {
         val anomalies = detector.detect(
             monthPeriod = month,
             categoryMap = mapOf(9L to category),
-            allExpenses = expenses
+            allExpenses = expenses.map { it.toSnapshot() }
         )
 
         assertTrue("Flat baseline spike should be detected", anomalies.any { it.expense.id == 5L })
@@ -173,4 +175,29 @@ class AnomalyDetectorTest {
             .atZone(ZoneId.systemDefault())
             .toInstant()
             .toEpochMilli()
+
+    private fun Expense.toSnapshot(): ExpenseSnapshot = ExpenseSnapshot(
+        id = id,
+        amount = amount,
+        effectiveAmount = effectiveAmount,
+        currency = currency,
+        merchant = merchant,
+        merchantKey = merchantKey,
+        transactionType = when (transactionType) {
+            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        },
+        date = date,
+        categoryId = categoryId,
+        isNotMine = isNotMine,
+        transferDirection = when (transferDirection) {
+            com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+            com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+            null -> null
+        },
+        notes = notes
+    )
 }

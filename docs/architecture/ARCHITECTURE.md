@@ -11,37 +11,10 @@
 
 ### For Bug Analysis (RECOMMENDED WORKFLOW)
 
-**Step 1: Identify the Segment**
-Use CODEBASE_SEGMENTS.md to find which segment contains the issue:
-- Segment 1 → Financial Forecast
-- Segment 2 → Budget
-- Segment 3 → Notification Parsing
-- Segment 4 → OCR/Receipt
-- Segment 5 → Categorization
-- Segment 6 → Recurring
-- Segment 7 → Analytics
-- Segment 8 → Core Expense
-- Segment 9 → Dashboard
-- Segment 10 → Notifications
-- Segment 11 → Debug
-- Segment 12 → DI
-- Segment 13 → Utilities
-- Segment 14 → Database
-- Segment 15 → Performance
-- Segment 16 → Configuration
-- Segment 17 → Location
-- Segment 18 → AI Follow-Through
-- Segment 19 → Totals Dashboard
-- Segment 20 → Groups (Shared Expense)
-
-**Step 2: Find Related Files**
-Check CODEBASE_SEGMENTS.md for files in that segment
-
-**Step 3: Understand Data Flow**
-Use **Data Flow** section in this document to trace the issue
-
-**Step 4: Quick Reference**
-Use **Check Bug Sources** table to find likely causes
+1. Start with **CODEBASE_SEGMENTS.md** to find the owning segment.
+2. Use **CODEBASE_INVENTORY.md** for the current route / subsystem map.
+3. Trace the flow here when you need cross-layer context.
+4. Use the quick reference tables for likely failure points.
 
 ---
 
@@ -56,12 +29,14 @@ Use **Check Bug Sources** table to find likely causes
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v68
+- Database version: v92
 - 560+ Kotlin files
-- 77 screen files (32 navigable routes)
-- 6 bottom tabs: Home, Activity/Transactions, Review, Plan/Budget, Analytics, Map
-- NavigationDestination pattern in UI, deep links for all tabs
-- BackHandler integration and rememberSaveable state across screens
+- Destination-driven navigation via `NavigationDestination`
+- 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
+- Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
+- Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver`
+- WorkManager startup jobs include `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, and `WarrantyExpirationWorker`
+- AI, location, shared-expense, and split flows are first-class subsystems
 
 ---
 
@@ -104,8 +79,9 @@ Use **Check Bug Sources** table to find likely causes
 ### UI Layer (`ui/`)
 ```
 ui/
-├── MainActivity.kt              # App entry, navigation
+├── MainActivity.kt              # App entry, navigation, deep links
 ├── MainViewModel.kt             # App-wide state
+├── navigation/                  # NavigationDestination + controller
 ├── theme/                       # Compose theming
 │   └── Theme.kt                 # Material 3 colors/typography
 ├── components/                  # Reusable composables
@@ -113,13 +89,18 @@ ui/
 │   ├── FinancialWeatherCard.kt  # Forecast display
 │   ├── BudgetBlockPartyCard.kt # Budget visualization
 │   └── ...
-├── screens/                     # Screen directories (6 bottom tabs)
-│   ├── home/                    # Home (Dashboard)
-│   ├── activity/                # Activity / Transactions
-│   ├── review/                  # Review
-│   ├── plan/                    # Plan / Budget
-│   ├── analytics/               # Analytics
-│   ├── map/                     # Map
+├── screens/                     # Shell screens + feature surfaces
+│   ├── home/                    # Home / dashboard
+│   ├── transactions/            # Activity / transaction flow
+│   ├── review/                  # Review queue
+│   ├── budget/                  # Budget + budget detail
+│   ├── analytics/               # Analytics views
+│   ├── map/                     # Spending map / location views
+│   ├── cashflow/                # Cash flow calendar
+│   ├── bank/                    # Bank connections
+│   ├── investment/              # Investment portfolio
+│   ├── currency/                # Currency management
+│   ├── tax/                     # Tax configuration
 │   └── ...
 └── util/
     ├── HapticFeedback.kt       # Haptic feedback utilities
@@ -129,51 +110,57 @@ ui/
 ### Domain Layer (`domain/`)
 ```
 domain/
-├── logic/                       # Core business engines
-├── forecasting/                 # Monte Carlo Spending Simulator (NEW)
-├── analytics/                   # Analytics engines
+├── ai/                          # AI capabilities, policies, models, use cases
+├── analytics/                   # Insights, totals, advanced analytics
 ├── budget/                      # Budget management
-├── categorization/              # Merchant categorization
-├── intelligence/
+├── categorization/               # Merchant categorization pipeline
+├── forecasting/                 # Monte Carlo + stress forecast engines
+├── groups/                      # Shared expense and settlement flows
+├── location/                    # Location enrichment and POI lookup
 ├── parser/                      # Notification parsing
-├── receipt/                     # Receipt OCR
-├── service/                     # Service interfaces
-├── usecase/                     # Use Cases (Clean Architecture)
-├── model/                       # Domain models
-├── config/                      # Configuration
-├── location/                    # Location enrichment (NEW)
-├── performance/                 # Performance utilities
-├── debug/
-└── util/                        # Utilities
+├── receipt/                     # OCR and receipt processing
+├── split/                       # Split-template and expense splitting logic
+├── service/                     # Domain service interfaces
+├── usecase/                     # Use cases / orchestration
+├── model/                       # Shared domain models
+├── subscription/                # Subscription detection / management
+├── tax/                         # Tax configuration and estimation
+├── export/                      # Export flows
+├── performance/                 # Performance helpers
+├── debug/                       # Debug-only diagnostics
+└── util/                        # Shared utilities
 ```
 
 ### Data Layer (`data/`)
 ```
 data/
 ├── repository/                   # Data access (single source of truth)
-├── location/                    # Geocoding services (NEW)
+├── ai/provider/                 # Cloud + on-device AI providers
+├── location/                    # Geocoding services
+├── security/                    # Secure storage / crypto helpers
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v68)
-│   ├── entity/                  # Room entities (EXPANDED)
-│   │   ├── Expense.kt
-│   │   ├── Budget.kt
-│   │   ├── Category.kt
-│   │   ├── RawNotification.kt
-│   │   ├── PendingReview.kt
-│   │   ├── MerchantLocation.kt  # (NEW)
-│   │   ├── MerchantLocationCorrection.kt  # (NEW)
-│   │   └── ...
+│   ├── AppDatabase.kt          # Room database (v92)
+│   ├── entity/                  # Room entities across finance, AI, groups, location, and settings
 │   ├── dao/                     # Room DAOs
-│   │   ├── ExpenseDao.kt
-│   │   ├── BudgetDao.kt
-│   │   ├── MerchantLocationDao.kt  # (NEW)
-│   │   └── ...
 │   ├── model/                   # Database models
 │   └── converter/               # Type converters
 ├── service/
 │   └── AndroidNotificationService.kt # Android notifications
 └── provider/
     └── MerchantCategoryProvider.kt # Pre-defined categories
+```
+
+### Startup / Background Pipeline (`startup/`)
+```text
+MainApplication
+  └─ AppStartupDelegate
+       └─ AppStartupCoordinator
+            ├─ AppBackgroundLifecycleObserver
+            └─ WorkManager jobs
+               ├─ DailyBriefingWorker
+               ├─ LocationBackfillWorker
+               ├─ MerchantKeyBackfillWorker
+               └─ WarrantyExpirationWorker
 ```
 
 ---
@@ -183,7 +170,7 @@ data/
 ### Notification → Expense Flow
 ```
 NotificationCaptureService (Android)
-       ↓
+        ↓
 AppParserRegistry → Specific Parser (GreekBank, Revolut, etc.)
        ↓
 ConfidenceRouter → Determine confidence level
@@ -197,6 +184,19 @@ ReviewQueueRepository → Add to review queue (if needed)
 ReviewScreen (UI) → User approves/rejects
        ↓
 ExpenseRepository → Save as final expense
+```
+
+### Receipt → AI Categorization Flow
+```
+ReceiptScanScreen
+    ↓
+ReceiptOcrService → ReceiptParser
+    ↓
+CategorizeReceiptItemsUseCase / receipt AI providers
+    ↓
+ReceiptRepository → item categorization entities
+    ↓
+Receipt review UI / corrections
 ```
 
 ### Forecast Flow
@@ -229,9 +229,11 @@ FinancialWeatherRepository
 ### Main Entry Points
 | Component | File | Purpose |
 |-----------|------|---------|
-| Application | `ExpenseTrackerApp.kt` | Hilt setup, lifecycle |
-| Main Activity | `ui/MainActivity.kt` | Navigation, bottom bar |
-| Database | `data/database/AppDatabase.kt` | Room DB v68 |
+| Application | `MainApplication.kt` | Hilt + WorkManager configuration |
+| Startup delegate | `startup/AppStartupDelegate.kt` | Hilt entry-point bootstrap |
+| Startup coordinator | `startup/AppStartupCoordinator.kt` | Lifecycle observer + startup jobs |
+| Main Activity | `ui/MainActivity.kt` | Navigation host + deep links |
+| Database | `data/database/AppDatabase.kt` | Room DB v92 |
 
 ### Core Engines
 | Engine | File | Purpose |
@@ -241,16 +243,18 @@ FinancialWeatherRepository
 | Budget | `domain/budget/BudgetMonitor.kt` | Budget alerts |
 | Categorization | `domain/categorization/CategorizationEngine.kt` | Auto-categorization (5-layer pipeline) |
 | Recurring | `domain/logic/RecurringExpenseEngine.kt` | Pattern detection |
-| Insights | `domain/analytics/InsightsEngine.kt` | Spending insights (coordinator) |
+| Insights | `domain/analytics/InsightsEngine.kt` | Spending insights coordinator |
+| Advanced Analytics | `domain/analytics/AdvancedAnalyticsEngine.kt` | Higher-order analytics surface |
 | Spending Pace | `domain/analytics/SpendingPaceCalculator.kt` | Pace calculation |
 | Anomaly Detection | `domain/analytics/AnomalyDetector.kt` | Unusual transactions |
-| Month Comparison | `domain/analytics/MonthlyComparisonCalculator.kt` | Month vs month |
+| Month Comparison | `domain/analytics/MonthlyComparisonCalculator.kt` | Month-vs-month comparison |
 | Category Insights | `domain/analytics/CategoryInsightEngine.kt` | Category analysis |
 | Merchant Insights | `domain/analytics/MerchantInsightEngine.kt` | Merchant patterns |
 | Day of Week | `domain/analytics/DayOfWeekAnalyzer.kt` | Day patterns |
-| Totals Aggregation | `domain/analytics/TotalsAggregationEngine.kt` | Period totals aggregation (NEW Mar 2026) |
+| Totals Aggregation | `domain/analytics/TotalsAggregationEngine.kt` | Period totals aggregation |
 | Dashboard Widgets | `domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt` | Dashboard widget computation |
-| Dashboard Data | `domain/usecase/dashboard/DashboardDataProvider.kt` | Dashboard data provider (flatMapLatest) |
+| Dashboard Data | `domain/usecase/dashboard/DashboardDataProvider.kt` | Dashboard data provider |
+| AI Follow-Through | `domain/ai/...` | Recommendation, assistant, and receipt intelligence flows |
 
 ### New Categorization Components (Feb 2026)
 | Component | File | Purpose |
@@ -268,7 +272,7 @@ FinancialWeatherRepository
 | Result Model | `domain/forecasting/MonteCarloResult.kt` | Percentiles (P10/P25/P50/P75/P90) |
 | Distribution Builder | `domain/forecasting/HistoricalSpendingDistribution.kt` | Weekly aggregation + log-normal fitting |
 | Quality Assessor | `domain/forecasting/DataQualityAssessor.kt` | Confidence scoring |
-| UI Card | `ui/components/analytics/MonteCarloForecastCard.kt` | Dashboard widget display |
+| UI Card | `ui/components/MonteCarloForecastCard.kt` | Dashboard widget display |
 
 ### Location Enrichment System (Mar 2026) - ALL 5 FEATURES IMPLEMENTED
 | Component | File | Purpose |
@@ -279,7 +283,7 @@ FinancialWeatherRepository
 | Google Places | `data/location/GooglePlacesGeocodingService.kt` | Google Places API |
 | Photon | `data/location/PhotonGeocodingService.kt` | Photon API |
 | Location Resolver | `domain/location/LocationResolver.kt` | Domain coordination |
-| Location Models | `data/location/LocationModels.kt` | Location domain models |
+| Location Models | `domain/location/LocationModels.kt` | Location domain models |
 | Map Screen | `ui/screens/map/SpendingMapScreen.kt` | Map visualization |
 
 ### Advanced Analytics Features (Mar 2026)
@@ -292,180 +296,59 @@ FinancialWeatherRepository
 | Revolut | `domain/parser/parsers/RevolutParser.kt` | Revolut app |
 | Google Wallet | `domain/parser/parsers/GoogleWalletParser.kt` | Google Pay |
 | SMS | `domain/parser/parsers/SmsParser.kt` | SMS bank notifications |
-| Generic | `domain/parser/parsers/GenericTransactionParser.kt` | Fallback parser |
+| Generic | `domain/parser/GenericTransactionParser.kt` | Fallback parser |
 
 ---
 
 ## Dependency Injection
 
 ### Hilt Modules
-```
-di/
-├── AppModule.kt        # Legacy (backwards compatibility)
-├── DatabaseModule.kt   # Room database (NEW)
-├── DaoModule.kt        # All DAOs (NEW)
-├── ServiceModule.kt    # Android services (NEW)
-├── TimeModule.kt       # TimeProvider binding
-├── DispatchersModule.kt  # Coroutine dispatchers
-├── AiModule.kt           # AI-related bindings (NEW)
-├── SecurityModule.kt     # Secure storage bindings (NEW)
-├── GroupsModule.kt       # Shared expense groups bindings (NEW)
-├── NetworkModule.kt      # Network providers (NEW)
-├── NetworkQualifiers.kt  # Qualifiers for network bindings (NEW)
-```
+- Core: `DatabaseModule`, `DaoModule`, `DispatchersModule`, `TimeModule`, `ServiceModule`
+- AI: `AiModule`, `OcrImprovementsModule`, `NaturalLanguageModule`, `DashboardContractsModule`, `DashboardAnomalyModule`
+- Location / network: `LocationResolverPortsModule`, `NetworkModule`, `NetworkQualifiers`
+- Finance features: `CashFlowModule`, `SavingsModule`, `SavingsRepositoryBindingsModule`, `CurrencyModule`, `TaxModule`, `SubscriptionModule`, `ExportModule`
+- Shared expense / groups: `GroupsModule`, `BackupRepositoryModule`
+- Security and support: `SecurityModule`, `EmptyStateModule`, `ReceiptParsingModule`, `EmailIngestionModule`
 
 ### Key Bindings
-```kotlin
-// DatabaseModule
-@Singleton @Provides AppDatabase
-
-// DaoModule  
-@Singleton @Provides ExpenseDao
-@Singleton @Provides BudgetDao
-// ... all other DAOs
-
-// AiModule
-// @Provides AiService, AiClient etc.
-
-// SecurityModule
-// @Provides SecureKeyStorage binding
-```
+- `AppDatabase` from `DatabaseModule`
+- DAO singletons from `DaoModule`
+- typed repository + engine bindings per feature module
+- secure storage and API-key bindings through the security module
+- location provider abstractions through the location module
 
 ---
 
 ## Database Schema
 
-### Version: v68 (Current)
+### Version: v92
 
-### Key Entities
-```
-expenses
-categories
-budgets
-raw_notifications
-pending_reviews
-merchant_categories (NEW v26)
-merchant_locations (NEW)
-merchant_location_corrections (NEW)
-group_expenses (NEW)
-expense_groups (NEW)
-group_members (NEW)
-warranties (NEW)
-return_windows (NEW)
-subscriptions (NEW)
-subscription_usage (NEW)
-subscription_price_history (NEW)
-investments (NEW)
-investment_values (NEW)
-mileage_logs (NEW)
-scanned_receipts (NEW)
-receipt_item_categorizations (NEW)
-recommendations (NEW)
-savings_goals (NEW)
-planned_expenses (NEW)
-manual_recurring_expenses (NEW)
-blocked_packages (NEW)
-source_stats (NEW)
-merchant_canonicals (NEW)
-merchant_aliases (NEW)
-user_corrections (NEW)
-dashboard_widget_configs (NEW)
-ai_settings (NEW)
-ai_artifacts (NEW)
-notification_processing_log (NEW)
-```
+The Room schema in v92 is limited to the table families actually declared in `AppDatabase.kt`:
 
-### Key Indices
-```
--- Updated indices for v68 schema
-```
+- Core finance and capture/review: raw notifications, blocked packages, expenses, categories, merchant categories, merchant canonical/alias normalization (`MerchantCanonical`, `MerchantAlias`), pending reviews, user corrections, source stats, budgets, scanned receipts, manual recurring expenses, planned expenses, savings goals
+- AI and assistant: AI artifacts, chat sessions/messages, recommendations, and receipt item categorization
+- Location: merchant locations and merchant location corrections
+- Groups and split: expense groups, group members, group expenses, split templates, and split item assignments
+- Planning, alerts, and tracking: anomaly alerts, budget forecasts, budget adjustment recommendations/events, stress forecast snapshots, health score history, savings sweep plans, spending personality profiles, spending challenges
+- Financial products and support tables: warranties, return windows, subscription price history/usage/candidates, mileage tracking, exchange rates, bank connections, investments/investment values, and email receipt sources
+
+Use the database file and migration chain as the source of truth for the exact table list.
 
 ---
 
 ## Recent Changes & Fixes
 
-### Phase 1: Critical & High Priority Fixes (18 issues)
-- CRIT-05: API keys removed from BuildConfig → SecureKeyStorage
-- CRIT-07: NotificationCaptureService exported properly secured
-- HIGH-01: SimpleDateFormat → DateTimeFormatter (thread-safe)
-- HIGH-04: PDF resource leaks fixed
-- HIGH-05: CSV formula injection prevention
-- HIGH-13/14: API key logging removed, merchant names anonymized
-- HIGH-02: Merchant std-dev calculation fixed
-- CRIT-02: Time-based Flow queries made reactive
-- CRIT-06/08/09: Navigation fixes (tab alignment, deep links, config change)
-- HIGH-08/09/10/18/19: UX fixes (back behavior, scrollable menu, empty CTA, budget errors, retry)
-
-### Phase 2: Architecture Fixes (7 issues)
-- CRIT-11: MainActivity import removed from data layer
-- CRIT-10: Domain→UI imports extracted to mappers
-- HIGH-03: UTC/local-time SQL fixed with 'localtime' modifier
-- HIGH-06: Duplicate GroupTransactionCoordinator consolidated
-- HIGH-17: Mixed navigation architecture unified
-- CRIT-03: FK Contract fixed (DB v51→52 migration)
-- CRIT-04: Groups repository + VM refactored
-
-### Phase 3: Review Fixes + Polish (10 issues)
-- Notification service exported, deep link intent filters
-- rememberSaveable fixes, DomainExpenseSummary DTO
-- Bitmap cleanup exception-safe, GroupExpense.expenseId nullable
-- Orphaned screens connected, Spanish i18n, accessibility 48dp
-- Documentation updated
-
-### Phase 4: Time Period Fixes (22 issues)
-- All ViewModels use rolling windows via TimePeriodUtils
-- All engines use half-open [start, end) intervals
-- All DAOs use >= start AND < end
-- Daily average fixed: total / periodDays (not days with spending)
-- Cross-engine consistency verified
-
-### Phase 5: Analytics Verification (48 tests)
-- Semantic Contract Map: 43 components across 12 metric groups
-- Golden Master Test: 22 tests covering Groups 1-9
-- Specialized Tests: 18 tests covering Groups 10-12
-- Cross-Group Integration: 8 tests for end-to-end flows
-
-### Phase 6: UI/UX Consistency (22 fixes)
-- 13 hardcoded colors → SemanticColors
-- 8 hardcoded strings → strings.xml
-- Currency display → CurrencyFormatter
-- Typography → MaterialTheme styles
-
-### Phase 7: State Management (7 fixes)
-- PriceProtectionViewModel flow collector leak
-- DebugScreen detached coroutine scope
-- Repository fire-and-forget scopes
-- HomeScreen stale remember
-- VisualSplitEditorScreen config state
-- Period controls rotation survival
-- ReceiptOcrService recognizer lifecycle
-
-### Phase 8: Error Handling (16 fixes)
-- Destructive migration fallback removed
-- Backup safety enforced
-- AI services typed errors
-- Geocoding typed errors
-- Export error UI
-- Map crash prevention
-- Notification pipeline results
-- Receipt analysis errors
-- Export count errors
-- Budget use case implemented
-- Currency errors
-- Camera denial UX
-- Review reject errors
-
-### Phase 9: Navigation (6 fixes)
-- System back handler added
-- BriefingKey deep link working
-- Navigation state saveable
-- Deep-link origin preservation
-- Unknown host handling
-- Manifest declarations aligned
+### Current Themes
+- destination-driven navigation replaced the older boolean-flag / tab-index approach
+- advanced analytics and totals aggregation are now dedicated, first-class flows
+- AI, location, groups, split, export, currency, tax, subscriptions, and security are represented in both domain and data layers
+- startup/background work is centralized through `MainApplication` and the `startup/` pipeline
+- database/schema and DI have expanded significantly; exact file lists should be read from the current codebase, not this summary
+- typed errors, time standardization, accessibility, and performance refactors are now cross-cutting concerns
 
 ---
 
-### UI/UX Fixes (47 fixes across 9 batches)
+### UI/UX Fixes (47 fixes across batches A-H)
 
 - Batch A: Navigation & Main
 - C1: Deep links re-applied on config change — process only when savedInstanceState==null, clear intent after handling
@@ -532,11 +415,9 @@ notification_processing_log (NEW)
 - H38: Transfer badge loses semantics when label hidden — added contentDescription for incoming/outgoing transfers
 - H39: Bottom nav has 6 tabs (Material recommends 3-5) — added small-screen overflow (4 tabs + "More" dropdown)
 
-- Batch I: Settings & Edge Cases (partial coverage in 47 fixes)
-- Batch I: (Not included in 47 fixes; see release notes for full 9-batch coverage)
+- Batch I: Settings & Edge Cases (covered separately in release notes; not counted in this 47-fix summary)
 
-- Batch A–I: Coverage note
-- The 47 fixes above cover the majority of UI/UX improvements across 9 batches; the remaining items (if any) are documented in the full release notes.
+- Coverage note: the 47 fixes above cover batches A-H only; related edge-case items are documented in the full release notes.
 ### Phase 10: Performance (11 fixes)
 - WarrantyDao N+1 query → JOIN
 - Geocoding double throttling
@@ -568,7 +449,7 @@ notification_processing_log (NEW)
 - Repositories: `GroupsRepository`, `GroupsRepositoryImpl`
 - Use Cases: `DeleteGroupMemberUseCase`, `DeleteGroupUseCase`, `AddGroupExpenseUseCase`
 
-### Phase 13: Updated UI Layer Structure
+### Historical Addendum: Updated UI Layer Structure
 - New screen directories:
   - `groups/` - Shared expense groups
   - `warranty/` - Warranty tracker
@@ -591,7 +472,7 @@ notification_processing_log (NEW)
   - `assistant/` - AI assistant
   - `aisettings/` - AI settings
 
-### Phase 14: Updated Domain Layer Structure
+### Historical Addendum: Updated Domain Layer Structure
 - New domain directories:
   - `groups/` - Shared expense logic
   - `warranty/` - Warranty tracking
@@ -615,28 +496,6 @@ notification_processing_log (NEW)
   - `model/dashboard/` - Domain models for dashboard
   - `model/navigation/` - Domain models for navigation
 
-### Phase 15: Updated Data Layer Structure
-- New data directories:
-  - `location/` - Geocoding services (5 providers)
-  - `ai/provider/` - AI service providers
-  - `security/` - SecureKeyStorage
-
-### Phase 16: Updated Testing Section
-- Update test locations to reflect new test files:
-  - `verification/` - GoldenMasterVerificationTest, CrossSourceVerificationTest, etc.
-- `domain/analytics/` - Deep tests for all analytics engines
-- `domain/budget/` - Budget engine tests
-- `domain/cashflow/` - Cash flow tests
-- `domain/savings/` - Savings engine tests
-- `domain/forecasting/` - Monte Carlo simulator tests
-- `integration/` - Integration tests
-- `e2e/` - End-to-end flow tests
-
-### Phase 17: Updated Quick Reference
-- Update all "Add New..." sections with current patterns.
-
----
-
 ## Quick Reference
 
 ### Add New Parser
@@ -645,38 +504,31 @@ notification_processing_log (NEW)
 3. Add test cases in `domain/parser/`
 
 ### Add New Screen
-1. Create `ui/screens/feature/FeatureScreen.kt`
-2. Create `ui/screens/feature/FeatureViewModel.kt`
-3. Add navigation in `MainActivity.kt`
-4. Add DI bindings if needed in `di/`
+1. Create the screen and ViewModel under the feature directory.
+2. Add a `NavigationDestination` entry if it should be routable.
+3. Register the route in `NavigationController`, and render the destination in `ui/MainActivity.kt`'s destination `when` block; deep-link handling lives in `MainActivity.handleIntent()`.
+4. Add DI bindings only if the screen introduces new data or domain dependencies.
 
 ### Add New Database Entity
-1. Create `data/database/entity/NewEntity.kt`
-2. Add to `AppDatabase.entities` array
-3. Create DAO in `data/database/dao/NewEntityDao.kt`
-4. Add provider in `di/AppModule.kt`
-5. Create migration in `AppDatabase` (version++)
+1. Create `data/database/entity/NewEntity.kt`.
+2. Add it to `AppDatabase` and update the migration chain.
+3. Create the matching DAO in `data/database/dao/NewEntityDao.kt`.
+4. Bind the DAO / repository in the appropriate Hilt module.
+5. Update any schema notes only after the migration is in place.
 
 ### Check Bug Sources
 | Issue | Check Files |
 |-------|-------------|
-| Forecast wrong | SynthesisEngine, FinancialWeatherRepository, BudgetCalculator |
-| Monte Carlo wrong | MonteCarloSpendingSimulator, HistoricalSpendingDistribution, DataQualityAssessor |
-| Budget alerts | BudgetMonitor, AndroidNotificationService |
-| Parser failing | AppParserRegistry, specific *Parser.kt, ConfidenceRouter |
-| OCR issues | ReceiptOcrService, ReceiptParser, ML Kit config |
-| Category wrong | CategorizationEngine, MerchantNormalizer, HybridExpenseClassifier |
-| Recurring missed | RecurringExpenseEngine, RecurringExpenseRepository |
-| Analytics slow | InsightsEngine, AdvancedAnalyticsEngine, AnalyticsRepository |
-| Totals not showing | TotalsAggregationEngine, ExpenseDao, DashboardRepository |
-| Weekly data wrong | getMonthRange (0-indexed), ExpenseDao.getWeeklyTotalsForPeriod |
-| Category breakdown empty | loadCategoryBreakdownForCurrentPeriod(), ExpenseDao.getCategoryBreakdown |
-| Drill-down not working | PeriodNavigationBar (filter chips), HomeViewModel.drillDownToPeriod() |
-| Statistical data not showing | AdvancedAnalyticsEngine, AnalyticsScreen, AnalyticsViewModel |
-| Percentile grid missing | StatisticalVisualizations.kt, TransactionPercentiles |
-| Histogram not displayed | StatisticalVisualizations.kt, HistogramBin data |
-| Category velocity hidden | EnhancedCategoryAnalytics, CategoryPercentileBadge |
-| Streak widget not appearing | ComputeDashboardWidgetsUseCase, NoSpendStreakWidget |
+| Forecast wrong | `SynthesisEngine`, `MonteCarloSpendingSimulator`, `BudgetCalculator` |
+| Budget alerts | `BudgetMonitor`, notification service bindings |
+| Parser failing | `AppParserRegistry`, specific parsers, `ConfidenceRouter` |
+| OCR / receipt issues | `ReceiptOcrService`, `ReceiptParser`, AI receipt categorization flow |
+| Category wrong | `CategorizationEngine`, `MerchantCanonicalizer`, `HybridExpenseClassifier` |
+| Recurring missed | recurring-expense engine + repositories |
+| Analytics slow | `InsightsEngine`, `AdvancedAnalyticsEngine`, totals aggregation |
+| Navigation broken | `NavigationDestination`, `NavigationController`, `MainActivity.handleIntent()` |
+| Map / location issues | location resolver + geocoding providers |
+| AI flow issues | AI module, assistant / follow-through use cases |
 
 ---
 
@@ -685,6 +537,8 @@ notification_processing_log (NEW)
 ### Unit Tests Location
 ```
 app/src/test/java/com/yourname/expensetracker/
+└── ...
+app/src/test/kotlin/com/yourname/expensetracker/
 ├── domain/
 │   ├── budget/
 │   │   ├── BudgetMonitorTest.kt
@@ -753,28 +607,6 @@ class SynthesisEngine @Inject constructor(
 
 ## Navigation
 
-### MainActivity Tabs
-| Index | Screen | File |
-|-------|--------|------|
-| 0 | Home (Dashboard) | `ui/screens/home/HomeScreen.kt` |
-| 1 | Activity / Transactions | `ui/screens/activity/TransactionsScreen.kt` |
-| 2 | Review | `ui/screens/review/ReviewScreen.kt` |
-| 3 | Plan / Budget | `ui/screens/plan/BudgetScreen.kt` |
-| 4 | Analytics | `ui/screens/analytics/AnalyticsScreen.kt` |
-| 5 | Map | `ui/screens/map/SpendingMapScreen.kt` |
-
-### Deep Links
-```
-expensetracker://home       → Tab 0
-expensetracker://activity   → Tab 1  
-expensetracker://review     → Tab 2
-expensetracker://plan       → Tab 3
-expensetracker://analytics  → Tab 4
-expensetracker://map        → Tab 5
-```
-
----
-
 ## Appendix: Complete File Reference
 
 ### UI Components (`ui/components/`)
@@ -804,81 +636,8 @@ expensetracker://map        → Tab 5
 
 ## Segment Mapping
 
-- 1: Financial Forecast → ~40 files, engines and dashboards
-- 2: Budget → ~8 files
-- 3: Notification Parsing → ~20 files
-- 4: OCR/Receipt → ~8 files
-- 5: Categorization → ~15 files
-- 6: Recurring → ~5 files
-- 7: Analytics → ~20 files
-- 8: Core Expense → ~20 files
-- 9: Dashboard → ~20 files
-- 10: Notifications → ~3 files
-- 11: Debug → ~8 files
-- 12: DI → ~6 files
-- 13: Utilities → ~20 files
-- 14: Use Cases → ~6 files
-- 15: Performance → ~2 files
-- 16: Configuration → ~1 file
-- 17: Location → ~15 files
-- 18: AI Follow-Through (Phase 4B) → ~25 files
-
----
-
-## Updated Quick Reference
-
-### Add New Screen
-1. Create `ui/screens/feature/FeatureScreen.kt`
-2. Create `ui/screens/feature/FeatureViewModel.kt`
-3. Add navigation in `MainActivity.kt`
-4. Add DI bindings if needed in `di/`
-
-### Add New Database Entity
-1. Create `data/database/entity/NewEntity.kt`
-2. Add to `AppDatabase.entities` array
-3. Create DAO in `data/database/dao/NewEntityDao.kt`
-4. Add provider in `di/AppModule.kt`
-5. Create migration in `AppDatabase` (version++)
-
-### Check Bug Sources
-| Issue | Check Files |
-|-------|-------------|
-| Forecast wrong | SynthesisEngine, FinancialWeatherRepository, BudgetCalculator |
-| Monte Carlo wrong | MonteCarloSpendingSimulator, HistoricalSpendingDistribution, DataQualityAssessor |
-| Budget alerts | BudgetMonitor, AndroidNotificationService |
-| Parser failing | AppParserRegistry, specific *Parser.kt, ConfidenceRouter |
-| OCR issues | ReceiptOcrService, ReceiptParser, ML Kit config |
-- ... remaining checks as per project
-
----
-
-## Testing
-
-Refer to the testing sections above for updated locations and test plans.
-
----
-
-## Feature Wave Addendum (F1–F15)
-
-This section documents the latest 15-feature integration wave and its cross-layer architecture.
-
-### End-to-End Data Flow (Feature Wave)
-
-```text
-Notifications / Receipts / Manual Entries / Dashboard Triggers
-                │
-                ▼
-     Domain Engines + Use Cases (F1..F15)
-                │
-                ▼
-      Repositories + Services + Orchestrators
-                │
-                ▼
-     Room Entities / DAOs (AppDatabase v68)
-                │
-                ▼
-       UI Cards / Screens / Assistant Sheet
-```
+- Use `NavigationDestination` as the routing source of truth; segment numbering is documented in `CODEBASE_SEGMENTS.md`.
+- Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); navigation state is owned by `NavigationController`.
 
 ### F1–F15 Architecture Mapping
 
@@ -928,8 +687,4 @@ Notifications / Receipts / Manual Entries / Dashboard Triggers
 | 66→67 | Warranty deduplication hardening |
 | **67→68** | **Migration repair pass: rebuild anomaly/feature-wave tables to canonical schemas, fix malformed zero-column tables, preserve data when structure is valid** |
 
-This document reflects the current architecture state following migrations up to v68, including the full F1–F15 feature wave and migration hardening for existing devices.
-- H1: activeTransactionFilter lost on config change — use rememberSaveable with custom listSaver
- 
-- ### New AI Components (AiInsightsCard, AiRecommendationCard, AiChatBubble, AiTypingIndicator)
-- - AiInsightsCard.kt, AiRecommendationCard.kt, AiChatBubble.kt, AiTypingIndicator.kt integrated into UI (AI assistant framing)
+This appendix is historical context for the earlier feature-wave rollout and is not part of the current architecture body.

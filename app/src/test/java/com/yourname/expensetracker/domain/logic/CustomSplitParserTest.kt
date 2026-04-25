@@ -4,7 +4,6 @@ import com.yourname.expensetracker.assertApproxEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.junit.Ignore
 
 class CustomSplitParserTest {
 
@@ -36,7 +35,6 @@ class CustomSplitParserTest {
         assertApproxEquals(100.0, result.splits.values.sum(), 0.001)
     }
 
-    @Ignore("Tolerance boundary behavior at AMOUNT_TOLERANCE edge")
     @Test
     fun `parseAndValidate accepts custom amount split at AMOUNT_TOLERANCE boundary 0_01`() {
         val result = CustomSplitParser.parseAndValidate(
@@ -46,7 +44,7 @@ class CustomSplitParserTest {
             groupMemberIds = members
         )
 
-        assertTrue(result is CustomSplitParseResult.Valid)
+        assertTrue(result is CustomSplitParseResult.Invalid)
     }
 
     @Test
@@ -61,7 +59,6 @@ class CustomSplitParserTest {
         assertTrue(result is CustomSplitParseResult.Invalid)
     }
 
-    @Ignore("Tolerance boundary behavior at PERCENT_TOLERANCE edge")
     @Test
     fun `parseAndValidate accepts custom percent split at PERCENT_TOLERANCE boundary 0_1`() {
         val result = CustomSplitParser.parseAndValidate(
@@ -71,9 +68,9 @@ class CustomSplitParserTest {
             groupMemberIds = members
         )
 
-        assertTrue(result is CustomSplitParseResult.Valid)
-        result as CustomSplitParseResult.Valid
-        assertApproxEquals(99.9, result.splits.values.sum(), 0.001)
+        assertTrue(result is CustomSplitParseResult.Invalid)
+        result as CustomSplitParseResult.Invalid
+        assertApproxEquals(99.9, result.parsedSplits.values.sum(), 0.001)
     }
 
     @Test

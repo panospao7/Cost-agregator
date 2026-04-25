@@ -161,7 +161,10 @@ class RecommendationRepository @Inject constructor(
      * Alias kept to match follow-through infrastructure contract.
      */
     suspend fun expireAll(userId: String, beforeTimestamp: Long = timeProvider.now()) {
-        expireOld(userId, beforeTimestamp)
+        withContext(ioDispatcher) {
+            dao.expireOld(userId, beforeTimestamp)
+            dao.expireAllActiveByUser(userId, timeProvider.now())
+        }
     }
     
     /**

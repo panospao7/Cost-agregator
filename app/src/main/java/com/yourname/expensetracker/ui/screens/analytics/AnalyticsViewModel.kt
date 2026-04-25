@@ -9,6 +9,9 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.analytics.*
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.location.AreaSpending
 import com.yourname.expensetracker.domain.location.AreaSpendingEngine
 import com.yourname.expensetracker.domain.location.LocatedExpense
@@ -44,7 +47,7 @@ data class AnalyticsState(
     val previousTotal: Double? = null,
     val changePercent: Float? = null,
     val transactionCount: Int = 0,
-    val categoryBreakdown: List<CategoryBreakdown> = emptyList(),
+    val categoryBreakdown: List<AnalyticsCategoryBreakdown> = emptyList(),
     val merchantBreakdown: List<MerchantBreakdown> = emptyList(),
     val dailyTotals: Map<String, Double> = emptyMap(),
     val insights: List<SpendingInsight> = emptyList(),
@@ -247,6 +250,14 @@ class AnalyticsViewModel @Inject constructor(
             .toList()
 
         val categoryMap = categories.associateBy { it.id }
+        val analyticsCategories = categories.map {
+            AnalyticsCategoryRef(
+                id = it.id,
+                name = it.name,
+                icon = it.icon,
+                color = it.color
+            )
+        }
 
         val periodLength = currentEnd - currentStart
         val previousStart = currentStart - periodLength
@@ -254,6 +265,8 @@ class AnalyticsViewModel @Inject constructor(
 
         // Current/previous period expenses
         val currentExpenses = purchases
+        val currentExpenseSnapshots = currentExpenses.map { it.toExpenseSnapshot() }
+        val allExpenseSnapshots = allExpenses.map { it.toExpenseSnapshot() }
         val previousExpenses = expenseRepository.getExpensesBetween(previousStart, previousEnd)
             .asSequence()
             .filter { it.transactionType == TransactionType.PURCHASE }
@@ -273,11 +286,12 @@ class AnalyticsViewModel @Inject constructor(
 
         // Merchant breakdown (Still manual for now, or move to Repo later)
         val merchantBreakdown = currentExpenses
-            .groupBy { it.merchant.uppercase() }
+            .map { it.toExpenseSnapshot() }
+            .groupBy { it.canonicalMerchantKey() }
             .map { (_, exps) ->
                 val totalAmount = exps.sumOf { it.effectiveAmount }
                 MerchantBreakdown(
-                    name = exps.first().merchant,
+                    name = resolveMerchantDisplayName(exps),
                     totalSpent = totalAmount,
                     transactionCount = exps.size,
                     averageTransaction = totalAmount / exps.size,
@@ -310,10 +324,10 @@ class AnalyticsViewModel @Inject constructor(
                 TimePeriodUtils.daysBetween(oldest, now).coerceIn(7, 365)
             }
         }
-        val dailyTotals = insightsEngine.buildDailyTotals(currentExpenses, chartDays)
+        val dailyTotals = insightsEngine.buildDailyTotals(currentExpenseSnapshots, chartDays)
 
         // Insights
-        val insightsSnapshot = insightsEngine.generateInsights(categories, allExpenses)
+        val insightsSnapshot = insightsEngine.generateInsights(analyticsCategories, allExpenseSnapshots)
         val insights = insightsEngine.getLegacyInsights(insightsSnapshot)
         // Note: dayOfWeekPattern is now computed period-aware below from currentExpenses
 
@@ -323,19 +337,40 @@ class AnalyticsViewModel @Inject constructor(
         // Note: The engine normally looks at 12 months. 'allExpenses' here might be limited by 'period' if we passed filtered list?
         // Actually generateInsights receives 'allExpenses' (usually full list or large subset).
         // Let's assume 'allExpenses' passed to computeAnalytics is sufficient.
-        val patterns = recurringExpenseEngine.getPatterns(allExpenses)
+        val patterns = recurringExpenseEngine.getPatternsFromSnapshots(allExpenseSnapshots)
         val recurringOccurrencesByMerchant = allExpenses
             .asSequence()
             .filter { it.transactionType == TransactionType.PURCHASE }
-            .groupingBy { it.merchant.lowercase().trim() }
-            .eachCount()
+            .map { it.toExpenseSnapshot() }
+            .groupBy { it.canonicalMerchantKey() }
+            .mapValues { (_, snapshots) ->
+                snapshots.size to resolveMerchantDisplayName(snapshots)
+            }
         
         val recurring = patterns.map { pattern ->
-            val occurrences = recurringOccurrencesByMerchant[pattern.merchantName.lowercase().trim()] ?: 0
-            RecurringCandidate(
-                merchant = pattern.merchantName,
+            val patternMerchantKey = ExpenseSnapshot(
+                id = -1L,
                 amount = pattern.averageAmount,
-                intervalDays = pattern.frequency.days,
+                effectiveAmount = pattern.averageAmount,
+                currency = "",
+                merchant = pattern.merchantName,
+                merchantKey = null,
+                transactionType = DomainTransactionType.PURCHASE,
+                date = 0L,
+                categoryId = pattern.categoryId,
+                isNotMine = false,
+                transferDirection = null,
+                notes = null
+            ).canonicalMerchantKey()
+            val (occurrences, displayMerchantName) = recurringOccurrencesByMerchant[patternMerchantKey]
+                ?: (0 to pattern.merchantName)
+            val intervalDays = pattern.frequency.fixedIntervalDays
+                ?: pattern.frequency.calendarMonths?.times(30)
+                ?: 0
+            RecurringCandidate(
+                merchant = displayMerchantName,
+                amount = pattern.averageAmount,
+                intervalDays = intervalDays,
                 occurrences = occurrences,
                 nextExpectedDate = pattern.nextExpectedDate,
                 confidence = pattern.confidence
@@ -400,12 +435,12 @@ class AnalyticsViewModel @Inject constructor(
         val advRange = if (advancedPeriod != null) {
             advancedAnalyticsEngine.getPeriodRange(advancedPeriod)
         } else {
-            PeriodRange(
+            AnalyticsPeriodRange(
                 period = AnalyticsPeriod.CUSTOM,
                 startMs = currentStart,
                 endMs = currentEnd,
                 label = period.name,
-                comparisonRange = PeriodRange(
+                comparisonRange = AnalyticsPeriodRange(
                     period = AnalyticsPeriod.CUSTOM,
                     startMs = previousStart,
                     endMs = previousEnd,
@@ -841,6 +876,33 @@ class AnalyticsViewModel @Inject constructor(
         }
 
         return suspects.sortedByDescending { it.amount }.take(10)
+    }
+
+    private fun Expense.toExpenseSnapshot(): ExpenseSnapshot {
+        return ExpenseSnapshot(
+            id = id,
+            amount = amount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            merchantKey = merchantKey,
+            transactionType = when (transactionType) {
+                TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+                TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+                TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+                TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+                TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+            },
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            transferDirection = when (transferDirection) {
+                com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+                com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+                null -> null
+            },
+            notes = notes
+        )
     }
 
 }

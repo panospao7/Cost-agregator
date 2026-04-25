@@ -10,7 +10,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
-import org.junit.Ignore
 
 /**
  * PHASE 5 TEST: PriceProtectionTracker
@@ -45,29 +44,30 @@ class PriceProtectionTrackerTest {
         }
     }
 
-    @Ignore("PriceProtection API behavior differs from test expectations")
-    @Test
-    fun `getPriceProtectedItems returns eligible items`() = runTest {
-        coEvery { receiptDao.getRecentReceipts(any()) } returns createMockReceipts()
-        
-        val items = tracker.getPriceProtectedItems()
-        
-        // Should return items from price-protectable categories
-        assertThat(items).isNotEmpty()
-    }
+	@Test
+	fun `getPriceProtectedItems returns eligible items`() = runTest {
+		coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(
+			createReceiptWithItem("Laptop Computer", "electronics", 999.0)
+		)
 
-    @Ignore("PriceProtection API behavior differs from test expectations")
-    @Test
-    fun `isPriceProtectable identifies electronics correctly`() = runTest {
-        coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(
-            createReceiptWithItem("Laptop Computer", "electronics", 999.0)
-        )
-        
-        val items = tracker.getPriceProtectedItems()
-        
-        assertThat(items).hasSize(1)
-        assertThat(items[0].category).contains("electronics")
-    }
+		val items = tracker.getPriceProtectedItems()
+
+		// Should return items from price-protectable categories (electronics)
+		assertThat(items).isNotEmpty()
+		assertThat(items[0].itemName).contains("Laptop Computer")
+	}
+
+	@Test
+	fun `isPriceProtectable identifies electronics correctly`() = runTest {
+		coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(
+			createReceiptWithItem("Laptop Computer", "electronics", 999.0)
+		)
+
+		val items = tracker.getPriceProtectedItems()
+
+		assertThat(items).hasSize(1)
+		assertThat(items[0].category).contains("electronics")
+	}
 
     @Test
     fun `isPriceProtectable returns false for non-protectable items`() = runTest {
@@ -91,16 +91,26 @@ class PriceProtectionTrackerTest {
         assertThat(items.all { it.priceProtectionEligible }).isTrue()
     }
 
-    @Ignore("PriceProtection API behavior differs from test expectations")
     @Test
     fun `isEligibleForPriceProtection returns false for old purchases`() = runTest {
-        val oldReceipt = createMockReceipt(daysOld = 35)
+        val oldReceipt = ScannedReceipt(
+            id = 1L,
+            imagePath = "/path/to/receipt.jpg",
+            rawOcrText = "Old electronics receipt",
+            parsedTotal = 999.0,
+            parsedMerchant = "Test Store",
+            parsedDate = System.currentTimeMillis() - (35 * 24 * 60 * 60 * 1000),
+            parsedItems = """[{"name":"Laptop","price":999.0,"category":"electronics"}]""",
+            parsedTaxAmount = null,
+            confidence = 0.9f,
+            createdAt = System.currentTimeMillis() - (35 * 24 * 60 * 60 * 1000)
+        )
         coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(oldReceipt)
         
         val items = tracker.getPriceProtectedItems()
         
         // 35 days is beyond 30-day protection window
-        assertThat(items.all { it.priceProtectionEligible }).isFalse()
+        assertThat(items).isEmpty()
     }
 
     @Test
@@ -117,7 +127,6 @@ class PriceProtectionTrackerTest {
         }
     }
 
-    @Ignore("PriceProtection API behavior differs from test expectations")
     @Test
     fun `monitorPriceDrops emits alerts for price drops over 5 percent`() = runTest {
         coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(
@@ -131,7 +140,6 @@ class PriceProtectionTrackerTest {
         assertThat(alerts[0].priceDropPercent).isAtLeast(5.0)
     }
 
-    @Ignore("PriceProtection API behavior differs from test expectations")
     @Test
     fun `monitorPriceDrops ignores small price drops`() = runTest {
         coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(
@@ -206,10 +214,9 @@ class PriceProtectionTrackerTest {
         assertThat(benefits.any { it.benefitDescription.contains("dining") }).isTrue()
     }
 
-    @Ignore("PriceProtection API behavior differs from test expectations")
     @Test
     fun `getCreditCardBenefits returns grocery cashback for supermarkets`() = runTest {
-        val groceryReceipt = createMockReceipt(merchant = "Sklavenitis")
+        val groceryReceipt = createMockReceipt(merchant = "Sklavenitis", total = 100.0)
         
         val benefits = tracker.getCreditCardBenefits(groceryReceipt)
         
@@ -281,7 +288,7 @@ class PriceProtectionTrackerTest {
             parsedTotal = total,
             parsedMerchant = merchant,
             parsedDate = System.currentTimeMillis() - (daysOld * 24 * 60 * 60 * 1000),
-            parsedItems = null,
+            parsedItems = """[{"name":"Laptop","price":$total,"category":"electronics"}]""",
             parsedTaxAmount = null,
             confidence = 0.9f,
             createdAt = System.currentTimeMillis() - (daysOld * 24 * 60 * 60 * 1000)
@@ -296,7 +303,7 @@ class PriceProtectionTrackerTest {
             parsedTotal = price,
             parsedMerchant = "Test Store",
             parsedDate = System.currentTimeMillis(),
-            parsedItems = null,
+            parsedItems = """[{"name":"$name","price":$price,"category":"$category"}]""",
             parsedTaxAmount = null,
             confidence = 0.9f,
             createdAt = System.currentTimeMillis()

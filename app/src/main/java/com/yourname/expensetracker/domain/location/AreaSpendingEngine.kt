@@ -38,22 +38,27 @@ data class AreaSpending(
 @Singleton
 class AreaSpendingEngine @Inject constructor() {
 
+    private data class AreaNameStats(
+        var count: Int = 0,
+        var totalSpend: Double = 0.0
+    )
+
+    private data class GridCell(val latBucket: Long, val lonBucket: Long)
+
+    private data class Accumulator(
+        var totalSpend: Double = 0.0,
+        var count: Int = 0,
+        var latSum: Double = 0.0,
+        var lonSum: Double = 0.0,
+        val areaCandidates: MutableMap<String, AreaNameStats> = linkedMapOf()
+    )
+
     fun compute(expenses: List<Expense>): List<AreaSpending> {
         // Only consider expenses that have a lat/lon AND a resolved address
         val located = expenses.filter {
             it.latitude != null && it.longitude != null && !it.resolvedAddress.isNullOrBlank()
         }
         if (located.isEmpty()) return emptyList()
-
-        data class GridCell(val latBucket: Long, val lonBucket: Long)
-
-        data class Accumulator(
-            var areaName: String,
-            var totalSpend: Double = 0.0,
-            var count: Int = 0,
-            var latSum: Double = 0.0,
-            var lonSum: Double = 0.0
-        )
 
         val cells = HashMap<GridCell, Accumulator>()
 
@@ -66,20 +71,23 @@ class AreaSpendingEngine @Inject constructor() {
             val lonBucket = (lon / GRID_DEG).toLong()
             val cell = GridCell(latBucket, lonBucket)
 
-            val acc = cells.getOrPut(cell) { Accumulator(areaName) }
-            // Keep the most common area name — for now use the first one per cell
+            val acc = cells.getOrPut(cell) { Accumulator() }
             acc.totalSpend += expense.effectiveAmount
             acc.count += 1
             acc.latSum += lat
             acc.lonSum += lon
+            val stats = acc.areaCandidates.getOrPut(areaName) { AreaNameStats() }
+            stats.count += 1
+            stats.totalSpend += expense.effectiveAmount
         }
 
         // Merge cells that share the same area name (handles address spelling variations)
         val byArea = HashMap<String, Accumulator>()
         for ((_, acc) in cells) {
-            val existing = byArea[acc.areaName]
+            val resolvedAreaName = selectRepresentativeAreaName(acc.areaCandidates)
+            val existing = byArea[resolvedAreaName]
             if (existing == null) {
-                byArea[acc.areaName] = acc
+                byArea[resolvedAreaName] = acc
             } else {
                 existing.totalSpend += acc.totalSpend
                 existing.count += acc.count
@@ -89,10 +97,10 @@ class AreaSpendingEngine @Inject constructor() {
         }
 
         return byArea.values
-            .filter { it.count > 0 && it.areaName.isNotBlank() }
+            .filter { it.count > 0 && selectRepresentativeAreaName(it.areaCandidates).isNotBlank() }
             .map { acc ->
                 AreaSpending(
-                    areaName = acc.areaName,
+                    areaName = selectRepresentativeAreaName(acc.areaCandidates),
                     totalSpend = acc.totalSpend,
                     transactionCount = acc.count,
                     avgTransaction = acc.totalSpend / acc.count,
@@ -118,6 +126,19 @@ class AreaSpendingEngine @Inject constructor() {
             parts.size == 1 -> parts[0]
             else -> resolvedAddress.trim()
         }
+    }
+
+    private fun selectRepresentativeAreaName(candidates: Map<String, AreaNameStats>): String {
+        return candidates.entries
+            .sortedWith(
+                compareByDescending<Map.Entry<String, AreaNameStats>> { it.value.count }
+                    .thenByDescending { it.value.totalSpend }
+                    .thenBy { it.key.lowercase() }
+                    .thenBy { it.key }
+            )
+            .firstOrNull()
+            ?.key
+            .orEmpty()
     }
 
     private companion object {

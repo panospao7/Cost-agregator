@@ -64,7 +64,7 @@ class PendingReviewDaoTest {
         val rawId = insertRawNotification()
         pendingReviewDao.insert(makeReview(rawId))
 
-        val pending = pendingReviewDao.getPending()
+        val pending = pendingReviewDao.getPendingUncapped()
         assertEquals(1, pending.size)
         assertEquals(PendingReviewStatus.PENDING, pending[0].review.status)
     }
@@ -121,7 +121,7 @@ class PendingReviewDaoTest {
 
         pendingReviewDao.updateStatus(id1, PendingReviewStatus.APPROVED)
 
-        val pending = pendingReviewDao.getPending()
+        val pending = pendingReviewDao.getPendingUncapped()
         assertEquals(1, pending.size)
     }
 
@@ -149,12 +149,31 @@ class PendingReviewDaoTest {
 
         pendingReviewDao.approveAllPending()
 
-        val pending = pendingReviewDao.getPending()
+        val pending = pendingReviewDao.getPendingUncapped()
         assertEquals(0, pending.size)
 
         val all = pendingReviewDao.getAllFlow().first()
         assertEquals(2, all.size)
         assertEquals(PendingReviewStatus.APPROVED, all[0].status)
         assertEquals(PendingReviewStatus.APPROVED, all[1].status)
+    }
+
+    @Test
+    fun upsertByRawNotificationId_updates_existing_row_instead_of_inserting_duplicate() = runBlocking {
+        val rawId = insertRawNotification()
+        val firstId = pendingReviewDao.insert(makeReview(rawId))
+
+        val replacementId = pendingReviewDao.upsertByRawNotificationId(
+            makeReview(rawId).copy(
+                suggestedAmount = 42.0,
+                notificationText = "Updated text"
+            )
+        )
+
+        val all = pendingReviewDao.getAllFlow().first()
+        assertEquals(firstId, replacementId)
+        assertEquals(1, all.size)
+        assertEquals(42.0, all.single().suggestedAmount, 0.001)
+        assertEquals("Updated text", all.single().notificationText)
     }
 }

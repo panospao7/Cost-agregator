@@ -12,7 +12,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.junit.Ignore
 
 class ReceiptAssistInputBuilderTest {
 
@@ -27,7 +26,6 @@ class ReceiptAssistInputBuilderTest {
         builder = ReceiptAssistInputBuilder(aiPolicy, timeProvider)
     }
 
-    @Ignore("ReceiptAssistInputBuilder field mismatch (imagePath)")
     @Test
     fun `build keeps contextual receipt fields when redaction off`() {
         every { aiPolicy.shouldRedact(any(), AiCapability.RECEIPT_EXTRACTION) } returns false
@@ -40,8 +38,8 @@ class ReceiptAssistInputBuilderTest {
 
         assertEquals(receipt.id, result.receiptId)
         assertEquals(receipt.rawOcrText, result.rawOcrText)
-        assertEquals(null, result.imagePath)
-        assertEquals(null, result.imageMimeType)
+        assertEquals(receipt.imagePath, result.imagePath)
+        assertEquals("image/jpeg", result.imageMimeType)
         assertEquals(receipt.parsedItems, result.lineItemsJson)
         assertFalse(result.redactBeforeCloud)
         assertEquals(timeProvider.now(), result.currentTimeMs)
@@ -61,7 +59,6 @@ class ReceiptAssistInputBuilderTest {
         assertEquals("image/jpeg", result.imageMimeType)
     }
 
-    @Ignore("ReceiptAssistInputBuilder field mismatch (imagePath)")
     @Test
     fun `build redacts long sensitive numeric values when redaction on`() {
         every { aiPolicy.shouldRedact(any(), AiCapability.RECEIPT_EXTRACTION) } returns true
@@ -74,8 +71,8 @@ class ReceiptAssistInputBuilderTest {
         assertTrue(result.rawOcrText.contains("[REDACTED_CARD]"))
         assertTrue(result.rawOcrText.contains("[REDACTED_IBAN]"))
         assertFalse(result.rawOcrText.contains("2101234567"))
-        assertEquals(null, result.imagePath)
-        assertEquals(null, result.imageMimeType)
+        assertEquals(receipt.imagePath, result.imagePath)
+        assertEquals("image/jpeg", result.imageMimeType)
         assertEquals(null, result.lineItemsJson)
         assertTrue(result.redactBeforeCloud)
     }

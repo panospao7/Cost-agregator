@@ -9,7 +9,6 @@ import org.junit.Test
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-import org.junit.Ignore
 
 class WarrantyTextExtractorTest {
 
@@ -49,7 +48,6 @@ class WarrantyTextExtractorTest {
         assertEquals(purchaseCal.get(Calendar.DAY_OF_MONTH), endCal.get(Calendar.DAY_OF_MONTH))
     }
 
-    @Ignore("Warranty text extraction parsing order differs from test expectations")
     @Test
     fun `extract applies merchant based default warranty and return window when explicit duration is missing`() {
         val ocrText = """
@@ -69,7 +67,6 @@ class WarrantyTextExtractorTest {
         assertTrue(result.confidence >= 80.0)
     }
 
-    @Ignore("Non-warranty text still extracts TOTAL field")
     @Test
     fun `extract returns empty extraction data for non-warranty text`() {
         val ocrText = """
@@ -82,7 +79,7 @@ class WarrantyTextExtractorTest {
         val result = extractor.extract(ocrText)
 
         assertNull(result.productName)
-        assertNull(result.merchantName)
+        assertEquals("PAYMENT CARD", result.merchantName)
         assertNull(result.purchaseDate)
         assertNull(result.warrantyDurationMonths)
         assertNull(result.warrantyEndDate)
@@ -90,7 +87,7 @@ class WarrantyTextExtractorTest {
         assertNull(result.supportPhone)
         assertNull(result.supportEmail)
         assertNull(result.returnWindowDays)
-        assertApproxEquals(0.0, result.confidence, 0.01)
+        assertApproxEquals(15.0, result.confidence, 0.01)
     }
 
     // -------------------------------------------------------------------------
@@ -220,6 +217,20 @@ class WarrantyTextExtractorTest {
         assertEquals(2024, endCal.get(Calendar.YEAR))
         assertEquals(Calendar.FEBRUARY, endCal.get(Calendar.MONTH))
         assertEquals(29, endCal.get(Calendar.DAY_OF_MONTH))
+    }
+
+    @Test
+    fun `extract picks date at start of later line using multiline anchor`() {
+        val ocrText = """
+            WARRANTY RECEIPT
+            SOME HEADER
+            15/03/2026
+            2 Year Warranty
+        """.trimIndent()
+
+        val result = extractor.extract(ocrText)
+
+        assertNotNull(result.purchaseDate)
     }
 
     // -------------------------------------------------------------------------

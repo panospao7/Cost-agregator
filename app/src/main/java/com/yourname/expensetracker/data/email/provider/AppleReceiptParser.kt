@@ -186,7 +186,7 @@ class AppleReceiptParser : BaseEmailParser() {
         val text = (cleanedBody + rawBody).uppercase()
         
         for ((currency, indicators) in CURRENCY_INDICATORS) {
-            if (indicators.any { text.contains(it) }) {
+            if (indicators.any { indicator -> containsBoundedToken(text, indicator.uppercase()) }) {
                 return currency
             }
         }

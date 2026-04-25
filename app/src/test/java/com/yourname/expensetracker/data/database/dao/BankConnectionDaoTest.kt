@@ -33,6 +33,8 @@ import kotlin.test.assertNull
  * Uses an in-memory Room database driven by Robolectric so no Android device
  * or emulator is required.
  */
+private const val FIXED_NOW = 1_710_000_000_000L
+
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class BankConnectionDaoTest {
@@ -62,7 +64,7 @@ class BankConnectionDaoTest {
         bankId: String = "nbg",
         accessToken: String = "enc:v1:aaaa:bbbb",
         refreshToken: String = "enc:v1:cccc:dddd",
-        tokenExpiry: Long = System.currentTimeMillis() + 3_600_000L,
+        tokenExpiry: Long = FIXED_NOW + 3_600_000L,
         tokenEncryptionVersion: Int = 2
     ): BankConnection = BankConnection(
         bankId = bankId,
@@ -154,7 +156,7 @@ class BankConnectionDaoTest {
             connectedRow(
                 accessToken = "enc:v1:tok:val",
                 refreshToken = "enc:v1:ref:val",
-                tokenExpiry = System.currentTimeMillis() + 7_200_000L,
+                tokenExpiry = FIXED_NOW + 7_200_000L,
                 tokenEncryptionVersion = 5
             )
         )
@@ -173,7 +175,7 @@ class BankConnectionDaoTest {
 
     @Test
     fun `disconnect preserves non-credential fields untouched`() = runTest {
-        val created = System.currentTimeMillis()
+        val created = FIXED_NOW
         val original = connectedRow(bankId = "eurobank").copy(
             bankName = "Eurobank",
             countryCode = "GR",

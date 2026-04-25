@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
@@ -102,7 +103,7 @@ class GenerateTransactionInsightUseCase @Inject constructor(
         // ── 4. Generate insight ──────────────────────────────────────────────
         val now = timeProvider.now()
         val targetKey = "transaction:${transaction.id}"
-        val sourceHash = transaction.hashCode().toString()
+        val sourceHash = AiArtifactSourceHash.forTransactionInsight(transaction)
 
         val baseEntity = AiArtifactRecord(
             targetType = AiTargetType.EXPENSE,

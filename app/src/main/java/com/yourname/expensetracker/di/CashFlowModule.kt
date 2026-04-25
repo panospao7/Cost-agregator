@@ -15,13 +15,11 @@ object CashFlowModule {
     @Singleton
     fun provideCashFlowCalculator(
         expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
-        recurringExpenseEngine: com.yourname.expensetracker.domain.logic.RecurringExpenseEngine,
-        recurringExpenseRepository: com.yourname.expensetracker.data.repository.RecurringExpenseRepository,
+        recurringPatternsProvider: com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider,
         timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
     ): CashFlowCalculator = CashFlowCalculator(
         expenseRepository,
-        recurringExpenseEngine,
-        recurringExpenseRepository,
+        recurringPatternsProvider,
         timeProvider
     )
 }

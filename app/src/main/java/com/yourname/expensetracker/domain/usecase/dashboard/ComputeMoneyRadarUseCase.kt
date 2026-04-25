@@ -1,15 +1,15 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
-import com.yourname.expensetracker.R
-import com.yourname.expensetracker.data.database.dao.AnomalyAlertDao
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
-import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier
+import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.usecase.budget.GetMonteCarloBudgetImpactUseCase
+import com.yourname.expensetracker.domain.usecase.dashboard.AnomalyAlertRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.async
@@ -91,8 +91,8 @@ sealed class MoneyRadarAction {
  */
 @Singleton
 class ComputeMoneyRadarUseCase @Inject constructor(
-    private val recurringExpenseEngine: RecurringExpenseEngine,
-    private val anomalyAlertDao: AnomalyAlertDao,
+    private val recurringPatternsProvider: MergedRecurringPatternsProvider,
+    private val anomalyAlertRepository: AnomalyAlertRepository,
     private val getMonteCarloBudgetImpact: GetMonteCarloBudgetImpactUseCase,
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
     private val expenseRepository: ExpenseRepository,
@@ -189,15 +189,19 @@ class ComputeMoneyRadarUseCase @Inject constructor(
      * Get bills due within the next 7 days from recurring patterns.
      */
     private suspend fun getDueBills(now: Long): List<UpcomingBill> {
+        val startOfToday = TimePeriodUtils.getStartOfDay(now)
         val windowEnd = now + (BILL_WINDOW_DAYS * ONE_DAY_MS)
         
         return try {
-            val patterns = recurringExpenseEngine.getPatterns()
+            val patterns = recurringPatternsProvider.getConfirmedPatterns()
             
             patterns
-                .filter { it.nextExpectedDate in now..windowEnd }
+                .filter { it.nextExpectedDate in startOfToday..windowEnd }
                 .map { pattern ->
-                    val daysUntil = ((pattern.nextExpectedDate - now) / ONE_DAY_MS).toInt().coerceAtLeast(0)
+                    val daysUntil = TimePeriodUtils.daysBetween(
+                        startOfToday,
+                        TimePeriodUtils.getStartOfDay(pattern.nextExpectedDate)
+                    ).coerceAtLeast(0)
                     UpcomingBill(
                         merchant = pattern.merchantName,
                         amount = pattern.averageAmount,
@@ -219,7 +223,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
         val thirtyDaysAgo = now - (30 * ONE_DAY_MS)
         
         return try {
-            val alerts = anomalyAlertDao.getActiveAlerts()
+            val alerts = anomalyAlertRepository.getActiveAlerts()
             
             alerts
                 .filter { it.alertedAt >= thirtyDaysAgo }
@@ -244,6 +248,8 @@ class ComputeMoneyRadarUseCase @Inject constructor(
      */
     private suspend fun getBudgetRisk(now: Long): BudgetRiskInfo? {
         return try {
+            val startOfToday = TimePeriodUtils.getStartOfDay(now)
+
             // Get monthly budget
             val budgetStatuses = budgetRepository.getBudgetStatuses().first()
             val overallBudget = budgetStatuses.find { it.budget.categoryId == null }
@@ -267,8 +273,8 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             
             // Include known upcoming recurring obligations in next 7 days
             val windowEnd = now + (BILL_WINDOW_DAYS * ONE_DAY_MS)
-            val upcomingRecurring = recurringExpenseEngine.getPatterns()
-                .filter { it.nextExpectedDate in now..windowEnd }
+            val upcomingRecurring = recurringPatternsProvider.getConfirmedPatterns()
+                .filter { it.nextExpectedDate in startOfToday..windowEnd }
                 .sumOf { it.averageAmount }
 
             // Run Monte Carlo simulation
@@ -397,14 +403,15 @@ class ComputeMoneyRadarUseCase @Inject constructor(
         // Add reasons in priority order
         if (dueBills.isNotEmpty()) {
             val billText = if (dueBills.size == 1) {
-                UiText.StringResource(
-                    R.string.money_radar_reason_single_bill_due_format,
-                    listOf(dueBills.first().merchant)
+                UiText.fromKey(
+                    DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_SINGLE_BILL_DUE_FORMAT,
+                    dueBills.first().merchant
                 )
             } else {
-                UiText.StringResource(
-                    R.string.money_radar_reason_multiple_bills_due_format,
-                    listOf(dueBills.size, BILL_WINDOW_DAYS)
+                UiText.fromKey(
+                    DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_MULTIPLE_BILLS_DUE_FORMAT,
+                    dueBills.size,
+                    BILL_WINDOW_DAYS
                 )
             }
             reasons.add(billText)
@@ -412,14 +419,14 @@ class ComputeMoneyRadarUseCase @Inject constructor(
         
         if (anomalies.isNotEmpty()) {
             val anomalyText = if (anomalies.size == 1) {
-                UiText.StringResource(
-                    R.string.money_radar_reason_single_anomaly_format,
-                    listOf(anomalies.first().merchant)
+                UiText.fromKey(
+                    DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_SINGLE_ANOMALY_FORMAT,
+                    anomalies.first().merchant
                 )
             } else {
-                UiText.StringResource(
-                    R.string.money_radar_reason_multiple_anomalies_format,
-                    listOf(anomalies.size)
+                UiText.fromKey(
+                    DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_MULTIPLE_ANOMALIES_FORMAT,
+                    anomalies.size
                 )
             }
             reasons.add(anomalyText)
@@ -429,17 +436,17 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             if (risk.probabilityOfOverrun >= 0.25) {
                 val probabilityPercent = (risk.probabilityOfOverrun * 100).toInt()
                 val riskText = when (risk.riskTier) {
-                    RiskTier.CRITICAL -> UiText.StringResource(
-                        R.string.money_radar_reason_budget_risk_critical_format,
-                        listOf(probabilityPercent)
+                    RiskTier.CRITICAL -> UiText.fromKey(
+                        DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_BUDGET_RISK_CRITICAL_FORMAT,
+                        probabilityPercent
                     )
-                    RiskTier.HIGH -> UiText.StringResource(
-                        R.string.money_radar_reason_budget_risk_high_format,
-                        listOf(probabilityPercent)
+                    RiskTier.HIGH -> UiText.fromKey(
+                        DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_BUDGET_RISK_HIGH_FORMAT,
+                        probabilityPercent
                     )
-                    RiskTier.MEDIUM -> UiText.StringResource(
-                        R.string.money_radar_reason_budget_risk_medium_format,
-                        listOf(probabilityPercent)
+                    RiskTier.MEDIUM -> UiText.fromKey(
+                        DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_BUDGET_RISK_MEDIUM_FORMAT,
+                        probabilityPercent
                     )
                     RiskTier.LOW -> null
                 }
@@ -450,9 +457,9 @@ class ComputeMoneyRadarUseCase @Inject constructor(
         // Add generic message if no specific reasons
         if (reasons.isEmpty()) {
             reasons.add(if (urgencyScore <= GREEN_THRESHOLD) {
-                UiText.StringResource(R.string.money_radar_reason_finances_healthy)
+                UiText.fromKey(DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_FINANCES_HEALTHY)
             } else {
-                UiText.StringResource(R.string.money_radar_reason_monitor_spending)
+                UiText.fromKey(DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_MONITOR_SPENDING)
             })
         }
         

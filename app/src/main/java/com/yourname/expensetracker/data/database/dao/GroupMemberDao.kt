@@ -68,10 +68,8 @@ interface GroupMemberDao {
     /**
      * Atomically designates [memberId] as the current user for [groupId].
      *
-     * The partial unique index `index_group_members_groupId_currentUser` enforces
-     * at most one `isCurrentUser = 1` row per group. This transaction clears the
-     * previous current user (if any) before promoting the new one, so the index
-     * constraint is never violated.
+     * App-layer transaction logic enforces the single-current-user invariant by
+     * clearing the previous current user before promoting the new one.
      *
      * Both [groupId] **and** [memberId] are checked: the promotion query matches
      * on `id = :memberId AND groupId = :groupId`, preventing a cross-group

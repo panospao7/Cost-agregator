@@ -2,10 +2,12 @@ package com.yourname.expensetracker.data.email.provider
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
 
 class UberReceiptParserTest {
 
@@ -13,6 +15,7 @@ class UberReceiptParserTest {
 
     @Test
     fun `parse uses timestamped ride date subgroup instead of am pm token`() {
+        val receivedAt = utcMillis(2026, Calendar.MARCH, 20)
         val receipt = parser.parse(
             emailBody = """
                 Uber trip receipt
@@ -21,12 +24,12 @@ class UberReceiptParserTest {
                 9:15 PM · March 07
                 Trip ID: ride-123
             """.trimIndent(),
-            receivedAt = 42L
+            receivedAt = receivedAt
         )
 
         assertNotNull(receipt)
         assertEquals(23.45, receipt!!.amount, 0.001)
-        assertEquals(expectedCurrentYearMillis("MMMM dd", "March 07"), receipt.date)
+        assertEquals(utcMillis(2026, Calendar.MARCH, 7), receipt.date)
     }
 
     @Test
@@ -65,15 +68,70 @@ class UberReceiptParserTest {
         assertEquals("Uber Eats - Burger Place", receipt.merchant)
     }
 
+    @Test
+    fun `parse year-less uber date anchored to receivedAt year`() {
+        val receivedAt = utcMillis(2025, Calendar.JULY, 10)
+        val receipt = parser.parse(
+            emailBody = """
+                Uber trip receipt
+                Total ${'$'}11.00
+                9:15 PM · March 07
+                Trip ID: ride-anchored
+            """.trimIndent(),
+            receivedAt = receivedAt
+        )
+
+        assertNotNull(receipt)
+        assertEquals(utcMillis(2025, Calendar.MARCH, 7), receipt!!.date)
+    }
+
+    @Test
+    fun `parse year-less near-new-year date clamps future date to previous year`() {
+        val receivedAt = utcMillis(2026, Calendar.JANUARY, 2)
+        val receipt = parser.parse(
+            emailBody = """
+                Uber trip receipt
+                Total ${'$'}19.50
+                7:40 PM · December 31
+                Trip ID: ride-new-year
+            """.trimIndent(),
+            receivedAt = receivedAt
+        )
+
+        assertNotNull(receipt)
+        assertEquals(utcMillis(2025, Calendar.DECEMBER, 31), receipt!!.date)
+    }
+
+    @Test
+    fun `parse does not infer EUR from incidental ORDER token`() {
+        val receipt = parser.parse(
+            emailBody = """
+                Uber trip receipt
+                Total ${'$'}19.50
+                ORDER DETAILS
+                Trip ID: ride-order
+            """.trimIndent(),
+            receivedAt = utcMillis(2026, Calendar.JANUARY, 10)
+        )
+
+        assertNotNull(receipt)
+        assertEquals("USD", receipt!!.currency)
+        assertNotEquals("EUR", receipt.currency)
+    }
+
     private fun expectedLocalDateMillis(value: String): Long {
         return SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value)!!.time
     }
 
-    private fun expectedCurrentYearMillis(pattern: String, value: String): Long {
-        val parsed = SimpleDateFormat(pattern, Locale.US).parse(value)!!
-        return Calendar.getInstance().apply {
-            time = parsed
-            set(Calendar.YEAR, Calendar.getInstance().get(Calendar.YEAR))
+    private fun utcMillis(year: Int, month: Int, dayOfMonth: Int): Long {
+        return Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, dayOfMonth)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
         }.timeInMillis
     }
 }

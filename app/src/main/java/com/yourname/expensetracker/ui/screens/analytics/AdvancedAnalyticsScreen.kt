@@ -228,7 +228,7 @@ private fun InsightCard(insight: DashboardInsight) {
 }
 
 @Composable
-private fun CategoryCard(category: com.yourname.expensetracker.domain.analytics.DashboardCategoryBreakdown) {
+private fun CategoryCard(category: com.yourname.expensetracker.domain.analytics.AnalyticsDashboardCategoryBreakdown) {
     val currencyFormat = NumberFormat.getCurrencyInstance(Locale.GERMANY)
     
     Card(

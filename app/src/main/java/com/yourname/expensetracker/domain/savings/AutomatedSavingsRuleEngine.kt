@@ -2,12 +2,10 @@ package com.yourname.expensetracker.domain.savings
 
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.repository.AutomatedSavingsRuleStateRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import java.util.Calendar
@@ -47,7 +45,6 @@ data class RuleExecution(
 class AutomatedSavingsRuleEngine @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
-    private val savingsGoalRepository: SavingsGoalRepository,
     private val timeProvider: TimeProvider,
     private val ruleStateRepository: AutomatedSavingsRuleStateRepository
 ) {

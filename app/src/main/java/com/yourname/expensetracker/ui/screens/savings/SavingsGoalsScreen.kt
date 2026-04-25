@@ -15,11 +15,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.savings.SavingsStreak
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
+import com.yourname.expensetracker.domain.model.GoalProtectionLevel
+import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.usecase.savings.GoalAllocation
 import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
@@ -34,6 +36,7 @@ fun SavingsGoalsScreen(
     viewModel: SavingsGoalsViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("MMM yyyy", Locale.getDefault()) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -176,9 +179,10 @@ fun SavingsGoalsScreen(
                         protectionLevel = protectionLevel
                     )
                     showAddGoalDialog = false
+                    val createdMessage = context.getString(R.string.savings_goal_created_message)
                     scope.launch {
                         snackbarHostState.showSnackbar(
-                            message = "Goal created",
+                            message = createdMessage,
                             withDismissAction = true
                         )
                     }
@@ -189,11 +193,20 @@ fun SavingsGoalsScreen(
         recommendationToConfirm?.let { recommendation ->
             AlertDialog(
                 onDismissRequest = { recommendationToConfirm = null },
-                title = { Text("Contribute to ${recommendation.goal.name}?") },
+                title = {
+                    Text(
+                        stringResource(
+                            R.string.savings_contribute_dialog_title_format,
+                            recommendation.goal.name
+                        )
+                    )
+                },
                 text = {
                     Text(
-                        "Add ${CurrencyFormatter.format(recommendation.recommendedAmount)} " +
-                                "to this goal now?"
+                        stringResource(
+                            R.string.savings_contribute_dialog_message_format,
+                            CurrencyFormatter.format(recommendation.recommendedAmount)
+                        )
                     )
                 },
                 confirmButton = {
@@ -204,9 +217,13 @@ fun SavingsGoalsScreen(
                                 amount = recommendation.recommendedAmount
                             )
                             recommendationToConfirm = null
+                            val savedMessage = context.getString(
+                                R.string.savings_saved_amount_message_format,
+                                CurrencyFormatter.format(recommendation.recommendedAmount)
+                            )
                             scope.launch {
                                 snackbarHostState.showSnackbar(
-                                    message = "Saved ${CurrencyFormatter.format(recommendation.recommendedAmount)}",
+                                    message = savedMessage,
                                     withDismissAction = true
                                 )
                             }
@@ -352,12 +369,12 @@ private fun AddGoalDialog(
     val dateLabel = remember(targetDateMillis) {
         targetDateMillis?.let { millis ->
             SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(millis))
-        } ?: "No date"
+        } ?: ""
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add savings goal") },
+        title = { Text(stringResource(R.string.savings_add_goal_dialog_title)) },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -365,7 +382,7 @@ private fun AddGoalDialog(
                 OutlinedTextField(
                     value = goalName,
                     onValueChange = { goalName = it },
-                    label = { Text("Goal name") },
+                    label = { Text(stringResource(R.string.savings_goal_name_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     isError = goalName.isNotBlank() && !isNameValid
@@ -378,31 +395,37 @@ private fun AddGoalDialog(
                             targetAmountInput = value
                         }
                     },
-                    label = { Text("Target amount") },
+                    label = { Text(stringResource(R.string.savings_target_amount_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     isError = targetAmountInput.isNotEmpty() && !isAmountValid
                 )
 
                 Text(
-                    text = "Target date: $dateLabel",
+                    text = stringResource(R.string.savings_target_date_label_format, dateLabel),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { showDatePicker = true }) {
-                        Text(if (targetDateMillis == null) "Set date" else "Change date")
+                        Text(
+                            if (targetDateMillis == null) {
+                                stringResource(R.string.savings_set_date)
+                            } else {
+                                stringResource(R.string.savings_change_date)
+                            }
+                        )
                     }
                     if (targetDateMillis != null) {
                         TextButton(onClick = { targetDateMillis = null }) {
-                            Text("Clear")
+                            Text(stringResource(R.string.savings_action_clear_date))
                         }
                     }
                 }
 
                 Text(
-                    text = "Protection level",
+                    text = stringResource(R.string.savings_protection_level_label),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Medium
                 )
@@ -411,7 +434,17 @@ private fun AddGoalDialog(
                         FilterChip(
                             selected = protectionLevel == level,
                             onClick = { protectionLevel = level },
-                            label = { Text(level.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                            label = {
+                                Text(
+                                    stringResource(
+                                        when (level) {
+                                            GoalProtectionLevel.STRICT -> R.string.savings_goal_protection_strict
+                                            GoalProtectionLevel.WARNING -> R.string.savings_goal_protection_warning
+                                            GoalProtectionLevel.TRACKING -> R.string.savings_goal_protection_tracking
+                                        }
+                                    )
+                                )
+                            }
                         )
                     }
                 }
@@ -468,7 +501,7 @@ private fun AddGoalDialog(
 
 @Composable
 private fun GoalCard(
-    goal: com.yourname.expensetracker.data.database.entity.SavingsGoal,
+    goal: SavingsGoal,
     dateFormat: SimpleDateFormat,
     onClick: () -> Unit,
     onQuickAdd: () -> Unit
@@ -605,7 +638,7 @@ private fun LifestyleRecommendationCard(
                 Spacer(modifier = Modifier.width(8.dp))
                 
                 Text(
-                    text = "💡 Lifestyle Inflation Alert",
+                    text = stringResource(R.string.savings_lifestyle_alert_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -622,7 +655,10 @@ private fun LifestyleRecommendationCard(
             
             // Show suggested uplift
             Text(
-                text = "Suggested savings boost: +${String.format("%.1f", recommendation.suggestedMonthlyUplift)}% monthly",
+                text = stringResource(
+                    R.string.savings_lifestyle_boost_format,
+                    String.format("%.1f", recommendation.suggestedMonthlyUplift)
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f),
                 fontWeight = FontWeight.Medium
@@ -637,7 +673,7 @@ private fun LifestyleRecommendationCard(
                 OutlinedButton(
                     onClick = onDismiss
                 ) {
-                    Text("Not Now")
+                    Text(stringResource(R.string.savings_not_now))
                 }
                 
                 Button(
@@ -645,7 +681,7 @@ private fun LifestyleRecommendationCard(
                 ) {
                     Icon(androidx.compose.material.icons.Icons.Rounded.Savings, contentDescription = null)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Boost Savings")
+                    Text(stringResource(R.string.savings_boost_action))
                 }
             }
         }
@@ -683,12 +719,15 @@ private fun SweepRecommendationCard(
                 
                 Column {
                     Text(
-                        text = "End of Month Sweep",
+                        text = stringResource(R.string.savings_end_of_month_sweep_title),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Month ends ${dateFormat.format(monthEndDate)}",
+                        text = stringResource(
+                            R.string.savings_month_ends_format,
+                            dateFormat.format(monthEndDate)
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                     )
@@ -699,7 +738,10 @@ private fun SweepRecommendationCard(
             
             // Safe to save amount
             Text(
-                text = "Safe to Save: ${CurrencyFormatter.format(recommendation.safeSweepAmount)}",
+                text = stringResource(
+                    R.string.savings_safe_to_save_sweep_format,
+                    CurrencyFormatter.format(recommendation.safeSweepAmount)
+                ),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
@@ -709,8 +751,11 @@ private fun SweepRecommendationCard(
             
             // Underspend and buffer details
             Text(
-                text = "Underspend: ${CurrencyFormatter.format(recommendation.totalUnderspend)} • " +
-                       "Buffer: ${CurrencyFormatter.format(recommendation.riskBuffer)}",
+                text = stringResource(
+                    R.string.savings_underspend_buffer_format,
+                    CurrencyFormatter.format(recommendation.totalUnderspend),
+                    CurrencyFormatter.format(recommendation.riskBuffer)
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
             )
@@ -720,11 +765,11 @@ private fun SweepRecommendationCard(
             // Confidence indicator
             if (recommendation.confidence >= 0.6) {
                 val confidenceText = when {
-                    recommendation.confidence >= 0.8 -> "High confidence"
-                    else -> "Good confidence"
+                    recommendation.confidence >= 0.8 -> stringResource(R.string.savings_confidence_high)
+                    else -> stringResource(R.string.savings_confidence_good)
                 }
                 Text(
-                    text = "✓ $confidenceText",
+                    text = stringResource(R.string.savings_confidence_prefix_format, confidenceText),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -735,7 +780,7 @@ private fun SweepRecommendationCard(
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 Text(
-                    text = "Suggested allocation:",
+                    text = stringResource(R.string.savings_suggested_allocation),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Medium
                 )
@@ -756,7 +801,7 @@ private fun SweepRecommendationCard(
                 OutlinedButton(
                     onClick = onDismiss
                 ) {
-                    Text("Skip")
+                    Text(stringResource(R.string.action_skip))
                 }
                 
                 Button(
@@ -764,7 +809,7 @@ private fun SweepRecommendationCard(
                 ) {
                     Icon(androidx.compose.material.icons.Icons.Rounded.Savings, contentDescription = null)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Sweep to Goals")
+                    Text(stringResource(R.string.savings_sweep_to_goals))
                 }
             }
         }
@@ -788,7 +833,10 @@ private fun GoalAllocationRow(allocation: GoalAllocation) {
             
             val progressAfter = allocation.getProgressAfterAllocation()
             Text(
-                text = "Progress: ${String.format("%.0f", progressAfter)}%",
+                text = stringResource(
+                    R.string.savings_progress_label_format,
+                    String.format("%.0f", progressAfter)
+                ),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
             )

@@ -189,6 +189,26 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `refreshForecast retries same budget and period after initial failure`() = runTest(testDispatcher) {
+        val budget = createBudget(id = 31L, amount = 120.0)
+        val recoveredForecast = createForecast(budgetId = budget.id, predictedSpending = 95.0)
+        coEvery { forecastingEngine.generateForecast(budget, 45) } throws IllegalStateException("engine failure") andThen recoveredForecast
+
+        viewModel.generateForecast(budget, forecastPeriodDays = 45)
+        advanceUntilIdle()
+
+        assertEquals(budget, viewModel.uiState.value.budget)
+        assertTrue(viewModel.uiState.value.error?.contains("engine failure") == true)
+
+        viewModel.refreshForecast()
+        advanceUntilIdle()
+
+        assertNull(viewModel.uiState.value.error)
+        assertEquals(95.0, viewModel.uiState.value.forecast!!.predictedSpending, 0.0)
+        coVerify(exactly = 2) { forecastingEngine.generateForecast(budget, 45) }
+    }
+
+    @Test
     fun `empty budget forecast shows no data state`() = runTest(testDispatcher) {
         val emptyBudget = createBudget(id = 40L, amount = 0.0)
         val noDataForecast = createForecast(

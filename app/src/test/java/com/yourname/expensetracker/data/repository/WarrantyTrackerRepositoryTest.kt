@@ -179,24 +179,28 @@ class WarrantyTrackerRepositoryTest {
     @Test
     fun `getWarrantiesExpiringSoon calculates correct future time`() = runTest {
         val days = 7
-        val currentTime = System.currentTimeMillis()
-        val expectedFutureTime = currentTime + (days * 24 * 60 * 60 * 1000)
-        
+        val currentStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(timeProvider.now())
+        val futureExclusive = com.yourname.expensetracker.domain.util.TimePeriodUtils.addDays(currentStart, days)
+
         val warranties = listOf(
             Warranty(id = 1, receiptId = 1, productName = "Phone", merchantName = "Samsung",
-                purchaseDate = 1000, warrantyDurationMonths = 24, warrantyEndDate = expectedFutureTime - 1000)
+            purchaseDate = 1000, warrantyDurationMonths = 24, warrantyEndDate = futureExclusive - 1000)
         )
-        
-        coEvery { 
-            warrantyDao.getWarrantiesExpiringSoon(match { it >= expectedFutureTime - 5000 }, any()) 
+
+        coEvery {
+            warrantyDao.getWarrantiesExpiringSoon(
+                futureTime = futureExclusive,
+                currentTime = currentStart
+            )
         } returns warranties
 
         val result = repository.getWarrantiesExpiringSoon(days)
-        
+
         assertEquals(1, result.size)
         assertEquals("Phone", result[0].productName)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `markWarrantyAsClaimed updates status`() = runTest {
         coEvery { warrantyDao.updateWarrantyStatus(1, WarrantyStatus.CLAIMED, any()) } just Runs

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.budget
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.Budget
@@ -12,10 +13,12 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -299,6 +302,59 @@ class BudgetAutopilotEngineTest {
 
         assertApproxEquals(85.0, rec.recommendedBudget, 0.01)
         assertEquals(BudgetTrend.DECREASING, rec.trend)
+    }
+
+    @Test
+    fun `generateRecommendations and forecasting use aligned normalized month history`() = runTest {
+        val parityNow = millis(2026, Calendar.APRIL, 1) - (2L * 60L * 60L * 1000L) // 2026-04-01 10:00
+        every { timeProvider.now() } returns parityNow
+
+        val budget = budget(id = 1L, categoryId = 1L, amount = 100.0)
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(budget)
+
+        val monthlyTotals = listOf(
+            MonthlySpendingTotal("2026-01", 100.0, 1),
+            MonthlySpendingTotal("2026-04", 300.0, 1)
+        )
+        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns monthlyTotals
+
+        val autopilotRecommendation = engine.generateRecommendations().categoryRecommendations.single()
+
+        val budgetForecastDao = mockk<BudgetForecastDao>(relaxed = true)
+        coEvery { budgetForecastDao.insertWithDeactivation(any()) } returns 1L
+        coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
+        val forecastingEngine = BudgetForecastingEngine(
+            expenseDao = expenseDao,
+            budgetRepository = budgetRepository,
+            budgetForecastDao = budgetForecastDao,
+            timeProvider = timeProvider,
+            ioDispatcher = Dispatchers.Unconfined
+        )
+        val forecast = forecastingEngine.generateForecast(budget)
+
+        val windowStart = TimePeriodUtils.addMonths(parityNow, -3)
+        val normalized = BudgetHistorySeriesBuilder.build(
+            monthlyTotals = monthlyTotals,
+            windowStartInclusive = windowStart,
+            windowEndExclusive = parityNow
+        )
+        assertEquals(listOf("2026-01", "2026-02", "2026-03", "2026-04"), normalized.monthKeys)
+        assertApproxEquals(100.0, normalized.values[0], 0.0001)
+        assertApproxEquals(0.0, normalized.values[1], 0.0001)
+        assertApproxEquals(0.0, normalized.values[2], 0.0001)
+        assertApproxEquals(300.0, normalized.values[3], 0.0001)
+
+        val (_, periodEnd) = BudgetCalculator(timeProvider).calculatePeriodRange(budget, parityNow)
+        val forecastMonths = ((periodEnd - parityNow).coerceAtLeast(0L) / (24.0 * 60.0 * 60.0 * 1000.0)) / 30.0
+        val trendMultiplier = when (autopilotRecommendation.trend) {
+            BudgetTrend.INCREASING -> 1.1
+            BudgetTrend.DECREASING -> 0.9
+            BudgetTrend.STABLE -> 1.0
+        }
+        val expectedFromSharedSeries = normalized.values.average() * forecastMonths * trendMultiplier
+
+        assertEquals(BudgetTrend.INCREASING, autopilotRecommendation.trend)
+        assertApproxEquals(expectedFromSharedSeries, forecast.predictedSpending, 0.01)
     }
 
     @Test

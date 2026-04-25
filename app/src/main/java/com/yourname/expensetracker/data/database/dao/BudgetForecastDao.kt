@@ -52,8 +52,8 @@ interface BudgetForecastDao {
     /**
      * Deactivates all currently-active forecasts for a given budget + target period.
      *
-     * Used by [insertWithDeactivation] to ensure the partial unique index
-     * `index_budget_forecasts_active_budget_period` is never violated.
+     * Used by [insertWithDeactivation] to keep a single active forecast for the
+     * same budget + target period at the app layer.
      */
     @Query("""
         UPDATE budget_forecasts SET isActive = 0
@@ -68,8 +68,8 @@ interface BudgetForecastDao {
      * Atomically deactivates any existing active forecast for the same
      * (budgetId, targetPeriodStart, targetPeriodEnd) and then inserts a new one.
      *
-     * This prevents UNIQUE constraint violations on the partial unique index
-     * created by MIGRATION_74_75.
+     * This preserves the invariant that only the newest forecast remains active
+     * for a given budget + target period.
      */
     @Transaction
     suspend fun insertWithDeactivation(forecast: BudgetForecast): Long {

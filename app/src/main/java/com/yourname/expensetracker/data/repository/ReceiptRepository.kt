@@ -921,7 +921,7 @@ class ReceiptRepository @Inject constructor(
         val endDate = anchorDate + lookbackDays * dayMs
         val receiptAmount = receipt.parsedTotal
 
-        return expenseDao.getExpensesBetween(startDate, endDate)
+        return expenseDao.getExpensesBetweenUncapped(startDate, endDate)
             .asSequence()
             .filter { it.transactionType == TransactionType.PURCHASE }
             .sortedBy { expense ->

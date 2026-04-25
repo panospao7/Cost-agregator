@@ -4,9 +4,10 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
-import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
+import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
@@ -118,7 +119,14 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         )
 
         // Calculate risk buffer from Monte Carlo uncertainty
-        val riskBuffer = calculateRiskBuffer(monteCarloResult)
+        val riskBuffer = calculateRiskBuffer(
+            monteCarloResult = monteCarloResult,
+            spentToDate = spentToDate,
+            knownUpcoming = knownUpcoming,
+            budgetAmount = totalBudgeted,
+            currentDayOfMonth = dayOfMonth,
+            daysRemaining = daysRemaining
+        )
 
         // Calculate safe sweep amount
         val safeSweepAmount = (underspend - riskBuffer).coerceAtLeast(0.0)
@@ -128,7 +136,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         }
 
         // Get active goals
-        val goals = savingsGoalRepository.getAllGoals().first()
+        val goals = savingsGoalRepository.observeSavingsGoals().first()
             .filter { it.targetAmount > 0.0 && it.currentAmount < it.targetAmount } // Only valid, incomplete goals
 
         if (goals.isEmpty()) {
@@ -226,10 +234,25 @@ class MonthlySavingsSweepUseCase @Inject constructor(
      * Calculate risk buffer from Monte Carlo uncertainty.
      * Uses the spread between p75 and p50 as a conservative uncertainty buffer.
      */
-    private fun calculateRiskBuffer(monteCarloResult: com.yourname.expensetracker.domain.forecasting.MonteCarloResult?): Double {
+    private fun calculateRiskBuffer(
+        monteCarloResult: com.yourname.expensetracker.domain.forecasting.MonteCarloResult?,
+        spentToDate: Double,
+        knownUpcoming: Double,
+        budgetAmount: Double,
+        currentDayOfMonth: Int,
+        daysRemaining: Int
+    ): Double {
         if (monteCarloResult == null) {
-            // Fallback: use a conservative 20% of monthly spending estimate
-            return 100.0
+            val safeCurrentDay = currentDayOfMonth.coerceAtLeast(1)
+            val currentDailySpend = spentToDate / safeCurrentDay
+            val projectedRemainingSpend = currentDailySpend * daysRemaining.coerceAtLeast(0)
+            val baselineBuffer = maxOf(
+                knownUpcoming * 0.15,
+                projectedRemainingSpend * 0.20,
+                budgetAmount * 0.03
+            )
+            val maxFallbackBuffer = maxOf(knownUpcoming, budgetAmount * 0.25)
+            return baselineBuffer.coerceIn(0.0, maxFallbackBuffer)
         }
 
         // Risk buffer = p75 - p50 (uncertainty in the upper range)
@@ -252,10 +275,10 @@ class MonthlySavingsSweepUseCase @Inject constructor(
      */
     private fun allocateAcrossGoals(
         safeSweepAmount: Double,
-        goals: List<com.yourname.expensetracker.data.database.entity.SavingsGoal>
+        goals: List<SavingsGoal>
     ): List<GoalAllocation> {
         data class GoalAllocationState(
-            val goal: com.yourname.expensetracker.data.database.entity.SavingsGoal,
+            val goal: SavingsGoal,
             val urgency: Double,
             val remainingGap: Double,
             var allocated: Double = 0.0

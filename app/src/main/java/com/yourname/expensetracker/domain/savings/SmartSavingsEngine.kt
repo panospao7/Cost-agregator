@@ -1,15 +1,17 @@
 package com.yourname.expensetracker.domain.savings
 
-import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.text.DomainTextKeys
+import com.yourname.expensetracker.domain.text.UiTextArg
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
@@ -43,7 +45,6 @@ class SmartSavingsEngine @Inject constructor(
     private val budgetRepository: BudgetRepository,
     private val budgetCalculator: BudgetCalculator,
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
-    private val savingsGoalRepository: SavingsGoalRepository,
     private val timeProvider: TimeProvider
 ) {
     companion object {
@@ -131,7 +132,7 @@ class SmartSavingsEngine @Inject constructor(
         return SavingsRecommendation(
             safeAmount = safeAmount,
             confidence = calculateConfidence(budgetSurplus, spendingPace, monteCarloResult),
-            impact = "Portfolio recommendation ready",
+            impact = UiText.fromKey(DomainTextKeys.SAVINGS_PORTFOLIO_RECOMMENDATION_READY).asFallbackString(),
             source = determinePrimarySource(budgetSurplus, spendingPace, monteCarloResult)
         )
     }
@@ -385,7 +386,9 @@ class SmartSavingsEngine @Inject constructor(
         timeHorizon: TimeHorizon
     ): String {
         val remaining = goal.targetAmount - goal.currentAmount
-        if (remaining <= 0) return "Goal already reached"
+        if (remaining <= 0) {
+            return UiText.fromKey(DomainTextKeys.SAVINGS_IMPACT_GOAL_ALREADY_REACHED).asFallbackString()
+        }
 
         val horizonDays = when (timeHorizon) {
             TimeHorizon.WEEK -> 7.0
@@ -399,9 +402,29 @@ class SmartSavingsEngine @Inject constructor(
         }
         
         return when {
-            daysToGoal <= 30 -> "You'll reach your goal in $daysToGoal days!"
-            daysToGoal <= 90 -> "On track to reach goal in ${daysToGoal / 30} months"
-            else -> "Steady progress toward your €${String.format("%.0f", goal.targetAmount)} goal"
+            daysToGoal <= 30 -> UiText.fromKey(
+                DomainTextKeys.SAVINGS_IMPACT_REACH_IN_DAYS_FORMAT,
+                daysToGoal
+            ).asFallbackString()
+
+            daysToGoal <= 90 -> UiText.fromKey(
+                DomainTextKeys.SAVINGS_IMPACT_ON_TRACK_MONTHS_FORMAT,
+                daysToGoal / 30
+            ).asFallbackString()
+
+            else -> UiText.fromKey(
+                DomainTextKeys.SAVINGS_IMPACT_STEADY_PROGRESS_FORMAT,
+                UiTextArg.Money(goal.targetAmount, showCents = false)
+            ).asFallbackString()
+        }
+    }
+
+    private fun UiText.asFallbackString(): String {
+        return when (this) {
+            is UiText.DynamicString -> value
+            is UiText.MessageKey -> if (args.isEmpty()) key else "$key ${args.joinToString(", ")}"
+            is UiText.PluralResource -> "plural:$resId($quantity)"
+            is UiText.StringResource -> "res:$resId"
         }
     }
     

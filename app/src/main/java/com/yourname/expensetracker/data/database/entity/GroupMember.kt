@@ -9,14 +9,6 @@ import androidx.room.PrimaryKey
 /**
  * Represents a member of an expense group.
  */
-/**
- * Note: the partial unique index enforcing "at most one current user per group"
- * (`index_group_members_groupId_currentUser … WHERE isCurrentUser = 1`) cannot
- * be expressed via Room's @Index annotation, which does not support WHERE clauses.
- * It is applied by [AppDatabase.FRESH_INSTALL_CALLBACK] on fresh installs and by
- * [AppDatabase.MIGRATION_70_71] on upgrades.  The non-unique composite index
- * declared below serves query optimisation only.
- */
 @Entity(
     tableName = "group_members",
     foreignKeys = [

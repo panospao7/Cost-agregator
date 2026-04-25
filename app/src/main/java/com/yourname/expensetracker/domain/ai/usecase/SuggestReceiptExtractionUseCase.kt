@@ -25,6 +25,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
 import javax.inject.Inject
+import java.security.MessageDigest
 import kotlin.coroutines.cancellation.CancellationException
 
 class SuggestReceiptExtractionUseCase @Inject constructor(
@@ -66,7 +67,7 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         }
         val targetKey = "scanned_receipt:$receiptId"
         val now = timeProvider.now()
-        val sourceHash = input.hashCode().toString()
+        val sourceHash = stableSourceHash(input)
 
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.RECEIPT_EXTRACTION)
         if (existing != null &&
@@ -177,6 +178,26 @@ class SuggestReceiptExtractionUseCase @Inject constructor(
         if (rawText.startsWith("[OCR Failed", ignoreCase = true)) return false
         if (rawText.startsWith("Scan Failed:", ignoreCase = true)) return false
         return true
+    }
+
+    private fun stableSourceHash(input: com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput): String {
+        val normalized = listOf(
+            input.receiptId.toString(),
+            input.rawOcrText.trim(),
+            input.imagePath.orEmpty().trim(),
+            input.imageMimeType.orEmpty().trim(),
+            input.isImageAnalysisMode.toString(),
+            input.redactBeforeCloud.toString(),
+            input.parsedMerchant.orEmpty().trim(),
+            input.parsedTotal?.toString().orEmpty(),
+            input.parsedDate?.toString().orEmpty(),
+            input.parsedTaxAmount?.toString().orEmpty(),
+            input.currency.trim(),
+            input.lineItemsJson.orEmpty().trim()
+        ).joinToString("\u001F")
+
+        val digest = MessageDigest.getInstance("SHA-256").digest(normalized.toByteArray(Charsets.UTF_8))
+        return digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
     }
 }
 

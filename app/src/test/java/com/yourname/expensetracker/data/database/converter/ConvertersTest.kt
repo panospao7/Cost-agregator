@@ -16,7 +16,7 @@ class ConvertersTest {
 
     @Test
     fun `converts all TransactionTypes roundtrip`() {
-        TransactionType.values().forEach { type ->
+        TransactionType.entries.forEach { type ->
             val str = converters.fromTransactionType(type)
             assertEquals(type, converters.toTransactionType(str))
         }

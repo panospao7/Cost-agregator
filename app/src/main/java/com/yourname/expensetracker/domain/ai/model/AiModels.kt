@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.ai.model
 
+import com.yourname.expensetracker.domain.model.UiText
+
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
@@ -116,16 +118,48 @@ data class AiEngagementState(
 
 data class DashboardBriefingInput(
     val dateKey: String,
-    val weatherHeadline: String,
-    val weatherSummary: String,
+    val weatherHeadline: UiText,
+    val weatherSummary: UiText,
     val discretionaryBudget: Double,
     val totalCommitted: Double,
     val totalLikely: Double,
     val pendingReviewCount: Int,
     val currentMonthSpent: Double,
     val topCategories: List<String>,
-    val budgetWarnings: List<String>,
-    val upcomingItems: List<String>
+    val budgetWarnings: List<DashboardBudgetWarningInput>,
+    val upcomingItems: List<DashboardUpcomingItemInput>,
+    val transactionInsight: TransactionInsightPromptInput? = null
+)
+
+enum class TransactionInsightAmountBucket {
+    UNDER_20,
+    RANGE_20_49,
+    RANGE_50_99,
+    RANGE_100_249,
+    RANGE_250_499,
+    RANGE_500_999,
+    RANGE_1000_PLUS
+}
+
+data class TransactionInsightPromptInput(
+    val merchantName: String,
+    val promptAmount: Double,
+    val currencyCode: String,
+    val redactForPrompt: Boolean,
+    val amountBucket: TransactionInsightAmountBucket,
+    val isHighValue: Boolean
+)
+
+data class DashboardBudgetWarningInput(
+    val categoryLabel: UiText,
+    val percentUsed: Int
+)
+
+data class DashboardUpcomingItemInput(
+    val description: String,
+    val amount: Double,
+    val dateMillis: Long,
+    val currencyCode: String? = null
 )
 
 data class DashboardBriefing(

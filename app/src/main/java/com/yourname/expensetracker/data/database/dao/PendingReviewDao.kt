@@ -19,12 +19,22 @@ interface PendingReviewDao {
     suspend fun delete(review: PendingReview)
 
     @Transaction
-    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC LIMIT :limit")
-    fun getPendingFlow(limit: Int = 100): Flow<List<PendingReviewWithReceipt>>
+    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC")
+    fun getPendingUncappedFlow(): Flow<List<PendingReviewWithReceipt>>
 
     @Transaction
     @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC LIMIT :limit")
-    suspend fun getPending(limit: Int = 500): List<PendingReviewWithReceipt>
+    fun getPendingFlow(limit: Int): Flow<List<PendingReviewWithReceipt>>
+
+    @Transaction
+    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun getPending(limit: Int): List<PendingReviewWithReceipt>
+
+    @Transaction
+    @Query("SELECT * FROM pending_reviews WHERE status = 'PENDING' ORDER BY createdAt DESC")
+    suspend fun getPendingUncapped(): List<PendingReviewWithReceipt>
+
+    suspend fun getPending(): List<PendingReviewWithReceipt> = getPendingUncapped()
 
     @Query("SELECT COUNT(*) FROM pending_reviews WHERE status = 'PENDING'")
     fun getPendingCountFlow(): Flow<Int>
@@ -41,6 +51,21 @@ interface PendingReviewDao {
 
     @Query("SELECT * FROM pending_reviews WHERE rawNotificationId = :rawId")
     suspend fun getByRawId(rawId: Long): PendingReview?
+
+    @Transaction
+    suspend fun upsertByRawNotificationId(review: PendingReview): Long {
+        val rawId = review.rawNotificationId ?: return insert(review)
+        val existing = getByRawId(rawId) ?: return insert(review)
+        update(
+            review.copy(
+                id = existing.id,
+                scannedReceiptId = existing.scannedReceiptId,
+                createdAt = existing.createdAt,
+                status = existing.status
+            )
+        )
+        return existing.id
+    }
 
     @Query("DELETE FROM pending_reviews WHERE rawNotificationId = :rawId")
     suspend fun deleteByRawId(rawId: Long)
@@ -368,6 +393,48 @@ interface PendingReviewDao {
     ): Boolean
 
     /**
+     * Check existence of a pending review duplicate by **merchantKey prefix containment**.
+     *
+     * Mirrors [ExpenseDao.existsByMerchantKeyPrefixInRangeCurrencyAware] for the
+     * pending_reviews table. Catches cross-source duplicates where one source
+     * includes the store branch/address in the merchant name and the other does not.
+ *
+ * The `LENGTH >= 4` guard mirrors [DuplicateDetectionPolicy.MIN_MERCHANT_KEY_PREFIX_LENGTH];
+ * keep both in sync — Room SQL cannot reference Kotlin constants.
+     */
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1
+            FROM pending_reviews
+            WHERE status = 'PENDING'
+            AND (
+                :merchantKey LIKE suggestedMerchantKey || '%'
+                OR suggestedMerchantKey LIKE :merchantKey || '%'
+            )
+            AND LENGTH(suggestedMerchantKey) >= 4
+            AND LENGTH(:merchantKey) >= 4
+            AND suggestedDate >= :startDate
+            AND suggestedDate < :endDate
+            AND suggestedAmount BETWEEN :minAmount AND :maxAmount
+            AND UPPER(suggestedCurrency) = UPPER(:currency)
+            AND (
+                :transactionType = 'UNKNOWN'
+                OR suggestedType = 'UNKNOWN'
+                OR suggestedType = :transactionType
+            )
+        )
+    """)
+    suspend fun hasPendingDuplicateByMerchantKeyPrefixInRangeTypeAware(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Boolean
+
+    /**
      * Check existence of a pending review duplicate by raw **merchant name**
      * (fallback for legacy rows without merchantKey), restricted to the given
      * currency and compatible transaction type.
@@ -419,6 +486,14 @@ interface PendingReviewDao {
         transactionType: String
     ): Boolean {
         return hasPendingDuplicateByMerchantKeyInRangeTypeAware(
+            merchantKey = merchantKey,
+            startDate = startDate,
+            endDate = endDate,
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            currency = currency,
+            transactionType = transactionType
+        ) || hasPendingDuplicateByMerchantKeyPrefixInRangeTypeAware(
             merchantKey = merchantKey,
             startDate = startDate,
             endDate = endDate,

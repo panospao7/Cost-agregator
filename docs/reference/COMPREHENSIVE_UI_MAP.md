@@ -1,8 +1,8 @@
 # ExpenseTracker Frontend UI/UX Comprehensive Mapping
 
-**Generated**: April 4, 2026  
-**Scope**: Complete frontend inventory including screens, components, navigation, and theming  
-**Total Files**: 128 UI-related files (77 screens + 51 components)
+**Refreshed**: April 22, 2026  
+**Scope**: Current frontend inventory including screens, components, navigation, integration, and theming
+**Total Files**: Current UI inventory
 
 ---
 
@@ -32,8 +32,11 @@ ExpenseTrackerApp
 │   ├── Manual Recurring Expense
 │   └── AI Assistant (Chat Sheet)
 │
-├── Feature Screens (Config-Driven) [22 features]
+├── Feature Screens (Config-Driven)
 │   └── Accessed from Home widgets + Features Menu
+│
+├── Debug / Support Screens
+│   └── Debug, categorization debug, runtime diagnostics
 │
 └── Settings/Management Screens
     ├── AI Settings
@@ -77,6 +80,7 @@ ExpenseTrackerApp
 #### Modals:
 - **QuickSettingsDialog**: Settings shortcuts (AI, Categories, Debug)
 - **AddPlannedExpenseDialog**: Quick expense planning
+- **FeatureIntegration**: configuration-driven feature routing
 
 ---
 
@@ -681,10 +685,12 @@ All features accessible from:
 - Service diagnostics
 - Database import/export
 - CSV import
+- Issue inspection and data seeding tools
 
 #### Sub-Screens:
 - **CategorizationDebugScreen**: ML model debugging
 - **DebugViewerScreen**: Raw data viewer
+- **DebugIssueDetector**: runtime issue inspection
 
 #### Sub-Components (Dialogs):
 - **ImportDatabaseDialog**: Database restore
@@ -724,7 +730,16 @@ All features accessible from:
 | **NearbyShopSuggestionCard** | `NearbyShopSuggestionCard.kt` | Nearby store suggestions |
 | **NoSpendStreakWidget** | `analytics/NoSpendStreakWidget.kt` | Spending streaks counter |
 
-### 7.2 Chart & Visualization Components
+### 7.2 Feature and support components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **FeatureIntegration** | `integration/FeatureIntegration.kt` | Feature menu and routing integration |
+| **UiTextExtensions** | `components/UiTextExtensions.kt` | UI text helpers and formatting |
+| **EmptyStatePresentationModule** | `components/emptystate/EmptyStatePresentationModule.kt` | Empty-state wiring for UI support |
+| **DefaultEmptyStateRegistryInitializer** | `components/emptystate/DefaultEmptyStateRegistryInitializer.kt` | Empty-state registry bootstrap |
+
+### 7.3 Chart & Visualization Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -738,7 +753,7 @@ All features accessible from:
 | **PeriodBlock** | `PeriodBlock.kt` | Individual period cell |
 | **PeriodNavigationBar** | `PeriodNavigationBar.kt` | Period selector with arrows |
 
-### 7.3 AI Components
+### 7.4 AI Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -748,7 +763,7 @@ All features accessible from:
 | **ReceiptAssistCard** | `ai/ReceiptAssistCard.kt` | Receipt scanning results |
 | **ReceiptItemBreakdownCard** | `ai/ReceiptItemBreakdownCard.kt` | Item-level receipt data |
 
-### 7.4 Common/Shared Components
+### 7.5 Common/Shared Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -758,7 +773,7 @@ All features accessible from:
 | **LoadingSkeleton** | `common/LoadingSkeleton.kt` | Placeholder loading animation |
 | **ListSkeleton** | (in HomeScreen) | List item skeleton loader |
 
-### 7.5 Dialog/Sheet Components
+### 7.6 Dialog/Sheet Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -767,14 +782,14 @@ All features accessible from:
 | **LocationCorrectionSheet** | `LocationCorrectionSheet.kt` | Fix location modal |
 | **TransactionFilterSheet** | `transactions/TransactionFilterSheet.kt` | Advanced filter options |
 
-### 7.6 Permission Dialogs
+### 7.7 Permission Dialogs
 
 | Component | File | Purpose |
 |-----------|------|---------|
 | **LocationPermissionDialog** | `LocationPermissionDialog.kt` | Request location access |
 | **NotificationPermissionDialog** | `NotificationPermissionDialog.kt` | Request notification access |
 
-### 7.7 Navigation Components
+### 7.8 Navigation Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -977,7 +992,7 @@ Standard Material 3 padding/spacing scales:
 
 **File**: `ui/integration/FeatureIntegration.kt`
 
-Handles configuration-driven feature display and integration with Home screen and Features Menu.
+Handles configuration-driven feature display and integration with Home screen, Features Menu, and support routing.
 
 ---
 
@@ -1083,13 +1098,13 @@ All screens are currently navigated to via NavigationDestination. No orphaned sc
 | **Feature Screens** | 22 |
 | **Overlay Screens** | 4 |
 | **Management Screens** | 2 |
-| **Debug Screens** | 3 |
-| **Total Screen Files** | 77 |
-| **Component Files** | 51 |
-| **Total UI Files** | 128 |
-| **ViewModels** | ~70 |
+| **Debug Screens** | current debug set |
+| **Total Screen Files** | current screen inventory |
+| **Component Files** | current component inventory |
+| **Total UI Files** | current UI inventory |
+| **ViewModels** | many feature-scoped ViewModels |
 | **Dialog/Sheet Variants** | 20+ |
-| **Deep Link Hosts** | 8 |
+| **Deep Link Hosts** | current set |
 
 ---
 
@@ -1119,7 +1134,7 @@ All screens are currently navigated to via NavigationDestination. No orphaned sc
 ## 18. NOTES
 
 1. **Modern Navigation**: Uses sealed classes + CompositionLocal instead of NavHost
-2. **Config-Driven Features**: 22 features via FeatureConfig.kt
+2. **Config-Driven Features**: current feature set via FeatureConfig.kt
 3. **Type-Safe Navigation**: No string-based routes
 4. **Back Stack Management**: Tracked per feature, clears on tab switch
 5. **State Persistence**: Navigation state saved via rememberSaveable

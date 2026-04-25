@@ -11,7 +11,7 @@ data class SourceStats(
     @ColumnInfo(defaultValue = "0") val autoRejected: Long = 0,
     @ColumnInfo(defaultValue = "0") val pendingReview: Long = 0,
     @ColumnInfo(defaultValue = "0") val duplicates: Long = 0,
-    val lastSeen: Long = System.currentTimeMillis()
+    val lastSeen: Long
 ) {
     val trustScore: Float
         get() {

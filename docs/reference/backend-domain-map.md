@@ -1,8 +1,7 @@
 # Backend Domain Layer Map
 
-**Generated:** April 4, 2026  
-**Total Kotlin/Java Files:** 219  
-**Total Directories:** 42
+**Refreshed:** April 22, 2026  
+**Scope:** Current domain inventory across business, AI, dashboard, and shared UI text models
 
 ---
 
@@ -23,50 +22,28 @@
 
 ### Overview by Category
 
-| Directory | File Count | Purpose |
-|-----------|-----------|---------|
-| `ai/` | 31 | AI/ML capabilities (models, services, use cases) |
-| `analytics/` | 15 | Spending analysis and insights generation |
-| `alerts/` | 1 | Anomaly-based alerting |
-| `backup/` | 2 | Database backup operations |
-| `bank/` | 1 | Bank integration |
-| `budget/` | 6 | Budget calculation and management |
-| `business/` | 1 | Business expense reporting |
-| `carbon/` | 1 | Carbon footprint calculation |
-| `cashflow/` | 1 | Cash flow analysis |
-| `categorization/` | 6 | Expense categorization engines |
-| `challenge/` | 1 | Spending challenges |
-| `config/` | 1 | Application configuration |
-| `currency/` | 3 | Currency conversion and settings |
-| `debug/` | 3 | Debug utilities |
-| `engine/` | 1 | Dashboard recommendation engine |
-| `export/` | 1 | Data export (accounting format) |
-| `forecasting/` | 4 | Financial forecasting (Monte Carlo) |
-| `groups/` | 5 | Group expense sharing |
-| `health/` | 2 | Financial health scoring |
-| `income/` | 1 | Recurring income tracking |
-| `intelligence/` | 6 | ML classification and deduplication |
-| `investment/` | 1 | Investment tracking |
-| `lifestyle/` | 1 | Lifestyle inflation detection |
-| `location/` | 8 | Location-based analytics |
-| `logic/` | 5 | Core financial logic utilities |
-| `model/` | 17 | Domain models and data structures |
-| `naturallanguage/` | 1 | Natural language processing (speech) |
-| `negotiation/` | 1 | Bill negotiation engine |
-| `parser/` | 5 | Transaction parsing |
-| `performance/` | 1 | Image caching |
-| `price/` | 1 | Price protection tracking |
-| `receipt/` | 6 | Receipt processing (OCR, parsing) |
-| `receiptmatching/` | 1 | Receipt-to-transaction matching |
-| `reminder/` | 1 | Bill reminder management |
-| `savings/` | 3 | Savings goals and automation |
-| `service/` | 1 | General services |
-| `split/` | 1 | Expense split calculation |
-| `subscription/` | 2 | Subscription detection |
-| `tax/` | 2 | Tax estimation and configuration |
-| `usecase/` | 10 | Public use cases for features |
-| `util/` | 24 | Utility functions and helpers |
-| `widget/` | 2 | Widget-related services |
+| Directory | Current focus |
+|-----------|---------------|
+| `common/` | Shared helpers such as hashing and general-purpose utilities |
+| `dto/` | Cross-layer transfer objects for AI, review, and category references |
+| `ai/` | AI capability routing, policy, and model-backed services |
+| `bank/` | Bank API integration and connection orchestration |
+| `business/` | Business expense reporting and deduction workflows |
+| `budget/` | Budget status, history series, and forecasting engines |
+| `cashflow/` | Cash-flow calculation and calendar-oriented projections |
+| `carbon/` | Carbon-footprint estimation |
+| `debug/` | Runtime diagnostics, seeding, and issue inspection |
+| `groups/` | Shared expense group use cases and coordination |
+| `health/` | Financial health scoring and trend models |
+| `lifestyle/` | Lifestyle inflation detection and savings prompts |
+| `naturallanguage/` | Speech input and natural-language expense queries |
+| `model/` | Dashboard, navigation, recommendation, widget, and AI presentation models |
+| `receipt/` | Receipt parsing and warranty extraction |
+| `savings/` | Savings goals, automation, and sweep logic |
+| `usecase/` | Public application use cases for dashboard, budget, receipt, and AI flows |
+| `util/` | Shared numeric, date, text, and formatting utilities |
+| `widget/` | Widget state and repository contracts |
+| `logic/`, `parser/`, `location/`, `currency/`, `export/`, `subscription/`, `tax/`, etc. | Feature-specific domain services retained in the current map |
 
 ---
 
@@ -95,128 +72,33 @@ Domain Layer (This Document)
 
 ## Engines
 
-### 1. Dashboard Follow-Through Engine
-**File:** `engine/DashboardFollowThroughEngine.kt` (260 lines)
+### 1. Budget & cash-flow engines
+**Files:** `budget/BudgetForecastingEngine.kt`, `budget/BudgetHistorySeriesBuilder.kt`, `cashflow/CashFlowCalculator.kt`
 
-**Purpose:** Generates contextual recommendations for dashboard navigation based on transaction events.
+**Purpose:** Produce current budget status, historical series, and cash-flow projections for dashboards and forecasts.
 
-**Key Concepts:**
-- Deterministic rule-based engine (AI only provides summary text)
-- Generates up to 5 recommendations per transaction
-- Uses adaptive spending thresholds from `SpendingThresholdCalculator`
-
-**Key Methods:**
-| Method | Input | Output | Logic |
-|--------|-------|--------|-------|
-| `generateRecommendations()` | Expense, AiArtifact?, userId | List<DashboardFollowThroughRecommendation> | Applies 4 rules: high-amount, category, merchant, recent |
-| `generateFromInsight()` | Insight text, category, dates | DashboardFollowThroughRecommendation | Creates recommendation from AI insight |
-| `createHighAmountRecommendation()` | Expense, AiArtifact? | Recommendation | Priority: HIGH, uses adaptive threshold |
-| `createCategoryRecommendation()` | Expense, AiArtifact? | Recommendation | Priority: MEDIUM, 30-day category view |
-| `createMerchantRecommendation()` | Expense, AiArtifact? | Recommendation | Priority: MEDIUM, all from merchant |
-| `createRecentTransactionsRecommendation()` | Expense, AiArtifact? | Recommendation | Priority: LOW, last 7 days |
-
-**Dependencies:**
-- `TransactionFilterSerializer` (service layer)
-- `SpendingThresholdCalculator` (analytics)
-- `TimeProvider` (util)
-- `TimePeriodUtils` (util)
-
-**Output Models:**
-- `DomainTransactionFilter` (navigation/model/)
-- `DashboardFollowThroughRecommendation` (recommendation/model/)
-- `RecommendationPriority` enum
+**Key outputs:** budget trends, remaining runway, scenario-based forecast results, and series data for UI widgets.
 
 ---
 
-### 2. Insights Engine
-**File:** `analytics/InsightsEngine.kt` (751 lines)
+### 2. Alerts and anomaly orchestration
+**Files:** `alerts/AnomalyAlertOrchestrator.kt`, `debug/DebugIssueDetector.kt`
 
-**Purpose:** Comprehensive spending analytics and insights generation.
-
-**Key Concepts:**
-- Parallel async computation of 9 independent analyses
-- Error-resilient (each async task wrapped in try-catch)
-- Dual anomaly detection (merchant-level + statistical)
-- Monthly and multi-month aggregations
-
-**Key Methods:**
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `generateInsights()` | InsightsSnapshot | Master orchestrator, async parallel processing |
-| `getLegacyInsights()` | List<SpendingInsight> | Converts snapshot to legacy format |
-| `buildMonthlyComparison()` | MonthlyComparison | Current vs previous month |
-| `buildCategoryInsights()` | List<CategoryInsight> | Top categories with trends |
-| `buildMerchantInsights()` | List<MerchantInsight> | Top merchants with stats |
-| `buildSpendingPace()` | SpendingPace | Daily rate projection |
-| `findAnomalies()` | List<AnomalyTransaction> | Merged detection methods |
-| `findRecurringExpenses()` | List<RecurringExpense> | Via RecurringExpenseEngine |
-| `buildDayOfWeekPattern()` | List<DayOfWeekInsight> | 7-day breakdown |
-| `buildDailyTotals()` | Map<String, Double> | Day-by-day aggregation |
-
-**Sub-Engines Used:**
-- `SpendingPaceCalculator`
-- `AnomalyDetector`
-- `MonthlyComparisonCalculator`
-- `CategoryInsightEngine`
-- `MerchantInsightEngine`
-- `DayOfWeekAnalyzer`
-- `RecurringExpenseEngine`
-
-**Anomaly Detection (2-Path Approach):**
-
-Path 1: Merchant-level (DB-backed)
-- Compares current-month max vs historical average
-- Adaptive multiplier: 5x (few txns), 4x (5-10), 3x (10+)
-- Precise but only for known merchants
-
-Path 2: Statistical (in-memory)
-- IQR, MAD, contextual methods
-- Fires on new merchants
-- More sensitive to distribution outliers
+**Purpose:** Coordinate anomaly detection, alert surfacing, and diagnostics across repository and UI entry points.
 
 ---
 
-### 3. Categorization Engine
-**File:** `categorization/CategorizationEngine.kt`
+### 3. Business, carbon, and lifestyle engines
+**Files:** `business/BusinessExpenseReportGenerator.kt`, `carbon/CarbonFootprintCalculator.kt`, `lifestyle/LifestyleInflationDetector.kt`
 
-**Purpose:** Smart expense categorization using multiple strategies.
-
-**Sub-Engines:**
-- `ContextualInferenceEngine` - Uses transaction context
-- `SemanticKeywordMatcher` - Keyword-based matching
-- `GreeklishNormalizer` - Greek language normalization
-- `MerchantCanonicalizer` - Merchant name standardization
+**Purpose:** Generate business reporting, environmental impact, and lifestyle-spend trend signals.
 
 ---
 
-### 4. Budget Autopilot Engine
-**File:** `budget/BudgetAutopilotEngine.kt`
+### 4. Categorization and intelligence engines
+**Files:** `categorization/CategorizationEngine.kt`, `intelligence/TransactionClassifier.kt`, `intelligence/CrossSourceDeduplication.kt`
 
-**Purpose:** Automated budget optimization and recommendations.
-
-**Dependencies:**
-- `BudgetCalculator`
-- `BudgetMonitor`
-- `BudgetRecommendationEngine`
-
----
-
-### 5. Forecasting Engines
-
-#### Financial Stress Forecast Engine
-**File:** `forecasting/FinancialStressForecastEngine.kt`
-
-**Purpose:** Monte Carlo-based stress testing of financial scenarios.
-
-**Dependencies:**
-- `MonteCarloSpendingSimulator`
-- `DataQualityAssessor`
-- `HistoricalSpendingDistribution`
-
-#### Monte Carlo Spending Simulator
-**File:** `forecasting/MonteCarloSpendingSimulator.kt`
-
-**Purpose:** Probabilistic spending projection using Monte Carlo methods.
+**Purpose:** Classify, deduplicate, and normalize expense data before it reaches forecasting and dashboard layers.
 
 ---
 
@@ -435,6 +317,16 @@ Path 2: Statistical (in-memory)
 |------|---------|
 | `DomainBlockStatus.kt` | Dashboard widget status |
 | `DomainDayBudgetStatus.kt` | Daily budget tracking |
+| `DomainDashboardWidget.kt` | Widget composition and state |
+| `DomainDashboardSummary.kt` | Aggregated dashboard snapshot |
+
+### Widget Models
+**Directory:** `model/widget/`
+
+| File | Purpose |
+|------|---------|
+| `WidgetStyle.kt` | Widget theming and layout tokens |
+| `WidgetState.kt` | Render-time widget state |
 
 ### Navigation Models
 **Directory:** `model/navigation/`
@@ -442,6 +334,25 @@ Path 2: Statistical (in-memory)
 | File | Purpose |
 |------|---------|
 | `DomainTransactionFilter.kt` | Transaction filtering criteria |
+
+### Recommendation Models
+**Directory:** `model/recommendation/`
+
+| File | Purpose | Fields |
+|------|---------|--------|
+| `DashboardFollowThroughRecommendation.kt` | Navigation-oriented recommendation payload | navigationTarget, filterCriteria, priority, sourceArtifactId |
+| `RecommendationPriority.kt` | Priority enum | HIGH, MEDIUM, LOW |
+| `RecommendationStatus.kt` | Lifecycle enum | PENDING, VIEWED, ACTED |
+
+### DTOs
+**Directory:** `dto/`
+
+| File | Purpose |
+|------|---------|
+| `AiArtifactRecord.kt` | Serialized AI artifact transport |
+| `ReceiptItemCategorizationSnapshot.kt` | Receipt item categorization state |
+| `ReviewPriorityInput.kt` | Review ranking input payload |
+| `CategoryRef.kt` | Lightweight category reference |
 
 **Fields:**
 ```kotlin
@@ -452,15 +363,6 @@ maxAmount: Double?
 merchantName: String?
 transactionType: TransactionType?
 ```
-
-### Recommendation Models
-**Directory:** `model/recommendation/`
-
-| File | Purpose | Fields |
-|------|---------|--------|
-| `DashboardFollowThroughRecommendation.kt` | Contextual recommendations | userId, recommendationText, navigationTarget, filterCriteria, priority, category, sourceArtifactId |
-| `RecommendationPriority.kt` | Enum: HIGH, MEDIUM, LOW | Priority ranking |
-| `RecommendationStatus.kt` | Enum: PENDING, VIEWED, ACTED | Recommendation lifecycle |
 
 ### AI Models
 **Directory:** `ai/model/`
@@ -479,6 +381,14 @@ transactionType: TransactionType?
 | `AiArtifactPresentation.kt` | AI output packaging | AiArtifact display format |
 | `OnDeviceRuntimePresentation.kt` | Runtime UI presentation | Status display |
 
+### AI Policy
+**Directory:** `ai/policy/`
+
+| File | Purpose |
+|------|---------|
+| `AiPolicy.kt` | Capability gating and routing rules |
+| `DefaultAiCapabilityRouter.kt` | Default backend selection strategy |
+
 ---
 
 ## Services
@@ -488,6 +398,18 @@ transactionType: TransactionType?
 **File:** `service/NotificationService.kt`
 
 **Purpose:** Notification dispatch contract.
+
+**File:** `bank/BankApiIntegration.kt`
+
+**Purpose:** Bank data integration contract used by connection and sync flows.
+
+**File:** `naturallanguage/SpeechInputGateway.kt`
+
+**Purpose:** Speech-to-text input boundary for natural language expense queries.
+
+**File:** `naturallanguage/NaturalLanguageExpenseQueryRepository.kt`
+
+**Purpose:** Repository contract for text/speech expense search and interpretation.
 
 **File:** `ai/service/AiCapabilityRouter.kt`
 
@@ -514,6 +436,26 @@ interface AiCapabilityRouter {
 | `AiEngagementRepository.kt` | Track user engagement with AI | Metrics |
 | `AiChatRepository.kt` | Chat history management | Message list |
 | `AiArtifactRepository.kt` | Persist AI outputs | AiArtifactEntity |
+
+### Dashboard / feature contracts
+**Directory:** `usecase/dashboard/`
+
+| File | Purpose |
+|------|---------|
+| `DashboardRepositoryContracts.kt` | Dashboard data contracts and adapter boundaries |
+| `DashboardDataProvider.kt` | Dashboard data source abstraction |
+
+### Current AI use cases
+**Directory:** `ai/usecase/`
+
+| File | Purpose |
+|------|---------|
+| `ExecuteFinancialQueryUseCase.kt` | Execute natural-language financial queries |
+| `GenerateDashboardBriefingUseCase.kt` | Build dashboard briefing output |
+| `InterpretFinancialQueryUseCase.kt` | Parse query intent |
+| `MapFinancialQueryToNavigationUseCase.kt` | Map query results to navigation targets |
+| `PrioritizeReviewItemsUseCase.kt` | Rank review items |
+| `GenerateTransactionInsightUseCase.kt` | Produce transaction insight text |
 
 ### Categorization Services
 **Directory:** `categorization/`
@@ -869,15 +811,15 @@ User: "How much did I spend on groceries this month?"
 
 ## Key Architectural Insights
 
-### 1. Heavy Analytics Dependency
-- **InsightsEngine** is heavyweight (~750 lines) combining 7 sub-engines
-- Most analytics features depend on it directly or indirectly
-- Performance: Async/parallel execution mitigates blocking
+### 1. Analytics orchestration
+- Dashboard analytics are split across focused use cases and domain calculators
+- Budget, cash-flow, health, and dashboard widgets are composed from smaller inputs
+- Performance is preserved through coroutine-based aggregation
 
 ### 2. AI Infrastructure
-- **31 AI files** across models, services, use cases
-- Policy-based routing via `AiCapabilityRouter` (on-device vs cloud)
-- Input builders decouple presentation from AI domain models
+- Current AI surface spans policy, routing, use cases, and presentation models
+- Capability routing is policy-driven via `AiCapabilityRouter` and `AiPolicy`
+- Input builders still decouple presentation from AI domain models
 
 ### 3. Categorization Pipeline
 - **Multi-strategy:** Rules → Keywords → Semantic → ML fallback
@@ -885,24 +827,22 @@ User: "How much did I spend on groceries this month?"
 - Used by receipt processing and transaction classification
 
 ### 4. Location Is Cross-Cutting
-- 8 files dedicated to geo-analytics
-- Used by: Dashboard, Analytics, Travel detection, Heatmap
-- Not currently well integrated with other engines
+- Location and geo services remain cross-cutting across domain and data layers
+- Used by dashboard, analytics, travel, and map flows
+- Integration is handled through dedicated ports and adapters
 
 ### 5. Budget System Complexity
-- **5 period modes:** Daily, Weekly, Monthly, Yearly, Rolling
-- Month-end edge cases heavily tested (Feb 29, 31st days)
-- Budget forecasting (Monte Carlo) distinct from budget status
+- Budget forecasting is separate from budget status and history-series generation
+- Month-end edge cases still matter for calendar-based calculations
+- Forecasting flows are now split across focused builders and calculators
 
 ### 6. Recurring Transaction Detection
-- Centralized in `RecurringExpenseEngine`
-- Used by: Insights, Subscription detection, Reminders
-- Pattern recognition + interval calculation
+- Recurring detection is shared across savings, reminders, and subscription flows
+- Pattern recognition and interval calculation remain the core logic
 
-### 7. Dual Anomaly Detection
-- **Merchant-level:** Historical baseline + multiplier
-- **Statistical:** IQR/MAD in-memory analysis
-- Results merged and deduplicated for final list
+### 7. Anomaly alerting
+- Anomaly alerting is coordinated through dedicated orchestration and review flows
+- Results feed dashboard, notification, and review pipelines
 
 ---
 
@@ -940,8 +880,8 @@ User: "How much did I spend on groceries this month?"
 - ✅ Parsers (mock OCR service)
 
 ### System Testable (Full App)
-- ✅ End-to-end flows (Receipt → Expense → Analytics)
-- ✅ Concurrent async operations (InsightsEngine parallel tasks)
+- ✅ End-to-end flows (Receipt → Expense → Dashboard)
+- ✅ Concurrent async operations in dashboard and AI use cases
 
 ### Difficult to Test
 - ⚠️ ML Classifiers (TF Lite model loading with Context)
@@ -954,14 +894,14 @@ User: "How much did I spend on groceries this month?"
 
 | Metric | Count |
 |--------|-------|
-| **Total Files** | 219 |
-| **Total Lines of Code** | ~35,000 |
-| **Engines** | 20+ |
-| **Use Cases** | 25+ |
-| **Models** | 50+ |
-| **Services** | 40+ |
-| **Utilities** | 20+ |
-| **Clean Architecture Violations** | 12 files |
+| **Total Files** | current inventory |
+| **Total Lines of Code** | not restated here |
+| **Engines** | current engine set |
+| **Use Cases** | current use-case set |
+| **Models** | current model set |
+| **Services** | current service set |
+| **Utilities** | current utility set |
+| **Clean Architecture Violations** | review separately |
 | **Circular Dependencies** | 0 direct |
 
 ---
@@ -975,8 +915,8 @@ User: "How much did I spend on groceries this month?"
 
 ### Medium Term
 4. Extract NaturalLanguageSearchEngine to presentation/feature
-5. Consolidate analytics sub-engines documentation
-6. Add integration tests for high-complexity flows (InsightsEngine)
+5. Consolidate analytics use-case documentation
+6. Add integration tests for the main dashboard aggregation flows
 
 ### Long Term
 7. Implement formal API versioning for domain models

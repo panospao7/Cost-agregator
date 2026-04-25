@@ -1,8 +1,8 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.assertApproxEquals
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
 import io.mockk.mockk
@@ -138,12 +138,19 @@ class SpendingPaceBoundaryTest {
         assertEquals(PaceStatus.ON_PACE, result.paceStatus)
     }
 
-    private fun expense(id: Long, date: Long, amount: Double): Expense = Expense(
+    private fun expense(id: Long, date: Long, amount: Double): ExpenseSnapshot = ExpenseSnapshot(
         id = id,
         amount = amount,
+        effectiveAmount = amount,
+        currency = "EUR",
         merchant = "Test",
-        transactionType = TransactionType.PURCHASE,
-        date = date
+        merchantKey = null,
+        transactionType = DomainTransactionType.PURCHASE,
+        date = date,
+        categoryId = null,
+        isNotMine = false,
+        transferDirection = null,
+        notes = null
     )
 
     private fun ms(year: Int, month: Int, day: Int): Long =

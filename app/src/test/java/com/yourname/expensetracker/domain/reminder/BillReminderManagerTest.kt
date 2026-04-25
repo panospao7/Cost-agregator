@@ -98,6 +98,25 @@ class BillReminderManagerTest {
         coVerify(exactly = 1) { recurringExpenseRepository.getAll() }
     }
 
+    @Test
+    fun `getUpcomingReminders maps due today to critical and tomorrow to urgent`() = runTest {
+        val now = date(2026, 1, 10)
+        every { timeProvider.now() } returns now
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(
+            recurringExpense(id = 1L, frequency = RecurrenceFrequency.MONTHLY, nextDate = now),
+            recurringExpense(id = 2L, frequency = RecurrenceFrequency.MONTHLY, nextDate = date(2026, 1, 11)),
+            recurringExpense(id = 3L, frequency = RecurrenceFrequency.MONTHLY, nextDate = date(2026, 1, 14)),
+            recurringExpense(id = 4L, frequency = RecurrenceFrequency.MONTHLY, nextDate = date(2026, 1, 20))
+        )
+
+        val reminders = manager.getUpcomingReminders(daysAhead = 14).associateBy { it.recurringExpenseId }
+
+        assertEquals(ReminderUrgency.CRITICAL, reminders.getValue(1L).urgency)
+        assertEquals(ReminderUrgency.URGENT, reminders.getValue(2L).urgency)
+        assertEquals(ReminderUrgency.WARNING, reminders.getValue(3L).urgency)
+        assertEquals(ReminderUrgency.INFO, reminders.getValue(4L).urgency)
+    }
+
     private fun recurringExpense(
         id: Long,
         amount: Double = 50.0,

@@ -36,16 +36,22 @@ class HybridExpenseClassifier @Inject constructor(
     private val featureExtractor = FeatureExtractor()
     private val initMutex = Mutex()
     private var initialized = false
-    private var categories: List<Category> = emptyList()
-    private var categoryMap: Map<String, Category> = emptyMap()
+    @Volatile
+    private var categorySnapshot: List<Category> = emptyList()
 
     suspend fun initialize() {
         initMutex.withLock {
             if (!initialized) {
-                categories = categoryRepository.getAll()
-                categoryMap = categories.associateBy { it.name.lowercase() }
+                refreshCategorySnapshot()
                 initialized = true
             }
+        }
+    }
+
+    suspend fun invalidateCategorySnapshot() {
+        initMutex.withLock {
+            categorySnapshot = categoryRepository.getAll()
+            initialized = true
         }
     }
 
@@ -58,6 +64,7 @@ class HybridExpenseClassifier @Inject constructor(
     ): ClassificationResult = withContext(Dispatchers.Default) {
         
         if (!initialized) initialize()
+        val categories = currentCategories()
 
         val merchantNormalized = merchantName.trim()
         if (merchantNormalized.isBlank() &&
@@ -121,6 +128,7 @@ class HybridExpenseClassifier @Inject constructor(
      */
     private suspend fun classifyWithMerchantDictionary(merchantName: String): ClassificationResult? {
         val result = categorizationEngine.categorize(merchantName)
+        val categories = currentCategories()
         
         if (result.categoryId != null) {
             val category = categories.find { it.id == result.categoryId }
@@ -137,6 +145,7 @@ class HybridExpenseClassifier @Inject constructor(
     }
 
     private fun fallbackResult(): ClassificationResult {
+        val categories = categorySnapshot
         val defaultCategory = categories.find { it.name.equals("Uncategorized", ignoreCase = true) }
             ?: categories.find { it.name.contains("Other", ignoreCase = true) }
             ?: categories.firstOrNull()
@@ -172,5 +181,16 @@ class HybridExpenseClassifier @Inject constructor(
         
         // Also learn in CategorizationEngine for future dictionary lookups
         categorizationEngine.learnMerchantCategory(merchantName, correctCategoryId)
+        invalidateCategorySnapshot()
+    }
+
+    private suspend fun refreshCategorySnapshot() {
+        categorySnapshot = categoryRepository.getAll()
+    }
+
+    private suspend fun currentCategories(): List<Category> {
+        val latest = categoryRepository.getAll()
+        categorySnapshot = latest
+        return latest
     }
 }

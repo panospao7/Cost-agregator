@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator as 
 import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.logic.SplitCalculator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -50,12 +51,22 @@ class GroupTransactionCoordinator @Inject constructor(
     private val memberDao: GroupMemberDao,
     private val groupExpenseDao: GroupExpenseDao,
     private val expenseDao: ExpenseDao,
+    private val timeProvider: TimeProvider,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : DomainCoordinator {
 
     private companion object {
         const val INVALID_EQUAL_SPLIT_MESSAGE =
             "Equal split is invalid for the selected date because the payer is excluded or no participant qualifies"
+        const val LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE =
+            "Linked system expense is already attached to a group expense"
+    }
+
+    private fun validateSingleCurrentUser(members: List<GroupMember>) {
+        val currentUsers = members.filter { it.isCurrentUser }
+        if (currentUsers.size > 1) {
+            throw IllegalArgumentException("At most one current user is allowed per group")
+        }
     }
     
     // ==================== Interface Implementation ====================
@@ -70,6 +81,8 @@ class GroupTransactionCoordinator @Inject constructor(
         members: List<GroupMember>
     ): GroupCreationResult = withContext(ioDispatcher) {
         try {
+            validateSingleCurrentUser(members)
+
             val group = ExpenseGroup(
                 name = name,
                 description = description,
@@ -288,6 +301,12 @@ class GroupTransactionCoordinator @Inject constructor(
                 val existingExpense = expenseDao.getById(systemExpenseId)
                     ?: return@withTransaction GroupExpenseCreationResult.Error("Linked system expense not found")
 
+                if (groupExpenseDao.getGroupExpenseForExpense(systemExpenseId) != null) {
+                    return@withTransaction GroupExpenseCreationResult.Error(
+                        LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE
+                    )
+                }
+
                 val expenseCurrency = currency ?: group.defaultCurrency
 
                 // Create the group expense with system link
@@ -364,6 +383,8 @@ class GroupTransactionCoordinator @Inject constructor(
         group: ExpenseGroup,
         members: List<GroupMember>
     ): Long {
+        validateSingleCurrentUser(members)
+
         return database.withTransaction {
             // Insert group first
             val groupId = groupDao.insert(group)
@@ -470,7 +491,7 @@ class GroupTransactionCoordinator @Inject constructor(
                     notes = notes ?: "Group expense via ${payer.name}",
                     isSharedExpense = true,
                     myShareAmount = currentUserShare,
-                    createdAt = System.currentTimeMillis(),
+                    createdAt = timeProvider.now(),
                     dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
                         amount = amount,
                         merchant = description,
@@ -485,6 +506,12 @@ class GroupTransactionCoordinator @Inject constructor(
                 val systemExpenseId = expenseDao.insertAtomic(systemExpense)
                 if (systemExpenseId <= 0) {
                     return@withTransaction GroupExpenseCreationResult.Error("Failed to create system expense")
+                }
+
+                if (groupExpenseDao.getGroupExpenseForExpense(systemExpenseId) != null) {
+                    return@withTransaction GroupExpenseCreationResult.Error(
+                        LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE
+                    )
                 }
 
                 // 4. Create group expense linked to system expense
@@ -528,6 +555,11 @@ class GroupTransactionCoordinator @Inject constructor(
         groupExpense: GroupExpense
     ): Long {
         return database.withTransaction {
+            groupExpense.expenseId?.let { expenseId ->
+                if (groupExpenseDao.getGroupExpenseForExpense(expenseId) != null) {
+                    throw SQLiteConstraintException(LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE)
+                }
+            }
             groupExpenseDao.insert(groupExpense)
         }
     }

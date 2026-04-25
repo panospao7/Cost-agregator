@@ -73,7 +73,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                 (categoryId == null || expense.categoryId == categoryId)
         }
 
-        val totalPersonalSpend = personalExpenses.sumOf { it.amount }
+        val totalPersonalSpend = personalExpenses.sumOf { it.effectiveAmount }
         var totalSharedSpend = 0.0
         var totalReimbursed = 0.0
 

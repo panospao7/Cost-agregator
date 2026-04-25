@@ -18,8 +18,10 @@ import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DedupeJudgeService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.data.ai.provider.StrictAiJsonParsing
 import kotlinx.coroutines.flow.first
 import org.json.JSONObject
 import javax.inject.Inject
@@ -54,7 +56,7 @@ class JudgePendingReviewDuplicateUseCase @Inject constructor(
         }
         val targetKey = "pending_review:${item.review.id}"
         val now = timeProvider.now()
-        val sourceHash = input.hashCode().toString()
+        val sourceHash = AiArtifactSourceHash.forDedupeJudge(input)
 
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.DEDUPE_JUDGE)
         if (!force &&
@@ -176,13 +178,30 @@ private fun DedupeJudgeSuggestion.toPayloadJson(): String {
 private fun String.toDedupeJudgeSuggestionOrNull(): DedupeJudgeSuggestion? {
     return runCatching {
         val root = JSONObject(this)
+        val verdict = StrictAiJsonParsing.enumOrNull<com.yourname.expensetracker.domain.ai.model.DuplicateVerdict>(
+            root.optString("verdict")
+        ) ?: return null
+        val matchedTargetType = root.optString("matchedTargetType")
+            .takeIf { it.isNotBlank() }
+            ?.let { rawType ->
+                StrictAiJsonParsing.enumOrNull<AiTargetType>(rawType) ?: return null
+            }
+        val matchedTargetId = if (root.has("matchedTargetId") && !root.isNull("matchedTargetId")) {
+            StrictAiJsonParsing.run { root.nullableLongRejectingZeroOrNull("matchedTargetId") }
+                ?: return null
+        } else {
+            null
+        }
+        val confidence = if (root.has("confidence") && !root.isNull("confidence")) {
+            StrictAiJsonParsing.run { root.boundedConfidenceOrNull("confidence") } ?: return null
+        } else {
+            null
+        }
         DedupeJudgeSuggestion(
-            verdict = com.yourname.expensetracker.domain.ai.model.DuplicateVerdict.valueOf(root.getString("verdict")),
-            matchedTargetType = root.optString("matchedTargetType")
-                .takeIf { it.isNotBlank() }
-                ?.let { AiTargetType.valueOf(it) },
-            matchedTargetId = if (root.has("matchedTargetId") && !root.isNull("matchedTargetId")) root.optLong("matchedTargetId") else null,
-            confidence = if (root.has("confidence") && !root.isNull("confidence")) root.optDouble("confidence").toFloat() else null,
+            verdict = verdict,
+            matchedTargetType = matchedTargetType,
+            matchedTargetId = matchedTargetId,
+            confidence = confidence,
             rationale = root.optString("rationale").takeIf { it.isNotBlank() }
         )
     }.getOrNull()

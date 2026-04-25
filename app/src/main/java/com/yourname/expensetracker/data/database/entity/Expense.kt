@@ -129,6 +129,37 @@ data class Expense(
             isSharedExpense && mySharePercentage != null -> amount * mySharePercentage / 100.0
             else -> amount
         }
+
+    val hasConflictingOwnershipFlags: Boolean
+        get() = isNotMine && isSharedExpense
+
+    fun normalizeOwnership(): Expense {
+        val normalizedOwnerName = ownerName?.trim()?.takeIf { it.isNotEmpty() }
+        val normalizedSharedWithName = sharedWithName?.trim()?.takeIf { it.isNotEmpty() }
+
+        return when {
+            isNotMine -> copy(
+                ownerName = normalizedOwnerName,
+                isSharedExpense = false,
+                sharedWithName = null,
+                mySharePercentage = null,
+                myShareAmount = null
+            )
+
+            isSharedExpense -> copy(
+                isNotMine = false,
+                ownerName = null,
+                sharedWithName = normalizedSharedWithName
+            )
+
+            else -> copy(
+                ownerName = null,
+                sharedWithName = null,
+                mySharePercentage = null,
+                myShareAmount = null
+            )
+        }
+    }
     companion object {
         /**
          * Generate a deduplication key from the core transaction fields.

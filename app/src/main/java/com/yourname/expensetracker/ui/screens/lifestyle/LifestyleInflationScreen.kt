@@ -26,6 +26,9 @@ import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
 import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.components.common.EmptyStateType
 import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
+import com.yourname.expensetracker.ui.components.common.ErrorState
+import com.yourname.expensetracker.ui.components.common.ErrorType
+import com.yourname.expensetracker.ui.components.common.InlineErrorBanner
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
@@ -34,6 +37,28 @@ import java.text.NumberFormat
 import java.util.Locale
 
 internal const val MONTHLY_TREND_MIN_SEGMENT_WEIGHT = 0.001f
+
+internal enum class LifestyleInflationContentState {
+    FULL_SCREEN_LOADING,
+    FULL_SCREEN_ERROR,
+    CONTENT
+}
+
+internal fun resolveLifestyleInflationContentState(
+    hasReport: Boolean,
+    isLoading: Boolean,
+    hasError: Boolean
+): LifestyleInflationContentState {
+    if (isLoading && !hasReport && !hasError) {
+        return LifestyleInflationContentState.FULL_SCREEN_LOADING
+    }
+
+    if (hasError && !hasReport) {
+        return LifestyleInflationContentState.FULL_SCREEN_ERROR
+    }
+
+    return LifestyleInflationContentState.CONTENT
+}
 
 internal data class MonthlyTrendBarWeights(
     val essential: Float?,
@@ -71,6 +96,7 @@ fun LifestyleInflationScreen(
 ) {
     val report by viewModel.report.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val error by viewModel.error.collectAsState()
     val completedActionKeys by actionRegistry.completedActions.collectAsState()
     var selectedPeriod by rememberSaveable { mutableStateOf(12) }
     
@@ -113,26 +139,69 @@ fun LifestyleInflationScreen(
             )
         }
     ) { padding ->
-        if (isLoading) {
+        val hasReport = report != null
+        val hasError = !error.isNullOrBlank()
+
+        when (
+            resolveLifestyleInflationContentState(
+                hasReport = hasReport,
+                isLoading = isLoading,
+                hasError = hasError
+            )
+        ) {
+            LifestyleInflationContentState.FULL_SCREEN_LOADING -> {
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .padding(padding)
+                    .fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
                 CircularProgressIndicator()
             }
-        } else {
-            report?.let { data ->
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // Overview Card
-                    item {
-                        LifestyleOverviewCard(report = data)
-                    }
+            }
+
+            LifestyleInflationContentState.FULL_SCREEN_ERROR -> {
+            ErrorState(
+                type = ErrorType.UNKNOWN,
+                message = stringResource(R.string.error_load_failed),
+                isRetrying = isLoading,
+                onRetry = { viewModel.analyze(selectedPeriod) },
+                modifier = Modifier
+                    .padding(padding)
+                    .fillMaxSize()
+            )
+            }
+
+            LifestyleInflationContentState.CONTENT -> {
+                report?.let { data ->
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        if (isLoading) {
+                            item {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+
+                        if (hasError) {
+                            item {
+                                InlineErrorBanner(
+                                    message = stringResource(R.string.error_load_failed),
+                                    onRetry = { viewModel.analyze(selectedPeriod) },
+                                    isRetrying = isLoading,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+
+                        // Overview Card
+                        item {
+                            LifestyleOverviewCard(report = data)
+                        }
                     
                     // Correlation & Elasticity
                     item {
@@ -189,38 +258,41 @@ fun LifestyleInflationScreen(
                     item {
                         HedonicAdaptationCard(score = data.hedonicAdaptationScore)
                     }
-                }
-            } ?: run {
-                // Enhanced empty state with contextual actions
-                val emptyStateActions by remember(completedActionKeys) {
-                    derivedStateOf {
-                        actionRegistry.getActions(EmptyStateScreenKeys.LIFESTYLE)
                     }
-                }
-                
-                EnhancedEmptyState(
-                    type = EmptyStateType.GENERIC,
-                    title = stringResource(R.string.lifestyle_no_data_title),
-                    message = stringResource(R.string.lifestyle_no_data_subtitle),
-                    actions = emptyStateActions,
-                    onActionClick = { action ->
-                        when (val actionType = action.action) {
-                            is EmptyStateActionType.NavigateToDestination -> {
-                                // Handle navigation
-                            }
-                            is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
-                            is EmptyStateActionType.OpenFeature -> {
-                                // Handle opening features
-                            }
+                } ?: run {
+                    // Enhanced empty state with contextual actions
+                    val emptyStateActions by remember(completedActionKeys) {
+                        derivedStateOf {
+                            actionRegistry.getActions(EmptyStateScreenKeys.LIFESTYLE)
                         }
-                    },
-                    onDismissAction = { actionId ->
-                        actionRegistry.markCompleted(EmptyStateScreenKeys.LIFESTYLE, actionId)
-                    },
-                    actionLabel = stringResource(R.string.lifestyle_retry_button),
-                    onPrimaryClick = { viewModel.analyze(selectedPeriod) },
-                    modifier = Modifier.fillMaxSize()
-                )
+                    }
+
+                    EnhancedEmptyState(
+                        type = EmptyStateType.GENERIC,
+                        title = stringResource(R.string.lifestyle_no_data_title),
+                        message = stringResource(R.string.lifestyle_no_data_subtitle),
+                        actions = emptyStateActions,
+                        onActionClick = { action ->
+                            when (val actionType = action.action) {
+                                is EmptyStateActionType.NavigateToDestination -> {
+                                    // Handle navigation
+                                }
+                                is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
+                                is EmptyStateActionType.OpenFeature -> {
+                                    // Handle opening features
+                                }
+                            }
+                        },
+                        onDismissAction = { actionId ->
+                            actionRegistry.markCompleted(EmptyStateScreenKeys.LIFESTYLE, actionId)
+                        },
+                        actionLabel = stringResource(R.string.lifestyle_retry_button),
+                        onPrimaryClick = { viewModel.analyze(selectedPeriod) },
+                        modifier = Modifier
+                            .padding(padding)
+                            .fillMaxSize()
+                    )
+                }
             }
         }
     }
@@ -468,7 +540,13 @@ fun CreepAlertCard(alert: LifestyleInflationDetector.LifestyleCreepAlert) {
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
-                        text = alert.severity.name,
+                        text = stringResource(
+                            when (alert.severity) {
+                                LifestyleInflationDetector.CreepSeverity.HIGH -> R.string.lifestyle_creep_severity_high
+                                LifestyleInflationDetector.CreepSeverity.MEDIUM -> R.string.lifestyle_creep_severity_medium
+                                LifestyleInflationDetector.CreepSeverity.LOW -> R.string.lifestyle_creep_severity_low
+                            }
+                        ),
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -676,7 +754,13 @@ fun RecommendationCard(recommendation: LifestyleInflationDetector.LifestyleRecom
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        text = recommendation.priority.name,
+                        text = stringResource(
+                            when (recommendation.priority) {
+                                LifestyleInflationDetector.RecommendationPriority.HIGH -> R.string.lifestyle_recommendation_priority_high
+                                LifestyleInflationDetector.RecommendationPriority.MEDIUM -> R.string.lifestyle_recommendation_priority_medium
+                                LifestyleInflationDetector.RecommendationPriority.LOW -> R.string.lifestyle_recommendation_priority_low
+                            }
+                        ),
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -819,7 +903,7 @@ fun SavingsPromptCard(
                 Spacer(modifier = Modifier.width(8.dp))
                 
                 Text(
-                    text = "Boost Your Savings",
+                    text = stringResource(R.string.lifestyle_savings_prompt_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -828,8 +912,10 @@ fun SavingsPromptCard(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "Lifestyle inflation detected at ${numberFormat.format(inflationRate)}. " +
-                       "Consider redirecting some of that spending growth toward your savings goals.",
+                text = stringResource(
+                    R.string.lifestyle_savings_prompt_body_format,
+                    numberFormat.format(inflationRate)
+                ),
                 style = MaterialTheme.typography.bodyMedium
             )
             
@@ -841,7 +927,7 @@ fun SavingsPromptCard(
         ) {
             Icon(Icons.Rounded.Add, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Increase Savings Rate")
+            Text(stringResource(R.string.lifestyle_savings_prompt_action))
         }
         }
     }

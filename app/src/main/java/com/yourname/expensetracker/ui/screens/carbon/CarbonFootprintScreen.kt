@@ -30,11 +30,37 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.components.common.EmptyStateType
 import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
+import com.yourname.expensetracker.ui.components.common.ErrorState
+import com.yourname.expensetracker.ui.components.common.ErrorType
+import com.yourname.expensetracker.ui.components.common.InlineErrorBanner
 import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegistry
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import com.yourname.expensetracker.ui.theme.SemanticColors
+import kotlin.math.abs
+
+internal enum class CarbonFootprintContentState {
+    FULL_SCREEN_LOADING,
+    FULL_SCREEN_ERROR,
+    CONTENT
+}
+
+internal fun resolveCarbonFootprintContentState(
+    hasReport: Boolean,
+    isLoading: Boolean,
+    hasError: Boolean
+): CarbonFootprintContentState {
+    if (isLoading && !hasReport && !hasError) {
+        return CarbonFootprintContentState.FULL_SCREEN_LOADING
+    }
+
+    if (hasError && !hasReport) {
+        return CarbonFootprintContentState.FULL_SCREEN_ERROR
+    }
+
+    return CarbonFootprintContentState.CONTENT
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,6 +72,7 @@ fun CarbonFootprintScreen(
 ) {
     val report by viewModel.report.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val error by viewModel.error.collectAsState()
     val completedActionKeys by actionRegistry.completedActions.collectAsState()
     var selectedPeriod by rememberSaveable { mutableIntStateOf(30) }
     
@@ -88,22 +115,64 @@ fun CarbonFootprintScreen(
             )
         }
     ) { padding ->
-        if (isLoading) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
-        } else {
-            report?.let { data ->
-                LazyColumn(
+        val hasReport = report != null
+        val hasError = !error.isNullOrBlank()
+        when (
+            resolveCarbonFootprintContentState(
+                hasReport = hasReport,
+                isLoading = isLoading,
+                hasError = hasError
+            )
+        ) {
+            CarbonFootprintContentState.FULL_SCREEN_LOADING -> {
+                Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                        .padding(padding)
+                        .fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
+                    CircularProgressIndicator()
+                }
+            }
+
+            CarbonFootprintContentState.FULL_SCREEN_ERROR -> {
+                ErrorState(
+                    type = ErrorType.UNKNOWN,
+                    message = stringResource(R.string.error_load_failed),
+                    isRetrying = isLoading,
+                    onRetry = { viewModel.loadReport(selectedPeriod) },
+                    modifier = Modifier
+                        .padding(padding)
+                        .fillMaxSize()
+                )
+            }
+
+            CarbonFootprintContentState.CONTENT -> {
+                report?.let { data ->
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        if (isLoading) {
+                            item {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+
+                    if (hasError) {
+                        item {
+                            InlineErrorBanner(
+                                message = stringResource(R.string.error_load_failed),
+                                onRetry = { viewModel.loadReport(selectedPeriod) },
+                                isRetrying = isLoading,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+
                     // Header with score
                     item {
                         CarbonScoreCard(report = data)
@@ -168,40 +237,43 @@ fun CarbonFootprintScreen(
                             AlternativeCard(alternative = alternative)
                         }
                     }
-                }
-            } ?: run {
-                // Enhanced empty state with contextual actions
-                val emptyStateActions by remember(completedActionKeys) {
-                    derivedStateOf {
-                        actionRegistry.getActions(EmptyStateScreenKeys.CARBON)
                     }
-                }
-                
-                EnhancedEmptyState(
-                    type = EmptyStateType.GENERIC,
-                    title = stringResource(R.string.carbon_no_data),
-                    message = stringResource(R.string.carbon_add_transactions_hint),
-                    actions = emptyStateActions,
-                    onActionClick = { action ->
-                        when (val actionType = action.action) {
-                            is EmptyStateActionType.NavigateToDestination -> {
-                                // Handle navigation
-                            }
-                            is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
-                            is EmptyStateActionType.OpenFeature -> {
-                                when (actionType.feature) {
-                                    "carbon_offset" -> onViewOffsetOptions()
+                } ?: run {
+                    // Enhanced empty state with contextual actions
+                    val emptyStateActions by remember(completedActionKeys) {
+                        derivedStateOf {
+                            actionRegistry.getActions(EmptyStateScreenKeys.CARBON)
+                        }
+                    }
+
+                    EnhancedEmptyState(
+                        type = EmptyStateType.GENERIC,
+                        title = stringResource(R.string.carbon_no_data),
+                        message = stringResource(R.string.carbon_add_transactions_hint),
+                        actions = emptyStateActions,
+                        onActionClick = { action ->
+                            when (val actionType = action.action) {
+                                is EmptyStateActionType.NavigateToDestination -> {
+                                    // Handle navigation
+                                }
+                                is EmptyStateActionType.ExecuteAction -> actionType.action.invoke()
+                                is EmptyStateActionType.OpenFeature -> {
+                                    when (actionType.feature) {
+                                        "carbon_offset" -> onViewOffsetOptions()
+                                    }
                                 }
                             }
-                        }
-                    },
-                    onDismissAction = { actionId ->
-                        actionRegistry.markCompleted(EmptyStateScreenKeys.CARBON, actionId)
-                    },
-                    actionLabel = stringResource(R.string.carbon_calculate_button),
-                    onPrimaryClick = { viewModel.loadReport(selectedPeriod) },
-                    modifier = Modifier.fillMaxSize()
-                )
+                        },
+                        onDismissAction = { actionId ->
+                            actionRegistry.markCompleted(EmptyStateScreenKeys.CARBON, actionId)
+                        },
+                        actionLabel = stringResource(R.string.carbon_calculate_button),
+                        onPrimaryClick = { viewModel.loadReport(selectedPeriod) },
+                        modifier = Modifier
+                            .padding(padding)
+                            .fillMaxSize()
+                    )
+                }
             }
         }
     }
@@ -457,10 +529,10 @@ fun BenchmarkCard(report: CarbonFootprintCalculator.CarbonFootprintReport) {
                 )
                 
                 val gap = report.parisAgreementGap
-                val targetText = if (gap > 0) 
-                    stringResource(R.string.carbon_above_target_format, gap) 
-                else 
-                    stringResource(R.string.carbon_below_target_format, gap)
+                val targetText = if (gap > 0)
+                    stringResource(R.string.carbon_above_target_format, gap)
+                else
+                    stringResource(R.string.carbon_below_target_format, abs(gap))
                 Text(
                     text = targetText,
                     style = MaterialTheme.typography.bodyMedium,

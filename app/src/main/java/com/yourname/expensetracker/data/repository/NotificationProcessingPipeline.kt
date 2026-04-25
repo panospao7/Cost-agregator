@@ -17,6 +17,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
@@ -140,6 +141,7 @@ class NotificationProcessingPipeline @Inject constructor(
         if (initializeClassifier) {
             classifier.initialize()
         }
+        val sourceStatsTimestamp = timeProvider.now()
 
         // Phase 1: Pre-DB work (no transaction held)
         val parsed = parserRegistry.parseWithAiFallback(
@@ -159,19 +161,53 @@ class NotificationProcessingPipeline @Inject constructor(
 
             // Phase 2: DB transaction (DB-only mutations)
             database.withTransaction {
-                val rawId = dao.insertOrIgnore(notification)
+                val rawId = insertRawNotificationIfNotDuplicate(notification)
                 if (rawId == -1L) return@withTransaction
 
                 // Ensure source_stats row exists before any increment updates.
-                sourceStatsDao.insertIfNotExists(SourceStats(packageName = notification.packageName))
+                sourceStatsDao.insertIfNotExists(
+                    SourceStats(
+                        packageName = notification.packageName,
+                        lastSeen = sourceStatsTimestamp
+                    )
+                )
 
                 if (oversizedCandidate != null) {
+                    val oversizedMerchant = oversizedCandidate.merchantHint ?: "Unknown"
+                    val oversizedMerchantKey = MerchantKeyGenerator.generate(oversizedMerchant)
+                    val hasExpenseDuplicate = expenseDao.isDuplicateCurrencyAware(
+                        amount = oversizedCandidate.amount,
+                        merchant = oversizedMerchant,
+                        date = notification.timestamp,
+                        currency = oversizedCandidate.currency,
+                        transactionType = TransactionType.UNKNOWN.name,
+                        windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                        merchantKey = oversizedMerchantKey,
+                        dedupeKey = null
+                    )
+                    val hasPendingDuplicate = pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
+                        merchantKey = oversizedMerchantKey,
+                        merchantName = oversizedMerchant,
+                        startDate = notification.timestamp - DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                        endDate = DuplicateDetectionPolicy.windowEndExclusive(notification.timestamp),
+                        minAmount = oversizedCandidate.amount - DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                        maxAmount = oversizedCandidate.amount + DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                        currency = oversizedCandidate.currency,
+                        transactionType = TransactionType.UNKNOWN.name
+                    )
+
+                    if (hasExpenseDuplicate || hasPendingDuplicate) {
+                        sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+                        dao.markRelevance(rawId, false)
+                        return@withTransaction
+                    }
+
                     val review = PendingReview(
                         rawNotificationId = rawId,
                         suggestedAmount = oversizedCandidate.amount,
                         suggestedCurrency = oversizedCandidate.currency,
-                        suggestedMerchant = oversizedCandidate.merchantHint ?: "Unknown",
-                        suggestedMerchantKey = MerchantKeyGenerator.generate(oversizedCandidate.merchantHint ?: "Unknown"),
+                        suggestedMerchant = oversizedMerchant,
+                        suggestedMerchantKey = oversizedMerchantKey,
                         suggestedType = TransactionType.UNKNOWN.name,
                         suggestedCategoryId = null,
                         suggestedDate = notification.timestamp,
@@ -181,12 +217,68 @@ class NotificationProcessingPipeline @Inject constructor(
                         notificationTitle = notification.title,
                         notificationText = notification.text ?: notification.bigText
                     )
-                    pendingReviewDao.insert(review)
-                    sourceStatsDao.incrementTotalAndPending(notification.packageName, timeProvider.now())
+                    pendingReviewDao.upsertByRawNotificationId(review)
+                    sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
                     dao.markRelevance(rawId, true)
                 } else {
-                    sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, timeProvider.now())
-                    dao.markRelevance(rawId, false)
+                    val transactionSignalCandidate = detectTransactionSignalCandidate(
+                        title = notification.title,
+                        text = notification.text,
+                        bigText = notification.bigText
+                    )
+
+                    if (transactionSignalCandidate != null) {
+                        val signalMerchant = transactionSignalCandidate.merchantHint ?: "Unknown"
+                        val signalMerchantKey = MerchantKeyGenerator.generate(signalMerchant)
+                        val hasExpenseDuplicate = expenseDao.isDuplicateCurrencyAware(
+                            amount = transactionSignalCandidate.amount,
+                            merchant = signalMerchant,
+                            date = notification.timestamp,
+                            currency = transactionSignalCandidate.currency,
+                            transactionType = TransactionType.UNKNOWN.name,
+                            windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                            merchantKey = signalMerchantKey,
+                            dedupeKey = null
+                        )
+                        val hasPendingDuplicate = pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
+                            merchantKey = signalMerchantKey,
+                            merchantName = signalMerchant,
+                            startDate = notification.timestamp - DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                            endDate = DuplicateDetectionPolicy.windowEndExclusive(notification.timestamp),
+                            minAmount = transactionSignalCandidate.amount - DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                            maxAmount = transactionSignalCandidate.amount + DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                            currency = transactionSignalCandidate.currency,
+                            transactionType = TransactionType.UNKNOWN.name
+                        )
+
+                        if (hasExpenseDuplicate || hasPendingDuplicate) {
+                            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+                            dao.markRelevance(rawId, false)
+                            return@withTransaction
+                        }
+
+                        val review = PendingReview(
+                            rawNotificationId = rawId,
+                            suggestedAmount = transactionSignalCandidate.amount,
+                            suggestedCurrency = transactionSignalCandidate.currency,
+                            suggestedMerchant = signalMerchant,
+                            suggestedMerchantKey = signalMerchantKey,
+                            suggestedType = TransactionType.UNKNOWN.name,
+                            suggestedCategoryId = null,
+                            suggestedDate = notification.timestamp,
+                            confidence = 0.5f,
+                            explanation = "Transaction signal detected but parser failed — needs manual confirmation",
+                            packageName = notification.packageName,
+                            notificationTitle = notification.title,
+                            notificationText = notification.text ?: notification.bigText
+                        )
+                        pendingReviewDao.upsertByRawNotificationId(review)
+                        sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
+                        dao.markRelevance(rawId, true)
+                    } else {
+                        sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, sourceStatsTimestamp)
+                        dao.markRelevance(rawId, false)
+                    }
                 }
             }
 
@@ -201,19 +293,44 @@ class NotificationProcessingPipeline @Inject constructor(
 
         // Phase 2: DB transaction (DB-only mutations)
         val dbOutcome = database.withTransaction {
-            val rawId = dao.insertOrIgnore(notification)
+            val rawId = insertRawNotificationIfNotDuplicate(notification)
             if (rawId == -1L) return@withTransaction ParsedDbOutcome.RawDuplicate
 
             // Keep source stats row creation transactional while avoiding non-DB work.
-            sourceStatsDao.insertIfNotExists(SourceStats(packageName = notification.packageName))
+            sourceStatsDao.insertIfNotExists(
+                SourceStats(
+                    packageName = notification.packageName,
+                    lastSeen = sourceStatsTimestamp
+                )
+            )
 
             when (preDbContext.routingResult.decision) {
-                RoutingDecision.AUTO_ACCEPT -> handleAutoAcceptInTransaction(notification, rawId, preDbContext)
-                RoutingDecision.NEEDS_REVIEW -> handleNeedsReviewInTransaction(notification, rawId, preDbContext)
+                RoutingDecision.AUTO_ACCEPT -> handleAutoAcceptInTransaction(
+                    notification = notification,
+                    rawId = rawId,
+                    preDb = preDbContext,
+                    sourceStatsTimestamp = sourceStatsTimestamp
+                )
+                RoutingDecision.NEEDS_REVIEW -> handleNeedsReviewInTransaction(
+                    notification = notification,
+                    rawId = rawId,
+                    preDb = preDbContext,
+                    sourceStatsTimestamp = sourceStatsTimestamp
+                )
                 RoutingDecision.AUTO_REJECT -> {
-                    dao.markRelevance(rawId, false)
-                    sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, timeProvider.now())
-                    ParsedDbOutcome.AutoRejected
+                    if (notification.packageName in FINANCIAL_PACKAGES) {
+                        Timber.w("Auto-reject overridden to NEEDS_REVIEW for financial package: ${notification.packageName}")
+                        handleNeedsReviewInTransaction(
+                            notification = notification,
+                            rawId = rawId,
+                            preDb = preDbContext,
+                            sourceStatsTimestamp = sourceStatsTimestamp
+                        )
+                    } else {
+                        dao.markRelevance(rawId, false)
+                        sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, sourceStatsTimestamp)
+                        ParsedDbOutcome.AutoRejected
+                    }
                 }
             }
         }
@@ -231,7 +348,26 @@ class NotificationProcessingPipeline @Inject constructor(
         runParsedPostCommitActions(notification, preDbContext, dbOutcome)
     }
 
+    private suspend fun insertRawNotificationIfNotDuplicate(notification: RawNotification): Long {
+        val alreadyExists = dao.exists(
+            packageName = notification.packageName,
+            timestamp = notification.timestamp,
+            title = notification.title,
+            text = notification.text
+        )
+        if (alreadyExists) {
+            return -1L
+        }
+        return dao.insertOrIgnore(notification)
+    }
+
     internal data class OversizedAmountCandidate(
+        val amount: Double,
+        val currency: String,
+        val merchantHint: String?
+    )
+
+    internal data class TransactionSignalCandidate(
         val amount: Double,
         val currency: String,
         val merchantHint: String?
@@ -243,15 +379,28 @@ class NotificationProcessingPipeline @Inject constructor(
         private const val SUBSCRIPTION_DETECTION_TIMEOUT_MS = 5_000L
         private const val MAX_CONCURRENT_RECOMMENDATION_JOBS = 2
         private const val SUBSCRIPTION_LOOKBACK_DAYS = 120
+        private val FINANCIAL_PACKAGES = setOf(
+            "com.google.android.apps.walletnfcrel",
+            "com.google.android.apps.nbu.paisa.user",
+            "gr.nbg.mobilebanking",
+            "mbanking.NBG",
+            "gr.alpha.mobile",
+            "com.eurobank.mobile",
+            "com.winbank.mobile",
+            "com.revolut.revolut"
+        )
         private val CURRENCY_HINT_REGEX = Regex("""(€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b)""", RegexOption.IGNORE_CASE)
         private val TRANSACTION_HINT_REGEX = Regex(
             """(paid|payment|purchase|transaction|transfer|sent|received|χρεωση|πληρωμη|αγορα|καταθεση|πιστωση)""",
             RegexOption.IGNORE_CASE
         )
-        private val AMOUNT_TOKEN_REGEX = Regex(
-            """(?:€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b)?\s*[+-]?\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?""",
-            RegexOption.IGNORE_CASE
-        )
+private val CURRENCY_SUFFIX_REGEX = Regex("""\s*(€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b)""", RegexOption.IGNORE_CASE)
+private val CARD_TAIL_REGEX = Regex("""\*+\d{4}\b""")
+
+private val AMOUNT_TOKEN_REGEX = Regex(
+    """(?:€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b)?\s*[+-]?\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?(?:\s*(?:€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b))?""",
+    RegexOption.IGNORE_CASE
+)
 
         internal fun detectOversizedAmountCandidate(
             title: String?,
@@ -287,7 +436,68 @@ class NotificationProcessingPipeline @Inject constructor(
             )
         }
 
-        private fun extractMerchantHint(input: String?): String? {
+    internal fun detectTransactionSignalCandidate(
+        title: String?, text: String?, bigText: String?
+    ): TransactionSignalCandidate? {
+        val fullText = listOfNotNull(title, text, bigText)
+            .joinToString(" ")
+            .trim()
+        if (fullText.isBlank()) return null
+
+        if (!CURRENCY_HINT_REGEX.containsMatchIn(fullText) || !TRANSACTION_HINT_REGEX.containsMatchIn(fullText)) {
+            return null
+        }
+
+        // Score amount candidates to prefer currency-attached amounts over bare
+        // numbers (e.g. masked PAN fragments, order IDs). This mirrors the
+        // disambiguation logic in GenericTransactionParser.extractAmount().
+        data class ScoredAmount(val amount: Double, val score: Int)
+
+        val candidates = mutableListOf<ScoredAmount>()
+        for (match in AMOUNT_TOKEN_REGEX.findAll(fullText)) {
+            val parsed = AmountUtils.parseAmount(match.value) ?: continue
+            if (!parsed.isFinite() || parsed <= 0.01 || parsed > AppConfig.MAX_TRANSACTION_AMOUNT) continue
+
+        var score = 0
+        // Currency prefix/suffix in the matched token → strong signal
+        if (CURRENCY_HINT_REGEX.containsMatchIn(match.value)) score += 4
+        // Currency suffix immediately after the number (e.g. "4.08€", "4 EUR")
+        if (CURRENCY_SUFFIX_REGEX.containsMatchIn(match.value)) score += 4
+        // Decimal separator → likely an amount, not an ID
+        if (parsed != parsed.toLong().toDouble()) score += 2
+
+        // Proximity to a transaction keyword in the surrounding context
+        val ctxStart = (match.range.first - 30).coerceAtLeast(0)
+        val ctxEnd = (match.range.last + 30).coerceAtMost(fullText.length)
+        val context = fullText.substring(ctxStart, ctxEnd)
+        if (TRANSACTION_HINT_REGEX.containsMatchIn(context)) score += 2
+
+        // Penalty: masked PAN tail (e.g. "Card *1234") → likely not an amount
+        if (CARD_TAIL_REGEX.containsMatchIn(context)) score -= 3
+
+        candidates.add(ScoredAmount(parsed, score))
+        }
+        if (candidates.isEmpty()) return null
+
+        val best = candidates.maxWithOrNull(
+            compareBy<ScoredAmount> { it.score }
+                .thenByDescending { it.amount }
+        ) ?: return null
+        val amount = best.amount
+
+        val currency = when {
+            fullText.contains("USD", ignoreCase = true) || fullText.contains("$") -> "USD"
+            fullText.contains("GBP", ignoreCase = true) || fullText.contains("£") -> "GBP"
+            else -> "EUR"
+        }
+
+        val merchantHint = extractMerchantHint(title ?: text ?: bigText)
+        return TransactionSignalCandidate(
+            amount = amount, currency = currency, merchantHint = merchantHint
+        )
+    }
+
+    private fun extractMerchantHint(input: String?): String? {
             val raw = input ?: return null
             val fromAt = Regex("""\bat\s+([A-Za-zΑ-Ωα-ω0-9 .,'&-]{2,40})""", RegexOption.IGNORE_CASE)
                 .find(raw)
@@ -453,12 +663,13 @@ class NotificationProcessingPipeline @Inject constructor(
     private suspend fun handleAutoAcceptInTransaction(
         notification: RawNotification,
         rawId: Long,
-        preDb: PreDbContext
+        preDb: PreDbContext,
+        sourceStatsTimestamp: Long
     ): ParsedDbOutcome {
         val isDuplicate = hasCanonicalExpenseDuplicate(preDb)
         if (isDuplicate) {
             dao.markRelevance(rawId, false)
-            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             return ParsedDbOutcome.Duplicate
         }
 
@@ -484,7 +695,7 @@ class NotificationProcessingPipeline @Inject constructor(
         val expenseId = expenseDao.insertAtomic(expense)
         return if (expenseId > 0) {
             dao.markRelevance(rawId, true)
-            sourceStatsDao.incrementTotalAndAccepted(notification.packageName, timeProvider.now())
+            sourceStatsDao.incrementTotalAndAccepted(notification.packageName, sourceStatsTimestamp)
             ParsedDbOutcome.AutoAccepted(
                 expenseId = expenseId,
                 insertedExpense = expense
@@ -494,7 +705,7 @@ class NotificationProcessingPipeline @Inject constructor(
                 "Expense insert conflicted without a canonical duplicate for rawId=$rawId"
             }
             dao.markRelevance(rawId, false)
-            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             ParsedDbOutcome.Duplicate
         }
     }
@@ -502,12 +713,13 @@ class NotificationProcessingPipeline @Inject constructor(
     private suspend fun handleNeedsReviewInTransaction(
         notification: RawNotification,
         rawId: Long,
-        preDb: PreDbContext
+        preDb: PreDbContext,
+        sourceStatsTimestamp: Long
     ): ParsedDbOutcome {
         val isDuplicate = hasCanonicalExpenseDuplicate(preDb)
         if (isDuplicate) {
             dao.markRelevance(rawId, false)
-            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             return ParsedDbOutcome.Duplicate
         }
 
@@ -527,7 +739,7 @@ class NotificationProcessingPipeline @Inject constructor(
         )
         if (hasPendingDuplicate) {
             dao.markRelevance(rawId, false)
-            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, timeProvider.now())
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             return ParsedDbOutcome.Duplicate
         }
 
@@ -549,8 +761,8 @@ class NotificationProcessingPipeline @Inject constructor(
             suggestedLatitude = preDb.deviceGps?.first,
             suggestedLongitude = preDb.deviceGps?.second
         )
-        pendingReviewDao.insert(review)
-        sourceStatsDao.incrementTotalAndPending(notification.packageName, timeProvider.now())
+        pendingReviewDao.upsertByRawNotificationId(review)
+        sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
         return ParsedDbOutcome.NeedsReviewCreated
     }
 
@@ -626,7 +838,11 @@ class NotificationProcessingPipeline @Inject constructor(
         runPostCommitSafely("transfer analytics update") {
             if (direction != null) {
                 analytics.recordAutoDetection(
-                    direction = direction,
+                    direction = when (direction) {
+                        TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+                        TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+                        null -> return@runPostCommitSafely
+                    },
                     accountName = accountName,
                     wasCorrect = true,
                     transferId = transferId

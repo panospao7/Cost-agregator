@@ -570,6 +570,22 @@ class TimePeriodUtilsValidationTest {
     }
 
     @Test
+    fun `getCanonicalWeekRangeFromKey handles year rollover deterministically`() {
+        val dec31 = createDate(2025, 12, 31, 12, 0, 0)
+        val year = TimePeriodUtils.getYear(dec31)
+        val week = TimePeriodUtils.getWeekOfYear(dec31).toString().padStart(2, '0')
+        val key = "$year-$week"
+
+        val (start, end) = TimePeriodUtils.getCanonicalWeekRangeFromKey(key)
+        val startCal = Calendar.getInstance().apply { timeInMillis = start }
+        val endCal = Calendar.getInstance().apply { timeInMillis = end }
+
+        assertEquals(Calendar.MONDAY, startCal.get(Calendar.DAY_OF_WEEK))
+        assertEquals(Calendar.MONDAY, endCal.get(Calendar.DAY_OF_WEEK))
+        assertEquals(7, TimePeriodUtils.daysBetween(start, end))
+    }
+
+    @Test
     fun `getWeekOfYear returns correct week number`() {
         // Given: January 1, 2024 (should be week 1)
         val timestamp = createDate(2024, 1, 1, 12, 0, 0)

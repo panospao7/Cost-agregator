@@ -39,7 +39,8 @@ class BudgetViewModel @Inject constructor(
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val _manualState = MutableStateFlow<ManualState>(ManualState.Idle)
-    private val _refreshTrigger = MutableStateFlow(0)
+    private val _budgetsRefreshTrigger = MutableStateFlow(0)
+    private val _suggestionsRefreshTrigger = MutableStateFlow(0)
     private val _autopilotRecommendations = MutableStateFlow<BudgetAutopilotRecommendations?>(null)
     private val _autopilotLoading = MutableStateFlow(false)
 
@@ -50,22 +51,25 @@ class BudgetViewModel @Inject constructor(
     }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val adjustedBudgetStatuses: Flow<List<BudgetStatus>> =
+        _budgetsRefreshTrigger
+            .flatMapLatest { budgetRepository.getBudgetStatuses() }
+            .mapLatest { statuses ->
+                statuses.map { status ->
+                    status.copy(adjustedSpendBreakdown = calculateAdjustedSpend(status))
+                }
+            }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val uiState: StateFlow<BudgetUiState> = combine(
-        _refreshTrigger.flatMapLatest { budgetRepository.getBudgetStatuses() },
-        _refreshTrigger.flatMapLatest { flow { emit(budgetRepository.getSuggestions()) } },
+        adjustedBudgetStatuses,
+        _suggestionsRefreshTrigger.flatMapLatest { flow { emit(budgetRepository.getSuggestions()) } },
         _manualState,
         _autopilotRecommendations,
         _autopilotLoading
     ) { statuses, suggestions, manual, autopilot, autopilotLoading ->
-        // Calculate adjusted spend for each budget status
-        val statusesWithBreakdown = statuses.map { status ->
-            // Calculate shared expense offset asynchronously
-            val breakdown = calculateAdjustedSpend(status)
-            status.copy(adjustedSpendBreakdown = breakdown)
-        }
-        
         BudgetUiState(
-            budgets = statusesWithBreakdown,
+            budgets = statuses,
             suggestions = suggestions,
             autopilotRecommendations = autopilot?.categoryRecommendations ?: emptyList(),
             autopilotLoading = autopilotLoading,
@@ -193,12 +197,12 @@ class BudgetViewModel @Inject constructor(
     }
 
     fun refreshSuggestions() {
-        _refreshTrigger.value += 1
+        _suggestionsRefreshTrigger.value += 1
     }
 
     fun refreshBudgets() {
         timeProvider.now()
-        _refreshTrigger.value += 1
+        _budgetsRefreshTrigger.value += 1
     }
 
     fun clearError() {

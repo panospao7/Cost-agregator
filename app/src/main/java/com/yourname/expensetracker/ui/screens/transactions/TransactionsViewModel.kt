@@ -532,6 +532,56 @@ class TransactionsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Atomically update all ownership fields (not-mine + shared) in a single
+     * repository call.  This is the **only** safe way to persist changes from
+     * the `EditOwnershipDialog`, because calling `updateNotMineDetails` and
+     * `updateSharedExpenseDetails` sequentially would cause the second call
+     * to overwrite the first (both operate on the original Expense object
+     * whose flags are stale after the first write).
+     */
+    fun updateOwnership(
+        expense: Expense,
+        isNotMine: Boolean,
+        ownerName: String,
+        isSharedExpense: Boolean,
+        sharedWithName: String,
+        mySharePercentage: String,
+        myShareAmount: String
+    ) {
+        val percentageText = mySharePercentage.trim()
+        val parsedSharePercentage = percentageText.takeIf { it.isNotEmpty() }?.toIntOrNull()
+        if (percentageText.isNotEmpty() && (parsedSharePercentage == null || parsedSharePercentage !in 0..100)) {
+            viewModelScope.launch {
+                _error.emit("Share percentage must be between 0 and 100")
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                expenseRepository.updateOwnership(
+                    expense = expense,
+                    isNotMine = isNotMine,
+                    ownerName = ownerName.takeIf { it.isNotBlank() },
+                    isSharedExpense = isSharedExpense,
+                    sharedWithName = sharedWithName.takeIf { it.isNotBlank() },
+                    mySharePercentage = parsedSharePercentage,
+                    myShareAmount = myShareAmount.toDoubleOrNull()
+                )
+                val message = when {
+                    isNotMine -> "Marked as not mine"
+                    isSharedExpense -> "Marked as shared expense"
+                    else -> "Ownership updated"
+                }
+                _successMessage.emit(message)
+                refreshPagedExpensesAfterMutation()
+            } catch (e: Exception) {
+                _error.emit("Failed to update: ${e.message}")
+            }
+        }
+    }
+
     fun updateLocation(expense: Expense, lat: Double, lon: Double, address: String?, osmId: String?) {
         viewModelScope.launch {
             try {

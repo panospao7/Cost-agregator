@@ -258,31 +258,41 @@ class GroupMemberDaoTest {
         assertFalse(alice!!.isCurrentUser)
     }
 
-    // ── Fresh-install DB-level constraint tests (Batch 3) ───────────────────────
+    // ── Fresh-install invariant tests ───────────────────────────────────────────
 
     /**
-     * On a brand-new v71 database the partial unique index
-     * `index_group_members_groupId_currentUser` must reject inserting a second
-     * member with `isCurrentUser = 1` in the same group.
+     * Fresh installs should expose only Room-declared `group_members` indexes.
      */
     @Test
-    fun freshInstall_rejectsDuplicateCurrentUserInSameGroup() = runBlocking {
-        val groupId = insertGroup()
-
-        // First current user — should succeed.
-        groupMemberDao.insert(makeMember(groupId, "Alice", isCurrentUser = true))
-
-        // Second current user in the same group — must be rejected at DB level.
-        var rejected = false
-        try {
-            groupMemberDao.insert(makeMember(groupId, "Bob", isCurrentUser = true))
-        } catch (_: SQLiteConstraintException) {
-            rejected = true
+    fun freshInstall_groupMembers_has_only_room_declared_indexes() = runBlocking {
+        val db = database.openHelper.writableDatabase
+        val indexes = mutableSetOf<String>()
+        db.query("PRAGMA index_list('group_members')").use { cursor ->
+            while (cursor.moveToNext()) {
+                indexes.add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
+            }
         }
-        assertTrue(
-            "Fresh-install DB must reject a second isCurrentUser=1 in the same group",
-            rejected
-        )
+
+        assertTrue(indexes.contains("index_group_members_groupId"))
+        assertTrue(indexes.contains("index_group_members_groupId_isCurrentUser"))
+        assertTrue(indexes.contains("index_group_members_groupId_name"))
+        assertFalse(indexes.contains("index_group_members_groupId_currentUser"))
+    }
+
+    @Test
+    fun setCurrentUser_enforces_single_current_user_without_db_partial_index() = runBlocking {
+        val groupId = insertGroup()
+        val aliceId = groupMemberDao.insert(makeMember(groupId, "Alice", isCurrentUser = true))
+        val bobId = groupMemberDao.insert(makeMember(groupId, "Bob"))
+
+        groupMemberDao.setCurrentUser(groupId, bobId)
+
+        val alice = groupMemberDao.getById(aliceId)
+        val bob = groupMemberDao.getById(bobId)
+        assertNotNull(alice)
+        assertNotNull(bob)
+        assertFalse(alice!!.isCurrentUser)
+        assertTrue(bob!!.isCurrentUser)
     }
 
     /**
@@ -317,12 +327,38 @@ class GroupMemberDaoTest {
     }
 
     /**
-     * On a brand-new v71 database the partial unique index
-     * `index_group_expenses_expenseId_unique` must reject inserting a second
-     * group_expense row with the same non-null `expenseId`.
+     * On a fresh database, `group_expenses` should expose only Room-declared
+     * indexes and must not carry the old partial unique index.
      */
     @Test
-    fun freshInstall_rejectsDuplicateNonNullExpenseIdInGroupExpenses() = runBlocking {
+    fun freshInstall_groupExpenses_has_only_room_declared_indexes() = runBlocking {
+        val db = database.openHelper.writableDatabase
+        val indexes = mutableSetOf<String>()
+        db.query("PRAGMA index_list('group_expenses')").use { cursor ->
+            while (cursor.moveToNext()) {
+                indexes += cursor.getString(cursor.getColumnIndexOrThrow("name"))
+            }
+        }
+
+        assertEquals(
+            setOf(
+                "index_group_expenses_groupId",
+                "index_group_expenses_expenseId",
+                "index_group_expenses_paidById",
+                "index_group_expenses_groupId_date",
+                "index_group_expenses_isReimbursable"
+            ),
+            indexes
+        )
+        assertFalse(indexes.contains("index_group_expenses_expenseId_unique"))
+    }
+
+    /**
+     * Duplicate non-null linked expense IDs are now prevented in app logic,
+     * not by a non-Room SQLite partial index.
+     */
+    @Test
+    fun freshInstall_allowsDuplicateNonNullExpenseIdInGroupExpenses_withoutLegacyPartialIndex() = runBlocking {
         val groupId = insertGroup()
         val memberId = groupMemberDao.insert(makeMember(groupId, "Payer"))
 
@@ -348,26 +384,20 @@ class GroupMemberDaoTest {
             )
         )
 
-        // Second link to the same expenseId — must be rejected at DB level.
-        var rejected = false
-        try {
-            groupExpenseDao.insert(
-                GroupExpense(
-                    groupId = groupId,
-                    expenseId = expenseId,
-                    paidById = memberId,
-                    date = 1_700_000_000_000L,
-                    description = "Duplicate link",
-                    totalAmount = 50.0
-                )
+        val secondId = groupExpenseDao.insert(
+            GroupExpense(
+                groupId = groupId,
+                expenseId = expenseId,
+                paidById = memberId,
+                date = 1_700_000_000_000L,
+                description = "Duplicate link",
+                totalAmount = 50.0
             )
-        } catch (_: SQLiteConstraintException) {
-            rejected = true
-        }
-        assertTrue(
-            "Fresh-install DB must reject duplicate non-null expenseId in group_expenses",
-            rejected
         )
+
+        assertTrue(secondId > 0)
+        val matches = groupExpenseDao.getExpensesForGroupOnce(groupId).filter { it.expenseId == expenseId }
+        assertEquals(2, matches.size)
     }
 
     /**

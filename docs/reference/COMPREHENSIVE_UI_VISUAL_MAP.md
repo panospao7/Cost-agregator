@@ -39,7 +39,7 @@
          │       │       │
     ┌────▼──┐   │       │
     │Add    │   │       │
-    │Exp.   │   │       └─► Feature Menu (22 features + settings)
+     │Exp.   │   │       └─► Feature Menu (current feature set + settings)
     │Sheet  │   │           │
     └───────┘   │           ├─► SavingsGoals
                 │           ├─► CarbonFootprint
@@ -527,7 +527,7 @@ Modal Sheet (Bottom-up animation)
 │  │  ├─ ManualRecurringExpense                                  │
 │  │  └─ Assistant                                               │
 │  │                                                              │
-│  ├─ Feature Screens (22)                                       │
+│  ├─ Feature Screens (current set)                              │
 │  │  ├─ SavingsGoals                                            │
 │  │  ├─ CarbonFootprint                                         │
 │  │  ├─ WarrantyTracker                                         │
@@ -656,7 +656,8 @@ ui/
 │   ├── NavigationDestination.kt      ← Sealed class: all destinations
 │   ├── NavigationController.kt        ← Navigation state machine
 │   ├── FeatureConfig.kt              ← Feature menu configuration
-│   └── FeatureIntegration.kt         ← Feature integration logic
+│   ├── FeatureIntegration.kt         ← Feature integration logic
+│   └── UiTextExtensions.kt           ← UI text helpers
 │
 ├── theme/
 │   ├── Theme.kt                      ← Color scheme, typography

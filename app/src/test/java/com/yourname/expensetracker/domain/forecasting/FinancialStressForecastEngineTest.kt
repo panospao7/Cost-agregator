@@ -9,9 +9,9 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
-import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -31,7 +31,7 @@ class FinancialStressForecastEngineTest {
 
     private lateinit var synthesisEngine: SynthesisEngine
     private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
-    private lateinit var recurringExpenseEngine: RecurringExpenseEngine
+    private lateinit var mergedRecurringPatternsProvider: MergedRecurringPatternsProvider
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var timeProvider: TimeProvider
@@ -48,13 +48,13 @@ class FinancialStressForecastEngineTest {
     fun setup() {
         synthesisEngine = mockk(relaxed = true)
         monteCarloSimulator = mockk(relaxed = true)
-        recurringExpenseEngine = mockk()
+        mergedRecurringPatternsProvider = mockk()
         expenseRepository = mockk()
         budgetRepository = mockk()
         timeProvider = mockk()
 
         every { timeProvider.now() } returns now
-        coEvery { recurringExpenseEngine.getPatterns() } returns emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
@@ -72,7 +72,7 @@ class FinancialStressForecastEngineTest {
         engine = FinancialStressForecastEngine(
             synthesisEngine = synthesisEngine,
             monteCarloSimulator = monteCarloSimulator,
-            recurringExpenseEngine = recurringExpenseEngine,
+            recurringPatternsProvider = mergedRecurringPatternsProvider,
             expenseRepository = expenseRepository,
             budgetRepository = budgetRepository,
             timeProvider = timeProvider
@@ -200,7 +200,7 @@ class FinancialStressForecastEngineTest {
         allExpenses = listOf(salary, recurring1, recurring2, recurring3)
         allDeposits = listOf(salary)
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1200.0, spent = 0.0)))
-        coEvery { recurringExpenseEngine.getPatterns() } returns listOf(
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             recurringPattern(
                 merchant = "Netflix",
                 amount = 45.0,
@@ -217,6 +217,77 @@ class FinancialStressForecastEngineTest {
             // p50 and p90 discretionary spend collapse to the same value (0 in this fixture).
             assertApproxEquals(horizon.projectedBalance, horizon.minProjectedBalance, 0.0001)
         }
+    }
+
+    @Test
+    fun `computeStressForecast uses merged recurring obligations so duplicate stale manual rows do not double count`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern(
+                merchant = "Netflix",
+                amount = 15.0,
+                nextDate = now + dayMs,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 1.0f
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertApproxEquals(15.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+    }
+
+    @Test
+    fun `computeStressForecast ignores unconfirmed detected recurring suggestions`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+
+        val result = engine.computeStressForecast()
+
+        assertApproxEquals(0.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+    }
+
+    @Test
+    fun `computeStressForecast includes confirmed recurring obligations`() = runTest {
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern(
+                merchant = "Confirmed Rent",
+                amount = 800.0,
+                nextDate = now + dayMs,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 1.0f
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertApproxEquals(800.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
+    }
+
+    @Test
+    fun `computeStressForecast includes recurring obligation due earlier today`() = runTest {
+        val noonToday = millis(2026, Calendar.APRIL, 20, 12)
+        val earlierToday = millis(2026, Calendar.APRIL, 20, 8)
+        every { timeProvider.now() } returns noonToday
+        allExpenses = emptyList()
+        allDeposits = emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurringPattern(
+                merchant = "Morning Bill",
+                amount = 25.0,
+                nextDate = earlierToday,
+                frequency = RecurrenceFrequency.MONTHLY,
+                confidence = 1.0f
+            )
+        )
+
+        val result = engine.computeStressForecast()
+
+        assertApproxEquals(25.0, result.horizons.first { it.daysAhead == 30 }.recurringObligations, 0.0001)
     }
 
     @Test
@@ -332,12 +403,12 @@ class FinancialStressForecastEngineTest {
         )
     }
 
-    private fun millis(year: Int, month: Int, day: Int): Long {
+    private fun millis(year: Int, month: Int, day: Int, hourOfDay: Int = 12): Long {
         return Calendar.getInstance().apply {
             set(Calendar.YEAR, year)
             set(Calendar.MONTH, month)
             set(Calendar.DAY_OF_MONTH, day)
-            set(Calendar.HOUR_OF_DAY, 12)
+            set(Calendar.HOUR_OF_DAY, hourOfDay)
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)

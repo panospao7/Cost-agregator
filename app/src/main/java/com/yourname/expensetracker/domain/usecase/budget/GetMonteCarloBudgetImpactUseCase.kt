@@ -10,8 +10,7 @@ import javax.inject.Inject
  * Use case for evaluating the budget impact of Monte Carlo forecasting results.
  *
  * This use case bridges probabilistic spending forecasts with budget reality,
- * computing expected overruns, tail risks, and providing actionable risk tiers
- * with human-readable messaging for UI display.
+ * computing expected overruns, tail risks, and risk tiers using raw domain data.
  *
  * Risk tiers:
  * - LOW: overrun < 5% of budget AND P(overrun) < 25%
@@ -56,18 +55,12 @@ class GetMonteCarloBudgetImpactUseCase @Inject constructor() {
         // Determine risk tier based on overrun magnitude and probability
         val riskTier = determineRiskTier(expectedOverrun, budgetAmount, probabilityOfOverrun)
 
-        // Generate display message based on risk tier and formatted overrun
-        val formattedOverrun = MonteCarloBudgetImpact.formatCurrency(expectedOverrun)
-        val displayMessage = generateDisplayMessage(riskTier, formattedOverrun)
-
         val impact = MonteCarloBudgetImpact(
             budgetAmount = budgetAmount,
             p50Forecast = p50Forecast,
             expectedOverrun = expectedOverrun,
             probabilityOfOverrun = probabilityOfOverrun,
-            riskTier = riskTier,
-            displayMessage = displayMessage,
-            formattedOverrun = formattedOverrun
+            riskTier = riskTier
         )
 
         return Result.Success(impact)
@@ -100,21 +93,4 @@ class GetMonteCarloBudgetImpactUseCase @Inject constructor() {
         }
     }
 
-    /**
-     * Generates a human-readable message based on risk tier and formatted overrun.
-     *
-     * Messages:
-     * - LOW: "You're on track to stay within budget"
-     * - MEDIUM: "You may exceed your budget by €X"
-     * - HIGH: "High risk of exceeding budget by €X"
-     * - CRITICAL: "Very likely to exceed budget by €X"
-     */
-    private fun generateDisplayMessage(riskTier: RiskTier, formattedOverrun: String): String {
-        return when (riskTier) {
-            RiskTier.LOW -> "You're on track to stay within budget"
-            RiskTier.MEDIUM -> "You may exceed your budget by $formattedOverrun"
-            RiskTier.HIGH -> "High risk of exceeding budget by $formattedOverrun"
-            RiskTier.CRITICAL -> "Very likely to exceed budget by $formattedOverrun"
-        }
-    }
 }

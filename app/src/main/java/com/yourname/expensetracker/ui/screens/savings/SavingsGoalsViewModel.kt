@@ -2,15 +2,15 @@ package com.yourname.expensetracker.ui.screens.savings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
-import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
-import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.domain.model.GoalProtectionLevel
+import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.savings.*
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsRecommendation
 import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
 import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
@@ -47,7 +47,8 @@ class SavingsGoalsViewModel @Inject constructor(
     private val smartSavingsEngine: SmartSavingsEngine,
     private val gamificationEngine: SavingsGamificationEngine,
     private val lifestyleSavingsPromptUseCase: LifestyleSavingsPromptUseCase,
-    private val monthlySavingsSweepUseCase: MonthlySavingsSweepUseCase
+    private val monthlySavingsSweepUseCase: MonthlySavingsSweepUseCase,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SavingsGoalsState())
@@ -66,7 +67,7 @@ class SavingsGoalsViewModel @Inject constructor(
         goalsCollectionJob = viewModelScope.launch {
             _state.update { it.copy(isLoading = true) }
             
-            savingsGoalRepository.getAllGoals()
+            savingsGoalRepository.observeSavingsGoals()
                 .collect { goals ->
                     var totalSaved = 0.0
                     for (goal in goals) {
@@ -164,7 +165,7 @@ class SavingsGoalsViewModel @Inject constructor(
             
             // Apply allocations to goals atomically — no read-modify-write race
             for (allocation in recommendation.goalAllocations) {
-                val wasAdded = savingsGoalRepository.addToGoalAmount(
+                val wasAdded = savingsGoalRepository.incrementSavingsGoalAmount(
                     allocation.goalId,
                     allocation.suggestedAllocation
                 )
@@ -211,19 +212,22 @@ class SavingsGoalsViewModel @Inject constructor(
     fun addGoal(name: String, targetAmount: Double, targetDate: Long?, protectionLevel: GoalProtectionLevel) {
         viewModelScope.launch {
             val goal = SavingsGoal(
+                id = 0L,
                 name = name,
                 targetAmount = targetAmount,
+                currentAmount = 0.0,
                 targetDate = targetDate,
-                protectionLevel = protectionLevel
+                protectionLevel = protectionLevel,
+                createdAt = timeProvider.now()
             )
-            savingsGoalRepository.addGoal(goal)
+            savingsGoalRepository.createSavingsGoal(goal)
             loadGamification() // Refresh level/achievements
         }
     }
 
     fun contributeToGoal(goalId: Long, amount: Double) {
         viewModelScope.launch {
-            val wasAdded = savingsGoalRepository.addToGoalAmount(goalId, amount)
+            val wasAdded = savingsGoalRepository.incrementSavingsGoalAmount(goalId, amount)
             if (wasAdded) {
                 savingsContributionHistoryRepository.recordContribution(
                     goalId = goalId,
@@ -237,7 +241,7 @@ class SavingsGoalsViewModel @Inject constructor(
 
     fun deleteGoal(goal: SavingsGoal) {
         viewModelScope.launch {
-            savingsGoalRepository.deleteGoal(goal)
+            savingsGoalRepository.deleteSavingsGoal(goal)
         }
     }
 

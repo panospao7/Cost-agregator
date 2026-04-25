@@ -127,7 +127,7 @@ class ExpenseWithCategoryFormattedAmountTest {
             currency = currency,
             merchant = "TestMerchant",
             transactionType = transactionType,
-            date = System.currentTimeMillis(),
+            date = 1_700_000_000_000L,
             isNotMine = isNotMine,
             isSharedExpense = isSharedExpense,
             myShareAmount = myShareAmount,

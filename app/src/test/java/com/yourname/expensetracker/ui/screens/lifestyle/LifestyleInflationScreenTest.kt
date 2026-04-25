@@ -57,6 +57,39 @@ class LifestyleInflationScreenTest {
         assertEquals(MONTHLY_TREND_MIN_SEGMENT_WEIGHT, weights.essential ?: 0f)
     }
 
+    @Test
+    fun `resolveLifestyleInflationContentState returns loading when first load is in progress`() {
+        val state = resolveLifestyleInflationContentState(
+            hasReport = false,
+            isLoading = true,
+            hasError = false
+        )
+
+        assertEquals(LifestyleInflationContentState.FULL_SCREEN_LOADING, state)
+    }
+
+    @Test
+    fun `resolveLifestyleInflationContentState returns full screen error when no report exists`() {
+        val state = resolveLifestyleInflationContentState(
+            hasReport = false,
+            isLoading = false,
+            hasError = true
+        )
+
+        assertEquals(LifestyleInflationContentState.FULL_SCREEN_ERROR, state)
+    }
+
+    @Test
+    fun `resolveLifestyleInflationContentState keeps content visible when stale report exists with error`() {
+        val state = resolveLifestyleInflationContentState(
+            hasReport = true,
+            isLoading = false,
+            hasError = true
+        )
+
+        assertEquals(LifestyleInflationContentState.CONTENT, state)
+    }
+
     private fun monthData(
         income: Double,
         totalSpending: Double,

@@ -1,0 +1,349 @@
+package com.yourname.expensetracker.domain.forecasting
+
+import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority as EntityPlannedExpensePriority
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.analytics.PaceStatus
+import com.yourname.expensetracker.domain.analytics.SpendingPace
+import com.yourname.expensetracker.domain.analytics.SpendingPaceProjection
+import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.model.PlannedExpense
+import com.yourname.expensetracker.domain.model.PlannedExpensePriority as DomainPlannedExpensePriority
+import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
+import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlin.math.roundToLong
+
+/**
+ * Single source of truth for forecast-input assembly used by weather/dashboard forecast paths.
+ *
+ * Recurring merge policy (canonical):
+ * - include all manual recurring rows
+ * - include detected recurring rows only when confidence >= [HIGH_CONFIDENCE_THRESHOLD]
+ * - dedupe restored stale manual rows by stable rule signature, not merchant alone
+ * - manual rows take precedence only for the same stable rule signature
+ */
+@Singleton
+class ForecastInputAssembler @Inject constructor(
+    private val timeProvider: TimeProvider
+) {
+
+    data class ForecastInput(
+        val pastSumDaily: List<Double>,
+        val recurringPatterns: List<RecurringPattern>,
+        val plannedExpenses: List<PlannedExpense>,
+        val savingsGoals: List<SavingsGoal>,
+        val budgetStatuses: List<BudgetStatusSnapshot>,
+        val spendingPace: SpendingPace
+    )
+
+    fun mapExpenseSnapshots(
+        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>
+    ): List<ExpenseSnapshot> = expenses.map { expense ->
+        ExpenseSnapshot(
+            id = expense.id,
+            amount = expense.amount,
+            effectiveAmount = expense.effectiveAmount,
+            currency = expense.currency,
+            merchant = expense.merchant,
+            merchantKey = expense.merchantKey,
+            transactionType = when (expense.transactionType) {
+                TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+                TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+                TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+                TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+                TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+            },
+            date = expense.date,
+            categoryId = expense.categoryId,
+            isNotMine = expense.isNotMine,
+            transferDirection = when (expense.transferDirection) {
+                TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+                TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+                null -> null
+            },
+            notes = expense.notes
+        )
+    }
+
+    fun mapPlannedExpenses(
+        plannedEntities: List<com.yourname.expensetracker.data.database.entity.PlannedExpense>
+    ): List<PlannedExpense> = plannedEntities.map { entity ->
+        PlannedExpense(
+            id = entity.id,
+            description = entity.description,
+            amount = entity.amount,
+            date = entity.date,
+            categoryId = entity.categoryId,
+            isRecurring = entity.isRecurring,
+            priority = when (entity.priority) {
+                EntityPlannedExpensePriority.MUST -> DomainPlannedExpensePriority.MUST
+                EntityPlannedExpensePriority.LIKELY -> DomainPlannedExpensePriority.LIKELY
+                EntityPlannedExpensePriority.OPTIONAL -> DomainPlannedExpensePriority.OPTIONAL
+            }
+        )
+    }
+
+    fun mapBudgetSnapshots(budgetStatuses: List<BudgetStatus>): List<BudgetStatusSnapshot> =
+        budgetStatuses.map { status ->
+            BudgetStatusSnapshot(
+                budgetCategoryId = status.budget.categoryId,
+                budgetAmount = status.budget.amount,
+                categoryName = status.category?.name,
+                spentAmount = status.spentAmount,
+                remainingAmount = status.remainingAmount,
+                percentUsed = status.percentUsed.toDouble(),
+                healthStatus = status.healthStatus,
+                periodStart = status.periodStart,
+                periodEnd = status.periodEnd
+            )
+        }
+
+    fun mapSavingsGoals(goals: List<SavingsGoal>): List<SavingsGoal> = goals
+
+    fun mergeRecurringPatterns(
+        manualEntities: List<ManualRecurringExpense>,
+        detectedPatterns: List<RecurringPattern>
+    ): List<RecurringPattern> {
+        val manualPatterns = mapConfirmedRecurringPatterns(manualEntities)
+
+        val deduplicatedManualPatterns = dedupeManualPatternsBySignature(manualPatterns)
+        val manualRuleSignatures = deduplicatedManualPatterns
+            .mapTo(mutableSetOf()) { recurringRuleSignature(it) }
+        val acceptedDetected = detectedPatterns
+            .asSequence()
+            .filter { it.confidence >= HIGH_CONFIDENCE_THRESHOLD }
+            .filter { pattern -> recurringRuleSignature(pattern) !in manualRuleSignatures }
+            .toList()
+
+        return (deduplicatedManualPatterns + acceptedDetected).sortedByDescending { it.confidence }
+    }
+
+    fun mapConfirmedRecurringPatterns(
+        manualEntities: List<ManualRecurringExpense>
+    ): List<RecurringPattern> {
+        val now = timeProvider.now()
+        return manualEntities.map { manual ->
+            RecurringPattern(
+                id = manual.id,
+                merchantName = manual.merchant,
+                averageAmount = manual.amount,
+                currency = manual.currency,
+                frequency = manual.frequency,
+                nextExpectedDate = rollNextExpectedDateForward(
+                    nextExpectedDate = manual.nextDate,
+                    frequency = manual.frequency,
+                    now = now
+                ),
+                confidence = 1.0f,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                previousDates = emptyList()
+            )
+        }
+    }
+
+    fun dedupeConfirmedRecurringPatterns(
+        manualPatterns: List<RecurringPattern>
+    ): List<RecurringPattern> = dedupeManualPatternsBySignature(manualPatterns)
+
+    private fun dedupeManualPatternsBySignature(
+        manualPatterns: List<RecurringPattern>
+    ): List<RecurringPattern> {
+        return manualPatterns
+            .groupBy { manualPatternSignature(it) }
+            .values
+            .map { patternsForSignature ->
+                patternsForSignature.maxWithOrNull(
+                    compareBy<RecurringPattern> { it.nextExpectedDate }
+                        .thenBy { it.id ?: Long.MIN_VALUE }
+                        .thenBy { it.merchantName }
+                ) ?: patternsForSignature.first()
+            }
+    }
+
+    private fun manualPatternSignature(pattern: RecurringPattern): ManualPatternSignature {
+        return ManualPatternSignature(
+            ruleSignature = recurringRuleSignature(pattern),
+            categoryId = pattern.categoryId
+        )
+    }
+
+    private fun recurringRuleSignature(pattern: RecurringPattern): RecurringRuleSignature {
+        return RecurringRuleSignature(
+            merchantKey = merchantKey(pattern.merchantName),
+            frequency = pattern.frequency,
+            amountMinor = (pattern.averageAmount * 100.0).roundToLong(),
+            currency = pattern.currency.uppercase()
+        )
+    }
+
+    fun buildPastSumDaily(expenses: List<ExpenseSnapshot>): List<Double> {
+        val now = timeProvider.now()
+        val monthStart = TimePeriodUtils.getStartOfMonth(now)
+        val currentDayIndex = TimePeriodUtils.daysBetween(monthStart, now).coerceAtLeast(0)
+        val amountByDay = DoubleArray(currentDayIndex + 1)
+
+        expenses.forEach { expense ->
+            if (expense.transactionType != DomainTransactionType.PURCHASE) return@forEach
+            if (expense.isNotMine) return@forEach
+            if (expense.date !in monthStart..now) return@forEach
+
+            val dayIndex = TimePeriodUtils.daysBetween(monthStart, expense.date)
+            if (dayIndex in amountByDay.indices) {
+                amountByDay[dayIndex] += expense.effectiveAmount
+            }
+        }
+
+        var runningTotal = 0.0
+        return amountByDay.map { amount ->
+            runningTotal += amount
+            runningTotal
+        }
+    }
+
+    fun buildSpendingPace(expenses: List<ExpenseSnapshot>): SpendingPace {
+        val now = timeProvider.now()
+        val currentMonthStart = TimePeriodUtils.getStartOfMonth(now)
+        val previousMonthStart = TimePeriodUtils.getStartOfMonth(TimePeriodUtils.addMonths(now, -1))
+        val daysInMonth = TimePeriodUtils.getDaysInMonth(now)
+        val daysElapsed = (TimePeriodUtils.daysBetween(currentMonthStart, now) + 1).coerceAtLeast(1)
+
+        val monthSpent = expenses.sumOfIfOwnedPurchase { it.date in currentMonthStart..now }
+        val previousMonthSpent = expenses.sumOfIfOwnedPurchase {
+            it.date >= previousMonthStart && it.date < currentMonthStart
+        }
+
+        val averageMonthlyTotal = expenses
+            .filter {
+                it.transactionType == DomainTransactionType.PURCHASE &&
+                    !it.isNotMine &&
+                    it.date < currentMonthStart
+            }
+            .groupBy { "${TimePeriodUtils.getYear(it.date)}-${TimePeriodUtils.getMonth(it.date)}" }
+            .values
+            .map { monthExpenses -> monthExpenses.sumOf { it.effectiveAmount } }
+            .takeIf { it.isNotEmpty() }
+            ?.average()
+
+        val previousMonthDays = TimePeriodUtils.getDaysInMonth(previousMonthStart)
+        val baselineDailyRate = if (previousMonthSpent > 0.0 && previousMonthDays > 0) {
+            previousMonthSpent / previousMonthDays
+        } else {
+            0.0
+        }
+
+        val projectedTotal = SpendingPaceProjection.calculateProjectedTotal(
+            monthSpent = monthSpent,
+            daysElapsed = daysElapsed,
+            daysInMonth = daysInMonth,
+            baselineDailyRate = baselineDailyRate
+        )
+
+        val currentDailyRate = monthSpent / daysElapsed
+        val pacePercentage = if (baselineDailyRate > 0.0) {
+            (currentDailyRate / baselineDailyRate * 100.0).toFloat()
+        } else {
+            0f
+        }
+
+        val paceStatus = when {
+            baselineDailyRate <= 0.0 -> PaceStatus.NO_BASELINE
+            pacePercentage < PACE_UNDER_THRESHOLD -> PaceStatus.UNDER_PACE
+            pacePercentage > PACE_OVER_THRESHOLD -> PaceStatus.OVER_PACE
+            else -> PaceStatus.ON_PACE
+        }
+
+        return SpendingPace(
+            currentMonthSpent = monthSpent,
+            daysElapsed = daysElapsed,
+            daysInMonth = daysInMonth,
+            projectedTotal = projectedTotal,
+            previousMonthTotal = previousMonthSpent.takeIf { it > 0.0 },
+            averageMonthlyTotal = averageMonthlyTotal,
+            pacePercentage = pacePercentage,
+            paceStatus = paceStatus
+        )
+    }
+
+    fun assemble(
+        expenses: List<ExpenseSnapshot>,
+        manualRecurringEntities: List<ManualRecurringExpense>,
+        detectedRecurringPatterns: List<RecurringPattern>,
+        plannedExpenses: List<PlannedExpense>,
+        savingsGoals: List<SavingsGoal>,
+        budgetStatuses: List<BudgetStatusSnapshot>
+    ): ForecastInput {
+        return ForecastInput(
+            pastSumDaily = buildPastSumDaily(expenses),
+            recurringPatterns = mergeRecurringPatterns(
+                manualEntities = manualRecurringEntities,
+                detectedPatterns = detectedRecurringPatterns
+            ),
+            plannedExpenses = plannedExpenses,
+            savingsGoals = savingsGoals,
+            budgetStatuses = budgetStatuses,
+            spendingPace = buildSpendingPace(expenses)
+        )
+    }
+
+    private fun merchantKey(merchantName: String): String {
+        return MerchantKeyGenerator.generate(merchantName)
+            .takeIf { it.isNotBlank() }
+            ?: merchantName.lowercase().trim()
+    }
+
+    private fun rollNextExpectedDateForward(
+        nextExpectedDate: Long,
+        frequency: com.yourname.expensetracker.domain.model.RecurrenceFrequency,
+        now: Long
+    ): Long {
+        if (frequency.isIrregular) return nextExpectedDate
+
+        val todayStart = TimePeriodUtils.getStartOfDay(now)
+        var rolledDate = nextExpectedDate
+        while (rolledDate < todayStart) {
+            val candidate = RecurrenceCalculator.addFrequencyInterval(rolledDate, frequency)
+            if (candidate == rolledDate) break
+            rolledDate = candidate
+        }
+
+        return rolledDate
+    }
+
+    private fun List<ExpenseSnapshot>.sumOfIfOwnedPurchase(
+        predicate: (ExpenseSnapshot) -> Boolean
+    ): Double = filter {
+        it.transactionType == DomainTransactionType.PURCHASE &&
+            !it.isNotMine &&
+            predicate(it)
+    }.sumOf { it.effectiveAmount }
+
+    companion object {
+        const val HIGH_CONFIDENCE_THRESHOLD: Float = 0.70f
+        private const val PACE_UNDER_THRESHOLD = 90f
+        private const val PACE_OVER_THRESHOLD = 110f
+    }
+
+    private data class ManualPatternSignature(
+        val ruleSignature: RecurringRuleSignature,
+        val categoryId: Long?
+    )
+
+    private data class RecurringRuleSignature(
+        val merchantKey: String,
+        val frequency: com.yourname.expensetracker.domain.model.RecurrenceFrequency,
+        val amountMinor: Long,
+        val currency: String
+    )
+}

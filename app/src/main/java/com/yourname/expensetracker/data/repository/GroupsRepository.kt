@@ -52,7 +52,7 @@ interface GroupsRepository {
         paidById: Long,
         splitType: SplitType,
         customSplitsJson: String? = null,
-        date: Long = System.currentTimeMillis()
+        date: Long
     ): GroupExpenseCreationResult
 
     /**
@@ -67,7 +67,7 @@ interface GroupsRepository {
         currency: String,
         splitType: SplitType,
         customSplitsJson: String? = null,
-        date: Long = System.currentTimeMillis(),
+        date: Long,
         transactionType: TransactionType = TransactionType.PURCHASE,
         notes: String? = null
     ): GroupExpenseCreationResult

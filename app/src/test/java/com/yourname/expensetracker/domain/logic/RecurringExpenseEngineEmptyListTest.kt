@@ -79,13 +79,28 @@ class RecurringExpenseEngineEmptyListTest {
         assertTrue("Should filter out old expenses", patterns.isEmpty())
     }
 
-    private fun createExpense(date: Long, amount: Double, merchant: String): Expense {
+    @Test
+    fun `getPatterns groups merchant aliases by canonical merchant key`() = runTest {
+        val now = System.currentTimeMillis()
+        val expenses = listOf(
+            createExpense(now - 90L * 24 * 60 * 60 * 1000, 15.99, "Netflix", merchantKey = "netflix"),
+            createExpense(now - 60L * 24 * 60 * 60 * 1000, 15.99, "NETFLIX", merchantKey = "netflix"),
+            createExpense(now - 30L * 24 * 60 * 60 * 1000, 15.99, "Netflix.com", merchantKey = "netflix")
+        )
+
+        val patterns = engine.getPatterns(expenses)
+
+        assertEquals(1, patterns.size)
+        assertEquals(RecurrenceFrequency.MONTHLY, patterns.single().frequency)
+    }
+
+    private fun createExpense(date: Long, amount: Double, merchant: String, merchantKey: String = merchant.lowercase().replace(" ", "")): Expense {
         return Expense(
             id = 0,
             amount = amount,
             currency = "EUR",
             merchant = merchant,
-            merchantKey = merchant.lowercase().replace(" ", ""),
+            merchantKey = merchantKey,
             transactionType = TransactionType.PURCHASE,
             date = date,
             categoryId = null,

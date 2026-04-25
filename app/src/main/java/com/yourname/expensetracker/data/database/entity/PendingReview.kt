@@ -32,7 +32,7 @@ enum class PendingReviewStatus {
         )
     ],
     indices = [
-        Index(value = ["rawNotificationId"]),
+        Index(value = ["rawNotificationId"], unique = true),
         Index(value = ["scannedReceiptId"]),
         Index(value = ["status"]),
         Index(value = ["status", "createdAt"]),

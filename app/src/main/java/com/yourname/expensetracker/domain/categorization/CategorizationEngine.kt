@@ -450,18 +450,26 @@ class CategorizationEngine @Inject constructor(
     private fun getCategoryRepository(): CategoryRepository = categoryRepositoryProvider.get()
 
     suspend fun learnMerchantCategory(merchantName: String, categoryId: Long) {
-        val normalized = merchantNormalizer.normalize(merchantName, autoCreate = false).canonical.normalizedName
-        val canonicalResult = canonicalizer.canonicalize(normalized)
-        val normalizedCanonical = greeklishNormalizer.normalize(canonicalResult.canonicalName)
-        
-        val mapping = MerchantCategory(
-            merchantPattern = normalized,
-            categoryId = categoryId,
-            normalizedCanonicalName = normalizedCanonical
-        )
+        val mapping = createMerchantCategoryMapping(merchantName, categoryId)
         merchantCategoryRepository.insert(mapping)
         invalidateCache()
-        Timber.d("Learned merchant: $normalized -> category $categoryId (canonical: $normalizedCanonical)")
+        Timber.d(
+            "Learned merchant: ${mapping.merchantPattern} -> category $categoryId (canonical: ${mapping.normalizedCanonicalName})"
+        )
+    }
+
+    suspend fun createMerchantCategoryMapping(merchantName: String, categoryId: Long): MerchantCategory {
+        val normalized = merchantNormalizer.normalize(merchantName, autoCreate = false).canonical.normalizedName
+        return MerchantCategory(
+            merchantPattern = normalized,
+            categoryId = categoryId,
+            normalizedCanonicalName = normalizedCanonicalNameForMerchant(normalized)
+        )
+    }
+
+    fun normalizedCanonicalNameForMerchant(merchantName: String): String {
+        val canonicalResult = canonicalizer.canonicalize(merchantName.lowercase())
+        return greeklishNormalizer.normalize(canonicalResult.canonicalName)
     }
 
     suspend fun invalidateCache() {

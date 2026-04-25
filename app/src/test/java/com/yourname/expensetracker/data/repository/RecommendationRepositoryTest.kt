@@ -88,7 +88,7 @@ class RecommendationRepositoryTest {
     @Test
     fun `expireAll calls DAO expireOld`() = runTest {
         val userId = "user123"
-        val timestamp = System.currentTimeMillis()
+        val timestamp = timeProvider.now()
 
         coEvery { dao.expireOld(userId, timestamp, any()) } returns Unit
 
@@ -100,7 +100,7 @@ class RecommendationRepositoryTest {
     @Test
     fun `expireOld calls DAO expireOld`() = runTest {
         val userId = "user123"
-        val timestamp = System.currentTimeMillis()
+        val timestamp = timeProvider.now()
 
         coEvery { dao.expireOld(userId, timestamp, any()) } returns Unit
 

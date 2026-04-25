@@ -2,12 +2,11 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.createExpense
-import com.yourname.expensetracker.data.database.dao.CategoryTotal
-import com.yourname.expensetracker.data.database.dao.MerchantStats
-import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -29,8 +28,8 @@ class InsightsEngineDeepTest {
     private lateinit var spendingPaceCalculator: SpendingPaceCalculator
 
     private val categories = listOf(
-        Category(id = 1L, name = "Food", icon = "🍽️", color = "#FF0000"),
-        Category(id = 2L, name = "Transport", icon = "🚌", color = "#00FF00")
+        AnalyticsCategoryRef(id = 1L, name = "Food", icon = "🍽️", color = "#FF0000"),
+        AnalyticsCategoryRef(id = 2L, name = "Transport", icon = "🚌", color = "#00FF00")
     )
 
     @Before
@@ -46,28 +45,26 @@ class InsightsEngineDeepTest {
             timeProvider = timeProvider,
             spendingPaceCalculator = spendingPaceCalculator,
             anomalyDetector = mockk(relaxed = true),
-            monthlyComparisonCalculator = mockk(relaxed = true),
-            categoryInsightEngine = mockk(relaxed = true),
-            merchantInsightEngine = mockk(relaxed = true),
-            dayOfWeekAnalyzer = mockk(relaxed = true)
+            monthlyComparisonCalculator = MonthlyComparisonCalculator(),
+            categoryInsightEngine = CategoryInsightEngine(),
+            merchantInsightEngine = MerchantInsightEngine(),
+            dayOfWeekAnalyzer = DayOfWeekAnalyzer()
         )
 
         coEvery { recurringEngine.getPatterns(any()) } returns emptyList()
-        coEvery { expenseRepository.getLargestExpenseForPeriod(any(), any()) } returns null
-        coEvery { expenseRepository.getLargestExpenseForMerchant(any(), any(), any()) } returns null
-        coEvery { expenseRepository.getMerchantStats() } returns emptyList()
-        coEvery { expenseRepository.getTopMerchantsForPeriod(any(), any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getLargestExpenseSnapshotForPeriod(any(), any()) } returns null
+        coEvery { expenseRepository.getLargestExpenseSnapshotForMerchant(any(), any(), any()) } returns null
     }
 
     @Test
     fun `monthly comparison computes delta and percentage`() = runTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 15)
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returnsMany listOf(600.0, 400.0, 600.0, 400.0)
-        coEvery { expenseRepository.getCountForPeriod(any(), any()) } returnsMany listOf(6, 4, 4)
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
-        coEvery { expenseRepository.getAllMerchantStats() } returns emptyList()
+        val expenses = buildList {
+            repeat(6) { add(createExpense(date = "2026-04-${it + 1}", amount = 100.0, category = "Food")) }
+            repeat(4) { add(createExpense(date = "2026-03-${it + 1}", amount = 100.0, category = "Food")) }
+        }
 
-        val snapshot = engine.generateInsights(categories, emptyList())
+        val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() })
 
         assertApproxEquals(600.0, snapshot.monthlyComparison.currentTotal)
         assertApproxEquals(200.0, snapshot.monthlyComparison.changeAmount ?: 0.0)
@@ -77,10 +74,6 @@ class InsightsEngineDeepTest {
     @Test
     fun `spending pace canonical formula and status are correct`() = runTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 16)
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returnsMany listOf(1600.0, 930.0, 1600.0, 930.0)
-        coEvery { expenseRepository.getCountForPeriod(any(), any()) } returnsMany listOf(16, 31, 31)
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
-        coEvery { expenseRepository.getAllMerchantStats() } returns emptyList()
         every { spendingPaceCalculator.calculate(any(), any(), any(), any()) } returns SpendingPace(
             currentMonthSpent = 1600.0,
             daysElapsed = 16,
@@ -103,18 +96,14 @@ class InsightsEngineDeepTest {
     @Test
     fun `category breakdown groups by category and computes percentage`() = runTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 15)
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0
-        coEvery { expenseRepository.getCountForPeriod(any(), any()) } returns 0
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returnsMany listOf(
-            listOf(
-                CategoryTotal(categoryId = 1L, total = 300.0, txCount = 3),
-                CategoryTotal(categoryId = 2L, total = 100.0, txCount = 1)
-            ),
-            emptyList()
+        val expenses = listOf(
+            createExpense(date = "2026-04-01", amount = 100.0, category = "Food"),
+            createExpense(date = "2026-04-02", amount = 100.0, category = "Food"),
+            createExpense(date = "2026-04-03", amount = 100.0, category = "Food"),
+            createExpense(date = "2026-04-04", amount = 100.0, category = "Transport")
         )
-        coEvery { expenseRepository.getAllMerchantStats() } returns emptyList()
 
-        val snapshot = engine.generateInsights(categories, emptyList())
+        val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() })
         val food = snapshot.categoryInsights.first { it.category.id == 1L }
         val transport = snapshot.categoryInsights.first { it.category.id == 2L }
 
@@ -126,24 +115,17 @@ class InsightsEngineDeepTest {
     @Test
     fun `top merchants sorted descending and recurrence uses narrow variance`() = runTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 15)
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0
-        coEvery { expenseRepository.getCountForPeriod(any(), any()) } returns 0
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
-        coEvery { expenseRepository.getAllMerchantStats() } returns listOf(
-            MerchantStats("alpha_key", "Alpha", 400.0, 4, 100.0, 95.0, 110.0, 0L, 0L),
-            MerchantStats("beta_key", "Beta", 120.0, 2, 60.0, 10.0, 130.0, 0L, 0L)
-        )
-
         val allExpenses = listOf(
-            expenseWithKey(createExpense(date = "2026-04-01", amount = 95.0, merchant = "Alpha"), "alpha_key"),
-            expenseWithKey(createExpense(date = "2026-04-05", amount = 100.0, merchant = "Alpha"), "alpha_key"),
-            expenseWithKey(createExpense(date = "2026-04-09", amount = 110.0, merchant = "Alpha"), "alpha_key")
+            createExpense(date = "2026-04-01", amount = 95.0, merchant = "Alpha").toSnapshot().copy(merchantKey = "alpha_key"),
+            createExpense(date = "2026-04-05", amount = 100.0, merchant = "Alpha").toSnapshot().copy(merchantKey = "alpha_key"),
+            createExpense(date = "2026-04-09", amount = 110.0, merchant = "Alpha").toSnapshot().copy(merchantKey = "alpha_key"),
+            createExpense(date = "2026-04-12", amount = 120.0, merchant = "Beta").toSnapshot().copy(merchantKey = "beta_key")
         )
 
         val snapshot = engine.generateInsights(categories, allExpenses)
 
-        assertEquals("alpha_key", snapshot.topMerchants.first().merchant)
-        assertTrue(!snapshot.topMerchants.first().isLikelyRecurring)
+        assertEquals("Alpha", snapshot.topMerchants.first().merchant)
+        assertTrue(snapshot.topMerchants.first().isLikelyRecurring)
         assertTrue((snapshot.topMerchants.first().stdDeviation ?: 0.0) > 0.0)
         assertTrue(!snapshot.topMerchants.last().isLikelyRecurring)
     }
@@ -151,18 +133,13 @@ class InsightsEngineDeepTest {
     @Test
     fun `day of week pattern aggregates using effective amount`() = runTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 15)
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0
-        coEvery { expenseRepository.getCountForPeriod(any(), any()) } returns 0
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
-        coEvery { expenseRepository.getAllMerchantStats() } returns emptyList()
-
         val mondayShared = createExpense(
             date = "2026-03-02", amount = 100.0, effectiveAmount = 40.0,
             isSharedExpense = true, myShareAmount = 40.0, merchant = "Shared"
         )
         val mondayNormal = createExpense(date = "2026-03-09", amount = 30.0, merchant = "Normal")
 
-        val snapshot = engine.generateInsights(categories, listOf(mondayShared, mondayNormal))
+        val snapshot = engine.generateInsights(categories, listOf(mondayShared, mondayNormal).map { it.toSnapshot() })
         val monday = snapshot.dayOfWeekPattern.first { it.dayName == "Mon" }
 
         assertApproxEquals(70.0, monday.totalSpent)
@@ -173,18 +150,13 @@ class InsightsEngineDeepTest {
     @Test
     fun `average and median transaction size should use effective amount`() = runTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 10)
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0
-        coEvery { expenseRepository.getCountForPeriod(any(), any()) } returns 0
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
-        coEvery { expenseRepository.getAllMerchantStats() } returns emptyList()
-
         val expenses = listOf(
             createExpense(date = "2026-04-01", amount = 100.0, effectiveAmount = 20.0, isSharedExpense = true, myShareAmount = 20.0),
             createExpense(date = "2026-04-02", amount = 50.0),
             createExpense(date = "2026-04-03", amount = 30.0)
         )
 
-        val snapshot = engine.generateInsights(categories, expenses)
+        val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() })
 
         // Canonical expectation: avg=(20+50+30)/3=33.33, median=30
         assertApproxEquals(33.33, snapshot.averageTransactionSize, 0.1)
@@ -194,11 +166,6 @@ class InsightsEngineDeepTest {
     @Test
     fun `empty dataset yields safe defaults`() = runTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 10)
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0
-        coEvery { expenseRepository.getCountForPeriod(any(), any()) } returns 0
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
-        coEvery { expenseRepository.getAllMerchantStats() } returns emptyList()
-
         val snapshot = engine.generateInsights(categories, emptyList())
 
         assertApproxEquals(0.0, snapshot.monthlyComparison.currentTotal)
@@ -213,5 +180,30 @@ class InsightsEngineDeepTest {
             .toInstant()
             .toEpochMilli()
 
-    private fun expenseWithKey(expense: Expense, merchantKey: String): Expense = expense.copy(merchantKey = merchantKey)
+    private fun com.yourname.expensetracker.data.database.entity.Expense.toSnapshot(): ExpenseSnapshot {
+        return ExpenseSnapshot(
+            id = id,
+            amount = amount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            merchantKey = merchantKey,
+            transactionType = when (transactionType) {
+                TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+                TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+                TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+                TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+                TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+            },
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            transferDirection = when (transferDirection) {
+                com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+                com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+                null -> null
+            },
+            notes = notes
+        )
+    }
 }

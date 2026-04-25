@@ -31,6 +31,7 @@ class CloudWarrantyExtractionServiceTest {
         currency = "EUR"
     )
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `extractWarranty returns null when API key is missing`() {
         val service = CloudWarrantyExtractionService(

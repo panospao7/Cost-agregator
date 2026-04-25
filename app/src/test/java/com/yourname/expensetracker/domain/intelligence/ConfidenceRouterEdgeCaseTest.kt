@@ -22,10 +22,11 @@ class ConfidenceRouterEdgeCaseTest {
     private val userCorrectionRepository = mockk<UserCorrectionRepository>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val fixedNow = 1_700_000_000_000L
 
     @Before
     fun setup() {
-        every { timeProvider.now() } returns System.currentTimeMillis()
+        every { timeProvider.now() } returns fixedNow
         router = ConfidenceRouter(sourceStatsRepository, userCorrectionRepository, classifier, timeProvider)
         coEvery { sourceStatsRepository.getByPackage(any()) } returns null
         coEvery { userCorrectionRepository.getMerchantTotalCorrections(any()) } returns 0
@@ -79,7 +80,8 @@ class ConfidenceRouterEdgeCaseTest {
             SourceStats(
                 packageName = "com.test",
                 totalNotifications = 0,
-                acceptedAsExpense = 0
+                acceptedAsExpense = 0,
+                lastSeen = fixedNow
             )
         
         val result = router.route(makeParsed(0.90f), "com.test")

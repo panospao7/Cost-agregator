@@ -1,10 +1,10 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -60,16 +60,20 @@ class InsightsEngineValidationTest {
         transactionType: TransactionType = TransactionType.PURCHASE,
         merchant: String = "Test Merchant",
         isNotMine: Boolean = false
-    ): Expense {
-        return Expense(
+    ): ExpenseSnapshot {
+        return ExpenseSnapshot(
             id = id,
             amount = amount,
+            effectiveAmount = amount,
             currency = "EUR",
             merchant = merchant,
-            transactionType = transactionType,
+            merchantKey = null,
+            transactionType = transactionType.toDomainTransactionType(),
             date = date,
             categoryId = categoryId,
-            isNotMine = isNotMine
+            isNotMine = isNotMine,
+            transferDirection = null,
+            notes = null
         )
     }
 
@@ -136,7 +140,7 @@ class InsightsEngineValidationTest {
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
         
         // When: Generate insights
-        val categories = listOf(Category(id = 1, name = "Food", icon = "food", color = "#FF0000"))
+        val categories = listOf(cat(id = 1))
         val snapshot = engine.generateInsights(categories, emptyList())
         
         // Then: Percentage change should be 20%
@@ -164,7 +168,7 @@ class InsightsEngineValidationTest {
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
         
         // When: Generate insights
-        val categories = listOf(Category(id = 1, name = "Food", icon = "food", color = "#FF0000"))
+        val categories = listOf(cat(id = 1))
         val snapshot = engine.generateInsights(categories, emptyList())
         
         // Then: No percentage change (no previous data)
@@ -188,7 +192,7 @@ class InsightsEngineValidationTest {
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
         
         // When: Generate insights
-        val categories = listOf(Category(id = 1, name = "Food", icon = "food", color = "#FF0000"))
+        val categories = listOf(cat(id = 1))
         val snapshot = engine.generateInsights(categories, emptyList())
         
         // Then: Percentage change should be -20%
@@ -218,11 +222,8 @@ class InsightsEngineValidationTest {
         
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
         
-        // Mock repository to return our test expenses
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
-        
         // When: Generate insights
-        val categories = listOf(Category(id = 1, name = "Food", icon = "food", color = "#FF0000"))
+        val categories = listOf(cat(id = 1))
         val snapshot = engine.generateInsights(categories, expenses)
         
         // Then: Average transaction size should be (5 + 15 + 50 + 150 + 500) / 5 = 144
@@ -245,7 +246,7 @@ class InsightsEngineValidationTest {
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
         
         // When: Generate insights
-        val categories = listOf(Category(id = 1, name = "Food", icon = "food", color = "#FF0000"))
+        val categories = listOf(cat(id = 1))
         val snapshot = engine.generateInsights(categories, expenses)
         
         // Then: Should only consider purchases (100, 200, 150)
@@ -268,7 +269,7 @@ class InsightsEngineValidationTest {
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
         
         // When: Generate insights
-        val categories = listOf(Category(id = 1, name = "Food", icon = "food", color = "#FF0000"))
+        val categories = listOf(cat(id = 1))
         val snapshot = engine.generateInsights(categories, expenses)
         
         // Then: Should only consider mine (100, 150)
@@ -322,7 +323,7 @@ class InsightsEngineValidationTest {
         every { timeProvider.now() } returns createDate(2024, 4, 10, 12, 0)
         
         // When: Generate insights
-        val categories = listOf(Category(id = 1, name = "Food", icon = "food", color = "#FF0000"))
+        val categories = listOf(cat(id = 1))
         val snapshot = engine.generateInsights(categories, currentExpenses)
         
         // Then: Projected total should be 1500 (500 * 30 / 10)
@@ -361,7 +362,7 @@ class InsightsEngineValidationTest {
         every { timeProvider.now() } returns createDate(2024, 4, 3, 12, 0)
         
         // When: Generate insights
-        val categories = listOf(Category(id = 1, name = "Food", icon = "food", color = "#FF0000"))
+        val categories = listOf(cat(id = 1))
         val snapshot = engine.generateInsights(categories, currentExpenses)
         
         // Then: Projected total should use conservative estimate (900, not 3000)
@@ -390,7 +391,7 @@ class InsightsEngineValidationTest {
             paceStatus = PaceStatus.ON_PACE
         )
 
-        val categories = listOf(Category(id = 1, name = "Food", icon = "food", color = "#FF0000"))
+        val categories = listOf(cat(id = 1))
         val snapshot = engine.generateInsights(categories, expenses)
 
         verify(exactly = 1) {
@@ -422,7 +423,7 @@ class InsightsEngineValidationTest {
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
         
         // When: Generate insights
-        val categories = listOf(Category(id = 1, name = "Food", icon = "food", color = "#FF0000"))
+        val categories = listOf(cat(id = 1))
         val snapshot = engine.generateInsights(categories, expenses)
         
         // Then: Day of week pattern should have correct totals
@@ -469,9 +470,9 @@ class InsightsEngineValidationTest {
         
         // When: Generate insights
         val categories = listOf(
-            Category(id = 1, name = "Food", icon = "food", color = "#FF0000"),
-            Category(id = 2, name = "Transport", icon = "transport", color = "#00FF00"),
-            Category(id = 3, name = "Entertainment", icon = "ent", color = "#0000FF")
+            cat(id = 1, name = "Food", icon = "food", color = "#FF0000"),
+            cat(id = 2, name = "Transport", icon = "transport", color = "#00FF00"),
+            cat(id = 3, name = "Entertainment", icon = "ent", color = "#0000FF")
         )
         
         val snapshot = engine.generateInsights(categories, emptyList())
@@ -517,9 +518,7 @@ class InsightsEngineValidationTest {
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
         
         // When: Generate insights
-        val categories = listOf(
-            Category(id = 1, name = "Food", icon = "food", color = "#FF0000")
-        )
+        val categories = listOf(cat(id = 1, name = "Food", icon = "food", color = "#FF0000"))
         
         val snapshot = engine.generateInsights(categories, emptyList())
         
@@ -538,7 +537,7 @@ class InsightsEngineValidationTest {
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
         
         // When: Generate insights
-        val categories = listOf(Category(id = 1, name = "Food", icon = "food", color = "#FF0000"))
+        val categories = listOf(cat(id = 1))
         val snapshot = engine.generateInsights(categories, emptyList())
         
         // Then: All values should be zero or empty
@@ -560,5 +559,24 @@ class InsightsEngineValidationTest {
     // Helper function to set date (for readability)
     private fun setDate(year: Int, month: Int, day: Int): Long {
         return createDate(year, month, day)
+    }
+
+    private fun cat(
+        id: Long,
+        name: String = "Food",
+        icon: String = "food",
+        color: String = "#FF0000"
+    ): AnalyticsCategoryRef {
+        return AnalyticsCategoryRef(id = id, name = name, icon = icon, color = color)
+    }
+
+    private fun TransactionType.toDomainTransactionType(): DomainTransactionType {
+        return when (this) {
+            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
     }
 }

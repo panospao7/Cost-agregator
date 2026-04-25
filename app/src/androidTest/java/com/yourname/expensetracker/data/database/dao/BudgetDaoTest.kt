@@ -1,6 +1,5 @@
 package com.yourname.expensetracker.data.database.dao
 
-import android.database.sqlite.SQLiteConstraintException
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -14,7 +13,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -225,53 +223,46 @@ class BudgetDaoTest {
         assertNull(overall)
     }
 
-    // ── B4: ABORT semantics & transactional switching tests ───────────
+    // ── B4: transactional single-active-budget enforcement tests ──────
 
     @Test
-    fun insert_with_ABORT_rejects_duplicate_active_overall_budget() = runBlocking {
-        // First active overall budget succeeds
-        budgetDao.insert(
+    fun updateAndEnforceActiveScope_deactivates_previous_active_overall_budget() = runBlocking {
+        val originalId = budgetDao.insert(
             makeBudget(amount = 500.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_745_600_000L)
         )
+        val replacementId = budgetDao.insert(
+            makeBudget(amount = 600.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_800_000_000L, isActive = false)
+        )
 
-        // Second active overall budget must fail (partial unique index)
-        try {
-            budgetDao.insert(
-                makeBudget(amount = 600.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_745_600_000L)
-            )
-            fail("Expected SQLiteConstraintException for duplicate active overall budget")
-        } catch (_: SQLiteConstraintException) {
-            // expected — ABORT raises instead of silently replacing
-        }
+        budgetDao.updateAndEnforceActiveScope(
+            budgetDao.getById(replacementId)!!.copy(isActive = true)
+        )
 
-        // Only the original budget should exist
         val all = budgetDao.getAll()
-        assertEquals(1, all.size)
-        assertEquals(500.0, all[0].amount, 0.0001)
+        assertEquals(2, all.size)
+        assertTrue(!budgetDao.getById(originalId)!!.isActive)
+        assertTrue(budgetDao.getById(replacementId)!!.isActive)
     }
 
     @Test
-    fun insert_with_ABORT_rejects_duplicate_active_category_budget() = runBlocking {
+    fun updateAndEnforceActiveScope_deactivates_previous_active_category_budget() = runBlocking {
         val catId = database.categoryDao().insert(
             Category(name = "Groceries", icon = "🛒", color = "#43A047")
         )
 
-        budgetDao.insert(
+        val originalId = budgetDao.insert(
             makeBudget(amount = 200.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_745_600_000L, categoryId = catId)
         )
+        val replacementId = budgetDao.insert(
+            makeBudget(amount = 300.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_800_000_000L, categoryId = catId, isActive = false)
+        )
 
-        try {
-            budgetDao.insert(
-                makeBudget(amount = 300.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_745_600_000L, categoryId = catId)
-            )
-            fail("Expected SQLiteConstraintException for duplicate active category budget")
-        } catch (_: SQLiteConstraintException) {
-            // expected
-        }
+        budgetDao.updateAndEnforceActiveScope(
+            budgetDao.getById(replacementId)!!.copy(isActive = true)
+        )
 
-        val all = budgetDao.getAll()
-        assertEquals(1, all.size)
-        assertEquals(200.0, all[0].amount, 0.0001)
+        assertTrue(!budgetDao.getById(originalId)!!.isActive)
+        assertTrue(budgetDao.getById(replacementId)!!.isActive)
     }
 
     @Test
@@ -352,13 +343,71 @@ class BudgetDaoTest {
 
     @Test
     fun insertAndActivateCategory_requires_non_null_categoryId() = runBlocking {
-        try {
+        runCatching {
             budgetDao.insertAndActivateCategory(
                 makeBudget(amount = 100.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_745_600_000L, categoryId = null)
             )
-            fail("Expected IllegalArgumentException for null categoryId")
-        } catch (e: IllegalArgumentException) {
-            assertTrue(e.message!!.contains("non-null categoryId"))
+        }.onSuccess {
+            throw AssertionError("Expected IllegalArgumentException for null categoryId")
+        }.onFailure { error ->
+            assertTrue(error is IllegalArgumentException)
+            assertTrue(error.message!!.contains("non-null categoryId"))
         }
+    }
+
+    @Test
+    fun setActiveAndEnforceScope_deactivates_previous_active_overall_budget() = runBlocking {
+        val originalId = budgetDao.insert(
+            makeBudget(amount = 500.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_745_600_000L)
+        )
+        val replacementId = budgetDao.insert(
+            makeBudget(amount = 700.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_800_000_000L, isActive = false)
+        )
+
+        budgetDao.setActiveAndEnforceScope(replacementId, true)
+
+        assertTrue(!budgetDao.getById(originalId)!!.isActive)
+        assertTrue(budgetDao.getById(replacementId)!!.isActive)
+    }
+
+    @Test
+    fun setActiveAndEnforceScope_deactivates_previous_active_category_budget() = runBlocking {
+        val catId = database.categoryDao().insert(
+            Category(name = "Utilities", icon = "💡", color = "#FBC02D")
+        )
+        val originalId = budgetDao.insert(
+            makeBudget(amount = 120.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_745_600_000L, categoryId = catId)
+        )
+        val replacementId = budgetDao.insert(
+            makeBudget(amount = 180.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_800_000_000L, categoryId = catId, isActive = false)
+        )
+
+        budgetDao.setActiveAndEnforceScope(replacementId, true)
+
+        assertTrue(!budgetDao.getById(originalId)!!.isActive)
+        assertTrue(budgetDao.getById(replacementId)!!.isActive)
+    }
+
+    @Test
+    fun replaceAllAndEnforceActiveScopes_keeps_only_latest_active_budget_per_scope() = runBlocking {
+        val catId = database.categoryDao().insert(
+            Category(name = "Travel", icon = "✈️", color = "#5E35B1")
+        )
+
+        budgetDao.replaceAllAndEnforceActiveScopes(
+            listOf(
+                makeBudget(amount = 100.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_700_000_000L, isActive = true),
+                makeBudget(amount = 200.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_800_000_000L, isActive = true),
+                makeBudget(amount = 300.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_700_000_000L, categoryId = catId, isActive = true),
+                makeBudget(amount = 400.0, period = BudgetPeriod.MONTHLY, startDate = 1_706_800_000_000L, categoryId = catId, isActive = true)
+            )
+        )
+
+        val all = budgetDao.getAll().sortedBy { it.id }
+        assertEquals(4, all.size)
+        assertEquals(1, all.count { it.categoryId == null && it.isActive })
+        assertEquals(1, all.count { it.categoryId == catId && it.isActive })
+        assertEquals(200.0, all.last { it.categoryId == null && it.isActive }.amount, 0.0001)
+        assertEquals(400.0, all.last { it.categoryId == catId && it.isActive }.amount, 0.0001)
     }
 }

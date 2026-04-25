@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OnDeviceReceiptItemCategorizationServiceTest {
@@ -29,6 +30,7 @@ class OnDeviceReceiptItemCategorizationServiceTest {
                 CategoryRef(id = 1L, name = "Misc"),
                 CategoryRef(id = 2L, name = "Dining")
             ),
+            cloudCategoryOptions = emptyList(),
             totalTax = null,
             currency = "EUR"
         )
@@ -38,6 +40,9 @@ class OnDeviceReceiptItemCategorizationServiceTest {
         assertNotNull(result)
         val item = result!!.items.single()
         assertEquals("Dining", item.suggestedCategory?.categoryName)
-        assertEquals(0.6f, item.confidence)
+        assertTrue(
+            "Expected confidence ~0.6f but was ${item.confidence}",
+            kotlin.math.abs(item.confidence - 0.6f) < 0.01f
+        )
     }
 }

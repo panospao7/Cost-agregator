@@ -1,11 +1,12 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
-import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
+import com.yourname.expensetracker.domain.ai.model.TransactionInsightAmountBucket
+import com.yourname.expensetracker.domain.ai.model.TransactionInsightPromptInput
+import com.yourname.expensetracker.domain.model.UiText
 import java.time.Instant
 import java.time.ZoneId
-import java.util.Locale
 import javax.inject.Inject
 import kotlin.math.absoluteValue
 
@@ -14,103 +15,84 @@ class TransactionInsightInputBuilder @Inject constructor() {
     fun build(transaction: Expense, shouldRedact: Boolean): DashboardBriefingInput {
         val amountProfile = amountProfile(
             amount = transaction.amount,
-            currency = transaction.currency,
             shouldRedact = shouldRedact
         )
-        val merchantLabel = sanitizeMerchant(transaction.merchant, shouldRedact)
+        val merchantName = normalizeMerchantFact(transaction.merchant)
+        val currencyCode = normalizeCurrencyCode(transaction.currency)
 
         return DashboardBriefingInput(
             dateKey = Instant.ofEpochMilli(transaction.date)
                 .atZone(ZoneId.systemDefault())
                 .toLocalDate()
                 .toString(),
-            weatherHeadline = if (shouldRedact) {
-                "New ${amountProfile.headlineDescriptor} transaction recorded"
-            } else {
-                "New transaction recorded"
-            },
-            weatherSummary = "$merchantLabel - ${amountProfile.displayLabel}",
+            weatherHeadline = UiText.from(""),
+            weatherSummary = UiText.from(""),
             discretionaryBudget = 0.0,
-            totalCommitted = amountProfile.numericValue,
+            totalCommitted = amountProfile.promptAmount,
             totalLikely = 0.0,
             pendingReviewCount = 0,
-            currentMonthSpent = amountProfile.numericValue,
+            currentMonthSpent = amountProfile.promptAmount,
             topCategories = emptyList(),
-            budgetWarnings = buildBudgetWarnings(transaction, amountProfile, shouldRedact),
-            upcomingItems = listOf(
-                if (shouldRedact) {
-                    "Transaction from: $merchantLabel (${amountProfile.displayLabel})"
-                } else {
-                    "Transaction from: $merchantLabel"
-                }
+            budgetWarnings = emptyList(),
+            upcomingItems = emptyList(),
+            transactionInsight = TransactionInsightPromptInput(
+                merchantName = merchantName,
+                promptAmount = amountProfile.promptAmount,
+                currencyCode = currencyCode,
+                redactForPrompt = shouldRedact,
+                amountBucket = amountProfile.amountBucket,
+                isHighValue = amountProfile.isHighValue
             )
         )
     }
 
-    private fun buildBudgetWarnings(
-        transaction: Expense,
-        amountProfile: AmountProfile,
-        shouldRedact: Boolean
-    ): List<String> {
-        if (!amountProfile.isHighValue) return emptyList()
+    private fun normalizeMerchantFact(rawMerchant: String): String =
+        rawMerchant.trim().take(80).ifBlank { "Unknown" }
 
-        return listOf(
-            if (shouldRedact) {
-                "Higher-value transaction bucket: ${amountProfile.displayLabel}"
-            } else {
-                "High-value transaction: ${formatExactAmount(transaction.amount, transaction.currency)}"
-            }
-        )
-    }
+    private fun normalizeCurrencyCode(currency: String): String =
+        currency.trim().take(8).ifBlank { "CUR" }
 
-    private fun sanitizeMerchant(rawMerchant: String, shouldRedact: Boolean): String {
-        val trimmed = rawMerchant.trim().take(80).ifBlank { "Unknown" }
-        return if (shouldRedact) {
-            CloudPiiSanitizer.sanitizeMerchant(trimmed, shouldRedact = true)
-        } else {
-            trimmed
-        }
-    }
-
-    private fun amountProfile(amount: Double, currency: String, shouldRedact: Boolean): AmountProfile {
+    private fun amountProfile(amount: Double, shouldRedact: Boolean): AmountProfile {
+        val bucket = amountBucket(amount)
         if (!shouldRedact) {
             return AmountProfile(
-                numericValue = amount,
-                displayLabel = formatExactAmount(amount, currency),
-                headlineDescriptor = "transaction",
+                promptAmount = amount,
+                amountBucket = bucket,
                 isHighValue = amount.absoluteValue > HIGH_VALUE_THRESHOLD
             )
         }
 
         val absAmount = amount.absoluteValue
-        val currencyLabel = currency.trim().take(8).ifBlank { "CUR" }
-        val (headlineDescriptor, displayLabel, representativeAmount) = when {
-            absAmount < 20.0 -> Triple("small", "under 20 $currencyLabel", 10.0)
-            absAmount < 50.0 -> Triple("everyday", "20-49 $currencyLabel", 35.0)
-            absAmount < 100.0 -> Triple("moderate", "50-99 $currencyLabel", 75.0)
-            absAmount < 250.0 -> Triple("mid-range", "100-249 $currencyLabel", 175.0)
-            absAmount < 500.0 -> Triple("larger", "250-499 $currencyLabel", 375.0)
-            absAmount < 1000.0 -> Triple("large", "500-999 $currencyLabel", 750.0)
-            else -> Triple("very large", "1000+ $currencyLabel", 1000.0)
+        val representativeAmount = when (bucket) {
+            TransactionInsightAmountBucket.UNDER_20 -> 10.0
+            TransactionInsightAmountBucket.RANGE_20_49 -> 35.0
+            TransactionInsightAmountBucket.RANGE_50_99 -> 75.0
+            TransactionInsightAmountBucket.RANGE_100_249 -> 175.0
+            TransactionInsightAmountBucket.RANGE_250_499 -> 375.0
+            TransactionInsightAmountBucket.RANGE_500_999 -> 750.0
+            TransactionInsightAmountBucket.RANGE_1000_PLUS -> 1000.0
         }
 
         return AmountProfile(
-            numericValue = if (amount < 0) -representativeAmount else representativeAmount,
-            displayLabel = displayLabel,
-            headlineDescriptor = headlineDescriptor,
+            promptAmount = if (amount < 0) -representativeAmount else representativeAmount,
+            amountBucket = bucket,
             isHighValue = absAmount > HIGH_VALUE_THRESHOLD
         )
     }
 
-    private fun formatExactAmount(amount: Double, currency: String): String {
-        val currencyLabel = currency.trim().take(8).ifBlank { "CUR" }
-        return String.format(Locale.US, "%.2f %s", amount, currencyLabel)
+    private fun amountBucket(amount: Double): TransactionInsightAmountBucket = when {
+        amount.absoluteValue < 20.0 -> TransactionInsightAmountBucket.UNDER_20
+        amount.absoluteValue < 50.0 -> TransactionInsightAmountBucket.RANGE_20_49
+        amount.absoluteValue < 100.0 -> TransactionInsightAmountBucket.RANGE_50_99
+        amount.absoluteValue < 250.0 -> TransactionInsightAmountBucket.RANGE_100_249
+        amount.absoluteValue < 500.0 -> TransactionInsightAmountBucket.RANGE_250_499
+        amount.absoluteValue < 1000.0 -> TransactionInsightAmountBucket.RANGE_500_999
+        else -> TransactionInsightAmountBucket.RANGE_1000_PLUS
     }
 
     private data class AmountProfile(
-        val numericValue: Double,
-        val displayLabel: String,
-        val headlineDescriptor: String,
+        val promptAmount: Double,
+        val amountBucket: TransactionInsightAmountBucket,
         val isHighValue: Boolean
     )
 

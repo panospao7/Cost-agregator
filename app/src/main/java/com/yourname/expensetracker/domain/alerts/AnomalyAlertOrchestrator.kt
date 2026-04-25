@@ -1,13 +1,15 @@
 package com.yourname.expensetracker.domain.alerts
 
-import com.yourname.expensetracker.data.database.dao.AnomalyAlertDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.data.database.entity.AnomalyAlert
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.analytics.AnomalyDetector
+import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryRef
 import com.yourname.expensetracker.domain.analytics.AnomalyMethod
 import com.yourname.expensetracker.domain.analytics.AnomalyTransaction
 import com.yourname.expensetracker.domain.analytics.MonthPeriod
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -32,7 +34,7 @@ class AnomalyAlertOrchestrator @Inject constructor(
     private val anomalyDetector: AnomalyDetector,
     private val notificationService: NotificationService,
     private val expenseDao: ExpenseDao,
-    private val anomalyAlertDao: AnomalyAlertDao,
+    private val anomalyAlertRepository: AnomalyAlertRepository,
     private val timeProvider: TimeProvider
 ) {
     private val inFlightExpenseIds = ConcurrentHashMap.newKeySet<Long>()
@@ -92,13 +94,25 @@ class AnomalyAlertOrchestrator @Inject constructor(
                     emptyList()
                 }
                 val allExpenses = historicalExpenses + listOf(expense.expense)
-                val categoryMap = expense.category?.let { mapOf(it.id to it) } ?: emptyMap()
+                val expenseSnapshots = allExpenses.map { it.toSnapshot() }
+                val categoryMap = expense.category
+                    ?.let {
+                        mapOf(
+                            it.id to AnalyticsCategoryRef(
+                                id = it.id,
+                                name = it.name,
+                                icon = it.icon,
+                                color = it.color
+                            )
+                        )
+                    }
+                    ?: emptyMap()
 
                 // Run anomaly detection
                 val anomalies = anomalyDetector.detect(
                     monthPeriod = detectionPeriod,
                     categoryMap = categoryMap,
-                    allExpenses = allExpenses
+                    allExpenses = expenseSnapshots
                 )
 
                 // Check if this expense was flagged
@@ -129,7 +143,7 @@ class AnomalyAlertOrchestrator @Inject constructor(
                 val notificationId = ANOMALY_NOTIFICATION_BASE_ID + (expenseId % 100000).toInt()
 
                 // Record the alert in database
-                val alert = AnomalyAlert(
+                val alert = NewAnomalyAlert(
                     expenseId = expenseId,
                     merchant = expense.expense.merchant,
                     category = expense.category?.name,
@@ -139,7 +153,7 @@ class AnomalyAlertOrchestrator @Inject constructor(
                     alertedAt = now
                 )
 
-                val alertId = anomalyAlertDao.insert(alert)
+                val alertId = anomalyAlertRepository.insert(alert)
                 Timber.d("Created anomaly alert $alertId for expense $expenseId")
 
                 // Send the notification
@@ -175,7 +189,7 @@ class AnomalyAlertOrchestrator @Inject constructor(
         val category = expense.category?.name
 
         // Check if we've already alerted for this exact expense
-        val lastAlertForExpense = anomalyAlertDao.getLastAlertForExpense(expense.expense.id)
+        val lastAlertForExpense = anomalyAlertRepository.getLastAlertForExpense(expense.expense.id)
         if (lastAlertForExpense != null) {
             Timber.d("Already alerted for expense ${expense.expense.id}")
             return false
@@ -192,7 +206,7 @@ class AnomalyAlertOrchestrator @Inject constructor(
         }
 
         // Check if user has marked this merchant as "looks_normal" multiple times
-        val looksNormalCount = anomalyAlertDao.getLooksNormalCountForMerchant(merchant)
+        val looksNormalCount = anomalyAlertRepository.getLooksNormalCountForMerchant(merchant)
         if (looksNormalCount >= LOOKS_NORMAL_THRESHOLD) {
             // Only alert if deviation is very high (5x normal)
             val maxDeviation = anomalies.maxOf { it.deviationMultiple }
@@ -210,7 +224,7 @@ class AnomalyAlertOrchestrator @Inject constructor(
      */
     private suspend fun isMerchantCooldownActive(merchant: String, now: Long): Boolean {
         val sinceMs = now - MERCHANT_COOLDOWN_MS
-        val lastAlert = anomalyAlertDao.getLastAlertForMerchant(merchant, sinceMs)
+        val lastAlert = anomalyAlertRepository.getLastAlertForMerchant(merchant, sinceMs)
         return lastAlert != null
     }
 
@@ -219,7 +233,7 @@ class AnomalyAlertOrchestrator @Inject constructor(
      */
     private suspend fun isCategoryCooldownActive(category: String, now: Long): Boolean {
         val sinceMs = now - CATEGORY_COOLDOWN_MS
-        val lastAlert = anomalyAlertDao.getLastAlertForCategory(category, sinceMs)
+        val lastAlert = anomalyAlertRepository.getLastAlertForCategory(category, sinceMs)
         return lastAlert != null
     }
 
@@ -281,6 +295,33 @@ class AnomalyAlertOrchestrator @Inject constructor(
         val year = calendar.get(java.util.Calendar.YEAR)
         val month = calendar.get(java.util.Calendar.MONTH)
         return MonthPeriod(year, month, startMs, now + 1L)
+    }
+
+    private fun com.yourname.expensetracker.data.database.entity.Expense.toSnapshot(): ExpenseSnapshot {
+        return ExpenseSnapshot(
+            id = id,
+            amount = amount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            merchantKey = merchantKey,
+            transactionType = when (transactionType) {
+                com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+                com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+                com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+                com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+                com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+            },
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            transferDirection = when (transferDirection) {
+                com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+                com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+                null -> null
+            },
+            notes = notes
+        )
     }
 
     /**

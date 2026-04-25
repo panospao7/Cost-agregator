@@ -26,11 +26,18 @@ import com.yourname.expensetracker.data.database.dao.WeeklyTotal
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import androidx.room.withTransaction
 import androidx.sqlite.db.SimpleSQLiteQuery
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -70,6 +77,9 @@ class ExpenseRepository @Inject constructor(
     // that downstream consumers (analytics, forecasting, cash-flow, financial
     // weather) receive the complete dataset rather than a silently truncated one.
     fun getAllExpenses(): Flow<List<Expense>> = expenseDao.getAllFlowUncapped()
+
+    fun getAllExpenseSnapshots(): Flow<List<ExpenseSnapshot>> =
+        getAllExpenses().map { expenses -> expenses.map { expense -> expense.toExpenseSnapshot() } }
 
     fun getExpensesWithCategory(limit: Int = 200): Flow<List<ExpenseWithCategory>> =
         expenseDao.getAllWithCategoryFlow(limit)
@@ -440,8 +450,8 @@ class ExpenseRepository @Inject constructor(
         if (transferDirection != null) {
             transferDirectionAnalytics.recordUserCorrection(
                 transferId = expense.id,
-                fromDirection = expense.transferDirection,
-                toDirection = transferDirection
+                fromDirection = expense.transferDirection?.toDomainTransferDirection(),
+                toDirection = transferDirection.toDomainTransferDirection()
             )
         }
     }
@@ -451,9 +461,13 @@ class ExpenseRepository @Inject constructor(
         isNotMine: Boolean,
         ownerName: String?
     ) {
+        val normalized = expense.copy(
+            isNotMine = isNotMine,
+            ownerName = ownerName
+        ).normalizeOwnership()
+
         database.withTransaction {
-            expenseDao.updateIsNotMine(expense.id, isNotMine)
-            expenseDao.updateOwnerName(expense.id, ownerName)
+            applyOwnershipDetails(expense.id, normalized)
         }
     }
 
@@ -464,12 +478,63 @@ class ExpenseRepository @Inject constructor(
         mySharePercentage: Int?,
         myShareAmount: Double?
     ) {
+        val normalized = expense.copy(
+            isSharedExpense = isSharedExpense,
+            sharedWithName = sharedWithName,
+            mySharePercentage = mySharePercentage,
+            myShareAmount = myShareAmount
+        ).normalizeOwnership()
+
         database.withTransaction {
-            expenseDao.updateIsSharedExpense(expense.id, isSharedExpense)
-            expenseDao.updateSharedWithName(expense.id, sharedWithName)
-            expenseDao.updateMySharePercentage(expense.id, mySharePercentage)
-            expenseDao.updateMyShareAmount(expense.id, myShareAmount)
+            applyOwnershipDetails(expense.id, normalized)
         }
+    }
+
+    /**
+     * Atomic update of **all** ownership fields in a single transaction.
+     *
+     * This is the preferred entry point when the UI can change both the
+     * "not mine" and "shared expense" flags at the same time (e.g. the
+     * `EditOwnershipDialog`).  Calling [updateNotMineDetails] followed by
+     * [updateSharedExpenseDetails] is **unsafe** because the second call
+     * operates on the original [Expense] object whose `isNotMine` value is
+     * stale, causing it to overwrite the flag that the first call just
+     * persisted.
+     *
+     * All parameters are taken from the UI; [Expense.normalizeOwnership] is
+     * applied once to guarantee mutual exclusivity before the six columns
+     * are written atomically via [applyOwnershipDetails].
+     */
+    suspend fun updateOwnership(
+        expense: Expense,
+        isNotMine: Boolean,
+        ownerName: String?,
+        isSharedExpense: Boolean,
+        sharedWithName: String?,
+        mySharePercentage: Int?,
+        myShareAmount: Double?
+    ) {
+        val normalized = expense.copy(
+            isNotMine = isNotMine,
+            ownerName = ownerName,
+            isSharedExpense = isSharedExpense,
+            sharedWithName = sharedWithName,
+            mySharePercentage = mySharePercentage,
+            myShareAmount = myShareAmount
+        ).normalizeOwnership()
+
+        database.withTransaction {
+            applyOwnershipDetails(expense.id, normalized)
+        }
+    }
+
+    private suspend fun applyOwnershipDetails(expenseId: Long, normalized: Expense) {
+        expenseDao.updateIsNotMine(expenseId, normalized.isNotMine)
+        expenseDao.updateOwnerName(expenseId, normalized.ownerName)
+        expenseDao.updateIsSharedExpense(expenseId, normalized.isSharedExpense)
+        expenseDao.updateSharedWithName(expenseId, normalized.sharedWithName)
+        expenseDao.updateMySharePercentage(expenseId, normalized.mySharePercentage)
+        expenseDao.updateMyShareAmount(expenseId, normalized.myShareAmount)
     }
 
     suspend fun searchMerchants(query: String): List<MerchantSuggestion> {
@@ -514,6 +579,9 @@ class ExpenseRepository @Inject constructor(
     suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense> =
         expenseDao.getExpensesBetweenUncapped(startDate, endDate)
 
+    suspend fun getExpenseSnapshotsBetween(startDate: Long, endDate: Long): List<ExpenseSnapshot> =
+        getExpensesBetween(startDate, endDate).map { expense -> expense.toExpenseSnapshot() }
+
     suspend fun getExpensesBetweenPaged(
         startDate: Long,
         endDate: Long,
@@ -533,6 +601,9 @@ class ExpenseRepository @Inject constructor(
 
     suspend fun getExpensesSince(since: Long): List<Expense> =
         expenseDao.getExpensesSince(since)
+
+    suspend fun getExpenseSnapshotsSince(since: Long): List<ExpenseSnapshot> =
+        getExpensesSince(since).map { expense -> expense.toExpenseSnapshot() }
 
     /**
      * Reactive (Flow) variant of [getExpensesBetween] — returns the complete
@@ -565,14 +636,30 @@ class ExpenseRepository @Inject constructor(
     suspend fun getLargestExpenseForPeriod(startMs: Long, endMs: Long): Expense? =
         expenseDao.getLargestExpenseForPeriod(startMs, endMs)
 
+    suspend fun getLargestExpenseSnapshotForPeriod(startMs: Long, endMs: Long): ExpenseSnapshot? =
+        getLargestExpenseForPeriod(startMs, endMs)?.toExpenseSnapshot()
+
     suspend fun getLargestExpenseForMerchant(merchant: String, startMs: Long, endMs: Long): Expense? =
         expenseDao.getLargestExpenseForMerchant(merchant, startMs, endMs)
+
+    suspend fun getLargestExpenseSnapshotForMerchant(merchant: String, startMs: Long, endMs: Long): ExpenseSnapshot? =
+        getLargestExpenseForMerchant(merchant, startMs, endMs)?.toExpenseSnapshot()
 
     suspend fun getDailyTotalsForPeriod(startMs: Long, endMs: Long): List<DailyTotal> =
         expenseDao.getDailyTotalsForPeriod(startMs, endMs)
 
     suspend fun getWeeklyTotalsForPeriod(startMs: Long, endMs: Long): List<WeeklyTotal> =
-        expenseDao.getWeeklyTotalsForPeriod(startMs, endMs)
+        expenseDao.getWeeklyTotalsForPeriod(startMs, endMs).mapNotNull { weekly ->
+            parseCanonicalWeekStart(weekly.weekKey)?.let { weekStart ->
+                WeeklyTotal(
+                    weekKey = weekly.weekKey,
+                    startDate = weekStart,
+                    endDate = TimePeriodUtils.addDays(weekStart, 7),
+                    total = weekly.total,
+                    txCount = weekly.txCount
+                )
+            }
+        }
 
     suspend fun getRecurringCandidates(): List<MerchantStats> =
         expenseDao.getRecurringCandidates()
@@ -703,4 +790,45 @@ class ExpenseRepository @Inject constructor(
             transactionType = transactionType.name
         )
     }
+
+    private fun Expense.toExpenseSnapshot(): ExpenseSnapshot {
+        return ExpenseSnapshot(
+            id = id,
+            amount = amount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            merchantKey = merchantKey,
+            transactionType = transactionType.toDomainTransactionType(),
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            transferDirection = transferDirection?.toDomainTransferDirection(),
+            notes = notes
+        )
+    }
+
+    private fun parseCanonicalWeekStart(weekStartDate: String): Long? {
+        return runCatching {
+            LocalDate.parse(weekStartDate, DateTimeFormatter.ISO_LOCAL_DATE)
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        }.getOrNull()
+    }
+
+    private fun TransactionType.toDomainTransactionType(): DomainTransactionType =
+        when (this) {
+            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
+
+    private fun TransferDirection.toDomainTransferDirection(): DomainTransferDirection =
+        when (this) {
+            TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+            TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+        }
 }

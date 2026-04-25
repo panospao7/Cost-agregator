@@ -7,18 +7,52 @@ data class FinancialForecast(
     val generatedAt: Instant,
     val confidence: Double, // 0.0 - 1.0
     val components: ForecastComponents,
-    val actionableInsights: List<String>
+    val actionableInsights: List<UiText>
 ) {
     init {
         require(confidence.isFinite() && confidence in 0.0..1.0) { "confidence must be between 0 and 1" }
-        require(actionableInsights.none { it.isBlank() }) { "actionableInsights cannot contain blank entries" }
+        require(actionableInsights.none { insight -> (insight as? UiText.DynamicString)?.value?.isBlank() == true }) {
+            "actionableInsights cannot contain blank entries"
+        }
     }
 }
 
-enum class ForecastHorizon(val days: Int, val displayName: String) {
-    NEXT_7_DAYS(7, "Next 7 Days"),
-    NEXT_30_DAYS(30, "Next 30 Days"),
-    REST_OF_MONTH(0, "Rest of Month") // 0 means calculate based on calendar
+enum class ForecastHorizon(
+    val displayName: String,
+    val kind: Kind,
+    val fixedDays: Int? = null
+) {
+    NEXT_7_DAYS(
+        displayName = "Next 7 Days",
+        kind = Kind.FIXED_DAYS,
+        fixedDays = 7
+    ),
+    NEXT_30_DAYS(
+        displayName = "Next 30 Days",
+        kind = Kind.FIXED_DAYS,
+        fixedDays = 30
+    ),
+    REST_OF_MONTH(
+        displayName = "Rest of Month",
+        kind = Kind.REST_OF_MONTH
+    );
+
+    enum class Kind {
+        FIXED_DAYS,
+        REST_OF_MONTH
+    }
+
+    val isCalendarBound: Boolean
+        get() = kind == Kind.REST_OF_MONTH
+
+    @Deprecated(
+        message = "Use fixedDays and kind. REST_OF_MONTH is calendar-bound and has no fixed day count.",
+        replaceWith = ReplaceWith("fixedDays")
+    )
+    val days: Int
+        get() = fixedDays ?: throw UnsupportedOperationException(
+            "${name} is calendar-bound and does not have a fixed day count"
+        )
 }
 
 data class ForecastComponents(
@@ -58,14 +92,14 @@ enum class RiskLevel {
 data class WeatherNarrative(
     val state: com.yourname.expensetracker.domain.model.dashboard.WeatherState,
     val icon: String,
-    val headline: String,
-    val summary: String,
+    val headline: UiText,
+    val summary: UiText,
     val details: List<NarrativeSection> = emptyList()
 ) {
     init {
         require(icon.isNotBlank()) { "icon cannot be blank" }
-        require(headline.isNotBlank()) { "headline cannot be blank" }
-        require(summary.isNotBlank()) { "summary cannot be blank" }
+        require((headline as? UiText.DynamicString)?.value?.isBlank() != true) { "headline cannot be blank" }
+        require((summary as? UiText.DynamicString)?.value?.isBlank() != true) { "summary cannot be blank" }
     }
 }
 

@@ -33,6 +33,31 @@ class HybridExpenseClassifierTest {
     }
 
     @Test
+    fun `invalidateCategorySnapshot refreshes renamed categories without restart`() = runBlocking {
+        coEvery { categoryRepository.getAll() } returnsMany listOf(
+            listOf(foodCategory, uncategorizedCategory),
+            listOf(foodCategory.copy(name = "Dining"), uncategorizedCategory)
+        )
+        coEvery { categorizationEngine.categorize(any()) } returns CategorizationResult(
+            categoryId = foodCategory.id,
+            categoryName = foodCategory.name,
+            confidence = 0.95,
+            matchType = CategorizationMatchType.EXACT,
+            explanation = "Exact match"
+        )
+
+        hybridClassifier.initialize()
+        hybridClassifier.invalidateCategorySnapshot()
+
+        val result = hybridClassifier.classify(
+            merchantName = "Starbucks",
+            amount = 10.0
+        )
+
+        assertEquals("Dining", result.categoryName)
+    }
+
+    @Test
     fun `merchant dictionary matching takes priority`() = runBlocking {
         // Mock CategorizationEngine to return Food for Starbucks
         coEvery { categorizationEngine.categorize("Starbucks") } returns CategorizationResult(

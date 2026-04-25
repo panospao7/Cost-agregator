@@ -1,0 +1,403 @@
+# D3 Remediation Plan — Domain Boundaries, DTOs, and Localization Leakage
+
+## Technical Plan
+### Scope
+- In:
+  - Remaining D.3 standalone-medium issues tied to duplicated model families, domain/data boundary leaks, DTO ownership, mapper placement, and localization/presentation leakage.
+  - Specifically: duplicate `CategoryBreakdown` / `DashboardCategoryBreakdown` / `PeriodRange` families; `SavingsGoal` entity/domain leakage; domain AI builders importing data-layer internals; `MonteCarloBudgetImpact` and `NarrativeGenerator` presentation leakage; remaining hardcoded/resource-boundary text issues in targeted UI/domain surfaces.
+  - Direct compile-neighbor files that must move with those fixes to keep the codebase buildable and prevent partial boundary regressions.
+- Out:
+  - DB schema/migration work.
+  - Unrelated time/dispatcher/cancellation issues unless a tiny compile-safe shim is unavoidable.
+  - Large analytics-logic rewrites not required for the boundary cleanup.
+  - Broad clean-architecture rewrites outside the targeted medium-issue surfaces.
+- Assumptions / unknowns:
+  - `domain.model.PeriodRange` should remain the canonical generic half-open window type; the analytics-specific range should be renamed rather than forced into the generic contract.
+  - The `CategoryBreakdown` family is not truly one shape today; rename/deconflict by bounded context is safer than forcing one mega-DTO with optional fields.
+  - `UiText` can be extended to carry typed formatting args (for example money/date payloads) without breaking current resource resolution.
+  - Localizing assistant starter prompts may change AI interpretation quality; if that risk is unacceptable, visible labels and submitted canonical queries must be split.
+
+### Grouped Issue List
+- **Group A — Duplicate / ambiguous model families**
+  - `domain/model/CategoryBreakdown.kt`
+  - `domain/analytics/AnalyticsModels.kt` (`CategoryBreakdown`)
+  - `domain/model/dashboard/DashboardCategoryBreakdown.kt`
+  - `domain/analytics/AdvancedAnalyticsDashboard.kt` (`DashboardCategoryBreakdown`)
+  - `domain/model/PeriodRange.kt`
+  - `domain/analytics/AdvancedAnalyticsModels.kt` (`PeriodRange`)
+  - `DashboardContractsAdapter.observeCategoryBreakdown()` still fabricates `changeFromLastPeriod = 0.0`.
+- **Group B — Domain/data boundary leaks still open**
+  - `SavingsGoal` entity/domain split still leaks into domain and UI:
+    - `FinancialHealthScoreV2.kt`
+    - `CalculateFinancialForecastUseCase.kt`
+    - `MonthlySavingsSweepUseCase.kt`
+    - `LifestyleSavingsPromptUseCase.kt`
+    - `SmartSavingsEngine.kt`
+    - `AutomatedSavingsRuleEngine.kt`
+    - `SavingsGoalsViewModel.kt`
+    - `SavingsGoalsScreen.kt`
+    - `SavingsModule.kt`
+    - `data/repository/SavingsGoalRepository.kt`
+  - `ReviewExplanationInputBuilder.kt` imports `data.ai.provider.internal.sha256Prefix`.
+  - Adjacent current-code leaks in the same family:
+    - `FinancialQueryInterpretationInputBuilder.kt`
+    - `CategorizationAssistInputBuilder.kt`
+- **Group C — DTO / mapper ownership gaps**
+  - `data/repository/SavingsGoalRepository.kt` mixes domain mapping with entity-first public APIs.
+  - `DashboardContractsAdapter.kt` and `DashboardAnalyticsRepository` depend on duplicate category DTO families and fabricated fields.
+  - `CaptureAssistModels.kt` still allows invalid `CategorizationAssistInput.amount` values.
+  - `MonteCarloBudgetImpact.kt` still stores UI-shaped fields.
+- **Group D — Domain presentation / localization leakage**
+  - `NarrativeGenerator.kt` still formats currency in domain.
+  - `MonteCarloBudgetImpact.kt` / `GetMonteCarloBudgetImpactUseCase.kt` still produce formatted strings and EUR-default display text.
+  - `AdvancedAnalyticsDashboard.kt` still imports `R` and emits `UiText.StringResource` from domain.
+  - `ComputeMoneyRadarUseCase.kt` still emits `UiText.StringResource(R.string...)` from domain.
+  - `SavingsGamificationEngine.kt` and `InsightsEngine.kt` still emit hardcoded English / preformatted currency strings in domain.
+- **Group E — Presentation-layer localization cleanup still open**
+  - `AssistantSheet.kt` starter prompt labels are localized but submitted query text is hardcoded English.
+  - `ReceiptScanScreen.kt` still hardcodes permission-denial, settings, and retry copy.
+  - `LifestyleInflationScreen.kt` still hardcodes `SavingsPromptCard` copy.
+  - `SpendingChallengesScreen.kt` still hardcodes placeholder / target text.
+
+### Files
+- create: `docs/plans/D3-REMEDIATION-PLAN-DOMAIN-BOUNDARIES.md`
+- create: `app/src/main/java/com/yourname/expensetracker/domain/analytics/AnalyticsPeriodRange.kt` *(or equivalent renamed analytics-only range DTO)*
+- create: `app/src/main/java/com/yourname/expensetracker/domain/analytics/AnalyticsCategoryBreakdown.kt` *(or equivalent renamed analytics-only category DTO)*
+- create: `app/src/main/java/com/yourname/expensetracker/domain/text/UiTextArg.kt` *(or equivalent typed formatting-arg contract)*
+- create: `app/src/main/java/com/yourname/expensetracker/domain/common/Hashing.kt` *(or equivalent domain-safe hash helper)*
+- create: `app/src/main/java/com/yourname/expensetracker/domain/privacy/RedactionSanitizer.kt` *(or equivalent domain-safe redaction abstraction if provider sanitizer stays data-owned)*
+- create: `app/src/main/java/com/yourname/expensetracker/ui/mappers/MonteCarloBudgetImpactUiMapper.kt` *(or equivalent presentation mapper)*
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/model/CategoryBreakdown.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/model/dashboard/DashboardCategoryBreakdown.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/model/PeriodRange.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/model/SavingsGoal.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/model/budget/MonteCarloBudgetImpact.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/model/FinancialForecast.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/analytics/AnalyticsModels.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/analytics/AdvancedAnalyticsModels.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/analytics/AdvancedAnalyticsDashboard.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/analytics/InsightsEngine.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/logic/NarrativeGenerator.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/savings/SavingsGoalRepository.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/savings/SmartSavingsEngine.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/savings/AutomatedSavingsRuleEngine.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/savings/SavingsGamificationEngine.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/ai/model/CaptureAssistModels.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/ReviewExplanationInputBuilder.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/FinancialQueryInterpretationInputBuilder.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/CategorizationAssistInputBuilder.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/usecase/budget/GetMonteCarloBudgetImpactUseCase.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeMoneyRadarUseCase.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/DashboardRepositoryContracts.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/usecase/forecast/CalculateFinancialForecastUseCase.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/usecase/savings/MonthlySavingsSweepUseCase.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/domain/usecase/savings/LifestyleSavingsPromptUseCase.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/data/repository/AnalyticsRepository.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/data/repository/DashboardContractsAdapter.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/data/repository/FinancialWeatherRepository.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/di/SavingsModule.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/components/UiTextExtensions.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/components/CategoryBreakdownSheet.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/components/RetroCategoryBreakdownSheet.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/components/CategoryDonutChart.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/screens/home/HomeViewModel.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/screens/analytics/AnalyticsViewModel.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/screens/analytics/AdvancedAnalyticsScreen.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/screens/savings/SavingsGoalsViewModel.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/screens/savings/SavingsGoalsScreen.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/screens/assistant/AssistantSheet.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/screens/receiptscan/ReceiptScanScreen.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/screens/lifestyle/LifestyleInflationScreen.kt`
+- modify: `app/src/main/java/com/yourname/expensetracker/ui/screens/challenge/SpendingChallengesScreen.kt`
+- modify: `app/src/main/res/values/strings.xml`
+- modify: `docs/analyses and debug master/MASTER-ISSUE-REGISTRY.md`
+
+### File-Level Fix Plan
+- `domain/analytics/AnalyticsModels.kt`
+  - Rename analytics-only `CategoryBreakdown` to a unique analytics DTO name.
+  - Replace any `data.database.entity.Category` field with a domain-safe category reference/info DTO.
+- `domain/analytics/AdvancedAnalyticsModels.kt`
+  - Rename analytics-only `PeriodRange` to `AnalyticsPeriodRange` (or equivalent).
+- `domain/analytics/AdvancedAnalyticsDashboard.kt`
+  - Stop importing `R` from domain.
+  - Rename nested `DashboardCategoryBreakdown` to an analytics-owned name.
+  - Move resource/materialization to UI or adapter.
+- `data/repository/AnalyticsRepository.kt`
+  - Emit the renamed analytics DTO, not a Room-backed category breakdown shape.
+- `data/repository/DashboardContractsAdapter.kt`
+  - Map to the canonical dashboard breakdown DTO only.
+  - Replace fabricated `changeFromLastPeriod = 0.0` with real comparison data or remove the field upstream.
+- `domain/savings/SavingsGoalRepository.kt` + `data/repository/SavingsGoalRepository.kt`
+  - Make the domain interface the only contract domain/UI use.
+  - Keep entity-domain mapping inside data.
+- `FinancialHealthScoreV2.kt`, `CalculateFinancialForecastUseCase.kt`, `MonthlySavingsSweepUseCase.kt`, `LifestyleSavingsPromptUseCase.kt`, `SmartSavingsEngine.kt`, `AutomatedSavingsRuleEngine.kt`
+  - Replace `data.database.entity.SavingsGoal` and concrete data-repository usage with domain models/interfaces.
+- `SavingsGoalsViewModel.kt` + `SavingsGoalsScreen.kt`
+  - Stop using entity `SavingsGoal` directly in presentation.
+- `ReviewExplanationInputBuilder.kt`, `FinancialQueryInterpretationInputBuilder.kt`, `CategorizationAssistInputBuilder.kt`
+  - Replace `data.ai.provider.internal.*` imports with domain/common helpers or injected abstractions.
+- `CaptureAssistModels.kt`
+  - Enforce valid amount invariants at the DTO boundary.
+- `MonteCarloBudgetImpact.kt` + `GetMonteCarloBudgetImpactUseCase.kt`
+  - Remove display strings from domain; keep only raw assessment data and move rendering to a presentation mapper.
+- `NarrativeGenerator.kt`
+  - Replace domain-side formatted currency strings with semantic text + raw amount args.
+- `UiTextExtensions.kt`
+  - Add presentation-side support for typed money/date args while keeping existing `UiText` resolution backward-compatible during migration.
+- `ComputeMoneyRadarUseCase.kt`, `AdvancedAnalyticsDashboard.kt`, `SavingsGamificationEngine.kt`, `InsightsEngine.kt`
+  - Remove remaining resource ids / preformatted display text from domain outputs.
+- `AssistantSheet.kt`, `ReceiptScanScreen.kt`, `LifestyleInflationScreen.kt`, `SpendingChallengesScreen.kt`
+  - Extract remaining user-facing literals to resources.
+
+### Migration Strategy
+- Use additive changes first:
+  - Introduce new canonical/renamed DTOs before deleting old ones.
+  - Introduce presentation mappers / `UiText` typed-arg support before removing formatted domain fields.
+  - Introduce domain-safe repository operations before removing entity-first callers.
+- Keep boundary ownership strict during migration:
+  - Temporary shims may live in data or UI layers only.
+  - Domain must not add fresh `data.*` imports to bridge the move.
+- Prefer rename over forced unification where semantics differ:
+  - one generic `PeriodRange`
+  - analytics-specific range renamed
+  - category breakdowns deconflicted by bounded context, not merged into a nullable mega-model.
+- Rollback points:
+  - After each batch, the branch must compile cleanly.
+  - If a batch opens too much surface area, revert that batch only and keep any new helper hidden behind compatibility adapters until the next pass.
+
+### Recommended Batching Strategy
+- **Must be sequential:** Batch 1 first, then Batch 2.
+- **Can run in parallel after Batch 2 stabilizes:** Batch 3 (AI builder boundary) and Batch 4 (Monte Carlo raw contract).
+- **Should follow shared text/contract decisions:** Batch 5 after Batch 4, because the `UiText` typed-arg strategy should be settled once.
+- **Do last:** Batch 6 UI localization extraction, then Batch 7 docs/registry cleanup.
+
+### Implementation Steps
+1. **Batch 1 — Canonicalize duplicate model families before touching behavior**
+   - **Goal:** remove conceptual collisions around `CategoryBreakdown` and `PeriodRange` so later boundary cleanup has stable target contracts.
+   - **Primary files:**
+     - `domain/model/CategoryBreakdown.kt`
+     - `domain/analytics/AnalyticsModels.kt`
+     - `domain/model/dashboard/DashboardCategoryBreakdown.kt`
+     - `domain/analytics/AdvancedAnalyticsDashboard.kt`
+     - `domain/model/PeriodRange.kt`
+     - `domain/analytics/AdvancedAnalyticsModels.kt`
+     - `data/repository/AnalyticsRepository.kt`
+     - `data/repository/DashboardContractsAdapter.kt`
+     - `domain/usecase/dashboard/DashboardRepositoryContracts.kt`
+     - `ui/components/CategoryBreakdownSheet.kt`
+     - `ui/components/RetroCategoryBreakdownSheet.kt`
+     - `ui/components/CategoryDonutChart.kt`
+     - `ui/screens/analytics/AnalyticsViewModel.kt`
+     - `ui/screens/analytics/AdvancedAnalyticsScreen.kt`
+     - `ui/screens/home/HomeViewModel.kt`
+   - **Execution plan:**
+     - Keep `domain.model.PeriodRange` as the canonical half-open generic time window.
+     - Rename analytics-only `domain.analytics.PeriodRange` to `AnalyticsPeriodRange` and migrate imports.
+     - Rename analytics-only `CategoryBreakdown` DTOs to analytics-owned names.
+     - Decide whether `domain.model.dashboard.DashboardCategoryBreakdown` remains the dashboard contract or is renamed to `DashboardTopCategorySummary`; either way, only one dashboard DTO may own that concept.
+     - Replace fabricated `changeFromLastPeriod = 0.0` with real comparison data or remove the field.
+   - **Failure / rollback:**
+     - Do not delete old names in the same change that introduces replacements.
+     - Avoid typealiases that preserve ambiguity.
+   - **Validation:**
+     - `:app:compileDebugKotlin`
+     - `app/src/test/java/com/yourname/expensetracker/domain/analytics/AdvancedAnalyticsDashboardTest.kt`
+     - grep checks for duplicate public type names and Room-backed analytics DTOs
+   - **Complete when:**
+     - only one generic `PeriodRange` concept remains
+     - duplicate `CategoryBreakdown` families are deconflicted by bounded context
+     - dashboard breakdown no longer carries fabricated change data
+
+2. **Batch 2 — Finish `SavingsGoal` boundary cleanup end-to-end**
+   - **Goal:** make `SavingsGoal` a true domain contract and stop leaking entity/repository types into domain and UI logic.
+   - **Primary files:**
+     - `domain/model/SavingsGoal.kt`
+     - `domain/savings/SavingsGoalRepository.kt`
+     - `data/repository/SavingsGoalRepository.kt`
+     - `domain/health/FinancialHealthScoreV2.kt`
+     - `domain/usecase/forecast/CalculateFinancialForecastUseCase.kt`
+     - `domain/usecase/savings/MonthlySavingsSweepUseCase.kt`
+     - `domain/usecase/savings/LifestyleSavingsPromptUseCase.kt`
+     - `domain/savings/SmartSavingsEngine.kt`
+     - `domain/savings/AutomatedSavingsRuleEngine.kt`
+     - `data/repository/FinancialWeatherRepository.kt`
+     - `data/repository/DashboardContractsAdapter.kt`
+     - `ui/screens/savings/SavingsGoalsViewModel.kt`
+     - `ui/screens/savings/SavingsGoalsScreen.kt`
+     - `di/SavingsModule.kt`
+   - **Execution plan:**
+     - Expand the domain repository interface to cover the operations domain/UI actually use (`observe`, `read current`, `create`, `delete`, `increment`, etc.) with domain models only.
+     - Keep all entity-domain mapping inside `data/repository/SavingsGoalRepository.kt`.
+     - Migrate all domain call sites off `data.repository.SavingsGoalRepository` and `data.database.entity.SavingsGoal`.
+     - Migrate the savings UI off entity types so the boundary is closed end-to-end instead of only inside domain.
+     - Update DI bindings so domain engines receive the interface, not the data concrete type.
+   - **Failure / rollback:**
+     - Keep concrete data-repository methods available until all callers are moved.
+     - If write-path migration proves too wide, preserve temporary façade methods in data but expose only domain types upward.
+   - **Validation:**
+     - `:app:compileDebugKotlin`
+     - `app/src/test/java/com/yourname/expensetracker/ui/screens/savings/SavingsGoalsViewModelTest.kt`
+     - `app/src/test/java/com/yourname/expensetracker/data/repository/FinancialWeatherRepositoryTest.kt`
+     - grep checks for `data.database.entity.SavingsGoal` and `data.repository.SavingsGoalRepository` under `domain/**`
+   - **Complete when:**
+     - all targeted domain classes use domain `SavingsGoal`
+     - savings UI no longer renders or mutates entity objects directly
+     - `SavingsModule` injects only domain-facing repository contracts into engines
+
+3. **Batch 3 — Remove domain imports of data-layer internal AI helpers and tighten DTO boundaries**
+   - **Goal:** stop domain AI builders from importing `data.ai.provider.internal.*` and close the invalid-input hole on categorization-assist DTOs.
+   - **Primary files:**
+     - `domain/ai/usecase/ReviewExplanationInputBuilder.kt`
+     - `domain/ai/usecase/FinancialQueryInterpretationInputBuilder.kt`
+     - `domain/ai/usecase/CategorizationAssistInputBuilder.kt`
+     - `domain/ai/model/CaptureAssistModels.kt`
+     - new shared helper/interface files in `domain/common` / `domain/privacy`
+   - **Execution plan:**
+     - Introduce a domain-safe hash helper for stable pseudonymous aliases.
+     - Introduce a domain-safe redaction/sanitization contract; if the current provider sanitizer stays in data, wrap it behind an injected interface.
+     - Enforce `CategorizationAssistInput.amount` invariants (`finite && > 0`) at the DTO boundary.
+     - Define builder behavior for missing/invalid amounts explicitly; do not silently pass `0.0`/invalid values into the DTO.
+   - **Failure / rollback:**
+     - Keep redaction semantics behaviorally identical when swapping helpers; this batch is about ownership, not prompt-policy redesign.
+     - Any temporary adapter belongs in data/DI, not in domain.
+   - **Validation:**
+     - `:app:compileDebugKotlin`
+     - `app/src/test/java/com/yourname/expensetracker/domain/ai/usecase/ReviewExplanationInputBuilderTest.kt`
+     - `app/src/test/java/com/yourname/expensetracker/domain/ai/usecase/CategorizationAssistInputBuilderTest.kt`
+     - query interpretation tests around merchant/category alias redaction
+     - grep check for zero `data.ai.provider.internal` imports in `domain/**`
+   - **Complete when:**
+     - targeted domain builders depend only on domain/common abstractions
+     - invalid/non-positive categorization-assist amounts cannot enter the DTO
+     - redaction/hash outputs remain deterministic and covered by tests
+
+4. **Batch 4 — Refactor `MonteCarloBudgetImpact` into a raw domain contract**
+   - **Goal:** remove UI-formatted strings from the domain risk model and close both open Monte Carlo medium issues (`displayMessage`/`formattedOverrun` leakage and `€0.00` messaging).
+   - **Primary files:**
+     - `domain/model/budget/MonteCarloBudgetImpact.kt`
+     - `domain/usecase/budget/GetMonteCarloBudgetImpactUseCase.kt`
+     - `domain/usecase/dashboard/ComputeMoneyRadarUseCase.kt`
+     - `ui/components/dashboard/MoneyRadarWidget.kt`
+     - `ui/mappers/MonteCarloBudgetImpactUiMapper.kt`
+     - `ui/screens/home/HomeScreen.kt` *(if direct consumers exist)*
+   - **Execution plan:**
+     - Change `MonteCarloBudgetImpact` to raw data only (`budgetAmount`, `p50Forecast`, `expectedOverrun`, `probabilityOfOverrun`, `riskTier`, and explicit currency if required).
+     - Remove `displayMessage`, `formattedOverrun`, and `formatCurrency(...)` from the domain model.
+     - Move display text selection into a UI/presentation mapper that has access to string resources and currency formatting.
+     - Use raw `expectedOverrun` and `riskTier` in the mapper so high-risk / zero-overrun cases do not render “exceed by €0.00”.
+   - **Failure / rollback:**
+     - Introduce the UI mapper before deleting legacy fields so widgets can migrate safely.
+     - Migrate all direct consumers in the same batch to avoid mixed raw/legacy usage.
+   - **Validation:**
+     - `:app:compileDebugKotlin`
+     - `app/src/test/java/com/yourname/expensetracker/domain/usecase/budget/GetMonteCarloBudgetImpactUseCaseTest.kt`
+     - widget/home tests covering MEDIUM/HIGH/CRITICAL with `expectedOverrun == 0.0`
+     - grep check for zero `CurrencyFormatter.format(` in `MonteCarloBudgetImpact.kt`
+   - **Complete when:**
+     - the domain Monte Carlo model contains no display strings
+     - UI text is produced outside domain
+     - zero-overrun/high-probability cases no longer render misleading overrun wording
+
+5. **Batch 5 — Move currency/resource materialization out of domain text producers**
+   - **Goal:** finish the partially-resolved domain presentation cleanup by letting domain return semantic messages plus raw values, not preformatted strings or Android resource ids.
+   - **Primary files:**
+     - `domain/logic/NarrativeGenerator.kt`
+     - `domain/model/FinancialForecast.kt`
+     - `data/repository/FinancialWeatherRepository.kt`
+     - `ui/components/UiTextExtensions.kt`
+     - `domain/usecase/dashboard/ComputeMoneyRadarUseCase.kt`
+     - `domain/analytics/AdvancedAnalyticsDashboard.kt`
+     - `domain/savings/SavingsGamificationEngine.kt`
+     - `domain/analytics/InsightsEngine.kt` *(optional spillover; split if needed)*
+     - `app/src/main/res/values/strings.xml`
+   - **Execution plan:**
+     - Introduce a typed `UiText` argument contract for money/percent/date payloads.
+     - Update `NarrativeGenerator` to pass raw amounts (and currency context if needed) rather than preformatted strings.
+     - Update `UiTextExtensions` to resolve the new typed args into locale-aware strings.
+     - Convert targeted domain `UiText.StringResource(R.string...)` usages to `UiText.MessageKey(...)` or equivalent presentation-safe tokens.
+     - Sweep remaining obvious hardcoded/formatting leaks in the same family:
+       - `ComputeMoneyRadarUseCase`
+       - `AdvancedAnalyticsDashboard`
+       - `SavingsGamificationEngine`
+       - `InsightsEngine` only if capacity allows; otherwise split as Batch 5B with explicit follow-up ownership.
+   - **Failure / rollback:**
+     - Add resolver support for new typed args before migrating producers.
+     - Keep existing `UiText.StringResource` support intact while producers are gradually converted.
+   - **Validation:**
+     - `:app:compileDebugKotlin`
+     - `app/src/test/java/com/yourname/expensetracker/data/repository/FinancialWeatherRepositoryTest.kt`
+     - `app/src/test/java/com/yourname/expensetracker/domain/analytics/AdvancedAnalyticsDashboardTest.kt`
+     - targeted UI/widget smoke tests for weather and money-radar rendering
+     - grep checks for `R.string`, `UiText.StringResource(`, and `CurrencyFormatter.format(` in targeted `domain/**` files
+   - **Complete when:**
+     - targeted domain text producers emit only semantic keys/raw args
+     - final localization and currency formatting happen in UI/adapter code
+     - no targeted domain class imports Android resources
+
+6. **Batch 6 — Extract remaining hardcoded UI copy to resources**
+   - **Goal:** close the remaining presentation-layer localization issues after domain-side cleanup is stable.
+   - **Primary files:**
+     - `ui/screens/assistant/AssistantSheet.kt`
+     - `ui/screens/receiptscan/ReceiptScanScreen.kt`
+     - `ui/screens/lifestyle/LifestyleInflationScreen.kt`
+     - `ui/screens/challenge/SpendingChallengesScreen.kt`
+     - `app/src/main/res/values/strings.xml`
+   - **Execution plan:**
+     - Replace the hardcoded starter prompt query payloads with resource-backed strings or a structured prompt catalog containing both label and query resource IDs.
+     - Replace hardcoded camera-denial / open-settings / retry copy.
+     - Replace `SavingsPromptCard` hardcoded copy.
+     - Replace remaining `SpendingChallengesScreen` placeholder/target strings.
+     - If localized free-text prompts could reduce AI parsing quality, preserve an internal canonical prompt ID and localize only the visible label.
+   - **Failure / rollback:**
+     - Treat assistant prompt text as a product/API surface; if localization changes behavior, split visible label from submitted canonical query.
+     - Keep resource keys stable once added.
+   - **Validation:**
+     - `:app:compileDebugKotlin`
+     - assistant and receipt-scan UI/viewmodel smoke tests if available
+     - grep targeted files for remaining hardcoded English literals
+   - **Complete when:**
+     - no user-visible English literals remain in the targeted files
+     - starter prompt submission text is no longer hardcoded inline in composables
+
+7. **Batch 7 — Registry sync and dead-shim cleanup**
+   - **Goal:** remove temporary compatibility shims only after code is stable and mark resolved items accurately.
+   - **Primary files:**
+     - `docs/analyses and debug master/MASTER-ISSUE-REGISTRY.md`
+     - any temporary compatibility helpers introduced in Batches 1-6
+   - **Execution plan:**
+     - Update registry lines only for issues actually closed by code and validation.
+     - Remove deprecated old type names/helpers only if all imports and tests are green.
+     - Leave partially-migrated items marked partial if any leak remains.
+   - **Failure / rollback:**
+     - Never mark a partially-migrated issue resolved just because a new helper exists.
+     - If old types remain intentionally for compatibility, record the follow-up exit criteria instead of deleting the evidence.
+   - **Validation:**
+     - final grep pass
+     - final compile + targeted unit tests from prior batches
+   - **Complete when:**
+     - docs match the codebase state
+     - no temporary shim is left without an explicit follow-up owner/exit condition
+
+### Risks
+- **Rename churn risk:** duplicate model cleanup can break many imports quickly. Mitigation: additive rename + staged import migration; no same-batch deletion of old names.
+- **Repository contract risk:** `SavingsGoalRepository` currently acts as both adapter and app service. Mitigation: interface-first migration, then move callers, then narrow the concrete API.
+- **Behavior drift risk in AI redaction:** moving hash/sanitizer helpers can alter prompt inputs. Mitigation: deterministic alias/redaction tests before and after the move.
+- **Localization / AI quality risk:** translating starter prompts may change query interpretation quality. Mitigation: split visible label from submitted canonical query if needed.
+- **Formatting compatibility risk:** moving money formatting out of domain requires new presentation-side arg resolution. Mitigation: land resolver support first and keep backward-compatible handling during transition.
+- **Scope creep risk:** `AdvancedAnalyticsDashboard`, `InsightsEngine`, `ComputeMoneyRadarUseCase`, and `SavingsGamificationEngine` expose more leakage than the original narrow registry subset. Mitigation: treat `NarrativeGenerator` + Monte Carlo as the must-close core; split residual analytics/savings text cleanup if the batch grows too large.
+- **False resolution risk:** several lines are already partially resolved. Mitigation: only update registry status after grep + compile + test evidence.
+
+### Acceptance Criteria
+- [ ] Only one generic `PeriodRange` concept remains; analytics-specific range types are renamed or explicitly adapted.
+- [ ] Duplicate `CategoryBreakdown` families are deconflicted by bounded context, and no analytics breakdown DTO exposes Room `Category`.
+- [ ] `DashboardCategoryBreakdown.changeFromLastPeriod` is either computed correctly or removed from the contract; no permanent fake `0.0` placeholder remains.
+- [ ] No targeted domain file imports `data.database.entity.SavingsGoal` or `data.repository.SavingsGoalRepository`.
+- [ ] No targeted domain AI builder imports `data.ai.provider.internal.*`.
+- [ ] `CategorizationAssistInput.amount` rejects invalid/non-positive values at the DTO boundary.
+- [ ] `MonteCarloBudgetImpact` contains only raw domain data; display strings and currency formatting live outside domain.
+- [ ] `NarrativeGenerator` no longer formats currency itself; presentation/localization happens at the UI/adapter boundary.
+- [ ] Targeted domain text producers no longer import `R` or emit `UiText.StringResource`.
+- [ ] Remaining targeted UI screens (`AssistantSheet`, `ReceiptScanScreen`, `LifestyleInflationScreen`, `SpendingChallengesScreen`) contain no hardcoded user-facing English strings.
+- [ ] Targeted tests compile/pass, and final grep checks confirm the leaks are closed rather than moved.

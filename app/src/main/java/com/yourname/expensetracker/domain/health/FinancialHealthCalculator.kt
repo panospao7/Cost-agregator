@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.roundToInt
 
 /**
  * Calculates financial health scores across multiple time periods.
@@ -27,6 +28,10 @@ class FinancialHealthCalculator @Inject constructor(
         
         // Max bonus points per period
         private const val MAX_BONUS_POINTS = 15
+
+        // Current component ceilings: budget(25) + spending(25) + cleanliness(10) + bonus(10) = 70
+        // Normalize raw period score to 0-100 so HealthStatus bands remain reachable/meaningful.
+        private const val MAX_RAW_PERIOD_SCORE = 70.0
     }
 
     /**
@@ -106,11 +111,11 @@ class FinancialHealthCalculator @Inject constructor(
         val bonusPoints = calculateBonusPoints(
             noSpendStreak = if (spentToday == 0.0) noSpendStreak else 0,
             streak = streak,
-            allBudgetsOnTrack = budgetStatuses.all { it.healthStatus == BudgetHealthStatus.ON_TRACK }
+            allBudgetsOnTrack = hasAllBudgetsOnTrack(budgetStatuses)
         )
         
         val baseScore = budgetHealth + spendingControl + cleanliness
-        val finalScore = (baseScore + bonusPoints).coerceIn(0, 100)
+        val finalScore = normalizePeriodScore(baseScore + bonusPoints)
         
         return PeriodHealthScore(
             score = finalScore,
@@ -159,11 +164,11 @@ class FinancialHealthCalculator @Inject constructor(
         val bonusPoints = calculateBonusPoints(
             noSpendStreak = noSpendStreak,
             streak = streak,
-            allBudgetsOnTrack = budgetStatuses.all { it.healthStatus == BudgetHealthStatus.ON_TRACK }
+            allBudgetsOnTrack = hasAllBudgetsOnTrack(budgetStatuses)
         )
         
         val baseScore = budgetHealth + spendingControl + cleanliness
-        val finalScore = (baseScore + bonusPoints).coerceIn(0, 100)
+        val finalScore = normalizePeriodScore(baseScore + bonusPoints)
         
         return PeriodHealthScore(
             score = finalScore,
@@ -212,11 +217,11 @@ class FinancialHealthCalculator @Inject constructor(
         val bonusPoints = calculateBonusPoints(
             noSpendStreak = noSpendStreak,
             streak = streak,
-            allBudgetsOnTrack = budgetStatuses.all { it.healthStatus == BudgetHealthStatus.ON_TRACK }
+            allBudgetsOnTrack = hasAllBudgetsOnTrack(budgetStatuses)
         )
         
         val baseScore = budgetHealth + spendingControl + cleanliness
-        val finalScore = (baseScore + bonusPoints).coerceIn(0, 100)
+        val finalScore = normalizePeriodScore(baseScore + bonusPoints)
         
         return PeriodHealthScore(
             score = finalScore,
@@ -364,6 +369,16 @@ class FinancialHealthCalculator @Inject constructor(
         }
         
         return bonus.coerceAtMost(MAX_BONUS_POINTS)
+    }
+
+    private fun hasAllBudgetsOnTrack(budgetStatuses: List<BudgetStatusSnapshot>): Boolean {
+        return budgetStatuses.isNotEmpty() && budgetStatuses.all { it.healthStatus == BudgetHealthStatus.ON_TRACK }
+    }
+
+    private fun normalizePeriodScore(rawScore: Int): Int {
+        return ((rawScore.toDouble() / MAX_RAW_PERIOD_SCORE) * 100.0)
+            .roundToInt()
+            .coerceIn(0, 100)
     }
 
     /**

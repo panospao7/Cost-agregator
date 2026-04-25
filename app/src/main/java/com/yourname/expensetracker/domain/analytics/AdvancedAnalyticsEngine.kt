@@ -2,14 +2,15 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.BuildConfig
 import timber.log.Timber
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.di.DefaultDispatcher
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.model.BudgetSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
@@ -50,13 +51,13 @@ class AdvancedAnalyticsEngine @Inject constructor(
      * Calculates the period range for the given analytics period type.
      * @param period The period type to calculate
      * @param referenceDate Reference timestamp (defaults to now)
-     * @return PeriodRange with start/end timestamps and comparison period
+     * @return AnalyticsPeriodRange with start/end timestamps and comparison period
      */
     fun getPeriodRange(
         period: AnalyticsPeriod,
         referenceDate: Long = timeProvider.now(),
         computeComparison: Boolean = true
-    ): PeriodRange {
+    ): AnalyticsPeriodRange {
         val (startMs, endMs, label) = when (period) {
             AnalyticsPeriod.WEEK -> calculateWeekRange(referenceDate)
             AnalyticsPeriod.MONTH -> calculateMonthRange(referenceDate)
@@ -67,7 +68,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
             )
         }
         
-        return PeriodRange(
+        return AnalyticsPeriodRange(
             period = period,
             startMs = startMs,
             endMs = endMs,
@@ -113,7 +114,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         return Triple(start, end, year.toString())
     }
     
-    private fun getPreviousPeriodRange(period: AnalyticsPeriod, currentStartMs: Long): PeriodRange? {
+    private fun getPreviousPeriodRange(period: AnalyticsPeriod, currentStartMs: Long): AnalyticsPeriodRange? {
         return try {
             val previousRef = when (period) {
                 AnalyticsPeriod.WEEK -> TimePeriodUtils.addDays(currentStartMs, -7)
@@ -137,19 +138,19 @@ class AdvancedAnalyticsEngine @Inject constructor(
     /**
      * Generates enhanced analytics for all categories within the specified period.
      */
-    suspend fun getCategoryAnalytics(period: PeriodRange): List<EnhancedCategoryAnalytics> = withContext(defaultDispatcher) {
+    suspend fun getCategoryAnalytics(period: AnalyticsPeriodRange): List<EnhancedCategoryAnalytics> = withContext(defaultDispatcher) {
         coroutineScope {
         // Fetch all required data in parallel
         val currentExpensesDeferred = async(ioDispatcher) { 
-            expenseRepository.getExpensesBetween(period.startMs, period.endMs) 
+            expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) 
         }
         val previousExpensesDeferred = async(ioDispatcher) { 
             period.comparisonRange?.let { 
-                expenseRepository.getExpensesBetween(it.startMs, it.endMs) 
+                expenseRepository.getExpenseSnapshotsBetween(it.startMs, it.endMs) 
             } ?: emptyList()
         }
         val categoriesDeferred = async(ioDispatcher) { categoryRepository.getAll() }
-        val budgetsDeferred = async(ioDispatcher) { budgetRepository.getActiveBudgets() }
+        val budgetsDeferred = async(ioDispatcher) { getBudgetSnapshots() }
         
         val currentExpenses = currentExpensesDeferred.await()
         val previousExpenses = previousExpensesDeferred.await()
@@ -157,8 +158,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val budgets = budgetsDeferred.await()
         
         // Filter to purchases only, excluding "not mine" expenses
-        val currentPurchases = currentExpenses.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
-        val previousPurchases = previousExpenses.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
+        val currentPurchases = currentExpenses.filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
+        val previousPurchases = previousExpenses.filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
         
         // Build lookup maps
         val categoryMap = categories.associateBy { it.id }
@@ -198,7 +199,12 @@ class AdvancedAnalyticsEngine @Inject constructor(
             val velocity = calculateVelocity(expenses)
             
             EnhancedCategoryAnalytics(
-                category = category.toAnalyticsCategoryRef(),
+                category = AnalyticsCategoryRef(
+                    id = category.id,
+                    name = category.name,
+                    icon = category.icon,
+                    color = category.color
+                ),
                 period = period,
                 totalSpent = total,
                 transactionCount = expenses.size,
@@ -231,39 +237,40 @@ class AdvancedAnalyticsEngine @Inject constructor(
      * @param limit Maximum number of merchants to return
      */
     suspend fun getMerchantAnalytics(
-        period: PeriodRange,
+        period: AnalyticsPeriodRange,
         limit: Int = 20
     ): List<EnhancedMerchantAnalytics> = withContext(defaultDispatcher) {
         coroutineScope {
         val currentExpensesDeferred = async(ioDispatcher) { 
-            expenseRepository.getExpensesBetween(period.startMs, period.endMs) 
+            expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) 
         }
         
         // Get historical data for price trends (6 months back)
         val historicalStart = period.startMs - (180L * TimePeriodUtils.DAY_IN_MILLIS)
         val historicalExpensesDeferred = async(ioDispatcher) { 
-            expenseRepository.getExpensesSince(historicalStart) 
+            expenseRepository.getExpenseSnapshotsBetween(historicalStart, period.endMs)
         }
         
         val currentExpenses = currentExpensesDeferred.await()
         val historicalExpenses = historicalExpensesDeferred.await()
         
-        val currentPurchases = currentExpenses.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
+        val currentPurchases = currentExpenses.filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
+        val historicalPurchases = historicalExpenses.filter {
+            it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine
+        }
+        val historicalByMerchantKey = historicalPurchases.groupBy { it.canonicalMerchantKey() }
         
         currentPurchases
-            .groupBy { it.merchant }
-            .map { (merchant, transactions) ->
+            .groupBy { it.canonicalMerchantKey() }
+            .map { (merchantKey, transactions) ->
                 val amounts = transactions.map { it.effectiveAmount }
                 val sortedAmounts = amounts.sorted()
                 val dates = transactions.map { it.date }.sorted()
+                val displayName = resolveMerchantDisplayName(transactions)
                 
                 // Historical context for price trends
-                val historicalForMerchant = historicalExpenses
-                    .filter {
-                        it.transactionType.toDomain() == DomainTransactionType.PURCHASE &&
-                        !it.isNotMine &&
-                        it.merchant.equals(merchant, ignoreCase = true)
-                    }
+                val historicalForMerchant = historicalByMerchantKey[merchantKey]
+                    .orEmpty()
                     .sortedBy { it.date }
                 
                 // Visit frequency analysis
@@ -289,7 +296,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 val predictedNext = predictNextVisit(dates, avgDaysBetween)
                 
                 EnhancedMerchantAnalytics(
-                    merchant = merchant,
+                    merchant = displayName,
                     period = period,
                     totalSpent = amounts.sum(),
                     transactionCount = transactions.size,
@@ -327,12 +334,12 @@ class AdvancedAnalyticsEngine @Inject constructor(
     /**
      * Analyzes spending patterns including day-of-week distribution and detected behaviors.
      */
-    suspend fun getSpendingPatterns(period: PeriodRange): SpendingPatternAnalysis = withContext(defaultDispatcher) {
+    suspend fun getSpendingPatterns(period: AnalyticsPeriodRange): SpendingPatternAnalysis = withContext(defaultDispatcher) {
         coroutineScope {
             val expenses = withContext(ioDispatcher) {
-                expenseRepository.getExpensesBetween(period.startMs, period.endMs)
+                expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs)
             }
-            val purchases = expenses.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
+            val purchases = expenses.filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
         
         if (purchases.isEmpty()) {
             return@coroutineScope createEmptyPatternAnalysis(period)
@@ -401,7 +408,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
     }
 }
     
-    private fun createEmptyPatternAnalysis(period: PeriodRange): SpendingPatternAnalysis {
+    private fun createEmptyPatternAnalysis(period: AnalyticsPeriodRange): SpendingPatternAnalysis {
         return SpendingPatternAnalysis(
             period = period,
             dayOfWeekStats = emptyMap(),
@@ -426,12 +433,12 @@ class AdvancedAnalyticsEngine @Inject constructor(
     /**
      * Calculates statistical insights for the specified period.
      */
-    suspend fun getStatisticalInsights(period: PeriodRange): StatisticalInsights = withContext(defaultDispatcher) {
+    suspend fun getStatisticalInsights(period: AnalyticsPeriodRange): StatisticalInsights = withContext(defaultDispatcher) {
         coroutineScope {
             val expenses = withContext(ioDispatcher) {
-                expenseRepository.getExpensesBetween(period.startMs, period.endMs)
+                expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs)
             }
-            val purchases = expenses.filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
+            val purchases = expenses.filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
         
         if (purchases.isEmpty()) {
             return@coroutineScope createEmptyStatisticalInsights(period)
@@ -513,7 +520,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
     }
 }
     
-    private fun createEmptyStatisticalInsights(period: PeriodRange): StatisticalInsights {
+    private fun createEmptyStatisticalInsights(period: AnalyticsPeriodRange): StatisticalInsights {
         return StatisticalInsights(
             period = period,
             histogramBins = emptyList(),
@@ -608,27 +615,42 @@ class AdvancedAnalyticsEngine @Inject constructor(
     }
     
     private fun buildSparklineDataByCategory(
-        purchases: List<Expense>,
-        period: PeriodRange
+        purchases: List<ExpenseSnapshot>,
+        period: AnalyticsPeriodRange
     ): Map<Long?, List<Double>> {
-        val periodDuration = period.endMs - period.startMs
-        val periodDays = (periodDuration / TimePeriodUtils.DAY_IN_MILLIS).toInt()
+        val periodStartDay = TimePeriodUtils.getStartOfDay(period.startMs)
+        val now = timeProvider.now()
+        val todayStart = TimePeriodUtils.getStartOfDay(now)
+        val todayEnd = TimePeriodUtils.getEndOfDay(now)
+
+        // If the requested range overlaps today's calendar window, include today's
+        // day bucket even when period.endMs is earlier than today's end (e.g. custom
+        // ranges that end at "now").
+        val periodContainsToday = period.startMs < todayEnd && period.endMs > todayStart
+        val sparklineEndExclusive = if (periodContainsToday) {
+            maxOf(period.endMs, todayEnd)
+        } else {
+            period.endMs
+        }
+
+        val periodDays = TimePeriodUtils.daysBetween(periodStartDay, sparklineEndExclusive)
         if (periodDays <= 0) return emptyMap()
-        
+
         // Determine how many days to actually show
         // If the period is current, we only show up to today to avoid a long "future" flat line
-        val now = timeProvider.now()
-        val daysPassed = if (now in period.startMs until period.endMs) {
-            ((now - period.startMs) / TimePeriodUtils.DAY_IN_MILLIS).toInt()
+        val daysPassed = if (periodContainsToday) {
+            TimePeriodUtils.daysBetween(periodStartDay, todayEnd)
+                .coerceIn(0, periodDays)
         } else {
             periodDays
         }
-        
+
         val dailyByCategory = mutableMapOf<Long?, DoubleArray>()
-        
+
         for (purchase in purchases) {
-            val dayIndex = ((purchase.date - period.startMs) / TimePeriodUtils.DAY_IN_MILLIS).toInt()
-            
+            val purchaseDay = TimePeriodUtils.getStartOfDay(purchase.date)
+            val dayIndex = TimePeriodUtils.daysBetween(periodStartDay, purchaseDay)
+
             if (dayIndex in 0 until periodDays) {
                 val catArray = dailyByCategory.getOrPut(purchase.categoryId) { 
                     DoubleArray(periodDays) 
@@ -649,7 +671,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         }
     }
     
-    private fun calculateVelocity(expenses: List<Expense>): Double {
+    private fun calculateVelocity(expenses: List<ExpenseSnapshot>): Double {
         if (expenses.size < 2) return 0.0
         
         val sorted = expenses.sortedBy { it.date }
@@ -680,7 +702,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     private fun determineVisitFrequency(
         count: Int,
-        period: PeriodRange,
+        period: AnalyticsPeriodRange,
         avgDaysBetween: Double?
     ): MerchantVisitFrequency {
         val periodDays = ((period.endMs - period.startMs) / TimePeriodUtils.DAY_IN_MILLIS).toInt()
@@ -698,7 +720,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
     }
     
     private fun analyzePriceTrend(
-        historicalExpenses: List<Expense>
+        historicalExpenses: List<ExpenseSnapshot>
     ): PriceTrendResult {
         if (historicalExpenses.size < 2) {
             return PriceTrendResult(MerchantPriceTrend.INSUFFICIENT_DATA, null, null, null)
@@ -731,16 +753,10 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val change: Float?
     )
 
-    private fun com.yourname.expensetracker.data.database.entity.Category.toAnalyticsCategoryRef(): AnalyticsCategoryRef {
-        return AnalyticsCategoryRef(
-            id = id,
-            name = name,
-            icon = icon,
-            color = color
-        )
-    }
+    private suspend fun getBudgetSnapshots(): List<BudgetSnapshot> =
+        budgetRepository.getActiveBudgetSnapshots()
 
-    private fun Expense.toAnalyticsTransactionSummary(): AnalyticsTransactionSummary {
+    private fun ExpenseSnapshot.toAnalyticsTransactionSummary(): AnalyticsTransactionSummary {
         return AnalyticsTransactionSummary(
             id = id,
             amount = amount,
@@ -798,7 +814,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         }
     }
     
-    private fun calculateStreakCount(historicalExpenses: List<Expense>): Int {
+    private fun calculateStreakCount(historicalExpenses: List<ExpenseSnapshot>): Int {
         if (historicalExpenses.isEmpty()) return 0
         
         // Use zero-padded months for proper string sorting: "2024-01", "2024-02", etc.
@@ -829,7 +845,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         return maxStreak
     }
     
-    private fun calculateSpendingByDayOfWeek(transactions: List<Expense>): Map<Int, Double> {
+    private fun calculateSpendingByDayOfWeek(transactions: List<ExpenseSnapshot>): Map<Int, Double> {
         val result = mutableMapOf<Int, Double>()
         
         for (tx in transactions) {
@@ -848,7 +864,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
     }
     
     private fun detectSpendingPatterns(
-        purchases: List<Expense>,
+        purchases: List<ExpenseSnapshot>,
         dayTotals: DoubleArray,
         timeSlotStats: Map<TimeSlot, Double>,
         totalSpent: Double
@@ -966,13 +982,4 @@ class AdvancedAnalyticsEngine @Inject constructor(
             ?.key
     }
 
-    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
-    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
-        when (this) {
-            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
-            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
-            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
-            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
-            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
-        }
 }

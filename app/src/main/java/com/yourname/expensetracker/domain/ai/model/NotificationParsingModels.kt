@@ -38,4 +38,13 @@ data class NotificationParseResult(
     val direction: ParsedTransferDirection?,
     val confidence: Float,
     val reasoning: String?
-)
+) {
+    init {
+        require(amount.isFinite() && amount > 0.0) {
+            "NotificationParseResult.amount must be finite and > 0"
+        }
+        require(confidence.isFinite() && confidence in 0f..1f) {
+            "NotificationParseResult.confidence must be finite and within [0, 1]"
+        }
+    }
+}

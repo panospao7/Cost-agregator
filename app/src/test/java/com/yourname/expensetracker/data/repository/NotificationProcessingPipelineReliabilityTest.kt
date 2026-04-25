@@ -8,10 +8,14 @@ import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
+import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.PendingReviewStatus
 import com.yourname.expensetracker.data.database.entity.RawNotification
+import com.yourname.expensetracker.data.database.entity.SubscriptionCandidate
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
+import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
@@ -34,21 +38,29 @@ import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
 import com.yourname.expensetracker.domain.subscription.NotificationSubscriptionDetector
+import com.yourname.expensetracker.domain.subscription.SubscriptionCandidateResult
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.slot
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import java.util.concurrent.atomic.AtomicInteger
 
 class NotificationProcessingPipelineReliabilityTest {
 
@@ -137,6 +149,82 @@ class NotificationProcessingPipelineReliabilityTest {
 
         coVerify(exactly = 1) { classifier.initialize() }
         coVerify(exactly = 0) { rawDao.insertOrIgnore(any()) }
+    }
+
+    @Test
+    fun `process suppresses exact raw duplicate before insert when schema has no unique index`() = runBlocking {
+        val notification = testNotification("com.test.app")
+
+        coEvery {
+            parserRegistry.parseWithAiFallback(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns null
+        coEvery {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text
+            )
+        } returns true
+
+        val result = pipeline.process(notification)
+
+        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        coVerify(exactly = 1) {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text
+            )
+        }
+        coVerify(exactly = 0) { rawDao.insertOrIgnore(any()) }
+        coVerify(exactly = 0) { sourceStatsDao.insertIfNotExists(any()) }
+        coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndAutoRejected(any(), any()) }
+    }
+
+    @Test
+    fun `process inserts raw notification when exact duplicate does not exist`() = runBlocking {
+        val notification = testNotification("com.test.unique")
+
+        coEvery {
+            parserRegistry.parseWithAiFallback(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns null
+        coEvery {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text
+            )
+        } returns false
+        coEvery { rawDao.insertOrIgnore(notification) } returns 42L
+
+        val result = pipeline.process(notification)
+
+        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        coVerifyOrder {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text
+            )
+            rawDao.insertOrIgnore(notification)
+        }
+        coVerify(exactly = 1) { sourceStatsDao.insertIfNotExists(any()) }
     }
 
     @Test
@@ -292,6 +380,14 @@ class NotificationProcessingPipelineReliabilityTest {
         )
         coEvery { rawDao.insertOrIgnore(notification) } returns 123L
         coEvery {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text
+            )
+        } returns false
+        coEvery {
             expenseDao.isDuplicateCurrencyAware(
                 amount = 50.0,
                 merchant = "Shop",
@@ -319,6 +415,399 @@ class NotificationProcessingPipelineReliabilityTest {
         coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, any()) }
     }
 
+    @Test
+    fun `process remains stable when concurrent subscription detections insert same pending candidate`() = runTest(testDispatcher) {
+        val merchant = "Netflix"
+        val notification1 = testNotification("com.wallet").copy(timestamp = 1_700_000_000_000L)
+        val notification2 = testNotification("com.wallet").copy(timestamp = 1_700_000_060_000L, capturedAt = 1_700_000_060_000L)
+        val parsed1 = recurringParsedTransaction(merchant, notification1.timestamp)
+        val parsed2 = recurringParsedTransaction(merchant, notification2.timestamp)
+        val recentExpenses = recurringExpenses(merchant)
+        val detectedCandidate = SubscriptionCandidateResult(
+            merchant = merchant,
+            canonicalMerchant = merchant,
+            averageAmount = 9.99,
+            currency = "EUR",
+            detectedInterval = "monthly",
+            confidence = 0.92,
+            transactionCount = 3,
+            firstSeen = recentExpenses.first().expense.date,
+            lastSeen = recentExpenses.last().expense.date,
+            estimatedAnnualCost = 119.88
+        )
+        val candidateEntity = SubscriptionCandidate(
+            merchant = merchant,
+            canonicalMerchant = merchant,
+            averageAmount = 9.99,
+            currency = "EUR",
+            detectedInterval = "monthly",
+            confidence = 0.92,
+            transactionCount = 3,
+            firstSeen = recentExpenses.first().expense.date,
+            lastSeen = recentExpenses.last().expense.date,
+            estimatedAnnualCost = 119.88,
+            createdAt = 1_700_000_000_000L,
+            updatedAt = 1_700_000_000_000L
+        )
+        val pendingQueryCount = AtomicInteger(0)
+        val initialCheckBarrier = CompletableDeferred<Unit>()
+        val finalCheckBarrier = CompletableDeferred<Unit>()
+
+        coEvery {
+            parserRegistry.parseWithAiFallback(
+                notification1.title,
+                notification1.text,
+                notification1.bigText,
+                notification1.subText,
+                notification1.packageName
+            )
+        } returns parsed1
+        coEvery {
+            parserRegistry.parseWithAiFallback(
+                notification2.title,
+                notification2.text,
+                notification2.bigText,
+                notification2.subText,
+                notification2.packageName
+            )
+        } returns parsed2
+        coEvery { confidenceRouter.route(any(), any(), any()) } returns RoutingResult(
+            decision = RoutingDecision.AUTO_ACCEPT,
+            adjustedConfidence = 0.95f,
+            reason = "high confidence"
+        )
+        coEvery { merchantNormalizer.normalize(merchant, any(), any()) } returns merchantLookupResult(merchant)
+        coEvery {
+            hybridClassifier.classify(
+                merchantName = merchant,
+                amount = 9.99,
+                notificationTitle = any(),
+                notificationText = any(),
+                packageName = any()
+            )
+        } returns ClassificationResult(
+            categoryId = 0L,
+            categoryName = "Unknown",
+            confidence = 0f,
+            matchType = MatchType.FALLBACK
+        )
+        coEvery {
+            rawDao.exists(
+                packageName = notification1.packageName,
+                timestamp = notification1.timestamp,
+                title = notification1.title,
+                text = notification1.text
+            )
+        } returns false
+        coEvery {
+            rawDao.exists(
+                packageName = notification2.packageName,
+                timestamp = notification2.timestamp,
+                title = notification2.title,
+                text = notification2.text
+            )
+        } returns false
+        coEvery { rawDao.insertOrIgnore(notification1) } returns 1L
+        coEvery { rawDao.insertOrIgnore(notification2) } returns 2L
+        coEvery {
+            expenseDao.isDuplicateCurrencyAware(
+                amount = 9.99,
+                merchant = merchant,
+                date = any(),
+                currency = "EUR",
+                transactionType = TransactionType.PURCHASE.name,
+                windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                merchantKey = any(),
+                dedupeKey = any()
+            )
+        } returns false
+        coEvery { expenseDao.insertAtomic(any()) } returnsMany listOf(101L, 102L)
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = false))
+        coEvery { expenseDao.getRecentExpensesWithCategoryForMerchant(merchant, any()) } returns recentExpenses
+        coEvery { subscriptionDetector.detectSubscriptions(recentExpenses) } returns listOf(detectedCandidate)
+        every { subscriptionDetector.toEntity(detectedCandidate) } returns candidateEntity
+        coEvery { subscriptionCandidateDao.getPendingCanonicalMerchants(listOf(merchant)) } coAnswers {
+            when (pendingQueryCount.incrementAndGet()) {
+                1 -> {
+                    initialCheckBarrier.await()
+                    emptyList<String>()
+                }
+                2 -> {
+                    initialCheckBarrier.complete(Unit)
+                    emptyList<String>()
+                }
+                3 -> {
+                    finalCheckBarrier.await()
+                    emptyList<String>()
+                }
+                4 -> {
+                    finalCheckBarrier.complete(Unit)
+                    emptyList<String>()
+                }
+                else -> emptyList<String>()
+            }
+        }
+
+        val result1 = pipeline.process(notification1)
+        val result2 = pipeline.process(notification2)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification1.packageName), result1)
+        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification2.packageName), result2)
+        coVerify(exactly = 4) { subscriptionCandidateDao.getPendingCanonicalMerchants(listOf(merchant)) }
+        coVerify(exactly = 2) { subscriptionCandidateDao.insert(candidateEntity) }
+    }
+
+    @Test
+    fun `parser-null notification with currency and transaction signals routes to pending review`() = runBlocking {
+        val notification = testNotification("com.test.signal").copy(
+            title = "Payment €4.08",
+            text = "Card payment completed"
+        )
+        val reviewSlot = slot<PendingReview>()
+
+        coEvery {
+            parserRegistry.parseWithAiFallback(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns null
+        coEvery {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text
+            )
+        } returns false
+        coEvery { rawDao.insertOrIgnore(notification) } returns 50L
+        coEvery {
+            expenseDao.isDuplicateCurrencyAware(
+                amount = 4.08,
+                merchant = "Unknown",
+                date = notification.timestamp,
+                currency = "EUR",
+                transactionType = TransactionType.UNKNOWN.name,
+                windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                merchantKey = any(),
+                dedupeKey = any()
+            )
+        } returns false
+        coEvery {
+            pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
+                merchantKey = any(),
+                merchantName = "Unknown",
+                startDate = notification.timestamp - DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                endDate = DuplicateDetectionPolicy.windowEndExclusive(notification.timestamp),
+                minAmount = 4.08 - DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                maxAmount = 4.08 + DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                currency = "EUR",
+                transactionType = TransactionType.UNKNOWN.name
+            )
+        } returns false
+
+        val result = pipeline.process(notification)
+
+        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(capture(reviewSlot)) }
+        assertEquals(4.08, reviewSlot.captured.suggestedAmount, 0.0001)
+        coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndPending(notification.packageName, any()) }
+        coVerify(exactly = 1) { rawDao.markRelevance(50L, true) }
+        coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
+    }
+
+    @Test
+    fun `parser-null notification without transaction signals is still auto-rejected`() = runBlocking {
+        val notification = testNotification("com.test.nonfinancial").copy(
+            title = "Hello",
+            text = "world"
+        )
+
+        coEvery {
+            parserRegistry.parseWithAiFallback(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns null
+        coEvery {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text
+            )
+        } returns false
+        coEvery { rawDao.insertOrIgnore(notification) } returns 51L
+
+        val result = pipeline.process(notification)
+
+        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
+        coVerify(exactly = 0) { pendingReviewDao.upsertByRawNotificationId(any()) }
+    }
+
+    @Test
+    fun `AUTO_REJECT from financial package is salvaged to NEEDS_REVIEW`() = runBlocking {
+        val notification = testNotification("com.google.android.apps.walletnfcrel")
+        val parsed = ParsedTransaction(
+            amount = 4.08,
+            currency = "EUR",
+            merchant = "Unknown",
+            type = ParsedTransactionType.PURCHASE,
+            confidence = 0.90f,
+            date = notification.timestamp
+        )
+
+        coEvery {
+            parserRegistry.parseWithAiFallback(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns parsed
+        coEvery {
+            confidenceRouter.route(parsed, notification.packageName, any())
+        } returns RoutingResult(
+            decision = RoutingDecision.AUTO_REJECT,
+            adjustedConfidence = 0.45f,
+            reason = "Unknown merchant"
+        )
+        coEvery { merchantNormalizer.normalize("Unknown", any(), any()) } returns merchantLookupResult("unknown")
+        coEvery {
+            hybridClassifier.classify(
+                merchantName = "unknown",
+                amount = 4.08,
+                notificationTitle = notification.title,
+                notificationText = notification.text,
+                packageName = notification.packageName
+            )
+        } returns ClassificationResult(
+            categoryId = 0L,
+            categoryName = "Unknown",
+            confidence = 0f,
+            matchType = MatchType.FALLBACK
+        )
+        coEvery {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text
+            )
+        } returns false
+        coEvery { rawDao.insertOrIgnore(notification) } returns 55L
+        coEvery {
+            expenseDao.isDuplicateCurrencyAware(
+                amount = 4.08,
+                merchant = "unknown",
+                date = notification.timestamp,
+                currency = "EUR",
+                transactionType = TransactionType.PURCHASE.name,
+                windowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                merchantKey = any(),
+                dedupeKey = any()
+            )
+        } returns false
+        coEvery {
+            pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
+                merchantKey = any(),
+                merchantName = "unknown",
+                startDate = notification.timestamp - DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+                endDate = DuplicateDetectionPolicy.windowEndExclusive(notification.timestamp),
+                minAmount = 4.08 - DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                maxAmount = 4.08 + DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+                currency = "EUR",
+                transactionType = TransactionType.PURCHASE.name
+            )
+        } returns false
+
+        val result = pipeline.process(notification)
+
+        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(any()) }
+        coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndPending(notification.packageName, any()) }
+        coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
+    }
+
+    @Test
+    fun `AUTO_REJECT from non-financial package is NOT salvaged`() = runBlocking {
+        val notification = testNotification("com.some.random.app")
+        val parsed = ParsedTransaction(
+            amount = 4.08,
+            currency = "EUR",
+            merchant = "Unknown",
+            type = ParsedTransactionType.PURCHASE,
+            confidence = 0.90f,
+            date = notification.timestamp
+        )
+
+        coEvery {
+            parserRegistry.parseWithAiFallback(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns parsed
+        coEvery {
+            confidenceRouter.route(parsed, notification.packageName, any())
+        } returns RoutingResult(
+            decision = RoutingDecision.AUTO_REJECT,
+            adjustedConfidence = 0.45f,
+            reason = "Unknown merchant"
+        )
+        coEvery { merchantNormalizer.normalize("Unknown", any(), any()) } returns merchantLookupResult("unknown")
+        coEvery {
+            rawDao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text
+            )
+        } returns false
+        coEvery { rawDao.insertOrIgnore(notification) } returns 56L
+
+        val result = pipeline.process(notification)
+
+        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        coVerify(exactly = 1) { rawDao.markRelevance(56L, false) }
+        coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
+        coVerify(exactly = 0) { pendingReviewDao.upsertByRawNotificationId(any()) }
+    }
+
+    @Test
+    fun `detectTransactionSignalCandidate returns candidate for normal transaction-like text`() {
+        val candidate = NotificationProcessingPipeline.detectTransactionSignalCandidate(
+            title = "Payment €4.08",
+            text = "Transaction completed",
+            bigText = null
+        )
+
+        assertNotNull(candidate)
+        assertEquals(4.08, candidate!!.amount, 0.0001)
+        assertEquals("EUR", candidate.currency)
+    }
+
+    @Test
+    fun `detectTransactionSignalCandidate returns null for non-transaction text`() {
+        val candidate = NotificationProcessingPipeline.detectTransactionSignalCandidate(
+            title = "Hello",
+            text = "World",
+            bigText = null
+        )
+
+        assertNull(candidate)
+    }
+
     private fun merchantLookupResult(normalizedName: String): MerchantLookupResult {
         return MerchantLookupResult(
             canonical = MerchantCanonical(
@@ -330,6 +819,37 @@ class NotificationProcessingPipelineReliabilityTest {
             confidence = 1.0f,
             matchType = MatchType.EXACT_MATCH
         )
+    }
+
+    private fun recurringParsedTransaction(merchant: String, timestamp: Long): ParsedTransaction {
+        return ParsedTransaction(
+            amount = 9.99,
+            currency = "EUR",
+            merchant = merchant,
+            type = ParsedTransactionType.PURCHASE,
+            confidence = 0.97f,
+            date = timestamp
+        )
+    }
+
+    private fun recurringExpenses(merchant: String): List<ExpenseWithCategory> {
+        return listOf(
+            1_699_000_000_000L,
+            1_699_200_000_000L,
+            1_699_400_000_000L
+        ).mapIndexed { index, date ->
+            ExpenseWithCategory(
+                expense = Expense(
+                    id = (index + 1).toLong(),
+                    amount = 9.99,
+                    currency = "EUR",
+                    merchant = merchant,
+                    transactionType = TransactionType.PURCHASE,
+                    date = date
+                ),
+                category = null
+            )
+        }
     }
 
     private fun testNotification(pkg: String): RawNotification =

@@ -35,6 +35,7 @@ class CloudCategorizationAssistServiceTest {
         assertNull(result)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `suggest retries transient 500 and succeeds on second attempt`() = runBlocking {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
@@ -74,6 +75,7 @@ class CloudCategorizationAssistServiceTest {
         assertEquals("Groceries", result?.categoryName)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `suggest retries timeout once and succeeds on second attempt`() = runBlocking {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
@@ -105,6 +107,7 @@ class CloudCategorizationAssistServiceTest {
         assertTrue(result != null)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `suggest does not retry non-retryable 400`() = runBlocking {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
@@ -132,6 +135,7 @@ class CloudCategorizationAssistServiceTest {
         assertEquals(1, attempts.get())
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `suggest retries 429 up to max attempts then returns null`() = runBlocking {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
@@ -266,6 +270,106 @@ class CloudCategorizationAssistServiceTest {
         assertEquals("Groceries", result?.categoryName)
     }
 
+    @Test
+    fun `suggest returns null when confidence is malformed`() = runBlocking {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-gemini-key"
+
+        val malformedConfidenceValues = listOf("\"NaN\"", "\"Infinity\"", "1.1", "-0.1")
+
+        malformedConfidenceValues.forEach { confidenceLiteral ->
+            val client = OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(responseBodyWithConfidenceLiteral(confidenceLiteral).toResponseBody("application/json".toMediaType()))
+                        .build()
+                }
+                .build()
+
+            val service = CloudCategorizationAssistService(mockKeyStorage, client)
+
+            val result = service.suggest(defaultInput())
+
+            assertNull("Expected null for malformed confidence: $confidenceLiteral", result)
+        }
+    }
+
+    @Test
+    fun `suggest returns null when categoryId is zero or non-numeric`() = runBlocking {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-gemini-key"
+
+        val malformedCategoryIds = listOf("0", "\"abc\"")
+
+        malformedCategoryIds.forEach { categoryIdLiteral ->
+            val client = OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(responseBodyWithCategoryIdLiteral(categoryIdLiteral).toResponseBody("application/json".toMediaType()))
+                        .build()
+                }
+                .build()
+
+            val service = CloudCategorizationAssistService(mockKeyStorage, client)
+
+            val result = service.suggest(defaultInput())
+
+            assertNull("Expected null for malformed categoryId: $categoryIdLiteral", result)
+        }
+    }
+
+    @Test
+    fun `suggest ignores invalid alternativeCategoryIds values without coercing to zero`() = runBlocking {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "test-gemini-key"
+
+        val malformedAlternativeIds = listOf("[0]", "[\"abc\"]")
+
+        malformedAlternativeIds.forEach { alternativeCategoryIdsLiteral ->
+            val client = OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(
+                            responseBodyWithAlternativeCategoryIdsLiteral(alternativeCategoryIdsLiteral)
+                                .toResponseBody("application/json".toMediaType())
+                        )
+                        .build()
+                }
+                .build()
+
+            val service = CloudCategorizationAssistService(mockKeyStorage, client)
+
+            val result = service.suggest(
+                defaultInput().copy(
+                    candidateCategories = listOf(
+                        CategoryOption(0L, "Invalid Zero Id"),
+                        CategoryOption(1L, "Groceries"),
+                        CategoryOption(2L, "Transport")
+                    )
+                )
+            )
+
+            assertTrue("Expected a valid suggestion for malformed list: $alternativeCategoryIdsLiteral", result != null)
+            assertEquals(
+                "Expected malformed alternative IDs to be discarded: $alternativeCategoryIdsLiteral",
+                emptyList<Long>(),
+                result?.alternativeCategoryIds
+            )
+        }
+    }
+
     private fun defaultInput(): CategorizationAssistInput {
         return CategorizationAssistInput(
             targetType = AiTargetType.PENDING_REVIEW,
@@ -295,6 +399,60 @@ class CloudCategorizationAssistServiceTest {
                     "parts": [
                       {
                         "text": "{\"categoryId\":1,\"categoryName\":\"Groceries\",\"confidence\":0.9,\"rationale\":\"merchant hint\",\"alternativeCategoryIds\":[2]}"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+    }
+
+    private fun responseBodyWithConfidenceLiteral(confidenceLiteral: String): String {
+        return """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      {
+                        "text": "{\"categoryId\":1,\"categoryName\":\"Groceries\",\"confidence\":$confidenceLiteral,\"rationale\":\"merchant hint\",\"alternativeCategoryIds\":[2]}"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+    }
+
+    private fun responseBodyWithCategoryIdLiteral(categoryIdLiteral: String): String {
+        return """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      {
+                        "text": "{\"categoryId\":$categoryIdLiteral,\"categoryName\":\"Groceries\",\"confidence\":0.9,\"rationale\":\"merchant hint\",\"alternativeCategoryIds\":[2]}"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+    }
+
+    private fun responseBodyWithAlternativeCategoryIdsLiteral(alternativeCategoryIdsLiteral: String): String {
+        return """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      {
+                        "text": "{\"categoryId\":1,\"categoryName\":\"Groceries\",\"confidence\":0.9,\"rationale\":\"merchant hint\",\"alternativeCategoryIds\":$alternativeCategoryIdsLiteral}"
                       }
                     ]
                   }

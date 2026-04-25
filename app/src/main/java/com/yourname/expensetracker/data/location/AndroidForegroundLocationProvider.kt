@@ -11,6 +11,7 @@ import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -45,15 +46,29 @@ class AndroidForegroundLocationProvider @Inject constructor(
             val loc: Location? = fusedClient
                 .getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, cts.token)
                 .await()
-            loc?.let { Pair(it.latitude, it.longitude) }
+            loc?.toLatLon() ?: fusedClient.lastLocation.await()?.toLatLon()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: SecurityException) {
             Log.w(TAG, "Location permission revoked mid-call: ${e.message}")
             null
         } catch (e: Exception) {
             Log.w(TAG, "Location unavailable: ${e.message}")
-            null
+            try {
+                fusedClient.lastLocation.await()?.toLatLon()
+            } catch (fallback: CancellationException) {
+                throw fallback
+            } catch (fallback: SecurityException) {
+                Log.w(TAG, "Cached location unavailable after permission loss: ${fallback.message}")
+                null
+            } catch (fallback: Exception) {
+                Log.w(TAG, "Cached location unavailable: ${fallback.message}")
+                null
+            }
         }
     }
+
+    private fun Location.toLatLon(): Pair<Double, Double> = latitude to longitude
 
     private fun hasLocationPermission(): Boolean {
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)

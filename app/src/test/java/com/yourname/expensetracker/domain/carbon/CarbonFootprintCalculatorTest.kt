@@ -4,6 +4,7 @@ import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -19,11 +20,13 @@ import org.junit.Test
 class CarbonFootprintCalculatorTest {
 
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
+    private val timeProvider = mockk<TimeProvider>()
     private lateinit var calculator: CarbonFootprintCalculator
 
     @Before
     fun setup() {
-        calculator = CarbonFootprintCalculator(expenseDao)
+        every { timeProvider.now() } returns 1_700_000_000_000L
+        calculator = CarbonFootprintCalculator(expenseDao, timeProvider)
     }
 
     @Test

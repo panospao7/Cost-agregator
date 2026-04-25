@@ -142,7 +142,7 @@ class OnDeviceReviewPriorityScorer @Inject constructor(
     
     private suspend fun calculateDuplicateRisk(input: ReviewPriorityInput, allInputs: List<ReviewPriorityInput>): Float {
         // Check if there are similar transactions nearby using the already-mapped domain DTOs
-        val existingReviews = reviewQueueRepository.getPendingReviews().first()
+        val existingReviews = reviewQueueRepository.getAllPendingReviews().first()
         
         // Count potential duplicates (same amount, similar time, same merchant)
         var duplicateCount = 0

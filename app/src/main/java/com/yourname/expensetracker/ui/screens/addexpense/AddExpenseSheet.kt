@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.addexpense
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -96,11 +97,21 @@ fun AddExpenseSheet(
         }
     }
 
-    // Set initial values once
-    LaunchedEffect(Unit) {
-        if (initialAmount != null || initialMerchant != null) {
-            viewModel.setInitialValues(initialAmount, initialMerchant)
+    val incomingPrefill = remember(initialAmount, initialMerchant) {
+        initialAmount to initialMerchant
+    }
+
+    // Apply incoming prefill only while fields are still pristine
+    LaunchedEffect(incomingPrefill) {
+        val hasPrefill = incomingPrefill.first != null || incomingPrefill.second != null
+        if (hasPrefill) {
+            viewModel.setInitialValuesIfBlank(incomingPrefill.first, incomingPrefill.second)
         }
+    }
+
+    BackHandler {
+        viewModel.reset()
+        onDismiss()
     }
 
     Surface(

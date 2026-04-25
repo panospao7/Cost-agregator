@@ -5,11 +5,15 @@ import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
+import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
 import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
+import com.yourname.expensetracker.domain.health.FinancialHealthResult
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.BlockPartyStatus
 import com.yourname.expensetracker.domain.model.CategoryInfo
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
@@ -25,8 +29,10 @@ import com.yourname.expensetracker.domain.model.dashboard.toTransactionSummary
 import com.yourname.expensetracker.domain.model.TransactionSummary
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DashboardTextKeys
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import javax.inject.Inject
@@ -195,8 +201,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     private val healthCalculator: com.yourname.expensetracker.domain.health.FinancialHealthCalculator,
     private val healthScoreV2: com.yourname.expensetracker.domain.health.FinancialHealthScoreV2,
     private val lifestyleSavingsPromptUseCase: com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase,
+    private val monthlySavingsSweepUseCase: com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase,
     private val computeMoneyRadarUseCase: ComputeMoneyRadarUseCase,
-    private val stressForecastEngine: com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine
+    private val stressForecastEngine: com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine,
+    private val forecastInputAssembler: ForecastInputAssembler = ForecastInputAssembler(timeProvider)
 ) {
 
     /**
@@ -245,6 +253,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val healthScore = computeHealthScore(ctx, streakData.first)
         val healthScoreV2Result = computeHealthScoreV2(ctx)
         val lifestyleWidget = computeLifestyleWidget()
+        val savingsSweepWidget = computeSavingsSweepWidget()
         val moneyRadarData = computeMoneyRadarUseCase.compute()
         val stressForecastResult = computeStressForecast()
 
@@ -252,7 +261,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             ctx, runwayResult, blockPartyDays, monteCarloWidget,
             categoryTotals, trend, insightText, budgetSummary,
             streakData, healthScore, healthScoreV2Result,
-            lifestyleWidget, moneyRadarData, stressForecastResult
+            lifestyleWidget, savingsSweepWidget, moneyRadarData, stressForecastResult
         )
 
         return CompiledDashboardData(
@@ -323,42 +332,41 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     )
 
     private suspend fun computeRunwayAndForecast(ctx: ComputeContext): RunwayResult {
-        val currentDayIdx = TimePeriodUtils.daysBetween(ctx.monthStart, ctx.now).coerceAtLeast(0)
-
-        val currentPace = try {
-            insightsEngine.getSpendingPaceSuspend()
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to calculate spending pace")
-            SpendingPace(
-                currentMonthSpent = 0.0,
-                daysElapsed = currentDayIdx,
-                daysInMonth = ctx.daysInMonth,
-                projectedTotal = 0.0,
-                previousMonthTotal = null,
-                averageMonthlyTotal = null,
-                pacePercentage = 0f,
-                paceStatus = PaceStatus.NO_BASELINE
+        val purchasesThisMonth = ctx.purchases.filter { it.date >= ctx.monthStart }
+        val data = ctx.data.data
+        val expenseSnapshots = data.expenses.map { expense ->
+            ExpenseSnapshot(
+                id = expense.id,
+                amount = expense.amount,
+                effectiveAmount = expense.effectiveAmount,
+                currency = "EUR",
+                merchant = expense.merchant,
+                merchantKey = MerchantKeyGenerator.generate(expense.merchant).ifBlank { null },
+                transactionType = when (expense.transactionType) {
+                    DashboardTransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+                    DashboardTransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+                    DashboardTransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+                    DashboardTransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+                    DashboardTransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+                },
+                date = expense.date,
+                categoryId = expense.categoryId,
+                isNotMine = expense.isNotMine,
+                transferDirection = null,
+                notes = null
             )
         }
 
-        val purchasesThisMonth = ctx.purchases.filter { it.date >= ctx.monthStart }
-        val amountByDay = DoubleArray(currentDayIdx + 1)
-        purchasesThisMonth.forEach { exp ->
-            val dayIndex = TimePeriodUtils.daysBetween(ctx.monthStart, exp.date)
-            if (dayIndex in amountByDay.indices) amountByDay[dayIndex] += exp.effectiveAmount
-        }
-        var runningTotal = 0.0
-        val pastSumDaily = amountByDay.map { runningTotal += it; runningTotal }
-
-        val data = ctx.data.data
-        val forecast = synthesisEngine.synthesize(
-            pastSumDaily = pastSumDaily,
-            recurringPatterns = data.recurringPatterns,
+        val assembledInput = forecastInputAssembler.assemble(
+            expenses = expenseSnapshots,
+            manualRecurringEntities = emptyList(),
+            detectedRecurringPatterns = data.recurringPatterns,
             plannedExpenses = data.plannedExpenses,
             savingsGoals = data.goals,
-            budgetStatuses = data.budgetStatuses,
-            spendingPace = currentPace
+            budgetStatuses = data.budgetStatuses
         )
+        val forecast = synthesisEngine.synthesize(assembledInput)
+        val currentPace = assembledInput.spendingPace
 
         val totalCommitted = forecast.components?.totalCommitted ?: 0.0
         val totalLikely = forecast.components?.totalLikely ?: 0.0
@@ -568,12 +576,14 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
     private suspend fun computeHealthScoreV2(
         ctx: ComputeContext
-    ): com.yourname.expensetracker.domain.health.FinancialHealthResult? {
+    ): FinancialHealthResult? {
         return try {
             healthScoreV2.calculateHealthScore(
                 periodStart = ctx.monthStart,
                 periodEnd = TimePeriodUtils.getEndOfMonth(ctx.now)
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "Failed to calculate financial health score v2")
             null
@@ -595,6 +605,37 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 reason = it.reason,
                 hasExistingGoals = it.goals.isNotEmpty()
             )
+        }
+    }
+
+    private suspend fun computeSavingsSweepWidget(): DashboardWidget.SavingsSweepPrompt? {
+        return try {
+            withTimeout(3000L) {
+                monthlySavingsSweepUseCase.computeSweepRecommendation()
+            }?.let { recommendation ->
+                DashboardWidget.SavingsSweepPrompt(
+                    sweepAmount = recommendation.safeSweepAmount,
+                    underspend = recommendation.totalUnderspend,
+                    riskBuffer = recommendation.riskBuffer,
+                    goalAllocations = recommendation.goalAllocations.map { allocation ->
+                        DashboardWidget.SweepGoalAllocation(
+                            goalId = allocation.goalId,
+                            goalName = allocation.goalName,
+                            suggestedAmount = allocation.suggestedAllocation,
+                            currentProgress = allocation.currentProgress,
+                            targetAmount = allocation.targetAmount
+                        )
+                    },
+                    confidence = recommendation.confidence,
+                    daysUntilMonthEnd = TimePeriodUtils.daysBetween(recommendation.computedAt, recommendation.monthEnd)
+                        .coerceAtLeast(0)
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to compute savings sweep widget")
+            null
         }
     }
 
@@ -620,6 +661,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         healthScore: com.yourname.expensetracker.domain.health.HealthScoreResult,
         healthScoreV2Result: com.yourname.expensetracker.domain.health.FinancialHealthResult?,
         lifestyleWidget: DashboardWidget.LifestyleSavingsPrompt?,
+        savingsSweepWidget: DashboardWidget.SavingsSweepPrompt?,
         moneyRadarData: MoneyRadarData,
         stressForecastResult: com.yourname.expensetracker.domain.forecasting.StressForecastResult?
     ): List<DashboardWidget> {
@@ -644,13 +686,16 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 add(lifestyleWidget)
             }
 
-            // Financial Health Score V2 Widget (F5)
-            if (healthScoreV2Result != null) {
-                add(DashboardWidget.FinancialHealthScoreV2Widget(healthScoreV2Result))
+            if (savingsSweepWidget != null) {
+                add(savingsSweepWidget)
             }
 
-            // Legacy Financial Health Score Widget (keep for comparison)
-            add(DashboardWidget.FinancialHealthScoreWidget(healthScore))
+            // Emit a single authoritative health KPI.
+            if (healthScoreV2Result != null) {
+                add(DashboardWidget.FinancialHealthScoreV2Widget(healthScoreV2Result))
+            } else {
+                add(DashboardWidget.FinancialHealthScoreWidget(healthScore))
+            }
 
             add(DashboardWidget.TotalsDashboard)
 

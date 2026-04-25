@@ -4,6 +4,9 @@ import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.createExpense
 import com.yourname.expensetracker.startOfMonth
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -30,7 +33,7 @@ class MonthlyComparisonCalculatorTest {
         val comparison = calculator.calculate(
             currentMonth = currentMonth,
             previousMonth = previousMonth,
-            allExpenses = goldenMarchAndFebruaryExpenses()
+            allExpenses = goldenMarchAndFebruaryExpenses().map { it.toSnapshot() }
         )
 
         assertApproxEquals(1283.59, comparison.currentTotal, 0.01)
@@ -63,7 +66,7 @@ class MonthlyComparisonCalculatorTest {
                 createExpense("2026-03-04", 100.0, merchant = "A", id = 1L),
                 createExpense("2026-03-09", 200.0, merchant = "B", id = 2L),
                 createExpense("2026-02-15", 999.0, type = TransactionType.DEPOSIT, merchant = "Salary", id = 3L)
-            )
+            ).map { it.toSnapshot() }
         )
 
         assertApproxEquals(300.0, comparison.currentTotal, 0.01)
@@ -103,7 +106,7 @@ class MonthlyComparisonCalculatorTest {
                 createExpense("2026-02-02", 20.0, merchant = "P2", id = 7L),
                 createExpense("2026-02-02", 30.0, effectiveAmount = 0.0, merchant = "P3", isNotMine = true, id = 8L),
                 createExpense("2026-02-03", 400.0, type = TransactionType.DEPOSIT, merchant = "Bonus", id = 9L)
-            )
+            ).map { it.toSnapshot() }
         )
 
         assertEquals(3, comparison.currentCount)
@@ -145,4 +148,31 @@ class MonthlyComparisonCalculatorTest {
         createExpense("2026-02-18", 30.00, merchant = "Restaurant B", category = "dining", id = 105L),
         createExpense("2026-02-25", 115.00, merchant = "Utilities", category = "utilities", id = 106L)
     )
+
+    private fun com.yourname.expensetracker.data.database.entity.Expense.toSnapshot(): ExpenseSnapshot {
+        return ExpenseSnapshot(
+            id = id,
+            amount = amount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            merchantKey = merchantKey,
+            transactionType = when (transactionType) {
+                TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+                TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+                TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+                TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+                TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+            },
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            transferDirection = when (transferDirection) {
+                com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+                com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+                null -> null
+            },
+            notes = notes
+        )
+    }
 }

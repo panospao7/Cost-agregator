@@ -29,6 +29,11 @@ class SemanticKeywordMatcher @Inject constructor(
         val confidence: Double,
         val pattern: String
     )
+
+    private data class CompiledKeyword(
+        val entry: OrderedKeywordEntry,
+        val regex: Regex
+    )
     
     private val compiledPatterns: List<CompiledPattern> = listOf(
         // Food Patterns
@@ -51,6 +56,10 @@ class SemanticKeywordMatcher @Inject constructor(
         // Transport Patterns
         CompiledPattern(Regex(".*(gas|fuel|petrol)\\s+(station|market).*", RegexOption.IGNORE_CASE), "Transport", 0.90, ".*(gas|fuel|petrol)\\s+(station|market).*")
     )
+
+    private val compiledKeywords: List<CompiledKeyword> = orderedKeywordEntries.map { entry ->
+        CompiledKeyword(entry, buildKeywordRegex(entry.keyword))
+    }
     
     fun match(merchant: String, minConfidence: Double = 0.40): List<SemanticMatch> {
         val normalized = greeklishNormalizer.normalize(merchant).lowercase()
@@ -73,23 +82,22 @@ class SemanticKeywordMatcher @Inject constructor(
             }
         }
         
-        orderedKeywordEntries.forEach { entry ->
+        compiledKeywords.forEach { compiled ->
             try {
-                val wordBoundaryPattern = Regex("""\b${Regex.escape(entry.keyword)}\b""", RegexOption.IGNORE_CASE)
-                val matchResult = wordBoundaryPattern.find(normalized)
+                val matchResult = compiled.regex.find(normalized)
 
                 if (matchResult != null) {
                     val isAtStart = matchResult.range.first == 0
                     val positionBoost = if (isAtStart) 0.10 else 0.0
 
-                    val finalWeight = minOf(entry.confidence + positionBoost, 0.98)
+                    val finalWeight = minOf(compiled.entry.confidence + positionBoost, 0.98)
 
-                    val matches = scores.getOrPut(entry.categoryName) { mutableListOf() }
+                    val matches = scores.getOrPut(compiled.entry.categoryName) { mutableListOf() }
                     matches.add(
                         SemanticMatch(
-                            categoryName = entry.categoryName,
+                            categoryName = compiled.entry.categoryName,
                             confidence = finalWeight,
-                            matchedKeyword = entry.keyword,
+                            matchedKeyword = compiled.entry.keyword,
                             matchType = "keyword"
                         )
                     )
@@ -127,6 +135,15 @@ class SemanticKeywordMatcher @Inject constructor(
     
     fun getTopKeywords(merchant: String, limit: Int = 5): List<SemanticMatch> {
         return match(merchant, 0.30).take(limit)
+    }
+
+    private fun buildKeywordRegex(keyword: String): Regex {
+        val escaped = Regex.escape(keyword)
+        val startsWithWord = keyword.firstOrNull()?.isLetterOrDigit() == true || keyword.firstOrNull() == '_'
+        val endsWithWord = keyword.lastOrNull()?.isLetterOrDigit() == true || keyword.lastOrNull() == '_'
+        val prefix = if (startsWithWord) "(?<![\\p{L}\\p{N}_])" else ""
+        val suffix = if (endsWithWord) "(?![\\p{L}\\p{N}_])" else ""
+        return Regex("$prefix$escaped$suffix", RegexOption.IGNORE_CASE)
     }
 
     private companion object {

@@ -31,7 +31,9 @@ data class BusinessExpenseReport(
 data class MileageReport(
     val totalDistanceKm: Double,
     val totalDeduction: Double,
-    val deductionRatePerKm: Double,
+    val deductionRatePerKm: Double?,
+    val effectiveDeductionRatePerKm: Double,
+    val hasMultipleRates: Boolean,
     val tripCount: Int,
     val trips: List<MileageTracking>
 )
@@ -92,7 +94,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
         val mileageReport = if (includeMileage) {
             generateMileageReport(startDate, endDate)
         } else {
-            MileageReport(0.0, 0.0, 0.0, 0, emptyList())
+            MileageReport(0.0, 0.0, null, 0.0, false, 0, emptyList())
         }
         
         // Calculate total deductible (expenses + mileage)
@@ -138,7 +140,12 @@ class BusinessExpenseReportGenerator @Inject constructor(
                 append("MILEAGE DEDUCTION\n")
                 append("----------------------------------------\n")
                 append("Total Distance: ${String.format("%.1f", mileageReport.totalDistanceKm)} km\n")
-                append("Deduction Rate: €${String.format("%.2f", mileageReport.deductionRatePerKm)}/km\n")
+                val rateLine = if (mileageReport.hasMultipleRates) {
+                    "Deduction Rate: €${String.format("%.2f", mileageReport.effectiveDeductionRatePerKm)}/km (weighted average, multiple rates applied)"
+                } else {
+                    "Deduction Rate: €${String.format("%.2f", mileageReport.deductionRatePerKm ?: 0.0)}/km"
+                }
+                append("$rateLine\n")
                 append("Total Mileage Deduction: €${String.format("%.2f", mileageReport.totalDeduction)}\n")
                 append("Number of Trips: ${mileageReport.tripCount}\n")
                 append("\n")
@@ -200,12 +207,16 @@ class BusinessExpenseReportGenerator @Inject constructor(
             totalDeduction += trip.calculatedDeduction ?: (trip.distanceKm * trip.deductionRatePerKm)
         }
         
-        val rate = if (trips.isNotEmpty()) trips.first().deductionRatePerKm else 0.30
+        val distinctRates = trips.map { it.deductionRatePerKm }.distinct()
+        val singleRate = distinctRates.singleOrNull()
+        val effectiveRate = if (totalDistance > 0.0) totalDeduction / totalDistance else (singleRate ?: 0.30)
         
         return MileageReport(
             totalDistanceKm = totalDistance,
             totalDeduction = totalDeduction,
-            deductionRatePerKm = rate,
+            deductionRatePerKm = singleRate,
+            effectiveDeductionRatePerKm = effectiveRate,
+            hasMultipleRates = distinctRates.size > 1,
             tripCount = trips.size,
             trips = trips
         )

@@ -137,7 +137,7 @@
     <string name="error_network">Network error. Please check your connection.</string>
     <string name="error_invalid_input">Invalid input</string>
     <string name="error_required_field">This field is required</string>
-    <string name="error_invalid_amount">Enter a valid amount</string>
+    <string name="error_invalid_amount">Enter a valid positive amount</string>
     <string name="error_amount_too_large">Amount exceeds limit</string>
     <string name="error_invalid_date">Invalid date</string>
     <string name="error_duplicate">Duplicate entry detected</string>
@@ -370,6 +370,7 @@
     <string name="receipt_detected_items_format">Detected Items (%1$d)</string>
     <string name="receipt_analyze_items_cd">Analyze receipt items with AI</string>
     <string name="receipt_analyze_button">Analyze</string>
+    <string name="receipt_item_analysis_retry_button">Retry</string>
     <string name="receipt_tax_vat_label">Tax/VAT</string>
     <string name="receipt_notes_label">Notes (optional)</string>
     <string name="receipt_notes_input_cd">Optional notes input field</string>
@@ -397,6 +398,9 @@
     <string name="receipt_error_message">Something went wrong</string>
     <string name="receipt_retry_cd">Retry receipt processing</string>
     <string name="receipt_try_again_button">Try Again</string>
+    <string name="receipt_camera_permission_denied_title">Camera permission denied</string>
+    <string name="receipt_camera_permission_denied_message">Enable camera permission in app settings to capture receipts.</string>
+    <string name="receipt_open_settings_button">Open Settings</string>
     
     <!-- G10: Review Screen -->
     <string name="review_queue_title_format">REVIEW QUEUE (%1$d)</string>
@@ -823,6 +827,12 @@
     <string name="money_radar_reason_budget_risk_medium_format">Possible budget overrun (%1$d%%)</string>
     <string name="money_radar_reason_finances_healthy">Your finances look healthy</string>
     <string name="money_radar_reason_monitor_spending">Monitor your spending closely</string>
+    <string name="money_radar_budget_impact_on_track">You are on track to stay within budget</string>
+    <string name="money_radar_budget_impact_maybe_overrun_format">You may exceed your budget by %1$s</string>
+    <string name="money_radar_budget_impact_high_overrun_format">High risk of exceeding budget by %1$s</string>
+    <string name="money_radar_budget_impact_critical_overrun_format">Very likely to exceed budget by %1$s</string>
+    <string name="money_radar_budget_impact_probability_warning">High probability of exceeding budget</string>
+    <string name="money_radar_budget_impact_probability_critical">Very high probability of budget overrun</string>
 
     <!-- Budget Analytics -->
     <string name="budget_block_party_title">BUDGET BLOCK PARTY</string>
@@ -1293,6 +1303,35 @@
     <string name="savings_amount_eur">%1$s</string>
     <string name="savings_of_target">of %1$s</string>
     <string name="savings_safe_to_save">Safe to save %1$s more</string>
+    <string name="savings_goal_created_message">Goal created</string>
+    <string name="savings_contribute_dialog_title_format">Contribute to %1$s?</string>
+    <string name="savings_contribute_dialog_message_format">Add %1$s to this goal now?</string>
+    <string name="savings_saved_amount_message_format">Saved %1$s</string>
+    <string name="savings_add_goal_dialog_title">Add savings goal</string>
+    <string name="savings_goal_name_label">Goal name</string>
+    <string name="savings_target_amount_label">Target amount</string>
+    <string name="savings_target_date_label_format">Target date: %1$s</string>
+    <string name="savings_set_date">Set date</string>
+    <string name="savings_change_date">Change date</string>
+    <string name="savings_action_clear_date">Clear</string>
+    <string name="savings_protection_level_label">Protection level</string>
+    <string name="savings_goal_protection_strict">Strict</string>
+    <string name="savings_goal_protection_warning">Warning</string>
+    <string name="savings_goal_protection_tracking">Tracking</string>
+    <string name="savings_lifestyle_alert_title">💡 Lifestyle Inflation Alert</string>
+    <string name="savings_lifestyle_boost_format">Suggested savings boost: +%1$s%% monthly</string>
+    <string name="savings_not_now">Not Now</string>
+    <string name="savings_boost_action">Boost Savings</string>
+    <string name="savings_end_of_month_sweep_title">End of Month Sweep</string>
+    <string name="savings_month_ends_format">Month ends %1$s</string>
+    <string name="savings_safe_to_save_sweep_format">Safe to Save: %1$s</string>
+    <string name="savings_underspend_buffer_format">Underspend: %1$s • Buffer: %2$s</string>
+    <string name="savings_confidence_high">High confidence</string>
+    <string name="savings_confidence_good">Good confidence</string>
+    <string name="savings_confidence_prefix_format">✓ %1$s</string>
+    <string name="savings_suggested_allocation">Suggested allocation:</string>
+    <string name="savings_sweep_to_goals">Sweep to Goals</string>
+    <string name="savings_progress_label_format">Progress: %1$s%%</string>
     
     <!-- Warranty Tracker -->
     <string name="screen_warranty_tracker">Warranty Tracker</string>
@@ -1457,6 +1496,15 @@
     <string name="lifestyle_no_data_title">No Data Available</string>
     <string name="lifestyle_no_data_subtitle">Add income and spending transactions to see lifestyle inflation analysis</string>
     <string name="lifestyle_retry_button">Retry Analysis</string>
+    <string name="lifestyle_creep_severity_high">High</string>
+    <string name="lifestyle_creep_severity_medium">Medium</string>
+    <string name="lifestyle_creep_severity_low">Low</string>
+    <string name="lifestyle_recommendation_priority_high">High</string>
+    <string name="lifestyle_recommendation_priority_medium">Medium</string>
+    <string name="lifestyle_recommendation_priority_low">Low</string>
+    <string name="lifestyle_savings_prompt_title">Boost Your Savings</string>
+    <string name="lifestyle_savings_prompt_body_format">Lifestyle inflation detected at %1$s. Consider redirecting some of that spending growth toward your savings goals.</string>
+    <string name="lifestyle_savings_prompt_action">Increase Savings Rate</string>
     
     <!-- Bill Negotiation Screen -->
     <string name="bill_negotiation_title">Bill Negotiation</string>
@@ -1553,6 +1601,22 @@
     <string name="challenges_saved_today_format">Saved today: %1$s</string>
     <string name="challenges_7day_achievement">7-Day Streak Achievement!</string>
     <string name="challenges_start_streak">Start a no-spend streak today!</string>
+    <string name="challenges_unavailable_title">Active challenges unavailable</string>
+    <string name="challenges_unavailable_message">This build does not have a persisted active-challenges source yet.</string>
+    <string name="challenges_target_reduce_with_baseline_format">Baseline %1$s, reduce by %2$s</string>
+    <string name="challenges_target_reduce_format">Reduce spend by %1$s</string>
+    <string name="challenges_target_generic_format">Target: %1$s</string>
+    <string name="challenges_progress_window_format">%1$d%% through challenge window</string>
+    <string name="challenges_form_name_label">Challenge name</string>
+    <string name="challenges_form_type_label">Challenge type</string>
+    <string name="challenges_form_duration_label">Duration (days)</string>
+    <string name="challenges_form_reduce_by_amount_label">Reduce by amount</string>
+    <string name="challenges_form_target_amount_label">Target amount</string>
+    <string name="challenges_form_category_label">Category</string>
+    <string name="challenges_type_no_spend">No Spend</string>
+    <string name="challenges_type_budget_limit">Budget Limit</string>
+    <string name="challenges_type_reduce_spending">Reduce Spending</string>
+    <string name="challenges_type_category_specific">Category Specific</string>
     
     <!-- Spending Map Screen -->
     <string name="map_center_my_location_cd">Center map on my current location</string>
@@ -1914,6 +1978,10 @@
     <string name="assistant_suggestion_top_merchants">Top merchants</string>
     <string name="assistant_suggestion_largest">Largest purchase</string>
     <string name="assistant_suggestion_groceries">Show groceries</string>
+    <string name="assistant_query_this_month">How much did I spend this month?</string>
+    <string name="assistant_query_top_merchants">Top merchants this month</string>
+    <string name="assistant_query_largest_purchase">Largest purchase this month</string>
+    <string name="assistant_query_groceries">Show groceries this month</string>
     
     <!-- Transaction Filter Sheet -->
     <string name="filter_transactions_title">Filter Transactions</string>
@@ -1941,6 +2009,18 @@
     <string name="analytics_high_spending_description">You\'ve spent %1$.1f%% of your income this period</string>
     <string name="analytics_weekend_spending_description">Your weekend spending is higher than average weekday spending</string>
     <string name="analytics_great_savings_description">You\'re saving %1$.1f%% of your income!</string>
+    <string name="analytics_insight_spending_up_title_format">Spending up %1$d%%</string>
+    <string name="analytics_insight_spending_up_description_format">%1$s this month vs %2$s last month</string>
+    <string name="analytics_insight_spending_down_title_format">Good job! Spending down %1$d%%</string>
+    <string name="analytics_insight_spending_down_description_format">You saved %1$s compared to last month</string>
+    <string name="analytics_insight_pace_warning_title">Spending Pace Warning</string>
+    <string name="analytics_insight_pace_warning_description_format">You\'re at %1$d days but spent %2$d%% of typical month</string>
+    <string name="analytics_insight_category_up_title_format">%1$s up %2$d%%</string>
+    <string name="analytics_insight_category_up_description_format">%1$s vs %2$s</string>
+    <string name="analytics_insight_recurring_title_format">Recurring: %1$s</string>
+    <string name="analytics_insight_recurring_description_format">%1$s ~every %2$d days</string>
+    <string name="analytics_insight_largest_transaction_title_format">Largest: %1$s</string>
+    <string name="analytics_insight_largest_transaction_description_format">%1$s on %2$s</string>
     <string name="visual_split_amount_prefix_format">= %1$s</string>
     <string name="bill_reminders_title">Bill Reminders</string>
     <string name="bill_reminders_expected_monthly">Expected Monthly Bills</string>
@@ -1998,6 +2078,7 @@
     
     <!-- Financial Cards -->
     <string name="financial_weather_title">FINANCIAL WEATHER</string>
+    <string name="dashboard_briefing_overall">Overall</string>
     <string name="financial_upcoming">UPCOMING (NEXT 30 DAYS)</string>
     <string name="financial_runway_title">FINANCIAL RUNWAY</string>
     <string name="financial_runway_days">days</string>
@@ -2078,6 +2159,19 @@
     <string name="domain_savings_century_club">Century Club</string>
     <string name="domain_savings_goal_crusher">Goal Crusher</string>
     <string name="domain_savings_grand_saver">Grand Saver</string>
+    <string name="domain_savings_achievement_desc_first_goal">Create your first savings goal</string>
+    <string name="domain_savings_achievement_desc_streak">Save for 7 consecutive days</string>
+    <string name="domain_savings_achievement_desc_save_total_format">Save %1$s total</string>
+    <string name="domain_savings_achievement_desc_complete_first_goal">Complete your first savings goal</string>
+    <string name="domain_savings_achievement_req_create_goal">Create 1 goal</string>
+    <string name="domain_savings_achievement_req_streak">7 day streak</string>
+    <string name="domain_savings_achievement_req_saved_format">%1$s saved</string>
+    <string name="domain_savings_achievement_req_complete_goal">1 goal completed</string>
+    <string name="domain_savings_portfolio_recommendation_ready">Portfolio recommendation ready</string>
+    <string name="domain_savings_impact_goal_already_reached">Goal already reached</string>
+    <string name="domain_savings_impact_reach_in_days_format">You\'ll reach your goal in %1$d days!</string>
+    <string name="domain_savings_impact_on_track_months_format">On track to reach goal in %1$d months</string>
+    <string name="domain_savings_impact_steady_progress_format">Steady progress toward your %1$s goal</string>
     
     <!-- Domain: AI Financial Query -->
     <string name="domain_ai_top_categories">Top categories</string>
@@ -2093,6 +2187,35 @@
     <string name="domain_narrative_goal_reserves">Goal Reserves</string>
     <string name="domain_narrative_committed_plans">Committed Plans</string>
     <string name="domain_narrative_predicted_activity">Predicted Activity</string>
+    <string name="domain_weather_headline_stormy_weather">Stormy Weather</string>
+    <string name="domain_weather_summary_stormy_weather">⚠️ Immediate action required. Budgets exceeded and no discretionary buffer remains.</string>
+    <string name="domain_weather_headline_rainy_conditions">Rainy Conditions</string>
+    <string name="domain_weather_summary_rainy_conditions">Over pace on budgets and high committed costs. Caution is highly advised.</string>
+    <string name="domain_weather_headline_cloudy_forecast">Cloudy Forecast</string>
+    <string name="domain_weather_summary_cloudy_forecast_format">Spending is tight. You only have %1$s remaining for unpredicted expenses.</string>
+    <string name="domain_weather_headline_clear_skies">Clear Skies</string>
+    <string name="domain_weather_summary_clear_skies_format">You have a comfortable buffer of %1$s for the rest of the month.</string>
+    <string name="domain_weather_headline_partly_cloudy">Partly Cloudy</string>
+    <string name="domain_weather_summary_partly_cloudy_format">Everything is on track, though discretionary buffer is moderate (%1$s).</string>
+    <string name="domain_weather_headline_mixed_signals">Mixed Signals</string>
+    <string name="domain_weather_summary_mixed_signals">Not enough data to provide a clear outlook yet.</string>
+    <string name="domain_weather_headline_unavailable">Weather Unavailable</string>
+    <string name="domain_weather_summary_unavailable">We couldn’t calculate your financial outlook right now.</string>
+    <string name="domain_narrative_budget_exceeded_spent_format">%1$s is exceeded: %2$s spent</string>
+    <string name="domain_narrative_budget_critical_spent_format">%1$s is critical: %2$s spent</string>
+    <string name="domain_narrative_total_budget_exceeded_spent_format">Total Budget is exceeded: %1$s spent</string>
+    <string name="domain_narrative_total_budget_critical_spent_format">Total Budget is critical: %1$s spent</string>
+    <string name="domain_narrative_budget_warning_spent_format">%1$s is warning: %2$s spent</string>
+    <string name="domain_narrative_budget_on_track_spent_format">%1$s is on track: %2$s spent</string>
+    <string name="domain_narrative_all_budgets_on_track">All active budgets are currently on track</string>
+    <string name="domain_narrative_goal_reserves_locked_format">%1$s locked for high-priority savings</string>
+    <string name="domain_narrative_must_plan_format">%1$s: %2$s (Must)</string>
+    <string name="domain_narrative_likely_plan_format">%1$s: %2$s (Likely)</string>
+    <string name="domain_narrative_habit_forecast_format">Habit-based forecast: %1$s likely spending based on your typical month.</string>
+    <string name="domain_synthesis_spending_pace_higher">Spending pace is higher than usual.</string>
+    <string name="domain_synthesis_budgets_exceeded_format">%1$d budgets exceeded.</string>
+    <string name="domain_synthesis_strict_savings_goals_active_format">%1$d strict savings goals active.</string>
+    <string name="domain_synthesis_must_pay_planned_expenses_format">%1$d must-pay planned expenses this month.</string>
     
     <!-- AI Components - Currency Formats -->
     <string name="amount_eur_format_long">%.2f EUR</string>

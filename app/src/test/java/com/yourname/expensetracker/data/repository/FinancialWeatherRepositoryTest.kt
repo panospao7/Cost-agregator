@@ -1,13 +1,12 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.domain.analytics.InsightsEngine
-import com.yourname.expensetracker.domain.analytics.SpendingPace
-import com.yourname.expensetracker.domain.analytics.PaceStatus
+import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
+import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
-import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -24,32 +23,32 @@ import java.time.Instant
 class FinancialWeatherRepositoryTest {
 
     private val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
-    private val insightsEngine = mockk<InsightsEngine>(relaxed = true)
     private val budgetRepository = mockk<BudgetRepository>(relaxed = true)
     private val recurringExpenseRepository = mockk<RecurringExpenseRepository>(relaxed = true)
-    private val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
+    private val mergedRecurringPatternsProvider = mockk<MergedRecurringPatternsProvider>(relaxed = true)
     private val plannedExpenseRepository = mockk<PlannedExpenseRepository>(relaxed = true)
     private val savingsGoalRepository = mockk<SavingsGoalRepository>(relaxed = true)
     private val synthesisEngine = mockk<SynthesisEngine>(relaxed = true)
     private val narrativeGenerator = mockk<NarrativeGenerator>(relaxed = true)
     private val analyticsRepository = mockk<AnalyticsRepository>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private lateinit var forecastInputAssembler: ForecastInputAssembler
 
     private lateinit var repository: FinancialWeatherRepository
-    private val testDispatcher = StandardTestDispatcher()
 
     @Before
     fun setup() {
         every { timeProvider.now() } returns 1705320000000L // Jan 15, 2024
+        forecastInputAssembler = ForecastInputAssembler(timeProvider)
         
         repository = FinancialWeatherRepository(
             expenseRepository,
-            insightsEngine,
             budgetRepository,
             recurringExpenseRepository,
-            recurringExpenseEngine,
+            mergedRecurringPatternsProvider,
             plannedExpenseRepository,
             savingsGoalRepository,
+            forecastInputAssembler,
             synthesisEngine,
             narrativeGenerator,
             analyticsRepository,
@@ -78,29 +77,12 @@ class FinancialWeatherRepositoryTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
-        val spendingPace = SpendingPace(
-            currentMonthSpent = 35.0,
-            daysElapsed = 15,
-            daysInMonth = 31,
-            projectedTotal = 70.0,
-            previousMonthTotal = null,
-            averageMonthlyTotal = null,
-            pacePercentage = 50.0f,
-            paceStatus = PaceStatus.ON_PACE
-        )
-        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns spendingPace
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
 
-        val capturedPastSum = slot<List<Double>>()
-        every { synthesisEngine.synthesize(
-            pastSumDaily = capture(capturedPastSum),
-            recurringPatterns = any(),
-            plannedExpenses = any(),
-            savingsGoals = any(),
-            budgetStatuses = any(),
-            spendingPace = any()
-        ) } returns createMockForecast()
+        val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
+        every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
 
         every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
 
@@ -109,7 +91,7 @@ class FinancialWeatherRepositoryTest {
         val result = weatherFlow.first()
 
         // Assert
-        val pastSum = capturedPastSum.captured
+        val pastSum = capturedInput.captured.pastSumDaily
         assertEquals(15, pastSum.size) // Jan 1 to Jan 15 inclusive
         assertEquals(10.0, pastSum[0], 0.01) // Day 0
         assertEquals(30.0, pastSum[1], 0.01) // Day 1 (10 + 20)
@@ -126,17 +108,7 @@ class FinancialWeatherRepositoryTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
-        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns SpendingPace(
-            currentMonthSpent = 0.0,
-            daysElapsed = 15,
-            daysInMonth = 31,
-            projectedTotal = 0.0,
-            previousMonthTotal = null,
-            averageMonthlyTotal = null,
-            pacePercentage = 0f,
-            paceStatus = PaceStatus.NO_BASELINE
-        )
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
         val recurring = listOf(
             RecurringPattern(
@@ -151,6 +123,7 @@ class FinancialWeatherRepositoryTest {
                 previousDates = emptyList()
             )
         )
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns recurring
         val planned = listOf(
             PlannedExpense(
                 id = 1,
@@ -162,10 +135,8 @@ class FinancialWeatherRepositoryTest {
                 priority = PlannedExpensePriority.LIKELY
             )
         )
-        coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns recurring
-
         every {
-            synthesisEngine.synthesize(any(), any(), any(), any(), any(), any())
+            synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>())
         } returns FinancialForecast(
             horizon = ForecastHorizon.REST_OF_MONTH,
             generatedAt = Instant.ofEpochMilli(now),
@@ -186,8 +157,8 @@ class FinancialWeatherRepositoryTest {
         every { narrativeGenerator.generate(any(), any()) } returns WeatherNarrative(
             state = WeatherState.RAINY,
             icon = "🌧️",
-            headline = "Rainy",
-            summary = "Careful"
+            headline = UiText.StringResource(R.string.domain_weather_headline_rainy_conditions),
+            summary = UiText.StringResource(R.string.domain_weather_summary_rainy_conditions)
         )
 
         val result = repository.getFinancialWeather().first()
@@ -210,19 +181,9 @@ class FinancialWeatherRepositoryTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
-        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns SpendingPace(
-            currentMonthSpent = 0.0,
-            daysElapsed = 1,
-            daysInMonth = 31,
-            projectedTotal = 0.0,
-            previousMonthTotal = null,
-            averageMonthlyTotal = null,
-            pacePercentage = 0f,
-            paceStatus = PaceStatus.NO_BASELINE
-        )
-        coEvery { recurringExpenseEngine.getPatterns(any<List<Expense>>()) } returns emptyList()
-        every { synthesisEngine.synthesize(any(), any(), any(), any(), any(), any()) } returns createMockForecast()
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
+        every { synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>()) } returns createMockForecast()
         every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
 
         val result = repository.getFinancialWeather().first()
@@ -255,26 +216,17 @@ class FinancialWeatherRepositoryTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
-        val spendingPace = SpendingPace(
-            currentMonthSpent = 55.0, daysElapsed = 15, daysInMonth = 31,
-            projectedTotal = 110.0, previousMonthTotal = null, averageMonthlyTotal = null,
-            pacePercentage = 50.0f, paceStatus = PaceStatus.ON_PACE
-        )
-        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns spendingPace
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
 
-        val capturedPastSum = slot<List<Double>>()
-        every { synthesisEngine.synthesize(
-            pastSumDaily = capture(capturedPastSum),
-            recurringPatterns = any(), plannedExpenses = any(),
-            savingsGoals = any(), budgetStatuses = any(), spendingPace = any()
-        ) } returns createMockForecast()
+        val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
+        every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
         every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
 
         repository.getFinancialWeather().first()
 
-        val pastSum = capturedPastSum.captured
+        val pastSum = capturedInput.captured.pastSumDaily
         assertEquals(15, pastSum.size)
         assertEquals(10.0, pastSum[0], 0.01)  // Day 0: 10
         assertEquals(50.0, pastSum[1], 0.01)  // Day 1: 10 + 40 (NOT 10 + 100)
@@ -298,25 +250,17 @@ class FinancialWeatherRepositoryTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
-        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns SpendingPace(
-            currentMonthSpent = 70.0, daysElapsed = 15, daysInMonth = 31,
-            projectedTotal = 140.0, previousMonthTotal = null, averageMonthlyTotal = null,
-            pacePercentage = 50.0f, paceStatus = PaceStatus.ON_PACE
-        )
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
 
-        val capturedPastSum = slot<List<Double>>()
-        every { synthesisEngine.synthesize(
-            pastSumDaily = capture(capturedPastSum),
-            recurringPatterns = any(), plannedExpenses = any(),
-            savingsGoals = any(), budgetStatuses = any(), spendingPace = any()
-        ) } returns createMockForecast()
+        val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
+        every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
         every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
 
         repository.getFinancialWeather().first()
 
-        val pastSum = capturedPastSum.captured
+        val pastSum = capturedInput.captured.pastSumDaily
         assertEquals(50.0, pastSum[0], 0.01)  // Day 0: 50 (NOT 100)
         assertEquals(70.0, pastSum[1], 0.01)  // Day 1: 50 + 20 = 70
     }
@@ -335,41 +279,179 @@ class FinancialWeatherRepositoryTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
-        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns SpendingPace(
-            currentMonthSpent = 25.0, daysElapsed = 15, daysInMonth = 31,
-            projectedTotal = 50.0, previousMonthTotal = null, averageMonthlyTotal = null,
-            pacePercentage = 50.0f, paceStatus = PaceStatus.ON_PACE
-        )
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
 
-        val capturedPastSum = slot<List<Double>>()
-        val capturedPaceExpenses = slot<List<Expense>>()
-        every { synthesisEngine.synthesize(
-            pastSumDaily = capture(capturedPastSum),
-            recurringPatterns = any(), plannedExpenses = any(),
-            savingsGoals = any(), budgetStatuses = any(), spendingPace = any()
-        ) } returns createMockForecast()
+        val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
+        every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
         every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
-        coEvery { insightsEngine.getSpendingPaceSuspend(capture(capturedPaceExpenses)) } returns SpendingPace(
-            currentMonthSpent = 25.0, daysElapsed = 15, daysInMonth = 31,
-            projectedTotal = 50.0, previousMonthTotal = null, averageMonthlyTotal = null,
-            pacePercentage = 50.0f, paceStatus = PaceStatus.ON_PACE
-        )
 
         repository.getFinancialWeather().first()
 
         // isNotMine purchase is filtered out from daily cumulative (line 144: !it.isNotMine)
-        val pastSum = capturedPastSum.captured
+        val pastSum = capturedInput.captured.pastSumDaily
         assertEquals(25.0, pastSum[0], 0.01) // Day 0: only the regular purchase
         assertEquals(25.0, pastSum[1], 0.01) // Day 1: isNotMine filtered out, stays at 25
 
-        // isNotMine expense is also filtered out of pace input (line 165: !it.isNotMine)
-        val paceExpenses = capturedPaceExpenses.captured
-        assertTrue(
-            "isNotMine expenses should be filtered from pace input",
-            paceExpenses.none { it.isNotMine }
+        // isNotMine expense is also excluded from computed spending pace
+        assertEquals(25.0, capturedInput.captured.spendingPace.currentMonthSpent, 0.01)
+    }
+
+    @Test
+    fun `getFinancialWeather merges recurring with manual precedence and confidence threshold`() = runTest {
+        val now = 1705320000000L
+        every { timeProvider.now() } returns now
+
+        every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
+        every {
+            recurringExpenseRepository.getAllFlow()
+        } returns flowOf(
+            listOf(
+                com.yourname.expensetracker.data.database.entity.ManualRecurringExpense(
+                    id = 1,
+                    merchant = "Netflix",
+                    amount = 15.0,
+                    frequency = RecurrenceFrequency.MONTHLY,
+                    nextDate = now + 86_400_000L
+                )
+            )
         )
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns listOf(
+            RecurringPattern(
+                merchantName = "Netflix",
+                averageAmount = 15.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + 86_400_000L,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            ),
+            RecurringPattern(
+                merchantName = "Gym",
+                averageAmount = 35.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + 86_400_000L,
+                confidence = 0.8f,
+                previousDates = emptyList()
+            ),
+        )
+
+        val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
+        every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
+        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+
+        repository.getFinancialWeather().first()
+
+        val byMerchant = capturedInput.captured.recurringPatterns.associateBy { it.merchantName }
+        assertEquals(2, byMerchant.size)
+        assertEquals(15.0, byMerchant.getValue("Netflix").averageAmount, 0.0001)
+        assertEquals(1.0f, byMerchant.getValue("Netflix").confidence)
+        assertTrue(byMerchant.containsKey("Gym"))
+        assertTrue(!byMerchant.containsKey("Low"))
+    }
+
+    @Test
+    fun `getFinancialWeather uses confirmed recurring only for forecast assembly`() = runTest {
+        val now = 1705320000000L
+        every { timeProvider.now() } returns now
+        every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
+        every {
+            recurringExpenseRepository.getAllFlow()
+        } returns flowOf(
+            listOf(
+                com.yourname.expensetracker.data.database.entity.ManualRecurringExpense(
+                    id = 9,
+                    merchant = "Confirmed Rent",
+                    amount = 950.0,
+                    frequency = RecurrenceFrequency.MONTHLY,
+                    nextDate = now + 86_400_000L
+                )
+            )
+        )
+        every { mergedRecurringPatternsProvider.getConfirmedPatterns(any()) } returns listOf(
+            RecurringPattern(
+                id = 9,
+                merchantName = "Confirmed Rent",
+                averageAmount = 950.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + 86_400_000L,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+
+        val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
+        every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
+        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+
+        repository.getFinancialWeather().first()
+
+        assertEquals(listOf("Confirmed Rent"), capturedInput.captured.recurringPatterns.map { it.merchantName })
+        verify(exactly = 1) { mergedRecurringPatternsProvider.getConfirmedPatterns(any()) }
+        coVerify(exactly = 0) { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) }
+    }
+
+    @Test
+    fun `getConfirmedRecurringPatterns excludes unconfirmed merged suggestions`() = runTest {
+        val now = 1705320000000L
+        val manualRecurring = listOf(
+            com.yourname.expensetracker.data.database.entity.ManualRecurringExpense(
+                id = 9,
+                merchant = "Confirmed Rent",
+                amount = 950.0,
+                frequency = RecurrenceFrequency.MONTHLY,
+                nextDate = now + 86_400_000L
+            )
+        )
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(manualRecurring)
+        every { mergedRecurringPatternsProvider.getConfirmedPatterns(manualRecurring) } returns listOf(
+            RecurringPattern(
+                id = 9,
+                merchantName = "Confirmed Rent",
+                averageAmount = 950.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + 86_400_000L,
+                confidence = 1.0f,
+                previousDates = emptyList()
+            )
+        )
+        coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns listOf(
+            RecurringPattern(
+                merchantName = "Suggested Gym",
+                averageAmount = 45.0,
+                currency = "EUR",
+                frequency = RecurrenceFrequency.MONTHLY,
+                periodVarianceDays = 0,
+                amountVariancePercent = 0.0,
+                nextExpectedDate = now + 172_800_000L,
+                confidence = 0.95f,
+                previousDates = emptyList()
+            )
+        )
+
+        val result = repository.getConfirmedRecurringPatterns().first()
+
+        assertEquals(listOf("Confirmed Rent"), result.map { it.merchantName })
+        verify(exactly = 1) { mergedRecurringPatternsProvider.getConfirmedPatterns(manualRecurring) }
+        coVerify(exactly = 0) { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) }
     }
 
     private fun createExpense(amount: Double, date: Long, type: TransactionType): Expense {
@@ -426,7 +508,7 @@ class FinancialWeatherRepositoryTest {
         )
         return FinancialForecast(
             horizon = ForecastHorizon.REST_OF_MONTH,
-            generatedAt = java.time.Instant.now(),
+            generatedAt = java.time.Instant.ofEpochMilli(0L),
             confidence = 1.0,
             components = components,
             actionableInsights = emptyList()
@@ -437,8 +519,11 @@ class FinancialWeatherRepositoryTest {
         return WeatherNarrative(
             state = WeatherState.CLEAR_SKIES,
             icon = "☀️",
-            headline = "Clear",
-            summary = "OK"
+            headline = UiText.StringResource(R.string.domain_weather_headline_clear_skies),
+            summary = UiText.StringResource(
+                R.string.domain_weather_summary_clear_skies_format,
+                listOf("€0")
+            )
         )
     }
 }

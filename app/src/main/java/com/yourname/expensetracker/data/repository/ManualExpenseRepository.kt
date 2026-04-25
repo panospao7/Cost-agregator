@@ -145,7 +145,7 @@ class ManualExpenseRepository @Inject constructor(
                 latitude = latitude,
                 longitude = longitude,
                 locationSource = locationSource
-            )
+            ).normalizeOwnership()
 
             // Pre-insert canonical duplicate check: uses currency + transaction-type
             // aware policy so that (a) PURCHASE vs DEPOSIT/TRANSFER are never conflated,

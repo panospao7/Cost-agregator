@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.AiChatMessageDao
 import com.yourname.expensetracker.data.database.dao.AiChatSessionDao
 import com.yourname.expensetracker.data.database.entity.AiChatMessageEntity
@@ -13,9 +15,13 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.slot
+import io.mockk.unmockkStatic
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -23,6 +29,7 @@ import org.junit.Test
 
 class AiChatRepositoryImplTest {
 
+    private lateinit var database: AppDatabase
     private lateinit var sessionDao: AiChatSessionDao
     private lateinit var messageDao: AiChatMessageDao
     private lateinit var aiSettingsRepository: AiSettingsRepository
@@ -31,11 +38,24 @@ class AiChatRepositoryImplTest {
 
     @Before
     fun setup() {
+        database = mockk(relaxed = true)
         sessionDao = mockk(relaxed = true)
         messageDao = mockk(relaxed = true)
         aiSettingsRepository = mockk()
         fakeTimeProvider = FakeTimeProvider(1_000L)
-        repository = AiChatRepositoryImpl(sessionDao, messageDao, aiSettingsRepository, fakeTimeProvider)
+
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        val transactionBlock = slot<suspend () -> Any?>()
+        coEvery { database.withTransaction(capture(transactionBlock)) } coAnswers {
+            transactionBlock.captured.invoke()
+        }
+
+        repository = AiChatRepositoryImpl(database, sessionDao, messageDao, aiSettingsRepository, fakeTimeProvider)
+    }
+
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
     }
 
     @Test

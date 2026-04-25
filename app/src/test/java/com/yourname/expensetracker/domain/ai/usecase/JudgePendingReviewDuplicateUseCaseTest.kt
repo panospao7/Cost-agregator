@@ -22,8 +22,10 @@ import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DedupeJudgeService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
@@ -184,6 +186,66 @@ class JudgePendingReviewDuplicateUseCaseTest {
         assertEquals(DuplicateVerdict.LIKELY_DUPLICATE, suggestion.verdict)
         assertEquals(3L, suggestion.matchedTargetId)
         assertEquals(AiTargetType.EXPENSE, suggestion.matchedTargetType)
+    }
+
+    @Test
+    fun `invoke reuses cache when source hash matches canonical input`() = runTest {
+        val input = makeInput()
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(input)
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns AiArtifactRecord(
+            id = 11L,
+            targetType = AiTargetType.PENDING_REVIEW,
+            targetId = 2L,
+            targetKey = "pending_review:2",
+            capability = AiCapability.DEDUPE_JUDGE,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.CLOUD,
+            promptVersion = AppConfig.Ai.PROMPT_VERSION_DEDUPE,
+            sourceHash = AiArtifactSourceHash.forDedupeJudge(input),
+            payloadJson = """{"verdict":"UNCERTAIN"}""",
+            createdAt = 1_000L,
+            updatedAt = 1_000L,
+            expiresAt = 2_000L
+        )
+
+        val result = useCase(makeItem())
+
+        assertTrue(result is DedupeJudgeGenerationResult.Success)
+        assertTrue((result as DedupeJudgeGenerationResult.Success).fromCache)
+        coVerify(exactly = 0) { dedupeJudgeService.judge(any()) }
+    }
+
+    @Test
+    fun `invoke bypasses malformed cache payload and requests fresh suggestion`() = runTest {
+        val input = makeInput()
+        every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = true, dedupeJudgeEnabled = true))
+        coEvery { inputBuilder.build(any(), any()) } returns DedupeJudgeBuildResult.Ready(input)
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns AiArtifactRecord(
+            id = 12L,
+            targetType = AiTargetType.PENDING_REVIEW,
+            targetId = 2L,
+            targetKey = "pending_review:2",
+            capability = AiCapability.DEDUPE_JUDGE,
+            status = AiArtifactStatus.READY,
+            mode = AiMode.CLOUD,
+            promptVersion = AppConfig.Ai.PROMPT_VERSION_DEDUPE,
+            sourceHash = AiArtifactSourceHash.forDedupeJudge(input),
+            payloadJson = """{"verdict":"NOPE"}""",
+            createdAt = 1_000L,
+            updatedAt = 1_000L,
+            expiresAt = 2_000L
+        )
+        coEvery { dedupeJudgeService.judge(any()) } returns AiServiceResult.Success(
+            DedupeJudgeSuggestion(verdict = DuplicateVerdict.UNCERTAIN)
+        )
+        coEvery { aiArtifactRepository.upsert(any()) } returns 1L
+
+        val result = useCase(makeItem())
+
+        assertTrue(result is DedupeJudgeGenerationResult.Success)
+        assertTrue((result as DedupeJudgeGenerationResult.Success).fromCache.not())
+        coVerify(exactly = 1) { dedupeJudgeService.judge(any()) }
     }
 
     private fun makeItem() = PendingReviewWithReceipt(

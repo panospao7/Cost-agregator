@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.model.UiText
 
 // === New Insights Models ===
 
@@ -26,7 +25,7 @@ data class MonthPeriod(
 }
 
 data class CategoryInsight(
-    val category: Category,
+    val category: AnalyticsCategoryRef,
     val currentTotal: Double,
     val currentCount: Int,
     val previousTotal: Double?,
@@ -68,10 +67,10 @@ enum class PaceStatus {
 }
 
 data class AnomalyTransaction(
-    val expense: Expense,
+    val expense: AnalyticsTransactionSummary,
     val merchantAvg: Double,
     val deviationMultiple: Float, // how many times the average
-    val category: Category?,
+    val category: AnalyticsCategoryRef?,
     // Detection metadata — all optional; defaults preserve backward compat
     val detectionMethod: AnomalyMethod = AnomalyMethod.MULTIPLIER,
     val contextualNote: String? = null,  // e.g. "Unusual for a Tuesday evening"
@@ -131,7 +130,7 @@ data class InsightsSnapshot(
     val anomalies: List<AnomalyTransaction>,
     val recurringExpenses: List<RecurringExpense>,
     val dayOfWeekPattern: List<DayOfWeekInsight>,
-    val largestTransaction: Expense?,
+    val largestTransaction: AnalyticsTransactionSummary?,
     val averageTransactionSize: Double,
     val medianTransactionSize: Double,
     val totalMonthsOfData: Int
@@ -145,7 +144,7 @@ data class SpendingPeriod(
     val endDate: Long,
     val total: Double,
     val previousTotal: Double?,         // For comparison
-    val byCategory: List<CategoryBreakdown>,
+    val byCategory: List<AnalyticsCategoryBreakdown>,
     val byMerchant: List<MerchantBreakdown>,
     val dailyTotals: Map<String, Double>,   // "2024-01-15" → 45.60
     val transactionCount: Int
@@ -156,8 +155,14 @@ data class SpendingPeriod(
         else null
 }
 
-data class CategoryBreakdown(
-    val category: Category,
+@Deprecated(
+    message = "Use AnalyticsCategoryBreakdown",
+    replaceWith = ReplaceWith("AnalyticsCategoryBreakdown")
+)
+typealias LegacyAnalyticsCategoryBreakdown = AnalyticsCategoryBreakdown
+
+data class AnalyticsCategoryBreakdown(
+    val category: AnalyticsCategoryRef,
     val total: Double,
     val count: Int,
     val percentage: Float           // 0-100
@@ -174,8 +179,8 @@ data class MerchantBreakdown(
 data class SpendingInsight(
     val type: InsightType,
     val icon: String,
-    val title: String,
-    val description: String,
+    val title: UiText,
+    val description: UiText,
     val severity: Float             // 0-1, how important/urgent
 )
 

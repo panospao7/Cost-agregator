@@ -11,6 +11,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategoryName
+import com.yourname.expensetracker.domain.location.MerchantLocationGrid
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import kotlinx.coroutines.flow.Flow
 
@@ -93,7 +94,7 @@ interface ExpenseDao {
     suspend fun getChanges(): Int
 
     @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit")
-    fun getAllFlow(limit: Int = 500): Flow<List<Expense>>
+    fun getAllFlow(limit: Int): Flow<List<Expense>>
 
     @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit OFFSET :offset")
     suspend fun getPage(limit: Int = 100, offset: Int = 0): List<Expense>
@@ -155,7 +156,7 @@ interface ExpenseDao {
 
     @Deprecated("Use getAllFlow(limit) or getPage(limit, offset) to prevent OOM", ReplaceWith("getAllFlow(500)"))
     @Query("SELECT * FROM expenses ORDER BY date DESC LIMIT :limit")
-    suspend fun getAll(limit: Int = 2000): List<Expense>
+    suspend fun getAll(limit: Int): List<Expense>
 
     // ── Uncapped full-data queries (A.9) ────────────────────────────────────
     // These variants intentionally omit LIMIT so that callers with full-data
@@ -171,12 +172,16 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses ORDER BY date DESC")
     fun getAllFlowUncapped(): Flow<List<Expense>>
 
+    fun getAllFlow(): Flow<List<Expense>> = getAllFlowUncapped()
+
     /**
      * Suspend variant: return **all** expenses with no row cap.
      * Used by [ExpenseRepository] internal paging / snapshot helpers.
      */
     @Query("SELECT * FROM expenses ORDER BY date DESC")
     suspend fun getAllUncapped(): List<Expense>
+
+    suspend fun getAll(): List<Expense> = getAllUncapped()
 
     /**
      * Return all expenses in a half-open date range **without** a row cap.
@@ -186,12 +191,30 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC, id DESC")
     suspend fun getExpensesBetweenUncapped(startDate: Long, endDate: Long): List<Expense>
 
+    suspend fun getExpensesBetween(startDate: Long, endDate: Long): List<Expense> =
+        getExpensesBetweenUncapped(startDate, endDate)
+
+    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC, id DESC")
+    suspend fun getExpensesByTypeBetweenUncapped(startDate: Long, endDate: Long, type: String): List<Expense>
+
+    suspend fun getExpensesByTypeBetween(startDate: Long, endDate: Long, type: String): List<Expense> =
+        getExpensesByTypeBetweenUncapped(startDate, endDate, type)
+
     /**
      * Reactive (Flow) variant of [getExpensesBetweenUncapped].
      * Preserves the same ownership filter and ordering as [getExpensesBetweenFlow].
      */
     @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
     fun getExpensesBetweenFlowUncapped(startDate: Long, endDate: Long): Flow<List<Expense>>
+
+    fun getExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>> =
+        getExpensesBetweenFlowUncapped(startDate, endDate)
+
+    @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
+    fun getExpensesByTypeBetweenFlowUncapped(startDate: Long, endDate: Long, type: String): Flow<List<Expense>>
+
+    fun getExpensesByTypeBetweenFlow(startDate: Long, endDate: Long, type: String): Flow<List<Expense>> =
+        getExpensesByTypeBetweenFlowUncapped(startDate, endDate, type)
     
     @Query("SELECT * FROM expenses WHERE date >= :since AND isNotMine = 0 ORDER BY date DESC")
     suspend fun getExpensesSince(since: Long): List<Expense>
@@ -454,6 +477,55 @@ interface ExpenseDao {
     ): Boolean
 
     /**
+     * Check existence of a matching expense by **merchantKey prefix containment**
+     * within a time/amount range, restricted to the given currency and compatible
+     * transaction type.
+     *
+     * This catches cross-source duplicates where one source includes the store
+     * branch/address (e.g. "MASOUTIS RETZIKI 121" → merchantKey "masoutisretziki121")
+     * and the other just has the store name (e.g. "Masoutis" → merchantKey "masoutis").
+     *
+     * Two directions are checked:
+     * 1. Existing expense's key is a prefix of the new key (existing "masoutis" ⊂ new "masoutisretziki121")
+     * 2. New key is a prefix of the existing expense's key (new "masoutis" ⊂ existing "masoutisretziki121")
+     *
+ * A **minimum length guard** (`LENGTH(merchantKey) >= 4`) prevents short keys
+ * like "a" from spuriously matching everything.
+ * The `4` mirrors [DuplicateDetectionPolicy.MIN_MERCHANT_KEY_PREFIX_LENGTH];
+ * keep both in sync — Room SQL cannot reference Kotlin constants.
+     */
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1 FROM expenses
+            WHERE (
+                :merchantKey LIKE merchantKey || '%'
+                OR merchantKey LIKE :merchantKey || '%'
+            )
+            AND LENGTH(merchantKey) >= 4
+            AND LENGTH(:merchantKey) >= 4
+            AND date >= :startDate
+            AND date < :endDate
+            AND amount BETWEEN :minAmount AND :maxAmount
+            AND UPPER(currency) = UPPER(:currency)
+            AND (
+                :transactionType = 'UNKNOWN'
+                OR transactionType = 'UNKNOWN'
+                OR transactionType = :transactionType
+            )
+            LIMIT 1
+        )
+    """)
+    suspend fun existsByMerchantKeyPrefixInRangeCurrencyAware(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Boolean
+
+    /**
      * Check existence of a matching expense by raw **merchant** name within a
      * time/amount range, restricted to the given currency and compatible
      * transaction type.
@@ -599,6 +671,14 @@ interface ExpenseDao {
                 maxAmount = maxAmount,
                 currency = normalizedCurrency,
                 transactionType = transactionType
+            ) || existsByMerchantKeyPrefixInRangeCurrencyAware(
+                merchantKey = normalizedMerchantKey,
+                startDate = startDate,
+                endDate = endDate,
+                minAmount = minAmount,
+                maxAmount = maxAmount,
+                currency = normalizedCurrency,
+                transactionType = transactionType
             ) || existsByMerchantInRangeCurrencyAware(
                 merchant = merchant,
                 startDate = startDate,
@@ -707,6 +787,21 @@ interface ExpenseDao {
     """)
     fun getCategorySpentInPeriodFlow(categoryId: Long, startMs: Long, endMs: Long): Flow<Double>
 
+    @Query("""
+        SELECT categoryId, COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) AS total
+        FROM expenses
+        WHERE ${SPENDING_TYPE_SQL}
+          AND categoryId IN (:categoryIds)
+          AND date >= :startMs AND date < :endMs
+          AND isNotMine = 0
+        GROUP BY categoryId
+    """)
+    suspend fun getCategorySpentTotalsInPeriod(
+        categoryIds: List<Long>,
+        startMs: Long,
+        endMs: Long
+    ): List<CategorySpentTotal>
+
     // === Merchant Search for Manual Entry ===
     // avgAmount uses the effective (ownership-adjusted) amount via [EFFECTIVE_AMOUNT_SQL] so that
     // the pre-fill suggestion reflects what the user actually paid (not the gross posted amount on shared rows).
@@ -786,10 +881,10 @@ interface ExpenseDao {
     suspend fun getAmountsForPercentileCalc(startMs: Long, endMs: Long): List<Double>
 
     @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC, id DESC LIMIT :limit OFFSET :offset")
-    suspend fun getExpensesBetween(startDate: Long, endDate: Long, limit: Int = 2000, offset: Int = 0): List<Expense>
+    suspend fun getExpensesBetween(startDate: Long, endDate: Long, limit: Int, offset: Int = 0): List<Expense>
 
     @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date ASC, id ASC, merchant COLLATE NOCASE ASC LIMIT :limit OFFSET :offset")
-    suspend fun getExpensesBetweenForExport(startDate: Long, endDate: Long, limit: Int = 2000, offset: Int = 0): List<Expense>
+    suspend fun getExpensesBetweenForExport(startDate: Long, endDate: Long, limit: Int, offset: Int = 0): List<Expense>
 
     @Query("SELECT COUNT(*) FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0")
     suspend fun countExpensesBetween(startDate: Long, endDate: Long): Int
@@ -808,13 +903,13 @@ interface ExpenseDao {
     suspend fun getExpensesByCategory(categoryId: Long, startDate: Long, endDate: Long): List<Expense>
 
     @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC LIMIT :limit OFFSET :offset")
-    suspend fun getExpensesByTypeBetween(startDate: Long, endDate: Long, type: String, limit: Int = 2000, offset: Int = 0): List<Expense>
+    suspend fun getExpensesByTypeBetween(startDate: Long, endDate: Long, type: String, limit: Int, offset: Int = 0): List<Expense>
 
     @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC LIMIT :limit")
-    fun getExpensesBetweenFlow(startDate: Long, endDate: Long, limit: Int = 2000): Flow<List<Expense>>
+    fun getExpensesBetweenFlow(startDate: Long, endDate: Long, limit: Int): Flow<List<Expense>>
 
     @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC LIMIT :limit")
-    fun getExpensesByTypeBetweenFlow(startDate: Long, endDate: Long, type: String, limit: Int = 2000): Flow<List<Expense>>
+    fun getExpensesByTypeBetweenFlow(startDate: Long, endDate: Long, type: String, limit: Int): Flow<List<Expense>>
 
     @Query("""
         SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses 
@@ -1351,13 +1446,17 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY date DESC")
     fun getLocatedExpensesFlow(): Flow<List<Expense>>
 
-    /** Suspend version for one-shot reads (e.g., analytics). */
+    /** Suspend version for one-shot full reads (e.g., analytics). */
+    @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY date DESC")
+    suspend fun getLocatedExpenses(): List<Expense>
+
+    /** Explicitly bounded batch read for map/backfill helpers. */
     @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY date DESC LIMIT :limit")
-    suspend fun getLocatedExpenses(limit: Int = 2000): List<Expense>
+    suspend fun getLocatedExpensesBatch(limit: Int): List<Expense>
 
     /** All expenses that still lack coordinates. */
     @Query("SELECT * FROM expenses WHERE latitude IS NULL ORDER BY date DESC LIMIT :limit")
-    suspend fun getUnlocatedExpenses(limit: Int = 500): List<Expense>
+    suspend fun getUnlocatedExpenses(limit: Int): List<Expense>
 
     /** Count of located expenses — used for stats display. */
     @Query("SELECT COUNT(*) FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
@@ -1373,7 +1472,7 @@ interface ExpenseDao {
      * does not retry them indefinitely.
      */
     @Query("SELECT * FROM expenses WHERE latitude IS NULL AND backfillAttempts < :maxAttempts ORDER BY date DESC LIMIT :limit")
-    suspend fun getUnlocatedExpensesForBackfill(limit: Int = 500, maxAttempts: Int = 3): List<Expense>
+    suspend fun getUnlocatedExpensesForBackfill(limit: Int, maxAttempts: Int = 3): List<Expense>
 
     /** Increment the backfill attempt counter for an expense that could not be resolved. */
     @Query("UPDATE expenses SET backfillAttempts = backfillAttempts + 1 WHERE id = :expenseId")
@@ -1451,18 +1550,30 @@ interface ExpenseDao {
           AND longitude BETWEEN :minLon AND :maxLon
           AND latitude IS NOT NULL
         ORDER BY date DESC
-        LIMIT :limit
     """)
     suspend fun getExpensesInBoundingBox(
         minLat: Double, maxLat: Double,
+        minLon: Double, maxLon: Double
+    ): List<Expense>
+
+    @Query("""
+        SELECT * FROM expenses
+        WHERE latitude BETWEEN :minLat AND :maxLat
+          AND longitude BETWEEN :minLon AND :maxLon
+          AND latitude IS NOT NULL
+        ORDER BY date DESC
+        LIMIT :limit
+    """)
+    suspend fun getExpensesInBoundingBoxBatch(
+        minLat: Double, maxLat: Double,
         minLon: Double, maxLon: Double,
-        limit: Int = 2000
+        limit: Int
     ): List<Expense>
 
     /**
      * Cluster past located expenses for a given merchant into ~5 km grid cells.
-     * Uses CAST(lat/0.045 AS INTEGER) and CAST(lon/0.045 AS INTEGER) as grid keys
-     * (≈ 5 km cells), matching floor().toLong() used in Kotlin code.
+     * Uses the shared [MerchantLocationGrid] floor-based grid keys (≈ 5 km cells),
+     * including correct negative-coordinate handling.
      * Returns clusters ordered by count DESC so the caller can bias toward the
      * most-common area.
      *
@@ -1482,7 +1593,7 @@ interface ExpenseDao {
         WHERE merchantKey = :merchantKey
           AND latitude IS NOT NULL
           AND longitude IS NOT NULL
-        GROUP BY CAST(latitude / 0.045 AS INTEGER), CAST(longitude / 0.045 AS INTEGER)
+        GROUP BY ${MerchantLocationGrid.LATITUDE_BUCKET_SQL}, ${MerchantLocationGrid.LONGITUDE_BUCKET_SQL}
         ORDER BY count DESC
         LIMIT 5
     """)
@@ -1508,7 +1619,7 @@ interface ExpenseDao {
     // === Monthly/Weekly Totals Dashboard Queries ===
 
     @Query("""
-        SELECT strftime('%Y-%W', date/1000, 'unixepoch', 'localtime') as weekKey,
+        SELECT date(date/1000, 'unixepoch', 'localtime', '-6 days', 'weekday 1') as weekKey,
                MIN(date) as startDate,
                MAX(date) as endDate,
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
@@ -1676,6 +1787,11 @@ data class CategoryTotal(
     val txCount: Int = 0 
 )
 
+data class CategorySpentTotal(
+    val categoryId: Long,
+    val total: Double
+)
+
 data class MerchantStats(
     val merchantName: String,  // canonical merchantKey — used for grouping and DB lookups
     val displayName: String,   // MIN(merchant) — human-readable name for UI display
@@ -1717,7 +1833,9 @@ data class LocationCluster(
 // === Monthly/Weekly Totals Dashboard Data Classes ===
 
 data class WeeklyTotal(
+    /** Canonical Monday local date key (`yyyy-MM-dd`) for the grouped week. */
     val weekKey: String,
+    /** Raw DB values (repository normalizes these to canonical Monday boundaries). */
     val startDate: Long,
     val endDate: Long,
     val total: Double,

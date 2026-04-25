@@ -5,13 +5,9 @@ import android.database.MatrixCursor
 import android.database.sqlite.SQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
+import com.yourname.expensetracker.data.database.APP_DATABASE_SCHEMA_VERSION
 import com.yourname.expensetracker.data.database.AppDatabase
-import com.yourname.expensetracker.data.database.dao.BudgetDao
-import com.yourname.expensetracker.data.database.dao.CategoryDao
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
-import com.yourname.expensetracker.data.database.dao.PendingReviewDao
-import io.mockk.coEvery
+import com.yourname.expensetracker.domain.backup.DatabaseImportSummary
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -20,6 +16,8 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -37,13 +35,6 @@ class DatabaseBackupRepositoryImplTest {
     private val database = mockk<AppDatabase>(relaxed = true)
     private val openHelper = mockk<SupportSQLiteOpenHelper>(relaxed = true)
     private val supportDb = mockk<SupportSQLiteDatabase>(relaxed = true)
-
-    // Mock all DAOs with relaxed=true
-    private val expenseDao = mockk<ExpenseDao>(relaxed = true)
-    private val categoryDao = mockk<CategoryDao>(relaxed = true)
-    private val merchantCategoryDao = mockk<MerchantCategoryDao>(relaxed = true)
-    private val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
-    private val budgetDao = mockk<BudgetDao>(relaxed = true)
 
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var repository: DatabaseBackupRepositoryImpl
@@ -63,19 +54,10 @@ class DatabaseBackupRepositoryImplTest {
         every { openHelper.writableDatabase } returns supportDb
         every { supportDb.query("PRAGMA wal_checkpoint(FULL)") } answers { checkpointCursor(busyCode = 0) }
 
-        every { database.expenseDao() } returns expenseDao
-        every { database.categoryDao() } returns categoryDao
-        every { database.merchantCategoryDao() } returns merchantCategoryDao
-        every { database.pendingReviewDao() } returns pendingReviewDao
-        every { database.budgetDao() } returns budgetDao
-
-        coEvery { expenseDao.getTotalCount() } returns 0
-        coEvery { categoryDao.getCount() } returns 0
-        coEvery { merchantCategoryDao.getCount() } returns 0
-        coEvery { pendingReviewDao.getPendingCount() } returns 0
-        coEvery { budgetDao.getCount() } returns 0
-
-        repository = DatabaseBackupRepositoryImpl(context, database, testDispatcher)
+        repository = createRepository(
+            stagedVerifier = { _, _, _, _, summary -> summary },
+            liveVerifier = { _, _, _, summary -> summary }
+        )
     }
 
     @After
@@ -124,12 +106,6 @@ class DatabaseBackupRepositoryImplTest {
             budgetCount = 2
         )
 
-        coEvery { expenseDao.getTotalCount() } returns 3
-        coEvery { categoryDao.getCount() } returns 2
-        coEvery { merchantCategoryDao.getCount() } returns 4
-        coEvery { pendingReviewDao.getPendingCount() } returns 1
-        coEvery { budgetDao.getCount() } returns 2
-
         val result = repository.importDatabase(sourceBackup)
 
         assertTrue(result.isSuccess)
@@ -158,12 +134,12 @@ class DatabaseBackupRepositoryImplTest {
             budgetCount = 1
         )
 
-        // 1st call: checkpoint during safety backup -> success
-        // 2nd call: reopen after file swap -> fail and trigger rollback
-        // 3rd call: reopen during rollback restore -> success
-        every { openHelper.writableDatabase } returns supportDb andThenThrows RuntimeException("forced reopen failure") andThen supportDb
+        val failingRepository = createRepository(
+            stagedVerifier = { _, _, _, _, summary -> summary },
+            liveVerifier = { _, _, _, _ -> throw RuntimeException("forced reopen failure") }
+        )
 
-        val result = repository.importDatabase(sourceBackup)
+        val result = failingRepository.importDatabase(sourceBackup)
 
         assertTrue(result.isFailure)
         assertEquals(1, countRows(dbFile, "expenses"))
@@ -191,6 +167,346 @@ class DatabaseBackupRepositoryImplTest {
         verify(atLeast = 1) { supportDb.query("PRAGMA wal_checkpoint(FULL)") }
     }
 
+    @Test
+    fun `import repairs same version budgets defaults before reopen`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+
+        val sourceBackup = File(tempDir, "source_schema86_stale_budgets.db")
+        createSchema86DatabaseWithStaleBudgets(file = sourceBackup, budgetCount = 2)
+
+        every { openHelper.writableDatabase } answers {
+            if (isSchema86WithStaleBudgets(dbFile)) {
+                throw IllegalStateException("Migration didn't properly handle: budgets")
+            }
+            supportDb
+        }
+
+        val result = repository.importDatabase(sourceBackup)
+
+        assertTrue(result.isSuccess)
+        assertFalse(isSchema86WithStaleBudgets(dbFile))
+        assertEquals(2, countRows(dbFile, "budgets"))
+        assertTrue(indexExists(dbFile, "index_budgets_categoryId"))
+        assertTrue(indexExists(dbFile, "index_budgets_isActive"))
+    }
+
+    @Test
+    fun `import allows same lineage backup missing later non core tables`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+
+        val sourceBackup = File(tempDir, "source_missing_optional_tables.db")
+        createLegacyCompatibleDatabaseMissingOptionalTables(
+            file = sourceBackup,
+            schemaVersion = 70,
+            expenseCount = 2,
+            categoryCount = 1
+        )
+
+        val result = repository.importDatabase(sourceBackup)
+
+        assertTrue(result.isSuccess)
+        assertEquals(2, countRows(dbFile, "expenses"))
+        assertEquals(1, countRows(dbFile, "categories"))
+    }
+
+    @Test
+    fun `import does not reject backup with no expenses or categories when other tracked data exists`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+
+        val sourceBackup = File(tempDir, "source_non_expense_data_only.db")
+        createSqliteDatabase(
+            file = sourceBackup,
+            expenseCount = 0,
+            categoryCount = 0,
+            merchantCount = 2,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+
+        val result = repository.importDatabase(sourceBackup)
+
+        assertTrue(result.isSuccess)
+        assertEquals(0, countRows(dbFile, "expenses"))
+        assertEquals(0, countRows(dbFile, "categories"))
+        assertEquals(2, countRows(dbFile, "merchant_categories"))
+        assertEquals(1, countRows(dbFile, "pending_reviews"))
+        assertEquals(1, countRows(dbFile, "budgets"))
+    }
+
+    @Test
+    fun `import rejects schema86 backups with non repairable budgets mismatch`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+
+        val sourceBackup = File(tempDir, "source_schema86_invalid_budgets.db")
+        createSchema86DatabaseWithInvalidBudgetsColumns(sourceBackup)
+
+        val result = repository.importDatabase(sourceBackup)
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("Unsupported budgets schema") == true)
+        assertEquals(1, countRows(dbFile, "expenses"))
+    }
+
+    @Test
+    fun `import rejects schema86 backups with valid defaults but invalid budgets index uniqueness`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+
+        val sourceBackup = File(tempDir, "source_schema86_invalid_budgets_index_uniqueness.db")
+        createSchema86DatabaseWithBadBudgetsIndexUniqueness(sourceBackup)
+
+        val result = repository.importDatabase(sourceBackup)
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("Unsupported budgets schema") == true)
+        assertTrue(result.exceptionOrNull()?.message?.contains("invalid unique index metadata") == true)
+        assertEquals(1, countRows(dbFile, "expenses"))
+    }
+
+    @Test
+    fun `temp migration open failure leaves live db untouched`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 2,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+        val sourceBackup = File(tempDir, "source_stage_failure.db")
+        createSqliteDatabase(
+            file = sourceBackup,
+            schemaVersion = 37,
+            expenseCount = 5,
+            categoryCount = 2,
+            merchantCount = 3,
+            pendingCount = 1,
+            budgetCount = 2
+        )
+
+        val failingRepository = createRepository(
+            stagedVerifier = { _, _, _, _, _ ->
+                throw IllegalStateException("forced staged Room open failure")
+            }
+        )
+
+        val result = failingRepository.importDatabase(sourceBackup)
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("forced staged Room open failure") == true)
+        assertEquals(2, countRows(dbFile, "expenses"))
+        assertEquals(1, countRows(dbFile, "categories"))
+        assertFalse(File(tempDir, "safety_backups").exists())
+    }
+
+    @Test
+    fun `successful staged import swaps only after verification`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+        val sourceBackup = File(tempDir, "source_stage_success.db")
+        createSqliteDatabase(
+            file = sourceBackup,
+            schemaVersion = 37,
+            expenseCount = 6,
+            categoryCount = 3,
+            merchantCount = 2,
+            pendingCount = 2,
+            budgetCount = 4
+        )
+
+        var liveCountSeenDuringStage: Int? = null
+        val stagedRepository = createRepository(
+            stagedVerifier = { _, _, stagedFile, _, summary ->
+                liveCountSeenDuringStage = countRows(dbFile, "expenses")
+                assertEquals(6, countRows(stagedFile, "expenses"))
+                summary
+            },
+            liveVerifier = { _, liveFile, _, summary ->
+                assertEquals(6, countRows(liveFile, "expenses"))
+                summary
+            }
+        )
+
+        val result = stagedRepository.importDatabase(sourceBackup)
+
+        assertTrue(result.isSuccess)
+        assertEquals(1, liveCountSeenDuringStage)
+        assertEquals(6, countRows(dbFile, "expenses"))
+        assertEquals(3, countRows(dbFile, "categories"))
+    }
+
+    @Test
+    fun `verification rejects partial count loss for core tables`() {
+        val sourceSummary = DatabaseImportSummary(
+            transactionCount = 128,
+            categoryCount = 19,
+            merchantCount = 41,
+            pendingReviewCount = 7,
+            budgetCount = 5
+        )
+
+        val error = runCatching {
+            DatabaseBackupRepositoryImpl.verifySummaryPreservedForVerification(
+                sourceSummary = sourceSummary,
+                actualSummary = sourceSummary.copy(transactionCount = 127),
+                sourceSchemaVersion = 37
+            )
+        }.exceptionOrNull()
+
+        assertNotNull(error)
+        assertTrue(error?.message?.contains("reduced expenses from 128 to 127") == true)
+    }
+
+    @Test
+    fun `schema37 fixture import preserves exact core counts through staged pipeline seam`() = runTest(testDispatcher) {
+        val fixture = Schema37FixtureCounts(
+            expenseCount = 128,
+            categoryCount = 19,
+            merchantCount = 41,
+            pendingReviewCount = 7,
+            budgetCount = 5
+        )
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+        val sourceBackup = File(tempDir, "source_schema37_fixture.db")
+        createSqliteDatabase(
+            file = sourceBackup,
+            schemaVersion = 37,
+            expenseCount = fixture.expenseCount,
+            categoryCount = fixture.categoryCount,
+            merchantCount = fixture.merchantCount,
+            pendingCount = fixture.pendingReviewCount,
+            budgetCount = fixture.budgetCount
+        )
+
+        val expectedSummary = fixture.toImportSummary()
+        val seamRepository = createRepository(
+            stagedVerifier = { _, _, stagedFile, sourceSchemaVersion, summary ->
+                assertEquals(37, sourceSchemaVersion)
+                assertEquals(expectedSummary, summary)
+                val stagedSummary = trackedSummary(stagedFile)
+                assertEquals(expectedSummary, stagedSummary)
+                DatabaseBackupRepositoryImpl.verifySummaryPreservedForVerification(
+                    sourceSummary = summary,
+                    actualSummary = stagedSummary,
+                    sourceSchemaVersion = sourceSchemaVersion
+                )
+                stagedSummary
+            },
+            liveVerifier = { _, liveFile, sourceSchemaVersion, summary ->
+                assertEquals(37, sourceSchemaVersion)
+                assertEquals(expectedSummary, summary)
+                val liveSummary = trackedSummary(liveFile)
+                assertEquals(expectedSummary, liveSummary)
+                liveSummary
+            }
+        )
+
+        val result = seamRepository.importDatabase(sourceBackup)
+
+        assertTrue(result.isSuccess)
+        assertEquals(expectedSummary, result.getOrNull())
+        assertEquals(expectedSummary, trackedSummary(dbFile))
+    }
+
+    @Test
+    fun `rollback on post swap reopen failure`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 2,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+        val sourceBackup = File(tempDir, "source_post_swap_failure.db")
+        createSqliteDatabase(
+            file = sourceBackup,
+            schemaVersion = 37,
+            expenseCount = 7,
+            categoryCount = 2,
+            merchantCount = 2,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+
+        val repositoryWithFailingReopen = createRepository(
+            stagedVerifier = { _, _, stagedFile, _, summary ->
+                assertEquals(7, countRows(stagedFile, "expenses"))
+                summary
+            },
+            liveVerifier = { _, _, _, _ ->
+                throw IllegalStateException("forced live reopen failure")
+            }
+        )
+
+        val result = repositoryWithFailingReopen.importDatabase(sourceBackup)
+
+        assertTrue(result.isFailure)
+        assertNotNull(File(tempDir, "safety_backups").listFiles()?.firstOrNull())
+        assertEquals(2, countRows(dbFile, "expenses"))
+        assertTrue(result.exceptionOrNull()?.message?.contains("restored from safety backup") == true)
+    }
+
+    private fun createRepository(
+        stagedVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary,
+        liveVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary = { _, _, _, summary -> summary }
+    ): DatabaseBackupRepositoryImpl {
+        return DatabaseBackupRepositoryImpl(
+            context = context,
+            database = database,
+            ioDispatcher = testDispatcher,
+            stagedImportVerifier = stagedVerifier,
+            liveImportVerifier = liveVerifier
+        )
+    }
+
     private fun checkpointCursor(busyCode: Int): MatrixCursor {
         return MatrixCursor(arrayOf("busy")).apply {
             addRow(arrayOf(busyCode))
@@ -199,7 +515,7 @@ class DatabaseBackupRepositoryImplTest {
 
     private fun createSqliteDatabase(
         file: File,
-        schemaVersion: Int = 70,
+        schemaVersion: Int = APP_DATABASE_SCHEMA_VERSION,
         expenseCount: Int,
         categoryCount: Int,
         merchantCount: Int,
@@ -226,6 +542,26 @@ class DatabaseBackupRepositoryImplTest {
         }
     }
 
+    private fun createLegacyCompatibleDatabaseMissingOptionalTables(
+        file: File,
+        schemaVersion: Int,
+        expenseCount: Int,
+        categoryCount: Int
+    ) {
+        file.parentFile?.mkdirs()
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        try {
+            db.execSQL("PRAGMA user_version = $schemaVersion")
+            db.execSQL("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)")
+
+            repeat(expenseCount) { db.execSQL("INSERT INTO expenses(amount) VALUES (${it + 1}.0)") }
+            repeat(categoryCount) { db.execSQL("INSERT INTO categories(name) VALUES ('cat_$it')") }
+        } finally {
+            db.close()
+        }
+    }
+
     private fun countRows(file: File, table: String): Int {
         val db = SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
         return try {
@@ -234,6 +570,206 @@ class DatabaseBackupRepositoryImplTest {
             }
         } finally {
             db.close()
+        }
+    }
+
+    private fun trackedSummary(file: File): DatabaseImportSummary {
+        return DatabaseImportSummary(
+            transactionCount = countRows(file, "expenses"),
+            categoryCount = countRows(file, "categories"),
+            merchantCount = countRows(file, "merchant_categories"),
+            pendingReviewCount = countRows(file, "pending_reviews"),
+            budgetCount = countRows(file, "budgets")
+        )
+    }
+
+    private fun createSchema86DatabaseWithStaleBudgets(file: File, budgetCount: Int) {
+        file.parentFile?.mkdirs()
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        try {
+            db.execSQL("PRAGMA user_version = 86")
+            db.execSQL("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, amount REAL NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS merchant_categories (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS pending_reviews (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, status TEXT)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS budgets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    categoryId INTEGER,
+                    amount REAL NOT NULL,
+                    period TEXT NOT NULL,
+                    periodMode TEXT NOT NULL DEFAULT 'MONTHLY',
+                    startDate INTEGER NOT NULL,
+                    isActive INTEGER NOT NULL DEFAULT 0,
+                    notifyAtWarning REAL NOT NULL DEFAULT 0.80,
+                    notifyAtCritical REAL NOT NULL DEFAULT 0.95,
+                    rollover INTEGER NOT NULL DEFAULT 1,
+                    createdAt INTEGER NOT NULL,
+                    lastWarningNotifiedAt INTEGER,
+                    lastCriticalNotifiedAt INTEGER,
+                    lastExceededNotifiedAt INTEGER,
+                    FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
+
+            db.execSQL("INSERT INTO expenses(amount) VALUES (15.0)")
+            db.execSQL("INSERT INTO expenses(amount) VALUES (20.0)")
+            db.execSQL("INSERT INTO categories(id, name) VALUES (1, 'cat_1')")
+            db.execSQL("INSERT INTO merchant_categories(name) VALUES ('merchant_1')")
+            db.execSQL("INSERT INTO pending_reviews(status) VALUES ('PENDING')")
+            repeat(budgetCount) { i ->
+                db.execSQL(
+                    """
+                    INSERT INTO budgets (
+                        categoryId, amount, period, periodMode, startDate, isActive,
+                        notifyAtWarning, notifyAtCritical, rollover, createdAt,
+                        lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt
+                    ) VALUES (1, ${100 + i}.0, 'MONTHLY', 'ROLLING', 1700000000000, 1, 0.75, 0.9, 0, 1700000000000, NULL, NULL, NULL)
+                    """.trimIndent()
+                )
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    private fun createSchema86DatabaseWithInvalidBudgetsColumns(file: File) {
+        file.parentFile?.mkdirs()
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        try {
+            db.execSQL("PRAGMA user_version = 86")
+            db.execSQL("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, amount REAL NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS merchant_categories (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS pending_reviews (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, status TEXT)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS budgets (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, amount REAL NOT NULL)")
+
+            db.execSQL("INSERT INTO expenses(amount) VALUES (10.0)")
+            db.execSQL("INSERT INTO categories(name) VALUES ('cat_1')")
+            db.execSQL("INSERT INTO merchant_categories(name) VALUES ('merchant_1')")
+            db.execSQL("INSERT INTO pending_reviews(status) VALUES ('PENDING')")
+            db.execSQL("INSERT INTO budgets(amount) VALUES (50.0)")
+        } finally {
+            db.close()
+        }
+    }
+
+    private fun createSchema86DatabaseWithBadBudgetsIndexUniqueness(file: File) {
+        file.parentFile?.mkdirs()
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        try {
+            db.execSQL("PRAGMA user_version = 86")
+            db.execSQL("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, amount REAL NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS merchant_categories (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS pending_reviews (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, status TEXT)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS budgets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    categoryId INTEGER,
+                    amount REAL NOT NULL,
+                    period TEXT NOT NULL,
+                    periodMode TEXT NOT NULL DEFAULT 'ROLLING',
+                    startDate INTEGER NOT NULL,
+                    isActive INTEGER NOT NULL DEFAULT 1,
+                    notifyAtWarning REAL NOT NULL DEFAULT 0.75,
+                    notifyAtCritical REAL NOT NULL DEFAULT 0.9,
+                    rollover INTEGER NOT NULL DEFAULT 0,
+                    createdAt INTEGER NOT NULL,
+                    lastWarningNotifiedAt INTEGER,
+                    lastCriticalNotifiedAt INTEGER,
+                    lastExceededNotifiedAt INTEGER,
+                    FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
+
+            db.execSQL("INSERT INTO expenses(amount) VALUES (10.0)")
+            db.execSQL("INSERT INTO categories(id, name) VALUES (1, 'cat_1')")
+            db.execSQL("INSERT INTO merchant_categories(name) VALUES ('merchant_1')")
+            db.execSQL("INSERT INTO pending_reviews(status) VALUES ('PENDING')")
+            db.execSQL(
+                """
+                INSERT INTO budgets (
+                    categoryId, amount, period, periodMode, startDate, isActive,
+                    notifyAtWarning, notifyAtCritical, rollover, createdAt,
+                    lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt
+                ) VALUES (1, 100.0, 'MONTHLY', 'ROLLING', 1700000000000, 1, 0.75, 0.9, 0, 1700000000000, NULL, NULL, NULL)
+                """.trimIndent()
+            )
+        } finally {
+            db.close()
+        }
+    }
+
+    private fun isSchema86WithStaleBudgets(file: File): Boolean {
+        val db = SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+        return try {
+            val schemaVersion = db.rawQuery("PRAGMA user_version", null).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getInt(0) else 0
+            }
+            if (schemaVersion != 86) return false
+
+            val defaults = mutableMapOf<String, String?>()
+            db.rawQuery("PRAGMA table_info('budgets')", null).use { cursor ->
+                val nameIdx = cursor.getColumnIndexOrThrow("name")
+                val defaultIdx = cursor.getColumnIndexOrThrow("dflt_value")
+                while (cursor.moveToNext()) {
+                    defaults[cursor.getString(nameIdx)] = cursor.getString(defaultIdx)
+                }
+            }
+
+            val hasExpectedDefaults =
+                defaults["periodMode"] == "'ROLLING'" &&
+                    defaults["isActive"] == "1" &&
+                    defaults["notifyAtWarning"] == "0.75" &&
+                    defaults["notifyAtCritical"] == "0.9" &&
+                    defaults["rollover"] == "0"
+
+            val hasCategoryIndex = indexExists(file, "index_budgets_categoryId")
+            val hasIsActiveIndex = indexExists(file, "index_budgets_isActive")
+
+            !(hasExpectedDefaults && hasCategoryIndex && hasIsActiveIndex)
+        } finally {
+            db.close()
+        }
+    }
+
+    private fun indexExists(file: File, indexName: String): Boolean {
+        val db = SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+        return try {
+            db.rawQuery(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+                arrayOf(indexName)
+            ).use { cursor ->
+                cursor.moveToFirst()
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    private data class Schema37FixtureCounts(
+        val expenseCount: Int,
+        val categoryCount: Int,
+        val merchantCount: Int,
+        val pendingReviewCount: Int,
+        val budgetCount: Int
+    ) {
+        fun toImportSummary(): DatabaseImportSummary {
+            return DatabaseImportSummary(
+                transactionCount = expenseCount,
+                categoryCount = categoryCount,
+                merchantCount = merchantCount,
+                pendingReviewCount = pendingReviewCount,
+                budgetCount = budgetCount
+            )
         }
     }
 }

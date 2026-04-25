@@ -1,9 +1,9 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.assertApproxEquals
-import com.yourname.expensetracker.data.database.dao.AnomalyAlertDao
-import com.yourname.expensetracker.data.database.entity.AnomalyAlert
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -13,20 +13,22 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
 import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.forecasting.SimulationConfidence
 import com.yourname.expensetracker.domain.forecasting.SimulationMetadata
-import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact
 import com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier
+import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.usecase.budget.GetMonteCarloBudgetImpactUseCase
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.ui.components.asString
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -39,11 +41,15 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class ComputeMoneyRadarUseCaseTest {
 
-    private lateinit var recurringExpenseEngine: RecurringExpenseEngine
-    private lateinit var anomalyAlertDao: AnomalyAlertDao
+    private lateinit var mergedRecurringPatternsProvider: MergedRecurringPatternsProvider
+    private lateinit var context: Context
+    private lateinit var anomalyAlertRepository: AnomalyAlertRepository
     private lateinit var getMonteCarloBudgetImpact: GetMonteCarloBudgetImpactUseCase
     private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
     private lateinit var expenseRepository: ExpenseRepository
@@ -56,8 +62,9 @@ class ComputeMoneyRadarUseCaseTest {
 
     @Before
     fun setup() {
-        recurringExpenseEngine = mockk()
-        anomalyAlertDao = mockk()
+        context = ApplicationProvider.getApplicationContext()
+        mergedRecurringPatternsProvider = mockk()
+        anomalyAlertRepository = mockk()
         getMonteCarloBudgetImpact = mockk()
         monteCarloSimulator = mockk()
         expenseRepository = mockk()
@@ -65,8 +72,8 @@ class ComputeMoneyRadarUseCaseTest {
         timeProvider = mockk()
 
         useCase = ComputeMoneyRadarUseCase(
-            recurringExpenseEngine = recurringExpenseEngine,
-            anomalyAlertDao = anomalyAlertDao,
+            recurringPatternsProvider = mergedRecurringPatternsProvider,
+            anomalyAlertRepository = anomalyAlertRepository,
             getMonteCarloBudgetImpact = getMonteCarloBudgetImpact,
             monteCarloSimulator = monteCarloSimulator,
             expenseRepository = expenseRepository,
@@ -75,16 +82,17 @@ class ComputeMoneyRadarUseCaseTest {
         )
 
         every { timeProvider.now() } returns now
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
     }
 
     @Test
     fun `compute applies weighted urgency factors and emits RED with critical budget CTA`() = runTest {
-        coEvery { recurringExpenseEngine.getPatterns() } returns listOf(
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             recurring("Rent", 600.0, now + dayMs),
             recurring("Internet", 50.0, now + 2 * dayMs),
             recurring("Gym", 40.0, now + 3 * dayMs)
         )
-        coEvery { anomalyAlertDao.getActiveAlerts() } returns listOf(
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(
             anomaly("Odd Coffee", 8.0, now - dayMs),
             anomaly("Unknown Charge", 120.0, now - 2 * dayMs)
         )
@@ -102,9 +110,7 @@ class ComputeMoneyRadarUseCaseTest {
             p50Forecast = 1150.0,
             expectedOverrun = 150.0,
             probabilityOfOverrun = 0.80,
-            riskTier = RiskTier.CRITICAL,
-            displayMessage = "Very likely to exceed budget by €150.00",
-            formattedOverrun = "€150.00"
+            riskTier = RiskTier.CRITICAL
         )
         every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(impact)
 
@@ -116,20 +122,20 @@ class ComputeMoneyRadarUseCaseTest {
         assertEquals(80, result.urgencyScore)
         assertEquals(UrgencyLevel.RED, result.urgencyLevel)
         assertTrue(result.topReasons.any {
-            it == UiText.StringResource(
-                R.string.money_radar_reason_multiple_bills_due_format,
+            it == UiText.MessageKey(
+                DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_MULTIPLE_BILLS_DUE_FORMAT,
                 listOf(3, 7)
             )
         })
         assertTrue(result.topReasons.any {
-            it == UiText.StringResource(
-                R.string.money_radar_reason_multiple_anomalies_format,
+            it == UiText.MessageKey(
+                DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_MULTIPLE_ANOMALIES_FORMAT,
                 listOf(2)
             )
         })
         assertTrue(result.topReasons.any {
-            it == UiText.StringResource(
-                R.string.money_radar_reason_budget_risk_critical_format,
+            it == UiText.MessageKey(
+                DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_BUDGET_RISK_CRITICAL_FORMAT,
                 listOf(80)
             )
         })
@@ -138,13 +144,13 @@ class ComputeMoneyRadarUseCaseTest {
 
     @Test
     fun `compute includes only bills due within next seven days`() = runTest {
-        coEvery { recurringExpenseEngine.getPatterns() } returns listOf(
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
             recurring("DueToday", 20.0, now),
             recurring("DueInSeven", 30.0, now + 7 * dayMs),
             recurring("TooLate", 40.0, now + 8 * dayMs),
             recurring("AlreadyPast", 50.0, now - dayMs)
         )
-        coEvery { anomalyAlertDao.getActiveAlerts() } returns emptyList()
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 5000.0
 
@@ -155,9 +161,26 @@ class ComputeMoneyRadarUseCaseTest {
     }
 
     @Test
+    fun `compute includes recurring bill due earlier today as due today`() = runTest {
+        val noonToday = millis(2026, java.util.Calendar.MARCH, 9, 12)
+        val earlierToday = millis(2026, java.util.Calendar.MARCH, 9, 8)
+        every { timeProvider.now() } returns noonToday
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurring("Morning Bill", 20.0, earlierToday)
+        )
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+
+        val result = useCase.compute()
+
+        assertEquals(listOf("Morning Bill"), result.dueBills.map { it.merchant })
+        assertEquals(listOf(0), result.dueBills.map { it.daysUntilDue })
+    }
+
+    @Test
     fun `compute aggregates unresolved anomalies from last thirty days only`() = runTest {
-        coEvery { recurringExpenseEngine.getPatterns() } returns emptyList()
-        coEvery { anomalyAlertDao.getActiveAlerts() } returns listOf(
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(
             anomaly("Recent", 12.0, now - dayMs),
             anomaly("OlderButValid", 25.0, now - 10 * dayMs),
             anomaly("TooOld", 99.0, now - 40 * dayMs)
@@ -176,8 +199,8 @@ class ComputeMoneyRadarUseCaseTest {
         val r1 = recurring("Rent", 100.0, now + dayMs)
         val r2 = recurring("Insurance", 50.0, now + 5 * dayMs)
         val outside = recurring("LateBill", 200.0, now + 12 * dayMs)
-        coEvery { recurringExpenseEngine.getPatterns() } returns listOf(r1, r2, outside)
-        coEvery { anomalyAlertDao.getActiveAlerts() } returns emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(r1, r2, outside)
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
         coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 1000.0
         coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
@@ -203,9 +226,7 @@ class ComputeMoneyRadarUseCaseTest {
                 p50Forecast = 980.0,
                 expectedOverrun = 0.0,
                 probabilityOfOverrun = 0.4,
-                riskTier = RiskTier.MEDIUM,
-                displayMessage = "You may exceed your budget by €0.00",
-                formattedOverrun = "€0.00"
+                riskTier = RiskTier.MEDIUM
             )
         )
 
@@ -218,9 +239,83 @@ class ComputeMoneyRadarUseCaseTest {
     }
 
     @Test
+    fun `compute ignores unconfirmed detected recurring suggestions`() = runTest {
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+
+        val result = useCase.compute()
+
+        assertTrue(result.dueBills.isEmpty())
+        assertEquals(0, result.urgencyScore)
+        coVerify(exactly = 0) { mergedRecurringPatternsProvider.getPatterns() }
+    }
+
+    @Test
+    fun `compute includes confirmed recurring obligations in money radar`() = runTest {
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurring("Confirmed Rent", 700.0, now + dayMs)
+        )
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 2_000.0
+
+        val result = useCase.compute()
+
+        assertEquals(listOf("Confirmed Rent"), result.dueBills.map { it.merchant })
+        assertTrue(result.urgencyScore > 0)
+    }
+
+    @Test
+    fun `compute includes recurring bill due earlier today in budget risk urgency path`() = runTest {
+        val noonToday = millis(2026, java.util.Calendar.MARCH, 9, 12)
+        val earlierToday = millis(2026, java.util.Calendar.MARCH, 9, 8)
+        every { timeProvider.now() } returns noonToday
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurring("Morning Bill", 120.0, earlierToday)
+        )
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
+            expense(300.0, TransactionType.PURCHASE, earlierToday - dayMs)
+        )
+        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 1000.0
+
+        val mcResult = monteCarloResult(probabilityUnderBudget = 0.4)
+        var capturedKnownUpcoming = -1.0
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } answers {
+            capturedKnownUpcoming = secondArg()
+            mcResult
+        }
+        every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(
+            MonteCarloBudgetImpact(
+                budgetAmount = 1000.0,
+                p50Forecast = 1120.0,
+                expectedOverrun = 120.0,
+                probabilityOfOverrun = 0.6,
+                riskTier = RiskTier.HIGH
+            )
+        )
+
+        val result = useCase.compute()
+
+        assertEquals(listOf("Morning Bill"), result.dueBills.map { it.merchant })
+        assertApproxEquals(120.0, capturedKnownUpcoming, 0.0001)
+        assertNotNull(result.budgetRisk)
+        assertEquals(51, result.urgencyScore)
+        assertEquals(UrgencyLevel.YELLOW, result.urgencyLevel)
+        assertTrue(result.topReasons.any {
+            it == UiText.MessageKey(
+                DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_BUDGET_RISK_HIGH_FORMAT,
+                listOf(60)
+            )
+        })
+    }
+
+    @Test
     fun `compute returns GREEN with healthy message when no bills alerts or budget`() = runTest {
-        coEvery { recurringExpenseEngine.getPatterns() } returns emptyList()
-        coEvery { anomalyAlertDao.getActiveAlerts() } returns emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
 
         val result = useCase.compute()
@@ -231,7 +326,7 @@ class ComputeMoneyRadarUseCaseTest {
         assertEquals(emptyList<AnomalyAlertSummary>(), result.anomalyAlerts)
         assertNull(result.budgetRisk)
         assertEquals(
-            listOf(UiText.StringResource(R.string.money_radar_reason_finances_healthy)),
+            listOf(UiText.MessageKey(DomainTextKeys.COMPUTE_MONEY_RADAR_REASON_FINANCES_HEALTHY)),
             result.topReasons
         )
         assertNull(result.primaryCta)
@@ -241,8 +336,8 @@ class ComputeMoneyRadarUseCaseTest {
 
     @Test
     fun `compute excludes future dated purchases from spent to date`() = runTest {
-        coEvery { recurringExpenseEngine.getPatterns() } returns emptyList()
-        coEvery { anomalyAlertDao.getActiveAlerts() } returns emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
         coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
             expense(300.0, TransactionType.PURCHASE, now - dayMs),
@@ -262,9 +357,7 @@ class ComputeMoneyRadarUseCaseTest {
                 p50Forecast = 980.0,
                 expectedOverrun = 10.0,
                 probabilityOfOverrun = 0.4,
-                riskTier = RiskTier.MEDIUM,
-                displayMessage = "Possible overrun",
-                formattedOverrun = "€10.00"
+                riskTier = RiskTier.MEDIUM
             )
         )
 
@@ -275,8 +368,8 @@ class ComputeMoneyRadarUseCaseTest {
 
     @Test
     fun `compute budget urgency changes with magnitude and risk tier`() = runTest {
-        coEvery { recurringExpenseEngine.getPatterns() } returns emptyList()
-        coEvery { anomalyAlertDao.getActiveAlerts() } returns emptyList()
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
         coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
             expense(300.0, TransactionType.PURCHASE, now - dayMs)
@@ -291,9 +384,7 @@ class ComputeMoneyRadarUseCaseTest {
                 p50Forecast = 1000.0,
                 expectedOverrun = 5.0,
                 probabilityOfOverrun = 0.4,
-                riskTier = RiskTier.LOW,
-                displayMessage = "Low",
-                formattedOverrun = "€5.00"
+                riskTier = RiskTier.LOW
             )
         ) andThen Result.Success(
             MonteCarloBudgetImpact(
@@ -301,9 +392,7 @@ class ComputeMoneyRadarUseCaseTest {
                 p50Forecast = 1300.0,
                 expectedOverrun = 250.0,
                 probabilityOfOverrun = 0.4,
-                riskTier = RiskTier.CRITICAL,
-                displayMessage = "Critical",
-                formattedOverrun = "€250.00"
+                riskTier = RiskTier.CRITICAL
             )
         )
 
@@ -312,6 +401,71 @@ class ComputeMoneyRadarUseCaseTest {
 
         assertTrue(highRisk.urgencyScore > lowRisk.urgencyScore)
         assertTrue(highRisk.urgencyLevel >= lowRisk.urgencyLevel)
+    }
+
+    @Test
+    fun `compute formats string placeholder reason with scalar merchant arg`() = runTest {
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurring("Netflix", 19.99, now + dayMs)
+        )
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+
+        val result = useCase.compute()
+
+        assertEquals(
+            "1 bill due soon: Netflix",
+            result.topReasons.first().asString(context)
+        )
+    }
+
+    @Test
+    fun `compute uses merged recurring result to avoid duplicate stale bill inflation`() = runTest {
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            recurring("Netflix", 15.0, now + dayMs)
+        )
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns emptyList()
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+
+        val result = useCase.compute()
+
+        assertEquals(listOf("Netflix"), result.dueBills.map { it.merchant })
+        assertApproxEquals(15.0, result.dueBills.single().amount, 0.0001)
+        assertEquals(
+            "1 bill due soon: Netflix",
+            result.topReasons.first().asString(context)
+        )
+    }
+
+    @Test
+    fun `compute formats integer placeholder reasons with scalar numeric args`() = runTest {
+        coEvery { mergedRecurringPatternsProvider.getConfirmedPatterns() } returns emptyList()
+        coEvery { anomalyAlertRepository.getActiveAlerts() } returns listOf(
+            anomaly("Coffee Shop", 8.0, now - dayMs),
+            anomaly("Gas Station", 60.0, now - 2 * dayMs)
+        )
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(overallBudgetStatus(1000.0)))
+        coEvery { expenseRepository.getExpensesSince(any()) } returns listOf(
+            expense(300.0, TransactionType.PURCHASE, now - 5 * dayMs)
+        )
+        coEvery { expenseRepository.getTotalDepositsForPeriod(any(), any()) } returns 1000.0
+
+        val mcResult = monteCarloResult(probabilityUnderBudget = 0.4)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns mcResult
+        every { getMonteCarloBudgetImpact(1000.0, mcResult) } returns Result.Success(
+            MonteCarloBudgetImpact(
+                budgetAmount = 1000.0,
+                p50Forecast = 1100.0,
+                expectedOverrun = 100.0,
+                probabilityOfOverrun = 0.65,
+                riskTier = RiskTier.HIGH
+            )
+        )
+
+        val formattedReasons = useCase.compute().topReasons.map { it.asString(context) }
+
+        assertTrue(formattedReasons.contains("2 unusual charges need review"))
+        assertTrue(formattedReasons.contains("High risk of exceeding budget (65%)"))
     }
 
     private fun recurring(merchant: String, amount: Double, date: Long): RecurringPattern {
@@ -330,19 +484,12 @@ class ComputeMoneyRadarUseCaseTest {
         )
     }
 
-    private fun anomaly(merchant: String, amount: Double, alertedAt: Long): AnomalyAlert {
-        return AnomalyAlert(
-            id = 0,
-            expenseId = 1L,
+    private fun anomaly(merchant: String, amount: Double, alertedAt: Long): AnomalyAlertRecord {
+        return AnomalyAlertRecord(
             merchant = merchant,
-            category = null,
             amount = amount,
             anomalyReason = "Unexpected amount",
-            severity = "MEDIUM",
-            alertedAt = alertedAt,
-            dismissed = false,
-            dismissedAt = null,
-            userFeedback = null
+            alertedAt = alertedAt
         )
     }
 
@@ -412,5 +559,17 @@ class ComputeMoneyRadarUseCaseTest {
                 computedAt = now
             )
         )
+    }
+
+    private fun millis(year: Int, month: Int, day: Int, hourOfDay: Int): Long {
+        return java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.YEAR, year)
+            set(java.util.Calendar.MONTH, month)
+            set(java.util.Calendar.DAY_OF_MONTH, day)
+            set(java.util.Calendar.HOUR_OF_DAY, hourOfDay)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
     }
 }

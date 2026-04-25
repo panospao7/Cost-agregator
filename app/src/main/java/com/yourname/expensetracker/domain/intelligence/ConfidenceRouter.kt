@@ -37,6 +37,7 @@ class ConfidenceRouter @Inject constructor(
     companion object {
         const val AUTO_ACCEPT_THRESHOLD = 0.85f
         const val REVIEW_THRESHOLD = 0.50f
+        const val REVIEW_CONFIDENCE_FLOOR = REVIEW_THRESHOLD
         const val CACHE_TTL = 60_000L // 1 minute
         private const val MAX_CACHE_SIZE = 1000
         
@@ -184,11 +185,22 @@ class ConfidenceRouter @Inject constructor(
             }
         }
 
-        // 6. Penalty for Unknown merchant
-        if (parsed.merchant.isBlank() || parsed.merchant.equals("Unknown", ignoreCase = true)) {
-            adjustedConfidence *= UNKNOWN_MERCHANT_PENALTY
+    // 6. Penalty for Unknown merchant
+    if (parsed.merchant.isBlank() || parsed.merchant.equals("Unknown", ignoreCase = true)) {
+        val prePenaltyConfidence = adjustedConfidence
+        adjustedConfidence *= UNKNOWN_MERCHANT_PENALTY
+
+        // Only floor to REVIEW_THRESHOLD when the unknown-merchant penalty ALONE
+        // caused the confidence to drop below review. If other penalties (trust,
+        // package rejection, etc.) already pushed confidence below REVIEW_THRESHOLD,
+        // we must not override those anti-spam signals.
+        if (prePenaltyConfidence >= REVIEW_THRESHOLD && adjustedConfidence < REVIEW_THRESHOLD) {
+            adjustedConfidence = REVIEW_CONFIDENCE_FLOOR
+            reasons.add("Unknown merchant (review floor applied)")
+        } else {
             reasons.add("Unknown merchant")
         }
+    }
 
         // Clamp
         adjustedConfidence = adjustedConfidence.coerceIn(0f, 1f)
@@ -325,15 +337,24 @@ class ConfidenceRouter @Inject constructor(
     }
 
     suspend fun ensureSourceStats(packageName: String) {
+        val operationTimestamp = timeProvider.now()
         // Optimistic check using cache first to avoid DB read
         val cached = sourceStatsCache[packageName]?.first
         if (cached != null) return
 
         val existing = sourceStatsRepository.getByPackage(packageName)
         if (existing == null) {
-            sourceStatsRepository.insertIfNotExists(SourceStats(packageName = packageName))
+            sourceStatsRepository.insertIfNotExists(
+                SourceStats(
+                    packageName = packageName,
+                    lastSeen = operationTimestamp
+                )
+            )
         }
         // Update cache
-        sourceStatsCache[packageName] = Pair(existing ?: SourceStats(packageName = packageName), timeProvider.now())
+        sourceStatsCache[packageName] = Pair(
+            existing ?: SourceStats(packageName = packageName, lastSeen = operationTimestamp),
+            operationTimestamp
+        )
     }
 }

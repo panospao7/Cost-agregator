@@ -276,6 +276,31 @@ class DuplicateLogicConsistencyIntegrationTest {
     }
 
     @Test
+    fun `findPendingReviewDuplicate - oversized fallback duplicate is detected with unknown type`() {
+        val date = System.currentTimeMillis()
+        val review = createPendingReview(
+            id = 7,
+            amount = 9999.99,
+            merchant = "Unknown",
+            date = date,
+            currency = "EUR",
+            type = TransactionType.UNKNOWN
+        )
+
+        val result = deduplication.findPendingReviewDuplicate(
+            amount = 9999.99,
+            merchant = "Unknown",
+            date = date,
+            pendingReviews = listOf(review),
+            currency = "EUR",
+            transactionType = TransactionType.UNKNOWN
+        )
+
+        assertNotNull(result)
+        assertEquals(7L, result!!.id)
+    }
+
+    @Test
     fun `consistency - both methods use same amount tolerance`() {
         val amount = 25.50
         val merchant = "Starbucks"

@@ -33,7 +33,10 @@ import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.math.BigDecimal
+import java.math.RoundingMode
 import kotlin.math.abs
+import kotlin.math.pow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -489,14 +492,37 @@ private fun buildSettlementKey(fromId: Long, toId: Long, amount: Double): String
     return "$fromId-$toId-${"%.2f".format(Locale.US, amount)}"
 }
 
+internal fun roundedBalanceForDisplay(
+    balance: Double,
+    fractionDigits: Int = 2
+): Double {
+    if (!balance.isFinite()) return balance
+    return BigDecimal.valueOf(balance)
+        .setScale(fractionDigits.coerceAtLeast(0), RoundingMode.HALF_UP)
+        .toDouble()
+}
+
+internal fun isSettledBalance(
+    balance: Double,
+    fractionDigits: Int = 2
+): Boolean {
+    if (!balance.isFinite()) return false
+    val normalizedDigits = fractionDigits.coerceAtLeast(0)
+    val threshold = 0.5 * 10.0.pow(-normalizedDigits)
+    return abs(balance) < threshold
+}
+
 @Composable
 private fun MemberBalanceCard(
     member: GroupMember,
     balance: Double,
     currencyFormat: NumberFormat
 ) {
-    val isPositive = balance > 0
-    val isZero = balance == 0.0
+    val currencyFractionDigits = currencyFormat.maximumFractionDigits
+        .coerceAtLeast(currencyFormat.minimumFractionDigits)
+    val displayBalance = roundedBalanceForDisplay(balance, currencyFractionDigits)
+    val isPositive = displayBalance > 0
+    val isZero = isSettledBalance(balance, currencyFractionDigits)
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -538,9 +564,9 @@ private fun MemberBalanceCard(
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = when {
-                        isPositive -> stringResource(R.string.label_gets_back_format, currencyFormat.format(balance))
+                        isPositive -> stringResource(R.string.label_gets_back_format, currencyFormat.format(displayBalance))
                         isZero -> stringResource(R.string.label_settled_up)
-                        else -> stringResource(R.string.label_owes_format, currencyFormat.format(-balance))
+                        else -> stringResource(R.string.label_owes_format, currencyFormat.format(-displayBalance))
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = when {

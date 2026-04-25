@@ -25,7 +25,7 @@ class LifestyleInflationDetector @Inject constructor(
         val startDate = endDate - (monthsToAnalyze * 30L * 24 * 60 * 60 * 1000)
         
         // Get all expenses in the period
-        val expenses = expenseDao.getExpensesBetweenFlow(startDate, endDate).first()
+        val expenses = expenseDao.getExpensesBetweenFlowUncapped(startDate, endDate).first()
         
         // Separate income and spending
         val incomeByMonth = mutableMapOf<YearMonth, Double>()

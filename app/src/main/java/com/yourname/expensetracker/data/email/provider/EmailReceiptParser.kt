@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.util.AmountUtils
 import java.text.ParsePosition
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.regex.Pattern
 
 /**
  * Data class representing parsed receipt data from email.
@@ -192,6 +193,13 @@ abstract class BaseEmailParser : EmailReceiptParser {
             .replace(Regex(""" *\n *"""), "\n")
             .replace(extraBlankLinesRegex, "\n\n")
             .trim()
+    }
+
+    protected fun containsBoundedToken(text: String, token: String): Boolean {
+        if (token.isEmpty()) return false
+        val escapedToken = Pattern.quote(token)
+        val regex = Regex("""(?<![\p{L}\p{N}])$escapedToken(?![\p{L}\p{N}])""")
+        return regex.containsMatchIn(text)
     }
 
     private fun decodeHtmlEntities(text: String): String {

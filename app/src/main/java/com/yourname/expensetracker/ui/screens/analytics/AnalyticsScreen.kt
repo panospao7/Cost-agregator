@@ -799,13 +799,13 @@ fun NaturalLanguageInsightBento(insight: SpendingInsight) {
             Spacer(modifier = Modifier.width(16.dp))
             Column {
                 Text(
-                    text = insight.title,
+                    text = insight.title.asString(),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = insight.description,
+                    text = insight.description.asString(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
                     lineHeight = 20.sp
@@ -1097,7 +1097,7 @@ fun InsightsRow(insights: List<SpendingInsight>) {
                         Text(insight.icon, fontSize = 20.sp)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            insight.title,
+                            insight.title.asString(),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
@@ -1106,7 +1106,7 @@ fun InsightsRow(insights: List<SpendingInsight>) {
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        insight.description,
+                        insight.description.asString(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 3,
@@ -1119,7 +1119,7 @@ fun InsightsRow(insights: List<SpendingInsight>) {
 }
 
 @Composable
-fun CategoryItem(item: CategoryBreakdown) {
+fun CategoryItem(item: AnalyticsCategoryBreakdown) {
     val categoryColor = remember(item.category.color) {
         try { Color(android.graphics.Color.parseColor(item.category.color)) }
         catch (e: Exception) { Color.Gray }

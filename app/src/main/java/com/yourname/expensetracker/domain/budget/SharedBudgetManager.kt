@@ -79,16 +79,9 @@ class SharedBudgetManager @Inject constructor(
         budgetId: Long,
         memberIds: List<String>
     ): List<MemberContribution> = withContext(ioDispatcher) {
-        // Simplified implementation - would need member tracking on expenses
-        memberIds.map { memberId ->
-            MemberContribution(
-                memberId = memberId,
-                memberName = "Member $memberId", // Would fetch actual name
-                amountSpent = 0.0, // Would calculate from member-specific expenses
-                percentOfTotal = 0.0,
-                remainingAllowance = 0.0
-            )
-        }
+        throw UnsupportedOperationException(
+            "Shared budget member contributions require a real budget-to-group/member mapping and are not yet supported"
+        )
     }
     
 }

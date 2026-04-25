@@ -20,7 +20,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
+import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryBreakdown
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -38,7 +38,7 @@ import com.yourname.expensetracker.R
  */
 @Composable
 fun CategoryDonutChart(
-    categories: List<CategoryBreakdown>,
+    categories: List<AnalyticsCategoryBreakdown>,
     totalSpent: Double,
     modifier: Modifier = Modifier
 ) {

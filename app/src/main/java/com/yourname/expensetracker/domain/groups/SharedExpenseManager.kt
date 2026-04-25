@@ -129,6 +129,18 @@ class SharedExpenseManager @Inject constructor(
         splitType: GroupSplitType = GroupSplitType.EQUAL,
         customSplits: Map<Long, Double>? = null
     ): Long = withContext(ioDispatcher) {
+        if (description.isBlank()) {
+            throw IllegalArgumentException("Description cannot be blank")
+        }
+        if (!totalAmount.isFinite() || totalAmount <= 0.0) {
+            throw IllegalArgumentException("Amount must be a positive finite number")
+        }
+
+        val groupMemberIds = sharedExpenseDataPort.getGroupMembersOnce(groupId).map { it.id }.toSet()
+        if (paidById !in groupMemberIds) {
+            throw IllegalArgumentException("Payer is not a member of this group")
+        }
+
         if (splitType != GroupSplitType.EQUAL) {
             customSplits?.forEach { (memberId, splitValue) ->
                 if (!splitValue.isFinite()) {
@@ -145,7 +157,6 @@ class SharedExpenseManager @Inject constructor(
             val canonicalCustomSplitsJson = customSplits?.let { splits ->
                 CustomSplitJsonCodec.toCanonicalJson(splits)
             }
-            val groupMemberIds = sharedExpenseDataPort.getGroupMembersOnce(groupId).map { it.id }.toSet()
             when (val validation = parseCustomSplitsForValidation(
                 splitsString = canonicalCustomSplitsJson,
                 splitType = splitType,

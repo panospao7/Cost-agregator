@@ -152,4 +152,48 @@ class CsvExpenseImporterTest {
         assertThat(result.errors).isEqualTo(1)
         assertThat(result.imported).isEqualTo(1)
     }
+
+    @Test
+    fun `invalid csv date increments error count and does not import row`() = runTest {
+        val cat = Category(id = 1, name = "Cat", icon = "C", color = "#112233")
+        coEvery { categoryDao.getByName(any()) } returns cat
+        coEvery { expenseDao.insert(any()) } returns 1L
+
+        val csv = "2024-13-40,1.00,A,Cat,bad\n2024-01-02,2.00,B,Cat,ok"
+        val result = importer.importFromContent(csv) as CsvExpenseImporter.ImportResult.Success
+
+        assertThat(result.errors).isEqualTo(1)
+        assertThat(result.imported).isEqualTo(1)
+        coVerify(exactly = 1) { expenseDao.insert(any()) }
+    }
+
+    @Test
+    fun `imports quoted fields with embedded commas`() = runTest {
+        val cat = Category(id = 9, name = "Food", icon = "F", color = "#00FF00")
+        coEvery { categoryDao.getByName("Food") } returns cat
+        val slot = slot<Expense>()
+        coEvery { expenseDao.insert(capture(slot)) } returns 1L
+
+        val csv = "2024-01-15,25.50,\"Starbucks, Downtown\",Food,\"Morning, coffee\""
+        val result = importer.importFromContent(csv) as CsvExpenseImporter.ImportResult.Success
+
+        assertThat(result.imported).isEqualTo(1)
+        assertThat(result.errors).isEqualTo(0)
+        assertThat(slot.captured.merchant).isEqualTo("Starbucks, Downtown")
+        assertThat(slot.captured.notes).isEqualTo("Morning, coffee")
+    }
+
+    @Test
+    fun `invalid quoted csv row increments error count and skips insert`() = runTest {
+        val cat = Category(id = 1, name = "Cat", icon = "C", color = "#112233")
+        coEvery { categoryDao.getByName(any()) } returns cat
+        coEvery { expenseDao.insert(any()) } returns 1L
+
+        val csv = "2024-01-15,25.50,\"Unclosed merchant,Food,Desc"
+        val result = importer.importFromContent(csv) as CsvExpenseImporter.ImportResult.Success
+
+        assertThat(result.imported).isEqualTo(0)
+        assertThat(result.errors).isEqualTo(1)
+        coVerify(exactly = 0) { expenseDao.insert(any()) }
+    }
 }

@@ -37,40 +37,59 @@ class AiArtifactRepositoryImplTest {
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private fun fakeEntity(
+private fun fakeEntity(
         targetKey: String = "pending_review:1",
         capability: AiCapability = AiCapability.REVIEW_EXPLANATION
     ) = AiArtifactEntity(
-        id            = 1L,
-        targetType    = AiTargetType.PENDING_REVIEW,
-        targetKey     = targetKey,
-        capability    = capability,
-        status        = AiArtifactStatus.READY,
-        mode          = AiMode.AUTO,
+        id = 1L,
+        targetType = AiTargetType.PENDING_REVIEW,
+        targetId = null,
+        targetKey = targetKey,
+        capability = capability,
+        status = AiArtifactStatus.READY,
+        mode = AiMode.AUTO,
+        provider = null,
+        modelName = null,
         promptVersion = "v1",
-        sourceHash    = "hash",
-        createdAt     = 1_000L,
-        updatedAt     = 1_000L
+        summaryText = null,
+        explanationText = null,
+        payloadJson = null,
+        confidence = null,
+        sourceHash = "hash",
+        errorMessage = null,
+        createdAt = 1_000L,
+        updatedAt = 1_000L,
+        expiresAt = null
     )
 
-    private fun fakeRecord(
+private fun fakeRecord(
         targetKey: String = "pending_review:1",
         capability: AiCapability = AiCapability.REVIEW_EXPLANATION
     ) = AiArtifactRecord(
-        id            = 1L,
-        targetType    = AiTargetType.PENDING_REVIEW,
-        targetKey     = targetKey,
-        capability    = capability,
-        status        = AiArtifactStatus.READY,
-        mode          = AiMode.AUTO,
+        id = 1L,
+        targetType = AiTargetType.PENDING_REVIEW,
+        targetId = null,
+        targetKey = targetKey,
+        capability = capability,
+        status = AiArtifactStatus.READY,
+        mode = AiMode.AUTO,
+        provider = null,
+        modelName = null,
         promptVersion = "v1",
-        sourceHash    = "hash",
-        createdAt     = 1_000L,
-        updatedAt     = 1_000L
+        summaryText = null,
+        explanationText = null,
+        payloadJson = null,
+        confidence = null,
+        sourceHash = "hash",
+        errorMessage = null,
+        createdAt = 1_000L,
+        updatedAt = 1_000L,
+        expiresAt = null
     )
 
     // ── observeLatest ─────────────────────────────────────────────────────────
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `observeLatest delegates to dao with capability name`() = runTest(testDispatcher) {
         val entity = fakeEntity()
@@ -103,6 +122,7 @@ class AiArtifactRepositoryImplTest {
 
     // ── getLatest ─────────────────────────────────────────────────────────────
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `getLatest delegates to dao with capability name`() = runTest(testDispatcher) {
         val entity = fakeEntity()
@@ -130,6 +150,7 @@ class AiArtifactRepositoryImplTest {
 
     // ── upsert ────────────────────────────────────────────────────────────────
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `upsert delegates to dao and returns row id`() = runTest(testDispatcher) {
         val record = fakeRecord()
@@ -143,12 +164,14 @@ class AiArtifactRepositoryImplTest {
 
     // ── markDismissed ─────────────────────────────────────────────────────────
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `markDismissed delegates to dao`() = runTest(testDispatcher) {
         repository.markDismissed(7L)
         coVerify { dao.markDismissed(id = 7L, dismissed = any(), now = any()) }
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `markApplied delegates to dao`() = runTest(testDispatcher) {
         repository.markApplied(8L)
@@ -157,6 +180,7 @@ class AiArtifactRepositoryImplTest {
 
     // ── deleteExpired ─────────────────────────────────────────────────────────
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `deleteExpired delegates to dao with given timestamp`() = runTest(testDispatcher) {
         val now = 999_999L
@@ -166,6 +190,7 @@ class AiArtifactRepositoryImplTest {
 
     // ── deleteByTargetKey ─────────────────────────────────────────────────────
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `deleteByTargetKey delegates to dao`() = runTest(testDispatcher) {
         repository.deleteByTargetKey("pending_review:55")

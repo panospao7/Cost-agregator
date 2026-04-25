@@ -1,45 +1,36 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated:** 2026-04-02  
-**Total Kotlin Files:** 528  
-**Database Version:** 51  
+**Generated:** 2026-04-02 (snapshot)  
+**Database Version:** 92  
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
 
 ## EXECUTIVE SUMMARY
 
-| Metric | Count |
-|--------|-------|
-| UI Screens | 77 |
-| ViewModels | 36 |
-| Domain Files | 198 |
-| Repositories | 32 |
-| Database Entities | 37 |
-| DAOs | 36 |
-| DI Modules | 21 |
-| UI Components | 44 |
-| Services/Receivers | 14 |
-| String Resources | 1,730 |
+Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
 
 ---
 
 ## 1. UI SCREENS - COMPLETE INVENTORY
 
 ### Screen Distribution
-- **Total Screen Files:** 77 (includes screens, ViewModels, sheets, utilities)
-- **Screens with ViewModel:** 34
-- **Screens without ViewModel:** 3 (SplitTemplates, DebugViewer, RecurringExpenses)
-- **Navigable Screens:** 32
-- **Orphaned Screens:** 5 (RecurringExpenses, AiSettings, Categories, Debug variants)
+- Screen inventory includes screens, ViewModels, sheets, and utilities.
+- Most routed screens have a ViewModel.
+- Some utility/overlay screens intentionally do not.
+- Navigable screens are destination-driven; the set changes with feature flags and parameterized destinations.
 
-### Main Tabs (4)
+### Shell Destinations
 1. **HomeScreen** + HomeViewModel → `NavigationDestination.Home`
-2. **TransactionsScreen** + TransactionsViewModel → `NavigationDestination.Transactions`
-3. **AnalyticsScreen** + AnalyticsViewModel → `NavigationDestination.Analytics`
-4. **AssistantSheet** + AssistantViewModel → `NavigationDestination.Assistant`
+2. **TransactionsScreen** + TransactionsViewModel → `NavigationDestination.Transactions(initialExpenseId)`
+3. **AnalyticsScreen** + AnalyticsViewModel → `NavigationDestination.Analytics(initialPeriod)`
+4. **ReviewScreen** + ReviewViewModel → `NavigationDestination.Review`
+5. **BudgetScreen** + BudgetViewModel → `NavigationDestination.Budget`
+6. **SpendingMapScreen** + SpendingMapViewModel → `NavigationDestination.SpendingMap(initialLocationQuery)`
 
-### Feature Screens (32 navigable + 5 orphaned)
+Assistant is an overlay/entry surface, not a bottom tab.
+
+### Feature Screens (destination-driven + overlays/settings)
 
 #### Budget & Finance
 - BudgetScreen + BudgetViewModel → `Budget`
@@ -48,13 +39,13 @@
 
 #### Expense Management
 - AddExpenseSheet + AddExpenseViewModel → `AddExpense`
+- RecurringExpensesScreen + RecurringExpensesViewModel → `RecurringExpenses`
 - ManualRecurringExpenseScreen + ManualRecurringExpenseViewModel → `ManualRecurringExpense`
-- RecurringExpensesScreen (ORPHANED - no ViewModel, not in NavDestination)
 
 #### Receipt & Categorization
 - ReceiptScanScreen + ReceiptScanViewModel → `ScanReceipt`
 - ReceiptMatchingScreen + ReceiptMatchingViewModel → `ReceiptMatching`
-- CategoryScreen + CategoryViewModel (ORPHANED)
+- CategoryScreen + CategoryViewModel → category management surface
 
 #### Advanced Features
 - AdvancedAnalyticsScreen + AdvancedAnalyticsViewModel → `AdvancedAnalytics`
@@ -65,7 +56,8 @@
 
 #### AI & Search
 - NaturalLanguageSearchScreen + NaturalLanguageSearchViewModel → `SmartSearch`
-- AiSettingsScreen + AiSettingsViewModel (ORPHANED)
+- AssistantSheet + AssistantViewModel → overlay / entry surface
+- AiSettingsScreen + AiSettingsViewModel → assistant settings
 
 #### Investments & Banking
 - InvestmentPortfolioScreen + InvestmentViewModel → `InvestmentPortfolio`
@@ -73,7 +65,7 @@
 
 #### Reminders & Challenges
 - BillRemindersScreen + BillRemindersViewModel → `BillReminders`
-- SpendingChallengesScreen + SpendingChallengesViewModel → `SpendingChallenges`
+- SpendingChallengesScreen + SpendingChallengesViewModel → `SpendingChallenges(showCreateDialog)`
 
 #### Location & Cash Flow
 - SpendingMapScreen + SpendingMapViewModel → `SpendingMap`
@@ -102,14 +94,16 @@
 
 ---
 
-## 2. VIEWMODELS (36 Total)
+## 2. VIEWMODELS
 
 ### By Category
 **Main:** MainViewModel
 
-**Tabs (5):** HomeViewModel, TransactionsViewModel, AnalyticsViewModel, AdvancedAnalyticsViewModel, AssistantViewModel
+**Shell destinations:** HomeViewModel, TransactionsViewModel, ReviewViewModel, BudgetViewModel, AnalyticsViewModel, SpendingMapViewModel
 
-**Features (31):** 
+**Overlay / feature ViewModels:** AdvancedAnalyticsViewModel, AssistantViewModel, RecurringExpensesViewModel
+
+**Features / routed surfaces:** 
 - Expense: AddExpenseViewModel, ManualRecurringExpenseViewModel
 - Budget: BudgetViewModel, BudgetForecastingViewModel
 - Analytics: AnalyticsViewModel, AdvancedAnalyticsViewModel
@@ -140,65 +134,68 @@
 
 ---
 
-## 3. NAVIGATION GRAPH (32 Routes)
+## 3. NAVIGATION GRAPH
 
 **File:** `ui/navigation/NavigationDestination.kt` (sealed class, type-safe)
 
-### Main Routes
+### Shell Routes
 ```kotlin
 - Home
 - Transactions
 - Analytics
-- Assistant
+- Review
+- Budget
+- SpendingMap
 ```
 
-### Feature Routes (28)
-1. AddExpense
-2. ScanReceipt
-3. SavingsGoals
-4. CarbonFootprint
-5. WarrantyTracker
-6. PriceProtection
-7. BillNegotiation
-8. SmartSearch
-9. ReceiptMatching
-10. InvestmentPortfolio
-11. BankConnections
-12. BillReminders
-13. SpendingChallenges
-14. AdvancedAnalytics
-15. CashFlowCalendar
-16. LifestyleInflation
-17. SplitTemplates
-18. VisualSplitEditor (parameterized: expense, templateId)
-19. CurrencyManagement
-20. SubscriptionManagement
-21. TaxConfiguration
-22. ExportOptions
-23. ManualRecurringExpense
-24. SharedExpenseGroups
-25. BudgetForecasting (parameterized: budget)
-26. Review
-27. SpendingMap
-28. Budget
+### Overlay / Feature Routes
+- Assistant (overlay surface)
+- AddExpense
+- RecurringExpenses
+- ScanReceipt
+- SavingsGoals
+- CarbonFootprint
+- WarrantyTracker
+- PriceProtection
+- BillNegotiation
+- SmartSearch
+- ReceiptMatching
+- InvestmentPortfolio
+- BankConnections
+- BillReminders
+- SpendingChallenges(showCreateDialog)
+- AdvancedAnalytics
+- CashFlowCalendar
+- LifestyleInflation
+- SplitTemplates
+- VisualSplitEditor (parameterized: expense, templateId)
+- CurrencyManagement
+- SubscriptionManagement
+- TaxConfiguration
+- ExportOptions
+- ManualRecurringExpense
+- SharedExpenseGroups
+- BudgetForecasting (parameterized: budget)
+- BudgetDetail (parameterized: categoryId/categoryName)
+- AiSettings
+- CategoryManagement
 
 ### Navigation Infrastructure
 - **NavigationController.kt:** State management for navigation
 - **FeatureConfig.kt:** Feature feature configuration
 - **MainActivity.kt:** Navigation host and activity setup
 
-### Gaps Identified
-- RecurringExpensesScreen (NOT in NavigationDestination - orphaned)
-- AiSettingsScreen (NOT in NavigationDestination - orphaned)
-- CategoryScreen (NOT in NavigationDestination - orphaned)
-- Debug screens (Conditional, development-only)
+### Gaps / notes
+- Some surfaces are intentional overlays or settings entries rather than shell destinations.
+- Debug screens remain conditional / development-only.
+- Use `NavigationDestination` as the routing source of truth; this inventory is a compatibility map, not a tab list.
 
 ---
 
-## 4. DOMAIN LAYER (198 Files)
+## 4. DOMAIN LAYER
 
-### AI & Machine Learning (54 files)
-**Services (17):**
+### AI & Machine Learning
+**Services:**
 - AiArtifactRepository, AiCapabilityRouter, AiChatRepository
 - AiEngagementRepository, AiEnvironmentMonitor, AiSettingsRepository
 - AiWorkScheduler, CategorizationAssistService, DashboardBriefingService
@@ -206,7 +203,7 @@
 - ReceiptAssistService, ReceiptItemCategorizationService
 - ReviewExplanationService, ReviewPriorityScorer, SemanticDuplicateDetector
 
-**Use Cases (22):**
+**Use Cases:**
 - CategorizeReceiptItemsUseCase, DeliverProactiveBriefingNotificationUseCase
 - DetectSemanticDuplicateUseCase, ExecuteFinancialQueryUseCase
 - ExplainPendingReviewUseCase, GenerateDashboardBriefingUseCase
@@ -217,7 +214,7 @@
 - SyncProactiveBriefingWorkUseCase
 - Plus 7 InputBuilder classes
 
-**Models/Policies (15):**
+**Models/Policies:**
 - AiArtifactPresentation, AiLoadState, AiModels
 - AiPolicy, AiPolicyImpl, CaptureAssistModels
 - FinancialQueryModels, NotificationParsingModels
@@ -225,56 +222,56 @@
 - ReviewPriorityModels, SemanticDuplicateModels, DefaultAiCapabilityRouter
 - AiRuntimeStatusModels
 
-### Analytics (13 files)
+### Analytics
 - AdvancedAnalyticsEngine, AdvancedAnalyticsDashboard, AdvancedAnalyticsModels
 - AnalyticsModels, AnomalyDetector, CategoryInsightEngine
 - DayOfWeekAnalyzer, InsightsEngine, MerchantInsightEngine
 - MonthlyComparisonCalculator, SpendingPaceCalculator
 - SpendingThresholdCalculator, TotalsAggregationEngine, TransferDirectionAnalytics
 
-### Budget & Forecasting (11 files)
+### Budget & Forecasting
 - BudgetCalculator, BudgetForecastingEngine, BudgetModels
 - BudgetMonitor, BudgetRecommendationEngine, SharedBudgetManager
 - DataQualityAssessor, HistoricalSpendingDistribution
 - MonteCarloResult, MonteCarloSpendingSimulator
 - Plus backup-related files
 
-### Receipts & OCR (7 files)
+### Receipts & OCR
 - ReceiptOcrService, ReceiptParser, BankStatementParser
 - EnhancedMerchantExtractor, OcrLanguageProcessor
 - OcrPreprocessingPipeline, ProcessReceiptUseCase
 
-### Categorization (6 files)
+### Categorization
 - CategorizationEngine, ContextualInferenceEngine
 - CategoryKeywords, GreeklishNormalizer
 - MerchantCanonicalizer, SemanticKeywordMatcher
 
-### Transaction Parsing (4 files)
+### Transaction Parsing
 - AppParserRegistry, GenericTransactionParser
 - TransferDirectionDetector
 - Parsers: GoogleWalletParser, GreekBankParser, RevolutParser, SmsParser
 
-### Location & Geolocation (8 files)
+### Location & Geolocation
 - AreaSpendingEngine, GeocodingResult, LocatedExpense
 - LocationInsightsEngine, LocationModels, LocationResolver
 - NearbyPoi, SpendingHeatmapEngine, TravelDetectionEngine
 
-### Recurring & Scheduling (3 files)
+### Recurring & Scheduling
 - RecurringExpenseEngine, RecurrenceCalculator, PlannedExpense models
 
-### Savings & Investment (7 files)
+### Savings & Investment
 - AutomatedSavingsRuleEngine, SavingsGamificationEngine, SmartSavingsEngine
 - InvestmentTracker, SmartBillNegotiationEngine
 - NaturalLanguageSearchEngine, PriceProtectionTracker
 
-### Subscriptions (1 file)
+### Subscriptions
 - SubscriptionManagerEngine
 
-### Groups & Splitting (5 files)
+### Groups & Splitting
 - GroupTransactionCoordinator, SettlementCalculator
 - SharedExpenseManager, EnhancedSplitManager, SplitCalculator
 
-### Utilities (30+ files in domain/util/)
+### Utilities
 - AmountExtractionUtils, AmountUtils, AppConstants
 - BKTree (Burkhard-Keller tree), CommonPatterns
 - CurrencyFormatter, CurrencyNormalizer, DateFormatterUtils
@@ -289,147 +286,171 @@
 - SpendingChallengeManager, BillReminderManager
 - ReceiptTransactionMatcher, WidgetStyleRepository
 
-### Core Use Cases (6)
+### Core Use Cases
 - CategorizeExpenseUseCase, DetectDuplicateExpenseUseCase
 - CalculateBudgetStatusUseCase, CalculateFinancialForecastUseCase
 - ComputeDashboardWidgetsUseCase, DashboardDataProvider
 
 ---
 
-## 5. REPOSITORIES (32 Total)
+## 5. REPOSITORIES
 
-### Core
-1. ExpenseRepository
-2. CategoryRepository
-3. BudgetRepository
-4. DashboardRepository
-5. AnalyticsRepository
+Representative repository inventory; counts shift as implementations are added, renamed, or split.
+
+### Core finance
+- ExpenseRepository
+- CategoryRepository
+- BudgetRepository
+- DashboardRepository
+- AnalyticsRepository
+- FinancialWeatherRepository
 
 ### AI/Chat
-6. AiArtifactRepositoryImpl
-7. AiChatRepositoryImpl
-8. AiEngagementRepositoryImpl
-9. AiSettingsRepositoryImpl
+- AiArtifactRepositoryImpl
+- AiChatRepositoryImpl
+- AiEngagementRepositoryImpl
+- AiSettingsRepositoryImpl
 
 ### Specialized
-10. AccountingExportRepository
-11. BusinessExpenseRepository
-12. CurrencySettingsRepositoryImpl
-13. DatabaseBackupRepositoryImpl
-14. FinancialWeatherRepository
-15. ManualExpenseRepository
-16. MerchantCategoryRepository
-17. MerchantLocationRepository
-18. MerchantNormalizationRepository
-19. MerchantRulesRepository
-20. MultiCurrencyRepository
-21. NotificationProcessingPipeline
-22. NotificationRepository
-23. PlannedExpenseRepository
-24. ReceiptRepository
-25. RecommendationRepository
-26. RecurringExpenseRepository
-27. ReviewQueueRepository
-28. SavingsGoalRepository
-29. SourceStatsRepository
-30. UserCorrectionRepository
-31. WarrantyTrackerRepository
-32. WidgetStyleRepositoryImpl
+- AccountingExportRepository
+- BusinessExpenseRepository
+- CurrencySettingsRepositoryImpl
+- DatabaseBackupRepositoryImpl
+- ManualExpenseRepository
+- MerchantCategoryRepository
+- MerchantLocationRepository
+- MerchantNormalizationRepository
+- MerchantRulesRepository
+- MultiCurrencyRepository
+- NotificationProcessingPipeline
+- NotificationRepository
+- PlannedExpenseRepository
+- ReceiptRepository
+- RecommendationRepository
+- RecurringExpenseRepository
+- ReviewQueueRepository
+- SavingsGoalRepository
+- SourceStatsRepository
+- UserCorrectionRepository
+- WarrantyTrackerRepository
+- WidgetStyleRepositoryImpl
+
+### Current repositories not to omit
+- GroupsRepository
+- GroupsRepositoryImpl
+- ManualRecurringExpenseRepository
+- PromptStateRepository
+- ReceiptItemCategorizationRepository
+- SpendingChallengeRepository
+- SubscriptionManagementRepository
+- AnomalyAlertRepositoryImpl
 
 ---
 
-## 6. DATABASE (Version 51)
+## 6. DATABASE (Version 92)
 
-### Entities (37)
+### Entities
 
-**Core:**
+**Core finance:**
 - Expense, Category, Budget, ManualRecurringExpense
 - PlannedExpense, SavingsGoal, ScannedReceipt
 
-**Merchants:**
-- MerchantCategory, MerchantCanonical, MerchantAlias
-- MerchantLocation, MerchantLocationCorrection
-- MerchantNormalization
-
-**Notifications & Review:**
-- RawNotification, PendingReview, BlockedPackage
+**Capture / review:**
+- RawNotification, BlockedPackage, PendingReview
 - UserCorrection, SourceStats
 
-**Financial:**
-- ExchangeRate, Investment, InvestmentValue
-- SubscriptionPriceHistory, SubscriptionUsage
-- Warranty, ReturnWindow, MileageTracking
+**Merchants / location:**
+- MerchantCategory, MerchantCanonical, MerchantAlias
+- MerchantLocation, MerchantLocationCorrection
 
-**Groups:**
-- ExpenseGroup, GroupMember, GroupExpense
-
-**Advanced:**
-- BudgetForecast, ReceiptItemCategorization
-- RecommendationEntity, SplitTemplate, SplitItemAssignment
-
-**AI:**
+**AI / assistant:**
 - AiArtifactEntity, AiChatSessionEntity, AiChatMessageEntity
+- RecommendationEntity, ReceiptItemCategorization
 
-### DAOs (36)
+**Financial / planning:**
+- ExchangeRate, Investment, InvestmentValue, BankConnection
+- SubscriptionPriceHistory, SubscriptionUsage, MileageTracking
+- BudgetForecast
+
+**Groups / split:**
+- ExpenseGroup, GroupMember, GroupExpense
+- SplitTemplate, SplitItemAssignment
+
+**Lifecycle / alerts / support:**
+- Warranty, ReturnWindow, AnomalyAlert, PromptState
+- HealthScoreHistory, SavingsSweepPlan, SubscriptionCandidate
+- BudgetAdjustmentRecommendation, BudgetAdjustmentEvent
+- SpendingPersonalityProfileEntity, StressForecastSnapshot
+- EmailReceiptSource, SpendingChallengeEntity
+
+### DAOs
 One DAO per entity (mostly 1-to-1 mapping)
 - **Deprecated:** RecurringExpenseDao (delegates to ManualRecurringExpenseDao)
 - **Special:** MerchantNormalizationDao, BankConnectionDao
 
 ### Migration History
-- Database Version: 51
-- Migration methods: 45+
+- Database Version: 92
+- Migration methods: current chain in `AppDatabase.kt`
 - Export schema: Enabled
-- Type converters: Defined in converter/Converters.kt
+- Type converters: Defined in `converter/Converters.kt`
 
 ---
 
-## 7. DEPENDENCY INJECTION (21 Modules)
+## 7. DEPENDENCY INJECTION
 
-### Core Infrastructure
-1. **AppModule** - Application-level bindings
-2. **DatabaseModule** - Room database setup
-3. **DaoModule** - All DAO providers
-4. **DispatchersModule** - Coroutine dispatchers
-5. **TimeModule** - Time providers
-6. **ApplicationScope** - Custom scope annotations
+### Core / Infrastructure
+- **DatabaseModule** - Room database setup
+- **DaoModule** - All DAO providers
+- **DispatchersModule** - Coroutine dispatchers
+- **TimeModule** - Time providers
+- **ServiceModule** - App services
+- **ReceiptParsingModule** - Receipt parsing wiring
+- **NetworkModule** - Shared HTTP clients
+- **NetworkQualifiers** - HTTP client qualifiers
 
 ### Feature Modules
-7. **AiModule** - AI/ML services
-8. **BudgetForecastModule** - Budget forecasting
-9. **CashFlowModule** - Cash flow calculations
-10. **CurrencyModule** - Currency conversion
-11. **ExportModule** - Export functionality
-12. **GroupsModule** - Shared expenses
-13. **InvestmentModule** - Investment tracking
-14. **OcrImprovementsModule** - OCR & receipts
-15. **SavingsModule** - Savings engines
-16. **SubscriptionModule** - Subscriptions
-17. **TaxModule** - Tax estimation
+- **AiModule** - AI/ML services
+- **DashboardContractsModule** - Dashboard wiring
+- **DashboardAnomalyModule** - Dashboard anomaly bindings
+- **CashFlowModule** - Cash flow calculations
+- **CurrencyModule** - Currency conversion
+- **ExportModule** - Export functionality
+- **GroupsModule** - Shared expenses
+- **OcrImprovementsModule** - OCR & receipts
+- **SavingsModule** - Savings engines
+- **SavingsRepositoryBindingsModule** - Savings repository bindings
+- **SubscriptionModule** - Subscriptions
+- **TaxModule** - Tax estimation
+- **NaturalLanguageModule** - Natural language search bindings
+- **EmailIngestionModule** - Email receipt ingestion
 
-### Specialized
-18. **BackupRepositoryModule** - Backup/restore
-19. **SecurityModule** - Encryption & security
-20. **ServiceModule** - App services
-21. **Phase4FeaturesModule** - Empty (uses @Inject)
+### Specialized / Support
+- **BackupRepositoryModule** - Backup/restore
+- **SecurityModule** - Encryption & security
+- **LocationResolverPortsModule** - Location abstractions
+- **EmptyStateModule** - Empty-state wiring
+- **ApplicationScope** - App-scoped coroutine support
+- **EmptyStateRegistryInitializer** - Empty-state bootstrap
+- **Feature bindings** - Current feature modules bind via `@Inject` / `@Provides`
 
 ---
 
 ## 8. ANDROID MANIFEST
 
-### Services (1)
+### Services
 - **NotificationCaptureService**
   - Type: NotificationListenerService
   - Foreground: dataSync|location
   - Exported: true
 
-### Receivers (2)
+### Receivers
 - **BootReceiver** - BOOT_COMPLETED, MY_PACKAGE_REPLACED
 - **ServiceRestartReceiver** - Service keep-alive
 
-### Permissions (14)
+### Permissions (13)
 - Foreground service (3): FOREGROUND_SERVICE, DATA_SYNC, LOCATION
 - Notifications (2): POST_NOTIFICATIONS, RECEIVE_BOOT_COMPLETED
-- Camera (2): CAMERA permission + hardware feature
+- Camera (1): CAMERA permission + hardware feature
 - Location (2): ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION
 - File access (2): READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE
 - Network (2): INTERNET, ACCESS_NETWORK_STATE
@@ -440,7 +461,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 
 ---
 
-## 9. UI COMPONENTS (44 Files)
+## 9. UI COMPONENTS
 
 ### Layout Components
 - AppNavigationBar, PeriodBlock, PeriodGridView, PeriodNavigationBar
@@ -473,36 +494,45 @@ One DAO per entity (mostly 1-to-1 mapping)
 
 ---
 
-## 10. SERVICES & WORKERS (12 Files)
+## 10. STARTUP / BACKGROUND / SERVICES / WORKERS
+
+### Startup / Background
+1. **MainApplication** - App entry, Hilt + WorkManager bootstrap
+2. **AppStartupDelegate** - Startup entry-point bootstrap
+3. **AppStartupCoordinator** - Startup orchestration + lifecycle hooks
+4. **AppBackgroundLifecycleObserver** - Background lifecycle observer
 
 ### Main Services
-1. **NotificationCaptureService** - Notification listener
-2. **AndroidNotificationService** - Notification management
+5. **NotificationCaptureService** - Notification listener
+6. **AndroidNotificationService** - Notification management
 
 ### Recommendation System
-3. RecommendationCacheService
-4. RecommendationDeduplicator
-5. RecommendationDismissalHandler
-6. RecommendationInvalidator
-7. RecommendationLifecycleManager
-8. RecommendationStateManager
+7. RecommendationCacheService
+8. RecommendationDeduplicator
+9. RecommendationDismissalHandler
+10. RecommendationInvalidator
+11. RecommendationLifecycleManager
+12. RecommendationStateManager
 
 ### Workers
-9. ReceiptMatchingWorker (receipt matching background)
-10. WarrantyExpirationWorker (warranty tracking)
+13. **DailyBriefingWorker** - Proactive briefing delivery
+14. **LocationBackfillWorker** - Location enrichment backfill
+15. **MerchantKeyBackfillWorker** - Merchant key backfill
+16. **WarrantyExpirationWorker** - Warranty expiry tracking
+17. **ReceiptMatchingWorker** - Receipt matching background work
 
 ### Utilities
-11. TransactionFilterSerializer
-12. NavigationTargetResolver
+18. TransactionFilterSerializer
+19. NavigationTargetResolver
 
 ---
 
 ## 11. FEATURE IMPLEMENTATION CHECKLIST
 
-### Confirmed Implemented (28+)
+### Confirmed Implemented
 ✅ Home/Dashboard  
 ✅ Transactions/History  
-✅ Analytics (2 variants)  
+✅ Analytics variants  
 ✅ Expense Management  
 ✅ Receipt Scanning  
 ✅ Receipt Matching  
@@ -530,7 +560,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Export/Backup  
 
 ### Additional Features Found
-✅ Recurring Expense Management (2 screens)  
+✅ Recurring Expense Management  
 ✅ Bank Connection Integration  
 ✅ Merchant Normalization  
 ✅ Recommendation Engine  
@@ -543,43 +573,29 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Notification Processing  
 ✅ Proactive Briefing  
 
-### Screen Status Issues
-⚠️ **RecurringExpensesScreen** - ORPHANED
-- Exists: Yes
-- ViewModel: No
-- Navigable: No
-- Status: Legacy, replaced by ManualRecurringExpenseScreen
-
-⚠️ **AiSettingsScreen** - ORPHANED
-- Exists: Yes
-- ViewModel: Yes
-- Navigable: No
-- Status: Disconnected from navigation
-
-⚠️ **CategoryScreen** - ORPHANED
-- Exists: Yes
-- ViewModel: Yes
-- Navigable: No
-- Status: Possibly redundant with category management
+### Screen Status Notes
+- `RecurringExpensesScreen` remains a secondary recurring-management surface alongside `ManualRecurringExpenseScreen`.
+- `AiSettingsScreen` is a routed settings surface.
+- `CategoryScreen` is a routed category-management surface.
 
 ---
 
 ## 12. INTERNATIONALIZATION
 
-- **Single language:** English strings defined
-- **String count:** 1,730 strings in values/strings.xml
-- **Coverage:** ~43 strings per screen average
-- **No variants found:** No language-specific folders (values-es/, values-fr/, etc.)
+- **Primary strings:** `values/strings.xml`
+- **Localized variants:** present (for example, `values-es/strings.xml`)
+- **Coverage:** screen string density varies by feature
+- **Note:** exact string totals are intentionally not frozen here
 
 ---
 
 ## 13. ARCHITECTURAL COMPLIANCE
 
 ### Clean Architecture
-✅ **Domain:** Pure business logic (198 files), no Android deps  
-✅ **Data:** Repositories, entities, DAOs (32 repos + 37 entities + 36 DAOs)  
-✅ **UI:** Screens, ViewModels, components (77 screens + 36 ViewModels + 44 components)  
-✅ **DI:** Hilt modules (21 modules)
+✅ **Domain:** Primarily business logic; a few files still import Android APIs  
+✅ **Data:** Repositories, entities, DAOs  
+✅ **UI:** Screens, ViewModels, components  
+✅ **DI:** Hilt modules (live `di/` set)
 
 ### Design Patterns
 ✅ Repository Pattern  
@@ -590,47 +606,28 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Room Database Persistence  
 
 ### Database
-✅ Version 51 with 45+ migrations  
+✅ Version 92 with current migration chain  
 ✅ Export schema enabled  
-✅ Type converters defined  
+✅ Type converters defined
 
 ---
 
 ## 14. KNOWN ISSUES & RECOMMENDATIONS
 
 ### Critical
-1. **RecurringExpensesScreen orphaned** - Recommend deprecation/removal
-2. **AiSettingsScreen orphaned** - Add to NavigationDestination or remove
-3. **CategoryScreen orphaned** - Consolidate or expose in navigation
+1. Keep routed feature surfaces documented as routed unless the navigation map changes.
+2. Keep overlay/settings screens documented separately from shell destinations.
+3. Preserve compatibility notes only for truly legacy surfaces.
 
 ### Technical Debt
-1. **RecurringExpenseDao deprecated** - Migration path provided
-2. **Duplicate analytics screens** - Consider consolidation
-3. **Recurring expense duplication** - Two screens for same feature
+1. Review any duplicate feature surfaces before pruning them from navigation.
+2. Keep inventory wording aligned with current route ownership.
+3. Verify current code paths before classifying a screen as legacy.
 
 ### Recommendations
-- Remove/consolidate orphaned screens
-- Complete i18n with language variants
-- Review and update deprecated DAOs
-- Document Phase structure more clearly
-- Add comprehensive integration tests
-
----
-
-## 15. STATISTICS SUMMARY
-
-| Category | Count | % |
-|----------|-------|---|
-| UI Screens | 77 | 14.6% |
-| ViewModels | 36 | 6.8% |
-| Domain Logic | 198 | 37.5% |
-| Repositories | 32 | 6.1% |
-| Database Files | 98 | 18.6% |
-| DI Modules | 21 | 4.0% |
-| Components | 44 | 8.3% |
-| Services | 12 | 2.3% |
-| Other | 10 | 1.9% |
-| **TOTAL** | **528** | **100%** |
+- Complete i18n with language variants.
+- Document Phase structure more clearly.
+- Add comprehensive integration tests.
 
 ---
 

@@ -26,6 +26,12 @@ interface MerchantCategoryDao {
     @Query("SELECT * FROM merchant_categories")
     suspend fun getAll(): List<MerchantCategory>
 
+    @Query("SELECT * FROM merchant_categories WHERE normalizedCanonicalName IS NULL")
+    suspend fun getMappingsMissingCanonicalName(): List<MerchantCategory>
+
+    @Query("UPDATE merchant_categories SET normalizedCanonicalName = :normalizedCanonicalName WHERE merchantPattern = :merchantPattern")
+    suspend fun updateNormalizedCanonicalName(merchantPattern: String, normalizedCanonicalName: String)
+
     @Query("SELECT COUNT(*) FROM merchant_categories")
     suspend fun getCount(): Int
 

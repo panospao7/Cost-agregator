@@ -22,10 +22,12 @@ import com.yourname.expensetracker.receiver.ServiceRestartReceiver
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
-import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 internal fun computeNotificationContentHash(
@@ -42,6 +44,44 @@ internal fun resolveEffectiveBigText(
     ?: infoText?.takeIf { it.isNotBlank() }
     ?: summaryText?.takeIf { it.isNotBlank() }
 
+internal class NotificationServiceWorkTracker {
+    private val lock = Any()
+    private val inFlightJobs = linkedSetOf<Job>()
+    private var acceptingNewWork = true
+
+    fun launch(scope: CoroutineScope, block: suspend () -> Unit): Job? {
+        val job = synchronized(lock) {
+            if (!acceptingNewWork) return null
+            scope.launch { block() }.also { launched ->
+                inFlightJobs += launched
+            }
+        }
+        job.invokeOnCompletion {
+            synchronized(lock) {
+                inFlightJobs.remove(job)
+            }
+        }
+        return job
+    }
+
+    suspend fun stopAcceptingAndDrain(timeoutMs: Long): Boolean {
+        synchronized(lock) {
+            acceptingNewWork = false
+        }
+        val drained = withTimeoutOrNull<Boolean>(timeoutMs) {
+            while (true) {
+                val snapshot = synchronized(lock) { inFlightJobs.toList() }
+                if (snapshot.isEmpty()) {
+                    break
+                }
+                snapshot.joinAll()
+            }
+            true
+        }
+        return drained ?: false
+    }
+}
+
 @AndroidEntryPoint
 class NotificationCaptureService : NotificationListenerService() {
 
@@ -56,6 +96,7 @@ class NotificationCaptureService : NotificationListenerService() {
 
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
+    private val workTracker = NotificationServiceWorkTracker()
     
     @Volatile
     private var pendingRefresh = false
@@ -65,6 +106,9 @@ class NotificationCaptureService : NotificationListenerService() {
     
     @Volatile
     private var isListenerConnected = false
+
+    @Volatile
+    private var isShuttingDown = false
     
     // Thread-safe, bounded deduplication cache (INS-005)
     private val processedNotifications = java.util.Collections.synchronizedMap(
@@ -85,6 +129,7 @@ class NotificationCaptureService : NotificationListenerService() {
         private const val DEDUP_WINDOW_MS = 5000L
         private const val CACHE_CLEANUP_THRESHOLD = 50
         private const val CACHE_MAX_AGE_MS = 60_000L
+        private const val SHUTDOWN_DRAIN_TIMEOUT_MS = 2_000L
         private const val RESTART_INTERVAL_MS = 900_000L // Restart no more than every 15 minutes
         
     }
@@ -255,7 +300,8 @@ class NotificationCaptureService : NotificationListenerService() {
         processedNotifications[dedupeKey] = now
         cleanupCacheIfNeeded()
 
-        serviceScope.launch {
+        if (isShuttingDown) return
+        workTracker.launch(serviceScope) {
             processNotification(sbn, packageName, title, text, bigText, extras)
         }
     }
@@ -360,7 +406,8 @@ class NotificationCaptureService : NotificationListenerService() {
         
         Timber.d("Processing notification from: $packageName, title: $title")
 
-        serviceScope.launch {
+        if (isShuttingDown) return
+        workTracker.launch(serviceScope) {
             processNotification(sbn, packageName, title, text, bigText, extras)
         }
     }
@@ -400,16 +447,29 @@ class NotificationCaptureService : NotificationListenerService() {
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
+        isShuttingDown = true
         cancelRestartAlarm()
         diagnostics.recordServiceKilled()
         Timber.d("Service destroyed")
-        serviceJob.cancel() // Stop all active coroutines
+        // Cancel all in-flight work without blocking the main thread.
+        // Previously used runBlocking { workTracker.stopAcceptingAndDrain() } which could
+        // cause ForegroundServiceDidNotStopInTimeException by blocking the main thread
+        // past the system's foreground service stop timeout.
+        //
+        // We do not use workTracker.stopAcceptingAndDrain() here because it is a suspend
+        // function that would require runBlocking (blocking main) or a separate scope
+        // (whose drain would be moot since serviceJob.cancel() below cancels all child
+        // coroutines anyway). isShuttingDown=true above prevents new work from being
+        // accepted, and serviceJob.cancel() handles cleanup of in-flight coroutines.
+        serviceJob.cancel()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
             @Suppress("DEPRECATION")
             stopForeground(true)
         }
+        // Explicitly stop self so the system knows the service is done immediately.
+        stopSelf()
     }
 
     private fun cancelRestartAlarm() {

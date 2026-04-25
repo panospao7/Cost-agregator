@@ -4,7 +4,6 @@ import com.yourname.expensetracker.data.database.model.PendingReviewWithReceipt
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
@@ -12,20 +11,22 @@ import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryOption
 import com.yourname.expensetracker.domain.ai.model.MerchantTransactionHint
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
+import com.yourname.expensetracker.domain.common.sha256Prefix
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.dto.CategoryRef
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.privacy.RedactionSanitizer
 import timber.log.Timber
 import javax.inject.Inject
-import java.security.MessageDigest
 import kotlin.coroutines.cancellation.CancellationException
 
 class CategorizationAssistInputBuilder @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val aiPolicy: AiPolicy,
     private val expenseRepository: ExpenseRepository,
-    private val merchantNormalizer: MerchantNormalizer
+    private val merchantNormalizer: MerchantNormalizer,
+    private val redactionSanitizer: RedactionSanitizer
 ) {
 
     suspend fun build(
@@ -37,18 +38,19 @@ class CategorizationAssistInputBuilder @Inject constructor(
         val categoryRefs = categoryRepository.getAll().map { CategoryRef(id = it.id, name = it.name) }
         val rawMerchant = review.suggestedMerchant.trim().take(120)
         val merchant = if (shouldRedact) {
-            CloudPiiSanitizer.sanitizeMerchant(rawMerchant, true)
+            redactionSanitizer.sanitizeMerchant(rawMerchant)
         } else {
             rawMerchant
         }
         val merchantKey = merchantNormalizer.normalize(rawMerchant).canonical.searchKey
         val recentHints = fetchRecentTransactionHints(merchantKey, rawMerchant, shouldRedact)
+        val amount = sanitizeAmount(review.suggestedAmount)
 
         return CategorizationAssistInput(
             targetType = AiTargetType.PENDING_REVIEW,
             targetId = review.id,
             merchant = merchant,
-            amount = review.suggestedAmount,
+            amount = amount,
             currency = review.suggestedCurrency.take(8),
             transactionType = runCatching {
                 DomainTransactionType.valueOf(review.suggestedType)
@@ -82,10 +84,11 @@ class CategorizationAssistInputBuilder @Inject constructor(
             ?: ""
         val trimmedMerchant = rawMerchant.take(120)
         val merchant = if (shouldRedact) {
-            CloudPiiSanitizer.sanitizeMerchant(trimmedMerchant, true)
+            redactionSanitizer.sanitizeMerchant(trimmedMerchant)
         } else {
             trimmedMerchant
         }
+        val amount = sanitizeAmount(draftAmount ?: receipt.parsedTotal)
         val normalizedResult = merchantNormalizer.normalize(rawMerchant)
         val recentHints = fetchRecentTransactionHints(normalizedResult.canonical.searchKey, rawMerchant, shouldRedact)
 
@@ -93,7 +96,7 @@ class CategorizationAssistInputBuilder @Inject constructor(
             targetType = AiTargetType.SCANNED_RECEIPT,
             targetId = receipt.id,
             merchant = merchant,
-            amount = draftAmount ?: receipt.parsedTotal ?: 0.0,
+            amount = amount,
             currency = receipt.currency.take(8),
             transactionType = DomainTransactionType.PURCHASE,
             date = draftDate ?: receipt.parsedDate,
@@ -193,7 +196,7 @@ class CategorizationAssistInputBuilder @Inject constructor(
     private fun sanitizeHistoryMerchant(value: String): String {
         val trimmed = value.trim().take(80)
         if (trimmed.isBlank()) return "merchant_unknown"
-        return CloudPiiSanitizer.sanitizeMerchant(trimmed, true)
+        return redactionSanitizer.sanitizeMerchant(trimmed)
     }
 
     private fun sanitizeHistoryCategory(value: String): String {
@@ -206,8 +209,7 @@ class CategorizationAssistInputBuilder @Inject constructor(
         return "category_${trimmed.sha256Prefix()}"
     }
 
-    private fun String.sha256Prefix(length: Int = 12): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(toByteArray())
-        return digest.joinToString(separator = "") { "%02x".format(it) }.take(length)
+    private fun sanitizeAmount(amount: Double?): Double? {
+        return amount?.takeIf { it.isFinite() && it > 0.0 }
     }
 }

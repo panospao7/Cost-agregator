@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
@@ -16,7 +17,8 @@ import timber.log.Timber
 class CategoryRepository @Inject constructor(
     private val categoryDao: CategoryDao,
     private val merchantCategoryDao: MerchantCategoryDao,
-    private val categorizationEngine: CategorizationEngine
+    private val categorizationEngine: CategorizationEngine,
+    private val hybridExpenseClassifier: dagger.Lazy<HybridExpenseClassifier>
 ) {
 
     val allCategories: Flow<List<Category>> = categoryDao.getAllFlow()
@@ -49,11 +51,11 @@ class CategoryRepository @Inject constructor(
                 val merchantMap = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.getExpandedMap()
                 val merchantEntities = merchantMap.mapNotNull { (merchant, categoryName) ->
                    val catId = categoryIdMap[categoryName]
-                   if (catId != null) {
-                       MerchantCategory(merchantPattern = merchant, categoryId = catId)
-                   } else {
-                       null
-                   }
+                    if (catId != null) {
+                        categorizationEngine.createMerchantCategoryMapping(merchant, catId)
+                    } else {
+                        null
+                    }
                 }
                 if (merchantEntities.isNotEmpty()) {
                     // We need a bulk insert for speed
@@ -69,6 +71,14 @@ class CategoryRepository @Inject constructor(
                     }
                 }
             }
+
+            merchantCategoryDao.getMappingsMissingCanonicalName().forEach { mapping ->
+                merchantCategoryDao.updateNormalizedCanonicalName(
+                    merchantPattern = mapping.merchantPattern,
+                    normalizedCanonicalName = categorizationEngine.normalizedCanonicalNameForMerchant(mapping.merchantPattern)
+                )
+            }
+            hybridExpenseClassifier.get().invalidateCategorySnapshot()
         } catch (e: Exception) {
             Timber.e(e, "Failed to seed default categories")
         }
@@ -77,12 +87,11 @@ class CategoryRepository @Inject constructor(
     suspend fun addCategory(name: String, icon: String, color: String) = withContext(Dispatchers.IO) {
         val category = Category(name = name, icon = icon, color = color)
         categoryDao.insert(category)
+        hybridExpenseClassifier.get().invalidateCategorySnapshot()
     }
 
     suspend fun learnMerchantCategory(merchantName: String, categoryId: Long) = withContext(Dispatchers.IO) {
-        val normalized = categorizationEngine.normalize(merchantName)
-        val mapping = MerchantCategory(merchantPattern = normalized, categoryId = categoryId)
-        merchantCategoryDao.insert(mapping)
+        categorizationEngine.learnMerchantCategory(merchantName, categoryId)
     }
     
     suspend fun getCategoryByName(name: String): Category? = withContext(Dispatchers.IO) {

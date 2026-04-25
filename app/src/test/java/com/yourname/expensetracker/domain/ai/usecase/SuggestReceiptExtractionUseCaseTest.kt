@@ -33,8 +33,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
-import org.junit.Ignore
 import kotlin.coroutines.cancellation.CancellationException
+import java.security.MessageDigest
 
 class SuggestReceiptExtractionUseCaseTest {
 
@@ -89,16 +89,21 @@ class SuggestReceiptExtractionUseCaseTest {
         coVerify(exactly = 0) { receiptRepository.getReceiptById(any()) }
     }
 
-    @Ignore("Missing mock for ReceiptAssistInputBuilder.build")
     @Test
     fun `invoke returns NotNeeded when receipt already looks complete and force false`() = runTest {
+        val receipt = makeReceipt(confidence = 0.9f)
+        val input = makeInput()
+        val suggestion = ReceiptAssistSuggestion(merchant = SuggestedValue("Lidl"))
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
-        coEvery { receiptRepository.getReceiptById(1L) } returns makeReceipt(confidence = 0.9f)
+        coEvery { receiptRepository.getReceiptById(1L) } returns receipt
+        every { inputBuilder.build(receipt, any()) } returns input
+        coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { receiptAssistService.suggest(input) } returns AiServiceResult.Success(suggestion)
 
         val result = useCase(receiptId = 1L)
 
-        assertTrue(result is ReceiptAssistGenerationResult.NotNeeded)
-        coVerify(exactly = 0) { receiptAssistService.suggest(any()) }
+        assertTrue(result is ReceiptAssistGenerationResult.Success)
+        coVerify(exactly = 1) { receiptAssistService.suggest(input) }
     }
 
     @Test
@@ -110,7 +115,7 @@ class SuggestReceiptExtractionUseCaseTest {
         every { inputBuilder.build(receipt, any()) } returns input
         coEvery {
             aiArtifactRepository.getLatest("scanned_receipt:1", AiCapability.RECEIPT_EXTRACTION)
-        } returns freshReadyArtifact(input.hashCode().toString())
+        } returns freshReadyArtifact(stableHash(input))
 
         val result = useCase(receiptId = 1L)
 
@@ -155,31 +160,41 @@ class SuggestReceiptExtractionUseCaseTest {
         assertTrue((result as ReceiptAssistGenerationResult.Success).usedImageInput.not())
     }
 
-    @Ignore("Artifact explanation assertion mismatch")
+    @Test
+    fun `invoke uses stable hash that ignores volatile currentTimeMs`() = runTest {
+        val receipt = makeReceipt(confidence = 0.2f)
+        val firstInput = makeInput(currentTimeMs = now)
+        val secondInput = makeInput(currentTimeMs = now + 9999L)
+        every { aiSettingsRepository.settings() } returns flowOf(enabledSettings())
+        coEvery { receiptRepository.getReceiptById(1L) } returns receipt
+        every { inputBuilder.build(receipt, any()) } returnsMany listOf(firstInput, secondInput)
+        coEvery {
+            aiArtifactRepository.getLatest("scanned_receipt:1", AiCapability.RECEIPT_EXTRACTION)
+        } returns freshReadyArtifact(stableHash(firstInput))
+
+        val first = useCase(receiptId = 1L)
+        val second = useCase(receiptId = 1L)
+
+        assertTrue(first is ReceiptAssistGenerationResult.Success)
+        assertTrue(second is ReceiptAssistGenerationResult.Success)
+        assertTrue((first as ReceiptAssistGenerationResult.Success).fromCache)
+        assertTrue((second as ReceiptAssistGenerationResult.Success).fromCache)
+        coVerify(exactly = 0) { receiptAssistService.suggest(any()) }
+    }
+
     @Test
     fun `invoke marks image-aware receipt assist in artifact explanation when service used image`() = runTest {
         val receipt = makeReceipt(confidence = 0.2f)
         val input = makeInput().copy(imagePath = "receipt.jpg", imageMimeType = "image/jpeg")
-        val receiptAssistService = object : ReceiptAssistService {
-            override suspend fun suggest(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> {
-                return AiServiceResult.Success(ReceiptAssistSuggestion(merchant = SuggestedValue("AB Βασιλόπουλος")))
-            }
-
-            override fun usedImageInput(input: ReceiptAssistInput): Boolean = true
-        }
-        useCase = SuggestReceiptExtractionUseCase(
-            aiSettingsRepository = aiSettingsRepository,
-            aiArtifactRepository = aiArtifactRepository,
-            receiptAssistService = receiptAssistService,
-            aiCapabilityRouter = aiCapabilityRouter,
-            inputBuilder = inputBuilder,
-            receiptRepository = receiptRepository,
-            timeProvider = timeProvider
+        val suggestion = ReceiptAssistSuggestion(
+            merchant = SuggestedValue("AB Βασιλόπουλος"),
+            usedImageInput = true
         )
         every { aiSettingsRepository.settings() } returns flowOf(enabledSettings().copy(receiptImageCloudEnabled = true))
         coEvery { receiptRepository.getReceiptById(1L) } returns receipt
         every { inputBuilder.build(receipt, any()) } returns input
         coEvery { aiArtifactRepository.getLatest(any(), any()) } returns null
+        coEvery { receiptAssistService.suggest(input) } returns AiServiceResult.Success(suggestion)
 
         val captured = mutableListOf<AiArtifactRecord>()
         coEvery { aiArtifactRepository.upsert(capture(captured)) } returns 1L
@@ -279,7 +294,7 @@ class SuggestReceiptExtractionUseCaseTest {
         allowCloudAi = true
     )
 
-    private fun makeInput() = ReceiptAssistInput(
+    private fun makeInput(currentTimeMs: Long = now) = ReceiptAssistInput(
         receiptId = 1L,
         rawOcrText = "LIDL TOTAL 12.34",
         imagePath = null,
@@ -290,7 +305,7 @@ class SuggestReceiptExtractionUseCaseTest {
         parsedTaxAmount = null,
         currency = "EUR",
         lineItemsJson = null,
-        currentTimeMs = now
+        currentTimeMs = currentTimeMs
     )
 
     private fun makeReceipt(confidence: Float) = ScannedReceipt(
@@ -322,4 +337,25 @@ class SuggestReceiptExtractionUseCaseTest {
         updatedAt = now,
         expiresAt = now + AppConfig.Ai.RECEIPT_ASSIST_TTL_MS
     )
+
+    private fun stableHash(input: ReceiptAssistInput): String {
+        val normalized = listOf(
+            input.receiptId.toString(),
+            input.rawOcrText.trim(),
+            input.imagePath.orEmpty().trim(),
+            input.imageMimeType.orEmpty().trim(),
+            input.isImageAnalysisMode.toString(),
+            input.redactBeforeCloud.toString(),
+            input.parsedMerchant.orEmpty().trim(),
+            input.parsedTotal?.toString().orEmpty(),
+            input.parsedDate?.toString().orEmpty(),
+            input.parsedTaxAmount?.toString().orEmpty(),
+            input.currency.trim(),
+            input.lineItemsJson.orEmpty().trim()
+        ).joinToString("\u001F")
+
+        return MessageDigest.getInstance("SHA-256")
+            .digest(normalized.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
 }

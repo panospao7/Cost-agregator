@@ -3,7 +3,6 @@ package com.yourname.expensetracker.domain.forecasting
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
-import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -19,12 +18,19 @@ import java.util.Random
  * 
  * Predicts cash crunch based on recurring obligations + forecast at 30/60/90 day horizons.
  * Uses Monte Carlo simulation to compute probability of negative balance (P(balance < 0)).
+ *
+ * Confidence semantics note:
+ * - Stress output is probability-first (risk tiers from P(crunch)).
+ * - Monte Carlo dashboard output exposes data-quality confidence separately
+ *   (HIGH/MODERATE/LOW via [SimulationConfidence]).
+ * - This engine intentionally keeps risk-tier semantics isolated; UI may adapt
+ *   probability tiers and simulation confidence side-by-side.
  */
 @Singleton
 class FinancialStressForecastEngine @Inject constructor(
     private val synthesisEngine: SynthesisEngine,
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
-    private val recurringExpenseEngine: RecurringExpenseEngine,
+    private val recurringPatternsProvider: MergedRecurringPatternsProvider,
     private val expenseRepository: ExpenseRepository,
     private val budgetRepository: BudgetRepository,
     private val timeProvider: TimeProvider
@@ -54,7 +60,7 @@ class FinancialStressForecastEngine @Inject constructor(
             // Use a neutral starting point instead of presenting month-to-date
             // net cashflow as if it were the user's real cash balance.
             val currentBalance = resolveStartingBalanceBaseline()
-            val patterns = recurringExpenseEngine.getPatterns()
+            val patterns = recurringPatternsProvider.getConfirmedPatterns()
 
             // Calculate horizons
             val horizon30 = calculateHorizon(
@@ -126,10 +132,11 @@ class FinancialStressForecastEngine @Inject constructor(
         patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
         now: Long
     ): StressHorizon {
+        val horizonStart = TimePeriodUtils.getStartOfDay(now)
         val horizonEnd = now + (daysAhead * TimePeriodUtils.DAY_IN_MILLIS)
         
         // 1. Calculate recurring obligations within this horizon
-        val recurringOutflows = calculateRecurringOutflows(patterns, now, horizonEnd)
+        val recurringOutflows = calculateRecurringOutflows(patterns, horizonStart, horizonEnd)
         
         // 2. Estimate expected income
         val expectedIncome = estimateIncome(daysAhead)

@@ -1,7 +1,5 @@
 package com.yourname.expensetracker.domain.model.budget
 
-import com.yourname.expensetracker.domain.util.CurrencyFormatter
-
 /**
  * Represents the impact of Monte Carlo forecasting on a user's budget.
  *
@@ -13,17 +11,13 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
  * @property expectedOverrun The expected budget overrun: max(0, p50 - budget)
  * @property probabilityOfOverrun The probability of exceeding budget: 1 - probabilityUnderBudget
  * @property riskTier The assessed risk level based on overrun magnitude and probability
- * @property displayMessage Human-readable message for UI display
- * @property formattedOverrun The formatted overrun amount with currency symbol (e.g., "$123.45")
  */
 data class MonteCarloBudgetImpact(
     val budgetAmount: Double,
     val p50Forecast: Double,
     val expectedOverrun: Double,
     val probabilityOfOverrun: Double,
-    val riskTier: RiskTier,
-    val displayMessage: String,
-    val formattedOverrun: String
+    val riskTier: RiskTier
 ) {
     /**
      * Risk tier classification based on overrun magnitude and probability.
@@ -37,14 +31,5 @@ data class MonteCarloBudgetImpact(
         HIGH,
         /** Overrun >= 30% of budget OR P(overrun) >= 75% */
         CRITICAL
-    }
-
-    companion object {
-        /**
-         * Format currency for display messages using the app currency formatter.
-         */
-        fun formatCurrency(amount: Double): String {
-            return CurrencyFormatter.format(amount)
-        }
     }
 }

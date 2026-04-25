@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +28,7 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.usecase.dashboard.*
 import com.yourname.expensetracker.ui.components.BentoCard
 import com.yourname.expensetracker.ui.components.asString
+import com.yourname.expensetracker.ui.mappers.MonteCarloBudgetImpactUiMapper
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.SimpleDateFormat
 import java.util.*
@@ -41,6 +43,8 @@ fun MoneyRadarWidget(
     onActionClick: (MoneyRadarAction) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val budgetImpactMapper = remember(context) { MonteCarloBudgetImpactUiMapper(context) }
     val urgencyColor = when (data.urgencyLevel) {
         UrgencyLevel.GREEN -> SemanticColors.SuccessGreen
         UrgencyLevel.YELLOW -> SemanticColors.WarningOrange
@@ -63,7 +67,19 @@ fun MoneyRadarWidget(
         label = "urgency_color"
     )
 
-    val topConcernText = data.topReasons.firstOrNull()?.asString()
+    val budgetImpactTitle = data.budgetRisk?.let { riskInfo ->
+        budgetImpactMapper.map(
+            com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact(
+                budgetAmount = 0.0,
+                p50Forecast = 0.0,
+                expectedOverrun = riskInfo.expectedOverrun,
+                probabilityOfOverrun = riskInfo.probabilityOfOverrun,
+                riskTier = riskInfo.riskTier
+            )
+        ).title
+    }
+
+    val topConcernText = budgetImpactTitle ?: data.topReasons.firstOrNull()?.asString()
     
     val widgetDesc = buildString {
         append("Money Radar: $urgencyLabel. Score ${data.urgencyScore} out of 100. ")
@@ -331,6 +347,8 @@ private fun RadarPrimaryAction(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val budgetImpactMapper = remember(context) { MonteCarloBudgetImpactUiMapper(context) }
     val (icon, text, color) = when (action) {
         is MoneyRadarAction.ViewBills -> Triple(
             Icons.Rounded.Event,
@@ -349,9 +367,18 @@ private fun RadarPrimaryAction(
                 RiskTier.MEDIUM -> SemanticColors.WarningOrange
                 RiskTier.LOW -> SemanticColors.SuccessGreen
             }
+            val budgetText = budgetImpactMapper.map(
+                com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact(
+                    budgetAmount = 0.0,
+                    p50Forecast = 0.0,
+                    expectedOverrun = action.riskInfo.expectedOverrun,
+                    probabilityOfOverrun = action.riskInfo.probabilityOfOverrun,
+                    riskTier = action.riskInfo.riskTier
+                )
+            ).title
             Triple(
                 Icons.Rounded.TrendingUp,
-                "Review Budget Risk",
+                budgetText,
                 riskColor
             )
         }

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.model.dashboard
 
 import com.yourname.expensetracker.domain.model.NarrativeSection
 import com.yourname.expensetracker.domain.model.UpcomingItem
+import com.yourname.expensetracker.domain.model.UiText
 
 enum class WeatherState {
     CLEAR_SKIES,
@@ -14,8 +15,8 @@ enum class WeatherState {
 
 data class FinancialWeather(
     val state: WeatherState,
-    val headline: String,
-    val summary: String,
+    val headline: UiText,
+    val summary: UiText,
     val icon: String,
     val riskLevel: Int,
     val totalCommitted: Double,

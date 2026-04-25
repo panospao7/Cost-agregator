@@ -1,9 +1,9 @@
 package com.yourname.expensetracker.domain.usecase.savings
 
-import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.repository.PromptStateRepository
-import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
+import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
@@ -68,7 +68,7 @@ class LifestyleSavingsPromptUseCase @Inject constructor(
         }
         
         // Get current savings goals
-        val goals = savingsGoalRepository.getAllGoals().first()
+        val goals = savingsGoalRepository.observeSavingsGoals().first()
         
         // Calculate suggested uplift
         val currentSavingsRate = report.monthlyData.lastOrNull()?.savingsRate ?: 0.0

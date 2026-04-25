@@ -87,7 +87,8 @@ data class DashboardState(
     val error: UiText? = null,
     val aiBriefing: AiLoadState<DashboardBriefingUi> = AiLoadState.Disabled,
     val widgetStyles: WidgetStyleConfig = WidgetStyleConfig(),
-    val categoryTrends: Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo> = emptyMap()
+    val categoryTrends: Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo> = emptyMap(),
+    val referenceNowMillis: Long = 0L
 )
 
 private sealed interface ProcessedDashboardUiState {
@@ -137,6 +138,7 @@ class HomeViewModel @Inject constructor(
         _totalsDrillDownState.asStateFlow()
 
     private val isEditMode = MutableStateFlow(false)
+    private val dashboardReloadTrigger = MutableStateFlow(0)
     private val _categoryTrends = MutableStateFlow<Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo>>(emptyMap())
     private val dateKeyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     private fun dashboardBriefingKeyForToday(): String =
@@ -170,22 +172,25 @@ class HomeViewModel @Inject constructor(
     }
 
     private val processedDataFlow: StateFlow<ProcessedDashboardUiState> =
-        dashboardDataProvider.getProcessedDataFlow(analyticsRepository)
-            .map { processedData ->
-                ProcessedDashboardUiState.Ready(
-                    computeDashboardWidgetsUseCase.compute(processedData)
-                )
-            }
-            .catch<ProcessedDashboardUiState> { e ->
-                Timber.e(e, "Error processing dashboard data")
-                emit(
-                    ProcessedDashboardUiState.Error(
-                        UiText.StringResource(R.string.home_error_unable_to_load_dashboard)
-                    )
-                )
-            }
-            .onStart {
-                emit(ProcessedDashboardUiState.Loading)
+        dashboardReloadTrigger
+            .flatMapLatest {
+                dashboardDataProvider.getProcessedDataFlow(analyticsRepository)
+                    .map { processedData ->
+                        ProcessedDashboardUiState.Ready(
+                            computeDashboardWidgetsUseCase.compute(processedData)
+                        )
+                    }
+                    .catch<ProcessedDashboardUiState> { e ->
+                        Timber.e(e, "Error processing dashboard data")
+                        emit(
+                            ProcessedDashboardUiState.Error(
+                                UiText.StringResource(R.string.home_error_unable_to_load_dashboard)
+                            )
+                        )
+                    }
+                    .onStart {
+                        emit(ProcessedDashboardUiState.Loading)
+                    }
             }
             .flowOn(Dispatchers.Default)
             .stateIn(
@@ -271,6 +276,7 @@ class HomeViewModel @Inject constructor(
         val aiBriefing = params[3] as AiLoadState<DashboardBriefingUi>
         val widgetStyles = params[4] as WidgetStyleConfig
         val categoryTrends = params[5] as Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo>
+        val referenceNowMillis = timeProvider.now()
 
         if (processedDataState is ProcessedDashboardUiState.Loading) {
             return@combine DashboardState(
@@ -279,7 +285,8 @@ class HomeViewModel @Inject constructor(
                 error = null,
                 aiBriefing = aiBriefing,
                 widgetStyles = widgetStyles,
-                categoryTrends = categoryTrends
+                categoryTrends = categoryTrends,
+                referenceNowMillis = referenceNowMillis
             )
         }
 
@@ -290,7 +297,8 @@ class HomeViewModel @Inject constructor(
                 error = processedDataState.error,
                 aiBriefing = aiBriefing,
                 widgetStyles = widgetStyles,
-                categoryTrends = categoryTrends
+                categoryTrends = categoryTrends,
+                referenceNowMillis = referenceNowMillis
             )
         }
 
@@ -311,7 +319,8 @@ class HomeViewModel @Inject constructor(
             error            = null,
             aiBriefing       = aiBriefing,
             widgetStyles     = widgetStyles,
-            categoryTrends   = categoryTrends
+            categoryTrends   = categoryTrends,
+            referenceNowMillis = referenceNowMillis
         )
     }.catch { e ->
         Timber.e(e, "Error loading dashboard data")
@@ -331,6 +340,7 @@ class HomeViewModel @Inject constructor(
      */
     fun reloadDashboard() {
         viewModelScope.launch {
+            dashboardReloadTrigger.update { it + 1 }
             // Refresh recommendations
             recommendationStateManager.refreshForUser(defaultRecommendationUserId)
             // Reload category trends

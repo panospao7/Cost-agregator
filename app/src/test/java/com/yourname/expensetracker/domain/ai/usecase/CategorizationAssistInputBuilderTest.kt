@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
+import com.yourname.expensetracker.domain.privacy.DefaultRedactionSanitizer
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import io.mockk.coEvery
 import io.mockk.every
@@ -41,7 +42,13 @@ class CategorizationAssistInputBuilderTest {
         aiPolicy = mockk()
         expenseRepository = mockk()
         merchantNormalizer = mockk()
-        builder = CategorizationAssistInputBuilder(categoryRepository, aiPolicy, expenseRepository, merchantNormalizer)
+        builder = CategorizationAssistInputBuilder(
+            categoryRepository,
+            aiPolicy,
+            expenseRepository,
+            merchantNormalizer,
+            DefaultRedactionSanitizer()
+        )
     }
 
     @Test
@@ -132,7 +139,7 @@ class CategorizationAssistInputBuilderTest {
         assertEquals(AiTargetType.SCANNED_RECEIPT, result.targetType)
         assertEquals(receipt.id, result.targetId)
         assertEquals("Lidl", result.merchant)
-        assertEquals(22.5, result.amount, 0.0)
+        assertEquals(22.5, result.amount ?: 0.0, 0.0)
         assertEquals("Groceries", result.candidateCategories.single().name)
         assertNotNull(result.supportingText)
         assertEquals(null, result.deterministicMatchType)
@@ -162,6 +169,31 @@ class CategorizationAssistInputBuilderTest {
 
         assertTrue(result.merchant.startsWith("merchant_"))
         assertNull(result.supportingText)
+    }
+
+    @Test
+    fun `build receipt input omits invalid non-positive amount`() = runTest {
+        coEvery { categoryRepository.getAll() } returns emptyList()
+        every { aiPolicy.shouldRedact(any(), AiCapability.CATEGORIZATION_FALLBACK) } returns false
+        coEvery { merchantNormalizer.normalize(any()) } returns MerchantLookupResult(
+            canonical = MerchantCanonical(id = 1L, normalizedName = "Lidl", searchKey = "lidl"),
+            alias = null,
+            confidence = 0.9f,
+            matchType = MatchType.EXACT_MATCH
+        )
+        coEvery { expenseRepository.getRecentTransactionsForMerchant(any(), any()) } returns emptyList()
+
+        val receipt = makeItem().receipt!!
+        val result = builder.build(
+            receipt = receipt,
+            draftMerchant = "Lidl",
+            draftAmount = 0.0,
+            draftDate = 1234L,
+            currentCategoryId = null,
+            settings = AiSettings()
+        )
+
+        assertNull(result.amount)
     }
 
     @Test

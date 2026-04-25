@@ -4,7 +4,6 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import kotlinx.coroutines.flow.first
-import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -185,7 +184,7 @@ class BudgetAutopilotEngine @Inject constructor(
         budget: com.yourname.expensetracker.data.database.entity.Budget,
         now: Long
     ): HistoricalSpendSeries {
-        val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
+        val threeMonthsAgo = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(now, -3)
 
         val monthlyTotals: List<MonthlySpendingTotal> = if (budget.categoryId != null) {
             expenseDao.getMonthlySpendingTotalsByCategoryBetween(
@@ -200,30 +199,15 @@ class BudgetAutopilotEngine @Inject constructor(
             )
         }
 
-        if (monthlyTotals.isEmpty()) {
-            return HistoricalSpendSeries(
-                values = emptyList(),
-                observedMonthCount = 0
-            )
-        }
-
-        val totalsByMonth = linkedMapOf<String, Double>()
-        for (monthlyTotal in monthlyTotals) {
-            totalsByMonth[monthlyTotal.monthKey] = monthlyTotal.total
-        }
-
-        val sortedMonthKeys = totalsByMonth.keys.sorted()
-        val infilledValues = runCatching {
-            buildMonthKeyRange(sortedMonthKeys.first(), sortedMonthKeys.last()).map { monthKey ->
-                totalsByMonth[monthKey] ?: 0.0
-            }
-        }.getOrElse {
-            monthlyTotals.map { it.total }
-        }
+        val series = BudgetHistorySeriesBuilder.build(
+            monthlyTotals = monthlyTotals,
+            windowStartInclusive = threeMonthsAgo,
+            windowEndExclusive = now
+        )
 
         return HistoricalSpendSeries(
-            values = infilledValues,
-            observedMonthCount = monthlyTotals.size
+            values = series.values,
+            observedMonthCount = series.observedMonthCount
         )
     }
 
@@ -231,28 +215,7 @@ class BudgetAutopilotEngine @Inject constructor(
      * Calculate spending trend as percentage change per month.
      */
     private fun calculateTrend(historicalSpend: List<Double>): Double {
-        if (historicalSpend.size < 2) return 0.0
-
-        val avgSpend = historicalSpend.average()
-        
-        if (avgSpend <= 0) return 0.0
-        
-        // Input is monthly totals in chronological order.
-        val sorted = historicalSpend
-        val firstHalf = sorted.take(sorted.size / 2)
-        val secondHalf = sorted.drop(sorted.size / 2)
-
-        if (firstHalf.isEmpty() || secondHalf.isEmpty()) return 0.0
-
-        val firstHalfAvg = firstHalf.average()
-        val secondHalfAvg = secondHalf.average()
-
-        // Normalize by number of month-buckets in each half.
-        val periodsPerHalf = (sorted.size / 2.0).coerceAtLeast(1.0)
-        
-        return if (firstHalfAvg > 0) {
-            ((secondHalfAvg - firstHalfAvg) / firstHalfAvg) / periodsPerHalf
-        } else 0.0
+        return BudgetHistorySeriesBuilder.calculateNormalizedTrendRate(historicalSpend)
     }
     
     /**
@@ -368,41 +331,6 @@ class BudgetAutopilotEngine @Inject constructor(
         }
         
         return confidence.coerceIn(0.0, 1.0)
-    }
-
-    private fun buildMonthKeyRange(startMonthKey: String, endMonthKey: String): List<String> {
-        val cursor = parseMonthKey(startMonthKey)
-        val end = parseMonthKey(endMonthKey)
-        val monthKeys = mutableListOf<String>()
-
-        while (!cursor.after(end)) {
-            monthKeys.add(formatMonthKey(cursor))
-            cursor.add(Calendar.MONTH, 1)
-        }
-
-        return monthKeys
-    }
-
-    private fun parseMonthKey(monthKey: String): Calendar {
-        val parts = monthKey.split("-")
-        require(parts.size == 2) { "Unexpected month key: $monthKey" }
-
-        val year = parts[0].toInt()
-        val month = parts[1].toInt()
-        require(month in 1..12) { "Unexpected month key: $monthKey" }
-
-        return Calendar.getInstance().apply {
-            clear()
-            set(Calendar.YEAR, year)
-            set(Calendar.MONTH, month - 1)
-            set(Calendar.DAY_OF_MONTH, 1)
-        }
-    }
-
-    private fun formatMonthKey(calendar: Calendar): String {
-        val year = calendar.get(Calendar.YEAR)
-        val month = calendar.get(Calendar.MONTH) + 1
-        return String.format("%04d-%02d", year, month)
     }
 
     private data class HistoricalSpendSeries(

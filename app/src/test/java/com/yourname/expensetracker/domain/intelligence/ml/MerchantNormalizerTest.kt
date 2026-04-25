@@ -50,4 +50,20 @@ class MerchantNormalizerTest {
         assertEquals("Unknown", result.canonical.normalizedName)
         assertEquals(MatchType.NEW_MERCHANT, result.matchType)
     }
+
+    @Test
+    fun `fuzzy match ranks best candidate instead of first tree result`() = runBlocking {
+        val first = MerchantCanonical(id = 1, normalizedName = "Market House", searchKey = "markethouse", totalOccurrences = 1)
+        val best = MerchantCanonical(id = 2, normalizedName = "Market Home", searchKey = "markethome", totalOccurrences = 10, isVerified = true)
+
+        coEvery { repository.getAliasByNormalizedKey(any()) } returns null
+        coEvery { repository.getCanonicalBySearchKey("markethouse") } returns first
+        coEvery { repository.getCanonicalBySearchKey("markethome") } returns best
+        coEvery { repository.getTopMerchants(any()) } returns listOf(first, best)
+
+        val result = normalizer.normalize("Market Hom", autoCreate = false)
+
+        assertEquals(best.id, result.canonical.id)
+        assertEquals(MatchType.FUZZY_MATCH, result.matchType)
+    }
 }

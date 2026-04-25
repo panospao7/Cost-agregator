@@ -351,6 +351,7 @@ class CompositeGeocodingService @Inject constructor(
         GeocodingError.NetworkError,
         GeocodingError.Timeout -> true
         is GeocodingError.HttpError -> error.code >= 500
+        is GeocodingError.Unknown -> true
         else -> false
     }
 

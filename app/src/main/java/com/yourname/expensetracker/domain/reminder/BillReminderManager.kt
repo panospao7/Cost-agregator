@@ -56,9 +56,9 @@ class BillReminderManager @Inject constructor(
             val daysUntil = TimePeriodUtils.daysBetween(now, nextDate)
             
             val urgency = when {
-                nextDate < now -> ReminderUrgency.CRITICAL
-                daysUntil <= 1 -> ReminderUrgency.URGENT
-                daysUntil <= 3 -> ReminderUrgency.WARNING
+                nextDate <= now -> ReminderUrgency.CRITICAL
+                daysUntil <= 2 -> ReminderUrgency.URGENT
+                daysUntil <= 7 -> ReminderUrgency.WARNING
                 else -> ReminderUrgency.INFO
             }
             
@@ -88,7 +88,7 @@ class BillReminderManager @Inject constructor(
         reminders.filter { reminder ->
             when (reminder.urgency) {
                 ReminderUrgency.CRITICAL -> true
-                ReminderUrgency.URGENT -> reminder.daysUntilDue in 0..1
+                ReminderUrgency.URGENT -> reminder.daysUntilDue in 1..2
                 ReminderUrgency.WARNING -> reminder.daysUntilDue == DEFAULT_REMINDER_DAYS
                 ReminderUrgency.INFO -> false
             }

@@ -178,6 +178,51 @@ class CarbonFootprintViewModelTest : ViewModelTestUtils() {
         assertFalse(viewModel.isLoading.value)
     }
 
+    @Test
+    fun `load failure exposes error when no existing report`() = runTest(testDispatcher) {
+        coEvery { calculator.calculateCarbonFootprint(any(), any()) } throws IllegalStateException("carbon failed")
+
+        viewModel.loadReport(30)
+        advanceUntilIdle()
+
+        assertNull(viewModel.report.value)
+        assertEquals("Failed to load data", viewModel.error.value)
+        assertFalse(viewModel.isLoading.value)
+    }
+
+    @Test
+    fun `loadReport failure with blank message sets generic error`() = runTest(testDispatcher) {
+        coEvery { calculator.calculateCarbonFootprint(any(), any()) } throws IllegalStateException("   ")
+
+        viewModel.loadReport(30)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.error.value?.isNotBlank() == true)
+        assertEquals("Failed to load data", viewModel.error.value)
+        assertFalse(viewModel.isLoading.value)
+    }
+
+    @Test
+    fun `refresh failure keeps last successful report and sets error`() = runTest(testDispatcher) {
+        val successReport = carbonReport(totalEmissionsKg = 50.0, dailyAverageKg = 1.7, periodDays = 30)
+        coEvery { calculator.calculateCarbonFootprint(any(), any()) } returns successReport
+
+        viewModel.loadReport(30)
+        advanceUntilIdle()
+
+        assertEquals(successReport, viewModel.report.value)
+        assertNull(viewModel.error.value)
+
+        coEvery { calculator.calculateCarbonFootprint(any(), any()) } throws IllegalStateException("retry failed")
+
+        viewModel.loadReport(30)
+        advanceUntilIdle()
+
+        assertEquals(successReport, viewModel.report.value)
+        assertEquals("Failed to load data", viewModel.error.value)
+        assertFalse(viewModel.isLoading.value)
+    }
+
     private fun carbonReport(
         totalEmissionsKg: Double = 10.0,
         dailyAverageKg: Double = 0.5,

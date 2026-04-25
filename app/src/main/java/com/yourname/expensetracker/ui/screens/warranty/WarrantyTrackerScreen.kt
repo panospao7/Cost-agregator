@@ -491,7 +491,7 @@ private fun WarrantyCard(
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
                     }
-                } else if (isExpiringSoon) {
+                } else if (isExpired || isExpiringSoon) {
                     Badge(
                         containerColor = if (isExpired) 
                             MaterialTheme.colorScheme.error 

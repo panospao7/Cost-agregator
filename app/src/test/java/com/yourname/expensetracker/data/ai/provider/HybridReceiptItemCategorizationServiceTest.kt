@@ -21,6 +21,7 @@ import org.junit.Test
 
 class HybridReceiptItemCategorizationServiceTest {
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `categorizeItems uses on-device and never calls cloud when router selects on-device`() = runTest {
         val onDeviceService = mockk<OnDeviceReceiptItemCategorizationService>()

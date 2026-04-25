@@ -33,6 +33,20 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+internal fun isAmountParseableAndPositive(amount: String): Boolean {
+    val parsedAmount = amount.toDoubleOrNull() ?: return false
+    return parsedAmount.isFinite() && parsedAmount > 0
+}
+
+internal fun isConversionInputValid(amount: String, fromCurrency: String, toCurrency: String): Boolean {
+    return isAmountParseableAndPositive(amount) && fromCurrency != toCurrency
+}
+
+internal fun shouldShowAmountError(amount: String, interacted: Boolean): Boolean {
+    if (!interacted) return false
+    return !isAmountParseableAndPositive(amount)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CurrencyManagementScreen(
@@ -641,12 +655,15 @@ private fun ConversionDialog(
     onConvert: (Double, String, String) -> Unit
 ) {
     var amount by remember { mutableStateOf("100") }
+    var amountInteracted by remember { mutableStateOf(false) }
     val defaultFrom = remember(supportedCurrencies) { supportedCurrencies.firstOrNull()?.code.orEmpty() }
     val defaultTo = remember(supportedCurrencies, defaultFrom) {
         supportedCurrencies.firstOrNull { it.code != defaultFrom }?.code ?: defaultFrom
     }
     var fromCurrency by remember(defaultFrom) { mutableStateOf(defaultFrom) }
     var toCurrency by remember(defaultTo) { mutableStateOf(defaultTo) }
+    val isAmountValid = isAmountParseableAndPositive(amount)
+    val showAmountError = shouldShowAmountError(amount, interacted = amountInteracted)
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -663,8 +680,17 @@ private fun ConversionDialog(
                 // Amount input
                 OutlinedTextField(
                     value = amount,
-                    onValueChange = { amount = it },
+                    onValueChange = {
+                        amount = it
+                        amountInteracted = true
+                    },
                     label = { Text(stringResource(R.string.label_amount)) },
+                    isError = showAmountError,
+                    supportingText = if (showAmountError) {
+                        { Text(stringResource(R.string.error_invalid_amount)) }
+                    } else {
+                        null
+                    },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -747,10 +773,11 @@ private fun ConversionDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    amount.toDoubleOrNull()?.let { amt ->
+                    amount.toDoubleOrNull()?.takeIf { it.isFinite() }?.let { amt ->
                         onConvert(amt, fromCurrency, toCurrency)
                     }
-                }
+                },
+                enabled = isConversionInputValid(amount, fromCurrency, toCurrency)
             ) {
                 Text(stringResource(R.string.currency_convert_button))
             }

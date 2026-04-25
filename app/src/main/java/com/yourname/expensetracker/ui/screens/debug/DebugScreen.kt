@@ -1044,7 +1044,11 @@ fun MlStatsSection(
                 ) {
                     Column {
                         Text(
-                            stringResource(R.string.debug_status_format, if (classifierStats.isReady) stringResource(R.string.debug_status_active) else stringResource(R.string.debug_status_training)),
+                            stringResource(
+                                R.string.debug_status_format,
+                                stringResource(R.string.label_status),
+                                if (classifierStats.isReady) stringResource(R.string.debug_status_active) else stringResource(R.string.debug_status_training)
+                            ),
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(

@@ -6,8 +6,10 @@ import android.graphics.pdf.PdfDocument
 import com.yourname.expensetracker.data.database.entity.Expense
 import java.io.ByteArrayOutputStream
 import java.text.DecimalFormat
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.text.DecimalFormatSymbols
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
 
@@ -20,25 +22,24 @@ class AccountantReportPdfExporter @Inject constructor() {
         endDate: Long
     ): ByteArray {
         val document = PdfDocument()
+        val formatters = ExportFormatters(Locale.getDefault(), ZoneId.systemDefault())
 
         return try {
             val writer = PdfReportWriter(document)
-            val monthFormat = SimpleDateFormat("MMM yyyy", Locale.getDefault())
-            val timestampFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
-            val period = "${monthFormat.format(Date(startDate))} - ${monthFormat.format(Date(endDate))}"
+            val period = "${formatters.formatMonth(startDate)} - ${formatters.formatMonth(endDate)}"
             val expensesByCurrency = expenses.groupBy { it.reportCurrencyCode() }
                 .toSortedMap()
 
             writer.writeTitle("Accountant Report")
             writer.writeBody("Period: $period")
-            writer.writeBody("Generated: ${timestampFormat.format(Date())}")
+            writer.writeBody("Generated: ${formatters.formatTimestamp(System.currentTimeMillis())}")
             writer.blankLine()
 
             writer.writeHeading("Summary")
             writer.writeBody("Transaction Count: ${expenses.size}")
             expensesByCurrency.forEach { (currency, currencyExpenses) ->
                 writer.writeBody(
-                    "$currency Total Expenses: ${formatAmount(currencyExpenses.sumOf { it.effectiveAmount }, currency)}"
+                    "$currency Total Expenses: ${formatAmount(currencyExpenses.sumOf { it.effectiveAmount }, currency, formatters)}"
                 )
                 writer.writeBody("$currency Transaction Count: ${currencyExpenses.size}")
             }
@@ -55,15 +56,15 @@ class AccountantReportPdfExporter @Inject constructor() {
                         categoryExpenses.sumOf { it.effectiveAmount }
                     }
                     .forEach { (categoryName, categoryExpenses) ->
-                        val categoryTotal = categoryExpenses.sumOf { it.effectiveAmount }
-                        val percentage = if (totalForCurrency > 0.0) {
-                            categoryTotal / totalForCurrency * 100.0
+                    val categoryTotal = categoryExpenses.sumOf { it.effectiveAmount }
+                    val percentage = if (totalForCurrency > 0.0) {
+                        categoryTotal / totalForCurrency * 100.0
                         } else {
                             0.0
                         }
                         writer.writeBody(
-                            "$categoryName: ${formatAmount(categoryTotal, currency)} " +
-                                "(${categoryExpenses.size} transactions, ${ONE_DECIMAL_FORMAT.format(percentage)}%)"
+                            "$categoryName: ${formatAmount(categoryTotal, currency, formatters)} " +
+                                "(${categoryExpenses.size} transactions, ${formatters.formatOneDecimal(percentage)}%)"
                         )
                     }
 
@@ -76,8 +77,8 @@ class AccountantReportPdfExporter @Inject constructor() {
                     writer.writeHeading("$currency Large Transactions (Review)")
                     largeExpenses.forEach { expense ->
                         writer.writeBody(
-                            "- ${expense.merchant}: ${formatAmount(expense.effectiveAmount, currency)} on " +
-                                "${DAY_FORMAT.format(Date(expense.date))}"
+                            "- ${expense.merchant}: ${formatAmount(expense.effectiveAmount, currency, formatters)} on " +
+                                "${formatters.formatDay(expense.date)}"
                         )
                     }
                 }
@@ -94,8 +95,8 @@ class AccountantReportPdfExporter @Inject constructor() {
         }
     }
 
-    private fun formatAmount(amount: Double, currency: String): String {
-        return "$currency ${TWO_DECIMAL_FORMAT.format(amount)}"
+    private fun formatAmount(amount: Double, currency: String, formatters: ExportFormatters): String {
+        return "$currency ${formatters.formatTwoDecimals(amount)}"
     }
 
     private fun Expense.reportCurrencyCode(): String {
@@ -235,6 +236,21 @@ class AccountantReportPdfExporter @Inject constructor() {
         private fun lineHeight(paint: Paint): Float = paint.textSize * LINE_HEIGHT_MULTIPLIER
     }
 
+    private class ExportFormatters(locale: Locale, private val zoneId: ZoneId) {
+        private val decimalSymbols = DecimalFormatSymbols.getInstance(locale)
+        private val twoDecimals = DecimalFormat("0.00", decimalSymbols)
+        private val oneDecimal = DecimalFormat("0.0", decimalSymbols)
+        private val dayFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd", locale)
+        private val monthFormatter = DateTimeFormatter.ofPattern("MMM yyyy", locale)
+        private val timestampFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", locale)
+
+        fun formatTwoDecimals(value: Double): String = twoDecimals.format(value)
+        fun formatOneDecimal(value: Double): String = oneDecimal.format(value)
+        fun formatDay(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).atZone(zoneId).format(dayFormatter)
+        fun formatMonth(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).atZone(zoneId).format(monthFormatter)
+        fun formatTimestamp(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).atZone(zoneId).format(timestampFormatter)
+    }
+
     private companion object {
         const val PAGE_WIDTH = 595
         const val PAGE_HEIGHT = 842
@@ -242,9 +258,5 @@ class AccountantReportPdfExporter @Inject constructor() {
         const val CONTENT_WIDTH = (PAGE_WIDTH - (PAGE_MARGIN * 2)).toFloat()
         const val LARGE_TRANSACTION_THRESHOLD = 500.0
         const val LINE_HEIGHT_MULTIPLIER = 1.4f
-
-        val TWO_DECIMAL_FORMAT = DecimalFormat("0.00")
-        val ONE_DECIMAL_FORMAT = DecimalFormat("0.0")
-        val DAY_FORMAT = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
     }
 }

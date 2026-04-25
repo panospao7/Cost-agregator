@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
+import io.mockk.mockk
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
@@ -20,7 +21,6 @@ import com.yourname.expensetracker.domain.groups.Result
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
-import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -66,18 +66,20 @@ class GroupTransactionCoordinatorTest {
     private lateinit var groupExpenseDao: GroupExpenseDao
     private lateinit var expenseDao: ExpenseDao
     private lateinit var coordinator: GroupTransactionCoordinator
+    private val timeProvider = mockk<com.yourname.expensetracker.domain.util.TimeProvider>(relaxed = true)
 
     @Before
     fun setup() {
         database = AppDatabase.inMemoryBuilder(
             ApplicationProvider.getApplicationContext()
         ).build()
+        every { timeProvider.now() } returns TEST_DATE
 
         groupDao = database.expenseGroupDao()
         memberDao = database.groupMemberDao()
         groupExpenseDao = database.groupExpenseDao()
         expenseDao = database.expenseDao()
-        coordinator = GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao, expenseDao, Dispatchers.IO)
+        coordinator = GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao, expenseDao, timeProvider, Dispatchers.IO)
     }
 
     @After
@@ -155,7 +157,7 @@ class GroupTransactionCoordinatorTest {
         coEvery { mockMemberDao.insertAll(any()) } throws SQLException("Disk full")
 
         val mockCoordinator = GroupTransactionCoordinator(
-            database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, expenseDao, Dispatchers.IO
+            database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, expenseDao, timeProvider, Dispatchers.IO
         )
 
         // Act - Should throw exception
@@ -193,7 +195,7 @@ class GroupTransactionCoordinatorTest {
             merchant = "Test Merchant",
             transactionType = TransactionType.PURCHASE,
             notes = "Dinner",
-            date = System.currentTimeMillis()
+            date = TEST_DATE
         )
         val actualExpenseId = expenseDao.insert(expense)
 
@@ -201,7 +203,7 @@ class GroupTransactionCoordinatorTest {
             groupId = groupId,
             expenseId = actualExpenseId,
             paidById = aliceId,
-            date = System.currentTimeMillis(),
+            date = TEST_DATE,
             description = "Dinner",
             totalAmount = 100.0,
             currency = "EUR",
@@ -236,7 +238,7 @@ class GroupTransactionCoordinatorTest {
             merchant = "Test Merchant",
             transactionType = TransactionType.PURCHASE,
             notes = "Lunch",
-            date = System.currentTimeMillis()
+            date = TEST_DATE
         )
         val expenseId = expenseDao.insert(expense)
 
@@ -246,7 +248,7 @@ class GroupTransactionCoordinatorTest {
             groupId = groupId,
             expenseId = expenseId,
             paidById = savedMembers[0].id,
-            date = System.currentTimeMillis(),
+            date = TEST_DATE,
             description = "Lunch",
             totalAmount = 50.0,
             splitType = SplitType.EQUAL
@@ -368,7 +370,7 @@ class GroupTransactionCoordinatorTest {
             merchant = "Gift",
             transactionType = TransactionType.PURCHASE,
             notes = "Gift",
-            date = System.currentTimeMillis()
+            date = TEST_DATE
         )
         val actualExpenseId = expenseDao.insert(expense)
 
@@ -377,7 +379,7 @@ class GroupTransactionCoordinatorTest {
             groupId = groupId,
             expenseId = actualExpenseId,
             paidById = savedMembers[0].id,
-            date = System.currentTimeMillis(),
+            date = TEST_DATE,
             description = "Gift",
             totalAmount = 0.0,
             splitType = SplitType.EQUAL
@@ -448,10 +450,10 @@ class GroupTransactionCoordinatorTest {
             amount = 50.0,
             paidById = aliceId,
             currency = "EUR",
-            splitType = SplitType.EQUAL,
-            date = System.currentTimeMillis(),
-            transactionType = TransactionType.PURCHASE,
-            notes = "Group expense via Alice"
+        splitType = SplitType.EQUAL,
+        date = TEST_DATE,
+        transactionType = TransactionType.PURCHASE,
+        notes = "Group expense via Alice"
         )
 
         // Assert
@@ -525,9 +527,9 @@ class GroupTransactionCoordinatorTest {
             amount = 25.0,
             paidById = savedMembers.first().id,
             currency = "EUR",
-            splitType = SplitType.EQUAL,
-            date = System.currentTimeMillis(),
-            transactionType = TransactionType.PURCHASE
+        splitType = SplitType.EQUAL,
+        date = TEST_DATE,
+        transactionType = TransactionType.PURCHASE
         )
 
         // Assert
@@ -554,9 +556,9 @@ class GroupTransactionCoordinatorTest {
             amount = 30.0,
             paidById = 99999L,
             currency = "EUR",
-            splitType = SplitType.EQUAL,
-            date = System.currentTimeMillis(),
-            transactionType = TransactionType.PURCHASE
+        splitType = SplitType.EQUAL,
+        date = TEST_DATE,
+        transactionType = TransactionType.PURCHASE
         )
 
         // Assert
@@ -619,7 +621,7 @@ class GroupTransactionCoordinatorTest {
             amount = 75.0,
             merchant = "Link Test",
             transactionType = TransactionType.PURCHASE,
-            date = System.currentTimeMillis()
+            date = TEST_DATE
         )
         val systemExpenseId = expenseDao.insert(expense)
 
@@ -632,7 +634,7 @@ class GroupTransactionCoordinatorTest {
             paidById = aliceId,
             currency = "EUR",
             splitType = SplitType.EQUAL,
-            date = System.currentTimeMillis()
+            date = TEST_DATE
         )
 
         // Assert
@@ -739,5 +741,99 @@ class GroupTransactionCoordinatorTest {
 
         val afterFailure = expenseDao.getById(systemExpenseId)
         assertThat(afterFailure).isEqualTo(beforeLink)
+    }
+
+    @Test
+    fun `addExpenseWithLink rejects already linked system expense`() = runTest {
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = ExpenseGroup(name = "Link Guard Group", defaultCurrency = "EUR"),
+            members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
+        )
+        val payerId = memberDao.getMembersForGroup(groupId).first().first().id
+
+        val systemExpenseId = expenseDao.insert(
+            Expense(
+                amount = 25.0,
+                merchant = "Taxi",
+                transactionType = TransactionType.PURCHASE,
+                date = TEST_DATE
+            )
+        )
+
+        val first = coordinator.addExpenseWithLink(
+            groupId = groupId,
+            systemExpenseId = systemExpenseId,
+            description = "Taxi",
+            amount = 25.0,
+            paidById = payerId,
+            currency = "EUR",
+            splitType = SplitType.EQUAL,
+            date = TEST_DATE
+        )
+        assertThat(first).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+
+        val second = coordinator.addExpenseWithLink(
+            groupId = groupId,
+            systemExpenseId = systemExpenseId,
+            description = "Taxi duplicate",
+            amount = 25.0,
+            paidById = payerId,
+            currency = "EUR",
+            splitType = SplitType.EQUAL,
+            date = TEST_DATE
+        )
+
+        assertThat(second).isInstanceOf(GroupExpenseCreationResult.Error::class.java)
+        assertThat((second as GroupExpenseCreationResult.Error).message)
+            .contains("already attached")
+        assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).hasSize(1)
+    }
+
+    @Test
+    fun `addExpenseToGroupAtomic rejects already linked system expense`() = runTest {
+        val groupId = coordinator.createGroupWithMembersAtomic(
+            group = ExpenseGroup(name = "Atomic Guard Group", defaultCurrency = "EUR"),
+            members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
+        )
+        val payerId = memberDao.getMembersForGroup(groupId).first().first().id
+        val systemExpenseId = expenseDao.insert(
+            Expense(
+                amount = 12.0,
+                merchant = "Coffee",
+                transactionType = TransactionType.PURCHASE,
+                date = TEST_DATE
+            )
+        )
+
+        coordinator.addExpenseToGroupAtomic(
+            GroupExpense(
+                groupId = groupId,
+                expenseId = systemExpenseId,
+                paidById = payerId,
+                date = TEST_DATE,
+                description = "Coffee",
+                totalAmount = 12.0
+            )
+        )
+
+        var thrown: Exception? = null
+        try {
+            coordinator.addExpenseToGroupAtomic(
+                GroupExpense(
+                    groupId = groupId,
+                    expenseId = systemExpenseId,
+                    paidById = payerId,
+                    date = TEST_DATE,
+                    description = "Coffee again",
+                    totalAmount = 12.0
+                )
+            )
+        } catch (e: Exception) {
+            thrown = e
+        }
+
+        assertThat(thrown).isNotNull()
+        assertThat(thrown).isInstanceOf(android.database.sqlite.SQLiteConstraintException::class.java)
+        assertThat(groupExpenseDao.getExpensesForGroup(groupId).first()).hasSize(1)
     }
 }

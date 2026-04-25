@@ -357,6 +357,108 @@ class TimePeriodUtilsTest {
         assertEquals(7, TimePeriodUtils.daysBetween(startOfWeek, endOfWeek))
     }
 
+    @Test
+    fun `getCanonicalWeekRangeFromKey returns Monday-start next-Monday-exclusive`() {
+        val year = 2024
+        val week = 14
+        val key = "$year-${week.toString().padStart(2, '0')}"
+
+        val (start, end) = TimePeriodUtils.getCanonicalWeekRangeFromKey(key)
+        val startCal = Calendar.getInstance().apply { timeInMillis = start }
+        val endCal = Calendar.getInstance().apply { timeInMillis = end }
+
+        assertEquals(Calendar.MONDAY, startCal.get(Calendar.DAY_OF_WEEK))
+        assertEquals(Calendar.MONDAY, endCal.get(Calendar.DAY_OF_WEEK))
+        assertEquals(7, TimePeriodUtils.daysBetween(start, end))
+    }
+
+    @Test
+    fun `getCanonicalWeekRangeFromKey maps SQLite key 2024-53 to Dec 30 2024 Monday`() {
+        val (start, end) = TimePeriodUtils.getCanonicalWeekRangeFromKey("2024-53")
+        val startCal = Calendar.getInstance().apply { timeInMillis = start }
+        val endCal = Calendar.getInstance().apply { timeInMillis = end }
+
+        assertEquals(2024, startCal.get(Calendar.YEAR))
+        assertEquals(Calendar.DECEMBER, startCal.get(Calendar.MONTH))
+        assertEquals(30, startCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(Calendar.MONDAY, startCal.get(Calendar.DAY_OF_WEEK))
+
+        assertEquals(2025, endCal.get(Calendar.YEAR))
+        assertEquals(Calendar.JANUARY, endCal.get(Calendar.MONTH))
+        assertEquals(6, endCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(Calendar.MONDAY, endCal.get(Calendar.DAY_OF_WEEK))
+    }
+
+    @Test
+    fun `getCanonicalWeekRangeFromKey maps SQLite key 2025-00 to last week of 2024`() {
+        val (start, end) = TimePeriodUtils.getCanonicalWeekRangeFromKey("2025-00")
+        val startCal = Calendar.getInstance().apply { timeInMillis = start }
+        val endCal = Calendar.getInstance().apply { timeInMillis = end }
+
+        assertEquals(2024, startCal.get(Calendar.YEAR))
+        assertEquals(Calendar.DECEMBER, startCal.get(Calendar.MONTH))
+        assertEquals(30, startCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(Calendar.MONDAY, startCal.get(Calendar.DAY_OF_WEEK))
+
+        assertEquals(2025, endCal.get(Calendar.YEAR))
+        assertEquals(Calendar.JANUARY, endCal.get(Calendar.MONTH))
+        assertEquals(6, endCal.get(Calendar.DAY_OF_MONTH))
+    }
+
+    @Test
+    fun `year rollover dates Dec30 Dec31 Jan1 Jan5 map to correct SQLite week keys`() {
+        val dec30 = Calendar.getInstance().apply {
+            set(2024, Calendar.DECEMBER, 30, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val dec31 = Calendar.getInstance().apply {
+            set(2024, Calendar.DECEMBER, 31, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val jan1 = Calendar.getInstance().apply {
+            set(2025, Calendar.JANUARY, 1, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val jan5 = Calendar.getInstance().apply {
+            set(2025, Calendar.JANUARY, 5, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        val (week53Start, week53End) = TimePeriodUtils.getCanonicalWeekRangeFromKey("2024-53")
+        val (week00Start, week00End) = TimePeriodUtils.getCanonicalWeekRangeFromKey("2025-00")
+
+        assertTrue(TimePeriodUtils.isInRange(dec30, week53Start, week53End))
+        assertTrue(TimePeriodUtils.isInRange(dec31, week53Start, week53End))
+        assertTrue(TimePeriodUtils.isInRange(jan1, week00Start, week00End))
+        assertTrue(TimePeriodUtils.isInRange(jan5, week00Start, week00End))
+        assertEquals("Both SQLite keys should normalize to the same canonical week", week53Start, week00Start)
+        assertEquals(week53End, week00End)
+    }
+
+    @Test
+    fun `canonical week range supports empty week intervals with stable boundaries`() {
+        val (start, end) = TimePeriodUtils.getCanonicalWeekRangeFromKey("2025-02")
+        val previousWeekEnd = TimePeriodUtils.addDays(start, -7)
+        val nextWeekStart = end
+
+        assertEquals(7, TimePeriodUtils.daysBetween(start, end))
+        assertFalse(TimePeriodUtils.isInRange(previousWeekEnd, start, end))
+        assertFalse(TimePeriodUtils.isInRange(nextWeekStart, start, end))
+    }
+
+    @Test
+    fun `month key helpers format parse and build inclusive range`() {
+        val key = TimePeriodUtils.formatMonthKey(2026, 4)
+        assertEquals("2026-04", key)
+
+        val (year, month) = TimePeriodUtils.parseMonthKey("2025-12")
+        assertEquals(2025, year)
+        assertEquals(12, month)
+
+        val keys = TimePeriodUtils.buildMonthKeyRange("2026-02", "2026-04")
+        assertEquals(listOf("2026-02", "2026-03", "2026-04"), keys)
+    }
+
     // ============================================================================
     // MONDAY-START WEEK CONTRACT TESTS
     // ============================================================================

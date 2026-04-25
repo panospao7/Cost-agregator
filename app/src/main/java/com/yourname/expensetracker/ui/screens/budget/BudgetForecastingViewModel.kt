@@ -37,13 +37,19 @@ class BudgetForecastingViewModel @Inject constructor(
     
     private val _uiState = MutableStateFlow(BudgetForecastUiState())
     val uiState: StateFlow<BudgetForecastUiState> = _uiState.asStateFlow()
+    private var lastForecastPeriodDays: Int = 30
     
     /**
      * Generate a forecast for a specific budget.
      */
     fun generateForecast(budget: Budget, forecastPeriodDays: Int = 30) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+            lastForecastPeriodDays = forecastPeriodDays
+            _uiState.value = _uiState.value.copy(
+                budget = budget,
+                isLoading = true,
+                error = null
+            )
             
             try {
                 // Generate forecast
@@ -80,6 +86,7 @@ class BudgetForecastingViewModel @Inject constructor(
             } catch (e: Exception) {
                 e.printStackTrace()
                 _uiState.value = _uiState.value.copy(
+                    budget = budget,
                     isLoading = false,
                     error = "Failed to generate forecast: ${e.message}"
                 )
@@ -92,7 +99,7 @@ class BudgetForecastingViewModel @Inject constructor(
      */
     fun refreshForecast() {
         _uiState.value.budget?.let { budget ->
-            generateForecast(budget)
+            generateForecast(budget, lastForecastPeriodDays)
         }
     }
     

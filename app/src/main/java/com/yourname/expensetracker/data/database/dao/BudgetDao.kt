@@ -31,12 +31,13 @@ interface BudgetDao {
 
     /**
      * Atomically inserts a new overall budget and deactivates any previously
-     * active overall budget.  This is the **only** safe path for setting a
-     * new active overall budget — callers must never rely on silent REPLACE
-     * semantics, which would drop history/notification fields on the old row.
+     * active overall budget.
      */
     @Transaction
     suspend fun insertAndActivateOverall(budget: Budget): Long {
+        require(budget.isActive) {
+            "insertAndActivateOverall requires an active budget"
+        }
         // Deactivate every currently-active overall budget (id 0 matches none
         // during the deactivation pass; the real keepId is applied after insert).
         @Suppress("KotlinConstantConditions")
@@ -50,11 +51,69 @@ interface BudgetDao {
      */
     @Transaction
     suspend fun insertAndActivateCategory(budget: Budget): Long {
+        require(budget.isActive) {
+            "insertAndActivateCategory requires an active budget"
+        }
         val catId = requireNotNull(budget.categoryId) {
             "insertAndActivateCategory requires a non-null categoryId"
         }
         deactivateAllActiveCategoryBudgets(catId)
         return insert(budget)
+    }
+
+    /**
+     * Updates a budget while enforcing the single-active-budget invariant for
+     * the budget's target scope.
+     */
+    @Transaction
+    suspend fun updateAndEnforceActiveScope(budget: Budget) {
+        val existing = getById(budget.id)
+        if (existing == null) {
+            update(budget)
+            return
+        }
+
+        if (budget.isActive) {
+            when (val categoryId = budget.categoryId) {
+                null -> deactivateOtherOverallBudgets(budget.id)
+                else -> deactivateOtherCategoryBudgets(categoryId, budget.id)
+            }
+        }
+
+        update(budget)
+    }
+
+    /**
+     * Toggles a budget's active state while enforcing the single-active-budget
+     * invariant when activating.
+     */
+    @Transaction
+    suspend fun setActiveAndEnforceScope(id: Long, isActive: Boolean) {
+        if (isActive) {
+            val budget = getById(id)
+            when (budget?.categoryId) {
+                null -> if (budget != null) deactivateOtherOverallBudgets(id)
+                else -> deactivateOtherCategoryBudgets(budget.categoryId, id)
+            }
+        }
+
+        setActive(id, isActive)
+    }
+
+    /**
+     * Replaces all budgets while replaying active-budget enforcement for each
+     * inserted row so restored snapshots cannot leave conflicting active rows.
+     */
+    @Transaction
+    suspend fun replaceAllAndEnforceActiveScopes(budgets: List<Budget>) {
+        deleteAll()
+        budgets.forEach { budget ->
+            when {
+                !budget.isActive -> insert(budget)
+                budget.categoryId == null -> insertAndActivateOverall(budget)
+                else -> insertAndActivateCategory(budget)
+            }
+        }
     }
 
     /** Deactivate **all** active overall budgets (categoryId IS NULL). */

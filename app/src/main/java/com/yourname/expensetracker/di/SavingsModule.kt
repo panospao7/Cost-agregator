@@ -24,7 +24,6 @@ object SavingsModule {
         budgetRepository: com.yourname.expensetracker.data.repository.BudgetRepository,
         budgetCalculator: com.yourname.expensetracker.domain.budget.BudgetCalculator,
         monteCarloSimulator: com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator,
-        savingsGoalRepository: com.yourname.expensetracker.data.repository.SavingsGoalRepository,
         timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
     ): SmartSavingsEngine = SmartSavingsEngine(
         expenseRepository,
@@ -32,7 +31,6 @@ object SavingsModule {
         budgetRepository,
         budgetCalculator,
         monteCarloSimulator,
-        savingsGoalRepository,
         timeProvider
     )
     
@@ -61,13 +59,11 @@ object SavingsModule {
     fun provideAutomatedSavingsRuleEngine(
         expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
         categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
-        savingsGoalRepository: com.yourname.expensetracker.data.repository.SavingsGoalRepository,
         timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
         ruleStateRepository: AutomatedSavingsRuleStateRepository
     ): AutomatedSavingsRuleEngine = AutomatedSavingsRuleEngine(
         expenseRepository,
         categoryRepository,
-        savingsGoalRepository,
         timeProvider,
         ruleStateRepository
     )

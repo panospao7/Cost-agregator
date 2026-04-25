@@ -16,6 +16,7 @@ class OnDeviceNotificationParserTest {
         settingsRepository = mockk<AiSettingsRepository>(relaxed = true)
     )
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `parseResponse drops transfer metadata for purchase JSON with direction`() {
         val result = parser.parseResponse(
@@ -29,6 +30,7 @@ class OnDeviceNotificationParserTest {
         assertNull(result.transferAccountName)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `parseResponse keeps transfer metadata for transfer JSON`() {
         val result = parser.parseResponse(
@@ -42,6 +44,7 @@ class OnDeviceNotificationParserTest {
         assertEquals("To: John", result.transferAccountName)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `parseResponse keeps transfer metadata for deposit JSON`() {
         val result = parser.parseResponse(

@@ -253,15 +253,32 @@ fun AssistantSheet(
 private fun StarterPrompts(
     onPromptSelected: (String) -> Unit
 ) {
+    val queryThisMonth = stringResource(R.string.assistant_query_this_month)
+    val queryTopMerchants = stringResource(R.string.assistant_query_top_merchants)
+    val queryLargestPurchase = stringResource(R.string.assistant_query_largest_purchase)
+    val queryGroceries = stringResource(R.string.assistant_query_groceries)
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.assistant_try_asking), style = MaterialTheme.typography.titleMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SuggestionChip(onClick = { onPromptSelected("How much did I spend this month?") }, label = { Text(stringResource(R.string.assistant_suggestion_this_month)) })
-            SuggestionChip(onClick = { onPromptSelected("Top merchants this month") }, label = { Text(stringResource(R.string.assistant_suggestion_top_merchants)) })
+            SuggestionChip(
+                onClick = { onPromptSelected(queryThisMonth) },
+                label = { Text(stringResource(R.string.assistant_suggestion_this_month)) }
+            )
+            SuggestionChip(
+                onClick = { onPromptSelected(queryTopMerchants) },
+                label = { Text(stringResource(R.string.assistant_suggestion_top_merchants)) }
+            )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SuggestionChip(onClick = { onPromptSelected("Largest purchase this month") }, label = { Text(stringResource(R.string.assistant_suggestion_largest)) })
-            SuggestionChip(onClick = { onPromptSelected("Show groceries this month") }, label = { Text(stringResource(R.string.assistant_suggestion_groceries)) })
+            SuggestionChip(
+                onClick = { onPromptSelected(queryLargestPurchase) },
+                label = { Text(stringResource(R.string.assistant_suggestion_largest)) }
+            )
+            SuggestionChip(
+                onClick = { onPromptSelected(queryGroceries) },
+                label = { Text(stringResource(R.string.assistant_suggestion_groceries)) }
+            )
         }
     }
 }

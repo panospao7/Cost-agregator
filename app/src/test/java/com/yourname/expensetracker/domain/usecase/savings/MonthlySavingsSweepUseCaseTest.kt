@@ -234,6 +234,45 @@ class MonthlySavingsSweepUseCaseTest {
     }
 
     @Test
+    fun `computeSweepRecommendation derives deterministic fallback risk buffer when Monte Carlo unavailable`() = runTest {
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(
+            listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 700.0))
+        )
+        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+            listOf(goal(1L, "Emergency", target = 1000.0, current = 100.0))
+        )
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            com.yourname.expensetracker.data.database.entity.Expense(
+                amount = 300.0,
+                merchant = "Groceries",
+                transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+                date = withinWindowNow - dayMs
+            )
+        )
+        every { recurringExpenseRepository.getAllFlow() } returns flowOf(
+            listOf(
+                ManualRecurringExpense(
+                    id = 1L,
+                    merchant = "Rent",
+                    amount = 80.0,
+                    currency = "EUR",
+                    frequency = RecurrenceFrequency.MONTHLY,
+                    nextDate = withinWindowNow + dayMs,
+                    note = null
+                )
+            )
+        )
+        every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
+        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+
+        val result = useCase.computeSweepRecommendation()
+
+        assertNotNull(result)
+        assertApproxEquals(120.0, result!!.riskBuffer, 0.01)
+        assertApproxEquals(180.0, result.safeSweepAmount, 0.01)
+    }
+
+    @Test
     fun `computeSweepRecommendation caps allocations by remaining goal gap before concentration cap`() = runTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(
             listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 800.0))

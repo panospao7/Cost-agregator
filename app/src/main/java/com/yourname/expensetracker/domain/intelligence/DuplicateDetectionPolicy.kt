@@ -30,6 +30,22 @@ object DuplicateDetectionPolicy {
      */
     const val DEFAULT_CURRENCY: String = "EUR"
 
+    /**
+     * Minimum length a merchant key must have to participate in
+     * cross-package prefix-based dedup (`LIKE merchantKey || '%'`).
+     *
+     * Keys shorter than this are too generic (e.g. "a", "car") and
+     * would produce false positives.
+     *
+     * **NOTE:** This value is also hardcoded in the Room `@Query`
+     * annotations of `ExpenseDao.existsByMerchantKeyPrefixInRangeCurrencyAware`
+     * and `PendingReviewDao.hasPendingDuplicateByMerchantKeyPrefixInRangeTypeAware`
+     * because Room SQL strings cannot reference Kotlin constants.
+     * If you change this value, you MUST update the SQL `LENGTH(…) >= N`
+     * literals in both DAOs.
+     */
+    const val MIN_MERCHANT_KEY_PREFIX_LENGTH: Int = 4
+
     // ── Currency normalization ───────────────────────────────────────────
 
     /**

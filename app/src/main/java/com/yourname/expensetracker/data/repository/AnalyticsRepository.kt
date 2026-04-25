@@ -1,7 +1,8 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.domain.analytics.CategoryBreakdown
+import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryBreakdown
+import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryRef
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -94,7 +95,7 @@ class AnalyticsRepository @Inject constructor(
     /**
      * getCategoryBreakdown - Returns a list of categories sorted by spending amount.
      */
-    fun getCategoryBreakdown(start: Long, end: Long): Flow<List<CategoryBreakdown>> {
+    fun getCategoryBreakdown(start: Long, end: Long): Flow<List<AnalyticsCategoryBreakdown>> {
         return flow {
             val categories = categoryRepository.getAll()
             val categoryMap = categories.associateBy { it.id }
@@ -106,8 +107,13 @@ class AnalyticsRepository @Inject constructor(
                 totals
                 .mapNotNull { (catId, total, txCount) ->
                     val cat = categoryMap[catId] ?: return@mapNotNull null
-                    CategoryBreakdown(
-                        category = cat,
+                    AnalyticsCategoryBreakdown(
+                        category = AnalyticsCategoryRef(
+                            id = cat.id,
+                            name = cat.name,
+                            icon = cat.icon,
+                            color = cat.color
+                        ),
                         total = total,
                         count = txCount,
                         percentage = if (totalSpent > 0) (total / totalSpent * 100).toFloat() else 0f

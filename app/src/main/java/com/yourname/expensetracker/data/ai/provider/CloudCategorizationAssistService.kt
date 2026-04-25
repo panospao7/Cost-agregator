@@ -182,7 +182,7 @@ class CloudCategorizationAssistService @Inject constructor(
 
             Review facts:
             - merchant: ${input.merchant}
-            - amount: ${input.amount} ${input.currency}
+            - amount: ${input.amount?.toString() ?: "none"} ${input.currency}
             - transactionType: ${input.transactionType}
             - date: ${input.date?.toString() ?: "none"}
             - currentCategoryId: ${input.currentCategoryId?.toString() ?: "none"}
@@ -229,7 +229,7 @@ class CloudCategorizationAssistService @Inject constructor(
         if (!suggestion.has("categoryId") || suggestion.isNull("categoryId")) return null
         if (!suggestion.has("categoryName") || suggestion.optString("categoryName").isBlank()) return null
 
-        val categoryId = suggestion.optLong("categoryId")
+        val categoryId = StrictAiJsonParsing.run { suggestion.positiveIdOrNull("categoryId") } ?: return null
         val matchedCategory = input.candidateCategories.firstOrNull { it.id == categoryId }
             ?: input.candidateCategories.firstOrNull {
                 it.name.equals(suggestion.optString("categoryName").trim(), ignoreCase = true) ||
@@ -240,21 +240,17 @@ class CloudCategorizationAssistService @Inject constructor(
         return CategoryAssistSuggestion(
             categoryId = matchedCategory.id,
             categoryName = matchedCategory.name,
-            confidence = if (suggestion.has("confidence") && !suggestion.isNull("confidence")) suggestion.optDouble("confidence").toFloat() else null,
+            confidence = if (suggestion.has("confidence") && !suggestion.isNull("confidence")) {
+                StrictAiJsonParsing.run { suggestion.boundedConfidenceOrNull("confidence") } ?: return null
+            } else {
+                null
+            },
             rationale = suggestion.optString("rationale").trim().ifBlank { null },
-            alternativeCategoryIds = suggestion.optJSONArray("alternativeCategoryIds")
-                .toLongList()
+            alternativeCategoryIds = StrictAiJsonParsing.run {
+                suggestion.optJSONArray("alternativeCategoryIds").positiveLongs()
+            }
                 .filter { altId -> input.candidateCategories.any { it.id == altId } }
         )
-    }
-
-    private fun JSONArray?.toLongList(): List<Long> {
-        if (this == null) return emptyList()
-        return buildList(length()) {
-            for (index in 0 until length()) {
-                add(optLong(index))
-            }
-        }
     }
 
     private companion object {

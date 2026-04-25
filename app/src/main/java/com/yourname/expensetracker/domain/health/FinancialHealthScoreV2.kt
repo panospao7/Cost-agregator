@@ -3,13 +3,15 @@ package com.yourname.expensetracker.domain.health
 import com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao
 import com.yourname.expensetracker.data.database.entity.HealthScoreHistory
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -83,7 +85,7 @@ class FinancialHealthScoreV2 @Inject constructor(
             
             // Get budget statuses
             val budgetStatuses = budgetRepository.getBudgetStatusesAt(resolveBudgetEvaluationTime(periodStart, periodEnd))
-            val savingsGoals = savingsGoalRepository.getAllGoals().first()
+            val savingsGoals = savingsGoalRepository.getSavingsGoals()
             
             // Calculate individual component scores
             val savingsRateScore = calculateSavingsRateScore(deposits, purchases)
@@ -179,6 +181,8 @@ class FinancialHealthScoreV2 @Inject constructor(
                 recommendation = recommendation
             )
             
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "Failed to calculate financial health score")
             // Return a default result with warning status
@@ -231,7 +235,7 @@ class FinancialHealthScoreV2 @Inject constructor(
      */
     private suspend fun calculateRunwayScore(
         purchases: List<com.yourname.expensetracker.data.database.entity.Expense>,
-        savingsGoals: List<com.yourname.expensetracker.data.database.entity.SavingsGoal>,
+        savingsGoals: List<SavingsGoal>,
         periodStart: Long,
         periodEnd: Long
     ): Int {
@@ -381,46 +385,40 @@ class FinancialHealthScoreV2 @Inject constructor(
         periodStart: Long,
         periodEnd: Long
     ): Int {
-        return try {
-            // Get recurring patterns
-            val patterns = recurringExpenseEngine.getPatterns(expenses)
-            
-            if (patterns.isEmpty()) {
-                return 75 // Default good score if no recurring patterns detected
-            }
-            
-            val relevantPatterns = patterns.filter { pattern ->
-                pattern.previousDates.isNotEmpty() &&
-                    pattern.previousDates.last() < periodEnd &&
-                    pattern.nextExpectedDate > periodStart
-            }
+        // Get recurring patterns
+        val patterns = recurringExpenseEngine.getPatterns(expenses)
 
-            if (relevantPatterns.isEmpty()) {
-                return 75
-            }
-
-            var totalWeight = 0.0
-            var weightedReliability = 0.0
-            
-            for (pattern in relevantPatterns) {
-                val cadenceReliability = calculatePatternTimingReliability(pattern)
-                val weight = pattern.averageAmount
-                weightedReliability += cadenceReliability * weight
-                totalWeight += weight
-            }
-            
-            val overallReliability = if (totalWeight > 0) {
-                weightedReliability / totalWeight
-            } else {
-                0.75 // Default if no weights
-            }
-            
-            (overallReliability * 100).toInt().coerceIn(0, 100)
-            
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to calculate bill reliability score")
-            75 // Default to good score on error
+        if (patterns.isEmpty()) {
+            return 75 // Default good score if no recurring patterns detected
         }
+
+        val relevantPatterns = patterns.filter { pattern ->
+            pattern.previousDates.isNotEmpty() &&
+                pattern.previousDates.last() < periodEnd &&
+                pattern.nextExpectedDate > periodStart
+        }
+
+        if (relevantPatterns.isEmpty()) {
+            return 75
+        }
+
+        var totalWeight = 0.0
+        var weightedReliability = 0.0
+
+        for (pattern in relevantPatterns) {
+            val cadenceReliability = calculatePatternTimingReliability(pattern)
+            val weight = pattern.averageAmount
+            weightedReliability += cadenceReliability * weight
+            totalWeight += weight
+        }
+
+        val overallReliability = if (totalWeight > 0) {
+            weightedReliability / totalWeight
+        } else {
+            0.75 // Default if no weights
+        }
+
+        return (overallReliability * 100).toInt().coerceIn(0, 100)
     }
     
     /**
@@ -453,16 +451,24 @@ class FinancialHealthScoreV2 @Inject constructor(
             return 0.75
         }
 
-        val intervals = buildList {
+        val intervalPairs = buildList {
             for (index in 1 until previousDates.size) {
-                add(TimePeriodUtils.daysBetween(previousDates[index - 1], previousDates[index]).toDouble())
+                add(previousDates[index - 1] to previousDates[index])
             }
         }
-        val expectedIntervalDays = pattern.frequency.days.toDouble().takeIf { it > 0.0 }
-            ?: return 0.75
-        val averageDeviationDays = intervals
-            .map { kotlin.math.abs(it - expectedIntervalDays) }
-            .average()
+
+        val deviations = intervalPairs.mapNotNull { (currentDate, nextObservedDate) ->
+            expectedIntervalDaysFromDate(currentDate, pattern.frequency)?.let { expectedDays ->
+                val actualDays = TimePeriodUtils.daysBetween(currentDate, nextObservedDate).toDouble()
+                kotlin.math.abs(actualDays - expectedDays)
+            }
+        }
+
+        if (deviations.isEmpty()) {
+            return 0.75
+        }
+
+        val averageDeviationDays = deviations.average()
 
         return when {
             averageDeviationDays <= 1.0 -> 1.0
@@ -471,6 +477,19 @@ class FinancialHealthScoreV2 @Inject constructor(
             averageDeviationDays <= 14.0 -> 0.6
             else -> 0.45
         }
+    }
+
+    private fun expectedIntervalDaysFromDate(
+        currentDate: Long,
+        frequency: com.yourname.expensetracker.domain.model.RecurrenceFrequency
+    ): Double? {
+        if (frequency.isIrregular) {
+            return null
+        }
+
+        val expectedNextDate = RecurrenceCalculator.calculateNextDate(currentDate, frequency)
+        val expectedDays = TimePeriodUtils.daysBetween(currentDate, expectedNextDate).toDouble()
+        return expectedDays.takeIf { it > 0.0 }
     }
     
     /**
@@ -567,6 +586,8 @@ class FinancialHealthScoreV2 @Inject constructor(
             val ninetyDaysAgo = timeProvider.now() - (90L * 24 * 60 * 60 * 1000)
             healthScoreHistoryDao.deleteOlderThan(ninetyDaysAgo)
             
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "Failed to save health score history")
         }

@@ -12,12 +12,12 @@ enum class AnalyticsPeriod {
 /**
  * Represents a time range for analytics calculations.
  */
-data class PeriodRange(
+data class AnalyticsPeriodRange(
     val period: AnalyticsPeriod,
     val startMs: Long,
     val endMs: Long,
     val label: String,
-    val comparisonRange: PeriodRange?
+    val comparisonRange: AnalyticsPeriodRange?
 )
 
 /**
@@ -25,7 +25,7 @@ data class PeriodRange(
  */
 data class EnhancedCategoryAnalytics(
     val category: AnalyticsCategoryRef,
-    val period: PeriodRange,
+    val period: AnalyticsPeriodRange,
     
     // Core metrics
     val totalSpent: Double,
@@ -70,7 +70,7 @@ enum class CategoryTrendDirection {
  */
 data class EnhancedMerchantAnalytics(
     val merchant: String,
-    val period: PeriodRange,
+    val period: AnalyticsPeriodRange,
     
     // Core metrics
     val totalSpent: Double,
@@ -117,7 +117,7 @@ enum class MerchantConsistencyRating {
  * Spending pattern analysis results.
  */
 data class SpendingPatternAnalysis(
-    val period: PeriodRange,
+    val period: AnalyticsPeriodRange,
     
     // Day of week breakdown
     val dayOfWeekStats: Map<Int, DayOfWeekStats>,
@@ -183,7 +183,7 @@ enum class SpendingPatternType {
  * Statistical insights for a period.
  */
 data class StatisticalInsights(
-    val period: PeriodRange,
+    val period: AnalyticsPeriodRange,
     
     // Transaction size distribution
     val histogramBins: List<HistogramBin>,

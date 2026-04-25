@@ -1,10 +1,13 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.text.DomainTextKeys
+import com.yourname.expensetracker.domain.text.UiTextArg
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
@@ -16,14 +19,14 @@ data class AnalyticsDashboardData(
     val totalSpent: Double,
     val totalIncome: Double,
     val netCashflow: Double,
-    val topCategories: List<DashboardCategoryBreakdown>,
+    val topCategories: List<AnalyticsDashboardCategoryBreakdown>,
     val topMerchants: List<DashboardMerchantBreakdown>,
     val monthlyTrend: List<MonthlyDataPoint>,
     val weeklyPattern: List<DayOfWeekSpending>,
     val insights: List<DashboardInsight>
 )
 
-data class DashboardCategoryBreakdown(
+data class AnalyticsDashboardCategoryBreakdown(
     val categoryId: Long,
     val categoryName: UiText,
     val amount: Double,
@@ -85,10 +88,10 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         startDate: Long,
         endDate: Long
     ): AnalyticsDashboardData = withContext(Dispatchers.IO) {
-        val expenses = expenseRepository.getExpensesBetween(startDate, endDate)
+        val expenses = expenseRepository.getExpenseSnapshotsBetween(startDate, endDate)
         val comparisonExpenses = if (endDate > startDate) {
             val comparisonStart = startDate - (endDate - startDate)
-            expenseRepository.getExpensesBetween(comparisonStart, startDate)
+            expenseRepository.getExpenseSnapshotsBetween(comparisonStart, startDate)
         } else {
             emptyList()
         }
@@ -99,12 +102,11 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         var totalIncome = 0.0
         
         for (expense in expenses) {
-            when (expense.transactionType.name) {
-                "PURCHASE", "WITHDRAWAL" -> totalSpent += expense.effectiveAmount
-                "DEPOSIT" -> totalIncome += expense.effectiveAmount
-                "TRANSFER" -> if (expense.transferDirection?.name == "INCOMING") {
-                    totalIncome += expense.effectiveAmount
-                }
+            when (expense.transactionType) {
+                DomainTransactionType.PURCHASE,
+                DomainTransactionType.WITHDRAWAL -> totalSpent += expense.effectiveAmount
+                DomainTransactionType.DEPOSIT -> totalIncome += expense.effectiveAmount
+                else -> Unit
             }
         }
         
@@ -122,21 +124,21 @@ class AdvancedAnalyticsDashboard @Inject constructor(
     }
     
     private fun getTopCategories(
-        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
-        comparisonExpenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        expenses: List<ExpenseSnapshot>,
+        comparisonExpenses: List<ExpenseSnapshot>,
         categoryNamesById: Map<Long, String>
-    ): List<DashboardCategoryBreakdown> {
+    ): List<AnalyticsDashboardCategoryBreakdown> {
         val currentTotals = calculateCategoryTotals(expenses)
         val previousTotals = calculateCategoryTotals(comparisonExpenses)
         val total = currentTotals.values.sum()
         
         return currentTotals.map { (catId, amount) ->
-            DashboardCategoryBreakdown(
+            AnalyticsDashboardCategoryBreakdown(
                 categoryId = catId ?: 0L,
                 categoryName = catId
                     ?.let(categoryNamesById::get)
                     ?.let(UiText::DynamicString)
-                    ?: UiText.StringResource(R.string.unknown),
+                    ?: UiText.fromKey(DomainTextKeys.COMMON_UNKNOWN),
                 amount = amount,
                 percentage = if (total > 0) (amount / total) * 100 else 0.0,
                 changeFromLastPeriod = calculateChangeFromLastPeriod(
@@ -147,11 +149,11 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         }.sortedByDescending { it.amount }.take(5)
     }
     
-    private fun getTopMerchants(expenses: List<com.yourname.expensetracker.data.database.entity.Expense>): List<DashboardMerchantBreakdown> {
+    private fun getTopMerchants(expenses: List<ExpenseSnapshot>): List<DashboardMerchantBreakdown> {
         val merchantMap = mutableMapOf<String, Pair<Double, Int>>()
         
         for (expense in expenses) {
-            if (expense.transactionType.name == "PURCHASE") {
+            if (expense.transactionType == DomainTransactionType.PURCHASE) {
                 val (current, count) = merchantMap[expense.merchant] ?: Pair(0.0, 0)
                 merchantMap[expense.merchant] = Pair(current + expense.effectiveAmount, count + 1)
             }
@@ -170,7 +172,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         val result = mutableListOf<MonthlyDataPoint>()
         if (endDate <= startDate) return result
 
-        val monthlyBuckets = expenseRepository.getExpensesBetween(startDate, endDate)
+        val monthlyBuckets = expenseRepository.getExpenseSnapshotsBetween(startDate, endDate)
             .groupBy(::buildMonthKey)
 
         val startYear = TimePeriodUtils.getYear(startDate)
@@ -208,9 +210,11 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             var income = 0.0
 
             for (expense in expenses) {
-                when (expense.transactionType.name) {
-                    "PURCHASE", "WITHDRAWAL" -> spending += expense.effectiveAmount
-                    "DEPOSIT" -> income += expense.effectiveAmount
+                when (expense.transactionType) {
+                    DomainTransactionType.PURCHASE,
+                    DomainTransactionType.WITHDRAWAL -> spending += expense.effectiveAmount
+                    DomainTransactionType.DEPOSIT -> income += expense.effectiveAmount
+                    else -> Unit
                 }
             }
 
@@ -228,12 +232,12 @@ class AdvancedAnalyticsDashboard @Inject constructor(
     }
 
     private fun calculateCategoryTotals(
-        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>
+        expenses: List<ExpenseSnapshot>
     ): Map<Long?, Double> {
         val categoryMap = mutableMapOf<Long?, Double>()
 
         for (expense in expenses) {
-            if (expense.transactionType.name == "PURCHASE") {
+            if (expense.transactionType == DomainTransactionType.PURCHASE) {
                 val current = categoryMap[expense.categoryId] ?: 0.0
                 categoryMap[expense.categoryId] = current + expense.effectiveAmount
             }
@@ -250,28 +254,28 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         }
     }
 
-    private fun buildMonthKey(expense: com.yourname.expensetracker.data.database.entity.Expense): String {
+    private fun buildMonthKey(expense: ExpenseSnapshot): String {
         val year = TimePeriodUtils.getYear(expense.date)
         val month = TimePeriodUtils.getMonth(expense.date) + 1
         return String.format("%04d-%02d", year, month)
     }
     
-    private fun getWeeklyPattern(expenses: List<com.yourname.expensetracker.data.database.entity.Expense>): List<DayOfWeekSpending> {
+    private fun getWeeklyPattern(expenses: List<ExpenseSnapshot>): List<DayOfWeekSpending> {
         val dayMap = mutableMapOf<Int, MutableList<Double>>()
         val dayNames = mapOf<Int, UiText>(
-            1 to UiText.StringResource(R.string.day_monday),
-            2 to UiText.StringResource(R.string.day_tuesday),
-            3 to UiText.StringResource(R.string.day_wednesday),
-            4 to UiText.StringResource(R.string.day_thursday),
-            5 to UiText.StringResource(R.string.day_friday),
-            6 to UiText.StringResource(R.string.day_saturday),
-            7 to UiText.StringResource(R.string.day_sunday)
+            1 to UiText.fromKey(DomainTextKeys.COMMON_DAY_MONDAY),
+            2 to UiText.fromKey(DomainTextKeys.COMMON_DAY_TUESDAY),
+            3 to UiText.fromKey(DomainTextKeys.COMMON_DAY_WEDNESDAY),
+            4 to UiText.fromKey(DomainTextKeys.COMMON_DAY_THURSDAY),
+            5 to UiText.fromKey(DomainTextKeys.COMMON_DAY_FRIDAY),
+            6 to UiText.fromKey(DomainTextKeys.COMMON_DAY_SATURDAY),
+            7 to UiText.fromKey(DomainTextKeys.COMMON_DAY_SUNDAY)
         )
         
         val calendar = java.util.Calendar.getInstance()
         
         for (expense in expenses) {
-            if (expense.transactionType.name == "PURCHASE") {
+            if (expense.transactionType == DomainTransactionType.PURCHASE) {
                 calendar.timeInMillis = expense.date
                 val dayOfWeek = calendar.get(java.util.Calendar.DAY_OF_WEEK)
                 // Convert to Monday = 1 format
@@ -286,7 +290,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             val amounts = dayMap[day] ?: emptyList()
             DayOfWeekSpending(
                 dayOfWeek = day,
-                dayName = dayNames[day] ?: UiText.StringResource(R.string.unknown),
+                dayName = dayNames[day] ?: UiText.fromKey(DomainTextKeys.COMMON_UNKNOWN),
                 averageSpending = if (amounts.isNotEmpty()) amounts.average() else 0.0,
                 transactionCount = amounts.size
             )
@@ -294,7 +298,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
     }
     
     private fun generateInsights(
-        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        expenses: List<ExpenseSnapshot>,
         totalSpent: Double,
         totalIncome: Double
     ): List<DashboardInsight> {
@@ -306,22 +310,22 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                 DashboardInsight(
                     type = DashboardInsightType.BUDGET_WARNING,
                     title = UiText.fromKey("domain_analytics_high_spending"),
-                    description = UiText.StringResource(
-                        R.string.analytics_high_spending_description,
-                        listOf((totalSpent / totalIncome) * 100)
+                    description = UiText.fromKey(
+                        DomainTextKeys.ANALYTICS_HIGH_SPENDING_DESCRIPTION_FORMAT,
+                        UiTextArg.Percent((totalSpent / totalIncome) * 100)
                     ),
                     severity = DashboardInsightSeverity.WARNING
                 )
             )
         }
-        
+
         // Check weekend spending
         val calendar = java.util.Calendar.getInstance()
         var weekendSpending = 0.0
         var weekdaySpending = 0.0
-        
+
             for (expense in expenses) {
-            if (expense.transactionType.name == "PURCHASE") {
+            if (expense.transactionType == DomainTransactionType.PURCHASE) {
                 calendar.timeInMillis = expense.date
                 val dayOfWeek = calendar.get(java.util.Calendar.DAY_OF_WEEK)
                 if (dayOfWeek == java.util.Calendar.SATURDAY || dayOfWeek == java.util.Calendar.SUNDAY) {
@@ -331,18 +335,18 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                 }
             }
         }
-        
+
         if (weekendSpending > weekdaySpending / 5 * 2) {
             insights.add(
                 DashboardInsight(
                     type = DashboardInsightType.SPENDING_PATTERN,
                     title = UiText.fromKey("domain_analytics_weekend_high"),
-                    description = UiText.StringResource(R.string.analytics_weekend_spending_description),
+                    description = UiText.fromKey(DomainTextKeys.ANALYTICS_WEEKEND_SPENDING_DESCRIPTION),
                     severity = DashboardInsightSeverity.INFO
                 )
             )
         }
-        
+
         // Check savings rate
         if (totalIncome > 0) {
             val savingsRate = ((totalIncome - totalSpent) / totalIncome) * 100
@@ -351,16 +355,16 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                     DashboardInsight(
                         type = DashboardInsightType.SAVINGS_OPPORTUNITY,
                         title = UiText.fromKey("domain_analytics_great_savings"),
-                        description = UiText.StringResource(
-                            R.string.analytics_great_savings_description,
-                            listOf(savingsRate)
+                        description = UiText.fromKey(
+                            DomainTextKeys.ANALYTICS_GREAT_SAVINGS_DESCRIPTION_FORMAT,
+                            UiTextArg.Percent(savingsRate)
                         ),
                         severity = DashboardInsightSeverity.INFO
                     )
                 )
             }
         }
-        
+
         return insights
     }
 }

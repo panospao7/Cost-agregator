@@ -329,4 +329,44 @@ class FinancialHealthCalculatorBoundaryTest {
         assertTrue("Empty expenses should still produce valid scores",
             result.composite in 0..100)
     }
+
+    @Test
+    fun `empty budget list does not award all budgets on track bonus`() {
+        val now = toEpochMs(2026, 4, 15, 14, 0)
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now))
+
+        val result = calculator.calculateHealthScores(
+            expenses = emptyList(),
+            budgetStatuses = emptyList(),
+            pendingReviews = 0,
+            todayStreak = 7,
+            weekStreak = 7,
+            monthStreak = 7,
+            noSpendStreak = 7
+        )
+
+        // 5 (no-spend) + 3 (streak). The extra +2 should NOT apply when no budgets exist.
+        assertEquals(8, result.today.breakdown.bonusPoints)
+        assertEquals(8, result.week.breakdown.bonusPoints)
+        assertEquals(8, result.month.breakdown.bonusPoints)
+    }
+
+    @Test
+    fun `excellent status is reachable when component score is near ceiling`() {
+        val now = toEpochMs(2026, 4, 15, 14, 0)
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now))
+
+        val result = calculator.calculateHealthScores(
+            expenses = emptyList(),
+            budgetStatuses = listOf(onTrackBudget()),
+            pendingReviews = 0,
+            todayStreak = 7,
+            weekStreak = 7,
+            monthStreak = 7,
+            noSpendStreak = 7
+        )
+
+        assertTrue(result.composite in 85..100)
+        assertEquals(HealthStatus.EXCELLENT, result.getCompositeStatus())
+    }
 }

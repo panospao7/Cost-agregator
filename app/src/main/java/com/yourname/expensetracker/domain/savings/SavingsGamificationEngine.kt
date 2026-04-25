@@ -4,7 +4,7 @@ import com.yourname.expensetracker.data.repository.SavingsContributionEvent
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
-import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.text.UiTextArg
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
@@ -22,12 +22,12 @@ data class SavingsStreak(
 data class SavingsAchievement(
     val id: String,
     val title: UiText,
-    val description: String,
+    val description: UiText,
     val icon: String, // Emoji or icon name
     val isUnlocked: Boolean,
     val unlockedAt: Long?,
     val progress: Double, // 0.0 to 1.0
-    val requirement: String
+    val requirement: UiText
 )
 
 @Singleton
@@ -75,17 +75,17 @@ class SavingsGamificationEngine @Inject constructor(
             SavingsAchievement(
                 id = "first_goal",
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_GOAL_SETTER),
-                description = "Create your first savings goal",
+                description = UiText.fromKey(DomainTextKeys.SAVINGS_ACHIEVEMENT_DESC_FIRST_GOAL),
                 icon = "🎯",
                 isUnlocked = goalCount >= 1,
                 unlockedAt = firstGoalUnlockedAt,
                 progress = if (goalCount >= 1) 1.0 else 0.0,
-                requirement = "Create 1 goal"
+                requirement = UiText.fromKey(DomainTextKeys.SAVINGS_ACHIEVEMENT_REQ_CREATE_GOAL)
             ),
             SavingsAchievement(
                 id = "saving_streak_7",
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_WEEK_WARRIOR),
-                description = "Save for 7 consecutive days",
+                description = UiText.fromKey(DomainTextKeys.SAVINGS_ACHIEVEMENT_DESC_STREAK),
                 icon = "🔥",
                 isUnlocked = contributionMetrics.sevenDayStreakUnlockedAt != null,
                 unlockedAt = contributionMetrics.sevenDayStreakUnlockedAt,
@@ -94,22 +94,28 @@ class SavingsGamificationEngine @Inject constructor(
                 } else {
                     (contributionMetrics.currentStreakDays / 7.0).coerceIn(0.0, 1.0)
                 },
-                requirement = "7 day streak"
+                requirement = UiText.fromKey(DomainTextKeys.SAVINGS_ACHIEVEMENT_REQ_STREAK)
             ),
             SavingsAchievement(
                 id = "century_saver",
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_CENTURY_CLUB),
-                description = "Save ${CurrencyFormatter.format(100.0, showCents = false)} total",
+                description = UiText.fromKey(
+                    DomainTextKeys.SAVINGS_ACHIEVEMENT_DESC_SAVE_TOTAL_FORMAT,
+                    UiTextArg.Money(100.0, showCents = false)
+                ),
                 icon = "💯",
                 isUnlocked = totalSaved >= 100,
                 unlockedAt = if (totalSaved >= 100) totalSavedThresholds[100.0] else null,
                 progress = (totalSaved / 100.0).coerceIn(0.0, 1.0),
-                requirement = "${CurrencyFormatter.format(100.0, showCents = false)} saved"
+                requirement = UiText.fromKey(
+                    DomainTextKeys.SAVINGS_ACHIEVEMENT_REQ_SAVED_FORMAT,
+                    UiTextArg.Money(100.0, showCents = false)
+                )
             ),
             SavingsAchievement(
                 id = "goal_crusher",
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_GOAL_CRUSHER),
-                description = "Complete your first savings goal",
+                description = UiText.fromKey(DomainTextKeys.SAVINGS_ACHIEVEMENT_DESC_COMPLETE_FIRST_GOAL),
                 icon = "🏆",
                 isUnlocked = completedGoals >= 1,
                 unlockedAt = if (completedGoals >= 1) goalCrusherUnlockedAt else null,
@@ -117,17 +123,23 @@ class SavingsGamificationEngine @Inject constructor(
                     (bestProgressGoal?.let {
                         it.currentAmount / it.targetAmount.coerceAtLeast(0.01)
                     } ?: 0.0).coerceIn(0.0, 1.0),
-                requirement = "1 goal completed"
+                requirement = UiText.fromKey(DomainTextKeys.SAVINGS_ACHIEVEMENT_REQ_COMPLETE_GOAL)
             ),
             SavingsAchievement(
                 id = "thousand_saver",
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_GRAND_SAVER),
-                description = "Save ${CurrencyFormatter.format(1000.0, showCents = false)} total",
+                description = UiText.fromKey(
+                    DomainTextKeys.SAVINGS_ACHIEVEMENT_DESC_SAVE_TOTAL_FORMAT,
+                    UiTextArg.Money(1000.0, showCents = false)
+                ),
                 icon = "💰",
                 isUnlocked = totalSaved >= 1000,
                 unlockedAt = if (totalSaved >= 1000) totalSavedThresholds[1000.0] else null,
                 progress = (totalSaved / 1000.0).coerceIn(0.0, 1.0),
-                requirement = "${CurrencyFormatter.format(1000.0, showCents = false)} saved"
+                requirement = UiText.fromKey(
+                    DomainTextKeys.SAVINGS_ACHIEVEMENT_REQ_SAVED_FORMAT,
+                    UiTextArg.Money(1000.0, showCents = false)
+                )
             )
         )
     }

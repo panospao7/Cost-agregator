@@ -124,7 +124,7 @@ class TravelDetectionEngine @Inject constructor() {
         var tripEnd = sorted[0].date
         var tripSpend = sorted[0].effectiveAmount
         var tripCount = 1
-        var tripDest = sorted[0].resolvedAddress?.split(",")?.getOrNull(1)?.trim()
+        var tripDest = parseDestinationHint(sorted[0].resolvedAddress)
 
         for (i in 1 until sorted.size) {
             val exp = sorted[i]
@@ -134,7 +134,7 @@ class TravelDetectionEngine @Inject constructor() {
                 tripSpend += exp.effectiveAmount
                 tripCount++
                 if (tripDest == null) {
-                    tripDest = exp.resolvedAddress?.split(",")?.getOrNull(1)?.trim()
+                    tripDest = parseDestinationHint(exp.resolvedAddress)
                 }
             } else {
                 // Save previous trip and start a new one
@@ -143,13 +143,27 @@ class TravelDetectionEngine @Inject constructor() {
                 tripEnd = exp.date
                 tripSpend = exp.effectiveAmount
                 tripCount = 1
-                tripDest = exp.resolvedAddress?.split(",")?.getOrNull(1)?.trim()
+                tripDest = parseDestinationHint(exp.resolvedAddress)
             }
         }
         // Flush last trip
         trips.add(TravelTrip(tripStart, tripEnd, tripSpend, tripCount, tripDest))
 
         return trips
+    }
+
+    private fun parseDestinationHint(resolvedAddress: String?): String? {
+        val parts = resolvedAddress
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            .orEmpty()
+
+        return when {
+            parts.size >= 2 -> parts[1]
+            parts.size == 1 -> parts[0]
+            else -> null
+        }
     }
 
     private companion object {

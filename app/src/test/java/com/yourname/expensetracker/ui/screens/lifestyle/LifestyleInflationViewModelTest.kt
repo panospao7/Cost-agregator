@@ -122,6 +122,7 @@ class LifestyleInflationViewModelTest : ViewModelTestUtils() {
             advanceUntilIdle()
 
             assertNull(viewModel.report.value)
+            assertEquals("Failed to load data", viewModel.error.value)
             expectNoEvents()
             cancelAndIgnoreRemainingEvents()
         }
@@ -136,6 +137,18 @@ class LifestyleInflationViewModelTest : ViewModelTestUtils() {
             assertFalse(awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test
+    fun `analyze failure with blank message sets generic error`() = runTest(testDispatcher) {
+        coEvery { lifestyleDetector.analyzeLifestyleInflation(12) } throws IllegalStateException("\t")
+
+        viewModel.analyze(12)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.error.value?.isNotBlank() == true)
+        assertEquals("Failed to load data", viewModel.error.value)
+        assertFalse(viewModel.isLoading.value)
     }
 
     @Test
@@ -162,6 +175,27 @@ class LifestyleInflationViewModelTest : ViewModelTestUtils() {
         advanceUntilIdle()
 
         assertEquals(latestReport, viewModel.report.value)
+        assertFalse(viewModel.isLoading.value)
+    }
+
+    @Test
+    fun `refresh failure keeps last successful report and sets error`() = runTest(testDispatcher) {
+        val successReport = lifestyleReport(lifestyleInflationRate = 0.04)
+        coEvery { lifestyleDetector.analyzeLifestyleInflation(12) } returns successReport
+
+        viewModel.analyze(12)
+        advanceUntilIdle()
+
+        assertEquals(successReport, viewModel.report.value)
+        assertNull(viewModel.error.value)
+
+        coEvery { lifestyleDetector.analyzeLifestyleInflation(12) } throws IllegalStateException("retry failed")
+
+        viewModel.analyze(12)
+        advanceUntilIdle()
+
+        assertEquals(successReport, viewModel.report.value)
+        assertEquals("Failed to load data", viewModel.error.value)
         assertFalse(viewModel.isLoading.value)
     }
 

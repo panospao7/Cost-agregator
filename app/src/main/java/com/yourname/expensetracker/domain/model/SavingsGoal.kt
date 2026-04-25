@@ -7,7 +7,7 @@ data class SavingsGoal(
     val currentAmount: Double,
     val targetDate: Long?,
     val protectionLevel: GoalProtectionLevel,
-    val createdAt: Long = 0L
+    val createdAt: Long
 ) {
     init {
         require(name.isNotBlank()) { "name cannot be blank" }

@@ -79,10 +79,10 @@ class ExpenseRepositoryTest {
             merchant = "Test Merchant",
             categoryId = originalCategoryId,
             transactionType = TransactionType.PURCHASE,
-            date = System.currentTimeMillis()
-        )
-        
-        coEvery { expenseDao.updateCategory(expenseId, newCategoryId) } just runs
+        date = 1_700_000_000_000L
+    )
+
+    coEvery { expenseDao.updateCategory(expenseId, newCategoryId) } just runs
         
         // Act
         repository.updateExpenseCategory(expense, newCategoryId)
@@ -113,10 +113,10 @@ class ExpenseRepositoryTest {
             merchant = oldMerchant,
             categoryId = 1L,
             transactionType = TransactionType.PURCHASE,
-            date = System.currentTimeMillis()
-        )
-        
-        coEvery { expenseDao.updateMerchantAndKey(expenseId, newMerchant, MerchantKeyGenerator.generate(newMerchant)) } just runs
+        date = 1_700_000_000_000L
+    )
+
+    coEvery { expenseDao.updateMerchantAndKey(expenseId, newMerchant, MerchantKeyGenerator.generate(newMerchant)) } just runs
         
         // Act
         repository.updateExpenseMerchant(expense, newMerchant)
@@ -137,10 +137,10 @@ class ExpenseRepositoryTest {
             merchant = oldMerchant,
             categoryId = 3L,
             transactionType = TransactionType.PURCHASE,
-            date = System.currentTimeMillis()
-        )
+        date = 1_700_000_000_000L
+    )
 
-        repository.updateExpenseMerchant(expense, newMerchant, applyToAll = true)
+    repository.updateExpenseMerchant(expense, newMerchant, applyToAll = true)
 
         coVerify {
             expenseDao.updateMerchantForMerchant(
@@ -169,10 +169,10 @@ class ExpenseRepositoryTest {
             merchant = merchant,
             categoryId = 2L,
             transactionType = TransactionType.PURCHASE,
-            date = System.currentTimeMillis()
-        )
+        date = 1_700_000_000_000L
+    )
 
-        repository.updateExpenseMerchant(expense, merchant, applyToAll = false)
+    repository.updateExpenseMerchant(expense, merchant, applyToAll = false)
 
         coVerify(exactly = 0) { expenseDao.updateMerchantAndKey(any(), any(), any()) }
         coVerify(exactly = 0) { expenseDao.updateMerchantForMerchant(any(), any(), any()) }
@@ -263,8 +263,8 @@ class ExpenseRepositoryTest {
             currency = "EUR",
             merchant = "Acme Corp",
             transactionType = TransactionType.PURCHASE,
-            date = System.currentTimeMillis(),
-            isBusinessExpense = true,
+        date = 1_700_000_000_000L,
+        isBusinessExpense = true,
             businessPurpose = "Client dinner",
             splitTemplateId = 7L,
             splitVisualization = """{"segments":[]}"""

@@ -144,6 +144,18 @@ class RecommendationStateManagerTest {
     }
 
     @Test
+    fun `invalidate all path refreshes against empty active set after expireAll`() = runTest(testDispatcher) {
+        coEvery { repository.getActiveForUser("user1") } returns emptyList()
+
+        manager.refreshForUser("user1")
+        advanceUntilIdle()
+
+        assertTrue(manager.recommendations.value.isEmpty())
+        coVerify(exactly = 1) { repository.expireOld("user1") }
+        coVerify(exactly = 1) { repository.getActiveForUser("user1") }
+    }
+
+    @Test
     fun `refreshForUser publishes at most 5 sorted by priority`() = runTest(testDispatcher) {
         val recs = (1..8).map { i ->
             createRecommendation(

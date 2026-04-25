@@ -11,9 +11,9 @@ import org.junit.Test
 
 class CloudReviewExplanationServiceTest {
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `generate returns null safely when api key is absent`() {
-        // Mock SecureKeyStorage to return empty key
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
         every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns ""
         

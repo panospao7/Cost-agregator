@@ -11,13 +11,16 @@ import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
 import com.yourname.expensetracker.domain.config.AppConfig
-import org.json.JSONObject
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class OnDeviceDashboardBriefingService @Inject constructor() : DashboardBriefingService {
+class OnDeviceDashboardBriefingService @Inject constructor(
+    private val promptFormatter: DashboardBriefingPromptFormatter
+) : DashboardBriefingService {
+
+    constructor() : this(DashboardBriefingPromptFormatter())
 
     @Volatile
     private var cachedModel: GenerativeModel? = null
@@ -57,51 +60,10 @@ class OnDeviceDashboardBriefingService @Inject constructor() : DashboardBriefing
     }
 
     internal fun buildPrompt(input: DashboardBriefingInput): String {
-        return buildString {
-            appendLine("Write a short daily finance dashboard briefing.")
-            appendLine("Be concise, practical, and advisory only.")
-            appendLine("Do not invent facts. Return ONLY one JSON object.")
-            appendLine()
-            appendLine("Date: ${input.dateKey}")
-            appendLine("Weather headline: ${input.weatherHeadline}")
-            appendLine("Weather summary: ${input.weatherSummary}")
-            appendLine("Discretionary budget: ${input.discretionaryBudget}")
-            appendLine("Total committed: ${input.totalCommitted}")
-            appendLine("Total likely: ${input.totalLikely}")
-            appendLine("Pending reviews: ${input.pendingReviewCount}")
-            appendLine("Current month spent: ${input.currentMonthSpent}")
-            appendLine("Top categories: ${input.topCategories.joinToString(", ")}")
-            appendLine("Budget warnings: ${input.budgetWarnings.joinToString(", ").ifBlank { "none" }}")
-            appendLine("Upcoming items: ${input.upcomingItems.joinToString(", ").ifBlank { "none" }}")
-            appendLine()
-            appendLine("JSON schema: {\"title\":\"short title\",\"text\":\"brief message\",\"tone\":\"calm|neutral|cautious\",\"confidence\":0.0}")
-        }
+        return promptFormatter.buildPrompt(input)
     }
 
     internal fun parseResponse(text: String): DashboardBriefing? {
-        val jsonText = extractFirstJsonObject(text.trim()) ?: return null
-        return try {
-            val root = JSONObject(jsonText)
-            val title = root.optString("title").trim().take(60)
-            val body = root.optString("text").trim().take(AppConfig.Ai.MAX_BRIEFING_LENGTH_CHARS)
-            if (title.isBlank() || body.isBlank()) return null
-
-            DashboardBriefing(
-                title = title,
-                text = body,
-                tone = root.optString("tone").trim().ifBlank { "neutral" },
-                confidence = if (root.has("confidence") && !root.isNull("confidence")) root.optDouble("confidence").toFloat() else null
-            )
-        } catch (e: Exception) {
-            Timber.w(e, "OnDeviceDashboardBriefingService: JSON parse failure")
-            null
-        }
-    }
-
-    private fun extractFirstJsonObject(text: String): String? {
-        val start = text.indexOf('{')
-        val end = text.lastIndexOf('}')
-        if (start == -1 || end <= start) return null
-        return text.substring(start, end + 1)
+        return DashboardBriefingResponseParser.parseResponse(text)
     }
 }

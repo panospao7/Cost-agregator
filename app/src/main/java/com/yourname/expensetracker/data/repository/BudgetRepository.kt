@@ -3,12 +3,14 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.CategorySpentTotal
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
+import com.yourname.expensetracker.domain.model.BudgetSnapshot
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -44,6 +46,14 @@ class BudgetRepository @Inject constructor(
     val activeBudgets: Flow<List<Budget>> = budgetDao.getActiveBudgetsFlow()
 
     suspend fun getActiveBudgets(): List<Budget> = budgetDao.getActiveBudgets()
+
+    suspend fun getActiveBudgetSnapshots(): List<BudgetSnapshot> =
+        getActiveBudgets().map { budget ->
+            BudgetSnapshot(
+                categoryId = budget.categoryId,
+                amount = budget.amount
+            )
+        }
     
     suspend fun getById(id: Long): Budget? = budgetDao.getById(id)
 
@@ -198,7 +208,7 @@ class BudgetRepository @Inject constructor(
                 lastCriticalNotifiedAt = null,
                 lastExceededNotifiedAt = null
             )
-            budgetDao.update(resetBudget)
+            budgetDao.updateAndEnforceActiveScope(resetBudget)
             // budgetMonitor.checkBudgets()
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
@@ -219,7 +229,7 @@ class BudgetRepository @Inject constructor(
 
     suspend fun toggleBudget(id: Long, isActive: Boolean): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
-            budgetDao.setActive(id, isActive)
+            budgetDao.setActiveAndEnforceScope(id, isActive)
             // budgetMonitor.checkBudgets()
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
@@ -244,9 +254,10 @@ class BudgetRepository @Inject constructor(
 
     suspend fun restoreDebugSnapshot(snapshot: DebugBudgetSnapshot): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
-            budgetDao.deleteAll()
             if (snapshot.budgets.isNotEmpty()) {
-                budgetDao.insertAll(snapshot.budgets)
+                budgetDao.replaceAllAndEnforceActiveScopes(snapshot.budgets)
+            } else {
+                budgetDao.deleteAll()
             }
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
@@ -257,11 +268,13 @@ class BudgetRepository @Inject constructor(
 
     suspend fun getSuggestions(): List<BudgetSuggestion> {
         val categories = categoryDao.getAllFlow().first()
-        val suggestions = mutableListOf<BudgetSuggestion>()
         
         // Suggest budgets for top-spending categories that don't have one
         val activeBudgets = budgetDao.getActiveBudgets()
         val categoriesWithBudget = activeBudgets.mapNotNull { it.categoryId }.toSet()
+        val categoriesWithoutBudget = categories.filter { !categoriesWithBudget.contains(it.id) }
+
+        if (categoriesWithoutBudget.isEmpty()) return emptyList()
 
         val now = timeProvider.now()
         val endExclusive = TimePeriodUtils.getEndOfDay(now)
@@ -282,31 +295,37 @@ class BudgetRepository @Inject constructor(
 
         val daysInCurrentMonth = TimePeriodUtils.getDaysInMonth(now).coerceAtLeast(1)
         val monthsDivisor = daysDiff.toDouble() / daysInCurrentMonth.toDouble()
-        
-        for (category in categories) {
-            if (categoriesWithBudget.contains(category.id)) continue
 
-            val spent = expenseDao.getCategorySpentInPeriod(category.id, effectiveStart, endExclusive)
-            
-            // Calculate monthly average
-            val monthlyAvg = if (monthsDivisor > 0) spent / monthsDivisor else 0.0
-            
-            // Only suggest if significant spend (> €20/month)
-            if (monthlyAvg > 20.0) { 
-                suggestions.add(
-                    BudgetSuggestion(
-                        categoryId = category.id,
-                        categoryName = category.name,
-                        categoryIcon = category.icon,
-                        // increase buffer to 20% (LOG-016)
-                        suggestedAmount = (monthlyAvg * 1.2).coerceAtLeast(20.0), 
-                        basedOnMonths = Math.round(monthsDivisor).toInt().coerceAtLeast(1),
-                        reason = "Based on your €${"%.0f".format(monthlyAvg)} monthly average spend."
-                    )
+        val categorySpentById: Map<Long, Double> = expenseDao.getCategorySpentTotalsInPeriod(
+            categoryIds = categoriesWithoutBudget.map { it.id },
+            startMs = effectiveStart,
+            endMs = endExclusive
+        ).associateToCategoryTotalMap()
+
+        val basedOnMonths = Math.round(monthsDivisor).toInt().coerceAtLeast(1)
+
+        return categoriesWithoutBudget
+            .mapNotNull { category ->
+                val spent = categorySpentById[category.id] ?: 0.0
+                val monthlyAvg = if (monthsDivisor > 0) spent / monthsDivisor else 0.0
+                if (monthlyAvg <= 20.0) return@mapNotNull null
+
+                BudgetSuggestion(
+                    categoryId = category.id,
+                    categoryName = category.name,
+                    categoryIcon = category.icon,
+                    // increase buffer to 20% (LOG-016)
+                    suggestedAmount = (monthlyAvg * 1.2).coerceAtLeast(20.0),
+                    basedOnMonths = basedOnMonths,
+                    reason = "Based on your €${"%.0f".format(monthlyAvg)} monthly average spend."
                 )
             }
-        }
-        return suggestions.sortedByDescending { it.suggestedAmount }.take(3)
+            .sortedByDescending { it.suggestedAmount }
+            .take(3)
+    }
+
+    private fun List<CategorySpentTotal>.associateToCategoryTotalMap(): Map<Long, Double> {
+        return associate { it.categoryId to it.total }
     }
 
     suspend fun updateExceededNotification(id: Long, timestamp: Long) {

@@ -17,6 +17,7 @@ import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -124,6 +125,7 @@ class CloudDedupeJudgeServiceTest {
         assertTrue(failure.error is AiServiceError.Offline)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `judge returns disabled when api key is missing`() = runTest {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
@@ -135,5 +137,98 @@ class CloudDedupeJudgeServiceTest {
         assertTrue(result is AiServiceResult.Failure)
         val failure = result as AiServiceResult.Failure
         assertTrue(failure.error is AiServiceError.Disabled)
+    }
+
+    @Test
+    fun `judge returns parse error for malformed verdict enum`() = runTest {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "fake-api-key"
+
+        val responseBody =
+            """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      {
+                        "text": "{\"verdict\":\"MAYBE\",\"matchedTargetType\":\"EXPENSE\",\"matchedTargetId\":2,\"confidence\":0.93}"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+            """.trimIndent()
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(responseBody.toResponseBody("application/json".toMediaType()))
+                    .build()
+            }
+            .build()
+
+        val service = CloudDedupeJudgeService(
+            secureKeyStorage = mockKeyStorage,
+            client = client
+        )
+
+        val result = service.judge(sampleInput())
+
+        assertTrue(result is AiServiceResult.Failure)
+        val failure = result as AiServiceResult.Failure
+        assertTrue(failure.error is AiServiceError.ParseError)
+    }
+
+    @Test
+    fun `judge maps malformed target type enum and zero id to null`() = runTest {
+        val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
+        every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns "fake-api-key"
+
+        val responseBody =
+            """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      {
+                        "text": "{\"verdict\":\"UNCERTAIN\",\"matchedTargetType\":\"OTHER\",\"matchedTargetId\":0,\"confidence\":0.4}"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+            """.trimIndent()
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(responseBody.toResponseBody("application/json".toMediaType()))
+                    .build()
+            }
+            .build()
+
+        val service = CloudDedupeJudgeService(
+            secureKeyStorage = mockKeyStorage,
+            client = client
+        )
+
+        val result = service.judge(sampleInput())
+
+        assertTrue(result is AiServiceResult.Success)
+        val success = result as AiServiceResult.Success
+        assertNull(success.value.matchedTargetType)
+        assertNull(success.value.matchedTargetId)
     }
 }

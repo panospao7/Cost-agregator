@@ -9,14 +9,13 @@ import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -38,6 +37,7 @@ class BudgetForecastingEngine @Inject constructor(
         const val MIN_HISTORY_MONTHS = 3
         const val CONFIDENCE_THRESHOLD_HIGH = 0.8
         const val CONFIDENCE_THRESHOLD_MEDIUM = 0.6
+        private const val TREND_THRESHOLD = 0.10
         private const val MILLIS_PER_DAY = 24 * 60 * 60 * 1000.0
         private const val DESIRED_HISTORY_MONTHS = 4.0
     }
@@ -101,11 +101,10 @@ class BudgetForecastingEngine @Inject constructor(
         )
         
         // Save forecast — deactivate any existing active forecast for the same
-        // budget+period to avoid violating the partial unique index on
-        // (budgetId, targetPeriodStart, targetPeriodEnd) WHERE isActive = 1.
-        budgetForecastDao.insertWithDeactivation(forecast)
-        
-        forecast
+        // budget+period so only the newest forecast remains active.
+        val persistedId = budgetForecastDao.insertWithDeactivation(forecast)
+
+        forecast.copy(id = persistedId)
     }
     
     /**
@@ -117,13 +116,13 @@ class BudgetForecastingEngine @Inject constructor(
      * [getMonthlySpendingTotalsBetween] return pre-grouped monthly totals
      * computed with the effective-amount formula, preserving A.1 semantics.
      *
-     * Gap months within the lookback window are synthesized as explicit
-     * zero-spend buckets so averages and trends are not skewed upward when
-     * a user simply had no spending in a month.
+     * Gap months between first/last observed month keys are synthesized as
+     * explicit zero-spend buckets so averages and trends are not skewed
+     * upward when a user simply had no spending in an intermediate month.
      */
     private suspend fun getHistoricalSpendingData(budget: Budget): HistoricalData {
         val now = timeProvider.now()
-        val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
+        val threeMonthsAgo = TimePeriodUtils.addMonths(now, -3)
         
         // Fetch pre-aggregated monthly totals via SQL — no row-count limit.
         val monthlyTotals: List<MonthlySpendingTotal> = if (budget.categoryId != null) {
@@ -139,20 +138,19 @@ class BudgetForecastingEngine @Inject constructor(
             )
         }
         
-        val lookbackMonthKeys = buildMonthKeyRange(
-            startMonthKey = formatMonthKey(threeMonthsAgo),
-            endMonthKey = formatMonthKey(now)
+        val normalizedSeries = BudgetHistorySeriesBuilder.build(
+            monthlyTotals = monthlyTotals,
+            windowStartInclusive = threeMonthsAgo,
+            windowEndExclusive = now
         )
 
-        val totalsByMonth = monthlyTotals.associate { it.monthKey to it.total }
         val monthlySpending = linkedMapOf<String, Double>()
-        for (monthKey in lookbackMonthKeys) {
-            monthlySpending[monthKey] = totalsByMonth[monthKey] ?: 0.0
+        normalizedSeries.monthKeys.forEachIndexed { index, monthKey ->
+            monthlySpending[monthKey] = normalizedSeries.values[index]
         }
         
         // Calculate statistics
-        val sortedMonthKeys = monthlySpending.keys.sorted()
-        val values = sortedMonthKeys.map { monthlySpending[it] ?: 0.0 }
+        val values = normalizedSeries.values
         val average = if (values.isNotEmpty()) values.sum() / values.size else 0.0
         
         var variance = 0.0
@@ -163,43 +161,18 @@ class BudgetForecastingEngine @Inject constructor(
             kotlin.math.sqrt(variance / (values.size - 1))
         } else 0.0
         
-        // Detect trend
-        val trend = when {
-            values.size < 2 -> SpendingTrend.STABLE
-            values.size == 2 -> {
-                val older = values.first()
-                val recent = values.last()
-                if (older <= 0.0) {
-                    SpendingTrend.STABLE
-                } else {
-                    when {
-                        recent > older * 1.1 -> SpendingTrend.INCREASING
-                        recent < older * 0.9 -> SpendingTrend.DECREASING
-                        else -> SpendingTrend.STABLE
-                    }
-                }
-            }
-            else -> {
-                val recent = values.takeLast(2).average()
-                val older = values.dropLast(2).average()
-                if (older <= 0.0) {
-                    SpendingTrend.STABLE
-                } else {
-                    when {
-                        recent > older * 1.1 -> SpendingTrend.INCREASING
-                        recent < older * 0.9 -> SpendingTrend.DECREASING
-                        else -> SpendingTrend.STABLE
-                    }
-                }
-            }
+        val trend = when (BudgetHistorySeriesBuilder.classifyTrend(values, TREND_THRESHOLD)) {
+            BudgetHistorySeriesBuilder.TrendDirection.INCREASING -> SpendingTrend.INCREASING
+            BudgetHistorySeriesBuilder.TrendDirection.DECREASING -> SpendingTrend.DECREASING
+            BudgetHistorySeriesBuilder.TrendDirection.STABLE -> SpendingTrend.STABLE
         }
         
         return HistoricalData(
             monthlySpending = monthlySpending,
             averageMonthly = average,
             standardDeviation = standardDeviation,
-            monthsOfHistory = monthlySpending.size,
-            observedMonthCount = monthlyTotals.size,
+            monthsOfHistory = normalizedSeries.filledMonthCount,
+            observedMonthCount = normalizedSeries.observedMonthCount,
             trend = trend
         )
     }
@@ -352,47 +325,6 @@ class BudgetForecastingEngine @Inject constructor(
         // This is a simplified accuracy metric
     }
 
-    private fun buildMonthKeyRange(startMonthKey: String, endMonthKey: String): List<String> {
-        val cursor = parseMonthKey(startMonthKey)
-        val end = parseMonthKey(endMonthKey)
-        val monthKeys = mutableListOf<String>()
-
-        while (!cursor.after(end)) {
-            monthKeys.add(formatMonthKey(cursor))
-            cursor.add(Calendar.MONTH, 1)
-        }
-
-        return monthKeys
-    }
-
-    private fun parseMonthKey(monthKey: String): Calendar {
-        val parts = monthKey.split("-")
-        require(parts.size == 2) { "Unexpected month key: $monthKey" }
-
-        val year = parts[0].toInt()
-        val month = parts[1].toInt()
-        require(month in 1..12) { "Unexpected month key: $monthKey" }
-
-        return Calendar.getInstance().apply {
-            clear()
-            set(Calendar.YEAR, year)
-            set(Calendar.MONTH, month - 1)
-            set(Calendar.DAY_OF_MONTH, 1)
-        }
-    }
-
-    private fun formatMonthKey(timestamp: Long): String {
-        return Calendar.getInstance().run {
-            timeInMillis = timestamp
-            formatMonthKey(this)
-        }
-    }
-
-    private fun formatMonthKey(calendar: Calendar): String {
-        val year = calendar.get(Calendar.YEAR)
-        val month = calendar.get(Calendar.MONTH) + 1
-        return String.format("%04d-%02d", year, month)
-    }
 }
 
 /**

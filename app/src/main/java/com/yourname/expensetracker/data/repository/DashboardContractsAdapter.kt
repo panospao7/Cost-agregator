@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.RecurringPattern
@@ -22,8 +21,10 @@ import com.yourname.expensetracker.domain.usecase.dashboard.DashboardExpenseRepo
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardFinancialWeatherRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardReviewQueueRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardSavingsGoalRepository
+import com.yourname.expensetracker.domain.savings.SavingsGoalRepository as DomainSavingsGoalRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -36,7 +37,7 @@ class DashboardContractsAdapter @Inject constructor(
     private val budgetRepository: BudgetRepository,
     private val reviewQueueRepository: ReviewQueueRepository,
     private val financialWeatherRepository: FinancialWeatherRepository,
-    private val savingsGoalRepository: SavingsGoalRepository,
+    private val savingsGoalRepository: DomainSavingsGoalRepository,
     private val analyticsRepository: AnalyticsRepository,
     private val recurringExpenseRepository: RecurringExpenseRepository,
     private val plannedExpenseRepository: PlannedExpenseRepository,
@@ -86,22 +87,7 @@ class DashboardContractsAdapter @Inject constructor(
         financialWeatherRepository.getFinancialWeather()
 
     override fun observeRecurringPatterns(): Flow<List<RecurringPattern>> =
-        recurringExpenseRepository.getAllFlow().map { list ->
-            list.map { entity ->
-                RecurringPattern(
-                    id = entity.id,
-                    merchantName = entity.merchant,
-                    averageAmount = entity.amount,
-                    currency = entity.currency,
-                    frequency = entity.frequency,
-                    nextExpectedDate = entity.nextDate,
-                    confidence = 1.0f,
-                    periodVarianceDays = 0,
-                    amountVariancePercent = 0.0,
-                    previousDates = emptyList()
-                )
-            }
-        }
+        financialWeatherRepository.getConfirmedRecurringPatterns()
 
     override fun observePlannedExpenses(): Flow<List<PlannedExpense>> =
         plannedExpenseRepository.getAllPlannedExpenses().map { list ->
@@ -123,23 +109,7 @@ class DashboardContractsAdapter @Inject constructor(
         }
 
     override fun observeSavingsGoals(): Flow<List<SavingsGoal>> =
-        savingsGoalRepository.getAllGoals().map { list ->
-            list.map { entity ->
-                SavingsGoal(
-                    id = entity.id,
-                    name = entity.name,
-                    targetAmount = entity.targetAmount,
-                    currentAmount = entity.currentAmount,
-                    targetDate = entity.targetDate,
-                    protectionLevel = when (entity.protectionLevel) {
-                        com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.STRICT -> GoalProtectionLevel.STRICT
-                        com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.WARNING -> GoalProtectionLevel.WARNING
-                        com.yourname.expensetracker.data.database.entity.GoalProtectionLevel.TRACKING -> GoalProtectionLevel.TRACKING
-                    },
-                    createdAt = entity.createdAt
-                )
-            }
-        }
+        savingsGoalRepository.observeSavingsGoals()
 
     override fun observeSpendingSummary(start: Long, end: Long): Flow<SpendingSummary> =
         analyticsRepository.getSpendingSummary(start, end).map { summary ->
@@ -155,7 +125,21 @@ class DashboardContractsAdapter @Inject constructor(
 
     override fun observeCategoryBreakdown(start: Long, end: Long): Flow<List<DashboardCategoryBreakdown>> =
         analyticsRepository.getCategoryBreakdown(start, end).map { breakdown ->
+            val periodLength = (end - start).coerceAtLeast(1L)
+            val previousStart = start - periodLength
+            val previousEnd = start
+            val previousByCategoryId = analyticsRepository
+                .getCategoryBreakdown(previousStart, previousEnd)
+                .map { list -> list.associateBy { it.category.id } }
+                .first()
+
             breakdown.map { item ->
+                val previousAmount = previousByCategoryId[item.category.id]?.total ?: 0.0
+                val changeFromLastPeriod = when {
+                    previousAmount > 0.0 -> ((item.total - previousAmount) / previousAmount) * 100.0
+                    item.total > 0.0 -> 100.0
+                    else -> 0.0
+                }
                 DashboardCategoryBreakdown(
                     categoryId = item.category.id,
                     categoryName = item.category.name,
@@ -163,7 +147,7 @@ class DashboardContractsAdapter @Inject constructor(
                     categoryColor = item.category.color,
                     amount = item.total,
                     percentage = item.percentage.toDouble(),
-                    changeFromLastPeriod = 0.0
+                    changeFromLastPeriod = changeFromLastPeriod
                 )
             }
         }

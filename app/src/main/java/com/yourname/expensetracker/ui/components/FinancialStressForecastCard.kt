@@ -253,7 +253,7 @@ private fun HorizonDetailView(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             BreakdownItem(
-                label = "Recurring",
+                label = "Recurring (${horizon.daysAhead}d total)",
                 value = "-${CurrencyFormatter.format(horizon.recurringObligations, showCents = false)}",
                 color = SemanticColors.WarningOrange
             )

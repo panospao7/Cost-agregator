@@ -63,7 +63,7 @@ class ExpenseWithCategoryFormattedTimeTest {
 
     // ---- Helper ----
 
-    private fun makeEwc(date: Long = System.currentTimeMillis()): ExpenseWithCategory {
+    private fun makeEwc(date: Long = 1_700_000_000_000L): ExpenseWithCategory {
         val expense = Expense(
             amount = 10.0,
             currency = "EUR",

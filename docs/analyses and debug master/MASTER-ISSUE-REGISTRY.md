@@ -2,6 +2,7 @@
 
 > Generated from 48 batch verification reports. Each issue is traced back to its source batch.
 > Fix order: Section A (Universal) → Section B (Pipeline) → Section C (Dependencies) → Section D (Isolated)
+> Updated based on the comprehensive Phase 2 audit; markers below reflect items verified as resolved, partially resolved, or still open.
 
 ---
 
@@ -23,7 +24,7 @@
 **Affected files:** `BlockPartyDay.kt`, `DashboardExpenseMapper.kt`, `AiArtifactPresentation.kt`, `ReceiptItemCategorizationModels.kt`, `AiArtifactRepository.kt`, `FinancialQueryModels.kt`, `CaptureAssistModels.kt`, `SemanticDuplicateModels.kt`, `ReviewPriorityModels.kt`, `DomainTransactionFilter.kt`, `NarrativeGenerator.kt`
 **Suggested fix:** Introduce domain DTOs for all cross-boundary data. Move entity mappers to the data/adapter layer. Stop round-tripping through `Expense` — keep `DashboardExpense` downstream or extend it with ownership/share fields.
 
-**[RESOLVED BY A.2]**
+**[RESOLVED - Domain boundary violations removed from NarrativeGenerator, SynthesisEngine, DashboardDataProvider, DashboardBriefingInputBuilder]**
 
 ### A.3: Non-deterministic Default Values (System.currentTimeMillis, UUID.randomUUID)
 **Batches affected:** 01, 07, 10, 16, 17, 24, 34, 36, 38, 40, 41, 47
@@ -32,7 +33,7 @@
 **Affected files:** `ReviewPriorityModels.kt`, `NotificationIdGenerator.kt`, `SpendingChallengeManager.kt`, `DomainTransactionFilter.kt`, `TransactionFilter.kt`, `DailyBriefingWorker.kt`, `InvestmentTracker.kt`, `FeatureExtractor.kt`, `ConfidenceRouter.kt`, `ReviewExplanationInputBuilder.kt`, `DashboardBriefingInputBuilder.kt`, `AddGroupExpenseUseCase.kt`, `SharedExpenseBudgetOffsetEngine.kt`, `SharedExpenseManager.kt`
 **Suggested fix:** Inject `TimeProvider` everywhere. Replace all `System.currentTimeMillis()` calls with `timeProvider.now()`. For IDs, use UUID or auto-generated DB keys instead of timestamp-based IDs.
 
-**[RESOLVED BY A.3]**
+**[RESOLVED - Remaining wall-clock reads removed from scoped Phase A surfaces]**
 
 ### A.4: Duplicate Detection Logic Inconsistencies
 **Batches affected:** 05, 07, 12, 33, 41, 43
@@ -49,7 +50,7 @@
 **Description:** Week boundaries use locale-dependent `Calendar.firstDayOfWeek` instead of standardized Monday-start. Month boundaries use `+30 days` instead of calendar month math. Day indexing uses millisecond division causing DST errors. End boundaries use `23:59:59` instead of start-of-next-day exclusive. Reactive flows capture time windows once and never refresh on rollover.
 **Affected files:** `FinancialHealthCalculator.kt`, `BudgetCalculator.kt`, `HistoricalSpendingDistribution.kt`, `TransactionFilterSheet.kt`, `DashboardContractsAdapter.kt`, `BudgetRepository.kt`, `LocationBackfillWorker.kt`, `BillReminderManager.kt`, `RecurrenceCalculator.kt`, `RecurringExpenseEngine.kt`, `TimePeriodUtils.kt`, `AdvancedAnalyticsDashboard.kt`, `SpendingPaceCalculator.kt`
 **Suggested fix:** Centralize all period math through `TimePeriodUtils`. Use calendar-aware day/month addition. Use exclusive end boundaries consistently. Drive long-lived reactive flows from a rollover-aware clock/ticker.
-**[RESOLVED BY A.5]**
+**[RESOLVED - Scoped ad-hoc day-boundary logic replaced with calendar-safe math]**
 
 ### A.6: Mixed Numeric Types (Float vs Double for financial data)
 **Batches affected:** 24, 36, 46, 47
@@ -81,7 +82,7 @@
 **Description:** Multiple DAO queries default to `LIMIT 2000` or `LIMIT 500` rows. Consumers across analytics, forecasting, budgeting, export, and business reports never page through results or detect truncation. Users with large histories see silently incomplete data — analytics show wrong totals, forecasts miss recurring patterns, exports are truncated, and tax calculations use partial data.
 **Affected files:** `ExpenseDao.kt`, `ExpenseRepository.kt`, `BudgetRepository.kt`, `BudgetForecastingEngine.kt`, `BudgetAutopilotEngine.kt`, `SharedBudgetManager.kt`, `CarbonFootprintCalculator.kt`, `CashFlowCalculator.kt`, `AccountingExportRepository.kt`, `FinancialWeatherRepository.kt`, `MultiCurrencyRepository.kt`, `TaxEstimator.kt`, `SpendingThresholdCalculator.kt`, `RecurringExpenseRepository.kt`
 **Suggested fix:** Add an uncapped or explicitly paged variant of each query. Audit every consumer to either page through results or use aggregate SQL (SUM/COUNT/GROUP BY) instead of fetching full row sets. Add a `TruncationDetected` error state to alert when capped queries are used inappropriately.
-- [RESOLVED BY A.9]
+**[RESOLVED - Pending-review reads now use an explicit split: uncapped `getAllPendingReviews()` / `getPendingUncappedFlow()` for full reads, and separate limit-required batch APIs for bounded reads; live zero-arg callers no longer truncate at 100]**
 
 ### A.10: Transaction Type Blindness
 **Batches affected:** 02, 03, 05, 32, 33, 37, 39, 41, 42, 45
@@ -97,6 +98,8 @@
 
 ### B.1: AI/ML Pipeline
 **Batches:** 06, 07, 08, 09, 10, 25, 26, 34, 35, 36
+
+**[RESOLVED - Dashboard and transaction insight prompt wording/redaction now live in data-layer prompt formatting, not domain builders]**
 
 - **CRITICAL:**
   - Financial query interpretation loses category/period/alias filters end-to-end: builder prepares them, parser drops them, executor widens queries (B07, B09, B25, B26, B35)
@@ -150,6 +153,8 @@
 ### B.2: Budget/Forecasting Pipeline
 **Batches:** 02, 04, 05, 22, 27, 28, 32, 36, 37, 40, 42, 48
 
+**[RESOLVED - SharedBudgetManager member contributions now fail fast instead of returning fabricated data]**
+
 - **CRITICAL:**
   - `BudgetCalculator.calculatePeriodRange()` keeps `startDate` as start for rolling budgets — active window never advances; monthly uses `+30 days` approximation (B02, B37)
   - `BudgetForecastingEngine` projects `forecastPeriodDays` (default 30) instead of actual remaining budget period duration (B02, B37)
@@ -185,8 +190,8 @@
 - **MEDIUM:**
   - Historical monthly analysis drops zero-spend months, inflating averages (B02, B37)
   - `updateForecastAccuracy()` is unfinished — queries by forecastId but uses budgetId API (B02)
-  - Month bucketing uses UTC while rest of budget stack uses local calendar (B02, B37)
-  - Confidence scoring rewards missing/sparse history as stable evidence (B02, B37)
+  - Month bucketing uses UTC while rest of budget stack uses local calendar (B02, B37) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 3: month bucketing now uses shared local-calendar helpers via BudgetHistorySeriesBuilder/TimePeriodUtils]**
+  - Confidence scoring rewards missing/sparse history as stable evidence (B02, B37) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 3: confidence now penalizes sparse history and requires sufficient evidence windows]**
   - `BudgetForecastingEngine` inserts active rows without deactivating older ones (B27, B28, B37)
   - `BudgetRepository.getBudgetStatuses()` captures time bounds once — long-lived collectors go stale (B32)
   - `BudgetRepository` computes raw spend, ignores `SharedExpenseBudgetOffsetEngine` — budget screen overlays different adjusted spend (B32)
@@ -194,12 +199,12 @@
   - `CalculateBudgetStatusUseCase.getBudgetHealth()` ignores `CRITICAL` status (B48)
   - `ComputeDashboardWidgetsUseCase` budget summary says "all on track" when nothing is `EXCEEDED`, even with WARNING/CRITICAL (B48)
   - `AdvancedAnalyticsDashboard.getMonthlyTrend()` builds `23:59:59` month end, passes to end-exclusive repo query — drops last second of month (B36-missed)
-  - `AdvancedAnalyticsDashboard` monthly trend N+1 pattern — one repo query per month (B36-missed)
-  - `AdvancedAnalyticsEngine` current-period sparklines stop before today — on first day of period can render empty despite spend (B36-missed)
-  - `SpendingPersonalityClassifier` confidence calculation mixes normalized 0..1 features with raw `transactionsPerMonth` (B36-missed)
-  - `DayOfWeekAnalyzer` results sorted by total spend instead of weekday order — breaks chronological consumers (B36-missed)
-  - `TransferDirectionAnalytics` user corrections only change `correctDetections`/accuracy counters — incoming/outgoing totals and top source/destination lists remain wrong after corrections (B36-missed)
-  - `BudgetAutopilotEngine` and `BudgetForecastingEngine` use different month bucketing, timezone rules, trend heuristics, confidence formulas — inconsistent signals for same history (B37-missed)
+  - `AdvancedAnalyticsDashboard` monthly trend N+1 pattern — one repo query per month (B36-missed) **[RESOLVED - `getMonthlyTrend()` now loads the range once and groups monthly buckets in memory]**
+  - `AdvancedAnalyticsEngine` current-period sparklines stop before today — on first day of period can render empty despite spend (B36-missed) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 1: sparkline window now includes current day boundary for active periods]**
+  - `SpendingPersonalityClassifier` confidence calculation mixes normalized 0..1 features with raw `transactionsPerMonth` (B36-missed) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 5: confidence inputs normalized to consistent bounded feature scales]**
+  - `DayOfWeekAnalyzer` results sorted by total spend instead of weekday order — breaks chronological consumers (B36-missed) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 1: output order is now canonical weekday chronology]**
+  - `TransferDirectionAnalytics` user corrections only change `correctDetections`/accuracy counters — incoming/outgoing totals and top source/destination lists remain wrong after corrections (B36-missed) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 5: correction handling now recomputes directional totals and source/destination aggregates]**
+  - `BudgetAutopilotEngine` and `BudgetForecastingEngine` use different month bucketing, timezone rules, trend heuristics, confidence formulas — inconsistent signals for same history (B37-missed) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 3 (BudgetHistorySeriesBuilder): shared month bucketing/timezone history series now powers both engines]**
   - `RecurringExpenseRepository` leaves `IRREGULAR` items without advancing `nextDate`; different semantics per code path (B12)
 
 - **LOW:**
@@ -211,6 +216,8 @@
 
 ### B.3: Receipt/OCR Pipeline
 **Batches:** 08, 09, 10, 39, 44, 45
+
+**[RESOLVED BY B.3]**
 
 - **CRITICAL:**
   - `WarrantyTextExtractor` uses shared `SimpleDateFormat` instances across parallel batch imports — not thread-safe (B45)
@@ -260,7 +267,7 @@
 ### B.4: Database/DAO/Entity Pipeline
 **Batches:** 11, 12, 13, 14, 15, 27, 28, 29
 
-**[RESOLVED BY B.4]** — All items below were addressed across B.4 micro-batches 1–10 plus late closeout fixes (ISSUE-B4-11: migration 76→77 `UserCorrection.originalMerchant` index; migration 77→78 `AnomalyAlert (category, alertedAt)` composite index; `InvestmentTracker` recent-value ordering; `ExpenseRepository` paged-projection re-verification; Batch 29 final: `formattedTime` extension rename + stale `TransactionsScreen` import removed; migration 78→79 `ExchangeRate.toCurrency` supplementary index). Targeted validation evidence and device/environment waivers recorded in `docs/reviews/REVIEW-B4.md`. Final schema version: 79.
+**[RESOLVED BY B.4]** — All items below were addressed across B.4 micro-batches 1–10 plus late closeout fixes (ISSUE-B4-11: migration 76→77 `UserCorrection.originalMerchant` index; migration 77→78 `AnomalyAlert (category, alertedAt)` composite index; `InvestmentTracker` recent-value ordering; `ExpenseRepository` paged-projection re-verification; Batch 29 final: `formattedTime` extension rename + stale `TransactionsScreen` import removed; migration 78→79 `ExchangeRate.toCurrency` supplementary index). Targeted validation evidence and device/environment waivers recorded in `docs/reviews/REVIEW-B4.md`. Final schema version: 81.
 
 - **CRITICAL:**
   - (None — all database issues are High or below)
@@ -320,6 +327,8 @@
 ### B.5: Location/Geocoding Pipeline
 **Batches:** 18, 30, 32, 42, 44
 
+**[PARTIALLY_RESOLVED - Many fixes landed but 13 items still open]**
+
 - **CRITICAL:**
   - (None)
 
@@ -340,27 +349,28 @@
   - Merchant location global-key encoding inconsistency — `"global"` vs `"<normalized>|global"` (B15)
 
 - **MEDIUM:**
-  - `AndroidForegroundLocationProvider.getLastKnownLocation()` only calls `getCurrentLocation()`, never reads cached `lastLocation` (B30)
-  - `CompositeGeocodingService.safeLookup()` maps unexpected provider exceptions to `Unknown` — only cascades on transient errors, disabling fallback chain (B30)
+  - [RESOLVED] `AndroidForegroundLocationProvider.getLastKnownLocation()` only calls `getCurrentLocation()`, never reads cached `lastLocation` (B30)
+  - [RESOLVED] `CompositeGeocodingService.safeLookup()` maps unexpected provider exceptions to `Unknown` — only cascades on transient errors, disabling fallback chain (B30)
   - `NominatimGeocodingService.searchMultiple()` accepts `limit` but always sends `NOMINATIM_MAX_RESULTS` (B30)
   - `LocationResolver` fetches device location before correction/cache checks — multiplies latency and battery cost in backfill runs (B30)
   - Grid-cell bucketing uses `.toLong()` (truncate toward zero) instead of flooring — negative lat/lon hash to wrong cell (B42)
   - `PriceProtectionTracker` uses `receipt.createdAt` and `Instant.now()` instead of `parsedDate` and `TimeProvider` — imported old receipts look newly eligible (B42, B44)
   - `PriceProtectionTracker` generates price drops/deals/coupons from hard-coded heuristics, rendered in user-facing UI as real results (B42, B44)
   - `PriceProtectionTracker.getDealsCouponsAndBenefits()` loads entire receipts table then applies `take(20)` (B42, B44)
-  - `MerchantLocationRepository` cache hits call DAO methods that update `lastResolvedAt` — TTL based on last access, not last resolution (B32)
-  - DAO uses `CAST(lat/0.045 AS INTEGER)` while repository uses `floor(...)` — negative coordinates hash to different area keys (B42)
+  - [RESOLVED] DAO uses `CAST(lat/0.045 AS INTEGER)` while repository uses `floor(...)` — negative coordinates hash to different area keys (B42)
 
 - **LOW:**
   - `SpendingMapScreen` date-range chips built from `remember { System.currentTimeMillis() }` — stale windows on long-lived screens (B18)
   - `SpendingMapViewModel` manual `recomputeMapData()` races with reactive collector (B18)
   - Map auto-centres on every GPS change — yanks map away from user viewport (B18)
-  - `AreaSpendingEngine` grid cells keep first parsed area name — mixed-address cells labelled by unrepresentative first expense (B42)
-  - `TravelDetectionEngine` destination hints extracted with `split(",").getOrNull(1)` — one-part addresses lose destination label (B42)
+  - [RESOLVED] `AreaSpendingEngine` grid cells keep first parsed area name — mixed-address cells labelled by unrepresentative first expense (B42)
+  - [RESOLVED] `TravelDetectionEngine` destination hints extracted with `split(",").getOrNull(1)` — one-part addresses lose destination label (B42)
   - `MerchantNormalizer` logs raw merchant names in plaintext (B42)
 
 ### B.6: Notification/Service/Worker Pipeline
 **Batches:** 20, 21, 23, 33, 36, 39, 44
+
+**[PARTIALLY_RESOLVED - Many fixes landed but 11 items still open]**
 
 - **CRITICAL:**
   - (None)
@@ -385,17 +395,17 @@
 
 - **MEDIUM:**
   - `NotificationFilter.shouldCapture()` lowercases content but `REGEX_CURRENCY` only matches uppercase — misses lowercase currency codes (B20)
-  - `NotificationCaptureService.onDestroy()` cancels `serviceJob` immediately — in-flight `processNotification()` can be aborted before persistence (B20)
+  - [RESOLVED] `NotificationCaptureService.onDestroy()` cancels `serviceJob` immediately — in-flight `processNotification()` can be aborted before persistence (B20)
   - `RecommendationStateManager.clearForUser()` always clears in-memory state even when cleared user is not currently displayed (B20)
   - `RecommendationDeduplicator.computeSignature()` always includes `rec.category` — same effective filter with different originating categories treated as distinct (B20)
   - `RecommendationDeduplicator.computeSignature()` omits `ownership` from signature — recommendations differing only by ownership type incorrectly collapsed as duplicates (B47-missed)
   - `NotificationCaptureService` force-started at boot, re-started every minute via repeating alarm — unnecessary wakeups (B21)
-  - `RecommendationInvalidator.invalidateAllForUser()` claims to invalidate all but only clears cache and expires already-expired rows (B21)
+  - [RESOLVED] `RecommendationInvalidator.invalidateAllForUser()` claims to invalidate all but only clears cache and expires already-expired rows (B21)
   - `NotificationRepository.deleteAll()` wipes notifications/expenses/reviews/corrections but only zeroes `pendingReview` in `source_stats` — other counts remain stale (B33)
   - `WidgetStyleRepositoryImpl` DataStore flow lacks `catch` — store corruption terminates all consumers (B33)
-  - `ReviewQueueRepository.markAsRelevant(true)` inserts new `PendingReview` when reparsing fails without checking for existing review (B33)
+  - [RESOLVED] `ReviewQueueRepository.markAsRelevant(true)` inserts new `PendingReview` when reparsing fails without checking for existing review (B33) — repository upsert path is fixed and `pending_reviews.rawNotificationId` uniqueness now matches on both upgrade (`81→82`) and fresh-install callback paths
   - `SmsParser` and `RevolutParser` amount regex only accepts single decimal separator — thousands-separated amounts rejected (B44-missed)
-  - `NotificationProcessingPipeline` oversized-amount fallback inserts `PendingReview` without semantic duplicate check (B33)
+  - [RESOLVED] `NotificationProcessingPipeline` oversized-amount fallback inserts `PendingReview` without semantic duplicate check (B33)
 
 - **LOW:**
   - AI briefing notifications use `targetKey.hashCode()` directly instead of shared notification ID allocator (B21)
@@ -408,6 +418,8 @@
 
 ### B.7: Export/Backup Pipeline
 **Batches:** 39, 44
+
+**[PARTIALLY_RESOLVED - Much improved but still has code issues]**
 
 - **CRITICAL:**
   - (None)
@@ -422,19 +434,20 @@
   - Repository export path buffers capped result set while UI export path pages deterministically — one path already truncates (B39)
 
 - **MEDIUM:**
-  - All three exporters keep `SimpleDateFormat` as instance state, Hilt provides as singletons — concurrent exports race on shared formatter (B39)
+  - [RESOLVED] All three exporters keep `SimpleDateFormat` as instance state, Hilt provides as singletons — concurrent exports race on shared formatter (B39)
   - All exporters emit raw `Double.toString()` for money — inconsistent precision or scientific notation (B39)
   - `DebugData.toJson()` hand-builds JSON, only escapes subset of fields — backslashes/control chars produce invalid JSON (B39)
-  - `includeReceipts` parameter exposed but never used (B33-missed)
   - Generic CSV export header omits currency column — mixed-currency CSV flattens unlike amounts (B39-missed)
   - CSV escaping handles commas/quotes/newlines but not formula-injection prefixes (`=`, `+`, `-`, `@`) (B37)
 
 - **LOW:**
   - `DebugData` transaction dates exported as epoch millis while metadata uses ISO — not a functional bug (B39)
-  - Mileage summary exposes first trip's `deductionRatePerKm` as if one rate applied to whole period (B37)
+  - [RESOLVED] Mileage summary exposes first trip's `deductionRatePerKm` as if one rate applied to whole period (B37)
 
 ### B.8: Savings/Investment Pipeline
 **Batches:** 03, 05, 32, 37, 41, 45, 48
+
+**[PARTIALLY_RESOLVED - additional verified Phase B.8 fixes landed in this pass; resolved bullets are marked inline below]**
 
 - **CRITICAL:**
   - (None)
@@ -464,18 +477,17 @@
   - `monthlyDiscretionary` always divides by `3.0` for any non-empty 90-day history (B03, B45)
   - `FinancialHealthScoreV2` bill reliability derived from recurring-pattern confidence, not due-date/on-time-payment signal (B41)
   - `RecurringIncomeTracker` uses raw `amount` instead of `effectiveAmount` — shared transactions overstated (B41)
-  - Confidence scoring compares millisecond-squared variance against tiny raw threshold — "low variance" branch practically unreachable (B41)
+  - Confidence scoring compares millisecond-squared variance against tiny raw threshold — "low variance" branch practically unreachable (B41) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 5: confidence variance now uses normalized day-scale metrics instead of ms² thresholds]**
   - `getStartOfMonth()` leaves milliseconds untouched — transactions at `00:00:00.000` can fall before computed start (B41)
   - `ReceiptMatchingWorker` rescans all unmatched receipts every run with no last-attempt marker (B45)
   - `LifestyleSavingsPromptUseCase` treats `savingsRate <= 1.0` as fraction but detector emits percentages — low rates inflated 100x (B05, B48)
   - Sweep-risk spending includes `WITHDRAWAL` while budget paths use purchase-only (B48)
-  - Null Monte Carlo falls back to hardcoded `100.0` risk buffer (B48)
-  - `MAX_SINGLE_ALLOCATION_PERCENT` enforced only for non-last goals — final remainder branch can exceed cap (B05-missed, B48-missed)
-  - `InvestmentTracker.updatePrice()` stores `dayChange` against previous snapshot, not previous day's close (B41-missed)
+  - Null Monte Carlo falls back to hardcoded `100.0` risk buffer (B48) **[RESOLVED - fallback now derives from spent-to-date, known upcoming obligations, budget size, and days remaining]**
+  - `MAX_SINGLE_ALLOCATION_PERCENT` enforced only for non-last goals — final remainder branch can exceed cap (B05-missed, B48-missed) **[RESOLVED - final allocation branch now applies remaining-gap and concentration caps consistently]**
 
 - **LOW:**
-  - Conservative `* 3.0` projection is arbitrary product heuristic (B01)
-  - `SavingsGoal.createdAt` defaults to `0L` (B46)
+  - Conservative `* 3.0` projection is arbitrary product heuristic (B01) **[RESOLVED - early-day projection now uses the shared bounded spending-pace projection path in both `SpendingPaceCalculator` and `CalculateFinancialForecastUseCase`, with no live literal `* 3.0` fallback remaining]**
+  - `SavingsGoal.createdAt` defaults to `0L` (B46) **[RESOLVED - domain model now requires explicit `createdAt`]**
   - `PlannedExpense.amount` has no non-negative invariant (B46)
   - Alerts/rankings/history use `getAllInvestments()` instead of active holdings only (B41)
   - `allocationPercentage` keeps pre-cap urgency share — displayed percentages disagree with final allocations (B48)
@@ -483,6 +495,8 @@
 
 ### B.9: UI/Compose Pipeline
 **Batches:** 05, 16, 17, 18, 19, 36, 40, 48
+
+**[PARTIALLY_RESOLVED - additional verified Phase B.9 fixes landed in this pass; resolved bullets are marked inline below]**
 
 - **CRITICAL:**
   - `ReviewViewModel.approveReviewWithEdits()` runs `applyToAll` and `approveAllPending` after primary approve returns `Duplicate` or `Error` — bulk mutations run even though edited approval failed (B18)
@@ -494,16 +508,15 @@
   - Date chips not initialized from `currentFilter`, Apply falls back to previous filter — existing date filters cannot be viewed or cleared (B16)
   - Date headers sum unsigned `effectiveAmount`, render red only when aggregate negative — expense-heavy days shown as positive green totals (B16, B17)
   - Category/merchant/type/not-mine/shared edits update database but don't refresh `_pagedExpenses` — `ALL` tab shows stale rows (B16, B17)
-  - `HomeViewModel.reloadDashboard()` doesn't recreate dashboard pipeline after `Error` — Home stuck on same error state (B17)
+  - `HomeViewModel.reloadDashboard()` doesn't recreate dashboard pipeline after `Error` — Home stuck on same error state (B17) **[RESOLVED - reload now rebuilds processed dashboard flow via a reload trigger]**
   - `TransactionsViewModel.applyFilter()` stores `TransactionFilter.ownership` in `_filter` but actual filtering uses `_ownershipFilter` — external ownership filter shown as active but results unfiltered (B17)
   - Manual expense creation and recurring-rule creation not atomic — expense insert succeeds, recurring-rule creation throws, UI reports failure (B17)
   - Year-over-year analytics computed from `purchases` containing only selected period — prior-year data missing for TODAY/WEEK/MONTH/QUARTER (B17)
-  - `BudgetForecastingViewModel` on first forecast failure, `_uiState.budget` remains null — `refreshForecast()` becomes no-op, Retry cannot recover (B17)
+  - `BudgetForecastingViewModel` on first forecast failure, `_uiState.budget` remains null — `refreshForecast()` becomes no-op, Retry cannot recover (B17) **[RESOLVED - budget and forecast period are retained across failures so retry can recover]**
   - `SharedExpenseGroupsViewModel.loadGroups()` rebuilds state from scratch, wiping `selectedGroup` and dialog flags (B18)
-  - `Expense.isNotMine` + `isSharedExpense` simultaneously allowed; `effectiveAmount` zeroes both — rows disappear from analytics (B16)
+  - `Expense.isNotMine` + `isSharedExpense` simultaneously allowed; `effectiveAmount` zeroes both — rows disappear from analytics (B16) **[RESOLVED - ownership flags are now normalized in entity helpers, repositories, add-expense UI, and migration cleanup]**
   - `TransactionsViewModel` external `dateRange` filters intersected with default `MONTH` tab window — drill-down navigation clips results (B16)
   - `VisualSplitEditorScreen` "Apply Split" hands data to callback but navigation host navigates back and discards result — no-op (B19)
-  - Spending challenges end-to-end feature incomplete — no persistence API, no domain manager wire-up (B19)
   - `SavingsGoalsViewModel` contributions use read-modify-write snapshots plus `updateGoalAmount()` — concurrent contributions lose money (B18)
   - `AssistantViewModel` clarification replies intentionally drop `conversationHistory` — follow-up answers interpreted without prior context (B19)
   - `AiSettingsViewModel.testConnection()` persists typed API key before connectivity test succeeds — failed tests overwrite working key (B19)
@@ -511,7 +524,6 @@
   - Visual split assigned amounts matched by `participantName` — duplicate names make multiple rows resolve to same segment (B19)
   - `LifestyleInflationViewModel.analyze()` launches detached jobs without cancelling prior requests — slower older analyses replace newer report (B19)
   - `CarbonFootprintViewModel.loadReport()` has same detached-job pattern — quick period changes leave stale report (B19)
-  - `SpendingChallengesViewModel.activeChallenges` exposed to UI but never populated (B19)
   - `AddGroupExpenseUseCase` accepts zero/negative/non-finite amounts and blank descriptions (B40)
   - `ReviewQueueRepository` approved transfer/deposit reviews never copy `suggestedDirection`/`suggestedAccountName` into `Expense` — transfer metadata lost (B18)
   - Review approval pipeline loses optional metadata end-to-end — place id dropped, transfer metadata never copied (B18)
@@ -522,8 +534,7 @@
   - Active-filter banner only depends on `activeFilter != null` — ownership-only filtering leaves list filtered with no visible banner (B16, B17)
   - Shared-expense editing accepts blank participant names and both-or-neither share fields (B16)
   - Month/year filter ranges use `System.currentTimeMillis()` instead of `TimeProvider`, end timestamps stop at `:59.000` (B16)
-  - `correlationId` defaults to `System.currentTimeMillis()`, part of data-class equality — logically identical filters compare unequal (B16)
-  - `BudgetViewModel.uiState` recalculates `calculateAdjustedSpend()` for every budget on every emission (B17)
+  - `BudgetViewModel.uiState` recalculates `calculateAdjustedSpend()` for every budget on every emission (B17) **[RESOLVED - adjusted budget statuses now refresh on a dedicated budget trigger instead of every combined emission]**
   - Budget suggestions loaded only from `_refreshTrigger` — add/delete/toggle mutations don't bump trigger (B17)
   - `AdvancedAnalyticsViewModel` on exception only sets `_dashboardData` to null — screen falls through to blank surface with no error/retry (B17)
   - `BudgetViewModel` suggestions loading wrapped in one-shot flow with no local recovery — one failure terminates shared UI pipeline (B17)
@@ -554,6 +565,8 @@
 ### B.10: Categorization/Intelligence Pipeline
 **Batches:** 31, 38, 41, 42, 44
 
+**[PARTIALLY_RESOLVED - 16/35 verified resolved, 17 still open, 2 false positives]**
+
 - **CRITICAL:**
   - (None)
 
@@ -573,15 +586,13 @@
   - `MerchantCanonicalizer` treats single-character prefix `"s"` as removable business prefix — `"s market"` → `"market"` (B38)
   - `ContextualInferenceEngine.isLikelySurname()` drops words shorter than 3 chars before checking `BUSINESS_INDICATORS` — 2-letter legal suffixes like `AE`/`SA`/`AB` ignored (B38)
   - `GreeklishNormalizer.getVariations()` compares normalized input against raw alias lists — case/spacing/Greek-script variants miss (B38)
-  - `CurrencyConverter.storeRate()` accepts zero, negative, `NaN`, infinite exchange rates (B38)
-  - `AppConfig` Nominatim User-Agent hardcodes personal email address in shipped source (B38)
+  - [RESOLVED] `CurrencyConverter.storeRate()` accepts zero, negative, `NaN`, infinite exchange rates (B38)
   - `Merchant approval/rejection history` cached under lowercase keys, DB queries use raw merchant string — casing/spacing variants miss prior corrections (B41)
   - `CrossSourceDeduplication.isCrossSourceDuplicate()` doesn't compare real transaction data — bank-like sources with non-blank merchant treated as same transaction (B41, B42)
-  - Default 24-hour duplicate window broad enough to collapse legitimate repeat purchases, candidate confidence ignores time distance and merchant proximity (B41)
   - `TransactionClassifier` retraining rebuilds counts without clearing `vocabulary` — old tokens remain, inflate `vocabularySize` (B41, B42)
   - `FeatureExtractor.extractFromNotification()` uses current wall clock instead of notification timestamp — reprocessing produces different features (B41)
-  - `HybridExpenseClassifier` categories loaded once and cached forever — added/renamed categories invisible until restart (B41)
-  - `SemanticKeywordMatcher` wraps every keyword in `\b...\b` — keywords ending in non-word characters like `disney+` never match (B38-missed)
+  - [RESOLVED] `HybridExpenseClassifier` categories loaded once and cached forever — added/renamed categories invisible until restart (B41)
+  - [RESOLVED] `SemanticKeywordMatcher` wraps every keyword in `\b...\b` — keywords ending in non-word characters like `disney+` never match (B38-missed)
   - `CategoryRepository.ensureDefaultCategories()` seeds merchant dictionary only when categories table empty — existing installations never receive seeded mappings (B31-missed)
   - `AppleReceiptParser` and `UberReceiptParser` `detectCurrency()` uses raw substring checks for short region fragments — `MUSIC`, `ORDER`, `DETAILS` select wrong currency (B31-missed)
   - Dead feature pipeline — classifier trains/classifies only on `merchantTokens`; amount, day, hour, weekend, source-package features extracted but thrown away (B42)
@@ -596,10 +607,12 @@
   - `CategoryKeywords` `"roasters"` declared twice — last entry silently downgrades confidence from `0.85` to `0.0.70` (B38-missed)
   - Levenshtein distance duplicated across modules instead of reusing `StringDistanceUtils` (B38)
   - `MerchantNormalizer` truncates long names for matching but alias persistence stores original `rawName` (B41)
-  - `fuzzyMatch()` picks first BK-tree result, then computes Jaro-Winkler — equal-distance candidates can resolve suboptimally (B41)
+  - [RESOLVED] `fuzzyMatch()` picks first BK-tree result, then computes Jaro-Winkler — equal-distance candidates can resolve suboptimally (B41)
 
 ### B.11: Email/Parsing Pipeline
 **Batches:** 31, 43, 44
+
+**[PARTIALLY_RESOLVED - additional verified Phase B.11 fixes landed in this pass; resolved bullets are marked inline below]**
 
 - **CRITICAL:**
   - (None)
@@ -613,7 +626,6 @@
   - Uber date pattern stores `AM/PM` in group 1, actual date in group 2, but `extractDate()` always reads group 1 (B31)
   - All three provider parsers assume English month names and dot-decimal amounts — localized receipts rejected or misdated (B31)
   - `GenericTransactionParser` treats `transfer received` as deposit, emits `DEPOSIT` instead of `TRANSFER` (B43)
-  - `GoogleWalletParser` has no transfer path — P2P sends emitted as `PURCHASE`, incoming P2P as `DEPOSIT` (B43)
   - `BankStatementParser` Revolut path emits only `DEPOSIT` or `PURCHASE` — transfers/top-ups/refunds misclassified (B44)
   - `OcrLanguageProcessor.normalizeForLanguage()` routes Cyrillic/Arabic/CJK through Latin-only normalization (B44)
   - `OcrLanguageProcessor` amount extraction mishandles locale-specific separators (B44)
@@ -621,13 +633,12 @@
   - `BillReminderManager` `SEMI_ANNUALLY` not handled in reminder scheduling or monthly-cost conversion (B43-missed)
 
 - **MEDIUM:**
-  - Seeded merchant mappings uppercased and inserted without `normalizedCanonicalName` — fuzzy layer filters with case-sensitive `startsWith(prefix)` against lowercase input, seeded mappings never participate in fuzzy fallback (B31)
+  - Seeded merchant mappings uppercased and inserted without `normalizedCanonicalName` — fuzzy layer filters with case-sensitive `startsWith(prefix)` against lowercase input, seeded mappings never participate in fuzzy fallback (B31) **[RESOLVED - seeded and learned mappings now share canonical-name construction and missing canonical names are backfilled]**
   - `ProcessReceiptUseCase` injected but email receipt service never calls it — email imports have separate behavior path that can drift (B31)
-  - `AndroidSpeechInputGateway` starts without `RECORD_AUDIO` permission guard or `SecurityException` handling (B31)
   - `CustomSplitParser` validates with raw `Double` sums and inclusive tolerances — boundary-valid payloads rejected by floating-point drift (B43)
   - `CUSTOM_AMOUNT`/`UNEQUAL` splits accept arbitrary decimal precision — sub-cent liabilities stored (B43)
-  - `RecurringExpenseEngine` groups merchants with `lowercase().trim()` instead of canonical merchant key (B43)
-  - `SynthesisEngine.pastSumDaily.lastOrNull()` used without `isFinite()` guard — single `NaN`/`Infinity` poisons every projected point (B43)
+  - `RecurringExpenseEngine` groups merchants with `lowercase().trim()` instead of canonical merchant key (B43) **[RESOLVED - recurring grouping now prefers stored `merchantKey` and falls back to canonical merchant-key generation]**
+  - `SynthesisEngine.pastSumDaily.lastOrNull()` used without `isFinite()` guard — single `NaN`/`Infinity` poisons every projected point (B43) **[RESOLVED - past spending series is sanitized before tail lookup and forecast emission]**
   - `GenericTransactionParser` date extraction uses lenient `Calendar` normalization — impossible dates accepted (B43)
   - `GreekBankParser` transfer parsing accepts Latin one-letter codes but direction detection only recognizes Greek/full-word codes (B43)
   - `SmsParser` and `RevolutParser` amount regex only accepts single decimal separator — thousands-separated amounts rejected (B44-missed)
@@ -638,6 +649,8 @@
 
 ### B.12: Groups/Shared Expenses Pipeline
 **Batches:** 33, 40, 43
+
+**[PARTIALLY_RESOLVED - additional verified Phase B.12 fixes landed in this pass; resolved bullets are marked inline below]**
 
 - **CRITICAL:**
   - (None)
@@ -652,27 +665,27 @@
   - `SharedExpenseBudgetOffsetEngine` group expense creation inserts full system `Expense` then adds user's group share on top — adjusted budget pipeline can overcount linked group expenses (B33-missed)
 
 - **MEDIUM:**
-  - `SharedExpenseManager.addExpense()` can persist group expense whose `paidById` belongs to different group — DB enforces member exists but not same-group membership (B40)
+  - `SharedExpenseManager.addExpense()` can persist group expense whose `paidById` belongs to different group — DB enforces member exists but not same-group membership (B40) **[RESOLVED - payer must now belong to the target group's current member set]**
   - `SharedExpenseBudgetOffsetEngine.getPendingReimbursement()` subtracts `totalReimbursed` from `totalSharedSpend` — fields represent different concepts, sign and amount can be wrong (B40)
   - `isExpenseFullySettled()` uses `myShareAmount ?: totalAmount / members.size` as generic fallback — ignores custom splits, misuses current-user-specific field (B40)
   - Equal-split budget math uses naive floating-point division while authoritative group split uses cent-based remainder distribution (B40)
-  - `SharedExpenseManager.addExpense()` validates custom-split finiteness but doesn't reject blank descriptions, non-finite totals, non-positive amounts (B40-missed)
+  - `SharedExpenseManager.addExpense()` validates custom-split finiteness but doesn't reject blank descriptions, non-finite totals, non-positive amounts (B40-missed) **[RESOLVED - blank descriptions and invalid total amounts are now rejected up front]**
   - `SharedExpenseBudgetOffsetEngine.calculateMyShare()` diverges from authoritative split pipeline for `CUSTOM_PERCENT` and malformed payloads (B40-missed)
   - `SharedExpenseBudgetOffsetEngine.calculateEffectiveBudgetSpend()` accepts `userId` but never uses it (B40-missed)
   - `SharedExpenseGroupsViewModel` computes splits and balances via `SplitCalculator` directly instead of consuming domain services (B40)
   - Room-entity repository path vs domain-port path: group subsystem has two parallel access patterns (B40)
   - `SynthesisEngine` resolves `budgetLimit` as `overall budget or category-budget sum`, but Block Party receives only `overallBudget?.budgetAmount` (B43)
-  - `SharedExpenseDataPortAdapter.addMember()` bypasses `GroupTransactionCoordinator.addMemberToGroup()` — archived/inactive-group validation skipped for member creation (B33-missed)
+  - `SharedExpenseDataPortAdapter.addMember()` bypasses `GroupTransactionCoordinator.addMemberToGroup()` — archived/inactive-group validation skipped for member creation (B33-missed) **[RESOLVED - member creation now routes through coordinator validation before resolving inserted ID]**
   - Validation pipeline for group creation vulnerable to archive/member-change races (B11)
   - UI validation → database: invariants only inconsistently enforced above DB (B12)
   - `customSplitsJson` not actually JSON; parsing split between `CustomSplitParser` and `SharedExpenseBudgetOffsetEngine` (B13)
 
 - **LOW:**
   - `SharedExpenseManager.isCurrentUser = (name == currentUserName)` is case-sensitive (B40)
-  - `SharedExpenseManager.addExpense()` hardcodes `System.currentTimeMillis()` (B40)
+  - `SharedExpenseManager.addExpense()` hardcodes `System.currentTimeMillis()` (B40) **[RESOLVED - group expense creation now uses injected `TimeProvider`]**
   - `AddGroupExpenseUseCase` hardcodes `System.currentTimeMillis()` in default `date` parameter (B40)
   - `SharedExpenseBudgetOffsetEngine` hardcodes `Dispatchers.IO` (B40)
-  - Personal-spend summation uses `amount` instead of `effectiveAmount` (B40)
+  - Personal-spend summation uses `amount` instead of `effectiveAmount` (B40) **[RESOLVED - budget-offset personal spend now sums `effectiveAmount`]**
   - `SharedExpenseBudgetOffsetEngine` imports Room entities and repository implementations directly (B40)
   - `AddGroupExpenseUseCase` depends directly on data-layer types (B40)
 
@@ -685,9 +698,9 @@
 1. **effectiveAmount standardization** → Blocks: All analytics, budget, business, tax, currency, challenge, and receipt-matching pipelines that currently use raw `amount`
 2. **Budget period/window centralization** → Blocks: Budget status, forecasting, shared-budget progress, alerts, dashboard weather, recommendations
 3. **Duplicate detection policy centralization (currency-aware)** → Blocks: Notification ingestion, review approval, statement import, cross-source dedupe
-4. **Domain/data boundary cleanup (BlockPartyDay, DashboardExpenseMapper, AI models)** → Blocks: Dashboard widgets, analytics, AI artifact diagnostics, recommendation engine
-5. **TimeProvider injection everywhere** → Blocks: Deterministic testing, rollover-aware reactive flows, worker day-key consistency, feature extraction reproducibility
-6. **CancellationException handling across all catch blocks** → Blocks: Structured concurrency, proper job lifecycle, stale artifact prevention
+4. **Domain/data boundary cleanup (BlockPartyDay, DashboardExpenseMapper, AI models)** → Blocks: Dashboard widgets, analytics, AI artifact diagnostics, recommendation engine **[STILL_OPEN]**
+5. **TimeProvider injection everywhere** → Blocks: Deterministic testing, rollover-aware reactive flows, worker day-key consistency, feature extraction reproducibility **[PARTIALLY_RESOLVED - D3 time-determinism pass removed targeted wall-clock defaults (including `SourceStats` creation paths), normalized single-capture `now` usage in targeted synthesis/income flows, and completed deterministic parser/date anchoring fixes; broader cross-app rollout still open]**
+6. **CancellationException handling across all catch blocks** → Blocks: Structured concurrency, proper job lifecycle, stale artifact prevention **[STILL_OPEN]**
 7. **Deduplication locale-invariant amount formatting** → Blocks: Cross-locale duplicate detection in notification ingestion, statement import, review approval (B12)
 
 ### C.2: Sequential Fix Dependencies
@@ -696,9 +709,9 @@
 - Step 2: Make BudgetCalculator single source of truth for period math → Enables: Fix forecasting, shared-budget, alerts, dashboard weather (B.2 → B.6)
 - Step 3: Fix duplicate detection (currency + transaction type) → Enables: Fix notification pipeline, review approval, statement import (A.4 → B.6/B.11)
 - Step 4: Remove DashboardExpense→Expense round-trip → Enables: Fix dashboard widgets, analytics, block-party, spending pace (A.2 → B.9)
-- Step 5: Inject TimeProvider everywhere → Enables: Fix rollover-aware flows, worker consistency, feature extraction reproducibility (A.3 → B.5/B.6/B.10)
-- Step 6: Fix CancellationException handling → Enables: Proper structured concurrency across AI, workers, services (A.7 → B.1/B.6)
-- Step 7: Centralize split-resolution logic → Enables: Fix budget-offset, settlement, UI calculation paths (B.12 → B.9)
+- Step 5: Inject TimeProvider everywhere → Enables: Fix rollover-aware flows, worker consistency, feature extraction reproducibility (A.3 → B.5/B.6/B.10) **[PARTIALLY_RESOLVED - D3 time-determinism pass closed targeted D.3 wall-clock/multi-now hotspots; full app-wide rollout remains open]**
+- Step 6: Fix CancellationException handling → Enables: Proper structured concurrency across AI, workers, services (A.7 → B.1/B.6) **[STILL_OPEN]**
+- Step 7: Centralize split-resolution logic → Enables: Fix budget-offset, settlement, UI calculation paths (B.12 → B.9) **[STILL_OPEN]**
 - Step 8: Fix AI routing/privacy policy → Enables: Fix all AI use case input builders, cloud providers, artifact persistence (B.1 → B.3)
 
 ### C.3: Independent Fix Groups
@@ -707,56 +720,56 @@
 - **Group 2: Email parser fixes** — Capture groups, HTML parsing, locale-aware amounts, currency detection (B.11)
 - **Group 3: Geocoding service fixes** — Retry semantics, Unicode normalization, log sanitization, HTTP cancellation (B.5)
 - **Group 4: Export format fixes** — Currency column, transaction type, PDF generation, formula-injection escaping (B.7)
-- **Group 5: UI Compose fixes** — Pagination, filter state, ownership validation, date header signs (B.9)
+- **Group 5: UI Compose fixes** — Pagination, filter state, ownership validation, date header signs (B.9) **[STILL_OPEN]**
 - **Group 6: Notification pipeline fixes** — Package allowlist, text fallback chain, recommendation state management (B.6)
 - **Group 7: Investment tracker fixes** — Fee inclusion, day-change calculation, portfolio history, all-time extrema (B.8)
 - **Group 8: Tax estimator fixes** — Progressive brackets, period math, annual summary, business-only scope (B.8)
-- **Group 9: Analytics engine consistency** — `InsightsEngine`, `AdvancedAnalyticsDashboard`, `AdvancedAnalyticsEngine`, and `SpendingPersonalityClassifier` re-implement each other's logic; merchant naming, day ordering, and anomaly baselines already diverge — fix at source engines before fixing consumers (B36-missed)
+- **Group 9: Analytics engine consistency** — `InsightsEngine`, `AdvancedAnalyticsDashboard`, `AdvancedAnalyticsEngine`, and `SpendingPersonalityClassifier` re-implement each other's logic; merchant naming, day ordering, and anomaly baselines already diverge — fix at source engines before fixing consumers (B36-missed) **[RESOLVED BY D3-ANALYTICS-FORECASTING - InsightsEngine now delegates to canonical analytics engines/calculators; no inline reimplementations remain; merchant anomaly baselines exclude current-month data; recurring frequency uses cadence labels]**
 - **Group 10: Lifestyle savings prompt pipeline** — `LifestyleSavingsPromptUseCase` evaluates savings rate and fires prompts but never records impressions; cooldown never starts after show, only after action — fix impression recording to close the loop (B33-missed)
-- **Group 11: `ExpenseDao` weekly aggregates** — `MIN(date)/MAX(date)` transaction timestamps forwarded as week boundaries — final transaction of week or day can be omitted from weekly analytics (B36-missed)
-- **Group 12: Financial health KPI duplication** — `FinancialHealthCalculator ↔ FinancialHealthScoreV2 ↔ ComputeDashboardWidgetsUseCase` — two incompatible health KPIs side by side with different formulas/filters/week definitions (B03)
-- **Group 13: FinancialHealthScoreV2 exception swallowing** — `FinancialHealthScoreV2 → ComputeDashboardWidgetsUseCase` V2 swallows fatal calculation exceptions into `50` — dashboard renders as real health data (B03)
-- **Group 14: Dual Monte Carlo implementations** — `FinancialStressForecastEngine` injects but doesn't use `MonteCarloSpendingSimulator` — two separate Monte Carlo implementations with divergent assumptions coexist (B04)
-- **Group 15: MonthlySavingsSweepUseCase dead widget** — `MonthlySavingsSweepUseCase → ComputeDashboardWidgetsUseCase → HomeScreen` — `DashboardWidget.SavingsSweepPrompt` never emitted, `HomeScreen` renders empty placeholder (B05)
-- **Group 16: AI artifact → recommendation persistence** — `RecommendationEntity.sourceArtifactId` joins and cleanup cannot be enforced safely — stored as required `String` with empty-string sentinels (B12)
-- **Group 17: Merchant analytics inconsistency** — some paths group by raw merchant text, some by canonical `merchantKey`, one path exposes key as display name — fix at engine level before fixing consumers (B36)
-- **Group 18: Forecasting duplication and divergent assumptions** — `FinancialStressForecastEngine ↔ MonteCarloSpendingSimulator ↔ DataQualityAssessor` — different period math, sampling strategies, and confidence models (B37)
+- **Group 11: `ExpenseDao` weekly aggregates** — `MIN(date)/MAX(date)` transaction timestamps forwarded as week boundaries — final transaction of week or day can be omitted from weekly analytics (B36-missed) **[RESOLVED BY D3-TIME-DETERMINISM - weekly boundaries are now canonicalized to Monday-start/next-Monday-exclusive ranges via `TimePeriodUtils` normalization in the repository path]**
+- **Group 12: Financial health KPI duplication** — `FinancialHealthCalculator ↔ FinancialHealthScoreV2 ↔ ComputeDashboardWidgetsUseCase` — two incompatible health KPIs side by side with different formulas/filters/week definitions (B03) **[RESOLVED - dashboard now emits a single authoritative health KPI: V2 when available, legacy only as fallback]**
+- **Group 13: FinancialHealthScoreV2 exception swallowing** — `FinancialHealthScoreV2 → ComputeDashboardWidgetsUseCase` V2 swallows fatal calculation exceptions into `50` — dashboard renders as real health data (B03) **[RESOLVED - both the top-level score path and the bill-reliability subpath now propagate non-cancellation failures instead of fabricating fallback scores, so callers can suppress the widget rather than mixing real data with synthetic health output]**
+- **Group 14: Dual Monte Carlo implementations** — `FinancialStressForecastEngine` injects but doesn't use `MonteCarloSpendingSimulator` — two separate Monte Carlo implementations with divergent assumptions coexist (B04) **[STILL_OPEN]**
+- **Group 15: MonthlySavingsSweepUseCase dead widget** — `MonthlySavingsSweepUseCase → ComputeDashboardWidgetsUseCase → HomeScreen` — `DashboardWidget.SavingsSweepPrompt` never emitted, `HomeScreen` renders empty placeholder (B05) **[RESOLVED - dashboard now computes, emits, and renders the sweep prompt widget]**
+- **Group 16: AI artifact → recommendation persistence** — `RecommendationEntity.sourceArtifactId` joins and cleanup cannot be enforced safely — stored as required `String` with empty-string sentinels (B12) **[STILL_OPEN]**
+- **Group 17: Merchant analytics inconsistency** — some paths group by raw merchant text, some by canonical `merchantKey`, one path exposes key as display name — fix at engine level before fixing consumers (B36) **[RESOLVED BY D3-ANALYTICS-FORECASTING - all merchant analytics paths (AdvancedAnalyticsEngine, MerchantInsightEngine, InsightsEngine, AnalyticsViewModel) now group by canonical merchantKey via AnalyticsWindowingSupport; display names resolved separately; O(merchants × history) eliminated]**
+- **Group 18: Forecasting duplication and divergent assumptions** — `FinancialStressForecastEngine ↔ MonteCarloSpendingSimulator ↔ DataQualityAssessor` — different period math, sampling strategies, and confidence models (B37) **[RESOLVED BY D3-ANALYTICS-FORECASTING - confidence/horizon semantics explicitly documented as intentionally isolated (stress=probability-tiered, MonteCarlo=data-quality-tiered) with adapter notes in FinancialStressForecastEngine; shared ForecastInputAssembler converges recurring inputs]**
 - **Group 19: RevolutParser ↔ BankStatementParser inconsistency** — same Revolut bank produces different transaction types (TRANSFER vs PURCHASE/DEPOSIT) depending on parser path (B44)
-- **Group 20: ReceiptTransactionMatcher → ReceiptMatchingWorker → NotificationService chain** — matching error becomes data-integrity + notification mismatch (B45)
-- **Group 21: Savings recommendation ↔ automation ↔ gamification divergent ledger** — use different proxies instead of shared contribution ledger (B45)
+- **Group 20: ReceiptTransactionMatcher → ReceiptMatchingWorker → NotificationService chain** — matching error becomes data-integrity + notification mismatch (B45) **[STILL_OPEN]**
+- **Group 21: Savings recommendation ↔ automation ↔ gamification divergent ledger** — use different proxies instead of shared contribution ledger (B45) **[STILL_OPEN]**
 - **Group 22: TaxConfiguration vs TaxEstimator contract mismatch** — `TaxConfiguration` exposes progressive brackets but `TaxEstimator` uses flat-rate (B45)
 - **Group 23: ReceiptRepository.processBatch() parallelism vs WarrantyTextExtractor thread safety** — singleton warranty path reuses one `WarrantyTextExtractor` with shared `SimpleDateFormat` — thread-safety exposed in real pipeline (B45)
 - **Group 24: Block-party domain boundary violation** — `BlockPartyDay` carries `Expense`, use case maps to `DomainExpenseSummary`, UI mapper recreates `Expense` — crosses domain boundary twice (B46)
-- **Group 25: Duplicate model types** — two `CategoryBreakdown` types / two `PeriodRange` types with overlapping semantics used by different screens/components (B46)
-- **Group 26: Inconsistent localization boundary** — raw `String`, `UiText`, hardcoded currency text, direct Android `R` in domain logic (B46)
+- **Group 25: Duplicate model types** — two `CategoryBreakdown` types / two `PeriodRange` types with overlapping semantics used by different screens/components (B46) **[PARTIALLY_RESOLVED - analytics-local `CategoryBreakdown` was removed in favor of `AnalyticsCategoryBreakdown`, but duplicated `PeriodRange` semantics remain open]**
+- **Group 26: Inconsistent localization boundary** — raw `String`, `UiText`, hardcoded currency text, direct Android `R` in domain logic (B46) **[RESOLVED - validated C.1 files now use domain-safe `UiText`/message-key contracts and presentation-layer resolution instead of Android resources in domain code]**
 - **Group 27: RecommendationRepository in-memory dedup vs JSON ordering** — parses JSON into normalized fields but compares rows using `filterCriteria.hashCode()` — semantically identical filters with different JSON ordering bypass cross-call deduplication (B47)
-- **Group 28: Financial weather vs dashboard forecast divergence** — uses merged detected+manual recurring patterns, but dashboard forecast widgets get only manual recurring rows — weather/runway/block-party/Monte Carlo can disagree (B48)
+- **Group 28: Financial weather vs dashboard forecast divergence** — uses merged detected+manual recurring patterns, but dashboard forecast widgets get only manual recurring rows — weather/runway/block-party/Monte Carlo can disagree (B48) **[RESOLVED BY D3-ANALYTICS-FORECASTING - all forecast surfaces (FinancialWeatherRepository, CalculateFinancialForecastUseCase, ComputeDashboardWidgetsUseCase) now consume ForecastInputAssembler with unified recurring merge policy (manual + high-confidence detected ≥ 0.70f, manual precedence); SynthesisEngine consumes shared input contract]**
 
 ---
 
 ## Section D: Isolated / Quick-Win Bugs
 
 ### D.1: Critical (Quick Wins)
-- `CarbonFootprintCalculator.calculateCarbonFootprint()` collects Room Flow in one-shot suspend — replace `collect` with `first()` (B37, B42)
-- `ReviewViewModel.approveReviewWithEdits()` runs bulk mutations after primary approve fails — add early return unless `Result.Success` (B18)
-- `LifestyleInflationScreen` `Modifier.weight(0f)` throws `IllegalArgumentException` — clamp weights to positive minimum (B19)
+- `CarbonFootprintCalculator.calculateCarbonFootprint()` collects Room Flow in one-shot suspend — replace `collect` with `first()` (B37, B42) **[RESOLVED BY AUDIT]**
+- `ReviewViewModel.approveReviewWithEdits()` runs bulk mutations after primary approve fails — add early return unless `Result.Success` (B18) **[RESOLVED BY AUDIT]**
+- `LifestyleInflationScreen` `Modifier.weight(0f)` throws `IllegalArgumentException` — clamp weights to positive minimum (B19) **[RESOLVED BY AUDIT]**
 
 ### D.2: High (Quick Wins)
 - `RecommendationStateManager` sorts by `compareByDescending { it.priority }` using enum ordinal — `LOW` placed ahead of `HIGH` (B20)
 - `BankConnectionDao.disconnect()` leaves token fields intact — null them out in same update (B15) **[RESOLVED BY B.4 — Batch 6: token fields nulled in same update]**
-- `BillReminderManager` urgency thresholds don't match enum semantics — overdue/today should be `CRITICAL` (B39)
+- `BillReminderManager` urgency thresholds don't match enum semantics — overdue/today should be `CRITICAL` (B39) **[RESOLVED - due today/overdue now map to `CRITICAL`, 1-2 days to `URGENT`, 3-7 days to `WARNING`]**
 - `BillReminderManager.markBillPaid()` advances only one interval from stored due date — advance from `max(now, currentDueDate)` (B39)
 - `BudgetForecastingViewModel` on first failure, `_uiState.budget` remains null — persist requested budget before running forecast (B17)
 - `CalculateFinancialForecastUseCase` maps all savings goals to `TRACKING` — map entity protection enum to domain enum (B05, B48)
 - `MonthlySavingsSweepUseCase` goal allocations never capped by remaining gap — cap each goal by remaining target (B05)
-- `SharedBudgetManager.getMemberContributions()` returns hardcoded zero placeholders — disable API or implement real calculation (B02, B37)
+- `SharedBudgetManager.getMemberContributions()` returns hardcoded zero placeholders — disable API or implement real calculation (B02, B37) **[RESOLVED - placeholder output removed; API now fails fast with explicit unsupported state until real budget↔member attribution exists]**
 - `PriceProtectionTracker` generates price drops/deals from hard-coded heuristics rendered as real results — hide behind debug providers (B42, B44)
 - `BankApiIntegration` returns successful OAuth URLs, demo tokens, mock sync results — gate behind "not implemented" error (B39)
 - `ManualRecurringExpense.isSubscription` defaults to `true` — change default to `false` (B12, B13) **[RESOLVED BY B.4 — Batch 4: default changed to `false`]**
 - `TaxEstimator.getTaxYearSummary()` hardcodes annual income to `30000.0` — feed real annual income (B45)
-- `AdvancedAnalyticsDashboard` incoming `TRANSFER` transactions counted as income — filter transfers from cashflow calculation (B36-missed)
+- `AdvancedAnalyticsDashboard` incoming `TRANSFER` transactions counted as income — filter transfers from cashflow calculation (B36-missed) **[RESOLVED - transfers no longer inflate income/cashflow totals]**
 - `AdvancedAnalyticsDashboard` top categories rendered as placeholder labels like `Category 5` — resolve category names from category store (B36-missed)
-- `InsightsEngine` merchant insights expose `ms.merchantName` (canonical key) not display label — use resolved display label (B36-missed)
+- `InsightsEngine` merchant insights expose `ms.merchantName` (canonical key) not display label — use resolved display label (B36-missed) **[RESOLVED - merchant insights now prefer DAO display label and keep canonical key internal]**
 - `InsightsEngine` merchant-level anomaly detection uses all-time stats including current-month — exclude current month from baseline (B36-missed)
 - `InsightsEngine` `RecurringExpense.frequency` set to `30 / intervalDays` — use actual occurrence count (B36-missed)
 - `SpendingPersonalityClassifier.calculateImpulseRatio()` uses `abs(purchase.date - incomeDate)` — only count purchases after payday (B36-missed)
@@ -764,267 +777,284 @@
 - `SynthesisEngine.calculateBlockPartyData()` sorts `topTransactions` by raw `Expense.amount` while rest of budgeting uses `effectiveAmount` — sort by `effectiveAmount` (B46-missed)
 - `DashboardFollowThroughRecommendation.expiresAt` derived from `createdAt` only at construction — later `copy(createdAt = ...)` leaves `expiresAt` stale, breaking TTL invariant (B24)
 - `DashboardExpenseMapper` `DashboardExpense` → `Expense` reconstruction loses shared-expense fields — `isSharedExpense`, `myShareAmount`, `mySharePercentage` not carried through (B24)
-- `SuggestReceiptExtractionUseCase` `sourceHash` derived from `ReceiptAssistInput.hashCode()` including `currentTimeMs` — cache effectively disabled (B36)
+- `SuggestReceiptExtractionUseCase` `sourceHash` derived from `ReceiptAssistInput.hashCode()` including `currentTimeMs` — cache effectively disabled (B36) **[RESOLVED - receipt-assist cache identity now uses stable SHA-256 over deterministic business fields only]**
 - `BillReminderManager.calculateNextDate()` `ANNUALLY`, `SEMI_ANNUALLY`, `IRREGULAR` fall through to default monthly advance — stringly-typed enum drift (B39)
 - `MultiCurrencyRepository` every reporting method calls `expenseDao.getExpensesBetween()` with default 2000-row cap — large reporting windows return incomplete converted totals (B32-missed)
 
 ### D.3: Medium (Quick Wins)
-- `BudgetDao.getOverallBudget()` and `getByCategory()` assume single active row — add deterministic `ORDER BY` (B14)
+### SubBatch D.1
+- `BudgetDao.getOverallBudget()` and `getByCategory()` assumed single active row — both queries now use deterministic `ORDER BY id DESC LIMIT 1` on active budgets **[RESOLVED]**
 - `ExpenseDao.searchMerchants()` uses `UPPER(merchant) LIKE '%...%'` — use normalized/indexed search key (B14)
-- `WarrantyDao.getTotalProtectedValue()` treats `status = 'ACTIVE'` as sufficient — add `currentTime` filter (B14)
+- `WarrantyDao.getTotalProtectedValue()` treated `status = 'ACTIVE'` as sufficient — query now also filters by `warrantyEndDate > :currentTime` **[RESOLVED]**
 - `WarrantyDao.getTotalProtectedValue()` sums raw `expense.amount` instead of `effectiveAmount` (B12)
-- `ExpenseDao` → `BudgetRepository.getSuggestions()` N+1 per-category loop (B14)
-- `CsvExpenseImporter` `line.split(",")` breaks quoted CSV fields — merchants/descriptions with commas corrupt column parsing (B23)
-- `CsvExpenseImporter` failed date parse silently substitutes `System.currentTimeMillis()` — historical expenses rewritten with today's date (B23)
-- `RecurringPattern.kt` missing invariants — allows negative/non-finite amounts, negative variance days, out-of-range confidence/percentage (B24)
-- `WarrantyExtractionModels.kt` missing invariants — allows negative `warrantyMonths`, negative `returnDays`, out-of-range `confidence` (B24)
-- `NotificationParsingModels.kt` missing invariants — documents positive amount and bounded confidence but enforces neither (B24)
-- `DomainTransactionFilter.correlationId` dropped by `TransactionFilterSerializer` — recommendation-generated filters lose end-to-end trace (B24)
-- Artifact hashing — several use cases derive `sourceHash` from `hashCode().toString()`, weaker than SHA-256 for long-lived cache identity (B35)
+- `ExpenseDao` → `BudgetRepository.getSuggestions()` N+1 per-category loop (B14) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 5: suggestions path now batches category spend retrieval and removes per-category query fan-out]**
+- `CsvExpenseImporter` `line.split(",")` breaks quoted CSV fields — merchants/descriptions with commas corrupt column parsing (B23) **[RESOLVED - importer now uses quote-aware CSV tokenization with escaped-quote handling instead of naive `split(",")`]**
+- `CsvExpenseImporter` failed date parse silently substitutes `System.currentTimeMillis()` — historical expenses rewritten with today's date (B23) **[RESOLVED BY D3-TIME-DETERMINISM - invalid date rows are now surfaced as import failures instead of being rewritten to wall-clock `now`]**
+- `RecurringPattern.kt` missing invariants — model now enforces positive finite amounts, non-negative variances/dates, bounded confidence, and non-blank merchant/currency **[RESOLVED]**
+- `WarrantyExtractionModels.kt` missing invariants — allows negative `warrantyMonths`, negative `returnDays`, out-of-range `confidence` (B24) **[RESOLVED - model now enforces positive optional day/month values and bounded finite confidence]**
+- `NotificationParsingModels.kt` missing invariants — documents positive amount and bounded confidence but enforces neither (B24) **[RESOLVED - model now enforces finite positive amount and bounded finite confidence]**
+- `DomainTransactionFilter.correlationId` dropped by `TransactionFilterSerializer` — serializer now preserves `correlationId` in both serialize/deserialize paths **[RESOLVED]**
+- Artifact hashing — `SuggestReceiptExtractionUseCase` now uses stable SHA-256 over deterministic business fields, but multiple AI use cases still derive `sourceHash` from `hashCode().toString()` (including dedupe judge, review explanation, dashboard briefing, transaction insight, and receipt-item categorization) **[RESOLVED - scoped AI artifact paths now use deterministic SHA-256 source hashes via `AiArtifactSourceHash` instead of `hashCode().toString()`]**
 - `toReadableMessage()` / route-diagnostic formatting / failure-message assembly duplicated across AI use cases (B35)
 - `MonteCarloSpendingSimulator.countRecentQualifyingWeeks()` treats any `total > 0` week as qualifying — confidence overstated (B40)
 - `SpendingPatternsCard` `maxOfOrNull(...) ?: 1.0` produces `NaN` when all totals `0.0` — use `takeIf { it > 0 } ?: 1.0` (B17)
-- `TransferDirection.valueOf(review.suggestedDirection)` assumes valid enum — parse with `runCatching` (B18)
+### SubBatch D.2
+- `TransferDirection.valueOf(review.suggestedDirection)` is only partially fixed — review approval now parses defensively, but `ReviewScreen` still calls `TransferDirection.valueOf(it)` directly for transfer badges **[RESOLVED - ReviewScreen transfer badges now use safe parsing (`parseTransferDirectionOrNull`) and no longer call raw enum `valueOf` on untrusted strings]**
 - `CategoryDao.getByName()` is case-sensitive — add unique `COLLATE NOCASE` index (B14)
 - `ReceiptItemCategorizationDao.getTotalForCategoryInExpense()` counts rows where either suggested or corrected matches — use `COALESCE` (B14)
 - `PendingReviewDao` legacy fallback queries have no index on `suggestedMerchant` — add composite index (B14)
-- `MerchantNormalizationDao.getAliasByNormalizedKey()` does `LIMIT 1` on non-unique key — enforce uniqueness (B15)
+- `MerchantNormalizationDao.getAliasByNormalizedKey()` no longer relies on arbitrary `LIMIT 1` behavior — `merchant_aliases.normalizedKey` is now unique, making lookup deterministic **[RESOLVED BY B.4 — Batch 5: `normalizedKey` uniqueness enforced]**
 - `ManualRecurringExpenseDao` dual APIs disagree on ordering — make both use same ordering (B15)
-- `GroupMemberDao.getCurrentUserFlow()` uses `LIMIT 1` with no `ORDER BY` — enforce single current-user row (B15)
-- `GroupExpenseDao.getGroupExpenseForExpense()` returns `LIMIT 1` but `expenseId` only indexed — add unique constraint (B15)
+- `GroupMemberDao.getCurrentUserFlow()` no longer depends on unordered `LIMIT 1` behavior — a partial unique index now enforces at most one `isCurrentUser = 1` row per group **[RESOLVED BY B.4 — Batch 3: partial unique index on `(groupId)` where `isCurrentUser = 1`]**
+- `GroupExpenseDao.getGroupExpenseForExpense()` no longer returns an arbitrary row — a partial unique index now enforces one non-null `expenseId` mapping **[RESOLVED BY B.4 — Batch 3: unique index on non-null `expenseId`]**
 - `MerchantLocationDao.upsertLocation()` read-then-insert under unique index — use single-statement upsert (B15)
 - `ExchangeRateDao.getAllRatesForBase()` filters on non-leading index column — add index on `(toCurrency, fromCurrency)` (B15) **[RESOLVED BY B.4 — Batch 7 / late closeout (ISSUE-B4-7, ISSUE-B4-11): B.4 resolved the non-leading-column scan by adding a standalone `Index(["toCurrency"])` entity annotation to `ExchangeRate.kt`; `MIGRATION_78_79` lands `CREATE INDEX IF NOT EXISTS index_exchange_rates_toCurrency ON exchange_rates (toCurrency)` at schema version 79]**
 - `EmailReceiptDao.getByReceiptId()` returns single row but multiple sources can share same receiptId — return `List` (B15-missed) **[RESOLVED BY B.4 — Batch 6: return type changed to `List<EmailReceiptSource>`]**
 - `SplitItemAssignmentDao.getParticipantTotals()` groups by `participantName` only — group by stable key (B15)
 - `UserCorrectionDao` tie-breaking uses `LIMIT 1` with no secondary ordering — add stable secondary sort (B27) **[RESOLVED BY B.4 — Batch 5: stable secondary sort (recency/id) added as tie-breaker]**
-- `AiChatRepositoryImpl.appendMessage()` persists message and updates session as two writes — move to one transaction (B27)
-- `InvestmentValueDao.getPortfolioValueHistory()` one query per investment — add batched query (B27) **[DEFERRED — not addressed in B.4; current code still uses per-investment `getValuesBetween()` calls]**
+- `AiChatRepositoryImpl.appendMessage()` no longer splits message persistence and session timestamp updates across separate writes — both operations now run inside `database.withTransaction { ... }` **[RESOLVED]**
+- `InvestmentTracker.getPortfolioValueHistory()` no longer issues one query per investment — it now uses batched DAO reads via `investmentValueDao.getPortfolioHistoryBatch(...)` **[RESOLVED]**
+### SubBatch D.3
 - `MileageTracking` reporting queries need composite index `(isBusinessTrip, date)` (B27)
 - `BudgetForecastDao.getForecastForDate()` returns `LIMIT 1` without ordering — add `ORDER BY` (B27)
 - `HealthScoreHistory` `(periodStart, periodEnd)` only indexed — make unique (B27)
-- `SubscriptionUsageDao.getAllUsageSince()` effectively unindexed — add standalone index on `usedAt` (B27-missed) **[RESOLVED BY B.4 — Batch 7: standalone `Index(["usedAt"])` added]**
-- `SubscriptionCandidate.convertedSubscriptionId` has no FK — add nullable FK (B28-missed) **[RESOLVED BY B.4 — Batch 8: nullable FK to `ManualRecurringExpense(id)` with `ON DELETE SET NULL` added]**
-- `MileageTracking` entity accepts impossible states — add validation (B28) **[RESOLVED BY B.4 — Batch 8: repository guard and DB CHECK constraints reject impossible mileage states]**
+- `SubscriptionUsageDao.getAllUsageSince()` effectively unindexed — add standalone index on `usedAt` (B27-missed) **[STILL_OPEN - Current schema still exposes only the composite index `(subscriptionId, usedAt)`; no standalone `usedAt` index exists for global `getAllUsageSince()` scans]**
+- `SubscriptionCandidate.convertedSubscriptionId` has no FK — add nullable FK (B28-missed) **[STILL_OPEN - `SubscriptionCandidate` and canonical schema definitions still declare `convertedSubscriptionId` without a foreign key to `ManualRecurringExpense(id)`]**
+- `MileageTracking` entity accepts impossible states — add validation (B28) **[RESOLVED - impossible mileage values are now rejected on repository write path (`BusinessExpenseRepository.addMileage(...)`) before DAO insert; entity constructor remains Room-safe]**
 - `formattedAmount` hardcodes `Locale.US` — centralize formatting (B29-missed) **[RESOLVED BY B.4 — Batch 10: `ExpenseWithCategory.formattedAmount` now uses `effectiveAmount` with polarity sign rules, `Locale.getDefault()` via `String.format`, and a prefixed currency code string; `NumberFormat`/`Currency` API is not used]**
 - `ExpenseWithCategory_Extensions` shadowed by member properties — delete duplicate extensions (B29) **[RESOLVED BY B.4 — Batch 10: shadowed duplicate extensions removed]**
 - `getExpensesPagedDynamic()` selects subset of columns but maps to full `ExpenseWithCategory` — use `SELECT e.*` (B29) **[RESOLVED BY B.4 — Batch 10: projection changed to `SELECT e.*`; re-verified in late closeout (ISSUE-B4-11)]**
-- `CloudReceiptItemCategorizationService` uses `ON_DEVICE_RECEIPT_ITEM_MAX_TOKENS` for cloud — add cloud-specific constant (B09)
+
+
+- `CloudReceiptItemCategorizationService` uses `ON_DEVICE_RECEIPT_ITEM_MAX_TOKENS` for cloud — add cloud-specific constant (B09) **[RESOLVED - Cloud request now uses `AppConfig.Ai.CLOUD_RECEIPT_ITEM_MAX_TOKENS` in `buildRequestBody()`]**
 - `CloudWarrantyExtractionService` hardcodes model name and token budget — use shared config (B09)
 - `CloudReviewExplanationService` generates new correlation ID per retry — generate one before retry loop (B09)
 - `CloudWarrantyExtractionService` accepts `"null"` string placeholders — filter placeholders (B09)
-- `CloudReceiptItemCategorizationService` hardcodes `€` in prompts — use input currency (B09)
-- `OnDeviceDashboardBriefingService` confidence parsed with `optDouble.toFloat()` without finiteness check — parse strictly (B09-missed)
+- `CloudReceiptItemCategorizationService` hardcodes `€` in prompts — use input currency (B09) **[RESOLVED - Prompt now formats line-item amounts via `CurrencyFormatter.format(item.totalPrice, input.currency)`; no hardcoded euro literal remains]**
+- `OnDeviceDashboardBriefingService` confidence parsed with `optDouble.toFloat()` without finiteness check — parse strictly (B09-missed) **[RESOLVED - parser now uses strict bounded confidence parsing and rejects non-finite/out-of-range values]**
 - `OnDeviceDedupeJudgeService` `matchedTargetId`/`confidence` use lenient parsing — use strict parsing (B09-missed)
-- `OnDeviceCategorizationAssistService` lenient numeric parsing can emit `categoryId = 0`, `confidence = NaN` — require finite values (B09)
-- `NotificationFilter.shouldCapture()` lowercases content but regex only matches uppercase — make regex case-insensitive (B20)
-- `RecommendationStateManager.clearForUser()` clears in-memory state for non-current user — only clear when `currentUserId == userId` (B20)
-- `RecommendationDeduplicator.computeSignature()` always includes `rec.category` — build target-specific signatures (B20)
-- `RecommendationInvalidator` swallows exceptions with empty catch — log failures (B21)
+### SubBatch D.4
+- `OnDeviceCategorizationAssistService` lenient numeric parsing can emit `categoryId = 0`, `confidence = NaN` — require finite values (B09) **[RESOLVED - strict JSON parsing now requires positive category IDs and finite bounded confidence]**
+- `NotificationFilter.shouldCapture()` lowercases content but regex only matches uppercase — make regex case-insensitive (B20) **[RESOLVED - `REGEX_CURRENCY` now uses `RegexOption.IGNORE_CASE`]**
+- `RecommendationStateManager.clearForUser()` clears in-memory state for non-current user — only clear when `currentUserId == userId` (B20) **[RESOLVED - state clear is now conditional on `currentUserId == userId`]**
+- `RecommendationDeduplicator.computeSignature()` always includes `rec.category` — build target-specific signatures (B20) **[RESOLVED - signature no longer includes `rec.category`; it is derived from navigation target plus deserialized filter fields]**
+- `RecommendationInvalidator` swallows exceptions with empty catch — log failures (B21) **[RESOLVED - invalidation/clear/cleanup paths now log failures with `Timber.e(...)`]**
 - `NotificationSeeder` derives package names from display labels — map to valid parser package IDs (B39)
 - `NotificationSeeder.generateRecurring()` produces isolated random charges — generate clustered occurrences (B39)
-- `ServiceDiagnostics` counters use unsynchronized read-modify-write on SharedPreferences — guard with lock (B39)
+- `ServiceDiagnostics` counters use unsynchronized read-modify-write on SharedPreferences — guard with lock (B39) **[RESOLVED - counter updates and snapshot reads are synchronized on a shared lock]**
 - `DebugIssueDetector` OCR-quality heuristic counts literal `?` — count only replacement characters (B39)
 - `DebugData.toJson()` hand-builds JSON, only escapes subset of fields — use real serializer (B39)
-- `DashboardFollowThroughEngine` category/merchant recommendations hardcode `PURCHASE` — preserve source transaction type (B39)
-- `DatabaseBackupRepository` import restart semantics tunnelled through sentinel values — return explicit result model (B39)
-- `AccountingExporters` SimpleDateFormat as singleton instance state — use `java.time` or instantiate per call (B39)
-- `AccountingExporters` emit raw `Double.toString()` for money — centralize money formatting (B39)
-- `includeReceipts` parameter exposed but never used — implement or remove (B33-missed)
-- `Generic CSV export` header omits currency column — add Currency column (B39-missed)
-- `CSV escaping` doesn't handle formula-injection prefixes — prefix dangerous characters with `'` (B37)
-- `Mileage summary` exposes first trip's rate as if uniform — show weighted rate (B37)
-- `SmsParser.detectSmsDirection()` returns `INCOMING` on tie for transfers — return `null` for ambiguous transfers (B44)
-- `RevolutParser` amount regex only accepts single decimal separator — broaden regex (B44-missed)
-- `SmsParser` amount regex same limitation — capture full token, delegate to `AmountUtils.parseAmount()` (B44-missed)
-- `ImageCache` keyed only by URI hashCode — include dimensions in key (B44)
-- `Disk cache` never evicts — add size/age-based pruning (B44)
-- `BankStatementParser` header/date-column detection computed but never used — apply or remove (B44)
+- `DashboardFollowThroughEngine` recommendation filters still do not consistently preserve source transaction type — high-amount recommendations now use the source type, but category recommendations still hardcode `PURCHASE` and merchant recommendations still omit transaction type (B39) **[PARTIALLY_RESOLVED]**
+- Database backup import restart semantics are still tunneled through `DatabaseImportSummary.transactionCount == -1` in `DatabaseBackupRepository.importDatabase()`, even though `DatabaseImportResult.SuccessNeedsRestart` now exists at the UI/result layer (B39) **[PARTIALLY_RESOLVED]**
+- `AccountingExporters` SimpleDateFormat as singleton instance state — use `java.time` or instantiate per call (B39) **[RESOLVED - exporters now use immutable `java.time.format.DateTimeFormatter`]**
+- `AccountingExporters` emit raw `Double.toString()` for money — centralize money formatting (B39) **[RESOLVED - money output now goes through `CurrencyFormatter.formatForExport(...)`]**
+- `Generic CSV export` header omits currency column — add Currency column (B39-missed) **[RESOLVED - generic CSV header and rows now include `Currency`]**
+- CSV formula-injection hardening is incomplete — generic/export-accounting CSV paths now prefix dangerous `=`, `+`, `-`, `@` starters, but `BusinessExpenseReportGenerator.escapeCSV()` still writes them raw (B37) **[PARTIALLY_RESOLVED]**
+- `Mileage summary` exposes first trip's rate as if uniform — show weighted rate (B37) **[RESOLVED - mileage summary now shows a weighted average when multiple deduction rates are present]**
+- `SmsParser.detectSmsDirection()` returns `INCOMING` on tie for transfers — return `null` for ambiguous transfers (B44) **[RESOLVED - tie/no-evidence cases now return `null`]**
+- `RevolutParser` amount regex only accepts single decimal separator — broaden regex (B44-missed) **[RESOLVED - parser now uses shared grouped-amount token and delegates normalization to `AmountUtils.parseAmount()`]**
+- `SmsParser` amount regex same limitation — capture full token, delegate to `AmountUtils.parseAmount()` (B44-missed) **[RESOLVED - parser now uses shared grouped-amount token and delegates normalization to `AmountUtils.parseAmount()`]**
+- `ImageCache` keyed only by URI hashCode — include dimensions in key (B44) **[RESOLVED - cache key now includes URI plus requested dimensions before hashing]**
+### SubBatch D.5
+- `Disk cache` now evicts by size, but still lacks age-based pruning for stale entries (B44) **[PARTIALLY_RESOLVED - `ImageCache` now enforces a 50MB size cap via `evictIfNeededLocked()`, but no age-based pruning exists]**
+- `BankStatementParser` header/date-column detection computed but never used — apply or remove (B44) **[RESOLVED - detected date-column order now flows into `extractTransactionFromRow(...)` and is used when selecting the transaction date]**
 - `EnhancedMerchantExtractor.isPrice()` only filters lines with currency token — reject total/amount lines without currency (B44)
 - `EnhancedMerchantExtractor` drops known merchant when OCR yields no candidates — fall back to existingMerchant (B44)
 - `OcrPreprocessingPipeline` median-filter allocates new list per pixel — use reusable buffer (B44)
-- `CustomSplitParser` validates with raw Double sums — validate in cents/basis points (B43)
-- `CUSTOM_AMOUNT/UNEQUAL` splits accept arbitrary decimal precision — reject >2 decimal places (B43)
-- `RecurringExpenseEngine` groups with `lowercase().trim()` instead of canonical key — group by `merchantKey` (B43)
-- `SynthesisEngine.pastSumDaily.lastOrNull()` without `isFinite()` guard — reject non-finite inputs (B43)
-- `GenericTransactionParser` date extraction uses lenient Calendar — use strict java.time (B43)
+- `CustomSplitParser` validates with raw Double sums — validate in cents/basis points (B43) **[RESOLVED - totals and split values are now converted to integer minor units / basis points before sum validation]**
+- `CUSTOM_AMOUNT/UNEQUAL` splits accept arbitrary decimal precision — reject >2 decimal places (B43) **[RESOLVED - amount splits now reject fractional-cent values via exact minor-unit validation]**
+- `RecurringExpenseEngine` groups with `lowercase().trim()` instead of canonical key — group by `merchantKey` (B43) **[RESOLVED - recurring grouping now prefers stored `merchantKey` and otherwise falls back to canonical merchant-key generation]**
+- `SynthesisEngine.pastSumDaily.lastOrNull()` without `isFinite()` guard — reject non-finite inputs (B43) **[RESOLVED - past spending series is sanitized before tail lookup and forecast emission]**
+- `GenericTransactionParser` date extraction uses lenient Calendar — use strict java.time (B43) **[RESOLVED - notification date parsing now uses strict `java.time` / `LocalDate` parsing with `ResolverStyle.STRICT`]**
 - `GreekBankParser` direction detection doesn't recognize Latin codes — extend detection (B43)
-- `BillReminderManager` `SEMI_ANNUALLY` not handled — add explicit handling (B43-missed)
+- `BillReminderManager` `SEMI_ANNUALLY` not handled — add explicit handling (B43-missed) **[RESOLVED - reminder date advancement and monthly-cost conversion now delegate to `RecurrenceCalculator`, which explicitly handles `SEMI_ANNUALLY` and `ANNUALLY`]**
 - `ComputeDashboardWidgetsUseCase` keeps only `overallBudget` as resolved limit — resolve as `overall-or-category-sum` (B43-missed)
 - `CalculateBudgetStatusUseCase.getBudgetHealth()` ignores `CRITICAL` — count explicitly (B48)
 - `ComputeDashboardWidgetsUseCase` budget summary says "all on track" when nothing EXCEEDED — treat non-ON_TRACK as non-healthy (B48)
 - `ReviewExpenseUseCase` returns Success when categoryId is null — require non-null category (B48)
 - `ProcessReceiptUseCase` coerces missing merchant/total to "Unknown"/0.0 with no review signal — return incomplete result (B48)
 - `LifestyleSavingsPromptUseCase` maxCap becomes 0 but coerceAtLeast(1.0) forces 1% uplift — handle zero rates explicitly (B48)
-- `MonthlySavingsSweepUseCase` allocationPercentage keeps pre-cap urgency share — recalculate from finalized amounts (B48)
-- `ComputeMoneyRadarUseCase` depends directly on `AnomalyAlertDao` — introduce repository interface (B48)
+- `MonthlySavingsSweepUseCase` allocationPercentage keeps pre-cap urgency share — recalculate from finalized amounts (B48) **[RESOLVED - allocationPercentage is now derived from finalized allocated amounts, not the pre-cap urgency share]**
+- `ComputeMoneyRadarUseCase` depends directly on `AnomalyAlertDao` — introduce repository interface (B48) **[RESOLVED - use case now depends on domain `AnomalyAlertRepository` port with data-layer adapter implementation and DI binding]**
 - `MonthlySavingsSweepUseCase` redefines `effectiveAmount` locally — use canonical property (B48)
-- `ComputeMoneyRadarUseCase` independent fetches run sequentially — use `async`/`await` (B48)
+### SubBatch D.6
+- `ComputeMoneyRadarUseCase` independent fetches run sequentially — use `async`/`await` (B48) **[RESOLVED - `compute()` now fetches due bills, anomaly alerts, and budget risk concurrently via `async`/`await`]**
 - `DetectDuplicateExpenseUseCase` userCorrectionRepository injected but unused — remove or integrate (B48)
-- `GetMonteCarloBudgetImpactUseCase` messages say "exceed by €0.00" — choose messages from riskTier + expectedOverrun (B48-missed)
-- `MonthlySavingsSweepUseCase` MAX_SINGLE_ALLOCATION_PERCENT not enforced for last goal — cap all allocations consistently (B48-missed)
-- `BlockPartyDay` imports Room `Expense` entity — replace with domain DTO (B46)
-- `FinancialForecast.actionableInsights` is `List<String>` while feature family uses `UiText` — use `List<UiText>` (B46)
-- `ForecastHorizon.REST_OF_MONTH` uses `days = 0` as sentinel — model calendar-bound case explicitly (B46)
-- `PeriodRange` accepts `end < start` — add `require(end >= start)` (B46)
-- `PlannedExpense.amount` has no non-negative invariant — enforce `amount >= 0` (B46)
-- `RecurrenceFrequency` mixes approximate fixed-day values for calendar frequencies — remove `intervalInMs` for calendar-based (B46)
-- `SavingsGoal.createdAt` defaults to `0L` — remove default or supply from injected clock (B46)
+- `GetMonteCarloBudgetImpactUseCase` messages say "exceed by €0.00" — choose messages from riskTier + expectedOverrun (B48-missed) **[RESOLVED - domain use case now returns only raw Monte Carlo impact data and no longer builds display strings; UI mapper now selects risk-tier wording and avoids zero-overrun overrun phrasing]**
+- `BlockPartyDay` imports Room `Expense` entity — replace with domain DTO (B46) **[RESOLVED - block-party previews now use domain `TransactionSummary` instead of Room `Expense`]**
+- `FinancialForecast.actionableInsights` is `List<String>` while feature family uses `UiText` — use `List<UiText>` (B46) **[RESOLVED - `FinancialForecast.actionableInsights` now uses `List<UiText>`]**
+- `ForecastHorizon.REST_OF_MONTH` uses `days = 0` as sentinel — model calendar-bound case explicitly (B46) **[RESOLVED BY D3-TIME-DETERMINISM - `ForecastHorizon` now uses explicit calendar-bound metadata (no sentinel `days = 0` semantics)]**
+- `PeriodRange` accepts `end < start` — add `require(end >= start)` (B46) **[RESOLVED - `PeriodRange` now enforces `end >= start` in its init block]**
+- `PlannedExpense.amount` has no non-negative invariant — enforce `amount >= 0` (B46) **[RESOLVED - `PlannedExpense` now requires a positive finite `amount`]**
+- `RecurrenceFrequency` mixes approximate fixed-day values for calendar frequencies — remove `intervalInMs` for calendar-based (B46) **[RESOLVED BY D3-TIME-DETERMINISM - production recurrence advancement now uses explicit fixed-interval vs calendar-bound helpers via `RecurrenceCalculator`; legacy sentinel accessors deprecated]**
 - `UpcomingItem.Recurring.id` uses only `merchantName` — use `pattern.id` or composite key (B46)
-- `MonteCarloBudgetImpact` stores preformatted UI strings, hardcodes EUR — keep raw values only (B46)
-- `DashboardExpenseMapper` imports Room `Expense`/`TransactionType` — move mapper to data layer (B47)
-- `DomainTransactionFilter` depends on `TransactionType` and `OwnershipFilter` from data layer — define domain-level enums (B47)
-- `DomainTransactionFilter.correlationId` defaults to `System.currentTimeMillis()` — move outside value object (B47)
-- `SpendingSummary` mixes `Double` totals with `Float` histories — use `Double` consistently (B47)
+- `MonteCarloBudgetImpact` stores preformatted UI strings, hardcodes EUR — keep raw values only (B46) **[RESOLVED - model now contains only raw risk inputs/outputs (`budgetAmount`, `p50Forecast`, `expectedOverrun`, `probabilityOfOverrun`, `riskTier`); UI formatting moved to presentation mapper]**
+- `DashboardExpenseMapper` imports Room `Expense`/`TransactionType` — move mapper to data layer (B47) **[RESOLVED - mapper no longer imports Room types and now maps `DashboardExpense` to domain `TransactionSummary`]**
+- `DomainTransactionFilter` depends on `TransactionType` and `OwnershipFilter` from data layer — define domain-level enums (B47) **[RESOLVED - `DomainTransactionFilter` now depends on domain-owned transaction and ownership enums]**
+- `DomainTransactionFilter.correlationId` defaults to `System.currentTimeMillis()` — move outside value object (B47) **[RESOLVED - `correlationId` now defaults to `0L` instead of a wall-clock timestamp]**
+- `SpendingSummary` mixes `Double` totals with `Float` histories — use `Double` consistently (B47) **[RESOLVED - `SpendingSummary` now uses `Double` consistently for totals and history series]**
+### SubBatch D.7
 - `WidgetStyleConfig` accepts any string key but persistence only restores allowlisted set — validate at boundary (B47)
-- `DashboardCategoryBreakdown.changeFromLastPeriod` hardcoded to `0.0` — calculate or remove (B47)
-- `BudgetStatusSnapshot` `percentUsed` is `Float` while amounts are `Double` — store as `Double` (B47)
-- `ComputeDashboardWidgetsUseCase.DomainExpenseSummary.categoryName` populated with `categoryId?.toString()` — pass real name or rename field (B47-missed)
-- `DashboardWidgetUiMapper` converts transaction summaries into synthetic `Expense` entities with hardcoded `PURCHASE` — map to dedicated UI summary model (B47-missed)
-- `CategoryRepository.learnMerchantCategory()` inserts without `normalizedCanonicalName` and without cache invalidation — route through engine path (B38)
-- `CategoryKeywords` `"roasters"` declared twice — deduplicate (B38-missed)
-- `SemanticKeywordMatcher` wraps keywords in `\b...\b` — handle punctuation-at-edge tokens (B38-missed)
-- `AppleReceiptParser.detectCurrency()` uses raw substring checks — match bounded tokens (B31-missed)
-- `UberReceiptParser` same currency detection issue (B31-missed)
-- `UberReceiptParser.parseUberDate()` fills in current year for year-less dates — derive from email `receivedAt` year (B31-missed)
-- `WarrantyTextExtractor` "date at start of line" regex not compiled with `MULTILINE` — add flag (B45-missed)
+- `DashboardCategoryBreakdown.changeFromLastPeriod` hardcoded to `0.0` — calculate or remove (B47) **[RESOLVED - advanced analytics dashboard now computes `changeFromLastPeriod` via `calculateChangeFromLastPeriod(currentAmount, previousAmount)` using comparison-period category totals]**
+- `BudgetStatusSnapshot` `percentUsed` is `Float` while amounts are `Double` — store as `Double` (B47) **[RESOLVED - `BudgetStatusSnapshot.percentUsed` is now stored as `Double`, matching the rest of the amount fields]**
+- `ComputeDashboardWidgetsUseCase.DomainExpenseSummary.categoryName` populated with `categoryId?.toString()` — pass real name or rename field (B47-missed) **[RESOLVED - `DomainExpenseSummary.categoryName` is now resolved from the preloaded category map instead of stringifying `categoryId`]**
+- `DashboardWidgetUiMapper` converts transaction summaries into synthetic `Expense` entities with hardcoded `PURCHASE` — map to dedicated UI summary model (B47-missed) **[RESOLVED - the mapper now converts `DomainExpenseSummary` into lightweight `TransactionSummary` DTOs instead of fabricating synthetic `Expense` entities with a hardcoded transaction type]**
+- `CategoryRepository.learnMerchantCategory()` inserts without `normalizedCanonicalName` and without cache invalidation — route through engine path (B38) **[RESOLVED - repository learning now delegates to `CategorizationEngine.learnMerchantCategory()`, preserving centralized mapping creation and cache invalidation]**
+- `CategoryKeywords` `"roasters"` declared twice — deduplicate (B38-missed) **[RESOLVED - `CategoryKeywords` now contains only one `"roasters"` entry]**
+- `SemanticKeywordMatcher` wraps keywords in `\b...\b` — handle punctuation-at-edge tokens (B38-missed) **[RESOLVED - keyword matching now uses Unicode-aware boundary lookarounds instead of blanket `\b...\b` wrappers]**
+- `AppleReceiptParser.detectCurrency()` uses raw substring checks — match bounded tokens (B31-missed) **[RESOLVED - currency detection now uses bounded-token matching to avoid incidental substring hits]**
+- `UberReceiptParser` same currency detection issue (B31-missed) **[RESOLVED - currency detection now uses bounded-token matching to avoid incidental substring hits]**
+- `UberReceiptParser.parseUberDate()` fills in current year for year-less dates — derive from email `receivedAt` year (B31-missed) **[RESOLVED BY D3-TIME-DETERMINISM - year-less parsing now anchors to `receivedAt` with near-year-boundary future-date clamp]**
+- `WarrantyTextExtractor` "date at start of line" regex not compiled with `MULTILINE` — add flag (B45-missed) **[RESOLVED - start-of-line date pattern now uses `Pattern.MULTILINE`]**
 - `Expense.splitTemplateId` has no FK — add nullable FK (B12-missed) **[RESOLVED BY B.4 — Batch 8: nullable FK to `split_templates(id)` with `ON DELETE SET NULL` added]**
 - `PendingReview.suggestedType` stored as raw `String` — validate against allowed names (B12-missed) **[RESOLVED BY B.4 — Batch 8: enum-backed validation enforced on persistence; invalid strings rejected]**
-- `ClipboardAmountParser` regex grabs partial match on thousands-formatted values — anchor whole-token matching (B23-missed)
-- `CsvExpenseImporter` emits 8-digit ARGB colors but Category entity only accepts 6-digit `#RRGGBB` — emit 6-digit hex (B23-missed)
-- `AmountUtils` comma-group validation accepts `1,0000` — require 3-digit chunks (B23)
-- `CurrencyNormalizer.uppercase(Locale.getDefault())` is locale-sensitive — use `Locale.ROOT` (B23)
+### SubBatch D.8
+- `ClipboardAmountParser` regex grabs partial match on thousands-formatted values — anchor whole-token matching (B23-missed) **[RESOLVED - parser now enforces whole-token extraction and preserves grouped values like `1,234.56` without partial-tail matches]**
+- `CsvExpenseImporter` emits 8-digit ARGB colors but Category entity only accepts 6-digit `#RRGGBB` — emit 6-digit hex (B23-missed) **[RESOLVED - importer category colors are now limited to 6-digit `#RRGGBB` values, matching `Category` validation]**
+- `AmountUtils` comma-group validation accepts `1,0000` — require 3-digit chunks (B23) **[RESOLVED - comma-group parsing now requires canonical 3-digit grouping chunks when comma is treated as thousands separator]**
+- `CurrencyNormalizer.uppercase(Locale.getDefault())` is locale-sensitive — use `Locale.ROOT` (B23) **[RESOLVED - currency normalization now uppercases with `Locale.ROOT`]**
 - `MerchantCleaner` stop-word stripping truncates at first internal `" at"` — strip only anchored positions (B23)
 - `Money.format()` depends on device locale — use fixed locale or `BigDecimal.toPlainString()` (B23)
-- `DateFormatterUtils` ThreadLocal cache never evicts — remove or bound (B23)
-- `DateFormatterUtils` cached formatters capture locale at creation — cache by `(pattern, locale)` (B23)
+- `DateFormatterUtils` ThreadLocal cache never evicts — remove or bound (B23) **[RESOLVED - `DateFormatterUtils` no longer uses a `ThreadLocal` formatter cache and now keeps a bounded 16-entry LRU cache]**
+- `DateFormatterUtils` cached formatters capture locale at creation — cache by `(pattern, locale)` (B23) **[RESOLVED - formatter cache keys now include both pattern and locale]**
 - `HapticFeedback` uses `CONFIRM`/`REJECT` without pre-30 fallback — gate on `SDK_INT` (B23)
-- `StringDistanceUtils.isFuzzyMatch()` recompiles regexes every call — hoist to constants (B23)
+- `StringDistanceUtils.isFuzzyMatch()` recompiles regexes every call — hoist to constants (B23) **[RESOLVED - emoji/noise stripping regexes are now object-level constants reused across calls]**
 - `EmailReceiptSource.fingerprint` is primary dedupe lookup but schema only adds non-unique index — make unique (B13-missed)
 - `GroupTransactionCoordinator.deleteGroup()` always returns `true` — return affected-row count (B11-missed)
 - `InvestmentTracker.getValuesBetween()` returns ascending, `getInvestmentPerformance()` reads `firstOrNull()` for day change — use `lastOrNull()` (B27-missed) **[RESOLVED BY B.4 — Batch 10 / late closeout (ISSUE-B4-11): `recentValues.lastOrNull()` on ASC-ordered window confirmed correct]**
 - `FinancialHealthScoreV2.saveToHistory()` read-then-insert without uniqueness guarantee — add unique constraint, use UPSERT (B41)
-- `RecurringIncomeTracker` groups deposits by raw merchant including blank — skip blank merchants (B41)
-- `ConfidenceRouter` ensureSourceStats timestamps with `System.currentTimeMillis()` — use `timeProvider.now()` (B41)
+- `RecurringIncomeTracker` now groups deposits by canonical merchant key, but still keeps blank merchants instead of skipping them (B41) **[RESOLVED BY D3-TIME-DETERMINISM - blank/empty canonical merchant keys are now filtered out before recurring-income grouping]**
+### SubBatch D.9
+- `ConfidenceRouter` ensureSourceStats timestamps with `System.currentTimeMillis()` — use `timeProvider.now()` (B41) **[RESOLVED BY D3-TIME-DETERMINISM - `SourceStats.lastSeen` wall-clock default removed; `ensureSourceStats()` and notification source-stats paths now pass explicit `timeProvider.now()` timestamps]**
 - `CrossSourceDeduplication.isCrossSourceDuplicate()` doesn't compare real transaction data — redesign API (B41)
 - `TransactionClassifier` save/load failures log only message, not exception — use `Timber.e(e, ...)` (B41)
-- `FeatureExtractor.extractFromNotification()` uses wall clock — accept explicit timestamp (B41)
+- `FeatureExtractor.extractFromNotification()` uses wall clock — accept explicit timestamp (B41) **[RESOLVED - the extractor now accepts an explicit `eventTimeMillis` parameter and no longer reads `System.currentTimeMillis()` internally]**
 - `MerchantNormalizer` alias persistence stores original `rawName` bypassing length guard — persist sanitized name (B41)
 - `MerchantNormalizer` logs raw merchant names — hash/anonymize (B42)
 - `HybridExpenseClassifier.initialized` read outside mutex, not `@Volatile` — make `@Volatile` or move inside mutex (B42)
-- `AreaSpendingEngine` grid cells keep first parsed area name — track frequencies, keep most common (B42)
-- `TravelDetectionEngine` destination hints use `split(",").getOrNull(1)` — fall back to first component (B42)
-- `SavingsGamificationEngine.goal_crusher` uses `goals.firstOrNull()` — use max normalized progress (B03)
-- `SavingsGamificationEngine.unlockedAt` recomputed on each call — persist first-unlock timestamps (B03)
-- `goal.currentAmount / goal.targetAmount` unguarded for zero target — guard division (B03)
-- `FinancialHealthCalculator.calculateBudgetHealthScore()` accepts `periodExpenses` but never uses it — remove parameter or make period-aware (B03)
-- `FinancialHealthCalculator.calculateTodayScore()` increments `noSpendStreak` locally — trust supplied streak (B03)
-- `FinancialHealthCalculator` week calculations use locale-dependent `Calendar.firstDayOfWeek` — reuse `TimePeriodUtils` (B03)
-- `FinancialHealthScoreV2` trend compares against `getMostRecent()` without excluding current period — compare against latest different period (B03)
-- `FinancialHealthCalculator.budgetStatuses.all { }` vacuously true for empty list — require `isNotEmpty()` (B03)
-- `FinancialHealthCalculator` legacy score capped at 70, `EXCELLENT (85-100)` unreachable — rebalance weights (B41)
-- `FinancialHealthScoreV2` on exception returns synthetic score of 50 — add explicit fallback flag (B41)
-- `RecurringIncomeTracker` confidence compares ms-squared variance against tiny threshold — normalize to days (B41)
-- `RecurringIncomeTracker.getStartOfMonth()` leaves milliseconds untouched — set `MILLISECOND = 0` (B41)
-- `SpendingChallengeManager.durationDays * 24 * 60 * 60 * 1000L` overflow — cast to `Long` first (B38)
-- `SpendingChallengeManager.daysRemaining` can go negative — clamp with `coerceAtLeast(0)` (B38)
-- `SpendingChallengeManager` IDs use `System.currentTimeMillis()` — use UUID (B38)
-- `CategorizationEngine` reloads cache fragments via three accessors per call — fetch one snapshot (B38)
+- `AreaSpendingEngine` grid cells keep first parsed area name — track frequencies, keep most common (B42) **[RESOLVED - grid cells now accumulate area-name frequencies/total spend and choose the most representative candidate via `selectRepresentativeAreaName()`]**
+- `TravelDetectionEngine` destination hints use `split(",").getOrNull(1)` — fall back to first component (B42) **[RESOLVED - destination parsing now returns the second address component when present and falls back to the first component for single-part addresses]**
+- `SavingsGamificationEngine.goal_crusher` uses `goals.firstOrNull()` — use max normalized progress (B03) **[RESOLVED - goal-crusher progress now uses the goal with the highest normalized completion ratio via `maxByOrNull { currentAmount / targetAmount.coerceAtLeast(0.01) }`]**
+- `SavingsGamificationEngine.unlockedAt` recomputed on each call — persist first-unlock timestamps (B03) **[PARTIALLY_RESOLVED - unlock times are now derived from persisted goal/contribution timestamps instead of `now`, but achievement unlock state is still recomputed on each call rather than stored as dedicated first-unlock metadata]**
+- `goal.currentAmount / goal.targetAmount` unguarded for zero target — guard division (B03) **[RESOLVED - goal-progress calculations now guard zero/invalid targets with `targetAmount.coerceAtLeast(0.01)`]**
+- `FinancialHealthCalculator.calculateBudgetHealthScore()` accepts `periodExpenses` but never uses it — remove parameter or make period-aware (B03) **[RESOLVED - `calculateBudgetHealthScore()` no longer accepts an unused `periodExpenses` parameter]**
+- `FinancialHealthCalculator.calculateTodayScore()` increments `noSpendStreak` locally — trust supplied streak (B03) **[RESOLVED - today-score bonus logic now uses the caller-supplied `noSpendStreak` and only applies it when `spentToday == 0.0`]**
+- `FinancialHealthCalculator` week calculations use locale-dependent `Calendar.firstDayOfWeek` — reuse `TimePeriodUtils` (B03) **[RESOLVED - weekly ranges now come from locale-independent `TimePeriodUtils.getWeekRange(...)`]**
+- `FinancialHealthScoreV2` trend compares against `getMostRecent()` without excluding current period — compare against latest different period (B03) **[RESOLVED - trend lookup now uses `healthScoreHistoryDao.getMostRecentBefore(periodStart, periodEnd)` to exclude the current period]**
+- `FinancialHealthCalculator.budgetStatuses.all { }` vacuously true for empty list — require `isNotEmpty()` (B03) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 5: empty budget-status sets no longer qualify as all-on-track]**
+### SubBatch D.10
+- `FinancialHealthCalculator` legacy score capped at 70, `EXCELLENT (85-100)` unreachable — rebalance weights (B41) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 5: scoring weights/ranges rebalanced so EXCELLENT is reachable under top-performing inputs]**
+- `FinancialHealthScoreV2` on exception returns synthetic score of 50 — add explicit fallback flag (B41) **[RESOLVED - top-level `calculateHealthScore()` now rethrows non-cancellation exceptions after logging instead of returning a synthetic score]**
+- `RecurringIncomeTracker` confidence compares ms-squared variance against tiny threshold — normalize to days (B41) **[RESOLVED BY D3-TIME-DETERMINISM - interval variance/confidence now uses day-scale statistics instead of millisecond-squared thresholds]**
+- `RecurringIncomeTracker.getStartOfMonth()` leaves milliseconds untouched — set `MILLISECOND = 0` (B41) **[RESOLVED - `getStartOfMonth()` now explicitly clears `Calendar.MILLISECOND`]**
+- `SpendingChallengeManager.durationDays * 24 * 60 * 60 * 1000L` overflow — cast to `Long` first (B38) **[RESOLVED - challenge date math now uses `durationDays.toLong() * DAY_MS` for both challenge end dates and reduce-spending baselines]**
+- `SpendingChallengeManager.daysRemaining` can go negative — clamp with `coerceAtLeast(0)` (B38) **[RESOLVED - `daysRemaining` is now clamped with `.coerceAtLeast(0)` in `getChallengeProgress()`]**
+- `SpendingChallengeManager` IDs use `System.currentTimeMillis()` — use UUID (B38) **[RESOLVED - challenge creation now persists `id = 0` and relies on Room auto-generated IDs instead of timestamp-based IDs]**
+- `CategorizationEngine` reloads cache fragments via three accessors per call — fetch one snapshot (B38) **[PARTIALLY_RESOLVED - cache refresh is now centralized in `getCacheData()`, but `categorize()` / `debugCategorize()` still call separate wrapper accessors instead of reusing one local snapshot]**
 - `CategorizationEngine` fuzzy matcher prefilters by first two chars — loosen prefix heuristic (B38)
 - `CategorizationEngine.getCategoryIdByName()` reads outside snapshot — use snapshot's name-to-id map (B38)
-- `WarrantyTrackerScreen` expired warranties never show expired badge — render when `isExpired || isExpiringSoon` (B18)
-- `ReviewScreen` `showTrustSignal` never toggled — add expand/collapse or remove (B18-missed)
-- `WarrantyTrackerViewModel` auto-detected filter chip can't be toggled off — make chip toggle its own boolean (B18)
-- `CurrencyManagementScreen` conversion dialog leaves Convert enabled for invalid amounts — disable or show validation error (B18)
-- `SubscriptionManagementViewModel` no-spend status loaded once in `init` — observe reactively (B19)
-- `CarbonFootprintScreen` negative `parisAgreementGap` passed to formatter — use `abs(gap)` (B19)
-- `CarbonFootprintViewModel` collapses exceptions into `report = null` — add explicit error state (B19-missed)
-- `Loading states` ignore scaffold padding in multiple screens — apply padding (B19)
-- `Hardcoded English copy` in multiple screens — extract to string resources (B19)
-- `NoSpendStreakCard` hardcodes `Locale.GERMANY` — use `Locale.getDefault()` (B19)
-- `Starter prompt chips` display localized labels but inject hardcoded English queries — back with localized query strings (B19-missed)
-- `Active challenges` branch renders placeholder text — replace with real challenge card (B19-missed)
-- `balance == 0.0` exact float equality — compare with tolerance (B18)
-- `AddExpenseViewModel.reset()` doesn't cancel debounced search job — cancel in reset (B17)
-- `AddExpenseSheet` prefill keyed with `LaunchedEffect(Unit)` — key to `initialAmount`/`initialMerchant` (B17)
-- `ReceiptScanScreen` uses `collectAsState()` — use `collectAsStateWithLifecycle()` (B19)
-- `Camera permission denial copy` hardcoded English — move to strings.xml (B19)
-- `Retry button` hardcoded "Retry" string — extract to resource (B19)
-- `Currency.getInstance(currencyCode)` unguarded — wrap in `runCatching` (B19)
-- `Percentage/amount fields` coerce input through `Double.toString()` — store editable text separately (B19)
-- `LifestyleInflationViewModel` exceptions swallowed into `report = null` — add explicit error state (B19)
-- `SavingsPromptCard` hardcoded English copy — move to resources (B19)
-- `ReviewPriorityFactors.fromReview()` uses `System.currentTimeMillis()` — pass `now` (B34)
-- `ReviewPriorityFactors.calculateTimeSensitivity` reads `System.currentTimeMillis()` — inject clock (B24)
-- `CaptureAssistInput.amount` accepts `NaN`/`Infinity`/zero/negative — require finite positive (B34)
+- `WarrantyTrackerScreen` expired warranties never show expired badge — render when `isExpired || isExpiringSoon` (B18) **[RESOLVED - expired badge now renders when isExpired || isExpiringSoon]**
+- `ReviewScreen` `showTrustSignal` never toggled — add expand/collapse or remove (B18-missed) **[RESOLVED - trust-signal section now has explicit expand/collapse affordance; dead state path removed]**
+- `WarrantyTrackerViewModel` auto-detected filter chip can't be toggled off — make chip toggle its own boolean (B18) **[RESOLVED - auto-detected filter chip is now a true toggle; mutually exclusive with status/needs-review filters]**
+- `CurrencyManagementScreen` conversion dialog leaves Convert enabled for invalid amounts — disable or show validation error (B18) **[RESOLVED - Convert button disabled for invalid/zero/negative amounts and same-currency pairs; inline validation error shown after user interaction]**
+- `SubscriptionManagementViewModel` no-spend status loaded once in `init` — observe reactively (B19) **[RESOLVED - the current subscription management viewmodel/screen path no longer computes or renders a no-spend status, so the stale init-loaded state is gone]**
+- `CarbonFootprintScreen` negative `parisAgreementGap` passed to formatter — use `abs(gap)` (B19) **[RESOLVED - below-target gap now displays with abs(gap) semantics]**
+### SubBatch D.11
+- `CarbonFootprintViewModel` collapses exceptions into `report = null` — add explicit error state (B19-missed) **[RESOLVED - additive error: StateFlow<String?> preserves last successful report on failure; generic LOAD_ERROR_MESSAGE for UI]**
+- `Loading states` ignore scaffold padding in multiple screens — apply padding (B19) **[RESOLVED - CarbonFootprintScreen and LifestyleInflationScreen loading/error states now render inside scaffold-padded containers]**
+- `Hardcoded English copy` in multiple screens — extract to string resources (B19) **[PARTIALLY_RESOLVED - targeted hardcoded copy in `SpendingChallengesScreen.kt`, `ReceiptScanScreen.kt`, `LifestyleInflationScreen.kt`, and `AssistantSheet.kt` is now resource-backed; broader app-wide cleanup outside this targeted set remains open]**
+- Domain analytics layer imports Room `Expense` / `data.database.entity` types directly (D3 domain boundary) **[RESOLVED - targeted analytics engines now consume domain `ExpenseSnapshot`/`BudgetSnapshot` models, with entity→domain mapping moved to repository/adapter boundaries]**
+- `LifestyleInflationScreen` / `SavingsGoalsScreen` display enum `.name` values directly in chips (localization leakage) **[RESOLVED - enum labels are now mapped through localized string resources via `when` mappings]**
+- `NoSpendStreakCard` hardcodes `Locale.GERMANY` — use `Locale.getDefault()` (B19) **[RESOLVED - `NoSpendStreakCard` no longer hardcodes `Locale.GERMANY`; savings text now formats through `CurrencyFormatter`, which uses the default locale]**
+- `Starter prompt chips` display localized labels but inject hardcoded English queries — back with localized query strings (B19-missed) **[RESOLVED - starter chips now submit resource-backed localized query payloads (`assistant_query_*`) instead of inline English literals]**
+- `Active challenges` branch renders placeholder text — replace with real challenge card (B19-missed) **[RESOLVED - non-empty active-challenges state now renders `ActiveChallengeCard` rows with challenge name, type, progress, and target details]**
+- `balance == 0.0` exact float equality — compare with tolerance (B18) **[RESOLVED - SharedExpenseGroupsScreen now uses HALF_UP rounding and strict settlement threshold instead of exact float equality]**
+- `AddExpenseViewModel.reset()` doesn't cancel debounced search job — cancel in reset (B17) **[RESOLVED - reset() now cancels searchJob; stale suggestions cannot repopulate after sheet dismissal]**
+- `AddExpenseSheet` prefill keyed with `LaunchedEffect(Unit)` — key to `initialAmount`/`initialMerchant` (B17) **[RESOLVED - prefill keyed to incomingPrefill tuple; BackHandler ensures reset() on system back dismiss, preventing stale initialValuesApplied]**
+- `ReceiptScanScreen` uses `collectAsState()` — use `collectAsStateWithLifecycle()` (B19) **[RESOLVED - ReceiptScanScreen now uses collectAsStateWithLifecycle() for state and categories]**
+- `Camera permission denial copy` hardcoded English — move to strings.xml (B19) **[RESOLVED - camera-denial title/message and open-settings CTA are now string-resource backed in `ReceiptScanScreen`]**
+- `Retry button` hardcoded "Retry" string — extract to resource (B19) **[RESOLVED - retry action text in `ReceiptScanScreen` now uses shared resource (`action_retry`)]**
+- `Currency.getInstance(currencyCode)` unguarded — wrap in `runCatching` (B19) **[RESOLVED - guarded currency resolution is now used in `VisualSplitEditorScreen.buildCurrencyFormat()`, with a safe fallback when the code is invalid]**
+### SubBatch D.12
+- `Percentage/amount fields` coerce input through `Double.toString()` — store editable text separately (B19) **[RESOLVED - transient text state via SplitTextFieldState preserves partial user input; committed-value tracking prevents LaunchedEffect from clobbering in-progress edits; stable rowIds prevent state migration after participant removal; non-finite (NaN/Infinity) inputs are rejected]**
+- `LifestyleInflationViewModel` exceptions swallowed into `report = null` — add explicit error state (B19) **[RESOLVED - mirrors CarbonFootprint pattern: additive error StateFlow, preserves last successful report on failure, generic LOAD_ERROR_MESSAGE]**
+- `SavingsPromptCard` hardcoded English copy — move to resources (B19) **[RESOLVED - title/body/action in `SavingsPromptCard` now use `lifestyle_savings_prompt_*` string resources]**
+- `ReviewPriorityFactors.fromReview()` uses `System.currentTimeMillis()` — pass `now` (B34) **[RESOLVED - `fromReview()` now requires `nowMs`, and reviewed production callers pass an injected clock value instead of reading wall time internally]**
+- `ReviewPriorityFactors.calculateTimeSensitivity` reads `System.currentTimeMillis()` — inject clock (B24) **[RESOLVED - `calculateTimeSensitivity(createdAt, nowMs)` now takes the evaluation time as a parameter instead of reading wall time internally]**
+- `CaptureAssistInput.amount` accepts `NaN`/`Infinity`/zero/negative — require finite positive (B34) **[RESOLVED - `CategorizationAssistInput` now enforces finite positive amount in init invariants]**
 - `ReviewExplanationInputBuilder` imports `data.ai.provider.internal.sha256Prefix` — move hashing to domain/common (B36)
-- `DashboardBriefingInputBuilder.SimpleDateFormat` shared mutable state — use `DateTimeFormatter` (B35)
-- `RecurrenceFrequency.IRREGULAR.intervalInMs` returns `0L` — make nullable or model separately (B24)
-- `MonteCarloBudgetImpact.formatCurrency` hardcodes euro symbol — use `NumberFormat` with explicit `Currency` (B24)
-- `CategoryBreakdown`/`DashboardCategoryBreakdown` duplicated across packages — consolidate (B24)
+- `DashboardBriefingInputBuilder.SimpleDateFormat` shared mutable state — use `DateTimeFormatter` (B35) **[RESOLVED - the builder now uses an immutable `DateTimeFormatter` field and no longer holds shared `SimpleDateFormat` state]**
+- `RecurrenceFrequency.IRREGULAR.intervalInMs` returns `0L` — make nullable or model separately (B24) **[RESOLVED BY D3-TIME-DETERMINISM - irregular/calendar recurrence semantics are now explicit; sentinel `0L` interval semantics removed from production logic]**
+- `MonteCarloBudgetImpact.formatCurrency` hardcodes euro symbol — use `NumberFormat` with explicit `Currency` (B24) **[RESOLVED - currency-format helper was removed from the domain model entirely; Monte Carlo domain contract is now raw-only and presentation formatting is handled in UI mapper code]**
+- `CategoryBreakdown`/`DashboardCategoryBreakdown` duplicated across packages — consolidate (B24) **[PARTIALLY_RESOLVED - analytics-local `CategoryBreakdown` duplicate removed; domain-vs-dashboard semantic duplication still tracked]**
 - `PeriodRange` duplicated across `domain.model` and `domain.analytics` — rename one or add conversion layer (B46)
-- `SavingsGoal` domain and entity definitions differ — keep Room entities internal to data layer (B46)
-- `NarrativeGenerator` imports app `R`, constructs formatted strings in domain — emit `UiText`/message keys (B46-missed)
-- `FinancialForecast.generatedAt` uses `Instant.now()` instead of `TimeProvider` — use `Instant.ofEpochMilli(timeProvider.now())` (B46-missed)
-- `CalculateFinancialForecastUseCase` fabricated `SpendingPace` with `projectedTotal = monthSpent`, fixed `ON_PACE` — reuse real pace path (B48)
-- `CalculateFinancialForecastUseCase` passes `pastSumDaily = emptyList()` — build cumulative daily spend (B48)
-- `DashboardContractsAdapter.observeDashboardExpenses()` snapshots month once — drive from `TimeProvider` (B48)
+- `SavingsGoal` domain and entity definitions differ — keep Room entities internal to data layer (B46) **[PARTIALLY_RESOLVED - domain usage now routes through `domain.savings.SavingsGoalRepository` in targeted adapters; legacy entity-first helper APIs remain deprecated but present in data repository for compatibility]**
+- `NarrativeGenerator` imports app `R`, constructs formatted strings in domain — emit `UiText`/message keys (B46-missed) **[RESOLVED - `NarrativeGenerator` now emits domain text keys with typed args (`UiTextArg.Money`) and no longer imports app `R` or performs currency string formatting in domain]**
+### SubBatch D.13
+- `FinancialForecast.generatedAt` is now sourced from `timeProvider.now()` at forecast creation sites (`SynthesisEngine`) instead of `Instant.now()` (B46-missed) **[RESOLVED]**
+- `CalculateFinancialForecastUseCase` now builds `SpendingPace` from real owned-purchase history, using `SpendingPaceProjection.calculateProjectedTotal(...)` and dynamic `paceStatus` instead of fabricated `projectedTotal = monthSpent` / fixed `ON_PACE` (B48) **[RESOLVED]**
+- `CalculateFinancialForecastUseCase` now builds cumulative `pastSumDaily` from current-month owned purchases via `buildPastSumDaily(...)` instead of passing `emptyList()` (B48) **[RESOLVED]**
+- `DashboardContractsAdapter.observeDashboardExpenses()` now re-derives the month window from `timeBoundaryTicker.dayBoundaryTicks()` and `TimePeriodUtils.getMonthRange(now)` instead of snapshotting the month once (B48) **[RESOLVED]**
 - `DashboardDataProvider` flows silently replace failures with empty/default — log or surface error state (B48)
 - `GroupsModule` unused imports — remove (B22)
 - `EmailIngestionModule` provides parser singletons but `EmailReceiptIngestionService` manually constructs them — inject or remove bindings (B22-missed)
-- `ExportOptionsViewModel` constructs exporters directly instead of using Hilt-provided instances — inject (B22-missed)
-- `LifecycleObserver.onStop()` cancels `TransactionClassifier` singleton scope — don't cancel on every `onStop` (B22)
-- `BudgetMonitor.cleanup()` cancels `serviceJob` on every `onStop()` — keep scope alive or recreate on resume (B22)
-- `SavingsModule` engines depend on `data.repository.SavingsGoalRepository` instead of domain abstraction — change to domain interface (B22)
-- `AiSettingsRepositoryImpl.settings()` lacks `IOException` recovery — add `catch` (B06, B34)
-- `DefaultAiCapabilityRouter` disabled-route reasons interpolate raw enum names — use `displayName()` (B06)
+- `ExportOptionsViewModel` now receives `XeroCSVExporter`, `QuickBooksIIFExporter`, and `FreshBooksExporter` via Hilt; direct construction path is gone (B22-missed) **[RESOLVED]**
+- `LifecycleObserver.onStop()` now calls `TransactionClassifier.onBackground()` instead of canceling the singleton scope; routine backgrounding no longer destroys classifier work scheduling (B22) **[RESOLVED]**
+- `BudgetMonitor` is no longer destroyed on every `onStop()`; app lifecycle now calls non-destructive `onBackground()` and leaves the monitor scope reusable (B22) **[RESOLVED]**
+- `SavingsModule` is only partially migrated off `data.repository.SavingsGoalRepository`: `SavingsGamificationEngine` now uses the domain `SavingsGoalRepository`, but `SmartSavingsEngine` and `AutomatedSavingsRuleEngine` still depend on the data repository type (B22) **[RESOLVED - targeted engines and dependent adapters now consume the domain `SavingsGoalRepository` contract]**
+- `AiSettingsRepositoryImpl.settings()` now recovers from `IOException` via `catch { emit(emptyPreferences()) }` (B06, B34) **[RESOLVED]**
+- `DefaultAiCapabilityRouter` is only partially fixed: some unavailable-route messages use `displayName()`, but the disabled-capability fast path still returns raw enum text (`"$capability is disabled in settings."`) (B06) **[PARTIALLY_RESOLVED]**
 - `GetAiRuntimeStatusUseCase.highestPriorityMessage` is first-match not severity-ranked — rank by severity or rename (B06)
-- `OnDeviceDedupeJudgeService` raw `Enum.valueOf()` calls — use case-insensitive safe lookup (B09)
-- `HybridReceiptAssistService.lastUsedImageInput` mutable singleton state — remove shared mutable state (B10)
+- `OnDeviceDedupeJudgeService` raw `Enum.valueOf()` calls — use case-insensitive safe lookup (B09) **[RESOLVED - parser now uses safe enum lookup and strict numeric parsing for IDs/confidence]**
+- `HybridReceiptAssistService` no longer keeps `lastUsedImageInput` shared mutable state; image-usage reporting is per-request via `ReceiptAssistSuggestion.usedImageInput` (B10) **[RESOLVED]**
 - `CloudPiiSanitizer.PHONE_REGEX` broad enough to redact non-phone numeric text — tighten matching (B10)
-- `CloudJsonParser.extractFirstJsonObject()` returns first brace-balanced block, not first valid JSON — validate each candidate (B10)
+- `CloudJsonParser.extractFirstJsonObject()` now validates each brace-balanced candidate by parsing it as `JSONObject` before returning it, instead of returning the first balanced block blindly (B10) **[RESOLVED]**
 - `CloudCorrelation` keeps only 8 chars of UUID — use full UUID or longer token (B10)
+### SubBatch D.14
 - `ExpenseGroupDao.insertGroupWithMembers()` unused in production — remove or move to coordinator (B15)
 - `ExpenseGroupDao` `groupId <= 0` guard unreachable — remove (B15)
 - `ExpenseGroupDao` `memberIds.any { it <= 0 }` guard unreachable — remove (B15)
-- `ManualRecurringExpenseDao.insert()` uses `REPLACE` — use `ABORT` for create-only (B15)
+- `ManualRecurringExpenseDao.insert()` uses `REPLACE` — use `ABORT` for create-only (B15) **[RESOLVED - DAO now uses `@Insert(onConflict = OnConflictStrategy.ABORT)`]**
 - `MerchantNormalizationDao.linkAliasToCanonical()` read-then-insert — use atomic upsert (B15)
 - `ExpenseDao.getChanges()` exposes SQLite `changes()` as standalone helper — remove or wrap (B14)
 - `ScannedReceiptDao.linkToExpense()` updates only `expenseId` — atomically set matched status (B14) **[RESOLVED BY B.4 — Batch 9: link atomically sets matched status and clears suggestion metadata]**
-- `ReturnWindowDao` returns single row without 1:1 enforcement — enforce uniqueness (B14)
-
-- `SpendingThresholdCalculator` percentile query uses raw `amount` not `effectiveAmount` — shared expenses inflate threshold, anomaly detection less sensitive (B36-missed)
-- `AnomalyAlertOrchestrator` broad `catch` swallows `CancellationException` — re-throw before generic catch (B36-missed)
-- `AdvancedAnalyticsDashboard.getMonthlyTrend()` builds `23:59:59` month end passed to end-exclusive repo query — use start-of-next-month exclusive boundary (B36-missed)
-- `AdvancedAnalyticsDashboard` monthly trend N+1 pattern — batch into single date-range query or aggregate SQL (B36-missed)
-- `AdvancedAnalyticsEngine` current-period sparklines stop before today — extend end boundary to include current day (B36-missed)
-- `SpendingPersonalityClassifier` confidence mixes normalized 0..1 features with raw `transactionsPerMonth` — normalize all inputs (B36-missed)
-- `DayOfWeekAnalyzer` results sorted by total spend instead of weekday order — sort by day-of-week index (B36-missed)
-- `TransferDirectionAnalytics` corrections only update accuracy counters, not incoming/outgoing totals or source/destination lists — rebuild full stats on correction (B36-missed)
-- `ExpenseDao` weekly aggregates expose `MIN(date)/MAX(date)` transaction timestamps as week boundaries — use explicit period start/end from calendar (B36-missed)
-- `CrossSourceDeduplication` candidate ranking ignores time distance and merchant similarity when multiple candidates pass hard filters — weight by time delta and merchant score (B40-missed)
-- `BudgetAutopilotEngine` history fetched through `ExpenseRepository.getExpensesBetween()` — inherits 2000-row cap; add uncapped variant (B37-missed)
-- `BudgetForecastingEngine` historical reads call `getExpensesByCategory()`/`getExpensesByTypeBetween()` without overriding default limit — add uncapped variant (B37-missed)
-- `BudgetAutopilotEngine` and `BudgetForecastingEngine` use different month bucketing and timezone rules — centralize through shared period calculator (B37-missed)
+- `ReturnWindowDao` single-row contract is only partially enforced: `expenseId` is now unique, but `receiptId` is still non-unique while `getReturnWindowByReceiptId()` returns a single row — add DB-level uniqueness on `receiptId` or return a list for receipt-based lookups (B14) **[PARTIALLY_RESOLVED - `expenseId` uniqueness is enforced; `receiptId` uniqueness is not]**
+- `SpendingThresholdCalculator` percentile query uses raw `amount` not `effectiveAmount` — shared expenses inflate threshold, anomaly detection less sensitive (B36-missed) **[RESOLVED - `ExpenseDao.getAmountsForPercentileCalc()` now uses canonical `EFFECTIVE_AMOUNT_SQL` for PURCHASE-only percentile inputs]**
+- `AnomalyAlertOrchestrator` broad `catch` swallows `CancellationException` — re-throw before generic catch (B36-missed) **[RESOLVED - inner/outer catch blocks now rethrow `CancellationException` before generic handling]**
+- `AdvancedAnalyticsDashboard.getMonthlyTrend()` builds `23:59:59` month end passed to end-exclusive repo query — use start-of-next-month exclusive boundary (B36-missed) **[RESOLVED - monthly buckets now use calendar-month starts with next-month exclusive end boundaries]**
+- `AdvancedAnalyticsDashboard` monthly trend N+1 pattern — batch into single date-range query or aggregate SQL (B36-missed) **[RESOLVED - `getMonthlyTrend()` now loads the range once and groups monthly buckets in memory]**
+- `AdvancedAnalyticsEngine` current-period sparklines stop before today — extend end boundary to include current day (B36-missed) **[RESOLVED BY D3-TIME-DETERMINISM - sparkline day indexing now uses day-safe calculations and includes today for current periods]**
+- `SpendingPersonalityClassifier` confidence mixes normalized 0..1 features with raw `transactionsPerMonth` — normalize all inputs (B36-missed) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 5: confidence features are now fully normalized before aggregation]**
+### SubBatch D.15
+- `DayOfWeekAnalyzer` results sorted by total spend instead of weekday order — sort by day-of-week index (B36-missed) **[RESOLVED BY D3-TIME-DETERMINISM - analyzer output is now chronological Monday→Sunday]**
+- `TransferDirectionAnalytics` corrections only update accuracy counters, not incoming/outgoing totals or source/destination lists — rebuild full stats on correction (B36-missed) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 5: correction flow now updates full directional aggregates and rankings]**
+- `ExpenseDao` weekly aggregates expose `MIN(date)/MAX(date)` transaction timestamps as week boundaries — use explicit period start/end from calendar (B36-missed) **[RESOLVED BY D3-TIME-DETERMINISM - weekly totals now expose canonical `[start,end)` Monday-week ranges via repository normalization from week keys]**
+- `CrossSourceDeduplication` candidate ranking ignores time distance and merchant similarity when multiple candidates pass hard filters — weight by time delta and merchant score (B40-missed) **[RESOLVED - duplicate selection now builds `ScoredCandidate`s and routes tie-breaks through `DuplicateDetectionPolicy.bestCandidate()`, which ranks by time delta, amount delta, and merchant confidence]**
+- `BudgetAutopilotEngine` history fetched through `ExpenseRepository.getExpensesBetween()` — inherits 2000-row cap; add uncapped variant (B37-missed) **[RESOLVED - historical spend now comes from `ExpenseDao.getMonthlySpendingTotalsByCategoryBetween()` / `getMonthlySpendingTotalsBetween()` aggregate SQL instead of capped raw row reads]**
+- `BudgetForecastingEngine` historical reads call `getExpensesByCategory()`/`getExpensesByTypeBetween()` without overriding default limit — add uncapped variant (B37-missed) **[RESOLVED - historical spend now uses `ExpenseDao.getMonthlySpendingTotalsByCategoryBetween()` / `getMonthlySpendingTotalsBetween()` aggregate SQL instead of capped raw history queries]**
+- `BudgetAutopilotEngine` and `BudgetForecastingEngine` use different month bucketing and timezone rules — centralize through shared period calculator (B37-missed) **[RESOLVED BY D3-TIME-DETERMINISM - both engines now share `TimePeriodUtils` month-key parse/format/range helpers and aligned month-bucket contract]**
 - `InsightsEngine` composes analytics engines but reimplements their logic inline — delegate to engines to prevent drift (B36-missed)
-- `SplitCalculator` converts money to cents with `Int` — amounts above ~€21.47M overflow; use `Long` (B43-missed)
-- `ReviewPriorityScorer` batch scoring pre-computes `duplicateRisk` but `calculateBaseScore()` uses placeholder `0.5f` — feed computed risk into single-item scoring path (B34-missed)
-- `LifestyleSavingsPromptUseCase.evaluateAndPrompt()` never records impression — record impression before returning so cooldown starts at show time (B33-missed)
-- `RecommendationDeduplicator.computeSignature()` omits `ownership` — include ownership in signature (B47-missed)
+- `SplitCalculator` converts money to cents with `Int` — amounts above ~€21.47M overflow; use `Long` (B43-missed) **[RESOLVED - cent conversion and split math now use `Long` (`toCents(): Long`, `baseCents`, `centsByMember`), removing `Int` overflow for high-value amounts]**
+- `ReviewPriorityScorer` batch scoring pre-computes `duplicateRisk` but `calculateBaseScore()` uses placeholder `0.5f` — feed computed risk into single-item scoring path (B34-missed) **[PARTIALLY_RESOLVED - `scoreSingle()` now delegates to `scoreReviews(listOf(review))`, but `calculateBaseScore()` still relies on `ReviewPriorityFactors.fromReview(...)` with placeholder `duplicateRisk = 0.5f`, so quick/base scoring still diverges]**
+- `LifestyleSavingsPromptUseCase.evaluateAndPrompt()` never records impression — record impression before returning so cooldown starts at show time (B33-missed) **[RESOLVED - `evaluateAndPrompt()` now calls `promptStateRepository.recordPrompt(PROMPT_TYPE)` before returning the recommendation, so cooldown starts at show time]**
+- `RecommendationDeduplicator.computeSignature()` omits `ownership` — include ownership in signature (B47-missed) **[RESOLVED - `computeSignature()` now includes `filter.ownership` in the serialized filter signature, so ownership-distinct recommendations are no longer deduplicated together]**
 - `AdvancedAnalyticsEngine` merchant analytics groups by raw `merchant`, re-filters full 6-month history per merchant — aliases fragment results, O(merchants × history) runtime (B01)
 - `AdvancedAnalyticsDashboard` `generateDashboardData()` hardcodes `Dispatchers.IO` (B01)
+### SubBatch D.16
 - `CategoryInsightEngine` previous-period expenses re-filtered for every category — O(categories × previous-expenses) (B01)
 - `MerchantInsightEngine` merchant grouping by `merchant.lowercase()` not canonical `merchantKey` (B01)
 - `TransferDirectionAnalytics.recordUserCorrection()` assumes initial detection was correct — double-decrement on incorrect initial detection (B01)
 - `AdvancedAnalyticsEngine.getMerchantAnalytics()` loads history with `getExpensesSince(historicalStart)` and never caps at `period.endMs` — post-period transactions leak (B01)
-- `BudgetForecastingEngine.generateForecast()` inserts forecast row but returns pre-insert object — caller always gets `id = 0` (B02)
+- `BudgetForecastingEngine.generateForecast()` inserts forecast row but returns pre-insert object — caller always gets `id = 0` (B02) **[RESOLVED BY D3-ANALYTICS-FORECASTING - Batch 3: generateForecast now returns persisted forecast with inserted row ID/state]**
 - `SynthesisEngine` biweekly matching treats any date within ±2 days as bill day — one bill appears on up to 5 days (B04)
 - `MonteCarloSpendingSimulator.countRecentQualifyingWeeks()` uses `total > 0` instead of `>= 3` distinct transaction-days (B04)
-- `SynthesisEngine` `now` captured once but `Calendar` seeded with second `timeProvider.now()` call — midnight race (B04)
+- `SynthesisEngine` `now` captured once but `Calendar` seeded with second `timeProvider.now()` call — midnight race (B04) **[RESOLVED BY D3-TIME-DETERMINISM - synthesis now reuses a single captured `now` for calendar seeding and in-method period calculations]**
 - `SplitCalculator.formatBalance()` hardcodes `$` — non-USD users see wrong currency (B04)
 - `ComputeDashboardWidgetsUseCase` when no overall budget, `SafeToSpend.amount` populated with `ctx.monthSpent` (already-spent money) (B05)
-- `ComputeMoneyRadarUseCase.compute()` captures `now` but helpers call `timeProvider.now()` again — midnight mixing (B05)
+- `ComputeMoneyRadarUseCase.compute()` captures `now` but helpers call `timeProvider.now()` again — midnight mixing (B05) **[REVALIDATED IN D3-TIME-DETERMINISM - STALE/ALREADY_FIXED: current implementation captures one `now` in `compute()` and threads it through helper calls; no additional code change required]**
 - `ComputeDashboardWidgetsUseCase` zero `averageDailyBurn` + remaining budget → runway days = 0 → CRITICAL (B05)
 - `ComputeDashboardWidgetsUseCase` `monthSpent` from `summary.totalSpent` while `todaySpent`/`weekSpent` from `purchases` — different reactive paths → inconsistent (B05)
+### SubBatch D.17
 - `GetAiRuntimeStatusUseCase` capability status checks awaited sequentially — latency grows linearly (B07)
 - `SuggestReceiptExtractionUseCase` non-forced path no longer enforces deterministic `needsAssist()` gate (B08)
 - `MapFinancialQueryToNavigationUseCase` `QueryMetric.MIN` explicitly rejected — unsupported end-to-end (B08)
@@ -1033,11 +1063,11 @@
 - `ExecuteFinancialQueryUseCase` `QueryMetric.MIN` advertised but never executed — "smallest/cheapest" falls through to `Unsupported` (B08)
 
 ### D.4: Low (Quick Wins)
-- `ExpenseTrackerApp` creates own `CoroutineScope` instead of using Hilt-provided `@ApplicationScope` — inject (B22)
-- `TransactionClassifier` and `BudgetMonitor` eagerly field-injected into `Application` — use `Lazy`/`Provider` (B22)
-- `NotificationIdGenerator` `% RANGE_SIZE` preserves sign for negatives — use `floorMod` (B23)
-- `BKTree.size`/`isEmpty` read mutable state outside mutex — guard with mutex (B23)
-- `Math.abs(hash) % colors.size` can be negative for `Int.MIN_VALUE` — use `floorMod` (B23)
+- `ExpenseTrackerApp` creates own `CoroutineScope` instead of using Hilt-provided `@ApplicationScope` — inject (B22) **[RESOLVED - bespoke app scope removed; startup sync now launches from process lifecycle scope]**
+- `TransactionClassifier` and `BudgetMonitor` eagerly field-injected into `Application` — use `Lazy`/`Provider` (B22) **[RESOLVED - application now defers both via `Lazy` and only resolves them inside lifecycle callbacks]**
+- `NotificationIdGenerator` `% RANGE_SIZE` preserves sign for negatives — use `floorMod` (B23) **[RESOLVED - centralized positive range mapping now uses `Math.floorMod`]**
+- `BKTree.size`/`isEmpty` read mutable state outside mutex — guard with mutex (B23) **[RESOLVED - tree now exposes atomic snapshot state for lock-free reads consistent with mutex-protected writes]**
+- `Math.abs(hash) % colors.size` can be negative for `Int.MIN_VALUE` — use `floorMod` (B23) **[STILL_OPEN]**
 
 ---
 

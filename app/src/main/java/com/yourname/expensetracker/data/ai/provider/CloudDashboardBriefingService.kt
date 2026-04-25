@@ -32,29 +32,39 @@ import kotlinx.coroutines.withContext
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 class CloudDashboardBriefingService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient
+    @CloudAiHttpClient private val client: OkHttpClient,
+    private val promptFormatter: DashboardBriefingPromptFormatter
 ) : DashboardBriefingService {
 
     private var apiKeyOverride: String? = null
 
-    // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient())
+    constructor(secureKeyStorage: SecureKeyStorage) : this(
+        secureKeyStorage = secureKeyStorage,
+        client = OkHttpClient(),
+        promptFormatter = DashboardBriefingPromptFormatter()
+    )
 
-    // Secondary constructor for testing
-    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage, OkHttpClient()) {
+    constructor(secureKeyStorage: SecureKeyStorage, client: OkHttpClient) : this(
+        secureKeyStorage = secureKeyStorage,
+        client = client,
+        promptFormatter = DashboardBriefingPromptFormatter()
+    )
+
+    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(
+        secureKeyStorage = secureKeyStorage,
+        client = OkHttpClient(),
+        promptFormatter = DashboardBriefingPromptFormatter()
+    ) {
         this.apiKeyOverride = apiKeyOverride
     }
-
-    private val promptHelper = OnDeviceDashboardBriefingService()
 
     private val apiKey: String
         get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
     override suspend fun generate(input: DashboardBriefingInput): AiServiceResult<DashboardBriefing> {
         Timber.d(
-            "CloudDashboardBriefingService: Starting generation (dateKey=%s, weatherSummaryLength=%d, topCategoriesCount=%d, pendingReviewCount=%d)",
+            "CloudDashboardBriefingService: Starting generation (dateKey=%s, topCategoriesCount=%d, pendingReviewCount=%d)",
             input.dateKey,
-            input.weatherSummary.length,
             input.topCategories.size,
             input.pendingReviewCount
         )
@@ -183,7 +193,7 @@ class CloudDashboardBriefingService @Inject constructor(
     }
 
     private fun buildRequestBody(input: DashboardBriefingInput): String {
-        val prompt = promptHelper.buildPrompt(input)
+        val prompt = promptFormatter.buildPrompt(input)
         return JSONObject().apply {
             put(
                 "contents",
@@ -223,7 +233,7 @@ class CloudDashboardBriefingService @Inject constructor(
             ?.trim()
             ?: return null
 
-        return promptHelper.parseResponse(text)
+        return DashboardBriefingResponseParser.parseResponse(text)
     }
 
     private companion object {

@@ -12,6 +12,8 @@ import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.Flow
@@ -113,8 +115,8 @@ class DashboardDataProvider @Inject constructor(
             .catch {
                 emit(FinancialWeather(
                     state = WeatherState.UNKNOWN,
-                    headline = "Weather Unavailable",
-                    summary = "We couldn't calculate your financial outlook right now.",
+                    headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_UNAVAILABLE),
+                    summary = UiText.fromKey(DomainTextKeys.WEATHER_SUMMARY_UNAVAILABLE),
                     icon = "❓",
                     riskLevel = 0,
                     totalCommitted = 0.0,

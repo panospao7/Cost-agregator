@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
@@ -103,7 +104,7 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             provider = route.providerName,
             modelName = route.modelName,
             promptVersion = AppConfig.Ai.PROMPT_VERSION_RECEIPT_ITEMS,
-            sourceHash = input.hashCode().toString(),
+            sourceHash = AiArtifactSourceHash.forReceiptItemCategorization(input),
             createdAt = now,
             updatedAt = now,
             expiresAt = now + AppConfig.Ai.RECEIPT_ITEMS_TTL_MS

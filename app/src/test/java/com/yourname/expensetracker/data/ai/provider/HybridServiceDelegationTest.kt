@@ -31,6 +31,7 @@ import org.junit.Test
 
 class HybridServiceDelegationTest {
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `cloud mode delegates all hybrid services to cloud providers`() = runTest {
         val settings = aiSettings(mode = AiMode.CLOUD, aiEnabled = true)
@@ -83,6 +84,7 @@ class HybridServiceDelegationTest {
         coVerify(exactly = 0) { query.noOpService.interpret(any()) }
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `on-device mode delegates all hybrid services to on-device providers`() = runTest {
         val settings = aiSettings(mode = AiMode.ON_DEVICE, aiEnabled = true)
@@ -135,6 +137,7 @@ class HybridServiceDelegationTest {
         coVerify(exactly = 0) { query.noOpService.interpret(any()) }
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `fallback mode delegates all hybrid services to deterministic fallback providers`() = runTest {
         val settings = aiSettings(mode = AiMode.AUTO, aiEnabled = true)
@@ -181,6 +184,7 @@ class HybridServiceDelegationTest {
         coVerify(exactly = 0) { query.onDeviceService.interpret(any()) }
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `disabled mode skips cloud and on-device providers for all hybrid services`() = runTest {
         val settings = aiSettings(mode = AiMode.AUTO, aiEnabled = false)
@@ -350,6 +354,7 @@ class HybridServiceDelegationTest {
 
     // ---- usedImageInput compatibility shim tests ----
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `usedImageInput always returns false on hybrid service — no over-reporting on any route`() {
         // The hybrid service must never over-report image usage. The only canonical
@@ -378,6 +383,7 @@ class HybridServiceDelegationTest {
         assertEquals(false, harness.service.usedImageInput(receiptInput))
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `usedImageInput returns false on non-cloud routes without consulting cloud service`() {
         // ON_DEVICE route: the hybrid shim must never delegate to cloud service
@@ -407,6 +413,7 @@ class HybridServiceDelegationTest {
         verify(exactly = 0) { harnessOnDevice.cloudService.usedImageInput(any()) }
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `usedImageInput returns false on disabled and deterministic-fallback routes`() {
         val settingsDisabled = aiSettings(mode = AiMode.AUTO, aiEnabled = false)

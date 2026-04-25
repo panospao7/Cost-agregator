@@ -10,6 +10,8 @@ import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
+import com.yourname.expensetracker.domain.ai.model.TransactionInsightAmountBucket
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
@@ -25,7 +27,6 @@ import io.mockk.slot
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -105,25 +106,25 @@ class GenerateTransactionInsightUseCaseTest {
     }
 
     private fun assertRedacted(input: DashboardBriefingInput, transaction: Expense) {
-        val rawMerchant = transaction.merchant
-        val rawAmount = String.format(java.util.Locale.US, "%.2f", transaction.amount)
-        val cloudStrings = listOf(
-            input.weatherHeadline,
-            input.weatherSummary,
-            *input.budgetWarnings.toTypedArray(),
-            *input.upcomingItems.toTypedArray()
-        )
+        val insight = input.transactionInsight
 
-        assertTrue(input.weatherSummary.contains("merchant_"))
-        assertTrue(input.upcomingItems.single().contains("merchant_"))
+        assertNotNull(insight)
+        assertEquals(transaction.merchant, insight?.merchantName)
+        assertTrue(insight?.redactForPrompt == true)
+        assertEquals(TransactionInsightAmountBucket.RANGE_100_249, insight?.amountBucket)
         assertEquals(175.0, input.totalCommitted, 0.0)
         assertEquals(175.0, input.currentMonthSpent, 0.0)
-        assertTrue(input.budgetWarnings.single().contains("100-249 EUR"))
+        assertTrue(input.budgetWarnings.isEmpty())
+        assertTrue(input.upcomingItems.isEmpty())
+        assertEquals("", renderUiText(input.weatherHeadline))
+        assertEquals("", renderUiText(input.weatherSummary))
+    }
 
-        cloudStrings.forEach { value ->
-            assertFalse(value.contains(rawMerchant))
-            assertFalse(value.contains(rawAmount))
-        }
+    private fun renderUiText(text: UiText): String = when (text) {
+        is UiText.DynamicString -> text.value
+        is UiText.MessageKey -> if (text.args.isEmpty()) text.key else "${text.key} ${text.args.joinToString(", ")}"
+        is UiText.StringResource -> text.resId.toString()
+        is UiText.PluralResource -> text.resId.toString()
     }
 
     private companion object {

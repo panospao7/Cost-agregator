@@ -108,7 +108,7 @@ class AiPolicyTest {
     @Test
     fun `shouldRedact returns true when redactBeforeCloud is true regardless of capability`() {
         val settings = AiSettings(redactBeforeCloud = true)
-        for (capability in AiCapability.values()) {
+        for (capability in AiCapability.entries) {
             assertTrue(
                 "Expected shouldRedact=true for capability $capability",
                 policy.shouldRedact(settings, capability)
@@ -119,7 +119,7 @@ class AiPolicyTest {
     @Test
     fun `shouldRedact returns false when redactBeforeCloud is false regardless of capability`() {
         val settings = AiSettings(redactBeforeCloud = false)
-        for (capability in AiCapability.values()) {
+        for (capability in AiCapability.entries) {
             assertFalse(
                 "Expected shouldRedact=false for capability $capability",
                 policy.shouldRedact(settings, capability)

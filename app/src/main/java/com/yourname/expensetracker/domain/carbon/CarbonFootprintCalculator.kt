@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.util.TimeProvider
 import java.time.Instant
 import java.time.ZoneId
 import javax.inject.Inject
@@ -12,7 +13,8 @@ import kotlin.math.roundToInt
 
 @Singleton
 class CarbonFootprintCalculator @Inject constructor(
-    private val expenseDao: ExpenseDao
+    private val expenseDao: ExpenseDao,
+    private val timeProvider: TimeProvider
 ) {
     
     // CO2 emission factors (kg CO2 per euro spent) - simplified estimates
@@ -111,13 +113,16 @@ class CarbonFootprintCalculator @Inject constructor(
     )
     
     suspend fun calculateCarbonFootprint(
-        startDate: Long = System.currentTimeMillis() - (30L * 24 * 60 * 60 * 1000),
-        endDate: Long = System.currentTimeMillis()
+        startDate: Long? = null,
+        endDate: Long? = null
     ): CarbonFootprintReport {
+        val resolvedEndDate = endDate ?: timeProvider.now()
+        val resolvedStartDate = startDate ?: (resolvedEndDate - (30L * 24 * 60 * 60 * 1000))
+
         // Keep carbon reporting on a one-shot uncapped snapshot so the
         // point-in-time report is never silently truncated by the old
         // LIMIT 2000 DAO path and never relies on live Flow observation.
-        val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+        val expenses = expenseDao.getExpensesBetweenUncapped(resolvedStartDate, resolvedEndDate)
             .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE }
         
         val categoryEmissions = mutableMapOf<String, Double>()
@@ -140,7 +145,7 @@ class CarbonFootprintCalculator @Inject constructor(
         }
         
         // Calculate daily average
-        val daysInPeriod = ((endDate - startDate) / (24 * 60 * 60 * 1000)).coerceAtLeast(1)
+        val daysInPeriod = ((resolvedEndDate - resolvedStartDate) / (24 * 60 * 60 * 1000)).coerceAtLeast(1)
         val dailyAverage = totalEmissions / daysInPeriod
         
         // Compare to benchmarks

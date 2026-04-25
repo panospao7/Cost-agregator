@@ -7,10 +7,10 @@ import com.yourname.expensetracker.domain.model.NarrativeSection
 import com.yourname.expensetracker.domain.model.PlannedExpensePriority
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
+import com.yourname.expensetracker.domain.text.UiTextArg
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
-import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -24,50 +24,61 @@ class NarrativeGenerator @Inject constructor() {
         val components = forecast.components
         val risk = components.riskLevel
         val discretionary = components.discretionaryBudget
-        val formattedDiscretionary = CurrencyFormatter.format(discretionary)
 
         val basic = when {
             risk == RiskLevel.CRITICAL -> WeatherNarrative(
                 state = WeatherState.STORMY,
                 icon = "⛈️",
-                headline = "Stormy Weather",
-                summary = "⚠️ Immediate action required. Budgets exceeded and no discretionary buffer remains."
+                headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_STORMY),
+                summary = UiText.fromKey(DomainTextKeys.WEATHER_SUMMARY_STORMY)
             )
             risk == RiskLevel.HIGH && discretionary <= 0 -> WeatherNarrative(
                 state = WeatherState.RAINY,
                 icon = "🌧️",
-                headline = "Rainy Conditions",
-                summary = "Over pace on budgets and high committed costs. Caution is highly advised."
+                headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_RAINY),
+                summary = UiText.fromKey(DomainTextKeys.WEATHER_SUMMARY_RAINY)
             )
             risk == RiskLevel.HIGH -> WeatherNarrative(
                 state = WeatherState.CLOUDY,
                 icon = "☁️",
-                headline = "Cloudy Forecast",
-                summary = "Spending is tight. You only have $formattedDiscretionary remaining for unpredicted expenses."
+                headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_CLOUDY),
+                summary = UiText.fromKey(
+                    DomainTextKeys.WEATHER_SUMMARY_CLOUDY_FORMAT,
+                    UiTextArg.Money(discretionary)
+                )
             )
             risk == RiskLevel.LOW && discretionary > 100.0 -> WeatherNarrative(
                 state = WeatherState.CLEAR_SKIES,
                 icon = "☀️",
-                headline = "Clear Skies",
-                summary = "You have a comfortable buffer of $formattedDiscretionary for the rest of the month."
+                headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_CLEAR),
+                summary = UiText.fromKey(
+                    DomainTextKeys.WEATHER_SUMMARY_CLEAR_FORMAT,
+                    UiTextArg.Money(discretionary)
+                )
             )
             risk == RiskLevel.LOW -> WeatherNarrative(
                 state = WeatherState.PARTLY_CLOUDY,
                 icon = "⛅",
-                headline = "Partly Cloudy",
-                summary = "Everything is on track, though discretionary buffer is moderate ($formattedDiscretionary)."
+                headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_PARTLY_CLOUDY),
+                summary = UiText.fromKey(
+                    DomainTextKeys.WEATHER_SUMMARY_PARTLY_CLOUDY_FORMAT,
+                    UiTextArg.Money(discretionary)
+                )
             )
             risk == RiskLevel.MEDIUM -> WeatherNarrative(
                 state = WeatherState.PARTLY_CLOUDY,
                 icon = "⛅",
-                headline = "Partly Cloudy",
-                summary = "Everything is on track, though discretionary buffer is moderate ($formattedDiscretionary)."
+                headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_PARTLY_CLOUDY),
+                summary = UiText.fromKey(
+                    DomainTextKeys.WEATHER_SUMMARY_PARTLY_CLOUDY_FORMAT,
+                    UiTextArg.Money(discretionary)
+                )
             )
             else -> WeatherNarrative(
                 state = WeatherState.UNKNOWN,
                 icon = "❓",
-                headline = "Mixed Signals",
-                summary = "Not enough data to provide a clear outlook yet."
+                headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_MIXED),
+                summary = UiText.fromKey(DomainTextKeys.WEATHER_SUMMARY_MIXED)
             )
         }
 
@@ -91,11 +102,39 @@ class NarrativeGenerator @Inject constructor() {
                 NarrativeSection(
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_BUDGET_ALERTS),
                     icon = "🚨",
-                    items = criticalBudgets.map { 
-                        val name = it.categoryName ?: "Total Budget"
-                        UiText.from(
-                            "$name is ${it.healthStatus.name}: ${CurrencyFormatter.format(it.spentAmount, showCents = false)} spent"
-                        )
+                    items = criticalBudgets.map {
+                        when (it.healthStatus) {
+                            BudgetHealthStatus.EXCEEDED -> it.categoryName?.let { name ->
+                                UiText.fromKey(
+                                    DomainTextKeys.NARRATIVE_BUDGET_EXCEEDED_SPENT_FORMAT,
+                                    name,
+                                    UiTextArg.Money(it.spentAmount, showCents = false)
+                                )
+                            } ?: UiText.fromKey(
+                                DomainTextKeys.NARRATIVE_TOTAL_BUDGET_EXCEEDED_SPENT_FORMAT,
+                                UiTextArg.Money(it.spentAmount, showCents = false)
+                            )
+                            BudgetHealthStatus.CRITICAL -> it.categoryName?.let { name ->
+                                UiText.fromKey(
+                                    DomainTextKeys.NARRATIVE_BUDGET_CRITICAL_SPENT_FORMAT,
+                                    name,
+                                    UiTextArg.Money(it.spentAmount, showCents = false)
+                                )
+                            } ?: UiText.fromKey(
+                                DomainTextKeys.NARRATIVE_TOTAL_BUDGET_CRITICAL_SPENT_FORMAT,
+                                UiTextArg.Money(it.spentAmount, showCents = false)
+                            )
+                            BudgetHealthStatus.WARNING -> UiText.fromKey(
+                                DomainTextKeys.NARRATIVE_BUDGET_WARNING_SPENT_FORMAT,
+                                it.categoryName ?: UiTextArg.Money(it.spentAmount, showCents = false),
+                                UiTextArg.Money(it.spentAmount, showCents = false)
+                            )
+                            BudgetHealthStatus.ON_TRACK -> UiText.fromKey(
+                                DomainTextKeys.NARRATIVE_BUDGET_ON_TRACK_SPENT_FORMAT,
+                                it.categoryName ?: UiTextArg.Money(it.spentAmount, showCents = false),
+                                UiTextArg.Money(it.spentAmount, showCents = false)
+                            )
+                        }
                     }
                 )
             )
@@ -104,7 +143,9 @@ class NarrativeGenerator @Inject constructor() {
                 NarrativeSection(
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_BUDGET_HEALTH),
                     icon = "✅",
-                    items = listOf(UiText.from("All active budgets are currently on track"))
+                    items = listOf(
+                        UiText.fromKey(DomainTextKeys.NARRATIVE_ALL_BUDGETS_ON_TRACK)
+                    )
                 )
             )
         }
@@ -116,8 +157,9 @@ class NarrativeGenerator @Inject constructor() {
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_GOAL_RESERVES),
                     icon = "⛨",
                     items = listOf(
-                        UiText.from(
-                            "${CurrencyFormatter.format(components.goalReserves, showCents = false)} locked for high-priority savings"
+                        UiText.fromKey(
+                            DomainTextKeys.NARRATIVE_GOAL_RESERVES_LOCKED_FORMAT,
+                            UiTextArg.Money(components.goalReserves, showCents = false)
                         )
                     )
                 )
@@ -134,11 +176,20 @@ class NarrativeGenerator @Inject constructor() {
                 NarrativeSection(
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_COMMITTED_PLANS),
                     icon = "🎯",
-                    items = importantPlans.map { 
-                        val priorityLabel = if (it.priority == PlannedExpensePriority.MUST) "Must" else "Likely"
-                        UiText.from(
-                            "${it.description}: ${CurrencyFormatter.format(it.amount, showCents = false)} ($priorityLabel)"
-                        )
+                    items = importantPlans.map {
+                        if (it.priority == PlannedExpensePriority.MUST) {
+                            UiText.fromKey(
+                                DomainTextKeys.NARRATIVE_MUST_PLAN_FORMAT,
+                                it.description,
+                                UiTextArg.Money(it.amount, showCents = false)
+                            )
+                        } else {
+                            UiText.fromKey(
+                                DomainTextKeys.NARRATIVE_LIKELY_PLAN_FORMAT,
+                                it.description,
+                                UiTextArg.Money(it.amount, showCents = false)
+                            )
+                        }
                     }
                 )
             )
@@ -151,8 +202,9 @@ class NarrativeGenerator @Inject constructor() {
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_PREDICTED_ACTIVITY),
                     icon = "📈",
                     items = listOf(
-                        UiText.from(
-                            "Habit-based forecast: ${CurrencyFormatter.format(components.predictedDiscretionary, showCents = false)} likely spending based on your typical month."
+                        UiText.fromKey(
+                            DomainTextKeys.NARRATIVE_HABIT_FORECAST_FORMAT,
+                            UiTextArg.Money(components.predictedDiscretionary, showCents = false)
                         )
                     )
                 )

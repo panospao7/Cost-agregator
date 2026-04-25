@@ -76,6 +76,7 @@ class AddExpenseViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private var searchJob: Job? = null
+    private var initialValuesApplied: Boolean = false
 
     fun updateMerchant(value: String) {
         val sanitized = value.take(100) // Max 100 chars
@@ -184,7 +185,19 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun setIsNotMine(value: Boolean) {
-        _state.update { it.copy(isNotMine = value) }
+        _state.update {
+            if (value) {
+                it.copy(
+                    isNotMine = true,
+                    isSharedExpense = false,
+                    sharedWithName = "",
+                    mySharePercentage = "",
+                    myShareAmount = ""
+                )
+            } else {
+                it.copy(isNotMine = false)
+            }
+        }
     }
 
     fun updateOwnerName(name: String) {
@@ -192,7 +205,22 @@ class AddExpenseViewModel @Inject constructor(
     }
 
     fun setIsSharedExpense(value: Boolean) {
-        _state.update { it.copy(isSharedExpense = value) }
+        _state.update {
+            if (value) {
+                it.copy(
+                    isSharedExpense = true,
+                    isNotMine = false,
+                    ownerName = ""
+                )
+            } else {
+                it.copy(
+                    isSharedExpense = false,
+                    sharedWithName = "",
+                    mySharePercentage = "",
+                    myShareAmount = ""
+                )
+            }
+        }
     }
 
     fun updateSharedWithName(name: String) {
@@ -258,6 +286,13 @@ class AddExpenseViewModel @Inject constructor(
         val shareAmountText = currentState.myShareAmount.trim()
         val hasSharePercentage = sharePercentageText.isNotEmpty()
         val hasShareAmount = shareAmountText.isNotEmpty()
+
+        if (currentState.isNotMine && currentState.isSharedExpense) {
+            _state.update {
+                it.copy(saveResult = SaveResult.Error("Expense cannot be both not-mine and shared"))
+            }
+            return
+        }
 
         val sharePercentage: Int?
         val shareAmount: Double?
@@ -375,14 +410,27 @@ class AddExpenseViewModel @Inject constructor(
 
 
     fun reset() {
+        searchJob?.cancel()
+        searchJob = null
+        initialValuesApplied = false
         _state.value = AddExpenseState(date = timeProvider.now())
     }
 
-    fun setInitialValues(amount: String? = null, merchant: String? = null) {
-        _state.update { 
-            it.copy(
-                amount = amount ?: it.amount,
-                merchant = merchant ?: it.merchant
+    fun setInitialValuesIfBlank(amount: String? = null, merchant: String? = null) {
+        if (initialValuesApplied) return
+
+        _state.update { current ->
+            val amountIsBlank = current.amount.isBlank()
+            val merchantIsBlank = current.merchant.isBlank()
+
+            if (!amountIsBlank || !merchantIsBlank) {
+                return@update current
+            }
+
+            initialValuesApplied = true
+            current.copy(
+                amount = amount ?: current.amount,
+                merchant = merchant ?: current.merchant
             )
         }
     }

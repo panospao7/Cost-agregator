@@ -4,8 +4,8 @@ import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.domain.util.Money
 import com.yourname.expensetracker.domain.util.sum
 import com.yourname.expensetracker.domain.util.toMoney
+import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.junit.Ignore
 
 /**
  * CRITICAL TEST (HIGH-2): Split Calculation Precision
@@ -17,7 +17,6 @@ class SplitCalculationPrecisionTest {
 
     // ==================== EQUAL SPLIT TESTS ====================
 
-    @Ignore("Truth assertThat incompatible with Kotlin value class boxing")
     @Test
     fun `equal split of 100 dollars among 3 people sums to exactly 100`() {
         val total = 100.0.toMoney()
@@ -27,7 +26,7 @@ class SplitCalculationPrecisionTest {
         
         // Sum should equal total exactly
         val sum = shares.sum()
-        assertThat(sum).isEqualTo(total)
+        assertEquals(total.toDouble(), sum.toDouble(), 0.0)
         
         // Should be [33.34, 33.33, 33.33] (first gets remainder)
         assertThat(shares[0].toDouble()).isWithin(0.01).of(33.34)
@@ -35,7 +34,6 @@ class SplitCalculationPrecisionTest {
         assertThat(shares[2].toDouble()).isWithin(0.01).of(33.33)
     }
 
-    @Ignore("Truth assertThat incompatible with Kotlin value class boxing")
     @Test
     fun `equal split of 10 dollars among 3 people sums to exactly 10`() {
         val total = 10.0.toMoney()
@@ -44,12 +42,11 @@ class SplitCalculationPrecisionTest {
         val shares = calculateEqualSplit(total, numParticipants)
         val sum = shares.sum()
         
-        assertThat(sum).isEqualTo(total)
+        assertEquals(total.toDouble(), sum.toDouble(), 0.0)
         // 10/3 = 3.333... → [3.34, 3.33, 3.33]
         assertThat(shares[0].toDouble()).isWithin(0.01).of(3.34)
     }
 
-    @Ignore("Truth assertThat incompatible with Kotlin value class boxing")
     @Test
     fun `equal split with divisible amount has no remainder`() {
         val total = 100.0.toMoney()
@@ -58,7 +55,7 @@ class SplitCalculationPrecisionTest {
         val shares = calculateEqualSplit(total, numParticipants)
         val sum = shares.sum()
         
-        assertThat(sum).isEqualTo(total)
+        assertEquals(total.toDouble(), sum.toDouble(), 0.0)
         // All should be exactly 25.00
         shares.forEach { share ->
             assertThat(share.toDouble()).isWithin(0.001).of(25.0)
@@ -72,7 +69,7 @@ class SplitCalculationPrecisionTest {
         val shares = calculateEqualSplit(total, 1)
         
         assertThat(shares.size).isEqualTo(1)
-        assertThat(shares[0]).isEqualTo(total)
+        assertEquals(total.toDouble(), shares[0].toDouble(), 0.0)
     }
 
     @Test
@@ -83,7 +80,7 @@ class SplitCalculationPrecisionTest {
         val shares = calculateEqualSplit(total, numParticipants)
         val sum = shares.sum()
         
-        assertThat(sum).isEqualTo(total)
+        assertEquals(total.toDouble(), sum.toDouble(), 0.0)
     }
 
     @Test
@@ -94,13 +91,12 @@ class SplitCalculationPrecisionTest {
         val shares = calculateEqualSplit(total, numParticipants)
         val sum = shares.sum()
         
-        assertThat(sum).isEqualTo(total)
+        assertEquals(total.toDouble(), sum.toDouble(), 0.0)
         // One should get 0.01, other 0.00
         val totalDistributed = shares.map { it.toDouble() }.sum()
         assertThat(totalDistributed).isWithin(0.01).of(0.01)
     }
 
-    @Ignore("Truth assertThat incompatible with Kotlin value class boxing")
     @Test
     fun `equal split with many participants maintains precision`() {
         val total = 1000.0.toMoney()
@@ -109,14 +105,13 @@ class SplitCalculationPrecisionTest {
         val shares = calculateEqualSplit(total, numParticipants)
         val sum = shares.sum()
         
-        assertThat(sum).isEqualTo(total)
+        assertEquals(total.toDouble(), sum.toDouble(), 0.0)
         // Each should be 10.00
         assertThat(shares[0].toDouble()).isWithin(0.01).of(10.0)
     }
 
     // ==================== PERCENTAGE SPLIT TESTS ====================
 
-    @Ignore("Truth assertThat incompatible with Kotlin value class boxing")
     @Test
     fun `percentage split with 50-50 sums to total`() {
         val total = 100.0.toMoney()
@@ -125,7 +120,7 @@ class SplitCalculationPrecisionTest {
         val shares = calculatePercentageSplit(total, percentages)
         val sum = shares.sum()
         
-        assertThat(sum).isEqualTo(total)
+        assertEquals(total.toDouble(), sum.toDouble(), 0.0)
         assertThat(shares[0].toDouble()).isWithin(0.01).of(50.0)
         assertThat(shares[1].toDouble()).isWithin(0.01).of(50.0)
     }
@@ -156,7 +151,6 @@ class SplitCalculationPrecisionTest {
         assertThat(shares[2].toDouble()).isWithin(0.01).of(33.34)
     }
 
-    @Ignore("Truth assertThat incompatible with Kotlin value class boxing")
     @Test
     fun `percentage split with very small amount`() {
         val total = 0.03.toMoney()
@@ -169,7 +163,6 @@ class SplitCalculationPrecisionTest {
         assertThat(sum.toDouble()).isWithin(0.01).of(0.03)
     }
 
-    @Ignore("Truth assertThat incompatible with Kotlin value class boxing")
     @Test
     fun `percentage split with zero percent`() {
         val total = 100.0.toMoney()
@@ -177,7 +170,7 @@ class SplitCalculationPrecisionTest {
         
         val shares = calculatePercentageSplit(total, percentages)
         
-        assertThat(shares[0]).isEqualTo(total)
+        assertEquals(total.toDouble(), shares[0].toDouble(), 0.0)
         assertThat(shares[1].isZero()).isTrue()
     }
 
@@ -233,7 +226,6 @@ class SplitCalculationPrecisionTest {
         }
     }
 
-    @Ignore("Truth assertThat incompatible with Kotlin value class boxing")
     @Test
     fun `split with negative amount fails appropriately`() {
         // Negative amounts shouldn't be allowed in real scenarios
@@ -244,7 +236,7 @@ class SplitCalculationPrecisionTest {
         
         // Should still calculate correctly
         val sum = shares.sum()
-        assertThat(sum).isEqualTo(total)
+        assertEquals(total.toDouble(), sum.toDouble(), 0.0)
         assertThat(shares[0].toDouble()).isEqualTo(-50.0)
     }
 
@@ -260,7 +252,6 @@ class SplitCalculationPrecisionTest {
         assertThat(sum).isWithin(0.01).of(99.99)
     }
 
-    @Ignore("Truth assertThat incompatible with Kotlin value class boxing")
     @Test
     fun `multiple splits maintain precision across operations`() {
         // Simulate multiple expense splits in sequence
@@ -274,7 +265,7 @@ class SplitCalculationPrecisionTest {
             val shares = calculateEqualSplit(total, numParticipants)
             val sum = shares.sum()
             
-            assertThat(sum).isEqualTo(total)
+            assertEquals(total.toDouble(), sum.toDouble(), 0.0)
         }
     }
 
@@ -290,9 +281,9 @@ class SplitCalculationPrecisionTest {
         // Same inputs should produce same outputs
         assertThat(shares1).hasSize(3)
         assertThat(shares2).hasSize(3)
-        assertThat(shares1[0]).isEqualTo(shares2[0])
-        assertThat(shares1[1]).isEqualTo(shares2[1])
-        assertThat(shares1[2]).isEqualTo(shares2[2])
+        assertEquals(shares1[0].toDouble(), shares2[0].toDouble(), 0.0)
+        assertEquals(shares1[1].toDouble(), shares2[1].toDouble(), 0.0)
+        assertEquals(shares1[2].toDouble(), shares2[2].toDouble(), 0.0)
     }
 
     @Test

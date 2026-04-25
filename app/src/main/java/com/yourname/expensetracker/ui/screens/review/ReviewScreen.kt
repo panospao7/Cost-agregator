@@ -881,9 +881,7 @@ fun ReviewCard(
                         review.suggestedType == TransactionType.DEPOSIT.name) {
                         Spacer(modifier = Modifier.height(8.dp))
                         TransferDirectionBadge(
-                            direction = review.suggestedDirection?.let { 
-                                com.yourname.expensetracker.data.database.entity.TransferDirection.valueOf(it) 
-                            },
+                            direction = parseTransferDirectionOrNull(review.suggestedDirection),
                             accountName = review.suggestedAccountName,
                             compact = true
                         )
@@ -953,12 +951,26 @@ fun ReviewCard(
                         color = SemanticColors.TextSecondary,
                         letterSpacing = 1.sp
                     )
-                    Icon(
-                        Icons.Rounded.BugReport, // Changed icon
-                        null,
-                        tint = SemanticColors.TextMuted,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (showTrustSignal) {
+                            TextButton(onClick = { showTrustSignal = false }) {
+                                Text(stringResource(R.string.review_hide_button))
+                            }
+                        } else {
+                            TextButton(onClick = { showTrustSignal = true }) {
+                                Text(stringResource(R.string.a11y_expand))
+                            }
+                        }
+                        Icon(
+                            Icons.Rounded.BugReport,
+                            null,
+                            tint = SemanticColors.TextMuted,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
                 
                 AnimatedVisibility(visible = showTrustSignal) {
@@ -1219,6 +1231,18 @@ private fun AiExplanationSection(
     }
 }
 
+internal fun parseTransferDirectionOrNull(raw: String?): TransferDirection? {
+    val normalized = raw?.trim().takeUnless { it.isNullOrBlank() }
+        ?: return null
+    return TransferDirection.entries.firstOrNull { it.name == normalized }
+}
+
+internal fun parseTransactionTypeOrNull(raw: String?): TransactionType? {
+    val normalized = raw?.trim().takeUnless { it.isNullOrBlank() }
+        ?: return null
+    return TransactionType.entries.firstOrNull { it.name == normalized }
+}
+
 @Composable
 private fun ReviewCaptureAssistSection(
     item: PendingReviewWithReceipt,
@@ -1469,8 +1493,7 @@ fun EditReviewDialog(
     var selectedCategoryId by remember { mutableStateOf(initialCategoryIdOverride ?: review.suggestedCategoryId) }
     var selectedType by remember { 
         mutableStateOf(
-            try { TransactionType.valueOf(review.suggestedType) } 
-            catch (e: Exception) { TransactionType.PURCHASE }
+            parseTransactionTypeOrNull(review.suggestedType) ?: TransactionType.PURCHASE
         )
     }
     var applyToAll by remember { mutableStateOf(false) }
@@ -1757,9 +1780,9 @@ fun EditReviewDialog(
                         val editedAmount = if (parsedAmount != null && kotlin.math.abs(parsedAmount - review.suggestedAmount) > 0.001) parsedAmount else null
                         val editedMerchant = merchant.takeIf { it != review.suggestedMerchant }
                         val editedCategory = selectedCategoryId.takeIf { it != review.suggestedCategoryId }
+                        val originalType = parseTransactionTypeOrNull(review.suggestedType)
                         val editedType = selectedType.takeIf { 
-                            try { TransactionType.valueOf(review.suggestedType) != it }
-                            catch (e: Exception) { true }
+                            originalType != it
                         }
                         val editedDate = selectedDateMs.takeIf { it != (review.suggestedDate ?: review.createdAt) }
                         onSave(editedAmount, editedMerchant, editedCategory, editedDate, editedType, applyToAll, approveAllPending,

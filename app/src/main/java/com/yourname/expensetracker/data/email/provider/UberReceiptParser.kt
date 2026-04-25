@@ -116,7 +116,7 @@ class UberReceiptParser : BaseEmailParser() {
         val orderNumber = extractTripId(cleanedBody)
 
         // Extract date
-        val date = extractDate(cleanedBody) ?: receivedAt
+        val date = extractDate(cleanedBody, receivedAt) ?: receivedAt
 
         // Detect currency
         val currency = detectCurrency(cleanedBody, emailBody)
@@ -189,21 +189,23 @@ class UberReceiptParser : BaseEmailParser() {
         return null
     }
 
-    private fun extractDate(text: String): Long? {
+    private fun extractDate(text: String, receivedAt: Long): Long? {
         for (datePattern in DATE_PATTERNS) {
             val matcher = datePattern.pattern.matcher(text)
             if (matcher.find()) {
                 val dateStr = matcher.group(datePattern.dateGroup)
-                return parseUberDate(dateStr)
+                return parseUberDate(dateStr, receivedAt)
             }
         }
         return null
     }
 
-    private fun parseUberDate(dateStr: String): Long? {
+    private fun parseUberDate(dateStr: String, receivedAt: Long): Long? {
         parseDate(dateStr)?.let { return it }
 
-        val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+        val receivedCalendar = Calendar.getInstance().apply { timeInMillis = receivedAt }
+        val receivedYear = receivedCalendar.get(Calendar.YEAR)
+        val futureClampThresholdMs = 7L * 24L * 60L * 60L * 1000L
         
         val formats = listOf(
             SimpleDateFormat("MMMM dd, yyyy", Locale.US),
@@ -215,11 +217,15 @@ class UberReceiptParser : BaseEmailParser() {
         for (format in formats) {
             try {
                 val parsed = format.parse(dateStr) ?: continue
-                // If no year, assume current year
                 val cal = Calendar.getInstance()
                 cal.time = parsed
+                val isYearlessFormat = !format.toPattern().contains("yyyy")
                 if (cal.get(Calendar.YEAR) == 1970) {
-                    cal.set(Calendar.YEAR, currentYear)
+                    cal.set(Calendar.YEAR, receivedYear)
+                }
+
+                if (isYearlessFormat && cal.timeInMillis > receivedAt + futureClampThresholdMs) {
+                    cal.add(Calendar.YEAR, -1)
                 }
                 return cal.timeInMillis
             } catch (_: Exception) {
@@ -233,7 +239,7 @@ class UberReceiptParser : BaseEmailParser() {
         val text = (cleanedBody + rawBody).uppercase()
         
         for ((currency, indicators) in CURRENCY_INDICATORS) {
-            if (indicators.any { text.contains(it) }) {
+            if (indicators.any { indicator -> containsBoundedToken(text, indicator.uppercase()) }) {
                 return currency
             }
         }

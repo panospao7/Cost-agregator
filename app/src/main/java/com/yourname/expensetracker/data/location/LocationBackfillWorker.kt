@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit
  *  - Requires the app to be in the foreground *once* so [ForegroundLocationProvider]
  *    can optionally supply a GPS bias — but the worker succeeds even without GPS.
  *
- * Scheduling (called from [ExpenseTrackerApp]):
+ * Scheduling (called from [AppStartupCoordinator]):
  * ```
  * LocationBackfillWorker.schedule(context)
  * ```

@@ -588,6 +588,7 @@ fun HomeScreen(
                                     pastSpendingPoints = widget.weather.pastSpendingPoints,
                                     projectedSpendingPoints = widget.weather.projectedSpendingPoints,
                                     upcomingItems = widget.weather.upcomingItems,
+                                    referenceNowMillis = state.referenceNowMillis,
                                     totalRecurringCount = widget.weather.totalRecurringCount,
                                     details = widget.weather.details,
                                     onManageClick = onNavigateToRecurring,
@@ -731,8 +732,10 @@ fun HomeScreen(
                                 )
                             }
                             is DashboardWidget.SavingsSweepPrompt -> {
-                                // Savings Sweep Prompt widget - handled elsewhere
-                                Box(modifier = Modifier.fillMaxWidth())
+                                SavingsSweepPromptCard(
+                                    widget = widget,
+                                    onAction = { onNavigateToFeature(NavigationDestination.SavingsGoals) }
+                                )
                             }
                             else -> {
                                 // Fallback for any unhandled widget types
@@ -1408,6 +1411,42 @@ private fun FeaturesMenu(
                 ) {
                     Text(stringResource(R.string.a11y_close), color = SemanticColors.TextSecondary)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavingsSweepPromptCard(
+    widget: DashboardWidget.SavingsSweepPrompt,
+    onAction: () -> Unit
+) {
+    androidx.compose.material3.Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "End-of-month savings sweep",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Safe to sweep ${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(widget.sweepAmount)}",
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                text = "Underspend ${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(widget.underspend)} • Buffer ${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(widget.riskBuffer)}",
+                style = MaterialTheme.typography.bodySmall
+            )
+            widget.goalAllocations.firstOrNull()?.let { topGoal ->
+                Text(
+                    text = "Top allocation: ${topGoal.goalName} (${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(topGoal.suggestedAmount)})",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Button(onClick = onAction) {
+                Text("Review sweep")
             }
         }
     }

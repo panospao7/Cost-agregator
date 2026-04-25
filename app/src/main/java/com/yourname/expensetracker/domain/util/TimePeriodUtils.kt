@@ -188,6 +188,51 @@ object TimePeriodUtils {
         return startMs to endMs
     }
 
+    /**
+     * Derives canonical Monday-start week bounds from a persisted week key.
+     *
+     * Supported key formats:
+     * - `%Y-%W` (SQLite week index, Monday-based, 00-53)
+     * - `%Y-%U` (SQLite week index, Sunday-based, 00-53; normalized to Monday-start)
+     *
+     * Returns a half-open `[startInclusive, endExclusive)` range where start is Monday midnight
+     * and end is next Monday midnight.
+     */
+    fun getCanonicalWeekRangeFromKey(weekKey: String): Pair<Long, Long> {
+        val parts = weekKey.split("-")
+        require(parts.size == 2) { "Invalid weekKey format: $weekKey" }
+
+        val year = parts[0].toIntOrNull() ?: throw IllegalArgumentException("Invalid week year: $weekKey")
+        val week = parts[1].toIntOrNull() ?: throw IllegalArgumentException("Invalid week index: $weekKey")
+        require(week in 0..53) { "Invalid week index (expected 00-53): $weekKey" }
+
+        val firstMondayOfYear = getFirstMondayOfYear(year)
+        val canonicalStart = if (week == 0) {
+            addDays(firstMondayOfYear, -7)
+        } else {
+            addDays(firstMondayOfYear, (week - 1) * 7)
+        }
+        val canonicalEnd = addDays(canonicalStart, 7)
+        return canonicalStart to canonicalEnd
+    }
+
+    private fun getFirstMondayOfYear(year: Int): Long {
+        val jan1 = Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, Calendar.JANUARY)
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+
+        val dayOfWeek = jan1.get(Calendar.DAY_OF_WEEK)
+        val daysUntilMonday = (Calendar.MONDAY - dayOfWeek + 7) % 7
+        jan1.add(Calendar.DAY_OF_MONTH, daysUntilMonday)
+        return jan1.timeInMillis
+    }
+
     // ============================================================================
     // MONTH BOUNDARIES
     // ============================================================================
@@ -256,6 +301,71 @@ object TimePeriodUtils {
             set(Calendar.MILLISECOND, 0)
         }
         return getMonthRange(cal.timeInMillis)
+    }
+
+    /**
+     * Formats a timestamp as canonical month key (`yyyy-MM`).
+     */
+    fun formatMonthKey(timestamp: Long): String {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        return formatMonthKey(
+            year = cal.get(Calendar.YEAR),
+            month = cal.get(Calendar.MONTH) + 1
+        )
+    }
+
+    /**
+     * Formats year/month (1-based month) as canonical month key (`yyyy-MM`).
+     */
+    fun formatMonthKey(year: Int, month: Int): String {
+        require(month in 1..12) { "Invalid month: $month" }
+        return String.format("%04d-%02d", year, month)
+    }
+
+    /**
+     * Parses canonical month key (`yyyy-MM`) into `(year, month)` (1-based month).
+     */
+    fun parseMonthKey(monthKey: String): Pair<Int, Int> {
+        val parts = monthKey.split("-")
+        require(parts.size == 2) { "Unexpected month key: $monthKey" }
+
+        val year = parts[0].toIntOrNull() ?: throw IllegalArgumentException("Unexpected month key: $monthKey")
+        val month = parts[1].toIntOrNull() ?: throw IllegalArgumentException("Unexpected month key: $monthKey")
+        require(month in 1..12) { "Unexpected month key: $monthKey" }
+
+        return year to month
+    }
+
+    /**
+     * Builds an inclusive month-key range (`yyyy-MM`) from [startMonthKey] to [endMonthKey].
+     */
+    fun buildMonthKeyRange(startMonthKey: String, endMonthKey: String): List<String> {
+        val (startYear, startMonth) = parseMonthKey(startMonthKey)
+        val (endYear, endMonth) = parseMonthKey(endMonthKey)
+
+        val cursor = Calendar.getInstance().apply {
+            clear()
+            set(Calendar.YEAR, startYear)
+            set(Calendar.MONTH, startMonth - 1)
+            set(Calendar.DAY_OF_MONTH, 1)
+        }
+        val end = Calendar.getInstance().apply {
+            clear()
+            set(Calendar.YEAR, endYear)
+            set(Calendar.MONTH, endMonth - 1)
+            set(Calendar.DAY_OF_MONTH, 1)
+        }
+
+        require(!cursor.after(end)) {
+            "startMonthKey must be <= endMonthKey: $startMonthKey > $endMonthKey"
+        }
+
+        val monthKeys = mutableListOf<String>()
+        while (!cursor.after(end)) {
+            monthKeys.add(formatMonthKey(cursor.timeInMillis))
+            cursor.add(Calendar.MONTH, 1)
+        }
+        return monthKeys
     }
 
     // ============================================================================

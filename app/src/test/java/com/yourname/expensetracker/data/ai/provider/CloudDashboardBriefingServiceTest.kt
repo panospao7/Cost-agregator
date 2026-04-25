@@ -4,6 +4,9 @@ import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.AiServiceError
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
+import com.yourname.expensetracker.domain.ai.model.DashboardBudgetWarningInput
+import com.yourname.expensetracker.domain.ai.model.DashboardUpcomingItemInput
+import com.yourname.expensetracker.domain.model.UiText
 import io.mockk.every
 import io.mockk.mockk
 import okhttp3.MediaType.Companion.toMediaType
@@ -19,9 +22,9 @@ import kotlinx.coroutines.runBlocking
 
 class CloudDashboardBriefingServiceTest {
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `generate returns null safely when api key is absent`() {
-        // Mock SecureKeyStorage to return empty key (simulating missing API key)
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
         every { mockKeyStorage.getKey(SecureKeyStorage.KEY_GEMINI) } returns ""
         
@@ -31,16 +34,20 @@ class CloudDashboardBriefingServiceTest {
             service.generate(
                 DashboardBriefingInput(
                     dateKey = "2026-03-17",
-                    weatherHeadline = "Sunny",
-                    weatherSummary = "Stable",
+                    weatherHeadline = UiText.from("Sunny"),
+                    weatherSummary = UiText.from("Stable"),
                     discretionaryBudget = 120.0,
                     totalCommitted = 80.0,
                     totalLikely = 100.0,
                     pendingReviewCount = 2,
                     currentMonthSpent = 500.0,
                     topCategories = listOf("Groceries", "Transport"),
-                    budgetWarnings = listOf("Groceries near limit"),
-                    upcomingItems = listOf("Rent")
+                    budgetWarnings = listOf(
+                        DashboardBudgetWarningInput(UiText.from("Groceries near limit"), 95)
+                    ),
+                    upcomingItems = listOf(
+                        DashboardUpcomingItemInput("Rent", 500.0, 1_774_928_000_000, "EUR")
+                    )
                 )
             )
         }
@@ -50,6 +57,7 @@ class CloudDashboardBriefingServiceTest {
         assertTrue(failure.error is AiServiceError.Disabled)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `generate retries transient 500 and succeeds on second attempt`() = runBlocking {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
@@ -106,6 +114,7 @@ class CloudDashboardBriefingServiceTest {
         assertEquals("You are on track today.", success.value.text)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `generate retries transient 429 and succeeds on second attempt`() = runBlocking {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
@@ -144,6 +153,7 @@ class CloudDashboardBriefingServiceTest {
         assertTrue(result is AiServiceResult.Success)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `generate retries transient 408 and succeeds on second attempt`() = runBlocking {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
@@ -182,6 +192,7 @@ class CloudDashboardBriefingServiceTest {
         assertTrue(result is AiServiceResult.Success)
     }
 
+    // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `generate returns terminal 429 after max retries`() = runBlocking {
         val mockKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
@@ -216,16 +227,20 @@ class CloudDashboardBriefingServiceTest {
     private fun defaultInput(): DashboardBriefingInput {
         return DashboardBriefingInput(
             dateKey = "2026-03-17",
-            weatherHeadline = "Sunny",
-            weatherSummary = "Stable",
+            weatherHeadline = UiText.from("Sunny"),
+            weatherSummary = UiText.from("Stable"),
             discretionaryBudget = 120.0,
             totalCommitted = 80.0,
             totalLikely = 100.0,
             pendingReviewCount = 2,
             currentMonthSpent = 500.0,
             topCategories = listOf("Groceries", "Transport"),
-            budgetWarnings = listOf("Groceries near limit"),
-            upcomingItems = listOf("Rent")
+            budgetWarnings = listOf(
+                DashboardBudgetWarningInput(UiText.from("Groceries near limit"), 95)
+            ),
+            upcomingItems = listOf(
+                DashboardUpcomingItemInput("Rent", 500.0, 1_774_928_000_000, "EUR")
+            )
         )
     }
 

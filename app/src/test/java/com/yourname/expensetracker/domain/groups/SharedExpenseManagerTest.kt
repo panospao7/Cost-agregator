@@ -17,6 +17,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import kotlin.test.assertFailsWith
 
 class SharedExpenseManagerTest {
 
@@ -363,8 +364,68 @@ class SharedExpenseManagerTest {
     }
 
     @Test
+    fun `addExpense rejects blank description`() = runTest(testDispatcher) {
+        val error = assertFailsWith<IllegalArgumentException> {
+            manager.addExpense(
+                groupId = 1L,
+                expenseId = 10L,
+                paidById = 1L,
+                description = "   ",
+                totalAmount = 100.0,
+                splitType = GroupSplitType.EQUAL
+            )
+        }
+
+        assertEquals("Description cannot be blank", error.message)
+    }
+
+    @Test
+    fun `addExpense rejects non positive or non finite amount`() = runTest(testDispatcher) {
+        val invalidAmounts = listOf(0.0, -1.0, Double.NaN, Double.POSITIVE_INFINITY)
+
+        invalidAmounts.forEach { amount ->
+            val error = assertFailsWith<IllegalArgumentException> {
+                manager.addExpense(
+                    groupId = 1L,
+                    expenseId = 10L,
+                    paidById = 1L,
+                    description = "Taxi",
+                    totalAmount = amount,
+                    splitType = GroupSplitType.EQUAL
+                )
+            }
+            assertEquals("Amount must be a positive finite number", error.message)
+        }
+    }
+
+    @Test
+    fun `addExpense rejects payer outside group membership`() = runTest(testDispatcher) {
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns listOf(
+            SharedExpenseMember(id = 1L, groupId = 1L, name = "Me"),
+            SharedExpenseMember(id = 2L, groupId = 1L, name = "Alex")
+        )
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            manager.addExpense(
+                groupId = 1L,
+                expenseId = 10L,
+                paidById = 99L,
+                description = "Dinner",
+                totalAmount = 100.0,
+                splitType = GroupSplitType.EQUAL
+            )
+        }
+
+        assertEquals("Payer is not a member of this group", error.message)
+    }
+
+    @Test
     fun `addExpense uses group default currency from data port`() = runTest(testDispatcher) {
         val captured = mutableListOf<SharedGroupExpense>()
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns listOf(
+            SharedExpenseMember(id = 1L, groupId = 1L, name = "Me"),
+            SharedExpenseMember(id = 2L, groupId = 1L, name = "Alex")
+        )
         coEvery { sharedExpenseDataPort.getGroupOnce(1L) } returns SharedExpenseGroup(
             id = 1L,
             name = "Trip",

@@ -54,7 +54,10 @@ class ReviewQueueRepository @Inject constructor(
     }
 
 
-    fun getPendingReviews(limit: Int = 100): Flow<List<PendingReviewWithReceipt>> =
+    fun getAllPendingReviews(): Flow<List<PendingReviewWithReceipt>> =
+        pendingReviewDao.getPendingUncappedFlow()
+
+    fun getPendingReviewsBatch(limit: Int): Flow<List<PendingReviewWithReceipt>> =
         pendingReviewDao.getPendingFlow(limit)
 
     fun getPendingReviewCount(): Flow<Int> =
@@ -351,7 +354,7 @@ class ReviewQueueRepository @Inject constructor(
     }
 
     suspend fun approveAllReview() {
-        val pendingReviews = pendingReviewDao.getPending()
+        val pendingReviews = pendingReviewDao.getPendingUncapped()
         for (review in pendingReviews) {
             try {
                 approveReview(review.review.id)
@@ -362,7 +365,7 @@ class ReviewQueueRepository @Inject constructor(
     }
 
     suspend fun rejectAllReviews() {
-        val pendingReviews = pendingReviewDao.getPending()
+        val pendingReviews = pendingReviewDao.getPendingUncapped()
         for (review in pendingReviews) {
             try {
                 rejectReview(review.review.id)
@@ -492,8 +495,11 @@ class ReviewQueueRepository @Inject constructor(
                 }
 
                 pendingReview != null -> {
-                    pendingReviewDao.insert(pendingReview)
-                    sourceStatsDao.incrementPending(notification.packageName)
+                    val existing = pendingReview.rawNotificationId?.let { pendingReviewDao.getByRawId(it) }
+                    pendingReviewDao.upsertByRawNotificationId(pendingReview)
+                    if (existing == null) {
+                        sourceStatsDao.incrementPending(notification.packageName)
+                    }
                     userCorrectionDao.insert(correction)
                     MarkAsRelevantOutcome(
                         shouldTrainAsTransaction = false,

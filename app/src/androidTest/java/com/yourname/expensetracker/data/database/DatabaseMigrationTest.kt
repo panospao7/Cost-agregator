@@ -895,7 +895,7 @@ class DatabaseMigrationTest {
 
     @Test
     @Throws(IOException::class)
-    fun migrate_70_to_71_deduplicates_current_users_and_adds_partial_unique_index() {
+    fun migrate_70_to_71_deduplicates_current_users_and_keeps_room_declared_indexes_only() {
         assumeTrue(hasSchema(70) && hasSchema(71))
 
         var db = helper.createDatabase(testDb, 70)
@@ -950,20 +950,10 @@ class DatabaseMigrationTest {
             assertTrue("Charlie (non-current) must be preserved", cursor.moveToFirst())
         }
 
-        // Partial unique index must exist.
-        assertTrue(hasIndex(db, "index_group_members_groupId_currentUser"))
-
-        // Constraint enforcement: inserting a second current user in the same group must fail.
-        var constraintViolated = false
-        try {
-            db.execSQL("""
-                INSERT INTO group_members (groupId, name, isCurrentUser, joinedAt)
-                VALUES (1, 'Dave', 1, 1700000004000)
-            """)
-        } catch (_: Exception) {
-            constraintViolated = true
-        }
-        assertTrue("Partial unique index must reject a second current user in same group", constraintViolated)
+        assertTrue(hasIndex(db, "index_group_members_groupId"))
+        assertTrue(hasIndex(db, "index_group_members_groupId_isCurrentUser"))
+        assertTrue(hasIndex(db, "index_group_members_groupId_name"))
+        assertFalse(hasIndex(db, "index_group_members_groupId_currentUser"))
 
         // Non-current-user inserts should remain unconstrained.
         db.execSQL("""
@@ -985,7 +975,7 @@ class DatabaseMigrationTest {
 
     @Test
     @Throws(IOException::class)
-    fun migrate_70_to_71_deduplicates_group_expenses_expenseId_and_adds_partial_unique_index() {
+    fun migrate_70_to_71_deduplicates_group_expenses_expenseId_and_keeps_room_indexes_only() {
         assumeTrue(hasSchema(70) && hasSchema(71))
 
         var db = helper.createDatabase(testDb, 70)
@@ -1065,21 +1055,24 @@ class DatabaseMigrationTest {
             assertEquals(2, cursor.getInt(0))
         }
 
-        // Partial unique index must exist.
-        assertTrue(hasIndex(db, "index_group_expenses_expenseId_unique"))
+        assertFalse(hasIndex(db, "index_group_expenses_expenseId_unique"))
+        assertTrue(hasIndex(db, "index_group_expenses_groupId"))
+        assertTrue(hasIndex(db, "index_group_expenses_expenseId"))
+        assertTrue(hasIndex(db, "index_group_expenses_paidById"))
+        assertTrue(hasIndex(db, "index_group_expenses_groupId_date"))
+        assertTrue(hasIndex(db, "index_group_expenses_isReimbursable"))
 
-        // Constraint enforcement: inserting a second row for expenseId=100 must fail.
-        var constraintViolated = false
-        try {
-            db.execSQL("""
-                INSERT INTO group_expenses (groupId, expenseId, paidById, date, description,
-                    totalAmount, currency, splitType, isReimbursable, reimbursedAmount)
-                VALUES (1, 100, 1, 1700000000000, 'Dup attempt', 50.0, 'EUR', 'EQUAL', 0, 0.0)
-            """)
-        } catch (_: Exception) {
-            constraintViolated = true
+        // After healing migration, duplicates are removed but future duplicate links
+        // are no longer blocked at the SQLite index level.
+        db.execSQL("""
+            INSERT INTO group_expenses (groupId, expenseId, paidById, date, description,
+                totalAmount, currency, splitType, isReimbursable, reimbursedAmount)
+            VALUES (1, 100, 1, 1700000000000, 'Dup attempt', 50.0, 'EUR', 'EQUAL', 0, 0.0)
+        """)
+        db.query("SELECT COUNT(*) FROM group_expenses WHERE expenseId = 100").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(2, cursor.getInt(0))
         }
-        assertTrue("Partial unique index must reject duplicate non-null expenseId", constraintViolated)
 
         // NULL expenseId inserts remain unconstrained.
         db.execSQL("""
@@ -1399,20 +1392,14 @@ class DatabaseMigrationTest {
             assertTrue("id=20 should be demoted", demotedIds.contains(20L))
         }
 
-        // Partial unique index for active overall must exist.
-        assertTrue(hasIndex(db, "index_budgets_active_overall"))
+        // Partial unique index is intentionally not created (Room schema parity).
+        assertFalse(hasIndex(db, "index_budgets_active_overall"))
 
-        // Inserting a second active overall budget must be rejected.
-        var constraintViolated = false
-        try {
-            db.execSQL("""
-                INSERT INTO budgets (categoryId, amount, period, startDate, isActive, createdAt)
-                VALUES (NULL, 999.0, 'MONTHLY', 1700000000000, 1, 1699000000000)
-            """)
-        } catch (_: Exception) {
-            constraintViolated = true
-        }
-        assertTrue("Partial unique index must reject a second active overall budget", constraintViolated)
+        // Inserting a second active overall budget is now allowed at DB level.
+        db.execSQL("""
+            INSERT INTO budgets (categoryId, amount, period, startDate, isActive, createdAt)
+            VALUES (NULL, 999.0, 'MONTHLY', 1700000000000, 1, 1699000000000)
+        """)
 
         // Inactive overall inserts remain unconstrained.
         db.execSQL("""
@@ -1498,20 +1485,14 @@ class DatabaseMigrationTest {
             assertEquals(1, cursor.getInt(1))
         }
 
-        // Partial unique index for active per-category must exist.
-        assertTrue(hasIndex(db, "index_budgets_active_category"))
+        // Partial unique index is intentionally not created (Room schema parity).
+        assertFalse(hasIndex(db, "index_budgets_active_category"))
 
-        // Inserting a second active budget for category 1 must be rejected.
-        var constraintViolated = false
-        try {
-            db.execSQL("""
-                INSERT INTO budgets (categoryId, amount, period, startDate, isActive, createdAt)
-                VALUES (1, 999.0, 'MONTHLY', 1700000000000, 1, 1699000000000)
-            """)
-        } catch (_: Exception) {
-            constraintViolated = true
-        }
-        assertTrue("Partial unique index must reject a second active budget for same category", constraintViolated)
+        // Inserting a second active budget for category 1 is now allowed at DB level.
+        db.execSQL("""
+            INSERT INTO budgets (categoryId, amount, period, startDate, isActive, createdAt)
+            VALUES (1, 999.0, 'MONTHLY', 1700000000000, 1, 1699000000000)
+        """)
 
         // Inserting an active budget for a NEW category should succeed.
         db.execSQL("""
@@ -2069,12 +2050,12 @@ class DatabaseMigrationTest {
     }
 
     /**
-     * Verifies that MIGRATION_73_74 deduplicates raw_notifications with NULL
-     * title/text and creates four partial unique indexes.
+     * Verifies that MIGRATION_73_74 deduplicates legacy raw_notifications rows
+     * and leaves only the Room-declared indexes in place.
      */
     @Test
     @Throws(IOException::class)
-    fun migrate_73_to_74_raw_notifications_dedup_and_partial_indexes() {
+    fun migrate_73_to_74_raw_notifications_dedup_and_keeps_room_indexes_only() {
         assumeTrue(hasSchema(73) && hasSchema(74))
 
         var db = helper.createDatabase(testDb, 73)
@@ -2083,41 +2064,76 @@ class DatabaseMigrationTest {
         // The old unique index allowed this because NULL != NULL in SQLite.
         // Only id=1 (smallest) should survive.
         db.execSQL("""
-            INSERT INTO raw_notifications (id, packageName, timestamp, title, text, isProcessed, createdAt)
-            VALUES (1, 'com.bank.app', 1000, NULL, NULL, 0, 1000)
-        """)
+            INSERT INTO raw_notifications (
+                id, packageName, appName, title, text, bigText, subText, extrasJson,
+                timestamp, capturedAt, isProcessed, isRelevant, parseResult
+            ) VALUES (
+                1, 'com.bank.app', 'Bank App', NULL, NULL, NULL, NULL, NULL,
+                1000, 1000, 0, NULL, NULL
+            )
+        """.trimIndent())
         db.execSQL("""
-            INSERT INTO raw_notifications (id, packageName, timestamp, title, text, isProcessed, createdAt)
-            VALUES (2, 'com.bank.app', 1000, NULL, NULL, 0, 1000)
-        """)
+            INSERT INTO raw_notifications (
+                id, packageName, appName, title, text, bigText, subText, extrasJson,
+                timestamp, capturedAt, isProcessed, isRelevant, parseResult
+            ) VALUES (
+                2, 'com.bank.app', 'Bank App', NULL, NULL, NULL, NULL, NULL,
+                1000, 1001, 0, NULL, NULL
+            )
+        """.trimIndent())
 
         // Duplicate pair: same packageName+timestamp, title NULL, text NOT NULL and same.
         // Only id=3 should survive.
         db.execSQL("""
-            INSERT INTO raw_notifications (id, packageName, timestamp, title, text, isProcessed, createdAt)
-            VALUES (3, 'com.bank.app', 2000, NULL, 'Payment received', 0, 2000)
-        """)
+            INSERT INTO raw_notifications (
+                id, packageName, appName, title, text, bigText, subText, extrasJson,
+                timestamp, capturedAt, isProcessed, isRelevant, parseResult
+            ) VALUES (
+                3, 'com.bank.app', 'Bank App', NULL, 'Payment received', NULL, NULL, NULL,
+                2000, 2000, 0, NULL, NULL
+            )
+        """.trimIndent())
         db.execSQL("""
-            INSERT INTO raw_notifications (id, packageName, timestamp, title, text, isProcessed, createdAt)
-            VALUES (4, 'com.bank.app', 2000, NULL, 'Payment received', 0, 2000)
-        """)
+            INSERT INTO raw_notifications (
+                id, packageName, appName, title, text, bigText, subText, extrasJson,
+                timestamp, capturedAt, isProcessed, isRelevant, parseResult
+            ) VALUES (
+                4, 'com.bank.app', 'Bank App', NULL, 'Payment received', NULL, NULL, NULL,
+                2000, 2001, 0, NULL, NULL
+            )
+        """.trimIndent())
 
         // Duplicate pair: same packageName+timestamp, text NULL, title NOT NULL and same.
         // Only id=5 should survive.
         db.execSQL("""
-            INSERT INTO raw_notifications (id, packageName, timestamp, title, text, isProcessed, createdAt)
-            VALUES (5, 'com.bank.app', 3000, 'Alert', NULL, 0, 3000)
-        """)
+            INSERT INTO raw_notifications (
+                id, packageName, appName, title, text, bigText, subText, extrasJson,
+                timestamp, capturedAt, isProcessed, isRelevant, parseResult
+            ) VALUES (
+                5, 'com.bank.app', 'Bank App', 'Alert', NULL, NULL, NULL, NULL,
+                3000, 3000, 0, NULL, NULL
+            )
+        """.trimIndent())
         db.execSQL("""
-            INSERT INTO raw_notifications (id, packageName, timestamp, title, text, isProcessed, createdAt)
-            VALUES (6, 'com.bank.app', 3000, 'Alert', NULL, 0, 3000)
-        """)
+            INSERT INTO raw_notifications (
+                id, packageName, appName, title, text, bigText, subText, extrasJson,
+                timestamp, capturedAt, isProcessed, isRelevant, parseResult
+            ) VALUES (
+                6, 'com.bank.app', 'Bank App', 'Alert', NULL, NULL, NULL, NULL,
+                3000, 3001, 0, NULL, NULL
+            )
+        """.trimIndent())
 
         // Non-duplicate row: both title and text NOT NULL. Should survive as-is.
         db.execSQL("""
-            INSERT INTO raw_notifications (id, packageName, timestamp, title, text, isProcessed, createdAt)
-            VALUES (7, 'com.bank.app', 4000, 'Transfer', 'Amount 50', 0, 4000)
-        """)
+            INSERT INTO raw_notifications (
+                id, packageName, appName, title, text, bigText, subText, extrasJson,
+                timestamp, capturedAt, isProcessed, isRelevant, parseResult
+            ) VALUES (
+                7, 'com.bank.app', 'Bank App', 'Transfer', 'Amount 50', NULL, NULL, NULL,
+                4000, 4000, 0, 1, 'parsed'
+            )
+        """.trimIndent())
 
         db.close()
 
@@ -2139,26 +2155,55 @@ class DatabaseMigrationTest {
             assertEquals(listOf(1L, 3L, 5L, 7L), ids)
         }
 
-        // Verify partial unique indexes exist.
-        assertTrue(hasIndex(db, "index_raw_notifications_dedup_nonnull"))
-        assertTrue(hasIndex(db, "index_raw_notifications_dedup_both_null"))
-        assertTrue(hasIndex(db, "index_raw_notifications_dedup_title_null"))
-        assertTrue(hasIndex(db, "index_raw_notifications_dedup_text_null"))
-
-        // Verify non-unique covering index exists.
+        // Verify only Room-declared indexes exist.
         assertTrue(hasIndex(db, "index_raw_notifications_packageName_timestamp_title_text"))
+        assertTrue(hasIndex(db, "index_raw_notifications_packageName_timestamp"))
+        assertTrue(hasIndex(db, "index_raw_notifications_capturedAt"))
+        assertTrue(hasIndex(db, "index_raw_notifications_isRelevant"))
 
-        // Verify that inserting a duplicate with both NULLs is now rejected.
-        var constraintViolated = false
-        try {
-            db.execSQL("""
-                INSERT INTO raw_notifications (packageName, timestamp, title, text, isProcessed, createdAt)
-                VALUES ('com.bank.app', 1000, NULL, NULL, 0, 9999)
-            """)
-        } catch (_: Exception) {
-            constraintViolated = true
+        assertFalse(hasIndex(db, "index_raw_notifications_dedup_nonnull"))
+        assertFalse(hasIndex(db, "index_raw_notifications_dedup_both_null"))
+        assertFalse(hasIndex(db, "index_raw_notifications_dedup_title_null"))
+        assertFalse(hasIndex(db, "index_raw_notifications_dedup_text_null"))
+
+        assertEquals(
+            setOf(
+                "index_raw_notifications_packageName_timestamp_title_text",
+                "index_raw_notifications_packageName_timestamp",
+                "index_raw_notifications_capturedAt",
+                "index_raw_notifications_isRelevant"
+            ),
+            rawNotificationIndexes(db)
+        )
+
+        db.query("PRAGMA index_list('raw_notifications')").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            val uniqueIndex = cursor.getColumnIndexOrThrow("unique")
+            var foundCoveringIndex = false
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameIndex) == "index_raw_notifications_packageName_timestamp_title_text") {
+                    foundCoveringIndex = true
+                    assertEquals(0, cursor.getInt(uniqueIndex))
+                }
+            }
+            assertTrue(foundCoveringIndex)
         }
-        assertTrue("Duplicate with both NULLs must be rejected by partial unique index", constraintViolated)
+
+        // The migration should not reintroduce non-Room uniqueness constraints.
+        db.execSQL("""
+            INSERT INTO raw_notifications (
+                packageName, appName, title, text, bigText, subText, extrasJson,
+                timestamp, capturedAt, isProcessed, isRelevant, parseResult
+            ) VALUES (
+                'com.bank.app', 'Bank App', NULL, NULL, NULL, NULL, NULL,
+                1000, 9999, 0, NULL, NULL
+            )
+        """.trimIndent())
+
+        db.query("SELECT COUNT(*) FROM raw_notifications WHERE packageName = 'com.bank.app' AND timestamp = 1000").use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals(2, c.getInt(0))
+        }
 
         db.close()
     }
@@ -2224,11 +2269,11 @@ class DatabaseMigrationTest {
     /**
      * Verifies that MIGRATION_74_75 deduplicates pending subscription candidates
      * with duplicate (canonicalMerchant, detectedInterval), preserves non-pending
-     * and converted rows, and creates the partial unique index.
+     * and converted rows, and leaves only Room-declared indexes in place.
      */
     @Test
     @Throws(IOException::class)
-    fun migrate_74_to_75_subscription_candidates_dedup_and_index() {
+    fun migrate_74_to_75_subscription_candidates_dedup_and_room_indexes() {
         assumeTrue(hasSchema(74) && hasSchema(75))
 
         var db = helper.createDatabase(testDb, 74)
@@ -2309,24 +2354,21 @@ class DatabaseMigrationTest {
             assertEquals(4, c.getInt(1))
         }
 
-        // Verify partial unique index exists.
-        assertTrue(hasIndex(db, "index_subscription_candidates_pending_merchant_interval"))
+        assertFalse(hasIndex(db, "index_subscription_candidates_pending_merchant_interval"))
+        assertTrue(hasIndex(db, "index_subscription_candidates_canonicalMerchant"))
+        assertTrue(hasIndex(db, "index_subscription_candidates_isConverted"))
+        assertTrue(hasIndex(db, "index_subscription_candidates_confidence"))
 
-        // Verify that inserting a duplicate pending candidate now fails.
-        var constraintViolated = false
-        try {
-            db.execSQL("""
-                INSERT INTO subscription_candidates (merchant, canonicalMerchant,
-                    detectedInterval, confidence, firstSeen, lastSeen, transactionCount,
-                    averageAmount, currency, estimatedAnnualCost, isConverted,
-                    convertedSubscriptionId, userAction, createdAt, updatedAt)
-                VALUES ('Netflix 2', 'netflix', 'MONTHLY', 0.7, 3000, 3000, 1,
-                    15.99, 'EUR', 191.88, 0, NULL, 'pending', 3000, 3000)
-            """)
-        } catch (_: Exception) {
-            constraintViolated = true
-        }
-        assertTrue("Duplicate pending candidate must be rejected", constraintViolated)
+        // Direct duplicate inserts are allowed at SQLite level now that only
+        // Room-declared indexes remain.
+        db.execSQL("""
+            INSERT INTO subscription_candidates (merchant, canonicalMerchant,
+                detectedInterval, confidence, firstSeen, lastSeen, transactionCount,
+                averageAmount, currency, estimatedAnnualCost, isConverted,
+                convertedSubscriptionId, userAction, createdAt, updatedAt)
+            VALUES ('Netflix 2', 'netflix', 'MONTHLY', 0.7, 3000, 3000, 1,
+                15.99, 'EUR', 191.88, 0, NULL, 'pending', 3000, 3000)
+        """)
 
         // Verify that a converted candidate with same merchant+interval is still insertable.
         db.execSQL("""
@@ -2354,11 +2396,11 @@ class DatabaseMigrationTest {
     /**
      * Verifies that MIGRATION_74_75 demotes duplicate active budget forecasts
      * for the same (budgetId, targetPeriodStart, targetPeriodEnd), preserves
-     * inactive forecasts, and creates the partial unique index.
+     * inactive forecasts, and leaves only Room-declared indexes in place.
      */
     @Test
     @Throws(IOException::class)
-    fun migrate_74_to_75_budget_forecasts_dedup_and_index() {
+    fun migrate_74_to_75_budget_forecasts_dedup_and_room_indexes() {
         assumeTrue(hasSchema(74) && hasSchema(75))
 
         var db = helper.createDatabase(testDb, 74)
@@ -2471,27 +2513,12 @@ class DatabaseMigrationTest {
             assertEquals("id=5 should remain active", 1, c.getInt(0))
         }
 
-        // Verify partial unique index exists.
-        assertTrue(hasIndex(db, "index_budget_forecasts_active_budget_period"))
+        assertFalse(hasIndex(db, "index_budget_forecasts_active_budget_period"))
+        assertTrue(hasIndex(db, "index_budget_forecasts_budgetId"))
+        assertTrue(hasIndex(db, "index_budget_forecasts_forecastDate"))
+        assertTrue(hasIndex(db, "index_budget_forecasts_isActive"))
 
-        // Verify that inserting a duplicate active forecast now fails.
-        var constraintViolated = false
-        try {
-            db.execSQL("""
-                INSERT INTO budget_forecasts (budgetId, forecastDate,
-                    targetPeriodStart, targetPeriodEnd, predictedSpending, predictedRemaining,
-                    confidenceScore, riskLevel, overspendProbability, recommendationsJson,
-                    actualSpending, forecastAccuracy, isActive, createdAt)
-                VALUES (100, 3000, 2000, 3000, 480.0, 20.0,
-                    0.92, 'LOW', 0.1, NULL,
-                    NULL, NULL, 1, 3000)
-            """)
-        } catch (_: Exception) {
-            constraintViolated = true
-        }
-        assertTrue("Duplicate active forecast must be rejected", constraintViolated)
-
-        // Verify that an inactive forecast with the same key is still insertable.
+        // Direct duplicate inserts are now allowed at SQLite level.
         db.execSQL("""
             INSERT INTO budget_forecasts (budgetId, forecastDate,
                 targetPeriodStart, targetPeriodEnd, predictedSpending, predictedRemaining,
@@ -2499,7 +2526,7 @@ class DatabaseMigrationTest {
                 actualSpending, forecastAccuracy, isActive, createdAt)
             VALUES (100, 3000, 2000, 3000, 480.0, 20.0,
                 0.92, 'LOW', 0.1, NULL,
-                NULL, NULL, 0, 3000)
+                NULL, NULL, 1, 3000)
         """)
 
         db.close()
@@ -2559,9 +2586,15 @@ class DatabaseMigrationTest {
             assertEquals(1, c.getInt(0))
         }
 
-        // Both indexes should exist.
-        assertTrue(hasIndex(db, "index_subscription_candidates_pending_merchant_interval"))
-        assertTrue(hasIndex(db, "index_budget_forecasts_active_budget_period"))
+        // Only Room-declared subscription_candidates indexes should exist.
+        assertFalse(hasIndex(db, "index_subscription_candidates_pending_merchant_interval"))
+        assertTrue(hasIndex(db, "index_subscription_candidates_canonicalMerchant"))
+        assertTrue(hasIndex(db, "index_subscription_candidates_isConverted"))
+        assertTrue(hasIndex(db, "index_subscription_candidates_confidence"))
+        assertFalse(hasIndex(db, "index_budget_forecasts_active_budget_period"))
+        assertTrue(hasIndex(db, "index_budget_forecasts_budgetId"))
+        assertTrue(hasIndex(db, "index_budget_forecasts_forecastDate"))
+        assertTrue(hasIndex(db, "index_budget_forecasts_isActive"))
 
         db.close()
     }
@@ -2656,6 +2689,16 @@ class DatabaseMigrationTest {
     private fun hasIndex(db: androidx.sqlite.db.SupportSQLiteDatabase, indexName: String): Boolean {
         db.query("SELECT name FROM sqlite_master WHERE type='index' AND name='$indexName'").use { cursor ->
             return cursor.moveToFirst()
+        }
+    }
+
+    private fun rawNotificationIndexes(db: androidx.sqlite.db.SupportSQLiteDatabase): Set<String> {
+        db.query("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='raw_notifications'").use { cursor ->
+            val indexes = mutableSetOf<String>()
+            while (cursor.moveToNext()) {
+                indexes += cursor.getString(0)
+            }
+            return indexes
         }
     }
 
@@ -3041,10 +3084,11 @@ class DatabaseMigrationTest {
             assertTrue(e.message?.contains("CHECK") == true || e.message?.contains("constraint") == true)
         }
 
-        // Partial unique indexes from B4 should survive the rebuild
-        assertTrue(hasIndex(db, "index_budgets_active_overall"))
-        assertTrue(hasIndex(db, "index_budgets_active_category"))
+        // Only Room-declared budgets indexes should exist after rebuild
+        assertFalse(hasIndex(db, "index_budgets_active_overall"))
+        assertFalse(hasIndex(db, "index_budgets_active_category"))
         assertTrue(hasIndex(db, "index_budgets_categoryId"))
+        assertTrue(hasIndex(db, "index_budgets_isActive"))
 
         db.close()
     }
@@ -3169,6 +3213,518 @@ class DatabaseMigrationTest {
             "index_spending_challenges_isActive_endDate should exist after 79→80 migration",
             hasIndex(db, "index_spending_challenges_isActive_endDate")
         )
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_91_to_92_heals_email_receipt_sources_default_for_room_validation() {
+        assumeTrue(hasSchema(91) && hasSchema(92))
+
+        var db = helper.createDatabase(testDb, 91)
+
+        db.execSQL("DROP TABLE IF EXISTS email_receipt_sources")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS email_receipt_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                receiptId INTEGER NOT NULL,
+                emailSender TEXT NOT NULL,
+                emailSubject TEXT NOT NULL,
+                emailMessageId TEXT,
+                parsedAt INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                fingerprint TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY(receiptId) REFERENCES scanned_receipts(id) ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_receiptId ON email_receipt_sources (receiptId)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_email_receipt_sources_emailMessageId ON email_receipt_sources (emailMessageId) WHERE emailMessageId IS NOT NULL")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_provider_parsedAt ON email_receipt_sources (provider, parsedAt)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_sources_parsedAt ON email_receipt_sources (parsedAt)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_email_receipt_fingerprint ON email_receipt_sources (fingerprint)")
+        db.execSQL(
+            "INSERT INTO scanned_receipts (id, imagePath, rawOcrText, confidence, createdAt, itemCategorizationStatus) VALUES (999, NULL, 'ocr', 0.7, 1705000000001, 'PENDING')"
+        )
+        db.execSQL(
+            """
+            INSERT INTO email_receipt_sources (
+                receiptId, emailSender, emailSubject, emailMessageId,
+                parsedAt, provider, confidence, fingerprint
+            ) VALUES (
+                999, 'legacy-default@test.com', 'Legacy Default', '   ',
+                1705000000002, 'GMAIL', 0.8, 'fp-legacy-default'
+            )
+            """.trimIndent()
+        )
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            92,
+            true,
+            AppDatabase.MIGRATION_91_92
+        )
+
+        db.query("PRAGMA table_info(email_receipt_sources)").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            val defaultIndex = cursor.getColumnIndexOrThrow("dflt_value")
+            var foundEmailMessageId = false
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameIndex) == "emailMessageId") {
+                    foundEmailMessageId = true
+                    assertEquals("NULL", cursor.getString(defaultIndex))
+                }
+            }
+            assertTrue(foundEmailMessageId)
+        }
+
+        db.query("SELECT emailMessageId FROM email_receipt_sources WHERE emailSender='legacy-default@test.com'").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertTrue(cursor.isNull(0))
+        }
+
+        assertTrue(hasIndex(db, "index_email_receipt_sources_receiptId"))
+        assertTrue(hasIndex(db, "index_email_receipt_sources_emailMessageId"))
+        assertTrue(hasIndex(db, "index_email_receipt_sources_provider_parsedAt"))
+        assertTrue(hasIndex(db, "index_email_receipt_sources_parsedAt"))
+        assertTrue(hasIndex(db, "index_email_receipt_fingerprint"))
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_81_to_82_deduplicates_pending_reviews_and_enforces_unique_raw_notification_id() {
+        assumeTrue(hasSchema(81) && hasSchema(82))
+
+        var db = helper.createDatabase(testDb, 81)
+
+        db.execSQL("""
+            INSERT INTO raw_notifications (
+                id, packageName, timestamp, capturedAt, isProcessed
+            ) VALUES (
+                1, 'com.test.bank', 1700000000000, 1700000000000, 0
+            )
+        """.trimIndent())
+
+        db.execSQL("""
+            INSERT INTO pending_reviews (
+                id, rawNotificationId, suggestedAmount, suggestedCurrency,
+                suggestedMerchant, suggestedType, confidence, packageName,
+                createdAt, status
+            ) VALUES (
+                10, 1, 12.0, 'EUR', 'Coffee Shop', 'PURCHASE', 0.7, 'com.test.bank',
+                1700000001000, 'PENDING'
+            )
+        """.trimIndent())
+        db.execSQL("""
+            INSERT INTO pending_reviews (
+                id, rawNotificationId, suggestedAmount, suggestedCurrency,
+                suggestedMerchant, suggestedType, confidence, packageName,
+                createdAt, status
+            ) VALUES (
+                20, 1, 15.0, 'EUR', 'Coffee Shop Updated', 'PURCHASE', 0.8, 'com.test.bank',
+                1700000002000, 'PENDING'
+            )
+        """.trimIndent())
+        db.execSQL("""
+            INSERT INTO pending_reviews (
+                id, rawNotificationId, suggestedAmount, suggestedCurrency,
+                suggestedMerchant, suggestedType, confidence, packageName,
+                createdAt, status
+            ) VALUES (
+                30, NULL, 22.0, 'EUR', 'No Raw Id', 'PURCHASE', 0.6, 'com.test.bank',
+                1700000003000, 'PENDING'
+            )
+        """.trimIndent())
+
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            82,
+            true,
+            AppDatabase.MIGRATION_81_82
+        )
+
+        db.query("SELECT id, suggestedMerchant FROM pending_reviews WHERE rawNotificationId = 1").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(20L, cursor.getLong(0))
+            assertEquals("Coffee Shop Updated", cursor.getString(1))
+            assertFalse(cursor.moveToNext())
+        }
+
+        db.query("SELECT COUNT(*) FROM pending_reviews WHERE rawNotificationId IS NULL").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(1, cursor.getInt(0))
+        }
+
+        assertTrue(hasIndex(db, "index_pending_reviews_rawNotificationId"))
+
+        var duplicateRejected = false
+        try {
+            db.execSQL("""
+                INSERT INTO pending_reviews (
+                    rawNotificationId, suggestedAmount, suggestedCurrency,
+                    suggestedMerchant, suggestedType, confidence, packageName,
+                    createdAt, status
+                ) VALUES (
+                    1, 18.0, 'EUR', 'Duplicate Insert', 'PURCHASE', 0.9, 'com.test.bank',
+                    1700000004000, 'PENDING'
+                )
+            """.trimIndent())
+        } catch (_: Exception) {
+            duplicateRejected = true
+        }
+        assertTrue("Unique rawNotificationId index must reject duplicates", duplicateRejected)
+
+        db.execSQL("""
+            INSERT INTO pending_reviews (
+                rawNotificationId, suggestedAmount, suggestedCurrency,
+                suggestedMerchant, suggestedType, confidence, packageName,
+                createdAt, status
+            ) VALUES (
+                NULL, 19.0, 'EUR', 'Another Null Raw Id', 'PURCHASE', 0.5, 'com.test.bank',
+                1700000005000, 'PENDING'
+            )
+        """.trimIndent())
+
+        db.query("SELECT COUNT(*) FROM pending_reviews WHERE rawNotificationId IS NULL").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(2, cursor.getInt(0))
+        }
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_84_to_85_normalizes_raw_notifications_indexes() {
+        assumeTrue(hasSchema(84) && hasSchema(85))
+
+        var db = helper.createDatabase(testDb, 84)
+
+        // Simulate drifted index state before healing migration.
+        db.execSQL("DROP INDEX IF EXISTS index_raw_notifications_packageName_timestamp_title_text")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_packageName_timestamp_title_text ON raw_notifications (packageName, timestamp, title, text)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_dedup_nonnull ON raw_notifications (packageName, timestamp, title, text) WHERE title IS NOT NULL AND text IS NOT NULL")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_dedup_both_null ON raw_notifications (packageName, timestamp) WHERE title IS NULL AND text IS NULL")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_dedup_title_null ON raw_notifications (packageName, timestamp, text) WHERE title IS NULL AND text IS NOT NULL")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_dedup_text_null ON raw_notifications (packageName, timestamp, title) WHERE text IS NULL AND title IS NOT NULL")
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            85,
+            true,
+            AppDatabase.MIGRATION_84_85
+        )
+
+        assertFalse(hasIndex(db, "index_raw_notifications_dedup_nonnull"))
+        assertFalse(hasIndex(db, "index_raw_notifications_dedup_both_null"))
+        assertFalse(hasIndex(db, "index_raw_notifications_dedup_title_null"))
+        assertFalse(hasIndex(db, "index_raw_notifications_dedup_text_null"))
+
+        assertTrue(hasIndex(db, "index_raw_notifications_packageName_timestamp"))
+        assertTrue(hasIndex(db, "index_raw_notifications_capturedAt"))
+        assertTrue(hasIndex(db, "index_raw_notifications_isRelevant"))
+        assertTrue(hasIndex(db, "index_raw_notifications_packageName_timestamp_title_text"))
+
+        db.query("PRAGMA index_list('raw_notifications')").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            val uniqueIndex = cursor.getColumnIndexOrThrow("unique")
+            var foundCoveringIndex = false
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameIndex) == "index_raw_notifications_packageName_timestamp_title_text") {
+                    foundCoveringIndex = true
+                    assertEquals("covering index must be non-unique", 0, cursor.getInt(uniqueIndex))
+                }
+            }
+            assertTrue("covering index must exist", foundCoveringIndex)
+        }
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_83_to_85_chain_normalizes_raw_notifications_indexes() {
+        assumeTrue(hasSchema(83) && hasSchema(85))
+
+        var db = helper.createDatabase(testDb, 83)
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            85,
+            true,
+            AppDatabase.MIGRATION_83_84,
+            AppDatabase.MIGRATION_84_85
+        )
+
+        assertFalse(hasIndex(db, "index_raw_notifications_dedup_nonnull"))
+        assertFalse(hasIndex(db, "index_raw_notifications_dedup_both_null"))
+        assertFalse(hasIndex(db, "index_raw_notifications_dedup_title_null"))
+        assertFalse(hasIndex(db, "index_raw_notifications_dedup_text_null"))
+
+        db.query("PRAGMA index_list('raw_notifications')").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            val uniqueIndex = cursor.getColumnIndexOrThrow("unique")
+            var foundCoveringIndex = false
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameIndex) == "index_raw_notifications_packageName_timestamp_title_text") {
+                    foundCoveringIndex = true
+                    assertEquals(0, cursor.getInt(uniqueIndex))
+                }
+            }
+            assertTrue(foundCoveringIndex)
+        }
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_85_to_86_heals_budgets_defaults_and_preserves_rows() {
+        assumeTrue(hasSchema(85) && hasSchema(86))
+
+        var db = helper.createDatabase(testDb, 85)
+
+        db.execSQL(
+            """
+            INSERT INTO categories (id, name, icon, color, isDefault)
+            VALUES (1, 'Food', '🍔', '#FF0000', 0)
+            """.trimIndent()
+        )
+
+        db.execSQL(
+            """
+            INSERT INTO budgets (
+                id, categoryId, amount, period, periodMode, startDate,
+                isActive, notifyAtWarning, notifyAtCritical, rollover,
+                createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt
+            ) VALUES (
+                100, 1, 250.5, 'MONTHLY', 'CALENDAR', 1700000000000,
+                1, 0.8, 0.95, 1,
+                1700000000001, 1700000000002, 1700000000003, 1700000000004
+            )
+            """.trimIndent()
+        )
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            86,
+            true,
+            AppDatabase.MIGRATION_85_86
+        )
+
+        val expectedDefaults = mapOf(
+            "periodMode" to "'ROLLING'",
+            "isActive" to "1",
+            "notifyAtWarning" to "0.75",
+            "notifyAtCritical" to "0.9",
+            "rollover" to "0"
+        )
+
+        db.query("PRAGMA table_info('budgets')").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            val defaultValueIndex = cursor.getColumnIndexOrThrow("dflt_value")
+            val seenDefaults = mutableMapOf<String, String?>()
+
+            while (cursor.moveToNext()) {
+                val name = cursor.getString(nameIndex)
+                if (expectedDefaults.containsKey(name)) {
+                    seenDefaults[name] = cursor.getString(defaultValueIndex)
+                }
+            }
+
+            expectedDefaults.forEach { (columnName, expectedDefault) ->
+                assertTrue("Expected column missing from budgets: $columnName", seenDefaults.containsKey(columnName))
+                assertEquals(
+                    "Unexpected default for budgets.$columnName",
+                    expectedDefault,
+                    seenDefaults[columnName]
+                )
+            }
+        }
+
+        db.query("SELECT COUNT(*) FROM budgets").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(1, cursor.getInt(0))
+        }
+
+        db.query(
+            """
+            SELECT
+                id, categoryId, amount, period, periodMode, startDate,
+                isActive, notifyAtWarning, notifyAtCritical, rollover,
+                createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt
+            FROM budgets
+            WHERE id = 100
+            """.trimIndent()
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(100L, cursor.getLong(0))
+            assertEquals(1L, cursor.getLong(1))
+            assertEquals(250.5, cursor.getDouble(2), 0.0001)
+            assertEquals("MONTHLY", cursor.getString(3))
+            assertEquals("CALENDAR", cursor.getString(4))
+            assertEquals(1700000000000L, cursor.getLong(5))
+            assertEquals(1, cursor.getInt(6))
+            assertEquals(0.8, cursor.getDouble(7), 0.0001)
+            assertEquals(0.95, cursor.getDouble(8), 0.0001)
+            assertEquals(1, cursor.getInt(9))
+            assertEquals(1700000000001L, cursor.getLong(10))
+            assertEquals(1700000000002L, cursor.getLong(11))
+            assertEquals(1700000000003L, cursor.getLong(12))
+            assertEquals(1700000000004L, cursor.getLong(13))
+            assertFalse(cursor.moveToNext())
+        }
+
+        assertTrue(hasIndex(db, "index_budgets_categoryId"))
+        assertTrue(hasIndex(db, "index_budgets_isActive"))
+        assertFalse(hasIndex(db, "index_budgets_active_overall"))
+        assertFalse(hasIndex(db, "index_budgets_active_category"))
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_86_to_87_drops_non_room_budgets_partial_indexes() {
+        assumeTrue(hasSchema(86) && hasSchema(87))
+
+        var db = helper.createDatabase(testDb, 86)
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_active_overall ON budgets (isActive) WHERE isActive = 1 AND categoryId IS NULL"
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_active_category ON budgets (categoryId) WHERE isActive = 1 AND categoryId IS NOT NULL"
+        )
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            87,
+            true,
+            AppDatabase.MIGRATION_86_87
+        )
+
+        assertFalse(hasIndex(db, "index_budgets_active_overall"))
+        assertFalse(hasIndex(db, "index_budgets_active_category"))
+        assertTrue(hasIndex(db, "index_budgets_categoryId"))
+        assertTrue(hasIndex(db, "index_budgets_isActive"))
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_87_to_88_drops_non_room_group_members_partial_index() {
+        assumeTrue(hasSchema(87) && hasSchema(88))
+
+        var db = helper.createDatabase(testDb, 87)
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_currentUser ON group_members (groupId) WHERE isCurrentUser = 1"
+        )
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            88,
+            true,
+            AppDatabase.MIGRATION_87_88
+        )
+
+        assertFalse(hasIndex(db, "index_group_members_groupId_currentUser"))
+        assertTrue(hasIndex(db, "index_group_members_groupId"))
+        assertTrue(hasIndex(db, "index_group_members_groupId_isCurrentUser"))
+        assertTrue(hasIndex(db, "index_group_members_groupId_name"))
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_88_to_89_drops_non_room_group_expenses_partial_index() {
+        assumeTrue(hasSchema(88) && hasSchema(89))
+
+        var db = helper.createDatabase(testDb, 88)
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_group_expenses_expenseId_unique ON group_expenses (expenseId) WHERE expenseId IS NOT NULL"
+        )
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            89,
+            true,
+            AppDatabase.MIGRATION_88_89
+        )
+
+        assertFalse(hasIndex(db, "index_group_expenses_expenseId_unique"))
+        assertTrue(hasIndex(db, "index_group_expenses_groupId"))
+        assertTrue(hasIndex(db, "index_group_expenses_expenseId"))
+        assertTrue(hasIndex(db, "index_group_expenses_paidById"))
+        assertTrue(hasIndex(db, "index_group_expenses_groupId_date"))
+        assertTrue(hasIndex(db, "index_group_expenses_isReimbursable"))
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_89_to_90_drops_non_room_budget_forecasts_partial_index() {
+        assumeTrue(hasSchema(89))
+
+        var db = helper.createDatabase(testDb, 89)
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_budget_forecasts_active_budget_period ON budget_forecasts (budgetId, targetPeriodStart, targetPeriodEnd) WHERE isActive = 1"
+        )
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            90,
+            true,
+            AppDatabase.MIGRATION_89_90
+        )
+
+        assertFalse(hasIndex(db, "index_budget_forecasts_active_budget_period"))
+        assertTrue(hasIndex(db, "index_budget_forecasts_budgetId"))
+        assertTrue(hasIndex(db, "index_budget_forecasts_forecastDate"))
+        assertTrue(hasIndex(db, "index_budget_forecasts_isActive"))
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_90_to_91_drops_non_room_subscription_candidates_partial_index() {
+        assumeTrue(hasSchema(90))
+
+        var db = helper.createDatabase(testDb, 90)
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_subscription_candidates_pending_merchant_interval ON subscription_candidates (canonicalMerchant, detectedInterval) WHERE isConverted = 0 AND userAction = 'pending'"
+        )
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            91,
+            true,
+            AppDatabase.MIGRATION_90_91
+        )
+
+        assertFalse(hasIndex(db, "index_subscription_candidates_pending_merchant_interval"))
+        assertTrue(hasIndex(db, "index_subscription_candidates_canonicalMerchant"))
+        assertTrue(hasIndex(db, "index_subscription_candidates_isConverted"))
+        assertTrue(hasIndex(db, "index_subscription_candidates_confidence"))
 
         db.close()
     }

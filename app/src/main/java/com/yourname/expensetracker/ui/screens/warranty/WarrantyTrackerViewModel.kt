@@ -92,8 +92,9 @@ class WarrantyTrackerViewModel @Inject constructor(
     // F1: Filter for auto-detected warranties
     fun filterByAutoDetected() {
         _state.update {
+            val enableAutoDetectedOnly = !it.showAutoDetectedOnly
             it.copy(
-                showAutoDetectedOnly = true,
+                showAutoDetectedOnly = enableAutoDetectedOnly,
                 showNeedsReviewOnly = false,
                 selectedFilter = null
             ).withDerivedWarranties()

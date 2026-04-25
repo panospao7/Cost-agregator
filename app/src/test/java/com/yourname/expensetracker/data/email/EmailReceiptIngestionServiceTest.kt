@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.email.provider.AmazonReceiptParser
@@ -254,18 +255,19 @@ class EmailReceiptIngestionServiceTest {
         coEvery { emailReceiptDao.getByMessageId("msg-scan-dup-1") } returns null
         coEvery { emailReceiptDao.getByFingerprint(any()) } returns null
         coEvery { scannedReceiptDao.getRecentReceipts(any()) } returns listOf(
-            ScannedReceipt(
-                id = 444L,
-                imagePath = "/tmp/receipt.jpg",
-                rawOcrText = "old",
-                parsedTotal = 12.34,
-                parsedMerchant = "Amazon",
-                parsedDate = FIXED_NOW,
-                parsedItems = null,
-                parsedTaxAmount = null,
-                confidence = 0.9f,
-                createdAt = FIXED_NOW - 2_000L
-            )
+		ScannedReceipt(
+			id = 444L,
+			imagePath = "/tmp/receipt.jpg",
+			rawOcrText = "old",
+			parsedTotal = 12.34,
+			parsedMerchant = "Amazon",
+			parsedDate = FIXED_NOW,
+			parsedItems = null,
+			parsedTaxAmount = null,
+			confidence = 0.9f,
+			createdAt = FIXED_NOW - 2_000L,
+			matchStatus = MatchStatus.UNMATCHED
+		)
         )
         val emailSourceSlot = slot<EmailReceiptSource>()
         coEvery { emailReceiptDao.insertOrIgnore(capture(emailSourceSlot)) } returns 1L

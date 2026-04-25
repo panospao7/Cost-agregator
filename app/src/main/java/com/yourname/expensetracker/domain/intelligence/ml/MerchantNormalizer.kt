@@ -165,16 +165,36 @@ class MerchantNormalizer @Inject constructor(
         
         val matches = tree.search(normalizedKey, maxDist)
         if (matches.isEmpty()) return null
-        
-        val best = matches.first()
-        val canonical = repository.getCanonicalBySearchKey(best.first) ?: return null
-        val similarity = StringDistanceUtils.jaroWinklerSimilarity(normalizedKey, best.first)
+
+        data class RankedCandidate(
+            val canonical: MerchantCanonical,
+            val distance: Int,
+            val similarity: Float
+        )
+
+        val ranked = matches.mapNotNull { (searchKey, distance) ->
+            val canonical = repository.getCanonicalBySearchKey(searchKey) ?: return@mapNotNull null
+            RankedCandidate(
+                canonical = canonical,
+                distance = distance,
+                similarity = StringDistanceUtils.jaroWinklerSimilarity(normalizedKey, searchKey).toFloat()
+            )
+        }.sortedWith(
+            compareBy<RankedCandidate> { it.distance }
+                .thenByDescending { it.similarity }
+                .thenByDescending { it.canonical.totalOccurrences }
+                .thenByDescending { it.canonical.isVerified }
+                .thenBy { it.canonical.normalizedName.lowercase() }
+                .thenBy { it.canonical.id }
+        )
+
+        val best = ranked.firstOrNull() ?: return null
         
         return MerchantLookupResult(
-            canonical = canonical,
+            canonical = best.canonical,
             alias = null,
-            confidence = similarity.toFloat(),
-            matchType = if (best.second == 0) MatchType.EXACT_MATCH else MatchType.FUZZY_MATCH
+            confidence = best.similarity,
+            matchType = if (best.distance == 0) MatchType.EXACT_MATCH else MatchType.FUZZY_MATCH
         )
     }
 

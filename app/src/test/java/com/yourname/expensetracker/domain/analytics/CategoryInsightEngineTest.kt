@@ -6,10 +6,14 @@ import com.yourname.expensetracker.createExpense
 import com.yourname.expensetracker.startOfMonth
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.TimeUnit
 
 class CategoryInsightEngineTest {
 
@@ -35,13 +39,13 @@ class CategoryInsightEngineTest {
             icon = "🏠",
             color = "#607D8B",
             isDefault = true
-        )).associateBy { it.id }
+        )).toAnalyticsCategoryMap()
 
         val insights = engine.calculate(
             currentMonth = currentMonth,
             previousMonth = previousMonth,
             categoryMap = categoryMap,
-            allExpenses = goldenMarchAndFebruaryExpensesWithRentCategory()
+            allExpenses = goldenMarchAndFebruaryExpensesWithRentCategory().map { it.toSnapshot() }
         )
 
         val groceries = insights.find { it.category.id == 2L }
@@ -91,8 +95,8 @@ class CategoryInsightEngineTest {
         val insights = engine.calculate(
             currentMonth = currentMonth,
             previousMonth = null,
-            categoryMap = TEST_CATEGORIES.associateBy { it.id },
-            allExpenses = expenses
+            categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
+            allExpenses = expenses.map { it.toSnapshot() }
         )
 
         assertEquals(1, insights.size)
@@ -113,7 +117,7 @@ class CategoryInsightEngineTest {
         val insights = engine.calculate(
             currentMonth = currentMonth,
             previousMonth = null,
-            categoryMap = TEST_CATEGORIES.associateBy { it.id },
+            categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
             allExpenses = emptyList()
         )
 
@@ -140,8 +144,8 @@ class CategoryInsightEngineTest {
         val insights = engine.calculate(
             currentMonth = currentMonth,
             previousMonth = null,
-            categoryMap = TEST_CATEGORIES.associateBy { it.id },
-            allExpenses = expenses
+            categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
+            allExpenses = expenses.map { it.toSnapshot() }
         )
 
         // Only PURCHASE transactions should be included
@@ -170,8 +174,8 @@ class CategoryInsightEngineTest {
         val insights = engine.calculate(
             currentMonth = currentMonth,
             previousMonth = null,
-            categoryMap = TEST_CATEGORIES.associateBy { it.id },
-            allExpenses = expenses
+            categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
+            allExpenses = expenses.map { it.toSnapshot() }
         )
 
         val totalAcrossInsights = insights.sumOf { it.currentTotal }
@@ -197,8 +201,8 @@ class CategoryInsightEngineTest {
         val insights = engine.calculate(
             currentMonth = currentMonth,
             previousMonth = null,
-            categoryMap = TEST_CATEGORIES.associateBy { it.id },
-            allExpenses = expenses
+            categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
+            allExpenses = expenses.map { it.toSnapshot() }
         )
 
         assertEquals(1, insights.size)
@@ -230,8 +234,8 @@ class CategoryInsightEngineTest {
         val insights = engine.calculate(
             currentMonth = currentMonth,
             previousMonth = null,
-            categoryMap = TEST_CATEGORIES.associateBy { it.id },
-            allExpenses = expenses
+            categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
+            allExpenses = expenses.map { it.toSnapshot() }
         )
 
         // Total from purchases: 200 + 60 + 40 = 300
@@ -273,8 +277,8 @@ class CategoryInsightEngineTest {
         val insights = engine.calculate(
             currentMonth = currentMonth,
             previousMonth = previousMonth,
-            categoryMap = TEST_CATEGORIES.associateBy { it.id },
-            allExpenses = expenses
+            categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
+            allExpenses = expenses.map { it.toSnapshot() }
         )
 
         val groceries = insights.find { it.category.id == 2L }
@@ -305,8 +309,8 @@ class CategoryInsightEngineTest {
         val insights = engine.calculate(
             currentMonth = currentMonth,
             previousMonth = null,
-            categoryMap = TEST_CATEGORIES.associateBy { it.id },
-            allExpenses = expenses
+            categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
+            allExpenses = expenses.map { it.toSnapshot() }
         )
 
         assertTrue(insights.isEmpty())
@@ -332,8 +336,8 @@ class CategoryInsightEngineTest {
         val insights = engine.calculate(
             currentMonth = currentMonth,
             previousMonth = null,
-            categoryMap = TEST_CATEGORIES.associateBy { it.id },
-            allExpenses = expenses
+            categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
+            allExpenses = expenses.map { it.toSnapshot() }
         )
 
         assertEquals(3, insights.size)
@@ -341,6 +345,49 @@ class CategoryInsightEngineTest {
         assertEquals(5L, insights[0].category.id) // Utilities
         assertEquals(2L, insights[1].category.id) // Groceries
         assertEquals(3L, insights[2].category.id) // Entertainment
+    }
+
+    @Test
+    fun `calculate previous totals remain correct with large previous period`() {
+        val currentMonth = MonthPeriod(
+            year = 2026,
+            month = 2,
+            startMs = startOfMonth(2026, 3),
+            endMs = startOfMonth(2026, 4)
+        )
+        val previousMonth = MonthPeriod(
+            year = 2026,
+            month = 1,
+            startMs = startOfMonth(2026, 2),
+            endMs = startOfMonth(2026, 3)
+        )
+
+        val previousStart = previousMonth.startMs
+        val previousExpenses = (0 until 1_000).map { idx ->
+            createExpense(
+                date = "2026-02-01",
+                amount = 1.0,
+                merchant = "G-$idx",
+                category = if (idx % 2 == 0) "groceries" else "dining",
+                id = 10_000L + idx
+            ).copy(date = previousStart + TimeUnit.HOURS.toMillis((idx % 24).toLong()))
+        }
+        val currentExpenses = listOf(
+            createExpense("2026-03-03", 100.0, merchant = "Lidl", category = "groceries", id = 20_001L),
+            createExpense("2026-03-04", 100.0, merchant = "Lidl", category = "groceries", id = 20_002L)
+        )
+
+        val insights = engine.calculate(
+            currentMonth = currentMonth,
+            previousMonth = previousMonth,
+            categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
+            allExpenses = (currentExpenses + previousExpenses).map { it.toSnapshot() }
+        )
+
+        val groceries = insights.first { it.category.id == 2L }
+        assertApproxEquals(200.0, groceries.currentTotal, 0.01)
+        assertApproxEquals(500.0, groceries.previousTotal ?: 0.0, 0.01)
+        assertEquals(500, groceries.previousCount)
     }
 
     private fun goldenMarchAndFebruaryExpensesWithRentCategory() = listOf(
@@ -375,4 +422,42 @@ class CategoryInsightEngineTest {
         createExpense("2026-02-18", 30.00, merchant = "Restaurant B", category = "dining", id = 105L),
         createExpense("2026-02-25", 115.00, merchant = "Utilities", category = "utilities", id = 106L)
     )
+
+    private fun List<Category>.toAnalyticsCategoryMap(): Map<Long, AnalyticsCategoryRef> {
+        return associate { category ->
+            category.id to AnalyticsCategoryRef(
+                id = category.id,
+                name = category.name,
+                icon = category.icon,
+                color = category.color
+            )
+        }
+    }
+
+    private fun com.yourname.expensetracker.data.database.entity.Expense.toSnapshot(): ExpenseSnapshot {
+        return ExpenseSnapshot(
+            id = id,
+            amount = amount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            merchantKey = merchantKey,
+            transactionType = when (transactionType) {
+                TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+                TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+                TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+                TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+                TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+            },
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            transferDirection = when (transferDirection) {
+                com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+                com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+                null -> null
+            },
+            notes = notes
+        )
+    }
 }

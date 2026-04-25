@@ -95,7 +95,7 @@ data class CategorizationAssistInput(
     val targetType: AiTargetType,
     val targetId: Long,
     val merchant: String,
-    val amount: Double,
+    val amount: Double?,
     val currency: String,
     val transactionType: DomainTransactionType,
     val date: Long?,
@@ -105,7 +105,13 @@ data class CategorizationAssistInput(
     val candidateCategories: List<CategoryOption>,
     val supportingText: String? = null,
     val recentTransactionsWithSameMerchant: List<MerchantTransactionHint> = emptyList()
-)
+) {
+    init {
+        require(amount == null || (amount.isFinite() && amount > 0.0)) {
+            "CategorizationAssistInput.amount must be finite and > 0 when provided"
+        }
+    }
+}
 
 data class CategoryAssistSuggestion(
     val categoryId: Long,

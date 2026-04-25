@@ -36,7 +36,7 @@ object NotificationIdGenerator {
      * Maps warranty Long ID to safe Int range.
      */
     fun forWarranty(warrantyId: Long, daysUntilExpiration: Int): Int {
-        val baseId = (warrantyId % WARRANTY_SUBRANGE_SIZE).toInt()
+        val baseId = positiveRangeOffset(warrantyId, WARRANTY_SUBRANGE_SIZE)
         val rangeStart = if (daysUntilExpiration <= 7) {
             WARRANTY_RANGE_START
         } else {
@@ -49,28 +49,28 @@ object NotificationIdGenerator {
      * Generate notification ID for receipt matching.
      */
     fun forReceipt(receiptId: Long): Int {
-        return RECEIPT_RANGE_START + (receiptId % RANGE_SIZE).toInt()
+        return RECEIPT_RANGE_START + positiveRangeOffset(receiptId, RANGE_SIZE)
     }
     
     /**
      * Generate notification ID for bill reminder.
      */
     fun forBill(expenseId: Long): Int {
-        return BILL_RANGE_START + (expenseId % RANGE_SIZE).toInt()
+        return BILL_RANGE_START + positiveRangeOffset(expenseId, RANGE_SIZE)
     }
     
     /**
      * Generate notification ID for budget alert.
      */
     fun forBudget(budgetId: Long): Int {
-        return BUDGET_RANGE_START + (budgetId % RANGE_SIZE).toInt()
+        return BUDGET_RANGE_START + positiveRangeOffset(budgetId, RANGE_SIZE)
     }
     
     /**
      * Generate notification ID for general app notification.
      */
     fun forGeneral(id: Long): Int {
-        return GENERAL_RANGE_START + (id % RANGE_SIZE).toInt()
+        return GENERAL_RANGE_START + positiveRangeOffset(id, RANGE_SIZE)
     }
     
     /**
@@ -80,7 +80,11 @@ object NotificationIdGenerator {
     fun fromLong(value: Long, rangeStart: Int = GENERAL_RANGE_START): Int {
         // Mix bits for better distribution
         val mixed = value xor (value shr 32)
-        return rangeStart + (mixed % RANGE_SIZE).toInt()
+        return rangeStart + positiveRangeOffset(mixed, RANGE_SIZE)
+    }
+
+    private fun positiveRangeOffset(value: Long, rangeSize: Int): Int {
+        return Math.floorMod(value, rangeSize.toLong()).toInt()
     }
 }
 

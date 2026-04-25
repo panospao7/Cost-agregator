@@ -17,12 +17,17 @@ class StringBKTree private constructor(
         val children: MutableMap<Int, Node> = mutableMapOf()
     )
 
-    private var root: Node? = null
-    private var _size = 0
+    private data class TreeState(
+        val root: Node? = null,
+        val size: Int = 0
+    )
+
+    @Volatile
+    private var state = TreeState()
     private val mutex = Mutex()
     
-    val size: Int get() = _size
-    val isEmpty: Boolean get() = root == null
+    val size: Int get() = state.size
+    val isEmpty: Boolean get() = state.root == null
 
     companion object {
         /**
@@ -40,15 +45,16 @@ class StringBKTree private constructor(
      */
     suspend fun insert(item: String) = mutex.withLock {
         val normalized = item.lowercase().trim()
+        val currentState = state
         
-        if (root == null) {
-            root = Node(normalized)
-            _size = 1
+        if (currentState.root == null) {
+            state = TreeState(root = Node(normalized), size = 1)
             return@withLock
         }
 
-        var current = root!!
+        var current = currentState.root
         while (true) {
+            current ?: return@withLock
             val dist = distanceFunction(current.item, normalized)
             
             if (dist == 0) return@withLock // Duplicate
@@ -56,7 +62,7 @@ class StringBKTree private constructor(
             val child = current.children[dist]
             if (child == null) {
                 current.children[dist] = Node(normalized)
-                _size++
+                state = state.copy(size = state.size + 1)
                 return@withLock
             }
             current = child
@@ -76,7 +82,7 @@ class StringBKTree private constructor(
     suspend fun search(query: String, maxDistance: Int): List<Pair<String, Int>> = mutex.withLock {
         val results = mutableListOf<Pair<String, Int>>()
         val normalized = query.lowercase().trim()
-        searchRecursive(root, normalized, maxDistance, results)
+        searchRecursive(state.root, normalized, maxDistance, results)
         results.sortedBy { it.second }
     }
 
@@ -115,7 +121,6 @@ class StringBKTree private constructor(
      * Clear all items.
      */
     suspend fun clear() = mutex.withLock {
-        root = null
-        _size = 0
+        state = TreeState()
     }
 }

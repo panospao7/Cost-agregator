@@ -137,6 +137,15 @@ interface RecommendationDao {
           AND status != 'EXPIRED'
     """)
     suspend fun expireOld(userId: String, beforeTimestamp: Long, nowMillis: Long = System.currentTimeMillis())
+
+    @Query("""
+        UPDATE recommendations
+        SET status = 'EXPIRED',
+            updatedAt = :nowMillis
+        WHERE userId = :userId
+          AND status = 'ACTIVE'
+    """)
+    suspend fun expireAllActiveByUser(userId: String, nowMillis: Long = System.currentTimeMillis()): Int
     
     /**
      * Clear all recommendations for a user (e.g., account switch).

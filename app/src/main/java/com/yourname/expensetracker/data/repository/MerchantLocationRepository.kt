@@ -5,11 +5,16 @@ import com.yourname.expensetracker.data.database.entity.MerchantLocation
 import com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
+import com.yourname.expensetracker.domain.location.MerchantLocationGrid
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.*
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Repository for the merchant-location cache ([MerchantLocation]) and
@@ -58,8 +63,8 @@ class MerchantLocationRepository @Inject constructor(
     fun getMostLikelyArea(merchantName: String, lat: Double?, lon: Double?): String {
         val key = normalizeKey(merchantName)
         return if (lat != null && lon != null) {
-            val gridLat = kotlin.math.floor(lat / 0.045).toLong()
-            val gridLon = kotlin.math.floor(lon / 0.045).toLong()
+            val gridLat = MerchantLocationGrid.bucketCoordinate(lat)
+            val gridLon = MerchantLocationGrid.bucketCoordinate(lon)
             "$key|$gridLat|$gridLon"
         } else {
             "global"

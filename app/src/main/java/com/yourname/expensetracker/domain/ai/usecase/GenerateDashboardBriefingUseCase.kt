@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -67,7 +68,7 @@ class GenerateDashboardBriefingUseCase @Inject constructor(
         // ── 3. Derive target key ─────────────────────────────────────────────
         val targetKey = "dashboard_home:${input.dateKey}"
         val now       = eventTimeMillis ?: timeProvider.now()
-        val sourceHash = input.hashCode().toString()
+        val sourceHash = AiArtifactSourceHash.forDashboardBriefing(input)
 
         // ── 4. Cache freshness check ─────────────────────────────────────────
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.DASHBOARD_BRIEFING)

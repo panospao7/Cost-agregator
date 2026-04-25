@@ -2,8 +2,10 @@ package com.yourname.expensetracker.service
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
+import kotlinx.coroutines.test.runTest
 
 class NotificationCaptureServiceFallbackTest {
 
@@ -92,5 +94,22 @@ class NotificationCaptureServiceFallbackTest {
         )
 
         assertNotEquals(originalHash, updatedHash)
+    }
+
+    @Test
+    fun `work tracker drains in flight jobs before shutdown`() = runTest {
+        val tracker = NotificationServiceWorkTracker()
+        var completed = false
+
+        val job = tracker.launch(this) {
+            kotlinx.coroutines.delay(10)
+            completed = true
+        }
+
+        assertNotNull(job)
+        val drained = tracker.stopAcceptingAndDrain(timeoutMs = 1_000)
+
+        assertEquals(true, drained)
+        assertEquals(true, completed)
     }
 }

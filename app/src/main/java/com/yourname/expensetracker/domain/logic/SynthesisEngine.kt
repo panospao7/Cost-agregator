@@ -3,8 +3,10 @@ package com.yourname.expensetracker.domain.logic
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
@@ -54,6 +56,19 @@ class SynthesisEngine @Inject constructor(
     }
 
     fun synthesize(
+        input: ForecastInputAssembler.ForecastInput
+    ): FinancialForecast {
+        return synthesize(
+            pastSumDaily = input.pastSumDaily,
+            recurringPatterns = input.recurringPatterns,
+            plannedExpenses = input.plannedExpenses,
+            savingsGoals = input.savingsGoals,
+            budgetStatuses = input.budgetStatuses,
+            spendingPace = input.spendingPace
+        )
+    }
+
+    fun synthesize(
         pastSumDaily: List<Double>,
         recurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
@@ -64,10 +79,11 @@ class SynthesisEngine @Inject constructor(
         return try {
             synthesizeInternal(pastSumDaily, recurringPatterns, plannedExpenses, savingsGoals, budgetStatuses, spendingPace)
         } catch (e: Exception) {
+            val fallbackNow = timeProvider.now()
             Timber.e(e, "Error in synthesize")
             FinancialForecast(
                 horizon = ForecastHorizon.REST_OF_MONTH,
-                generatedAt = Instant.now(),
+                generatedAt = Instant.ofEpochMilli(fallbackNow),
                 confidence = 0.0,
                 components = ForecastComponents(
                     recurringExpenses = emptyList(),
@@ -95,9 +111,10 @@ class SynthesisEngine @Inject constructor(
         spendingPace: SpendingPace
     ): FinancialForecast {
         val now = timeProvider.now()
+        val sanitizedPastSumDaily = sanitizePastSumDaily(pastSumDaily)
         
         // Fix: Use single Calendar instance to avoid inconsistent dates if crossing midnight
-        val calendar = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
+        val calendar = Calendar.getInstance().apply { timeInMillis = now }
         val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
         val daysRemaining = (daysInMonth - dayOfMonth).coerceAtLeast(0)
@@ -128,13 +145,8 @@ class SynthesisEngine @Inject constructor(
         
         val monthlyRecurringTotal = recurringPatterns.sumOf { pattern ->
             when (pattern.frequency) {
-                RecurrenceFrequency.WEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 7.0)
-                RecurrenceFrequency.BIWEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 14.0)
-                RecurrenceFrequency.MONTHLY -> pattern.averageAmount
-                RecurrenceFrequency.QUARTERLY -> pattern.averageAmount / 3.0
-                RecurrenceFrequency.SEMI_ANNUALLY -> pattern.averageAmount / 6.0
-                RecurrenceFrequency.ANNUALLY -> pattern.averageAmount / 12.0
-                else -> 0.0
+                RecurrenceFrequency.IRREGULAR -> 0.0
+                else -> RecurrenceCalculator.toMonthlyAmount(pattern.averageAmount, pattern.frequency)
             }
         }
 
@@ -168,7 +180,7 @@ class SynthesisEngine @Inject constructor(
             }
 
         // 4. Calculate Projected Timeline Points with date-based spikes
-        val lastKnownTotal = pastSumDaily.lastOrNull() ?: 0.0
+        val lastKnownTotal = sanitizedPastSumDaily.lastOrNull() ?: 0.0
 
         // Collect planned expenses with their dates (MUST=100%, LIKELY=70%)
         val plannedExpensesInRange = plannedExpenses.filter { it.date >= startOfToday && it.date < endOfMonthExclusive }
@@ -251,13 +263,13 @@ class SynthesisEngine @Inject constructor(
         
         return FinancialForecast(
             horizon = ForecastHorizon.REST_OF_MONTH,
-            generatedAt = Instant.now(),
+            generatedAt = Instant.ofEpochMilli(now),
             confidence = forecastConfidence.coerceIn(0.1, 0.95), 
             components = ForecastComponents(
                 recurringExpenses = recurringPatterns,
                 plannedExpenses = plannedExpenses,
                 goalReserves = goalReserves,
-                pastSpendingPoints = pastSumDaily,
+                pastSpendingPoints = sanitizedPastSumDaily,
                 projectedSpendingPoints = projectedPoints,
                 totalCommitted = totalCommitted,
                 totalLikely = totalLikely,
@@ -275,23 +287,19 @@ class SynthesisEngine @Inject constructor(
         dailySpending: List<Float>,
         budgetLimit: Double
     ): List<BlockPartyDay> {
-        val calendar = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
+        val now = timeProvider.now()
+        val calendar = Calendar.getInstance().apply { timeInMillis = now }
         val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
-        val (startOfMonth, endOfMonthExclusive) = TimePeriodUtils.getMonthRange(timeProvider.now())
+        val (startOfMonth, endOfMonthExclusive) = TimePeriodUtils.getMonthRange(now)
         
         val components = forecast.components
         
         // 1. Calculate Monthly Totals for pro-rating (frequency-adjusted)
         val totalMonthlyRecurring = components.recurringExpenses.sumOf { pattern ->
             when (pattern.frequency) {
-                RecurrenceFrequency.WEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 7.0)
-                RecurrenceFrequency.BIWEEKLY -> pattern.averageAmount * (daysInMonth.toDouble() / 14.0)
-                RecurrenceFrequency.MONTHLY -> pattern.averageAmount
-                RecurrenceFrequency.QUARTERLY -> pattern.averageAmount / 3.0
-                RecurrenceFrequency.SEMI_ANNUALLY -> pattern.averageAmount / 6.0
-                RecurrenceFrequency.ANNUALLY -> pattern.averageAmount / 12.0
-                else -> 0.0
+                RecurrenceFrequency.IRREGULAR -> 0.0
+                else -> RecurrenceCalculator.toMonthlyAmount(pattern.averageAmount, pattern.frequency)
             }
         }
         
@@ -334,8 +342,8 @@ class SynthesisEngine @Inject constructor(
             dayBucketCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
         }
 
-        val dateCal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
-        val anchorCal = Calendar.getInstance().apply { timeInMillis = timeProvider.now() }
+        val dateCal = Calendar.getInstance().apply { timeInMillis = now }
+        val anchorCal = Calendar.getInstance().apply { timeInMillis = now }
 
         // Pre-calculate which days have recurring expenses (optimization)
         val recurringByDay = mutableMapOf<Int, List<RecurringPattern>>()
@@ -513,18 +521,38 @@ class SynthesisEngine @Inject constructor(
         pace: SpendingPace,
         planned: List<PlannedExpense>,
         goals: List<SavingsGoal>
-    ): List<String> {
-        val insights = mutableListOf<String>()
-        if (pace.paceStatus == PaceStatus.OVER_PACE) insights.add("Spending pace is higher than usual.")
+    ): List<UiText> {
+        val insights = mutableListOf<UiText>()
+        if (pace.paceStatus == PaceStatus.OVER_PACE) {
+            insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_SPENDING_PACE_HIGHER))
+        }
         val exceeded = budgets.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
-        if (exceeded > 0) insights.add("$exceeded budgets exceeded.")
+        if (exceeded > 0) {
+            insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_BUDGETS_EXCEEDED_FORMAT, exceeded))
+        }
         
         val strictGoalCount = goals.count { it.protectionLevel == GoalProtectionLevel.STRICT }
-        if (strictGoalCount > 0) insights.add("$strictGoalCount strict savings goals active.")
+        if (strictGoalCount > 0) {
+            insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_STRICT_SAVINGS_GOALS_ACTIVE_FORMAT, strictGoalCount))
+        }
         
         val mustPlannedCount = planned.count { it.priority == PlannedExpensePriority.MUST }
-        if (mustPlannedCount > 0) insights.add("$mustPlannedCount must-pay planned expenses this month.")
+        if (mustPlannedCount > 0) {
+            insights.add(UiText.fromKey(DomainTextKeys.SYNTHESIS_MUST_PAY_PLANNED_EXPENSES_FORMAT, mustPlannedCount))
+        }
         
         return insights
+    }
+
+    private fun sanitizePastSumDaily(pastSumDaily: List<Double>): List<Double> {
+        var lastFiniteValue = 0.0
+        return pastSumDaily.map { point ->
+            if (point.isFinite()) {
+                lastFiniteValue = point
+                point
+            } else {
+                lastFiniteValue
+            }
+        }
     }
 }

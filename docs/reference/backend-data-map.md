@@ -1,19 +1,17 @@
 # Data Layer Architecture Map
 **Expense Tracker | Comprehensive Data Layer Reference**  
-*Last Updated: April 2026 | Version: 69 (Database Schema)*
+*Refreshed: April 2026 | Current schema and adapter map*
 
 ---
 
 ## Executive Summary
 
-The Data Layer follows a **Repository Pattern** layered over Room ORM and Android-native storage. The architecture supports:
+The Data Layer follows a **Repository Pattern** layered over Room ORM and Android-native storage. The current map emphasizes:
 
-- **46 entities** spanning expenses, budgets, investments, subscriptions, AI, and more
-- **45 DAOs** with sophisticated query patterns (dynamic filtering, aggregations, raw queries)
-- **36+ repositories** handling business logic, aggregations, and external integrations
-- **4 geocoding providers** (Nominatim, Photon, Google Places, Geoapify) with intelligent gating
-- **Multi-layered security**: EncryptedSharedPreferences for API keys, biometric protection ready
-- **46 database migrations** (v6→v69) tracking feature evolution
+- Room entities/DAOs for expenses, budgets, AI artifacts, receipts, groups, currency, and bank data
+- Repository and adapter layers that bridge domain contracts to persistence and services
+- Security and input gateways for bank tokens, speech input, and encrypted key storage
+- Notification, location, and AI processing pipelines that sit beside the classic Room repositories
 
 ---
 
@@ -21,11 +19,11 @@ The Data Layer follows a **Repository Pattern** layered over Room ORM and Androi
 
 ```
 data/
-├── database/               # Room ORM + migrations (46 migrations, 46 entities)
+├── database/               # Room ORM + migrations, entities, query models
 │   ├── AppDatabase.kt      # RoomDatabase (69 version, 46 entity references)
 │   ├── converter/          # Type converters
 │   │   └── Converters.kt   # @TypeConverter for complex types
-│   ├── dao/                # 45 DAOs
+│   ├── dao/                # Current DAO set
 │   │   ├── ExpenseDao.kt
 │   │   ├── CategoryDao.kt
 │   │   ├── BudgetDao.kt
@@ -37,7 +35,7 @@ data/
 │   │   ├── AiChatMessageDao.kt
 │   │   ├── [40+ more DAOs...]
 │   │   └── [See DAO Registry below]
-│   ├── entity/             # 46 Room entities
+│   ├── entity/             # Current Room entities
 │   │   ├── Expense.kt      # Core expense with transfer/shared/business fields
 │   │   ├── Category.kt     # Categories with icons & colors
 │   │   ├── Budget.kt       # Period-based budgets with warning thresholds
@@ -54,33 +52,29 @@ data/
 │       ├── PendingReviewWithReceipt.kt # Joins pending_reviews → scanned_receipts
 │       └── ExpenseWithCategory_Extensions.kt
 │
-├── repository/             # 36+ business logic repositories
-│   ├── ExpenseRepository.kt            # Core expense CRUD + analytics (merchants, trends)
-│   ├── CategoryRepository.kt           # Category CRUD
-│   ├── BudgetRepository.kt            # Budget alerts & forecasting
-│   ├── ReceiptRepository.kt           # Receipt matching & item categorization
-│   ├── MerchantNormalizationRepository.kt  # Merchant canonicalization
-│   ├── MerchantLocationRepository.kt   # Geocoding cache & corrections
-│   ├── MerchantCategoryRepository.kt   # Merchant → category mappings
-│   ├── AiArtifactRepositoryImpl.kt     # AI briefing storage (v34)
-│   ├── AiChatRepositoryImpl.kt         # Chat session persistence (v35)
-│   ├── RecurringExpenseRepository.kt   # Subscriptions & recurring expenses
-│   ├── FinancialWeatherRepository.kt   # Budget forecasting
-│   ├── PlannedExpenseRepository.kt     # Future expense planning
-│   ├── SavingsGoalRepository.kt        # Savings targets & progress
-│   ├── WarrantyTrackerRepository.kt    # Warranty tracking (v38)
-│   ├── InvestmentDao.kt                # Portfolio tracking (v45)
-│   ├── MultiCurrencyRepository.kt      # Exchange rates (v42)
-│   ├── GroupsRepositoryImpl.kt          # Shared expenses (v43)
-│   ├── DatabaseBackupRepositoryImpl.kt  # Export/restore pipeline
-│   ├── AnalyticsRepository.kt          # Aggregations (daily, weekly, monthly, by merchant)
-│   ├── DashboardRepository.kt          # Widget data aggregation
-│   ├── NotificationRepository.kt       # Raw notification CRUD
-│   ├── [16+ more repositories...]
-│   └── [See Repository Registry below]
+├── repository/             # Repository + adapter implementations
+│   ├── DashboardContractsAdapter.kt
+│   ├── SharedExpenseDataPortAdapter.kt
+│   ├── NotificationProcessingPipeline.kt
+│   ├── NaturalLanguageExpenseQueryRepositoryImpl.kt
+│   ├── BankApiIntegrationRepository.kt
+│   ├── ExpenseRepository.kt
+│   ├── BudgetRepository.kt
+│   ├── BusinessExpenseRepository.kt
+│   ├── ReceiptRepository.kt
+│   ├── SavingsGoalRepository.kt
+│   ├── AnomalyAlertRepositoryImpl.kt
+│   ├── RecommendationRepository.kt
+│   ├── DashboardRepository.kt
+│   ├── MultiCurrencyRepository.kt
+│   ├── GroupsRepositoryImpl.kt
+│   ├── DatabaseBackupRepositoryImpl.kt
+│   ├── AiArtifactRepositoryImpl.kt
+│   ├── AiChatRepositoryImpl.kt
+│   └── [other current repositories/adapters]
 │
 ├── ai/                    # AI services (local + cloud)
-│   ├── provider/           # 33 AI service providers
+│   ├── provider/           # Current AI providers
 │   │   ├── CloudCategorizationAssistService.kt
 │   │   ├── OnDeviceCategorizationAssistService.kt
 │   │   ├── HybridCategorizationAssistService.kt
@@ -96,7 +90,7 @@ data/
 │   │   ├── DefaultAiEnvironmentMonitor.kt
 │   │   ├── OnDeviceReviewPriorityScorer.kt
 │   │   ├── OnDeviceNotificationParser.kt
-│   │   ├── [18+ more providers...]
+│   │   ├── [other providers...]
 │   │   └── SmartReceiptAssistService.kt
 │   └── worker/           # Async AI job scheduling
 │       ├── AiWorkSchedulerImpl.kt
@@ -414,7 +408,7 @@ data/
 - **Parsers**: Amazon, Apple, Uber (extensible)
 - **Frequency**: User-configured polling
 
-### AI Providers (33 Services)
+### AI Providers
 
 **Categorization** (5 variants):
 - CloudCategorizationAssistService
@@ -449,7 +443,7 @@ data/
 - OnDeviceQueryInterpretationService
 - HybridQueryInterpretationService
 
-**Other AI Services** (12):
+**Other AI Services:**
 - CloudReviewExplanationService, OnDeviceReviewExplanationService, HybridReviewExplanationService
 - CloudWarrantyExtractionService
 - DefaultAiEnvironmentMonitor
@@ -660,13 +654,22 @@ NotificationProcessingPipeline
 ├── ExpenseRepository
 ├── MerchantNormalizationRepository
 └── AiArtifactRepositoryImpl
+
+DashboardContractsAdapter
+├── DashboardRepository
+├── BudgetRepository
+└── RecommendationRepository
+
+SharedExpenseDataPortAdapter
+├── GroupsRepositoryImpl
+└── ExpenseRepository
 ```
 
 ### Indirect Dependencies (External)
-- **CompositeGeocodingService** → 4 geocoding HTTP clients (Nominatim, Photon, Geoapify, Google Places)
-- **EmailReceiptIngestionService** → IMAP/POP3 + 4 email parsers
-- **AiChatRepositoryImpl** → AI cloud API (Gemini, etc.)
-- **MultiCurrencyRepository** → ExchangeRate API (external source)
+- **CompositeGeocodingService** → geocoding HTTP clients (Nominatim, Photon, Geoapify, Google Places)
+- **EmailReceiptIngestionService** → IMAP/POP3 + receipt parsers
+- **AiChatRepositoryImpl** → AI cloud API integrations
+- **MultiCurrencyRepository** → exchange-rate source
 
 ---
 
@@ -687,32 +690,28 @@ NotificationProcessingPipeline
 
 ```
 database/
-├── converter/       1 file
-├── dao/            45 files (one DAO per entity, most)
-├── entity/         46 files (one entity per table)
-├── model/           5 files (result POJOs)
-├── AppDatabase.kt   1 file
-└── GroupTransactionCoordinator.kt  1 file
-Total: 99 files
+├── converter/
+├── dao/
+├── entity/
+├── model/
+└── AppDatabase.kt
 
-repository/         36 files
+repository/
+├── adapters
+├── pipelines
+└── repositories
 
 ai/
-├── provider/       33 files
-├── worker/          2 files
-Total: 35 files
+├── provider/
+└── worker/
 
-location/            9 files
+location/
 email/
-├── provider/        4 files
-├── EmailReceiptIngestionService.kt  1 file
-Total: 5 files
+provider/
+security/
+service/
 
-provider/            1 file
-security/            1 file
-service/             1 file
-
-GRAND TOTAL: 188 files in data layer
+Totals omitted intentionally; current inventory is in flux.
 ```
 
 ---

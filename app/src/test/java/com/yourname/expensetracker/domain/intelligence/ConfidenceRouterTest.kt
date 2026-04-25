@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.intelligence
 
 import com.yourname.expensetracker.data.repository.SourceStatsRepository
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
+import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -18,14 +19,19 @@ class ConfidenceRouterTest {
     private val userCorrectionRepository = mockk<UserCorrectionRepository>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val fixedNow = 1_700_000_000_000L
 
     @Before
     fun setup() {
-        every { timeProvider.now() } returns System.currentTimeMillis()
+        every { timeProvider.now() } returns fixedNow
         router = ConfidenceRouter(sourceStatsRepository, userCorrectionRepository, classifier, timeProvider)
 
         // Default: no source stats, no corrections, classifier not ready
         coEvery { sourceStatsRepository.getByPackage(any()) } returns null
+        coEvery { userCorrectionRepository.getMerchantStats(any()) } returns
+            UserCorrectionDao.MerchantCorrectionStats(total = 0, rejections = 0)
+        coEvery { userCorrectionRepository.getPackageStats(any()) } returns
+            UserCorrectionDao.PackageCorrectionStats(total = 0, rejections = 0)
         coEvery { userCorrectionRepository.getMerchantTotalCorrections(any()) } returns 0
         coEvery { userCorrectionRepository.getTotalCorrections(any()) } returns 0
         coEvery { userCorrectionRepository.hasPreviousApprovals(any(), any()) } returns false
@@ -55,10 +61,65 @@ class ConfidenceRouterTest {
     }
 
     @Test
-    fun `unknown merchant gets confidence penalty`() = runBlocking {
+    fun `unknown merchant penalty floors to REVIEW when penalty alone causes drop`() = runBlocking {
         val result = router.route(makeParsed(0.90f, "Unknown"), "com.test")
-        // 0.90 * 0.5 = 0.45, which is below REVIEW_THRESHOLD
-        assertTrue(result.adjustedConfidence < 0.90f)
+        // 0.90 * 0.5 = 0.45 < REVIEW, but floor applies → 0.50 → NEEDS_REVIEW
+        assertEquals(RoutingDecision.NEEDS_REVIEW, result.decision)
+        assertTrue(result.adjustedConfidence >= ConfidenceRouter.REVIEW_THRESHOLD)
+    }
+
+    @Test
+    fun `unknown merchant penalty does not drop below REVIEW_THRESHOLD when parser confidence is high`() = runBlocking {
+        coEvery { classifier.getStats() } returns ClassifierStats(0, 0, 0, false)
+        coEvery { sourceStatsRepository.getByPackage(any()) } returns null
+        coEvery { userCorrectionRepository.getMerchantStats(any()) } returns
+            UserCorrectionDao.MerchantCorrectionStats(total = 0, rejections = 0)
+        coEvery { userCorrectionRepository.getPackageStats(any()) } returns
+            UserCorrectionDao.PackageCorrectionStats(total = 0, rejections = 0)
+        coEvery { userCorrectionRepository.hasPreviousApprovals(any(), any()) } returns false
+        every { timeProvider.now() } returns fixedNow
+
+        val unknownHighConfidence = router.route(
+            ParsedTransaction(4.08, "EUR", "Unknown", ParsedTransactionType.PURCHASE, 0.90f),
+            "com.test"
+        )
+        assertEquals(RoutingDecision.NEEDS_REVIEW, unknownHighConfidence.decision)
+        assertTrue(unknownHighConfidence.adjustedConfidence >= ConfidenceRouter.REVIEW_THRESHOLD)
+
+        val unknownLowConfidence = router.route(
+            ParsedTransaction(4.08, "EUR", "Unknown", ParsedTransactionType.PURCHASE, 0.30f),
+            "com.test"
+        )
+        assertEquals(RoutingDecision.AUTO_REJECT, unknownLowConfidence.decision)
+        assertTrue(unknownLowConfidence.adjustedConfidence < ConfidenceRouter.REVIEW_THRESHOLD)
+
+        val knownHighConfidence = router.route(
+            ParsedTransaction(4.08, "EUR", "Starbucks", ParsedTransactionType.PURCHASE, 0.90f),
+            "com.test"
+        )
+        assertEquals(RoutingDecision.AUTO_ACCEPT, knownHighConfidence.decision)
+    }
+
+    @Test
+    fun `review floor does NOT override other penalties that already dropped confidence below REVIEW`() = runBlocking {
+        // Simulate a spam source: trust modifier = 0.1
+        // 0.90 * 0.1 (spam) = 0.09, then * 0.5 (unknown merchant) = 0.045
+        // The pre-penalty confidence is already 0.09 < REVIEW_THRESHOLD,
+        // so the floor should NOT apply — anti-spam signal must be respected.
+        coEvery { sourceStatsRepository.getByPackage("com.spam") } returns
+            com.yourname.expensetracker.data.database.entity.SourceStats(
+                packageName = "com.spam",
+                totalNotifications = 100,
+                acceptedAsExpense = 1,
+                lastSeen = fixedNow
+            )
+
+        val result = router.route(
+            ParsedTransaction(4.08, "EUR", "Unknown", ParsedTransactionType.PURCHASE, 0.90f),
+            "com.spam"
+        )
+        assertEquals(RoutingDecision.AUTO_REJECT, result.decision)
+        assertTrue(result.adjustedConfidence < ConfidenceRouter.REVIEW_THRESHOLD)
     }
 
     @Test
@@ -87,7 +148,8 @@ class ConfidenceRouterTest {
             com.yourname.expensetracker.data.database.entity.SourceStats(
                 packageName = "com.spam",
                 totalNotifications = 100,
-                acceptedAsExpense = 1
+                acceptedAsExpense = 1,
+                lastSeen = fixedNow
             )
 
         val result = router.route(makeParsed(0.90f), "com.spam")

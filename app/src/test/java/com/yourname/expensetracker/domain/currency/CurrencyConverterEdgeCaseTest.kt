@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.currency
 
 import com.yourname.expensetracker.assertApproxEquals
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -116,5 +117,32 @@ class CurrencyConverterEdgeCaseTest {
 
         // Assert
         assertApproxEquals(100.0, currentAmount, 0.0001)
+    }
+
+    @Test
+    fun `storeRate rejects non positive and non finite rates`() = runTest {
+        converter.storeRate("EUR", "USD", 0.0)
+        converter.storeRate("EUR", "USD", -1.0)
+        converter.storeRate("EUR", "USD", Double.NaN)
+        converter.storeRate("EUR", "USD", Double.POSITIVE_INFINITY)
+
+        coVerify(exactly = 0) { exchangeRateStore.insertOrUpdate(any()) }
+    }
+
+    @Test
+    fun `storeRates skips invalid entries and persists valid ones only`() = runTest {
+        converter.storeRates(
+            listOf(
+                Triple("EUR", "USD", 1.1),
+                Triple("EUR", "GBP", 0.0),
+                Triple("EUR", "CHF", Double.NEGATIVE_INFINITY)
+            )
+        )
+
+        coVerify(exactly = 1) {
+            exchangeRateStore.insertOrUpdateAll(match { rates ->
+                rates.size == 1 && rates.single().toCurrency == "USD" && rates.single().rate == 1.1
+            })
+        }
     }
 }

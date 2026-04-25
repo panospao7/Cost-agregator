@@ -45,6 +45,8 @@ import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
+import com.yourname.expensetracker.domain.privacy.DefaultRedactionSanitizer
+import com.yourname.expensetracker.domain.privacy.RedactionSanitizer
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -168,6 +170,12 @@ abstract class AiModule {
     abstract fun bindSemanticDuplicateDetector(
         impl: com.yourname.expensetracker.data.ai.provider.OnDeviceSemanticDuplicateDetector
     ): com.yourname.expensetracker.domain.ai.service.SemanticDuplicateDetector
+
+    @Binds
+    @Singleton
+    abstract fun bindRedactionSanitizer(
+        impl: DefaultRedactionSanitizer
+    ): RedactionSanitizer
 
     // -------------------------------------------------------------------------
     // DAO provision (companion object)

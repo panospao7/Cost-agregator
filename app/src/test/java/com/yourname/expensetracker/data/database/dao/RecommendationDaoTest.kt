@@ -19,6 +19,8 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+private const val FIXED_NOW = 1_710_000_000_000L
+
 /**
  * Unit tests for RecommendationDao.
  * Tests database operations for follow-through recommendations.
@@ -47,7 +49,7 @@ class RecommendationDaoTest {
     @Test
     fun `getActiveByUser returns only active non-archived non-expired recommendations`() = runTest {
         val userId = "user123"
-        val nowMillis = System.currentTimeMillis()
+        val nowMillis = FIXED_NOW
         val futureMillis = nowMillis + (24 * 60 * 60 * 1000) // 1 day from now
         val pastMillis = nowMillis - (1 * 60 * 60 * 1000) // 1 hour ago
 
@@ -118,7 +120,7 @@ class RecommendationDaoTest {
         )
         dao.insert(recommendation)
 
-        val archiveTime = System.currentTimeMillis()
+        val archiveTime = FIXED_NOW
         dao.archive(recommendation.id, archiveTime)
 
         val result = dao.getById(recommendation.id)
@@ -131,7 +133,7 @@ class RecommendationDaoTest {
     @Test
     fun `expireOld marks old records as EXPIRED`() = runTest {
         val userId = "user123"
-        val nowMillis = System.currentTimeMillis()
+        val nowMillis = FIXED_NOW
         val oldExpiry = nowMillis - (8 * 24 * 60 * 60 * 1000L) // 8 days ago
         val futureExpiry = nowMillis + (24 * 60 * 60 * 1000) // 1 day from now
 
@@ -168,7 +170,7 @@ class RecommendationDaoTest {
     @Test
     fun `expireOld does not update already expired records`() = runTest {
         val userId = "user123"
-        val nowMillis = System.currentTimeMillis()
+        val nowMillis = FIXED_NOW
         val oldExpiry = nowMillis - (8 * 24 * 60 * 60 * 1000L) // 8 days ago
         val originalUpdateTime = nowMillis - (1000)
 
@@ -218,7 +220,7 @@ class RecommendationDaoTest {
     @Test
     fun `getActiveByUser respects max 5 limit`() = runTest {
         val userId = "user123"
-        val nowMillis = System.currentTimeMillis()
+        val nowMillis = FIXED_NOW
         val futureMillis = nowMillis + (24 * 60 * 60 * 1000)
 
         // Insert 8 active recommendations
@@ -244,7 +246,7 @@ class RecommendationDaoTest {
     @Test
     fun `getAllActiveByUser returns full active set beyond capped query`() = runTest {
         val userId = "user123"
-        val nowMillis = System.currentTimeMillis()
+        val nowMillis = FIXED_NOW
         val futureMillis = nowMillis + (24 * 60 * 60 * 1000)
 
         repeat(8) { i ->
@@ -273,7 +275,7 @@ class RecommendationDaoTest {
     @Test
     fun `archiveActiveOverflow archives only active rows outside retained set`() = runTest {
         val userId = "user123"
-        val nowMillis = System.currentTimeMillis()
+        val nowMillis = FIXED_NOW
         val futureMillis = nowMillis + (24 * 60 * 60 * 1000)
 
         val activeRecommendations = (0 until 7).map { i ->
@@ -328,7 +330,7 @@ class RecommendationDaoTest {
     @Test
     fun `getActiveByUser orders by priority then createdAt DESC`() = runTest {
         val userId = "user123"
-        val nowMillis = System.currentTimeMillis()
+        val nowMillis = FIXED_NOW
         val futureMillis = nowMillis + (24 * 60 * 60 * 1000)
 
         // Insert recommendations with different priorities
@@ -369,7 +371,7 @@ class RecommendationDaoTest {
     @Test
     fun `countActive returns correct count`() = runTest {
         val userId = "user123"
-        val nowMillis = System.currentTimeMillis()
+        val nowMillis = FIXED_NOW
         val futureMillis = nowMillis + (24 * 60 * 60 * 1000)
 
         // Insert 3 active recommendations
@@ -401,7 +403,7 @@ class RecommendationDaoTest {
     @Test
     fun `getArchived returns archived recommendations ordered by dismissedAt DESC`() = runTest {
         val userId = "user123"
-        val nowMillis = System.currentTimeMillis()
+        val nowMillis = FIXED_NOW
 
         // Insert archived recommendations with different dismissed times
         val archived1 = createRecommendation(
@@ -428,7 +430,7 @@ class RecommendationDaoTest {
     @Test
     fun `deleteExpired removes expired recommendations`() = runTest {
         val userId = "user123"
-        val nowMillis = System.currentTimeMillis()
+        val nowMillis = FIXED_NOW
         val pastExpiry = nowMillis - (1000)
         val futureExpiry = nowMillis + (24 * 60 * 60 * 1000)
 
@@ -495,10 +497,10 @@ class RecommendationDaoTest {
         recommendationText: String = "Test recommendation",
         navigationTarget: String = "TRANSACTION_LIST",
         filterCriteria: String = "{}",
-        createdAt: Long = System.currentTimeMillis(),
-        updatedAt: Long = System.currentTimeMillis(),
+        createdAt: Long = FIXED_NOW,
+        updatedAt: Long = FIXED_NOW,
         dismissedAt: Long? = null,
-        expiresAt: Long = System.currentTimeMillis() + (7L * 24 * 60 * 60 * 1000),
+        expiresAt: Long = FIXED_NOW + (7L * 24 * 60 * 60 * 1000),
         priority: RecommendationPriority = RecommendationPriority.MEDIUM,
         category: String = "GENERAL",
         sourceArtifactId: String = "",

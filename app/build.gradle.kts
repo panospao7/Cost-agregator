@@ -18,6 +18,7 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunnerArguments["clearPackageData"] = "true"
 
         // Geocoding API keys — removed from BuildConfig for security
         // Keys are now stored in SecureKeyStorage (encrypted at rest)
@@ -51,6 +52,24 @@ android {
     }
     sourceSets {
         getByName("androidTest").assets.srcDirs("$projectDir/schemas")
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true
+        execution = "ANDROIDX_TEST_ORCHESTRATOR"
+
+        unitTests.all {
+            it.maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).takeIf { forks -> forks > 0 } ?: 1
+
+            it.testLogging {
+                events("passed", "skipped", "failed", "standardOut", "standardError")
+                showExceptions = true
+                showCauses = true
+                showStackTraces = true
+                exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+            }
+        }
     }
 }
 
@@ -182,7 +201,7 @@ tasks.register("verifyRoomSchemaSnapshots") {
     description = "Reports Room schema snapshot coverage by version"
 
     doLast {
-        val maxVersion = 35
+        val maxVersion = (findProperty("roomSchemaMaxVersion")?.toString()?.toIntOrNull()) ?: 92
         val schemaDir = file("$projectDir/schemas/com.yourname.expensetracker.data.database.AppDatabase")
         val existing = if (schemaDir.exists()) {
             schemaDir.listFiles()

@@ -17,8 +17,10 @@ import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.data.ai.provider.StrictAiJsonParsing
 import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
@@ -141,7 +143,7 @@ class SuggestCategoryFallbackUseCase @Inject constructor(
         }
 
         val now = timeProvider.now()
-        val sourceHash = input.hashCode().toString()
+        val sourceHash = AiArtifactSourceHash.forReviewCategorizationFallback(input)
         val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.CATEGORIZATION_FALLBACK)
         if (!force &&
             existing != null &&
@@ -256,23 +258,22 @@ private fun CategoryAssistSuggestion.toPayloadJson(): String {
 private fun String.toCategoryAssistSuggestionOrNull(): CategoryAssistSuggestion? {
     return runCatching {
         val root = JSONObject(this)
+        val categoryId = StrictAiJsonParsing.run { root.positiveIdOrNull("categoryId") } ?: return null
+        val confidence = if (root.has("confidence") && !root.isNull("confidence")) {
+            StrictAiJsonParsing.run { root.boundedConfidenceOrNull("confidence") } ?: return null
+        } else {
+            null
+        }
         CategoryAssistSuggestion(
-            categoryId = root.optLong("categoryId"),
+            categoryId = categoryId,
             categoryName = root.optString("categoryName"),
-            confidence = if (root.has("confidence") && !root.isNull("confidence")) root.optDouble("confidence").toFloat() else null,
+            confidence = confidence,
             rationale = root.optString("rationale").takeIf { it.isNotBlank() },
-            alternativeCategoryIds = root.optJSONArray("alternativeCategoryIds").toLongList()
+            alternativeCategoryIds = StrictAiJsonParsing.run {
+                root.optJSONArray("alternativeCategoryIds").positiveLongs()
+            }
         )
     }.getOrNull()
-}
-
-private fun JSONArray?.toLongList(): List<Long> {
-    if (this == null) return emptyList()
-    return buildList(length()) {
-        for (index in 0 until length()) {
-            add(optLong(index))
-        }
-    }
 }
 
 private fun String?.withRouteDiagnostics(routeDecision: AiRouteDecision): String {

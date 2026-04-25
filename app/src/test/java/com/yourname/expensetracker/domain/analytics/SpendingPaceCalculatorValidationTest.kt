@@ -1,7 +1,8 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
@@ -42,15 +43,20 @@ class SpendingPaceCalculatorValidationTest {
         date: Long,
         transactionType: TransactionType = TransactionType.PURCHASE,
         isNotMine: Boolean = false
-    ): Expense {
-        return Expense(
+    ): ExpenseSnapshot {
+        return ExpenseSnapshot(
             id = id,
             amount = amount,
+            effectiveAmount = amount,
             currency = "EUR",
             merchant = "Test Merchant",
-            transactionType = transactionType,
+            merchantKey = null,
+            transactionType = transactionType.toDomainTransactionType(),
             date = date,
-            isNotMine = isNotMine
+            categoryId = null,
+            isNotMine = isNotMine,
+            transferDirection = null,
+            notes = null
         )
     }
 
@@ -233,10 +239,9 @@ class SpendingPaceCalculatorValidationTest {
             allExpenses = currentExpenses
         )
         
-        // Then: Projected total should use blended smoothing
-        // day=2, weight=2/7, linear=200*30/2=3000, conservative=200*3=600
-        // projection=(2/7*3000)+(5/7*600)=1285.714...
-        assertEquals(1285.714, result.projectedTotal, 0.01)
+        // Then: Without a prior baseline, early days use a stabilized projection floor.
+        // day=2, stabilizedDays=max(2,5)=5 => 200*30/5 = 1200
+        assertEquals(1200.0, result.projectedTotal, 0.01)
         assertEquals(2, result.daysElapsed)
         assertEquals(30, result.daysInMonth)
     }
@@ -264,10 +269,9 @@ class SpendingPaceCalculatorValidationTest {
             allExpenses = currentExpenses
         )
         
-        // Then: Projected total should still be blended
-        // day=4, weight=4/7, linear=400*30/4=3000, conservative=400*3=1200
-        // projection=(4/7*3000)+(3/7*1200)=2228.571...
-        assertEquals(2228.571, result.projectedTotal, 0.01)
+        // Then: Without a prior baseline, day 4 is still stabilized to a 5-day floor.
+        // 400*30/5 = 2400
+        assertEquals(2400.0, result.projectedTotal, 0.01)
         assertEquals(4, result.daysElapsed)
         assertEquals(30, result.daysInMonth)
     }
@@ -346,7 +350,7 @@ class SpendingPaceCalculatorValidationTest {
         every { timeProvider.now() } returns currentDate
         
         // Current month: no spending
-        val currentExpenses = emptyList<Expense>()
+        val currentExpenses = emptyList<ExpenseSnapshot>()
         
         // Previous month: spent 1500
         val previousMonthStart = createDate(2024, 3, 1)
@@ -541,5 +545,15 @@ class SpendingPaceCalculatorValidationTest {
         
         // Projected total: 700 * 29 / 14 = 1450
         assertEquals(1450.0, result.projectedTotal, 0.01)
+    }
+
+    private fun TransactionType.toDomainTransactionType(): DomainTransactionType {
+        return when (this) {
+            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        }
     }
 }

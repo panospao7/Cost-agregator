@@ -77,6 +77,7 @@ class BusinessExpenseRepository @Inject constructor(
      * Add mileage tracking entry.
      */
     suspend fun addMileage(mileage: MileageTracking): Long {
+        validateMileageForInsert(mileage)
         return mileageDao.insert(mileage)
     }
     
@@ -117,4 +118,42 @@ class BusinessExpenseRepository @Inject constructor(
             TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
             TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
         }
+
+    private fun validateMileageForInsert(mileage: MileageTracking) {
+        require(mileage.date > 0L) { "MileageTracking.date must be > 0" }
+        require(mileage.distanceKm.isFinite() && mileage.distanceKm > 0.0) {
+            "MileageTracking.distanceKm must be finite and > 0"
+        }
+        require(mileage.deductionRatePerKm.isFinite() && mileage.deductionRatePerKm > 0.0) {
+            "MileageTracking.deductionRatePerKm must be finite and > 0"
+        }
+        require(mileage.createdAt > 0L) { "MileageTracking.createdAt must be > 0" }
+
+        mileage.startOdometer?.let { start ->
+            require(start.isFinite() && start >= 0.0) {
+                "MileageTracking.startOdometer must be finite and >= 0 when provided"
+            }
+        }
+        mileage.endOdometer?.let { end ->
+            require(end.isFinite() && end >= 0.0) {
+                "MileageTracking.endOdometer must be finite and >= 0 when provided"
+            }
+        }
+        if (mileage.startOdometer != null && mileage.endOdometer != null) {
+            require(mileage.endOdometer >= mileage.startOdometer) {
+                "MileageTracking.endOdometer must be >= startOdometer"
+            }
+        }
+
+        mileage.calculatedDeduction?.let { deduction ->
+            require(deduction.isFinite() && deduction >= 0.0) {
+                "MileageTracking.calculatedDeduction must be finite and >= 0 when provided"
+            }
+        }
+        mileage.fuelCost?.let { fuelCost ->
+            require(fuelCost.isFinite() && fuelCost >= 0.0) {
+                "MileageTracking.fuelCost must be finite and >= 0 when provided"
+            }
+        }
+    }
 }

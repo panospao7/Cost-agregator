@@ -466,7 +466,20 @@ class BusinessExpenseReportGeneratorTest {
         assertApproxEquals(50.0, report.mileageReport.totalDistanceKm, 0.01)
         assertApproxEquals(15.0, report.mileageReport.totalDeduction, 0.01)
         assertEquals(1, report.mileageReport.tripCount)
-        assertApproxEquals(0.30, report.mileageReport.deductionRatePerKm, 0.001)
+        assertApproxEquals(0.30, report.mileageReport.deductionRatePerKm ?: error("Expected single deduction rate"), 0.001)
+    }
+
+    @Test
+    fun `mileage report exposes weighted rate when trips use multiple rates`() = runTest {
+        val higherRateTrip = sampleTrip.copy(id = 2L, distanceKm = 150.0, deductionRatePerKm = 0.45, calculatedDeduction = 67.5)
+        coEvery { repo.getBusinessMileageBetween(startDate, endDate) } returns listOf(sampleTrip, higherRateTrip)
+
+        val report = generator.generateReport(startDate, endDate, includeMileage = true)
+
+        assertTrue(report.mileageReport.hasMultipleRates)
+        assertEquals(null, report.mileageReport.deductionRatePerKm)
+        assertApproxEquals((15.0 + 67.5) / 200.0, report.mileageReport.effectiveDeductionRatePerKm, 0.001)
+        assertTrue(report.formattedReport.contains("weighted average, multiple rates applied"))
     }
 
     @Test

@@ -90,13 +90,27 @@ class OnDeviceDedupeJudgeService @Inject constructor() : DedupeJudgeService {
         val jsonText = extractFirstJsonObject(text.trim()) ?: return null
         return try {
             val suggestion = JSONObject(jsonText)
+            val verdict = StrictAiJsonParsing.enumOrNull<DuplicateVerdict>(suggestion.optString("verdict"))
+                ?: return null
             DedupeJudgeSuggestion(
-                verdict = DuplicateVerdict.valueOf(suggestion.optString("verdict")),
+                verdict = verdict,
                 matchedTargetType = suggestion.optString("matchedTargetType").trim()
                     .takeIf { it.isNotBlank() && it != "null" }
-                    ?.let { AiTargetType.valueOf(it) },
-                matchedTargetId = if (suggestion.has("matchedTargetId") && !suggestion.isNull("matchedTargetId")) suggestion.optLong("matchedTargetId") else null,
-                confidence = if (suggestion.has("confidence") && !suggestion.isNull("confidence")) suggestion.optDouble("confidence").toFloat() else null,
+                    ?.let { StrictAiJsonParsing.enumOrNull<AiTargetType>(it) },
+                matchedTargetId = if (suggestion.has("matchedTargetId") && !suggestion.isNull("matchedTargetId")) {
+                    StrictAiJsonParsing.run {
+                        suggestion.nullableLongRejectingZeroOrNull("matchedTargetId")
+                    }
+                } else {
+                    null
+                },
+                confidence = if (suggestion.has("confidence") && !suggestion.isNull("confidence")) {
+                    StrictAiJsonParsing.run {
+                        suggestion.boundedConfidenceOrNull("confidence")
+                    } ?: return null
+                } else {
+                    null
+                },
                 rationale = suggestion.optString("rationale").trim().ifBlank { null }
             )
         } catch (e: Exception) {

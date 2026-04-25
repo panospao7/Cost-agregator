@@ -65,16 +65,13 @@ object RecurrenceCalculator {
     fun calculateNextDate(currentDate: Long, frequency: RecurrenceFrequency): Long {
         val normalizedCurrentDate = normalizeToDateOnly(currentDate)
         val nextDate = when (frequency) {
-            RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(normalizedCurrentDate, 7)
-            RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(normalizedCurrentDate, 14)
-            RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(normalizedCurrentDate, 1)
-            RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(normalizedCurrentDate, 3)
-            RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(normalizedCurrentDate, 6)
-            RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(normalizedCurrentDate, 1)
-            RecurrenceFrequency.IRREGULAR -> {
-                // For irregular expenses, keep the same date or add 1 month as default
-                TimePeriodUtils.addMonths(normalizedCurrentDate, 1)
-            }
+            RecurrenceFrequency.WEEKLY,
+            RecurrenceFrequency.BIWEEKLY -> addFrequencyInterval(normalizedCurrentDate, frequency)
+            RecurrenceFrequency.MONTHLY,
+            RecurrenceFrequency.QUARTERLY,
+            RecurrenceFrequency.SEMI_ANNUALLY,
+            RecurrenceFrequency.ANNUALLY -> addFrequencyInterval(normalizedCurrentDate, frequency)
+            RecurrenceFrequency.IRREGULAR -> normalizedCurrentDate
         }
         return normalizeToDateOnly(nextDate)
     }
@@ -89,17 +86,28 @@ object RecurrenceCalculator {
     fun calculatePreviousDate(currentDate: Long, frequency: RecurrenceFrequency): Long {
         val normalizedCurrentDate = normalizeToDateOnly(currentDate)
         val previousDate = when (frequency) {
-            RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(normalizedCurrentDate, -7)
-            RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(normalizedCurrentDate, -14)
-            RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(normalizedCurrentDate, -1)
-            RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(normalizedCurrentDate, -3)
-            RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(normalizedCurrentDate, -6)
-            RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(normalizedCurrentDate, -1)
-            RecurrenceFrequency.IRREGULAR -> {
-                TimePeriodUtils.addMonths(normalizedCurrentDate, -1)
-            }
+            RecurrenceFrequency.WEEKLY,
+            RecurrenceFrequency.BIWEEKLY,
+            RecurrenceFrequency.MONTHLY,
+            RecurrenceFrequency.QUARTERLY,
+            RecurrenceFrequency.SEMI_ANNUALLY,
+            RecurrenceFrequency.ANNUALLY -> addFrequencyInterval(normalizedCurrentDate, frequency, forward = false)
+            RecurrenceFrequency.IRREGULAR -> normalizedCurrentDate
         }
         return normalizeToDateOnly(previousDate)
+    }
+
+    fun addFrequencyInterval(baseDate: Long, frequency: RecurrenceFrequency, forward: Boolean = true): Long {
+        val direction = if (forward) 1 else -1
+        frequency.fixedIntervalDays?.let { fixedDays ->
+            return TimePeriodUtils.addDays(baseDate, fixedDays * direction)
+        }
+
+        frequency.calendarMonths?.let { months ->
+            return TimePeriodUtils.addMonths(baseDate, months * direction)
+        }
+
+        return baseDate
     }
     
     /**
@@ -109,7 +117,7 @@ object RecurrenceCalculator {
      * @param referenceDate Reference date to check against (default: now)
      * @return True if due or overdue
      */
-    fun isDue(nextDueDate: Long, referenceDate: Long = System.currentTimeMillis()): Boolean {
+    fun isDue(nextDueDate: Long, referenceDate: Long): Boolean {
         return nextDueDate <= referenceDate
     }
     
@@ -124,7 +132,7 @@ object RecurrenceCalculator {
     fun isUpcoming(
         nextDueDate: Long, 
         daysWithin: Int = 7, 
-        referenceDate: Long = System.currentTimeMillis()
+        referenceDate: Long
     ): Boolean {
         val windowEnd = TimePeriodUtils.addDays(referenceDate, daysWithin)
         return nextDueDate in referenceDate..windowEnd

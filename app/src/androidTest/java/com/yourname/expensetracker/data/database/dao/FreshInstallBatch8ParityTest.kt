@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.database.dao
 
+import android.database.Cursor
 import android.database.sqlite.SQLiteConstraintException
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -158,6 +159,112 @@ class FreshInstallBatch8ParityTest {
             """.trimIndent()
         )
         // If we reach here, the insert succeeded as expected
+    }
+
+    @Test
+    fun pending_reviews_rawNotificationId_index_is_unique_on_fresh_install() {
+        val db = database.openHelper.writableDatabase
+
+        fun isUniqueIndex(indexName: String): Boolean {
+            db.query("SELECT sql FROM sqlite_master WHERE type='index' AND name='$indexName'").use { cursor: Cursor ->
+                if (!cursor.moveToFirst()) return false
+                return cursor.getString(0)?.contains("UNIQUE") == true
+            }
+        }
+
+        assertTrue(
+            "Fresh-install pending_reviews rawNotificationId index must be unique",
+            isUniqueIndex("index_pending_reviews_rawNotificationId")
+        )
+    }
+
+    @Test
+    fun pending_reviews_rejects_duplicate_non_null_rawNotificationId_on_fresh_install() {
+        val db = database.openHelper.writableDatabase
+
+        db.execSQL(
+            """
+            INSERT INTO raw_notifications (
+                id, packageName, timestamp, capturedAt, isProcessed
+            ) VALUES (
+                1, 'com.test.bank', 1700000000000, 1700000000000, 0
+            )
+            """.trimIndent()
+        )
+
+        db.execSQL(
+            """
+            INSERT INTO pending_reviews (
+                rawNotificationId, suggestedAmount, suggestedCurrency,
+                suggestedMerchant, suggestedType, suggestedCategoryId,
+                confidence, packageName, notificationTitle, notificationText,
+                createdAt, status
+            ) VALUES (
+                1, 10.0, 'EUR',
+                'Test', 'PURCHASE', NULL,
+                0.8, 'com.test', 'title', 'text',
+                ${System.currentTimeMillis()}, 'PENDING'
+            )
+            """.trimIndent()
+        )
+
+        try {
+            db.execSQL(
+                """
+                INSERT INTO pending_reviews (
+                    rawNotificationId, suggestedAmount, suggestedCurrency,
+                    suggestedMerchant, suggestedType, suggestedCategoryId,
+                    confidence, packageName, notificationTitle, notificationText,
+                    createdAt, status
+                ) VALUES (
+                    1, 11.0, 'EUR',
+                    'Test Duplicate', 'PURCHASE', NULL,
+                    0.9, 'com.test', 'title', 'text',
+                    ${System.currentTimeMillis()}, 'PENDING'
+                )
+                """.trimIndent()
+            )
+            fail("Expected unique constraint violation for duplicate non-null rawNotificationId on fresh install")
+        } catch (_: Exception) {
+            // expected — UNIQUE index on rawNotificationId fires
+        }
+    }
+
+    @Test
+    fun pending_reviews_allows_multiple_null_rawNotificationId_on_fresh_install() {
+        val db = database.openHelper.writableDatabase
+
+        db.execSQL(
+            """
+            INSERT INTO pending_reviews (
+                rawNotificationId, suggestedAmount, suggestedCurrency,
+                suggestedMerchant, suggestedType, suggestedCategoryId,
+                confidence, packageName, notificationTitle, notificationText,
+                createdAt, status
+            ) VALUES (
+                NULL, 12.0, 'EUR',
+                'Null One', 'PURCHASE', NULL,
+                0.8, 'com.test', 'title', 'text',
+                ${System.currentTimeMillis()}, 'PENDING'
+            )
+            """.trimIndent()
+        )
+
+        db.execSQL(
+            """
+            INSERT INTO pending_reviews (
+                rawNotificationId, suggestedAmount, suggestedCurrency,
+                suggestedMerchant, suggestedType, suggestedCategoryId,
+                confidence, packageName, notificationTitle, notificationText,
+                createdAt, status
+            ) VALUES (
+                NULL, 13.0, 'EUR',
+                'Null Two', 'PURCHASE', NULL,
+                0.9, 'com.test', 'title', 'text',
+                ${System.currentTimeMillis()}, 'PENDING'
+            )
+            """.trimIndent()
+        )
     }
 
     // ── savings_goals CHECK constraints ─────────────────────────────────────

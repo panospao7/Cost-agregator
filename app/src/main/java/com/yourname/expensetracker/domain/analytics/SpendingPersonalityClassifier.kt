@@ -1,8 +1,9 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.BudgetSnapshot
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -47,8 +48,21 @@ class SpendingPersonalityClassifier @Inject constructor(
         private const val ANALYSIS_MONTHS = 3
         private const val MIN_TRANSACTIONS_FOR_ANALYSIS = 10
         private const val MINIMALIST_MAX_TRANSACTIONS_PER_MONTH = 20
+        private const val CONFIDENCE_MAX_TRANSACTIONS_PER_MONTH = 120.0
         private const val NIGHT_HOUR_THRESHOLD = 20 // 8 PM
         private const val IMPULSE_WINDOW_DAYS = 1 // Same day as income
+
+        private val FEATURE_KEYS_FOR_CONFIDENCE = setOf(
+            "impulseRatio",
+            "merchantDiversity",
+            "weekendSpendShare",
+            "nightSpendShare",
+            "variance",
+            "budgetAdherence",
+            "anomalyFrequency",
+            "categoryDiversity",
+            "avgTransactionSize"
+        )
     }
 
     /**
@@ -62,16 +76,16 @@ class SpendingPersonalityClassifier @Inject constructor(
         coroutineScope {
             // Fetch all necessary data in parallel
             val allExpensesDeferred = async { 
-                expenseRepository.getExpensesBetween(analysisStartMs, now)
+                expenseRepository.getExpenseSnapshotsBetween(analysisStartMs, now)
             }
-            val budgetsDeferred = async { budgetRepository.getActiveBudgets() }
+            val budgetsDeferred = async { budgetRepository.getActiveBudgetSnapshots() }
             
             val allExpenses = allExpensesDeferred.await()
             val budgets = budgetsDeferred.await()
             
             // Filter to purchases only, excluding "not mine" expenses
             val purchases = allExpenses.filter { 
-                it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine 
+                it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine 
             }
             
             if (purchases.size < MIN_TRANSACTIONS_FOR_ANALYSIS) {
@@ -109,9 +123,9 @@ class SpendingPersonalityClassifier @Inject constructor(
      * Calculate all feature scores for personality classification.
      */
     private fun calculateFeatureScores(
-        purchases: List<Expense>,
-        allExpenses: List<Expense>,
-        budgets: List<com.yourname.expensetracker.data.database.entity.Budget>
+        purchases: List<ExpenseSnapshot>,
+        allExpenses: List<ExpenseSnapshot>,
+        budgets: List<BudgetSnapshot>
     ): Map<String, Double> {
         val scores = mutableMapOf<String, Double>()
         
@@ -154,13 +168,13 @@ class SpendingPersonalityClassifier @Inject constructor(
      * Calculate impulse ratio: % of purchases within 1 day of income deposits.
      */
     private fun calculateImpulseRatio(
-        purchases: List<Expense>,
-        allExpenses: List<Expense>
+        purchases: List<ExpenseSnapshot>,
+        allExpenses: List<ExpenseSnapshot>
     ): Double {
         // Find income/deposit dates
         val incomeDates = allExpenses
-            .filter { it.transactionType.toDomain() == DomainTransactionType.DEPOSIT || 
-                      (it.transferDirection == TransferDirection.INCOMING && it.amount > 100) }
+            .filter { it.transactionType == DomainTransactionType.DEPOSIT || 
+                      (it.transferDirection == DomainTransferDirection.INCOMING && it.amount > 100) }
             .map { it.date }
             .distinct()
         
@@ -179,7 +193,7 @@ class SpendingPersonalityClassifier @Inject constructor(
     /**
      * Calculate merchant diversity: unique merchants / total transactions.
      */
-    private fun calculateMerchantDiversity(purchases: List<Expense>): Double {
+    private fun calculateMerchantDiversity(purchases: List<ExpenseSnapshot>): Double {
         val uniqueMerchants = purchases.map { it.merchantKey ?: it.merchant.lowercase() }.distinct().size
         return uniqueMerchants.toDouble() / purchases.size.coerceAtLeast(1)
     }
@@ -187,7 +201,7 @@ class SpendingPersonalityClassifier @Inject constructor(
     /**
      * Calculate weekend spend share: % of spending on Saturday and Sunday.
      */
-    private fun calculateWeekendSpendShare(purchases: List<Expense>): Double {
+    private fun calculateWeekendSpendShare(purchases: List<ExpenseSnapshot>): Double {
         val calendar = Calendar.getInstance()
         
         val weekendSpending = purchases.filter { purchase ->
@@ -204,7 +218,7 @@ class SpendingPersonalityClassifier @Inject constructor(
     /**
      * Calculate night spend share: % of spending after 8 PM.
      */
-    private fun calculateNightSpendShare(purchases: List<Expense>): Double {
+    private fun calculateNightSpendShare(purchases: List<ExpenseSnapshot>): Double {
         val calendar = Calendar.getInstance()
         
         val nightSpending = purchases.filter { purchase ->
@@ -220,7 +234,7 @@ class SpendingPersonalityClassifier @Inject constructor(
     /**
      * Calculate spending variance: coefficient of variation in daily spending.
      */
-    private fun calculateSpendingVariance(purchases: List<Expense>): Double {
+    private fun calculateSpendingVariance(purchases: List<ExpenseSnapshot>): Double {
         // Group by day
         val dailyTotals = purchases.groupBy { expense ->
             val dayStart = TimePeriodUtils.getStartOfDay(expense.date)
@@ -243,8 +257,8 @@ class SpendingPersonalityClassifier @Inject constructor(
      * Calculate budget adherence: 1.0 = perfect adherence, 0.0 = completely over budget.
      */
     private fun calculateBudgetAdherence(
-        purchases: List<Expense>,
-        budgets: List<com.yourname.expensetracker.data.database.entity.Budget>
+        purchases: List<ExpenseSnapshot>,
+        budgets: List<BudgetSnapshot>
     ): Double {
         if (budgets.isEmpty()) return 0.5 // Neutral if no budgets set
         
@@ -280,7 +294,7 @@ class SpendingPersonalityClassifier @Inject constructor(
     /**
      * Calculate anomaly frequency: estimated from transaction variance and outliers.
      */
-    private fun calculateAnomalyFrequency(purchases: List<Expense>): Double {
+    private fun calculateAnomalyFrequency(purchases: List<ExpenseSnapshot>): Double {
         if (purchases.size < 5) return 0.0
         
         val amounts = purchases.map { it.effectiveAmount }
@@ -298,7 +312,7 @@ class SpendingPersonalityClassifier @Inject constructor(
     /**
      * Calculate category diversity: unique categories / total transactions.
      */
-    private fun calculateCategoryDiversity(purchases: List<Expense>): Double {
+    private fun calculateCategoryDiversity(purchases: List<ExpenseSnapshot>): Double {
         val uniqueCategories = purchases.mapNotNull { it.categoryId }.distinct().size
         return uniqueCategories.toDouble() / purchases.size.coerceAtLeast(1)
     }
@@ -306,12 +320,12 @@ class SpendingPersonalityClassifier @Inject constructor(
     /**
      * Calculate normalized average transaction size (0-1 scale).
      */
-    private fun calculateNormalizedAvgTransactionSize(purchases: List<Expense>): Double {
+    private fun calculateNormalizedAvgTransactionSize(purchases: List<ExpenseSnapshot>): Double {
         val avgAmount = purchases.map { it.effectiveAmount }.average()
         // Normalize: typical range €5 - €200, map to 0-1
         return (avgAmount / 200.0).coerceIn(0.0, 1.0)
     }
-    
+
     /**
      * Determine personality type based on feature scores using rule-based classification.
      */
@@ -391,17 +405,32 @@ class SpendingPersonalityClassifier @Inject constructor(
         transactionCount: Int,
         featureScores: Map<String, Double>
     ): Double {
-        // More data = higher confidence
-        val dataConfidence = (transactionCount.toDouble() / (ANALYSIS_MONTHS * 30)).coerceIn(0.0, 1.0)
-        
-        // Lower variance in features = higher confidence
-        val featureValues = featureScores.values.toList()
-        if (featureValues.isEmpty()) return 0.0
-        val featureMean = featureValues.average()
-        val featureVariance = featureValues.sumOf { (it - featureMean) * (it - featureMean) } / featureValues.size
-        val featureConfidence = (1.0 - featureVariance).coerceIn(0.0, 1.0)
-        
-        return (dataConfidence * 0.6 + featureConfidence * 0.4).coerceIn(0.0, 1.0)
+        // Count-based data quality is separate from feature-scale stability.
+        val countDataQuality = (transactionCount.toDouble() / (ANALYSIS_MONTHS * 30)).coerceIn(0.0, 1.0)
+
+        // Feature stability must use normalized inputs only.
+        val normalizedFeatureValues = buildList {
+            FEATURE_KEYS_FOR_CONFIDENCE.forEach { key ->
+                featureScores[key]?.let { add(it.coerceIn(0.0, 1.0)) }
+            }
+            val transactionsPerMonth = featureScores["transactionsPerMonth"]
+            if (transactionsPerMonth != null) {
+                add(normalizeTransactionsPerMonth(transactionsPerMonth))
+            }
+        }
+
+        if (normalizedFeatureValues.isEmpty()) return 0.0
+
+        val featureMean = normalizedFeatureValues.average()
+        val featureVariance = normalizedFeatureValues
+            .sumOf { (it - featureMean) * (it - featureMean) } / normalizedFeatureValues.size
+        val featureStability = (1.0 - featureVariance).coerceIn(0.0, 1.0)
+
+        return (countDataQuality * 0.6 + featureStability * 0.4).coerceIn(0.0, 1.0)
+    }
+
+    private fun normalizeTransactionsPerMonth(transactionsPerMonth: Double): Double {
+        return (transactionsPerMonth / CONFIDENCE_MAX_TRANSACTIONS_PER_MONTH).coerceIn(0.0, 1.0)
     }
     
     /**
@@ -513,15 +542,6 @@ class SpendingPersonalityClassifier @Inject constructor(
         )
     }
 
-    // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
-    private fun com.yourname.expensetracker.data.database.entity.TransactionType.toDomain(): DomainTransactionType =
-        when (this) {
-            com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
-            com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
-            com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
-            com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
-            com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
-        }
 }
 
 /**

@@ -1,7 +1,11 @@
 package com.yourname.expensetracker.domain.ai.usecase
 
+import com.yourname.expensetracker.domain.ai.model.DashboardBudgetWarningInput
+import com.yourname.expensetracker.domain.ai.model.DashboardUpcomingItemInput
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
 import com.yourname.expensetracker.domain.util.TimeProvider
 import java.time.Instant
@@ -42,20 +46,25 @@ class DashboardBriefingInputBuilder @Inject constructor(
         val budgetWarnings = data.budgetStatuses
             .filter { it.healthStatus == BudgetHealthStatus.EXCEEDED ||
                       it.healthStatus == BudgetHealthStatus.CRITICAL }
-            .mapNotNull { status ->
-                val name = status.categoryName ?: "Overall"
-                val pct  = (status.percentUsed * 100).toInt()
-                "$name at $pct%"
+            .map { status ->
+                DashboardBudgetWarningInput(
+                    categoryLabel = status.categoryName
+                        ?.let(UiText::from)
+                        ?: UiText.fromKey(DomainTextKeys.DASHBOARD_BRIEFING_OVERALL),
+                    percentUsed = (status.percentUsed * 100).toInt()
+                )
             }
 
-        // --- upcoming item labels (capped at 5) ------------------------------
+        // --- upcoming item facts (capped at 5) --------------------------------
         val upcomingItems = weather.upcomingItems
             .take(5)
             .map { item ->
-                val dateLabel = Instant.ofEpochMilli(item.date)
-                    .atZone(ZoneId.systemDefault())
-                    .format(dateKeyFormat)
-                "${item.description} €${"%.0f".format(item.amount)} on $dateLabel"
+                DashboardUpcomingItemInput(
+                    description = item.description,
+                    amount = item.amount,
+                    dateMillis = item.date,
+                    currencyCode = item.currencyCodeOrNull()
+                )
             }
 
         return DashboardBriefingInput(
@@ -73,5 +82,10 @@ class DashboardBriefingInputBuilder @Inject constructor(
             budgetWarnings       = budgetWarnings,
             upcomingItems        = upcomingItems
         )
+    }
+
+    private fun com.yourname.expensetracker.domain.model.UpcomingItem.currencyCodeOrNull(): String? = when (this) {
+        is com.yourname.expensetracker.domain.model.UpcomingItem.Recurring -> pattern.currency
+        is com.yourname.expensetracker.domain.model.UpcomingItem.Planned -> null
     }
 }

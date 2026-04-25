@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -17,6 +18,9 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.time.LocalDate
+import java.time.ZoneId
+import java.util.TimeZone
 
 @RunWith(AndroidJUnit4::class)
 class ExpenseDaoTest {
@@ -159,6 +163,86 @@ class ExpenseDaoTest {
 
         val between = expenseDao.getExpensesBetween(now - 3L * 86_400_000L, oneDayAgo + 1L)
         assertEquals(2, between.size)
+    }
+
+    @Test
+    fun getWeeklyTotalsForPeriod_returnsCanonicalLocalWeekBoundariesFromRepositoryMapping() = runBlocking {
+        val originalTimeZone = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Europe/Athens"))
+
+            val weekMonday = localDateAtHourMs(2026, 4, 20, 0)
+            val weekEnd = TimePeriodUtils.addDays(weekMonday, 7)
+
+            expenseDao.insert(makeExpense(amount = 12.0, date = localDateAtHourMs(2026, 4, 20, 9)))
+            expenseDao.insert(makeExpense(amount = 8.0, date = localDateAtHourMs(2026, 4, 22, 11)))
+
+            val weekly = expenseDao.getWeeklyTotalsForPeriod(weekMonday, weekEnd)
+
+            assertEquals(1, weekly.size)
+            assertEquals("2026-04-20", weekly.first().weekKey)
+
+            // DAO now emits the canonical Monday date key; the repository converts
+            // this key to local-midnight epoch boundaries using TimePeriodUtils.
+            val canonicalStart = LocalDate.parse(weekly.first().weekKey)
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+            val canonicalEnd = TimePeriodUtils.addDays(canonicalStart, 7)
+
+            assertEquals(TimePeriodUtils.getStartOfWeek(localDateAtHourMs(2026, 4, 22, 12)), canonicalStart)
+            assertEquals(TimePeriodUtils.getEndOfWeek(localDateAtHourMs(2026, 4, 22, 12)), canonicalEnd)
+        } finally {
+            TimeZone.setDefault(originalTimeZone)
+        }
+    }
+
+    @Test
+    fun getWeeklyTotalsForPeriod_crossYearWeekProducesSingleBucket() = runBlocking {
+        val start = localDateAtHourMs(2025, 12, 29, 0)
+        val end = localDateAtHourMs(2026, 1, 5, 0)
+
+        expenseDao.insert(makeExpense(amount = 10.0, date = localDateAtHourMs(2025, 12, 29, 9)))
+        expenseDao.insert(makeExpense(amount = 20.0, date = localDateAtHourMs(2025, 12, 31, 15)))
+        expenseDao.insert(makeExpense(amount = 30.0, date = localDateAtHourMs(2026, 1, 2, 10)))
+        expenseDao.insert(makeExpense(amount = 40.0, date = localDateAtHourMs(2026, 1, 4, 20)))
+
+        val weekly = expenseDao.getWeeklyTotalsForPeriod(start, end)
+
+        assertEquals(1, weekly.size)
+        assertEquals("2025-12-29", weekly.first().weekKey)
+        assertEquals(100.0, weekly.first().total, 0.01)
+        assertEquals(4, weekly.first().txCount)
+    }
+
+    @Test
+    fun getMerchantLocationClusters_matches_floor_buckets_for_negative_coordinates() = runBlocking {
+        expenseDao.insert(
+            makeExpense(merchant = "SouthWest").copy(
+                merchantKey = "southwest",
+                latitude = -33.86,
+                longitude = -151.20
+            )
+        )
+        expenseDao.insert(
+            makeExpense(merchant = "SouthWest").copy(
+                merchantKey = "southwest",
+                latitude = -33.87,
+                longitude = -151.19
+            )
+        )
+        expenseDao.insert(
+            makeExpense(merchant = "SouthWest").copy(
+                merchantKey = "southwest",
+                latitude = -34.20,
+                longitude = -151.60
+            )
+        )
+
+        val clusters = expenseDao.getMerchantLocationClusters("southwest")
+
+        assertEquals(2, clusters.size)
+        assertEquals(2, clusters.first().count)
     }
 
     @Test
@@ -788,6 +872,13 @@ class ExpenseDaoTest {
         matchStatus = if (expenseId != null) MatchStatus.AUTO_MATCHED else MatchStatus.UNMATCHED,
         createdAt = createdAt
     )
+
+    private fun localDateAtHourMs(year: Int, month: Int, day: Int, hour: Int): Long =
+        LocalDate.of(year, month, day)
+            .atTime(hour, 0)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
 
     /**
      * A business expense with requiresReceipt=1 and NO linked scanned_receipt

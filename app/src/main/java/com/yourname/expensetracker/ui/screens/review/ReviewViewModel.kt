@@ -235,7 +235,7 @@ class ReviewViewModel @Inject constructor(
     }
 
     val pendingReviews: StateFlow<List<PendingReviewWithReceipt>> = reviewQueueRepository
-        .getPendingReviews()
+        .getAllPendingReviews()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val pendingCount: StateFlow<Int> = reviewQueueRepository
@@ -557,7 +557,7 @@ class ReviewViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            val item = reviewQueueRepository.getPendingReviews().first().firstOrNull { it.review.id == reviewId }
+            val item = reviewQueueRepository.getAllPendingReviews().first().firstOrNull { it.review.id == reviewId }
                 ?: reviewQueueRepository.getPendingReviewWithReceiptById(reviewId)
                 ?: return@launch
             showQuickApprovePreview(reviewId, item, state, categorySuggestion)

@@ -216,14 +216,14 @@ private fun ChallengesUnavailableCard(
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Active challenges unavailable",
+                    text = stringResource(R.string.challenges_unavailable_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
             }
 
             Text(
-                text = reason ?: "This build does not have a persisted active-challenges source yet.",
+                text = reason ?: stringResource(R.string.challenges_unavailable_message),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -255,7 +255,7 @@ private fun ActiveChallengeCard(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = challenge.type.name.replace('_', ' '),
+                text = stringResource(challenge.type.toDisplayLabelRes()),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -266,31 +266,52 @@ private fun ActiveChallengeCard(
             )
 
             Text(
-                text = "${challenge.progress.toInt()}% through challenge window",
+                text = stringResource(
+                    R.string.challenges_progress_window_format,
+                    challenge.progress.toInt()
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             challenge.targetAmount?.let { targetAmount ->
                 Text(
-                    text = when (challenge.type) {
-                        com.yourname.expensetracker.domain.challenge.ChallengeType.REDUCE_SPENDING -> {
-                            val baseline = challenge.baselineAmount?.let(CurrencyFormatter::format)
-                            val reduction = CurrencyFormatter.format(targetAmount)
-                            if (baseline != null) {
-                                "Baseline $baseline, reduce by $reduction"
-                            } else {
-                                "Reduce spend by $reduction"
-                            }
-                        }
-
-                        else -> "Target: ${CurrencyFormatter.format(targetAmount)}"
-                    },
+                    text = formatChallengeTargetText(
+                        challenge = challenge,
+                        targetAmount = targetAmount
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun formatChallengeTargetText(
+    challenge: SpendingChallenge,
+    targetAmount: Double
+): String {
+    return when (challenge.type) {
+        ChallengeType.REDUCE_SPENDING -> {
+            val baseline = challenge.baselineAmount?.let(CurrencyFormatter::format)
+            val reduction = CurrencyFormatter.format(targetAmount)
+            if (baseline != null) {
+                stringResource(
+                    R.string.challenges_target_reduce_with_baseline_format,
+                    baseline,
+                    reduction
+                )
+            } else {
+                stringResource(R.string.challenges_target_reduce_format, reduction)
+            }
+        }
+
+        else -> stringResource(
+            R.string.challenges_target_generic_format,
+            CurrencyFormatter.format(targetAmount)
+        )
     }
 }
 
@@ -425,13 +446,13 @@ private fun CreateChallengeDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Challenge name") },
+                    label = { Text(stringResource(R.string.challenges_form_name_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Text(
-                    text = "Challenge type",
+                    text = stringResource(R.string.challenges_form_type_label),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Medium
                 )
@@ -452,7 +473,7 @@ private fun CreateChallengeDialog(
                                     targetAmountInput = ""
                                 }
                             },
-                            label = { Text(type.toDisplayLabel()) }
+                            label = { Text(stringResource(type.toDisplayLabelRes())) }
                         )
                     }
                 }
@@ -464,7 +485,7 @@ private fun CreateChallengeDialog(
                             durationDaysInput = value
                         }
                     },
-                    label = { Text("Duration (days)") },
+                    label = { Text(stringResource(R.string.challenges_form_duration_label)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth(),
@@ -482,8 +503,8 @@ private fun CreateChallengeDialog(
                         label = {
                             Text(
                                 when (selectedType) {
-                                    ChallengeType.REDUCE_SPENDING -> "Reduce by amount"
-                                    else -> "Target amount"
+                                    ChallengeType.REDUCE_SPENDING -> stringResource(R.string.challenges_form_reduce_by_amount_label)
+                                    else -> stringResource(R.string.challenges_form_target_amount_label)
                                 }
                             )
                         },
@@ -496,7 +517,7 @@ private fun CreateChallengeDialog(
 
                 if (requiresCategory) {
                     Text(
-                        text = "Category",
+                        text = stringResource(R.string.challenges_form_category_label),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Medium
                     )
@@ -555,9 +576,9 @@ private fun CreateChallengeDialog(
     )
 }
 
-private fun ChallengeType.toDisplayLabel(): String = when (this) {
-    ChallengeType.NO_SPEND -> "No Spend"
-    ChallengeType.BUDGET_LIMIT -> "Budget Limit"
-    ChallengeType.REDUCE_SPENDING -> "Reduce Spending"
-    ChallengeType.CATEGORY_SPECIFIC -> "Category Specific"
+private fun ChallengeType.toDisplayLabelRes(): Int = when (this) {
+    ChallengeType.NO_SPEND -> R.string.challenges_type_no_spend
+    ChallengeType.BUDGET_LIMIT -> R.string.challenges_type_budget_limit
+    ChallengeType.REDUCE_SPENDING -> R.string.challenges_type_reduce_spending
+    ChallengeType.CATEGORY_SPECIFIC -> R.string.challenges_type_category_specific
 }

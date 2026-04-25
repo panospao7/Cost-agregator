@@ -16,6 +16,7 @@ import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +38,49 @@ import java.util.Currency
 import java.util.Locale
 
 private const val DEFAULT_SPLIT_COLOR = "#FF6B6B"
+
+private val SplitTextFieldStateSaver: Saver<SplitTextFieldState, Any> = listSaver(
+    save = { state ->
+        listOf(state.text, state.lastCommittedValue)
+    },
+    restore = { saved ->
+        val text = saved.getOrNull(0) as? String ?: return@listSaver null
+        val lastCommittedValue = saved.getOrNull(1) as? Double ?: return@listSaver null
+        SplitTextFieldState(text = text, lastCommittedValue = lastCommittedValue)
+    }
+)
+
+internal data class SplitTextFieldState(
+    val text: String,
+    val lastCommittedValue: Double
+) {
+    companion object {
+        fun initial(externalValue: Double): SplitTextFieldState {
+            return SplitTextFieldState(
+                text = externalValue.toString(),
+                lastCommittedValue = externalValue
+            )
+        }
+    }
+
+    fun onUserInput(newText: String, onParsed: (Double) -> Unit = {}): SplitTextFieldState {
+        val parsed = newText.toDoubleOrNull()
+        return if (parsed != null && parsed.isFinite()) {
+            onParsed(parsed)
+            copy(text = newText, lastCommittedValue = parsed)
+        } else {
+            copy(text = newText)
+        }
+    }
+
+    fun onExternalValueChange(externalValue: Double): SplitTextFieldState {
+        return if (externalValue != lastCommittedValue) {
+            copy(text = externalValue.toString(), lastCommittedValue = externalValue)
+        } else {
+            this
+        }
+    }
+}
 
 internal fun buildCompletedSplitShares(
     participants: List<SplitShare>,
@@ -109,6 +153,8 @@ fun VisualSplitEditorScreen(
             )
         )
     }
+    var rowIds by rememberSaveable { mutableStateOf(listOf(0, 1)) }
+    var nextRowId by rememberSaveable { mutableIntStateOf(2) }
     var showTemplateDialog by rememberSaveable { mutableStateOf(false) }
     var showSaveTemplateDialog by rememberSaveable { mutableStateOf(false) }
     var templateName by rememberSaveable { mutableStateOf("") }
@@ -129,6 +175,8 @@ fun VisualSplitEditorScreen(
                     participants = shares.mapIndexed { index, share ->
                         share.copy(color = sanitizeColorHex(share.color, getRandomColor(index)))
                     }
+                    rowIds = shares.indices.map { nextRowId + it }
+                    nextRowId += shares.size
                 }
             }
         }
@@ -310,6 +358,8 @@ fun VisualSplitEditorScreen(
                                     participantName = personLabel,
                                     color = getRandomColor(participants.size)
                                 )
+                                rowIds = rowIds + nextRowId
+                                nextRowId++
                             }
                         },
                         enabled = participants.size < 10
@@ -321,7 +371,7 @@ fun VisualSplitEditorScreen(
             }
             
             val segmentsByIndex = currentSplit?.segments?.associateBy { it.index }.orEmpty()
-            items(participants) { participant ->
+            items(participants.zip(rowIds), key = { it.second }) { (participant, _) ->
                 val segment = segmentsByIndex[participant.participantIndex]
                 ParticipantSplitCard(
                     participant = participant,
@@ -352,10 +402,16 @@ fun VisualSplitEditorScreen(
                     },
                     onRemove = {
                         if (participants.size > 2) {
-                            participants = participants.filter { 
-                                it.participantIndex != participant.participantIndex 
-                            }.mapIndexed { index, share ->
-                                share.copy(participantIndex = index)
+                            val removeIndex = participants.indexOfFirst {
+                                it.participantIndex == participant.participantIndex
+                            }
+                            if (removeIndex >= 0) {
+                                participants = participants.filterIndexed { index, _ ->
+                                    index != removeIndex
+                                }.mapIndexed { index, share ->
+                                    share.copy(participantIndex = index)
+                                }
+                                rowIds = rowIds.filterIndexed { index, _ -> index != removeIndex }
                             }
                         }
                     },
@@ -396,9 +452,12 @@ fun VisualSplitEditorScreen(
                             },
                             modifier = Modifier.clickable {
                                 selectedTemplateId = template.id
-                                participants = viewModel.parseTemplateShares(template).mapIndexed { index, share ->
+                                val shares = viewModel.parseTemplateShares(template)
+                                participants = shares.mapIndexed { index, share ->
                                     share.copy(color = sanitizeColorHex(share.color, getRandomColor(index)))
                                 }
+                                rowIds = shares.indices.map { nextRowId + it }
+                                nextRowId += shares.size
                                 splitType = template.splitType
                                 showTemplateDialog = false
                             }
@@ -536,6 +595,23 @@ fun ParticipantSplitCard(
     canRemove: Boolean
 ) {
     val numberFormat = remember(currencyCode) { buildCurrencyFormat(currencyCode) }
+    var percentageState by rememberSaveable(stateSaver = SplitTextFieldStateSaver) {
+        mutableStateOf(SplitTextFieldState.initial(participant.percentage ?: percentage))
+    }
+    var amountState by rememberSaveable(stateSaver = SplitTextFieldStateSaver) {
+        mutableStateOf(SplitTextFieldState.initial(participant.amount ?: assignedAmount))
+    }
+
+    val currentExternalPercentage = participant.percentage ?: percentage
+    val currentExternalAmount = participant.amount ?: assignedAmount
+
+    LaunchedEffect(currentExternalPercentage) {
+        percentageState = percentageState.onExternalValueChange(currentExternalPercentage)
+    }
+
+    LaunchedEffect(currentExternalAmount) {
+        amountState = amountState.onExternalValueChange(currentExternalAmount)
+    }
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -593,9 +669,11 @@ fun ParticipantSplitCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         OutlinedTextField(
-                            value = (participant.percentage ?: percentage).toString(),
-                            onValueChange = { 
-                                it.toDoubleOrNull()?.let { onPercentageChange(it) }
+                            value = percentageState.text,
+                            onValueChange = { newText ->
+                                percentageState = percentageState.onUserInput(newText) { parsed ->
+                                    onPercentageChange(parsed)
+                                }
                             },
                             label = { Text(stringResource(R.string.visual_split_percentage_label)) },
                             suffix = { Text(stringResource(R.string.visual_split_percentage_suffix)) },
@@ -613,9 +691,11 @@ fun ParticipantSplitCard(
                 }
                 SplitTemplate.SplitType.CUSTOM_AMOUNT, SplitTemplate.SplitType.UNEQUAL -> {
                     OutlinedTextField(
-                        value = (participant.amount ?: assignedAmount).toString(),
-                        onValueChange = { 
-                            it.toDoubleOrNull()?.let { onAmountChange(it) }
+                        value = amountState.text,
+                        onValueChange = { newText ->
+                            amountState = amountState.onUserInput(newText) { parsed ->
+                                onAmountChange(parsed)
+                            }
                         },
                         label = { Text(stringResource(R.string.visual_split_amount_label)) },
                         modifier = Modifier.fillMaxWidth(),

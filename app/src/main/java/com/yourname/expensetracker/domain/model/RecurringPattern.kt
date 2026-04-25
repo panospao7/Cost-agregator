@@ -29,7 +29,13 @@ data class RecurringPattern(
     }
 }
 
-enum class RecurrenceFrequency(val days: Int) {
+enum class RecurrenceFrequency(
+    @Deprecated(
+        message = "Use fixedIntervalDays/calendarMonths/isIrregular helpers instead of sentinel day counts.",
+        replaceWith = ReplaceWith("fixedIntervalDays ?: 0")
+    )
+    val days: Int
+) {
     WEEKLY(7),
     BIWEEKLY(14),
     MONTHLY(30),
@@ -38,6 +44,29 @@ enum class RecurrenceFrequency(val days: Int) {
     ANNUALLY(365),
     IRREGULAR(0);
 
-    val intervalInMs: Long
-        get() = days * 86_400_000L
+    val fixedIntervalDays: Int?
+        get() = when (this) {
+            WEEKLY -> 7
+            BIWEEKLY -> 14
+            else -> null
+        }
+
+    val calendarMonths: Int?
+        get() = when (this) {
+            MONTHLY -> 1
+            QUARTERLY -> 3
+            SEMI_ANNUALLY -> 6
+            ANNUALLY -> 12
+            else -> null
+        }
+
+    val isIrregular: Boolean
+        get() = this == IRREGULAR
+
+    @Deprecated(
+        message = "Use fixedIntervalDays/calendarMonths/isIrregular and RecurrenceCalculator helpers.",
+        replaceWith = ReplaceWith("fixedIntervalDays?.toLong()?.times(86_400_000L)")
+    )
+    val intervalInMs: Long?
+        get() = fixedIntervalDays?.toLong()?.times(86_400_000L)
 }

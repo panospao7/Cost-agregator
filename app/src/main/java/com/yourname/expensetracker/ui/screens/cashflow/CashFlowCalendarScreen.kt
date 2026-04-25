@@ -339,7 +339,7 @@ private fun DailyCashFlowDetails(
         }
 
         val incomeTotal = cashFlow.income.sumOf { abs(it.amount) }
-        val expensesTotal = cashFlow.expenses.sumOf { it.amount }
+        val expensesTotal = cashFlow.expenses.sumOf { it.effectiveAmount }
         val recurringTotal = cashFlow.predictedRecurring.sumOf { it.averageAmount }
 
         Text(

@@ -142,7 +142,7 @@ class WarrantyTextExtractor {
             // "Receipt Date: 12/05/2024"
             Pattern.compile("RECEIPT(?:\\s+DATE)?[:\\s]*(\\d{1,2}[/.\\-]\\d{1,2}[/.\\-]\\d{2,4})", Pattern.CASE_INSENSITIVE),
             // Just a date at the start of a line
-            Pattern.compile("^(\\d{1,2}[/.\\-]\\d{1,2}[/.\\-]\\d{2,4})", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("^(\\d{1,2}[/.\\-]\\d{1,2}[/.\\-]\\d{2,4})", Pattern.CASE_INSENSITIVE or Pattern.MULTILINE),
             // Date with month name: "12 MAY 2024" or "MAY 12, 2024"
             Pattern.compile("(\\d{1,2}\\s+[A-Z]{3,9}\\s+\\d{2,4})", Pattern.CASE_INSENSITIVE),
             Pattern.compile("([A-Z]{3,9}\\s+\\d{1,2},?\\s+\\d{2,4})", Pattern.CASE_INSENSITIVE)

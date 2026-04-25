@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
+import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
@@ -119,7 +120,7 @@ class ExplainPendingReviewUseCaseTest {
         status        = AiArtifactStatus.READY,
         mode          = AiMode.AUTO,
         promptVersion = AppConfig.Ai.PROMPT_VERSION_REVIEW,
-        sourceHash    = makeInput(reviewId = reviewId).hashCode().toString(),
+        sourceHash    = AiArtifactSourceHash.forReviewExplanation(makeInput(reviewId = reviewId)),
         createdAt     = now,
         updatedAt     = now,
         expiresAt     = now + AppConfig.Ai.REVIEW_EXPLANATION_TTL_MS

@@ -177,6 +177,10 @@ class CurrencyConverter @Inject constructor(
         rate: Double,
         source: String = "manual"
     ) {
+        if (!isValidRate(rate)) {
+            Timber.w("Ignoring invalid exchange rate %s -> %s = %s", fromCurrency, toCurrency, rate)
+            return
+        }
         val exchangeRate = DomainExchangeRate(
             fromCurrency = fromCurrency.uppercase(),
             toCurrency = toCurrency.uppercase(),
@@ -194,7 +198,11 @@ class CurrencyConverter @Inject constructor(
         rates: List<Triple<String, String, Double>>,
         source: String = "api"
     ) {
-        val exchangeRates = rates.map { (from, to, rate) ->
+        val exchangeRates = rates.mapNotNull { (from, to, rate) ->
+            if (!isValidRate(rate)) {
+                Timber.w("Skipping invalid exchange rate %s -> %s = %s", from, to, rate)
+                return@mapNotNull null
+            }
             DomainExchangeRate(
                 fromCurrency = from.uppercase(),
                 toCurrency = to.uppercase(),
@@ -205,6 +213,8 @@ class CurrencyConverter @Inject constructor(
         }
         exchangeRateStore.insertOrUpdateAll(exchangeRates)
     }
+
+    private fun isValidRate(rate: Double): Boolean = rate.isFinite() && rate > 0.0
 
     /**
      * Check if an exchange rate exists for a currency pair.

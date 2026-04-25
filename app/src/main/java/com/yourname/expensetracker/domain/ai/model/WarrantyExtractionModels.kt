@@ -23,4 +23,16 @@ data class WarrantyExtractionResult(
     val returnDays: Int?,
     val returnConditions: String?,
     val confidence: Float
-)
+) {
+    init {
+        require(confidence.isFinite() && confidence in 0f..1f) {
+            "WarrantyExtractionResult.confidence must be finite and within [0, 1]"
+        }
+        require(warrantyMonths == null || warrantyMonths > 0) {
+            "WarrantyExtractionResult.warrantyMonths must be > 0 when provided"
+        }
+        require(returnDays == null || returnDays > 0) {
+            "WarrantyExtractionResult.returnDays must be > 0 when provided"
+        }
+    }
+}

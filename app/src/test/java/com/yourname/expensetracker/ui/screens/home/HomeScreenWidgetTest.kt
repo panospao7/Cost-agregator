@@ -106,9 +106,9 @@ class HomeScreenWidgetTest {
         assertTrue(source.contains("onNavigateToBudgetDetail: (String) -> Unit = {}"))
         assertTrue(source.contains("onNavigateToFeature: (NavigationDestination) -> Unit = {}"))
 
-        // Explicit no-op branch for widget rendered elsewhere
+        // Explicit dashboard branch for savings sweep widget
         assertTrue(source.contains("is DashboardWidget.SavingsSweepPrompt ->"))
-        assertTrue(source.contains("Savings Sweep Prompt widget - handled elsewhere"))
+        assertTrue(source.contains("SavingsSweepPromptCard("))
     }
 
     private fun homeScreenSource(): String {
