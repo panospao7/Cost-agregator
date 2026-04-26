@@ -92,8 +92,8 @@ data class AiSettings(
     val queryInterpretationEnabled: Boolean = false,
     val dashboardBriefingEnabled: Boolean = false,
     val reviewExplanationEnabled: Boolean = false,
-    val receiptAssistEnabled: Boolean = true,  // Changed: Enable by default for better accuracy
-    val receiptImageCloudEnabled: Boolean = true,  // Changed: Enable image analysis by default
+    val receiptAssistEnabled: Boolean = false, // PRIVACY FIX: Align with DataStore default — off by default
+    val receiptImageCloudEnabled: Boolean = false, // PRIVACY FIX: Align with DataStore default — cloud image upload must be opt-in
     val receiptItemCategorizationEnabled: Boolean = false, // NEW
     val categorizationFallbackEnabled: Boolean = false,
     val dedupeJudgeEnabled: Boolean = false,

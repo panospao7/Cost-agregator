@@ -5,13 +5,16 @@ import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudJsonParser
+import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -28,11 +31,15 @@ import timber.log.Timber
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 class CloudCategorizationAssistService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient
+    @CloudAiHttpClient private val client: OkHttpClient,
+    private val aiSettingsRepository: AiSettingsRepository? = null
 ) : CategorizationAssistService {
 
     // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient())
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), null)
+
+    // Secondary constructor for tests with client override
+    constructor(secureKeyStorage: SecureKeyStorage, client: OkHttpClient) : this(secureKeyStorage, client, null)
 
     private val apiKey: String
         get() = secureKeyStorage.getGeminiKey() ?: ""
@@ -43,7 +50,17 @@ class CloudCategorizationAssistService @Inject constructor(
             return null
         }
 
-        val requestBody = buildRequestBody(input)
+        // PRIVACY GUARD: Cloud must not be used if user has disabled it.
+        // This is a defense-in-depth check — the HybridService/Router already gates,
+        // but this prevents bypass via direct DI injection of the cloud service.
+        val settings = aiSettingsRepository?.settings()?.first()
+        if (settings != null && !settings.allowCloudAi) {
+            Timber.d("CloudCategorizationAssistService: Cloud AI disabled in settings, skipping.")
+            return null
+        }
+
+        val shouldRedact = settings?.redactBeforeCloud ?: true // default to redact if unknown
+        val requestBody = buildRequestBody(input, shouldRedact)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
@@ -116,8 +133,8 @@ class CloudCategorizationAssistService @Inject constructor(
         }
     }
 
-    private fun buildRequestBody(input: CategorizationAssistInput): String {
-        val prompt = buildPrompt(input)
+    private fun buildRequestBody(input: CategorizationAssistInput, shouldRedact: Boolean): String {
+        val prompt = buildPrompt(input, shouldRedact)
         return JSONObject().apply {
             put(
                 "contents",
@@ -145,50 +162,66 @@ class CloudCategorizationAssistService @Inject constructor(
         }.toString()
     }
 
-    private fun buildPrompt(input: CategorizationAssistInput): String {
+    private fun buildPrompt(input: CategorizationAssistInput, shouldRedact: Boolean): String {
         val categories = input.candidateCategories.joinToString("\n") { "- ${it.id}: ${it.cloudLabel}" }
         val merchantContext = buildMerchantContext(input)
-        
+
+        // PRIVACY FIX: Sanitize PII before sending to cloud
+        val safeMerchant = if (shouldRedact) {
+            CloudPiiSanitizer.sanitizeMerchant(input.merchant, shouldRedact = true)
+        } else {
+            input.merchant
+        }
+        val safeSupportingText = if (shouldRedact && input.supportingText != null) {
+            CloudPiiSanitizer.sanitizeText(
+                raw = input.supportingText,
+                maxChars = AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS,
+                fallbackPrefix = "supporting_text"
+            )
+        } else {
+            input.supportingText ?: "none"
+        }
+
         return """
-            You are helping categorize a pending finance review.
-            Choose only from the provided category list.
-            Never invent a new category.
-            Use COMMON SENSE to identify merchants from abbreviations or OCR errors.
-            
-            IMPORTANT - Merchant Identification:
-            - "amzn", "amzn uk", "amazon", "amazon uk" → Amazon (Online Shopping/Electronics)
-            - "goog", "google", "g.co" → Google (Subscriptions/Services)
-            - "msft", "microsoft", "xbox" → Microsoft (Subscriptions/Software)
-            - "netflix", "nfx" → Netflix (Subscriptions/Entertainment)
-            - "spotify", "sptfy" → Spotify (Subscriptions/Music)
-            - "fb", "facebook", "meta" → Meta/Facebook (Subscriptions/Social)
-            - "appl", "apple", "itunes", "appstore" → Apple (Subscriptions/Technology)
-            - "etsy" → Etsy (Shopping)
-            - "airbnb" → Airbnb (Travel/Accommodation)
-            - "uber", "lyft" → Ride Share (Transportation)
-            - "deliv", "doordash", "grubhub" → Food Delivery (Food & Dining)
-            $merchantContext
-            
-            Return JSON only.
+You are helping categorize a pending finance review.
+Choose only from the provided category list.
+Never invent a new category.
+Use COMMON SENSE to identify merchants from abbreviations or OCR errors.
 
-            JSON schema:
-            {
-              "categoryId": 0,
-              "categoryName": "string",
-              "confidence": 0.0,
-              "rationale": "short explanation of your reasoning",
-              "alternativeCategoryIds": [0]
-            }
+IMPORTANT - Merchant Identification:
+- "amzn", "amzn uk", "amazon", "amazon uk" → Amazon (Online Shopping/Electronics)
+- "goog", "google", "g.co" → Google (Subscriptions/Services)
+- "msft", "microsoft", "xbox" → Microsoft (Subscriptions/Software)
+- "netflix", "nfx" → Netflix (Subscriptions/Entertainment)
+- "spotify", "sptfy" → Spotify (Subscriptions/Music)
+- "fb", "facebook", "meta" → Meta/Facebook (Subscriptions/Social)
+- "appl", "apple", "itunes", "appstore" → Apple (Subscriptions/Technology)
+- "etsy" → Etsy (Shopping)
+- "airbnb" → Airbnb (Travel/Accommodation)
+- "uber", "lyft" → Ride Share (Transportation)
+- "deliv", "doordash", "grubhub" → Food Delivery (Food & Dining)
+$merchantContext
 
-            Review facts:
-            - merchant: ${input.merchant}
-            - amount: ${input.amount?.toString() ?: "none"} ${input.currency}
-            - transactionType: ${input.transactionType}
-            - date: ${input.date?.toString() ?: "none"}
-            - currentCategoryId: ${input.currentCategoryId?.toString() ?: "none"}
-            - deterministicMatchType: ${input.deterministicMatchType ?: "none"}
-            - deterministicExplanation: ${input.deterministicExplanation ?: "none"}
-            - supportingText: ${input.supportingText ?: "none"}
+Return JSON only.
+
+JSON schema:
+{
+  "categoryId": 0,
+  "categoryName": "string",
+  "confidence": 0.0,
+  "rationale": "short explanation of your reasoning",
+  "alternativeCategoryIds": [0]
+}
+
+Review facts:
+- merchant: $safeMerchant
+- amount: ${input.amount?.toString() ?: "none"} ${input.currency}
+- transactionType: ${input.transactionType}
+- date: ${input.date?.toString() ?: "none"}
+- currentCategoryId: ${input.currentCategoryId?.toString() ?: "none"}
+- deterministicMatchType: ${input.deterministicMatchType ?: "none"}
+- deterministicExplanation: ${input.deterministicExplanation ?: "none"}
+- supportingText: $safeSupportingText
 
             Allowed categories:
             $categories

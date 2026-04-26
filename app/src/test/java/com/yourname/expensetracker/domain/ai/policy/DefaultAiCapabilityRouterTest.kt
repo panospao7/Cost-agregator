@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.ai.policy
 
+import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiRoute
@@ -22,6 +23,7 @@ class DefaultAiCapabilityRouterTest {
     private lateinit var policy: AiPolicy
     private lateinit var environmentMonitor: AiEnvironmentMonitor
     private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
+    private lateinit var secureKeyStorage: SecureKeyStorage
     private lateinit var router: DefaultAiCapabilityRouter
 
     @Before
@@ -29,7 +31,10 @@ class DefaultAiCapabilityRouterTest {
         policy = AiPolicyImpl()
         environmentMonitor = mockk()
         aiRuntimeDiagnostics = mockk(relaxed = true)
-        router = DefaultAiCapabilityRouter(policy, environmentMonitor, aiRuntimeDiagnostics)
+        secureKeyStorage = mockk()
+        // By default, assume API key is present for existing tests
+        every { secureKeyStorage.hasKey(SecureKeyStorage.KEY_GEMINI) } returns true
+        router = DefaultAiCapabilityRouter(policy, environmentMonitor, aiRuntimeDiagnostics, secureKeyStorage)
     }
 
     @Test
@@ -336,7 +341,7 @@ class DefaultAiCapabilityRouterTest {
     }
 
     @Test
-    fun `decide falls back to cloud when on device preferred capability has no local availability`() = runTest {
+    fun `decide returns DETERMINISTIC_FALLBACK when on device preferred and local unavailable - no cloud leak`() = runTest {
         every { environmentMonitor.isNetworkAvailable() } returns true
         every { environmentMonitor.isWifiConnected() } returns true
         coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.REVIEW_EXPLANATION) } returns OnDeviceModelStatus.UNAVAILABLE
@@ -351,7 +356,29 @@ class DefaultAiCapabilityRouterTest {
 
         val result = router.decide(AiCapability.REVIEW_EXPLANATION, settings)
 
-        assertEquals(AiRoute.CLOUD, result.route)
-        assertEquals(AppConfig.Ai.REVIEW_EXPLANATION_CLOUD_PROVIDER, result.providerName)
+        // PRIVACY FIX: ON_DEVICE mode no longer falls back to cloud.
+        // User explicitly chose on-device for privacy; cloud is blocked.
+        assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
+        assertTrue(result.reason.contains("privacy", ignoreCase = true))
+    }
+
+    @Test
+    fun `decide returns DETERMINISTIC_FALLBACK when cloud preferred but API key is missing`() = runTest {
+        every { environmentMonitor.isNetworkAvailable() } returns true
+        every { environmentMonitor.isWifiConnected() } returns true
+        every { secureKeyStorage.hasKey(SecureKeyStorage.KEY_GEMINI) } returns false
+        coEvery { environmentMonitor.getOnDeviceModelStatus(AiCapability.REVIEW_EXPLANATION) } returns OnDeviceModelStatus.UNAVAILABLE
+
+        val settings = AiSettings(
+            aiEnabled = true,
+            allowCloudAi = true,
+            reviewExplanationEnabled = true,
+            preferredMode = AiMode.CLOUD
+        )
+
+        val result = router.decide(AiCapability.REVIEW_EXPLANATION, settings)
+
+        assertEquals(AiRoute.DETERMINISTIC_FALLBACK, result.route)
+        assertTrue(result.reason.contains("API key", ignoreCase = true))
     }
 }

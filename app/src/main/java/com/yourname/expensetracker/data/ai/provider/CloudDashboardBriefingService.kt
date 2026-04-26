@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.ai.model.AiServiceError
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefing
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
 import com.yourname.expensetracker.domain.config.AppConfig
 import okhttp3.MediaType.Companion.toMediaType
@@ -26,6 +27,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 @Singleton
@@ -33,7 +35,8 @@ import kotlinx.coroutines.withContext
 class CloudDashboardBriefingService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
-    private val promptFormatter: DashboardBriefingPromptFormatter
+    private val promptFormatter: DashboardBriefingPromptFormatter,
+    private val aiSettingsRepository: AiSettingsRepository? = null
 ) : DashboardBriefingService {
 
     private var apiKeyOverride: String? = null
@@ -41,19 +44,22 @@ class CloudDashboardBriefingService @Inject constructor(
     constructor(secureKeyStorage: SecureKeyStorage) : this(
         secureKeyStorage = secureKeyStorage,
         client = OkHttpClient(),
-        promptFormatter = DashboardBriefingPromptFormatter()
+        promptFormatter = DashboardBriefingPromptFormatter(),
+        aiSettingsRepository = null
     )
 
     constructor(secureKeyStorage: SecureKeyStorage, client: OkHttpClient) : this(
         secureKeyStorage = secureKeyStorage,
         client = client,
-        promptFormatter = DashboardBriefingPromptFormatter()
+        promptFormatter = DashboardBriefingPromptFormatter(),
+        aiSettingsRepository = null
     )
 
     constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(
         secureKeyStorage = secureKeyStorage,
         client = OkHttpClient(),
-        promptFormatter = DashboardBriefingPromptFormatter()
+        promptFormatter = DashboardBriefingPromptFormatter(),
+        aiSettingsRepository = null
     ) {
         this.apiKeyOverride = apiKeyOverride
     }
@@ -73,11 +79,20 @@ class CloudDashboardBriefingService @Inject constructor(
             Timber.w("CloudDashboardBriefingService: FAILED - Gemini API key missing/blank")
             return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
         }
-        
+
+        // PRIVACY GUARD: Cloud must not be used if user has disabled it.
+        val settings = aiSettingsRepository?.settings()?.first()
+        if (settings != null && !settings.allowCloudAi) {
+            Timber.d("CloudDashboardBriefingService: Cloud AI disabled in settings, skipping.")
+            return AiServiceResult.Failure(AiServiceError.Disabled("Cloud AI is disabled in settings"))
+        }
+
+        val shouldRedact = settings?.redactBeforeCloud ?: true
+
         // HIGH-13 FIX: Remove API key length logging (information disclosure)
         Timber.d("CloudDashboardBriefingService: API key configured: ${apiKey.isNotBlank()}")
 
-        val requestBody = buildRequestBody(input)
+        val requestBody = buildRequestBody(input, shouldRedact)
         Timber.d("CloudDashboardBriefingService: Request body built, length=${requestBody.length}")
         
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DASHBOARD_BRIEFING_CLOUD_MODEL}:generateContent"
@@ -192,8 +207,8 @@ class CloudDashboardBriefingService @Inject constructor(
         }
     }
 
-    private fun buildRequestBody(input: DashboardBriefingInput): String {
-        val prompt = promptFormatter.buildPrompt(input)
+    private fun buildRequestBody(input: DashboardBriefingInput, shouldRedact: Boolean): String {
+        val prompt = promptFormatter.buildPrompt(input, shouldRedact)
         return JSONObject().apply {
             put(
                 "contents",

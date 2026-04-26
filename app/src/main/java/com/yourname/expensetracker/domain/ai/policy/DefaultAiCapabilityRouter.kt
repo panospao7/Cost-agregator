@@ -17,7 +17,8 @@ import javax.inject.Singleton
 class DefaultAiCapabilityRouter @Inject constructor(
     private val aiPolicy: AiPolicy,
     private val environmentMonitor: AiEnvironmentMonitor,
-    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
+    private val secureKeyStorage: com.yourname.expensetracker.data.security.SecureKeyStorage
 ) : AiCapabilityRouter {
 
     override suspend fun decide(
@@ -26,11 +27,15 @@ class DefaultAiCapabilityRouter @Inject constructor(
         onDeviceStatus: OnDeviceModelStatus?
     ): AiRouteDecision {
         if (!settings.aiEnabled) {
-            return AiRouteDecision(AiRoute.DISABLED, "AI is disabled in settings.")
+            val decision = AiRouteDecision(AiRoute.DISABLED, "AI is disabled in settings.")
+            aiRuntimeDiagnostics.recordRouteDecision(capability, decision)
+            return decision
         }
 
         if (!isCapabilityEnabled(capability, settings)) {
-            return AiRouteDecision(AiRoute.DISABLED, "$capability is disabled in settings.")
+            val decision = AiRouteDecision(AiRoute.DISABLED, "$capability is disabled in settings.")
+            aiRuntimeDiagnostics.recordRouteDecision(capability, decision)
+            return decision
         }
 
         val resolvedOnDeviceStatus = onDeviceStatus ?: resolveOnDeviceStatus(capability, settings)
@@ -59,18 +64,13 @@ class DefaultAiCapabilityRouter @Inject constructor(
             )
         }
 
-        if (canUseCloud(capability, settings)) {
-            return AiRouteDecision(
-                route = AiRoute.CLOUD,
-                reason = "On-device was preferred but unavailable, so using cloud fallback.",
-                providerName = capability.defaultCloudProviderName(),
-                modelName = capability.defaultCloudModelName()
-            )
-        }
-
+        // PRIVACY FIX: When user explicitly selects ON_DEVICE mode, do NOT fall back to
+        // cloud. The user chose on-device for privacy — falling back to cloud violates
+        // their expectation. Instead, go to deterministic fallback and explain why.
         return AiRouteDecision(
             route = AiRoute.DETERMINISTIC_FALLBACK,
-            reason = combinedUnavailableReason(capability, settings, onDeviceStatus)
+            reason = "On-device was preferred but unavailable. Cloud fallback is blocked by ON_DEVICE mode for privacy. " +
+                onDeviceUnavailableReason(capability, settings, onDeviceStatus)
         )
     }
 
@@ -159,6 +159,11 @@ class DefaultAiCapabilityRouter @Inject constructor(
         if (!aiPolicy.canUseCloudFor(settings, capability)) return false
         if (!environmentMonitor.isNetworkAvailable()) return false
         if (settings.wifiOnlyForCloud && !environmentMonitor.isWifiConnected()) return false
+        // PRIVACY FIX: Check API key availability before routing to cloud.
+        // Without a key, cloud calls will fail anyway — but we prevent the
+        // router from choosing CLOUD route, avoiding unnecessary network probes
+        // and potential data leakage from partially-constructed requests.
+        if (!secureKeyStorage.hasKey(com.yourname.expensetracker.data.security.SecureKeyStorage.KEY_GEMINI)) return false
         return true
     }
 
@@ -228,6 +233,7 @@ class DefaultAiCapabilityRouter @Inject constructor(
             !isCapabilityEnabled(capability, settings) -> "${capability.displayName()} is disabled in settings."
             !settings.allowCloudAi -> "Cloud AI is disabled in settings."
             !aiPolicy.canUseCloudFor(settings, capability) -> "Cloud AI is disabled by policy for this capability."
+            !secureKeyStorage.hasKey(com.yourname.expensetracker.data.security.SecureKeyStorage.KEY_GEMINI) -> "Gemini API key is not configured."
             !environmentMonitor.isNetworkAvailable() -> "Cloud AI needs an internet connection."
             settings.wifiOnlyForCloud && !environmentMonitor.isWifiConnected() -> "Cloud AI is limited to Wi-Fi by settings."
             else -> "Cloud AI is unavailable right now."

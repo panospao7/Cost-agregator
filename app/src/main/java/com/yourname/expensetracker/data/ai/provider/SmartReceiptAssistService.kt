@@ -15,7 +15,6 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -42,8 +41,21 @@ class SmartReceiptAssistService @Inject constructor(
     private val aiPolicy: AiPolicy
 ) : ReceiptAssistService {
 
-    override fun usedImageInput(input: ReceiptAssistInput): Boolean = runBlocking {
-        executeWithFallback(input).actualUsedImageInput()
+    /**
+     * PRIVACY FIX: This method must NOT invoke the full AI pipeline.
+     * Previously called runBlocking { executeWithFallback() } which triggered
+     * cloud AI calls just to check a boolean — a privacy and performance violation.
+     *
+     * Now determines image usage statically from the input + settings without
+     * executing any AI service.
+     */
+    override fun usedImageInput(input: ReceiptAssistInput): Boolean {
+        // Image input is used when: image is available AND cloud image upload is allowed
+        // OR on-device vision is available — but we don't want to block here, so just
+        // check the static input properties. The actual runtime check happens in suggest().
+        return input.isImageAnalysisMode &&
+            input.imagePath != null &&
+            input.imageMimeType != null
     }
 
     data class AttemptDetails(
@@ -177,6 +189,8 @@ class SmartReceiptAssistService @Inject constructor(
         settings: AiSettings,
         selectedRoute: AiRoute
     ): RouteViability {
+        // PRIVACY FIX: When the user selected ON_DEVICE mode, never probe cloud
+        // availability. This prevents any cloud fallback attempt in the retry chain.
         return when (selectedRoute) {
             AiRoute.CLOUD -> RouteViability(
                 cloudAvailable = true,
@@ -186,18 +200,14 @@ class SmartReceiptAssistService @Inject constructor(
                 ).route == AiRoute.ON_DEVICE
             )
             AiRoute.ON_DEVICE -> RouteViability(
-                cloudAvailable = aiCapabilityRouter.decide(
-                    capability = AiCapability.RECEIPT_EXTRACTION,
-                    settings = settings.copy(preferredMode = AiMode.CLOUD)
-                ).route == AiRoute.CLOUD,
+                cloudAvailable = false, // PRIVACY: No cloud when user chose ON_DEVICE
                 onDeviceAvailable = true
             )
-            AiRoute.DETERMINISTIC_FALLBACK,
-            AiRoute.DISABLED -> RouteViability(
-                cloudAvailable = false,
-                onDeviceAvailable = false
-            )
-        }
+        AiRoute.DETERMINISTIC_FALLBACK, AiRoute.DISABLED -> RouteViability(
+            cloudAvailable = false,
+            onDeviceAvailable = false
+        )
+    }
     }
 
     private fun shouldAttemptCloudVision(

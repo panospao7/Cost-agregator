@@ -64,17 +64,26 @@ class CloudReceiptAssistService @Inject constructor(
         get() = apiKeyOverride ?: secureKeyStorage.getGeminiKey() ?: ""
 
     override fun usedImageInput(input: ReceiptAssistInput): Boolean =
-        input.imagePath != null && input.imageMimeType != null && !input.redactBeforeCloud
+        input.imagePath != null && input.imageMimeType != null
 
     override suspend fun suggest(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> {
+        // PRIVACY GUARD: Check API key before any network call
         if (apiKey.isBlank()) {
             Timber.d("CloudReceiptAssistService: Gemini API key missing, skipping.")
             return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
         }
 
         val settings = aiSettingsRepository.settings().first()
+
+        // PRIVACY GUARD: Cloud must not be used if user has disabled it
+        if (!settings.allowCloudAi) {
+            Timber.d("CloudReceiptAssistService: Cloud AI disabled in settings, skipping.")
+            return AiServiceResult.Failure(AiServiceError.Disabled("Cloud AI is disabled in settings"))
+        }
+
         val allowImage = input.isImageAnalysisMode && settings.receiptImageCloudEnabled
-        val requestPayload = buildRequestPayload(input, allowImage)
+        val shouldRedact = settings.redactBeforeCloud
+        val requestPayload = buildRequestPayload(input, allowImage, shouldRedact)
         val requestBody = requestPayload.jsonBody
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
@@ -172,11 +181,11 @@ class CloudReceiptAssistService @Inject constructor(
     }
 
     internal fun buildRequestBodyForTest(input: ReceiptAssistInput, allowImage: Boolean): String =
-        buildRequestPayload(input, allowImage).jsonBody
+        buildRequestPayload(input, allowImage, shouldRedact = false).jsonBody
 
-    private fun buildRequestPayload(input: ReceiptAssistInput, allowImage: Boolean): RequestPayload {
-        val inlineImagePart = buildImageInlineData(input, allowImage)
-        val prompt = buildPrompt(input, hasAttachedImage = inlineImagePart != null)
+    private fun buildRequestPayload(input: ReceiptAssistInput, allowImage: Boolean, shouldRedact: Boolean): RequestPayload {
+        val inlineImagePart = buildImageInlineData(input, allowImage, shouldRedact)
+        val prompt = buildPrompt(input, hasAttachedImage = inlineImagePart != null, shouldRedact = shouldRedact)
         val parts = JSONArray().put(JSONObject().put("text", prompt))
         inlineImagePart?.let(parts::put)
 
@@ -211,13 +220,13 @@ class CloudReceiptAssistService @Inject constructor(
         )
     }
 
-    private fun buildPrompt(input: ReceiptAssistInput, hasAttachedImage: Boolean): String {
-        val safeParsedMerchant = if (input.redactBeforeCloud) {
+    private fun buildPrompt(input: ReceiptAssistInput, hasAttachedImage: Boolean, shouldRedact: Boolean): String {
+        val safeParsedMerchant = if (shouldRedact) {
             input.parsedMerchant?.let { CloudPiiSanitizer.sanitizeMerchant(it, shouldRedact = true) }
         } else {
             input.parsedMerchant
         }
-        val safeLineItemsJson = if (input.redactBeforeCloud) {
+        val safeLineItemsJson = if (shouldRedact) {
             input.lineItemsJson?.let {
                 CloudPiiSanitizer.sanitizeText(
                     raw = it,
@@ -228,7 +237,7 @@ class CloudReceiptAssistService @Inject constructor(
         } else {
             input.lineItemsJson
         }
-        val safeRawOcrText = if (input.redactBeforeCloud) {
+        val safeRawOcrText = if (shouldRedact) {
             CloudPiiSanitizer.sanitizeText(
                 raw = input.rawOcrText,
                 maxChars = AppConfig.Ai.MAX_RECEIPT_OCR_CHARS_FOR_AI,
@@ -302,10 +311,13 @@ class CloudReceiptAssistService @Inject constructor(
         """.trimIndent()
     }
 
-    private fun buildImageInlineData(input: ReceiptAssistInput, allowImage: Boolean): JSONObject? {
+    private fun buildImageInlineData(input: ReceiptAssistInput, allowImage: Boolean, shouldRedact: Boolean): JSONObject? {
         if (!allowImage) return null
-        if (input.redactBeforeCloud) {
-            Timber.d("CloudReceiptAssistService: suppressing cloud image upload because redaction is required")
+        // PRIVACY FIX: Respect the user's redaction setting, not the per-call input flag.
+        // If redaction is required, we cannot upload the raw image because images
+        // cannot be meaningfully redacted — we must suppress the upload entirely.
+        if (shouldRedact) {
+            Timber.d("CloudReceiptAssistService: suppressing cloud image upload because redaction is required by settings")
             return null
         }
         val imagePath = input.imagePath ?: return null

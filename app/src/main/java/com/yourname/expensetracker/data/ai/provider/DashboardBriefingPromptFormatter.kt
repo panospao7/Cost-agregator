@@ -30,8 +30,8 @@ class DashboardBriefingPromptFormatter private constructor(
 
     private val dateKeyFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
-    fun buildPrompt(input: DashboardBriefingInput): String {
-        input.transactionInsight?.let { return buildTransactionInsightPrompt(input, it) }
+    fun buildPrompt(input: DashboardBriefingInput, shouldRedact: Boolean = false): String {
+        input.transactionInsight?.let { return buildTransactionInsightPrompt(input, it, shouldRedact) }
 
         return buildString {
             appendLine("Write a short daily finance dashboard briefing.")
@@ -46,9 +46,30 @@ class DashboardBriefingPromptFormatter private constructor(
             appendLine("Total likely: ${input.totalLikely}")
             appendLine("Pending reviews: ${input.pendingReviewCount}")
             appendLine("Current month spent: ${input.currentMonthSpent}")
-            appendLine("Top categories: ${input.topCategories.joinToString(", ").ifBlank { "none" }}")
+            // PRIVACY FIX: Redact top categories names when redaction is enabled
+            val safeTopCategories = if (shouldRedact) {
+                input.topCategories.take(3).map { CloudPiiSanitizer.sanitizeMerchant(it, shouldRedact = true) }
+                    .joinToString(", ").ifBlank { "none" }
+            } else {
+                input.topCategories.joinToString(", ").ifBlank { "none" }
+            }
+            appendLine("Top categories: $safeTopCategories")
             appendLine("Budget warnings: ${input.budgetWarnings.joinToString(", ") { formatBudgetWarning(it) }.ifBlank { "none" }}")
-            appendLine("Upcoming items: ${input.upcomingItems.joinToString(", ") { formatUpcomingItem(it) }.ifBlank { "none" }}")
+            // PRIVACY FIX: Redact upcoming item descriptions when redaction is enabled
+            val safeUpcomingItems = if (shouldRedact) {
+                input.upcomingItems.take(3).map { item ->
+                    val dateLabel = Instant.ofEpochMilli(item.dateMillis)
+                        .atZone(ZoneId.systemDefault())
+                        .format(dateKeyFormat)
+                    val amountLabel = item.currencyCode?.takeIf { it.isNotBlank() }?.let { currencyCode ->
+                        CurrencyFormatter.format(item.amount, currencyCode = currencyCode, showCents = false)
+                    } ?: String.format(Locale.getDefault(), "%.0f", item.amount)
+                    "${CloudPiiSanitizer.sanitizeMerchant(item.description, shouldRedact = true)} $amountLabel on $dateLabel"
+                }.joinToString(", ").ifBlank { "none" }
+            } else {
+                input.upcomingItems.joinToString(", ") { formatUpcomingItem(it) }.ifBlank { "none" }
+            }
+            appendLine("Upcoming items: $safeUpcomingItems")
             appendLine()
             appendLine("JSON schema: {\"title\":\"short title\",\"text\":\"brief message\",\"tone\":\"calm|neutral|cautious\",\"confidence\":0.0}")
         }
@@ -56,8 +77,11 @@ class DashboardBriefingPromptFormatter private constructor(
 
     private fun buildTransactionInsightPrompt(
         input: DashboardBriefingInput,
-        insight: TransactionInsightPromptInput
+        insight: TransactionInsightPromptInput,
+        shouldRedactFromSettings: Boolean = false
     ): String {
+        // Redact if either the per-call flag or the global settings say so
+        val shouldRedact = insight.redactForPrompt || shouldRedactFromSettings
         val merchantLabel = CloudPiiSanitizer.sanitizeMerchant(
             raw = insight.merchantName,
             shouldRedact = insight.redactForPrompt

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
+import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
@@ -11,6 +12,7 @@ import com.yourname.expensetracker.domain.ai.model.DedupeJudgeInput
 import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
 import com.yourname.expensetracker.domain.ai.model.DuplicateVerdict
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DedupeJudgeService
 import com.yourname.expensetracker.domain.config.AppConfig
 import okhttp3.MediaType.Companion.toMediaType
@@ -27,6 +29,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
@@ -37,11 +40,12 @@ import timber.log.Timber
 @Singleton
 class CloudDedupeJudgeService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient
+    @CloudAiHttpClient private val client: OkHttpClient,
+    private val aiSettingsRepository: AiSettingsRepository? = null
 ) : DedupeJudgeService {
 
     // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient())
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), null)
 
     /**
      * CRITICAL: API key is now retrieved from secure storage at runtime.
@@ -56,7 +60,15 @@ class CloudDedupeJudgeService @Inject constructor(
             return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
         }
 
-        val requestBody = buildRequestBody(input)
+        // PRIVACY GUARD: Cloud must not be used if user has disabled it.
+        val settings = aiSettingsRepository?.settings()?.first()
+        if (settings != null && !settings.allowCloudAi) {
+            Timber.d("CloudDedupeJudgeService: Cloud AI disabled in settings, skipping.")
+            return AiServiceResult.Failure(AiServiceError.Disabled("Cloud AI is disabled in settings"))
+        }
+
+        val shouldRedact = settings?.redactBeforeCloud ?: true // default to redact if unknown
+        val requestBody = buildRequestBody(input, shouldRedact)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
@@ -99,8 +111,8 @@ class CloudDedupeJudgeService @Inject constructor(
                         } else {
                             val body = response.body?.string()
                                 ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
-                            val parsed = parseResponse(body)
-                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable dedupe verdict in response"))
+        val parsed = parseResponse(body, input)
+            ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No usable dedupe verdict in response"))
                             AiServiceResult.Success(parsed)
                         }
                     }
@@ -151,8 +163,8 @@ class CloudDedupeJudgeService @Inject constructor(
         }
     }
 
-    private fun buildRequestBody(input: DedupeJudgeInput): String {
-        val prompt = buildPrompt(input)
+    private fun buildRequestBody(input: DedupeJudgeInput, shouldRedact: Boolean): String {
+        val prompt = buildPrompt(input, shouldRedact)
         return JSONObject().apply {
             put(
                 "contents",
@@ -180,44 +192,49 @@ class CloudDedupeJudgeService @Inject constructor(
         }.toString()
     }
 
-    private fun buildPrompt(input: DedupeJudgeInput): String {
+    private fun buildPrompt(input: DedupeJudgeInput, shouldRedact: Boolean): String {
         val candidates = input.candidates.joinToString("\n") { candidate ->
-            "- targetType=${candidate.targetType}, targetId=${candidate.targetId}, merchant=${candidate.merchant}, amount=${candidate.amount} ${candidate.currency}, date=${candidate.date}, txType=${candidate.transactionType ?: "UNKNOWN"}, source=${candidate.sourceLabel}, preview=${candidate.textPreview ?: "none"}"
+            val merchant = CloudPiiSanitizer.sanitizeMerchant(candidate.merchant, shouldRedact)
+            val preview = candidate.textPreview?.let { CloudPiiSanitizer.sanitizeText(it, 120, "preview") } ?: "none"
+            "- targetType=${candidate.targetType}, targetId=${candidate.targetId}, merchant=$merchant, amount=${candidate.amount} ${candidate.currency}, date=${candidate.date}, txType=${candidate.transactionType ?: "UNKNOWN"}, source=${candidate.sourceLabel}, preview=$preview"
         }
 
+        val subjectMerchant = CloudPiiSanitizer.sanitizeMerchant(input.subject.merchant, shouldRedact)
+        val subjectPreview = input.subject.textPreview?.let { CloudPiiSanitizer.sanitizeText(it, 120, "preview") } ?: "none"
+
         return """
-            You are helping judge whether a pending finance review is likely a duplicate of one bounded candidate set.
-            Stay conservative.
-            Never assume certainty from weak evidence.
-            Use only the subject and candidates below.
-            Note: Transactions of different types (e.g. PURCHASE vs DEPOSIT) are never duplicates.
-            Return JSON only.
+You are helping judge whether a pending finance review is likely a duplicate of one bounded candidate set.
+Stay conservative.
+Never assume certainty from weak evidence.
+Use only the subject and candidates below.
+Note: Transactions of different types (e.g. PURCHASE vs DEPOSIT) are never duplicates.
+Return JSON only.
 
-            JSON schema:
-            {
-              "verdict": "LIKELY_DUPLICATE|LIKELY_DISTINCT|UNCERTAIN",
-              "matchedTargetType": "PENDING_REVIEW|EXPENSE|null",
-              "matchedTargetId": 0,
-              "confidence": 0.0,
-              "rationale": "short explanation"
-            }
+JSON schema:
+{
+  "verdict": "LIKELY_DUPLICATE|LIKELY_DISTINCT|UNCERTAIN",
+  "matchedTargetType": "PENDING_REVIEW|EXPENSE|null",
+  "matchedTargetId": 0,
+  "confidence": 0.0,
+  "rationale": "short explanation"
+}
 
-            Subject:
-            - targetType=${input.subject.targetType}
-            - targetId=${input.subject.targetId}
-            - merchant=${input.subject.merchant}
-            - amount=${input.subject.amount} ${input.subject.currency}
-            - date=${input.subject.date}
-            - txType=${input.subject.transactionType ?: "UNKNOWN"}
-            - source=${input.subject.sourceLabel}
-            - preview=${input.subject.textPreview ?: "none"}
+Subject:
+- targetType=${input.subject.targetType}
+- targetId=${input.subject.targetId}
+- merchant=$subjectMerchant
+- amount=${input.subject.amount} ${input.subject.currency}
+- date=${input.subject.date}
+- txType=${input.subject.transactionType ?: "UNKNOWN"}
+- source=${input.subject.sourceLabel}
+- preview=$subjectPreview
 
-            Candidates:
-            $candidates
+Candidates:
+$candidates
         """.trimIndent()
     }
 
-    private fun parseResponse(body: String): DedupeJudgeSuggestion? {
+    private fun parseResponse(body: String, input: DedupeJudgeInput): DedupeJudgeSuggestion? {
         val root = JSONObject(body)
         val candidates = root.optJSONArray("candidates") ?: return null
         if (candidates.length() == 0) return null
@@ -234,14 +251,40 @@ class CloudDedupeJudgeService @Inject constructor(
         val verdict = StrictAiJsonParsing.enumOrNull<DuplicateVerdict>(suggestion.optString("verdict"))
             ?: return null
 
+        val rawMatchedTargetType = suggestion.optString("matchedTargetType").trim()
+            .takeIf { it.isNotBlank() && it != "null" }
+            ?.let { StrictAiJsonParsing.enumOrNull<AiTargetType>(it) }
+        val rawMatchedTargetId = StrictAiJsonParsing.run {
+            suggestion.positiveIdOrNull("matchedTargetId")
+        }
+
+        // HALLUCINATION FIX: Validate that the AI-returned target actually exists in
+        // the candidate set. LLMs can hallucinate IDs that don't exist — accepting
+        // them would cause the dedupe system to match against non-existent records.
+        val isValidMatch = if (rawMatchedTargetId != null && rawMatchedTargetType != null) {
+            input.candidates.any { candidate ->
+                candidate.targetId == rawMatchedTargetId && candidate.targetType == rawMatchedTargetType
+            }
+        } else {
+            // If no match claimed, that's valid (e.g. LIKELY_DISTINCT verdict)
+            true
+        }
+
+        val (matchedTargetType, matchedTargetId) = if (isValidMatch) {
+            rawMatchedTargetType to rawMatchedTargetId
+        } else {
+            Timber.w(
+                "CloudDedupeJudgeService: AI returned matchedTargetId=%s matchedTargetType=%s " +
+                "but this target is not in the provided candidate set. Rejecting the match.",
+                rawMatchedTargetId, rawMatchedTargetType
+            )
+            null to null
+        }
+
         return DedupeJudgeSuggestion(
             verdict = verdict,
-            matchedTargetType = suggestion.optString("matchedTargetType").trim()
-                .takeIf { it.isNotBlank() && it != "null" }
-                ?.let { StrictAiJsonParsing.enumOrNull<AiTargetType>(it) },
-            matchedTargetId = StrictAiJsonParsing.run {
-                suggestion.positiveIdOrNull("matchedTargetId")
-            },
+            matchedTargetType = matchedTargetType,
+            matchedTargetId = matchedTargetId,
             confidence = suggestion.optFiniteDoubleStrictOrNull("confidence")?.toFloat(),
             rationale = suggestion.optString("rationale").trim().ifBlank { null }
         )

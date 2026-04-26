@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
+import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
@@ -10,6 +11,7 @@ import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanation
 import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -25,6 +27,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
@@ -32,16 +35,17 @@ import timber.log.Timber
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 class CloudReviewExplanationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient
+    @CloudAiHttpClient private val client: OkHttpClient,
+    private val aiSettingsRepository: AiSettingsRepository? = null
 ) : ReviewExplanationService {
 
     private var apiKeyOverride: String? = null
 
     // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient())
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), null)
 
     // Secondary constructor for testing
-    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage, OkHttpClient()) {
+    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage, OkHttpClient(), null) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -54,7 +58,15 @@ class CloudReviewExplanationService @Inject constructor(
             return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
         }
 
-        val requestBody = buildRequestBody(input)
+        // PRIVACY GUARD: Cloud must not be used if user has disabled it.
+        val settings = aiSettingsRepository?.settings()?.first()
+        if (settings != null && !settings.allowCloudAi) {
+            Timber.d("CloudReviewExplanationService: Cloud AI disabled in settings, skipping.")
+            return AiServiceResult.Failure(AiServiceError.Disabled("Cloud AI is disabled in settings"))
+        }
+
+        val shouldRedact = settings?.redactBeforeCloud ?: true
+        val requestBody = buildRequestBody(input, shouldRedact)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.REVIEW_EXPLANATION_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()
             .url(url)
@@ -149,8 +161,8 @@ class CloudReviewExplanationService @Inject constructor(
         }
     }
 
-    private fun buildRequestBody(input: ReviewExplanationInput): String {
-        val prompt = buildPrompt(input)
+    private fun buildRequestBody(input: ReviewExplanationInput, shouldRedact: Boolean): String {
+        val prompt = buildPrompt(input, shouldRedact)
         return JSONObject().apply {
             put(
                 "contents",
@@ -178,41 +190,66 @@ class CloudReviewExplanationService @Inject constructor(
         }.toString()
     }
 
-    private fun buildPrompt(input: ReviewExplanationInput): String {
+    private fun buildPrompt(input: ReviewExplanationInput, shouldRedact: Boolean): String {
+        // PRIVACY FIX: Sanitize PII before sending to cloud
+        val safeMerchant = if (shouldRedact) {
+            CloudPiiSanitizer.sanitizeMerchant(input.merchant, shouldRedact = true)
+        } else {
+            input.merchant
+        }
+        val safeNotificationTitle = if (shouldRedact && input.notificationTitle != null) {
+            CloudPiiSanitizer.sanitizeText(
+                raw = input.notificationTitle,
+                maxChars = AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS,
+                fallbackPrefix = "title"
+            )
+        } else {
+            input.notificationTitle ?: "none"
+        }
+        val safeNotificationText = if (shouldRedact && input.notificationText != null) {
+            CloudPiiSanitizer.sanitizeText(
+                raw = input.notificationText,
+                maxChars = AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS,
+                fallbackPrefix = "text"
+            )
+        } else {
+            input.notificationText ?: "none"
+        }
+
         return """
-            You are helping explain why a pending expense review exists inside a finance app.
-            Stay cautious, concise, and non-authoritative.
-            Do not invent facts.
-            Do not tell the user the transaction is certainly correct.
-            Use the given signals only.
-            Keep the output short and plain.
-            Headline max 60 characters.
-            Body max 180 characters and one sentence.
-            Caution max 90 characters or null.
-            Do not include numbered lists.
-            Do not include markdown.
+You are helping explain why a pending expense review exists inside a finance app.
+Stay cautious, concise, and non-authoritative.
+Do not invent facts.
+Do not tell the user the transaction is certainly correct.
+Use the given signals only.
+Keep the output short and plain.
+Headline max 60 characters.
+Body max 180 characters and one sentence.
+Caution max 90 characters or null.
+Do not include numbered lists.
+Do not include markdown.
 
-            Return strict JSON with this schema:
-            {
-              "headline": "short title",
-              "body": "1-2 sentence explanation",
-              "caution": "optional caution or null"
-            }
+Return strict JSON with this schema:
+{
+  "headline": "short title",
+  "body": "1-2 sentence explanation",
+  "caution": "optional caution or null"
+}
 
-            Review facts:
-            - merchant: ${input.merchant}
-            - amount: ${input.amount} ${input.currency}
-            - type: ${input.suggestedType}
-            - confidence: ${input.confidence}
-            - matchType: ${input.matchType ?: "unknown"}
-            - deterministicExplanation: ${input.explanation ?: "none"}
-            - packageName: ${input.packageName}
-            - notificationTitle: ${input.notificationTitle ?: "none"}
-            - notificationText: ${input.notificationText ?: "none"}
+Review facts:
+- merchant: $safeMerchant
+- amount: ${input.amount} ${input.currency}
+- type: ${input.suggestedType}
+- confidence: ${input.confidence}
+- matchType: ${input.matchType ?: "unknown"}
+- deterministicExplanation: ${input.explanation ?: "none"}
+- packageName: ${input.packageName}
+- notificationTitle: $safeNotificationTitle
+- notificationText: $safeNotificationText
 
-            Write a user-facing explanation for why this landed in review and what signal looks uncertain.
-            Return JSON only.
-        """.trimIndent()
+Write a user-facing explanation for why this landed in review and what signal looks uncertain.
+Return JSON only.
+""".trimIndent()
     }
 
     private fun parseResponse(body: String): ReviewExplanation? {
