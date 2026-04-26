@@ -405,11 +405,14 @@ class ExpenseRepository @Inject constructor(
 
     suspend fun updateExpenseMerchant(expense: Expense, newMerchant: String, applyToAll: Boolean = false) {
         if (expense.merchant == newMerchant) return
-        
+
         val oldMerchant = expense.merchant
-        
+
         if (applyToAll) {
-            // Update all approved expenses with this name
+            // Update all approved expenses with this name.
+            // Bulk dedupeKey recomputation is not feasible in SQL, so we null out
+            // dedupeKey for affected rows — the range-based isDuplicateCurrencyAware
+            // check will still correctly detect duplicates.
             val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
             val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
             database.withTransaction {
@@ -418,23 +421,29 @@ class ExpenseRepository @Inject constructor(
                 pendingReviewDao.bulkRenameMerchant(oldMerchantKey, oldMerchant, newMerchant, newMerchantKey)
             }
         } else {
-            // Just update this single record
+            // Just update this single record — recompute dedupeKey so it stays in sync
             val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
-            expenseDao.updateMerchantAndKey(expense.id, newMerchant, newMerchantKey)
+            val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                expense.amount, newMerchant, expense.date, expense.currency, expense.transactionType
+            )
+            expenseDao.updateMerchantAndKey(expense.id, newMerchant, newMerchantKey, newDedupeKey)
         }
-        
+
         // Catch the rename for future auto-correction
         merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant)
-        
+
         // Also learn the category for this brand name
-        expense.categoryId?.let { 
+        expense.categoryId?.let {
             merchantCategoryRepository.learnPattern(newMerchant, it)
         }
     }
 
     suspend fun updateExpenseType(expense: Expense, newType: TransactionType) {
         if (expense.transactionType == newType) return
-        expenseDao.updateTransactionType(expense.id, newType.name)
+        val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+            expense.amount, expense.merchant, expense.date, expense.currency, newType
+        )
+        expenseDao.updateTransactionType(expense.id, newType.name, newDedupeKey)
     }
 
     suspend fun updateTransferDetails(

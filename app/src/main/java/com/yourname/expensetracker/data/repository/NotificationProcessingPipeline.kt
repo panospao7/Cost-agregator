@@ -353,7 +353,8 @@ class NotificationProcessingPipeline @Inject constructor(
             packageName = notification.packageName,
             timestamp = notification.timestamp,
             title = notification.title,
-            text = notification.text
+            text = notification.text,
+            bigText = notification.bigText
         )
         if (alreadyExists) {
             return -1L
@@ -668,6 +669,24 @@ private val AMOUNT_TOKEN_REGEX = Regex(
     ): ParsedDbOutcome {
         val isDuplicate = hasCanonicalExpenseDuplicate(preDb)
         if (isDuplicate) {
+            dao.markRelevance(rawId, false)
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+            return ParsedDbOutcome.Duplicate
+        }
+
+        // Check pending-review queue too — an identical transaction may already be
+        // awaiting manual approval; inserting a second copy would create a real duplicate.
+        val hasPendingDuplicate = pendingReviewDao.hasPendingDuplicateInRangeTypeAware(
+            merchantKey = preDb.merchantKey,
+            merchantName = preDb.correctedMerchant,
+            startDate = preDb.eventDate - DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+            endDate = DuplicateDetectionPolicy.windowEndExclusive(preDb.eventDate),
+            minAmount = preDb.parsed.amount - DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+            maxAmount = preDb.parsed.amount + DuplicateDetectionPolicy.AMOUNT_TOLERANCE,
+            currency = preDb.parsed.currency,
+            transactionType = preDb.transactionType.name
+        )
+        if (hasPendingDuplicate) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             return ParsedDbOutcome.Duplicate

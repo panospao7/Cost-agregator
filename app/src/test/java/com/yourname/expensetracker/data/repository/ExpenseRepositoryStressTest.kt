@@ -164,7 +164,7 @@ class ExpenseRepositoryStressTest {
 
         repository.updateExpenseType(expense, TransactionType.PURCHASE)
 
-        coVerify(exactly = 0) { expenseDao.updateTransactionType(any(), any()) }
+        coVerify(exactly = 0) { expenseDao.updateTransactionType(any(), any(), any()) }
     }
 
     @Test
@@ -181,11 +181,11 @@ class ExpenseRepositoryStressTest {
             createdAt = System.currentTimeMillis()
         )
 
-        coEvery { expenseDao.updateTransactionType(any(), any()) } returns Unit
+        coEvery { expenseDao.updateTransactionType(any(), any(), any()) } returns Unit
 
         repository.updateExpenseType(expense, TransactionType.TRANSFER)
 
-        coVerify { expenseDao.updateTransactionType(1, "TRANSFER") }
+        coVerify { expenseDao.updateTransactionType(1, "TRANSFER", any()) }
     }
 
     // ============================================================================

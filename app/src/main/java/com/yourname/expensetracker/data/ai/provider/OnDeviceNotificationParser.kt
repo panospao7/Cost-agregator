@@ -108,24 +108,30 @@ class OnDeviceNotificationParser @Inject constructor(
 
     internal fun buildPrompt(notificationText: String, packageName: String): String {
         return buildString {
-            appendLine("You are a financial transaction parser. Extract transaction details from the notification below.")
-            appendLine("The notification may be in any language (Greek, English, etc.).")
+		appendLine("You are a financial transaction parser. Extract transaction details from the notification below.")
+		appendLine("If the notification is NOT a financial transaction (e.g., social media, marketing, chat message), return: {\"is_transaction\": false}")
+		appendLine()
+		appendLine("The notification may be in any language (Greek, English, etc.).")
             appendLine()
             appendLine("Notification source: $packageName")
             appendLine("Notification text: \"$notificationText\"")
             appendLine()
-            appendLine("Extract these fields and return ONLY a JSON object:")
-            appendLine("{")
-            appendLine("  \"amount\": number (required, positive, no currency symbol),")
+		appendLine("Extract these fields and return ONLY a JSON object:")
+		appendLine("If this IS a financial transaction:")
+		appendLine("{")
+		appendLine("  \"is_transaction\": true,")
+		appendLine("  \"amount\": number (positive, no currency symbol),")
             appendLine("  \"currency\": string (ISO code: EUR, USD, GBP, etc., default EUR),")
             appendLine("  \"merchant\": string (merchant name or \"Unknown\" if unclear),")
             appendLine("  \"type\": string (one of: PURCHASE, TRANSFER, DEPOSIT, WITHDRAWAL, default PURCHASE),")
             appendLine("  \"direction\": string (one of: INCOMING, OUTGOING, or null; only set for TRANSFER or DEPOSIT, otherwise null),")
             appendLine("  \"confidence\": number (0.0-1.0, your confidence in this parsing),")
             appendLine("  \"reasoning\": string (brief explanation of how you interpreted the notification)")
-            appendLine("}")
-            appendLine()
-            appendLine("Guidelines:")
+		appendLine("}")
+		appendLine()
+		appendLine("If this is NOT a financial transaction, return: {\"is_transaction\": false}")
+		appendLine()
+		appendLine("Guidelines:")
             appendLine("- amount: Always positive number (5.0, not -5.0)")
             appendLine("- type PURCHASE: Buying something at a store/merchant")
             appendLine("- type TRANSFER: Moving money between accounts/people")
@@ -137,16 +143,22 @@ class OnDeviceNotificationParser @Inject constructor(
             appendLine("- For Greek: χρεωθήκατε = charged (usually PURCHASE, direction null), πιστώθηκε = credited (DEPOSIT, direction INCOMING)")
             appendLine()
             appendLine("Example for 'χρεωθήκατε 5€ στο Σκλαβενίτη':")
-            appendLine("{\"amount\":5.0,\"currency\":\"EUR\",\"merchant\":\"Σκλαβενίτης\",\"type\":\"PURCHASE\",\"direction\":null,\"confidence\":0.85,\"reasoning\":\"Greek word 'χρεωθήκατε' means 'charged', indicating a purchase\"}")
+		appendLine("{\"is_transaction\":true,\"amount\":5.0,\"currency\":\"EUR\",\"merchant\":\"Σκλαβενίτης\",\"type\":\"PURCHASE\",\"direction\":null,\"confidence\":0.85,\"reasoning\":\"Greek word 'χρεωθήκατε' means 'charged', indicating a purchase\"}")
         }
     }
 
     internal fun parseResponse(text: String, packageName: String): ParsedTransaction? {
         val jsonText = extractFirstJsonObject(text.trim()) ?: return null
         return try {
-            val json = JSONObject(jsonText)
-            
-            // Required fields
+		val json = JSONObject(jsonText)
+
+		// Check if the model says this is not a transaction
+		if (!json.optBoolean("is_transaction", true)) {
+			Timber.d("OnDeviceNotificationParser: AI classified as non-transaction")
+			return null
+		}
+
+		// Required fields
             val amount = json.optDouble("amount", -1.0)
             if (amount <= 0) {
                 Timber.w("OnDeviceNotificationParser: Invalid or missing amount")

@@ -15,6 +15,7 @@ object NotificationFilter {
         "com.google.android.apps.walletnfcrel",
         "com.google.android.apps.nbu.paisa.user",
         "gr.nbg.mobilebanking",
+        "mbanking.NBG",
         "com.eurobank.mobile",
         "gr.alpha.mobile",
         "com.winbank.mobile"
@@ -51,15 +52,21 @@ object NotificationFilter {
     )
 
     private val REGEX_CURRENCY = Regex(
-        pattern = """[€$£¥]|(EUR|USD|GBP|CHF)""",
+        pattern = """\d\s*[€$£¥]|[€$£¥]\s*\d|\d\s*(EUR|USD|GBP|CHF)|(EUR|USD|GBP|CHF)\s*\d""",
         options = setOf(RegexOption.IGNORE_CASE)
     )
     private val REGEX_AMOUNT = Regex("""\d+[.,]\d{2}""")
 
-    private val FINANCIAL_KEYWORDS = setOf(
+	val FINANCIAL_KEYWORDS = setOf(
+        // English
         "paid", "spent", "purchase", "charged", "payment", "transaction", "amount",
-        "card", "debit", "credit", "bank", "wallet",
-        "πληρωμ", "αγορ", "χρέωσ", "συναλλαγ", "κάρτα", "μεταφορ"
+        "card", "debit", "credit", "bank", "wallet", "deposit", "withdrawal", "transfer",
+        // Greek
+        "πληρωμ", "αγορ", "χρέωσ", "χρεώ", "συναλλαγ", "κάρτα", "μεταφορ",
+        "κατάθεσ", "πιστωση", "πίστωση", "έμβασμα", "εμβασμα", "ανάληψ", "αναληψ",
+        // Greeklish (Latin transliterations of Greek financial terms)
+        "plirom", "agora", "xreos", "synallagi", "kart", "metora",
+        "katathes", "pistosi", "emvasma", "analips"
     )
 
     /**

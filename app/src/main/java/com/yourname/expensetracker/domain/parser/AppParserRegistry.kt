@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
 import com.yourname.expensetracker.domain.parser.parsers.SmsParser
+import com.yourname.expensetracker.service.NotificationFilter
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -171,26 +172,62 @@ class AppParserRegistry @Inject constructor(
      * 
      * Use this in NotificationProcessingPipeline for better multilingual support.
      */
-    suspend fun parseWithAiFallback(
-        title: String?,
-        text: String?,
-        bigText: String?,
-        subText: String?,
-        packageName: String
-    ): ParsedTransaction? {
-        // 1. Try deterministic parsers first
-        val deterministicResult = parse(title, text, bigText, subText, packageName)
-        if (deterministicResult != null) {
-            return deterministicResult
-        }
-        
-        // 2. Try AI fallback for multilingual/unstructured notifications
-        Timber.d("AppParserRegistry: Trying AI fallback for package: $packageName")
-        return try {
-            aiFallbackParser.parse(title, text, bigText, packageName)
-        } catch (e: Exception) {
-            Timber.w(e, "AI fallback parser failed for package: $packageName")
-            null
-        }
-    }
+	suspend fun parseWithAiFallback(
+		title: String?,
+		text: String?,
+		bigText: String?,
+		subText: String?,
+		packageName: String
+	): ParsedTransaction? {
+		// 1. Try deterministic parsers first
+		val deterministicResult = parse(title, text, bigText, subText, packageName)
+		if (deterministicResult != null) {
+			return deterministicResult
+		}
+
+		// 2. Gate AI fallback by package — only invoke on-device model for
+		//    packages that are likely to carry financial notifications.
+		//    - Known finance packages: always try AI
+		//    - Communication packages (Gmail, SMS, Viber): try AI only if
+		//      the content contains financial signals
+		//    - All other packages: skip AI (they're unlikely to be financial)
+		if (!shouldAttemptAiFallback(packageName, title, text, bigText)) {
+			Timber.d("AppParserRegistry: Skipping AI fallback for non-financial package: $packageName")
+			return null
+		}
+
+		// 3. Try AI fallback for multilingual/unstructured notifications
+		Timber.d("AppParserRegistry: Trying AI fallback for package: $packageName")
+		return try {
+			aiFallbackParser.parse(title, text, bigText, packageName)
+		} catch (e: Exception) {
+			Timber.w(e, "AI fallback parser failed for package: $packageName")
+			null
+		}
+	}
+
+	/**
+	 * Determine whether AI fallback should be attempted for this notification.
+	 * Avoids wasting on-device compute on packages unlikely to carry financial data.
+	 */
+	private fun shouldAttemptAiFallback(
+		packageName: String,
+		title: String?,
+		text: String?,
+		bigText: String?
+	): Boolean {
+		// Known finance packages — always try AI
+		if (packageName in NotificationFilter.FINANCE_PACKAGES) return true
+
+		// Communication packages — try AI only if content has financial signals
+		if (packageName in NotificationFilter.COMMUNICATION_PACKAGES) {
+			val content = listOf(title, text, bigText)
+				.joinToString(" ") { it.orEmpty() }
+				.lowercase()
+			return NotificationFilter.FINANCIAL_KEYWORDS.any { content.contains(it) }
+		}
+
+		// All other packages — skip AI
+		return false
+	}
 }

@@ -13,7 +13,7 @@ import androidx.room.PrimaryKey
         // Room's schema contract only declares the non-unique covering index
         // below. SQLite treats NULL != NULL, so any stronger dedup guarantees
         // must be handled outside the Room-exported schema contract.
-        Index(value = ["packageName", "timestamp", "title", "text"])
+        Index(value = ["packageName", "timestamp", "title", "text", "bigText"])
     ]
 )
 data class RawNotification(

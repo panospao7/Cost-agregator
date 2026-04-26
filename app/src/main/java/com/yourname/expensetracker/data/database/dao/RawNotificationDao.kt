@@ -45,14 +45,15 @@ interface RawNotificationDao {
     
     @Query("""
         SELECT EXISTS(
-            SELECT 1 FROM raw_notifications 
-            WHERE packageName = :packageName 
-            AND timestamp = :timestamp 
+            SELECT 1 FROM raw_notifications
+            WHERE packageName = :packageName
+            AND timestamp = :timestamp
             AND (title = :title OR (:title IS NULL AND title IS NULL))
             AND (text = :text OR (:text IS NULL AND text IS NULL))
+            AND (bigText = :bigText OR (:bigText IS NULL AND bigText IS NULL))
         )
     """)
-    suspend fun exists(packageName: String, timestamp: Long, title: String?, text: String?): Boolean
+    suspend fun exists(packageName: String, timestamp: Long, title: String?, text: String?, bigText: String?): Boolean
 
     @Query("UPDATE raw_notifications SET isRelevant = :isRelevant WHERE id = :id")
     suspend fun markRelevance(id: Long, isRelevant: Boolean)

@@ -399,7 +399,7 @@ interface PendingReviewDao {
      * pending_reviews table. Catches cross-source duplicates where one source
      * includes the store branch/address in the merchant name and the other does not.
  *
- * The `LENGTH >= 4` guard mirrors [DuplicateDetectionPolicy.MIN_MERCHANT_KEY_PREFIX_LENGTH];
+ * The `LENGTH >= 8` guard mirrors [DuplicateDetectionPolicy.MIN_MERCHANT_KEY_PREFIX_LENGTH];
  * keep both in sync — Room SQL cannot reference Kotlin constants.
      */
     @Query("""
@@ -411,8 +411,8 @@ interface PendingReviewDao {
                 :merchantKey LIKE suggestedMerchantKey || '%'
                 OR suggestedMerchantKey LIKE :merchantKey || '%'
             )
-            AND LENGTH(suggestedMerchantKey) >= 4
-            AND LENGTH(:merchantKey) >= 4
+AND LENGTH(suggestedMerchantKey) >= 8
+AND LENGTH(:merchantKey) >= 8
             AND suggestedDate >= :startDate
             AND suggestedDate < :endDate
             AND suggestedAmount BETWEEN :minAmount AND :maxAmount

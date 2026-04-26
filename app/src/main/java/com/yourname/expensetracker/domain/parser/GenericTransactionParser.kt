@@ -73,10 +73,21 @@ class GenericTransactionParser @Inject constructor(
     // Using Regex to enforce word boundaries for English words to avoid "Coffee" matching "offer"
     private val negativeSignalsPattern by lazy {
         Pattern.compile(
-            """\b(offer|discount|save\s+up\s+to|earn|free|up\s+to|starting\s+from|balance|otp|verification|code|unsubscribe|opt\s+out|sale|%\s+off|promo|your\s+order|tracking|shipped|delivered|reminder|rate\s+us|review|survey)\b|""" +
-            """(προσφορά|έκπτωση|εξοικονομ|κέρδισε|δωρεάν|έως|υπόλοιπο|κωδικός|υπενθύμιση)""",
+            """\b(offer|discount|save\s+up\s+to|earn|free|up\s+to|starting\s+from|otp|verification|code|unsubscribe|opt\s+out|sale|%\s+off|promo|your\s+order|tracking|shipped|delivered|reminder|rate\s+us|review|survey)\b|""" +
+            """(προσφορά|έκπτωση|εξοικονομ|κέρδισε|δωρεάν|έως|κωδικός|υπενθύμιση)""",
             Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         )
+    }
+
+    private val balanceStripPattern by lazy {
+        Pattern.compile(
+            """(?m)^\s*(υπόλοιπ[οό]|balance)\s*:?\s*.*$""",
+            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+        )
+    }
+
+    private fun stripBalanceLines(text: String): String {
+        return balanceStripPattern.matcher(text).replaceAll("").trim()
     }
 
     private val amountPattern by lazy {
@@ -92,10 +103,10 @@ class GenericTransactionParser @Inject constructor(
         subText: String?,
         packageName: String
     ): ParsedTransaction? {
-        val fullText = listOfNotNull(title, text, bigText).joinToString(" ")
+        val rawFullText = listOfNotNull(title, text, bigText).joinToString(" ")
+        val fullText = stripBalanceLines(rawFullText)
         val lowerFull = fullText.lowercase()
 
-        // 1. Check negative signals first
         if (negativeSignalsPattern.matcher(lowerFull).find()) return null
 
         // 2. Check for transfer/deposit signals FIRST (high priority)

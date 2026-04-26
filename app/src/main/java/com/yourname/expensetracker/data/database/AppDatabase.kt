@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 92
+const val APP_DATABASE_SCHEMA_VERSION = 93
 
 @Database(
     entities = [
@@ -5601,11 +5601,18 @@ abstract class AppDatabase : RoomDatabase() {
                 } finally {
                     database.endTransaction()
                 }
-            }
         }
+    }
 
-        /**
-         * Creates an in-memory [RoomDatabase.Builder] pre-configured with
+    val MIGRATION_92_93 = object : androidx.room.migration.Migration(92, 93) {
+        override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+            database.execSQL("DROP INDEX IF EXISTS `index_raw_notifications_packageName_timestamp_title_text`")
+            database.execSQL("CREATE INDEX IF NOT EXISTS `index_raw_notifications_packageName_timestamp_title_text_bigText` ON `raw_notifications` (`packageName`, `timestamp`, `title`, `text`, `bigText`)")
+        }
+    }
+
+    /**
+     * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
          *
          * Every test that needs a fresh `AppDatabase` **must** go through this
@@ -5734,7 +5741,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_88_89,
             MIGRATION_89_90,
             MIGRATION_90_91,
-            MIGRATION_91_92
-        )
+MIGRATION_91_92,
+        MIGRATION_92_93
+    )
     }
 }

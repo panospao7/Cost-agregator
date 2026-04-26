@@ -87,13 +87,19 @@ class GreekBankParser @Inject constructor(
         )
     )
 
-    // Patterns to REJECT
-    private val REJECT_PATTERNS = listOf(
-        "υπόλοιπο", "balance", "otp", "κωδικός", "code",
-        "ενεργοποί", "activate", "εγκρίθηκε η αίτηση",
-        "προσφορά", "offer", "έκπτωση", "discount",
-        "ενημέρωση", "update", "reminder"
-    )
+ private val REJECT_PATTERNS = listOf(
+ "otp", "κωδικός", "code",
+ "ενεργοποί", "activate", "εγκρίθηκε η αίτηση",
+ "προσφορά", "offer", "έκπτωση", "discount",
+ "ενημέρωση", "update", "reminder"
+ )
+
+ private val BALANCE_STRIP_PATTERNS = listOf(
+ Regex("""(?m)^\s*υπόλοιπ[οό]\s*:?\s*.*$""", RegexOption.IGNORE_CASE),
+ Regex("""(?m)^\s*balance\s*:?\s*.*$""", RegexOption.IGNORE_CASE),
+ Regex("""υπόλοιπ[οό]\s*:?\s*[€$£]?\s*\d+([.,]\d{1,2})?""", RegexOption.IGNORE_CASE),
+ Regex("""balance\s*:?\s*[€$£]?\s*\d+([.,]\d{1,2})?""", RegexOption.IGNORE_CASE)
+ )
 
     override fun parse(
         title: String?,
@@ -102,12 +108,14 @@ class GreekBankParser @Inject constructor(
         @Suppress("UNUSED_PARAMETER") subText: String?,
         @Suppress("UNUSED_PARAMETER") packageName: String
     ): ParsedTransaction? {
-        val fields = listOfNotNull(title, text, bigText)
-        
-        for (field in fields) {
+ val fields = listOfNotNull(title, text, bigText)
+
+        for (rawField in fields) {
+            val field = BALANCE_STRIP_PATTERNS.fold(rawField) { acc, regex -> regex.replace(acc, "") }.trim()
+            if (field.isBlank()) continue
+
             val lowerField = field.lowercase()
-            
-            // Quick reject for this specific field
+
             if (REJECT_PATTERNS.any { lowerField.contains(it) }) continue
 
             // Try deposit patterns first (they're usually incoming transfers/salary)
@@ -268,13 +276,20 @@ class GreekBankParser @Inject constructor(
         val amount = amountStr?.let { AmountUtils.parseAmount(it) } ?: return null
         if (amount < 0.01 || amount > 50000) return null
 
+        // Matches from the last TRANSFER_PATTERN (index 3, bare "€amount στο MERCHANT")
+        // lack an explicit transfer keyword (μεταφορά/transfer) and can overlap with
+        // purchase patterns. Reduce confidence so downstream consumers can weigh this
+        // result against a purchase match if one is available.
+        val hasExplicitTransferKeyword = fullText.contains(Regex("""(?:μεταφορ[άα]|transfer)""", RegexOption.IGNORE_CASE))
+        val confidence = if (hasExplicitTransferKeyword) 0.9f else 0.75f
+
         val direction = detectGreekDirection(fullText)
         return ParsedTransaction(
             amount = amount,
             currency = currency,
             merchant = merchant,
             type = ParsedTransactionType.TRANSFER,
-            confidence = 0.9f,
+            confidence = confidence,
             transferDirection = direction,
             transferAccountName = direction?.let {
                 when (it) {

@@ -44,7 +44,7 @@ object DuplicateDetectionPolicy {
      * If you change this value, you MUST update the SQL `LENGTH(…) >= N`
      * literals in both DAOs.
      */
-    const val MIN_MERCHANT_KEY_PREFIX_LENGTH: Int = 4
+    const val MIN_MERCHANT_KEY_PREFIX_LENGTH: Int = 8
 
     // ── Currency normalization ───────────────────────────────────────────
 

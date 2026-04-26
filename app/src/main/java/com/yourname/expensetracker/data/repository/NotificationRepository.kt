@@ -55,8 +55,8 @@ class NotificationRepository @Inject constructor(
     fun getAllPackages(): Flow<List<String>> = dao.getAllPackagesFlow()
     fun getCount(): Flow<Int> = dao.getCountFlow()
     suspend fun save(notification: RawNotification): Long = dao.insert(notification)
-    suspend fun exists(packageName: String, timestamp: Long, title: String?, text: String?): Boolean =
-        dao.exists(packageName, timestamp, title, text)
+    suspend fun exists(packageName: String, timestamp: Long, title: String?, text: String?, bigText: String? = null): Boolean =
+        dao.exists(packageName, timestamp, title, text, bigText)
 
     // === Source Stats ===
     fun getSourceStats(): Flow<List<SourceStats>> = sourceStatsDao.getAllFlow()

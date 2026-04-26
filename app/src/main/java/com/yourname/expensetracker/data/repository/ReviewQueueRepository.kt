@@ -96,9 +96,12 @@ class ReviewQueueRepository @Inject constructor(
         val review = pendingReviewDao.getById(reviewId)
             ?: return Result.Error(message = ERROR_REVIEW_NOT_FOUND)
 
-        val amount: Double = finalAmount ?: review.suggestedAmount
-        val merchant: String = finalMerchant ?: review.suggestedMerchant
-        val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
+    val amount: Double = finalAmount ?: review.suggestedAmount
+    val merchant: String = finalMerchant ?: review.suggestedMerchant
+    // Normalize the merchant for key generation so that manually approved
+    // reviews use the same canonical form as auto-accepted expenses.
+    val normalizedMerchantForKeys: String = merchantNormalizer.normalize(merchant).canonical.normalizedName
+    val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
 
         if (amount > 1000000.0) {
             return Result.Error(message = ERROR_AMOUNT_EXCEEDS_LIMIT)
@@ -131,7 +134,7 @@ class ReviewQueueRepository @Inject constructor(
             amount = amount,
             currency = review.suggestedCurrency,
             merchant = merchant,
-            merchantKey = MerchantKeyGenerator.generate(merchant),
+            merchantKey = MerchantKeyGenerator.generate(normalizedMerchantForKeys),
             transactionType = type,
             date = transactionDate,
             rawNotificationId = review.rawNotificationId,
@@ -145,7 +148,7 @@ class ReviewQueueRepository @Inject constructor(
             // The range-based isDuplicateCurrencyAware pre-check remains the
             // canonical policy gate; insertAtomic is now purely a race guard.
             dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                amount, merchant, transactionDate, review.suggestedCurrency, type
+                amount, normalizedMerchantForKeys, transactionDate, review.suggestedCurrency, type
             ),
             transferDirection = transferDirection,
             transferAccountName = transferAccountName,

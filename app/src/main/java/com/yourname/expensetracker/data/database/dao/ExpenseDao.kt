@@ -259,17 +259,20 @@ interface ExpenseDao {
     @Query("UPDATE expenses SET categoryId = :categoryId WHERE merchantKey = :merchantKey")
     suspend fun updateCategoryForMerchant(merchantKey: String, categoryId: Long)
 
-    @Query("UPDATE expenses SET merchant = :newMerchant, merchantKey = :newMerchantKey WHERE merchantKey = :oldMerchantKey")
-    suspend fun updateMerchantForMerchant(oldMerchantKey: String, newMerchant: String, newMerchantKey: String)
+@Query("UPDATE expenses SET merchant = :newMerchant, merchantKey = :newMerchantKey, dedupeKey = NULL WHERE merchantKey = :oldMerchantKey")
+suspend fun updateMerchantForMerchant(oldMerchantKey: String, newMerchant: String, newMerchantKey: String)
 
     @Query("UPDATE expenses SET merchant = :merchant WHERE id = :expenseId")
     suspend fun updateMerchant(expenseId: Long, merchant: String)
 
-    @Query("UPDATE expenses SET merchant = :merchant, merchantKey = :merchantKey WHERE id = :expenseId")
-    suspend fun updateMerchantAndKey(expenseId: Long, merchant: String, merchantKey: String)
+@Query("UPDATE expenses SET merchant = :merchant, merchantKey = :merchantKey, dedupeKey = :dedupeKey WHERE id = :expenseId")
+suspend fun updateMerchantAndKey(expenseId: Long, merchant: String, merchantKey: String, dedupeKey: String)
 
-    @Query("UPDATE expenses SET transactionType = :type WHERE id = :expenseId")
-    suspend fun updateTransactionType(expenseId: Long, type: String)
+@Query("UPDATE expenses SET transactionType = :type, dedupeKey = :dedupeKey WHERE id = :expenseId")
+suspend fun updateTransactionType(expenseId: Long, type: String, dedupeKey: String)
+
+@Query("UPDATE expenses SET dedupeKey = :dedupeKey WHERE id = :expenseId")
+suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
 
     @Query("UPDATE expenses SET transferDirection = :direction WHERE id = :expenseId")
     suspend fun updateTransferDirection(expenseId: Long, direction: String?)
@@ -489,9 +492,9 @@ interface ExpenseDao {
      * 1. Existing expense's key is a prefix of the new key (existing "masoutis" ⊂ new "masoutisretziki121")
      * 2. New key is a prefix of the existing expense's key (new "masoutis" ⊂ existing "masoutisretziki121")
      *
- * A **minimum length guard** (`LENGTH(merchantKey) >= 4`) prevents short keys
- * like "a" from spuriously matching everything.
- * The `4` mirrors [DuplicateDetectionPolicy.MIN_MERCHANT_KEY_PREFIX_LENGTH];
+ * A **minimum length guard** (`LENGTH(merchantKey) >= 8`) prevents short keys
+ * like "a" or "unknown" from spuriously matching everything.
+ * The `8` mirrors [DuplicateDetectionPolicy.MIN_MERCHANT_KEY_PREFIX_LENGTH];
  * keep both in sync — Room SQL cannot reference Kotlin constants.
      */
     @Query("""
@@ -501,8 +504,8 @@ interface ExpenseDao {
                 :merchantKey LIKE merchantKey || '%'
                 OR merchantKey LIKE :merchantKey || '%'
             )
-            AND LENGTH(merchantKey) >= 4
-            AND LENGTH(:merchantKey) >= 4
+AND LENGTH(merchantKey) >= 8
+AND LENGTH(:merchantKey) >= 8
             AND date >= :startDate
             AND date < :endDate
             AND amount BETWEEN :minAmount AND :maxAmount
@@ -654,9 +657,11 @@ interface ExpenseDao {
         merchantKey: String? = null,
         dedupeKey: String? = null
     ): Boolean {
-        val startDate = date - windowMs
-        val endDate = date + windowMs + 1
-        val tolerance = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
+    val startDate = date - windowMs
+    // Must match DuplicateDetectionPolicy.windowEndExclusive(date, windowMs).
+    // Kept as arithmetic because DAOs cannot call Kotlin utility methods in SQL.
+    val endDate = date + windowMs + 1
+    val tolerance = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
         val minAmount = amount - tolerance
         val maxAmount = amount + tolerance
         val normalizedCurrency = DuplicateDetectionPolicy.normalizeCurrency(currency)
