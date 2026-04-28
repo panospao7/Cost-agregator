@@ -175,7 +175,8 @@ sealed class DashboardWidget {
 data class CategorySpending(
     val category: CategoryInfo,
     val total: Double,
-    val percentage: Float
+    val percentage: Float,
+    val currency: String = "EUR"
 )
 
 data class SpendingTrendSeries(
@@ -312,9 +313,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             monthSpent = summary.totalSpent,
             txCount = summary.transactionCount,
             previousMonthTotal = summary.previousTotalSpent ?: 0.0,
-            todaySpent = todayPurchases.sumOf { it.effectiveAmount },
+            todaySpent = todayPurchases.sumByCurrency(), // TODO: Replace with MultiCurrencyRepository.getHomeCurrencyPurchaseTotal for proper multi-currency conversion
             todayTxCount = todayPurchases.size,
-            weekSpent = purchases.filter { it.date >= weekStart }.sumOf { it.effectiveAmount },
+            weekSpent = purchases.filter { it.date >= weekStart }.sumByCurrency(), // TODO: Replace with MultiCurrencyRepository for proper multi-currency conversion
             overallBudget = overallBudget,
             totalBudgetAmount = overallBudget?.budgetAmount ?: 0.0,
             safeToSpend = data.weather.discretionaryBudget
@@ -339,7 +340,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 id = expense.id,
                 amount = expense.amount,
                 effectiveAmount = expense.effectiveAmount,
-                currency = "EUR",
+                currency = expense.currency,
                 merchant = expense.merchant,
                 merchantKey = MerchantKeyGenerator.generate(expense.merchant).ifBlank { null },
                 transactionType = when (expense.transactionType) {
@@ -373,7 +374,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val averageDailyBurn = if (ctx.dayOfMonth > 0) ctx.monthSpent / ctx.dayOfMonth else 0.0
         val monthlyIncome = ctx.deposits
             .filter { it.date >= ctx.monthStart }
-            .sumOf { it.effectiveAmount }
+            .sumByCurrency() // TODO: Replace with MultiCurrencyRepository for proper multi-currency conversion
         val totalRemaining = ctx.data.data.weather.discretionaryBudget.coerceAtLeast(0.0)
 
         val runwayDays = if (averageDailyBurn > 0 && totalRemaining > 0) {
@@ -858,6 +859,27 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
         
         return streak
+    }
+
+    /**
+     * Sum effective amounts across expenses, but only if all expenses share the same currency.
+     * If multiple currencies are present, logs a warning and returns the raw sum (with a comment
+     * that this is incorrect for mixed currencies).
+     *
+     * This is a TEMPORARY bridge until MultiCurrencyRepository is wired into the dashboard pipeline.
+     * The proper fix is to use MultiCurrencyRepository.getHomeCurrencyPurchaseTotal().
+     */
+    private fun List<DashboardExpense>.sumByCurrency(): Double {
+        if (isEmpty()) return 0.0
+        val currencies = map { it.currency }.distinct()
+        if (currencies.size > 1) {
+            Timber.w(
+                "Dashboard raw-sum across mixed currencies: %s. " +
+                    "This produces incorrect totals. Use MultiCurrencyRepository for currency-aware aggregation.",
+                currencies.joinToString(", ")
+            )
+        }
+        return sumOf { it.effectiveAmount }
     }
 
 }

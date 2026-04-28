@@ -220,9 +220,12 @@ class BudgetMonitor @Inject constructor(
         categoryName: String
     ) {
         val percent = (spent / budget.amount * 100).toInt()
+        val currencySymbol = com.yourname.expensetracker.domain.currency.SupportedCurrency
+            .fromCode(budget.currency)?.symbol ?: budget.currency
         val content = String.format(
             Locale.US,
-            "You've spent €%.2f (%d%%) of your %s budget.",
+            "You've spent %s%.2f (%d%%) of your %s budget.",
+            currencySymbol,
             spent,
             percent,
             categoryName

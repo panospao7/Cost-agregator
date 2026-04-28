@@ -113,14 +113,15 @@ class DashboardContractsAdapter @Inject constructor(
 
     override fun observeSpendingSummary(start: Long, end: Long): Flow<SpendingSummary> =
         analyticsRepository.getSpendingSummary(start, end).map { summary ->
-            SpendingSummary(
-                totalSpent = summary.totalSpent,
-                previousTotalSpent = summary.previousTotalSpent,
-                changePercent = summary.changePercent,
-                dailyHistory = summary.dailyHistory,
-                previousDailyHistory = summary.previousDailyHistory,
-                transactionCount = summary.transactionCount
-            )
+        SpendingSummary(
+            totalSpent = summary.totalSpent,
+            previousTotalSpent = summary.previousTotalSpent,
+            changePercent = summary.changePercent,
+            dailyHistory = summary.dailyHistory,
+            previousDailyHistory = summary.previousDailyHistory,
+            transactionCount = summary.transactionCount,
+            currency = summary.currency
+        )
         }
 
     override fun observeCategoryBreakdown(start: Long, end: Long): Flow<List<DashboardCategoryBreakdown>> =
@@ -153,17 +154,18 @@ class DashboardContractsAdapter @Inject constructor(
         }
 
     private fun com.yourname.expensetracker.data.database.entity.Expense.toDomainDashboard(): DashboardExpense =
-        DashboardExpense(
-            id = id,
-            amount = amount,
-            effectiveAmount = effectiveAmount,
-            merchant = merchant,
-            transactionType = transactionType.toDashboardType(),
-            date = date,
-            categoryId = categoryId,
-            isNotMine = isNotMine,
-            isManualEntry = isManualEntry
-        )
+    DashboardExpense(
+        id = id,
+        amount = amount,
+        effectiveAmount = effectiveAmount,
+        merchant = merchant,
+        transactionType = transactionType.toDashboardType(),
+        date = date,
+        categoryId = categoryId,
+        isNotMine = isNotMine,
+        isManualEntry = isManualEntry,
+        currency = currency
+    )
 
     private fun TransactionType.toDashboardType(): DashboardTransactionType =
         when (this) {

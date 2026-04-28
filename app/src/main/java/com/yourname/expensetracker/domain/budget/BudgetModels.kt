@@ -12,7 +12,11 @@ data class BudgetStatus(
     val healthStatus: BudgetHealthStatus,
     val periodStart: Long,
     val periodEnd: Long,
-    val adjustedSpendBreakdown: AdjustedSpendBreakdown? = null  // F11: Shared Expenses Budget Offset
+    val adjustedSpendBreakdown: AdjustedSpendBreakdown? = null, // F11: Shared Expenses Budget Offset
+    val currency: String = budget.currency,
+    val currencyAssumption: String = budget.currencyAssumption,
+    val isPartial: Boolean = false,
+    val conversionWarning: String? = null
 )
 
 data class AdjustedSpendBreakdown(

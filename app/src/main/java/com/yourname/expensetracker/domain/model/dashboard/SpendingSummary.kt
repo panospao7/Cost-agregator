@@ -6,5 +6,6 @@ data class SpendingSummary(
     val changePercent: Double?,
     val dailyHistory: List<Double>,
     val previousDailyHistory: List<Double>,
-    val transactionCount: Int
+    val transactionCount: Int,
+    val currency: String = "EUR"
 )

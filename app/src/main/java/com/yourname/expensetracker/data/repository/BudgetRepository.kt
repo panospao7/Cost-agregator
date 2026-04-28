@@ -171,6 +171,9 @@ class BudgetRepository @Inject constructor(
      * effective-amount SQL helper, matching the previous in-memory logic.
      */
     private suspend fun getAggregateSpent(categoryId: Long?, start: Long, end: Long): Double {
+        // TODO: CURRENCY-FOUNDATION — This uses raw SUM across mixed currencies.
+        // Should be replaced with MultiCurrencyRepository for currency-aware aggregation
+        // that converts expenses to budget.currency before summing.
         return if (categoryId != null) {
             expenseDao.getCategorySpentInPeriod(categoryId, start, end)
         } else {

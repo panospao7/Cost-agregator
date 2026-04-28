@@ -46,7 +46,9 @@ data class Budget(
     @ColumnInfo(defaultValue = "1") val isActive: Boolean = true,
     @ColumnInfo(defaultValue = "0.75") val notifyAtWarning: Float = 0.75f, // first alert threshold (75%)
     @ColumnInfo(defaultValue = "0.9") val notifyAtCritical: Float = 0.90f,// second alert threshold (90%)
-    @ColumnInfo(defaultValue = "0") val rollover: Boolean = false,      // carry unspent to next period
+    @ColumnInfo(defaultValue = "0") val rollover: Boolean = false, // carry unspent to next period
+    @ColumnInfo(defaultValue = "'EUR'") val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "'LEGACY_DEFAULT'") val currencyAssumption: String = "LEGACY_DEFAULT",
     val createdAt: Long = System.currentTimeMillis(),
     val lastWarningNotifiedAt: Long? = null,
     val lastCriticalNotifiedAt: Long? = null,

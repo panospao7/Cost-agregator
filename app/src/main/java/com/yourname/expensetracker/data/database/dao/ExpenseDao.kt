@@ -774,22 +774,24 @@ AND LENGTH(:merchantKey) >= 8
         transactionType: String
     ): List<Expense>
 
+    @Deprecated("Unsafe: raw SUM across mixed currencies. Use MultiCurrencyRepository.getCategoryTotalsInHomeCurrency() for currency-aware aggregation.")
     @Query("""
-        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
-        WHERE ${SPENDING_TYPE_SQL} 
-        AND categoryId = :categoryId 
+        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses
+        WHERE ${SPENDING_TYPE_SQL}
+        AND categoryId = :categoryId
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
-    """)
+        """)
     suspend fun getCategorySpentInPeriod(categoryId: Long, startMs: Long, endMs: Long): Double
 
+    @Deprecated("Unsafe: raw SUM across mixed currencies. Use currency-aware aggregation path instead.")
     @Query("""
-        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
-        WHERE ${SPENDING_TYPE_SQL} 
-        AND categoryId = :categoryId 
+        SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses
+        WHERE ${SPENDING_TYPE_SQL}
+        AND categoryId = :categoryId
         AND date >= :startMs AND date < :endMs
         AND isNotMine = 0
-    """)
+        """)
     fun getCategorySpentInPeriodFlow(categoryId: Long, startMs: Long, endMs: Long): Flow<Double>
 
     @Query("""
@@ -916,12 +918,13 @@ AND LENGTH(:merchantKey) >= 8
     @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC LIMIT :limit")
     fun getExpensesByTypeBetweenFlow(startDate: Long, endDate: Long, type: String, limit: Int): Flow<List<Expense>>
 
+    @Deprecated("Unsafe: raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.", ReplaceWith("MultiCurrencyRepository.getTotalExpensesInHomeCurrency()"))
     @Query("""
-        SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses 
-        WHERE ${SPENDING_TYPE_SQL} 
+        SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses
+        WHERE ${SPENDING_TYPE_SQL}
         AND date >= :startDate AND date < :endDate
         AND isNotMine = 0
-    """)
+        """)
     suspend fun getTotalSpentBetween(startDate: Long, endDate: Long): Double?
 
     /**
@@ -1221,6 +1224,7 @@ AND LENGTH(:merchantKey) >= 8
 
     // === Tier 1 & 2 Analytics Queries ===
 
+    @Deprecated("Unsafe: raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     // Monthly total for a specific month range
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 

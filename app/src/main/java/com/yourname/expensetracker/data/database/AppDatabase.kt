@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 93
+const val APP_DATABASE_SCHEMA_VERSION = 94
 
 @Database(
     entities = [
@@ -5604,14 +5604,24 @@ abstract class AppDatabase : RoomDatabase() {
         }
     }
 
-    val MIGRATION_92_93 = object : androidx.room.migration.Migration(92, 93) {
-        override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-            database.execSQL("DROP INDEX IF EXISTS `index_raw_notifications_packageName_timestamp_title_text`")
-            database.execSQL("CREATE INDEX IF NOT EXISTS `index_raw_notifications_packageName_timestamp_title_text_bigText` ON `raw_notifications` (`packageName`, `timestamp`, `title`, `text`, `bigText`)")
-        }
+val MIGRATION_92_93 = object : androidx.room.migration.Migration(92, 93) {
+    override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+        database.execSQL("DROP INDEX IF EXISTS `index_raw_notifications_packageName_timestamp_title_text`")
+        database.execSQL("CREATE INDEX IF NOT EXISTS `index_raw_notifications_packageName_timestamp_title_text_bigText` ON `raw_notifications` (`packageName`, `timestamp`, `title`, `text`, `bigText`)")
     }
+}
 
-    /**
+val MIGRATION_93_94 = object : androidx.room.migration.Migration(93, 94) {
+    override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+        // CURRENCY-FOUNDATION: Add currency tracking to budgets table.
+        // Existing budgets get EUR with LEGACY_DEFAULT assumption,
+        // indicating the currency was not originally stored.
+        database.execSQL("ALTER TABLE budgets ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'")
+        database.execSQL("ALTER TABLE budgets ADD COLUMN currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT'")
+    }
+}
+
+/**
      * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
          *
@@ -5742,7 +5752,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_89_90,
             MIGRATION_90_91,
 MIGRATION_91_92,
-        MIGRATION_92_93
+        MIGRATION_92_93,
+        MIGRATION_93_94
     )
     }
 }

@@ -21,7 +21,8 @@ data class SpendingSummary(
     val dailyHistory: List<Double>,
     /** Daily spending totals for the previous period, one entry per day. */
     val previousDailyHistory: List<Double>,
-    val transactionCount: Int
+    val transactionCount: Int,
+    val currency: String = "EUR"
 )
 
 data class LocationSpendSummary(
@@ -80,14 +81,15 @@ class AnalyticsRepository @Inject constructor(
             } else null
 
             emit(
-                SpendingSummary(
-                    totalSpent = totalSpent,
-                    previousTotalSpent = if (previousTotal > 0) previousTotal else null,
-                    changePercent = changePercent,
-                    dailyHistory = dailyHistory.toList(),
-                    previousDailyHistory = previousDailyHistory.toList(),
-                    transactionCount = transactionCount
-                )
+            SpendingSummary(
+                totalSpent = totalSpent,
+                previousTotalSpent = if (previousTotal > 0) previousTotal else null,
+                changePercent = changePercent,
+                dailyHistory = dailyHistory.toList(),
+                previousDailyHistory = previousDailyHistory.toList(),
+                transactionCount = transactionCount,
+                currency = "EUR" // TODO: Read from CurrencySettingsRepository for proper home currency
+            )
             )
         }
     }

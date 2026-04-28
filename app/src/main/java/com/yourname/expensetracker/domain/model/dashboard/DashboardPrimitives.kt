@@ -9,7 +9,8 @@ data class DashboardExpense(
     val date: Long,
     val categoryId: Long?,
     val isNotMine: Boolean,
-    val isManualEntry: Boolean
+    val isManualEntry: Boolean,
+    val currency: String = "EUR"
 )
 
 enum class DashboardTransactionType {

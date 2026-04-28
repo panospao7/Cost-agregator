@@ -1,13 +1,24 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.data.database.dao.CategoryCurrencyTotal
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.MerchantCurrencyTotal
+import com.yourname.expensetracker.data.database.dao.MonthlyCurrencyTotal
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.core.money.ConversionFailure
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.core.money.toConversionFailure
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.FailedConversion
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import javax.inject.Inject
@@ -21,7 +32,8 @@ import javax.inject.Singleton
 class MultiCurrencyRepository @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val currencyConverter: CurrencyConverter,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     sealed interface CurrencyRepositoryError {
         data class Dao(val message: String, val cause: Throwable? = null) : CurrencyRepositoryError
@@ -309,6 +321,196 @@ class MultiCurrencyRepository @Inject constructor(
     /**
      * Update an expense's currency.
      */
+
+    // ── Home-currency convenience methods ──────────────────────────────────
+    // These read the home currency from CurrencySettingsRepository so callers
+    // don't need to resolve it themselves.
+
+    /**
+     * Get the user's current home currency as a String.
+     * Falls back to "EUR" if the DataStore hasn't been initialized yet.
+     */
+    private suspend fun resolveHomeCurrency(): String {
+        return try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to read home currency, defaulting to EUR")
+            DEFAULT_HOME_CURRENCY
+        }
+    }
+
+    /**
+     * Get total expenses in home currency.
+     * Reads home currency from settings automatically.
+     * Returns MoneyAggregate with per-currency source buckets and conversion failures.
+     */
+    suspend fun getHomeCurrencyTotal(
+        startDate: Long,
+        endDate: Long
+    ): MoneyAggregate {
+        val homeCurrency = resolveHomeCurrency()
+        val currencyTotals = expenseDao.getAllSpentBetweenByCurrency(startDate, endDate)
+        return aggregateToMoneyAggregate(currencyTotals, homeCurrency)
+    }
+
+    /**
+     * Get category totals in home currency.
+     * Returns map of categoryId -> MoneyAggregate.
+     */
+    suspend fun getHomeCurrencyCategoryTotals(
+        startDate: Long,
+        endDate: Long
+    ): Map<Long?, MoneyAggregate> {
+        val homeCurrency = resolveHomeCurrency()
+        val grouped = expenseDao.getAllCategoryTotalsBetweenByCurrency(startDate, endDate)
+        val byCategoryId = grouped.groupBy { it.categoryId }
+        val result = mutableMapOf<Long?, MoneyAggregate>()
+        for ((categoryId, buckets) in byCategoryId) {
+            result[categoryId] = aggregateCurrencyTotalsToMoneyAggregate(buckets, homeCurrency)
+        }
+        return result
+    }
+
+    /**
+     * Get merchant totals in home currency.
+     * Returns map of merchant -> MoneyAggregate.
+     */
+    suspend fun getHomeCurrencyMerchantTotals(
+        startDate: Long,
+        endDate: Long
+    ): Map<String, MoneyAggregate> {
+        val homeCurrency = resolveHomeCurrency()
+        val grouped = expenseDao.getAllMerchantTotalsBetweenByCurrency(startDate, endDate)
+        val byMerchant = grouped.groupBy { it.merchant }
+        val result = mutableMapOf<String, MoneyAggregate>()
+        for ((merchant, buckets) in byMerchant) {
+            result[merchant] = aggregateCurrencyTotalsToMoneyAggregate(buckets, homeCurrency)
+        }
+        return result
+    }
+
+    /**
+     * Get monthly totals in home currency.
+     * Returns list of MonthMoneyAggregate sorted by monthKey ascending.
+     */
+    suspend fun getHomeCurrencyMonthlyTotals(
+        startDate: Long,
+        endDate: Long
+    ): List<MonthMoneyAggregate> {
+        val homeCurrency = resolveHomeCurrency()
+        val grouped = expenseDao.getAllMonthlyTotalsBetweenByCurrency(startDate, endDate)
+        val byMonth = grouped.groupBy { it.monthKey }
+        val result = mutableListOf<MonthMoneyAggregate>()
+        for ((monthKey, buckets) in byMonth.toSortedMap()) {
+            val aggregate = aggregateCurrencyTotalsToMoneyAggregate(buckets, homeCurrency)
+            result.add(MonthMoneyAggregate(monthKey, aggregate))
+        }
+        return result
+    }
+
+    // ── PURCHASE-only variants ─────────────────────────────────────────────
+
+    /**
+     * Get total PURCHASE spending in home currency.
+     * Uses the PURCHASE-filtered DAO variant.
+     */
+    suspend fun getHomeCurrencyPurchaseTotal(
+        startDate: Long,
+        endDate: Long
+    ): MoneyAggregate {
+        val homeCurrency = resolveHomeCurrency()
+        val currencyTotals = expenseDao.getTotalSpentBetweenByCurrency(startDate, endDate)
+        return aggregateToMoneyAggregate(currencyTotals, homeCurrency)
+    }
+
+    /**
+     * Get PURCHASE category totals in home currency.
+     * Uses the PURCHASE-filtered DAO variant.
+     */
+    suspend fun getHomeCurrencyPurchaseCategoryTotals(
+        startDate: Long,
+        endDate: Long
+    ): Map<Long?, MoneyAggregate> {
+        val homeCurrency = resolveHomeCurrency()
+        val grouped = expenseDao.getCategoryTotalsBetweenByCurrency(startDate, endDate)
+        val byCategoryId = grouped.groupBy { it.categoryId }
+        val result = mutableMapOf<Long?, MoneyAggregate>()
+        for ((categoryId, buckets) in byCategoryId) {
+            result[categoryId] = aggregateCurrencyTotalsToMoneyAggregate(buckets, homeCurrency)
+        }
+        return result
+    }
+
+    // ── Internal aggregation helpers ───────────────────────────────────────
+
+    /**
+     * Convert a list of CurrencyTotal (per-currency totals) into a MoneyAggregate.
+     */
+    private suspend fun aggregateToMoneyAggregate(
+        currencyTotals: List<CurrencyTotal>,
+        homeCurrency: String
+    ): MoneyAggregate {
+        if (currencyTotals.isEmpty()) {
+            return MoneyAggregate.empty(CurrencyCode(homeCurrency))
+        }
+        val sourceBuckets = currencyTotals.map { MoneyBucket(CurrencyCode(it.currency), it.total, it.txCount) }
+        val amounts = currencyTotals.map { Pair(it.total, it.currency) }
+        val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
+        val failures = aggregate.failedConversions.map { it.toConversionFailure() }
+        return MoneyAggregate(
+            displayAmount = aggregate.total,
+            displayCurrency = CurrencyCode(homeCurrency),
+            sourceBuckets = sourceBuckets,
+            conversionFailures = failures,
+            isPartial = aggregate.hasFailures,
+            warningMessage = if (aggregate.hasFailures) {
+                "Total excludes ${failures.size} currency bucket(s) due to missing exchange rates"
+            } else null
+        )
+    }
+
+    /**
+     * Convert a list of same-dimension currency totals into a MoneyAggregate.
+     * Used for category/merchant/month grouping where we have sub-buckets per key.
+     */
+    private suspend fun aggregateCurrencyTotalsToMoneyAggregate(
+        buckets: List<*>,
+        homeCurrency: String
+    ): MoneyAggregate {
+        if (buckets.isEmpty()) {
+            return MoneyAggregate.empty(CurrencyCode(homeCurrency))
+        }
+        val amounts = mutableListOf<Pair<Double, String>>()
+        val sourceBuckets = mutableListOf<MoneyBucket>()
+        for (bucket in buckets) {
+            when (bucket) {
+            is CategoryCurrencyTotal -> {
+                amounts.add(Pair(bucket.total, bucket.currency))
+                sourceBuckets.add(MoneyBucket(CurrencyCode(bucket.currency), bucket.total, bucket.txCount))
+            }
+            is MerchantCurrencyTotal -> {
+                amounts.add(Pair(bucket.total, bucket.currency))
+                sourceBuckets.add(MoneyBucket(CurrencyCode(bucket.currency), bucket.total, bucket.txCount))
+            }
+            is MonthlyCurrencyTotal -> {
+                amounts.add(Pair(bucket.total, bucket.currency))
+                sourceBuckets.add(MoneyBucket(CurrencyCode(bucket.currency), bucket.total, bucket.txCount))
+            }
+            }
+        }
+        val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
+        val failures = aggregate.failedConversions.map { it.toConversionFailure() }
+        return MoneyAggregate(
+            displayAmount = aggregate.total,
+            displayCurrency = CurrencyCode(homeCurrency),
+            sourceBuckets = sourceBuckets,
+            conversionFailures = failures,
+            isPartial = aggregate.hasFailures,
+            warningMessage = if (aggregate.hasFailures) {
+                "Total excludes ${failures.size} currency bucket(s) due to missing exchange rates"
+            } else null
+        )
+    }
     suspend fun updateExpenseCurrency(
         expenseId: Long,
         newCurrency: String,
@@ -410,4 +612,9 @@ data class MonthTotal(
     val total: Double,
     val homeCurrency: String,
     val failedConversions: List<FailedConversion> = emptyList()
+)
+
+data class MonthMoneyAggregate(
+    val monthKey: String,
+    val aggregate: MoneyAggregate
 )
