@@ -34,8 +34,9 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
  */
 @Composable
 fun SpendingTrendChart(
-    series: List<SpendingTrendSeries>,
-    modifier: Modifier = Modifier
+ series: List<SpendingTrendSeries>,
+ modifier: Modifier = Modifier,
+ currency: String = "EUR"
 ) {
     val currentSeries = series.filter { it.isCurrentMonth }
     val historicalSeries = series.filter { !it.isCurrentMonth }
@@ -131,7 +132,7 @@ fun SpendingTrendChart(
             }
 
             val startAxisFormatter = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ ->
-                CurrencyFormatter.formatCompact(value.toDouble())
+                CurrencyFormatter.formatCompact(value.toDouble(), currency)
             }
 
             val currentValues = currentSeries.flatMap { it.data }
@@ -140,7 +141,7 @@ fun SpendingTrendChart(
             val maxValue = (allValues.maxOrNull() ?: 0.0).toDouble()
             val currentValue = (currentValues.lastOrNull() ?: 0.0).toDouble()
             val chartSummary = remember(subtitle, minValue, maxValue, currentValue) {
-                "Spending trend chart for $subtitle. Current value ${CurrencyFormatter.format(currentValue, showCents = false)}, minimum ${CurrencyFormatter.format(minValue, showCents = false)}, maximum ${CurrencyFormatter.format(maxValue, showCents = false)}."
+                "Spending trend chart for $subtitle. Current value ${CurrencyFormatter.format(currentValue, currency, showCents = false)}, minimum ${CurrencyFormatter.format(minValue, currency, showCents = false)}, maximum ${CurrencyFormatter.format(maxValue, currency, showCents = false)}."
             }
 
             Chart(

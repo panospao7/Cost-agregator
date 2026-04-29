@@ -47,12 +47,13 @@ import com.yourname.expensetracker.R
  */
 @Composable
 fun RetroTopCategoriesCard(
-    categories: List<CategorySpending>,
-    categoryTrends: Map<Long, CategoryTrendInfo> = emptyMap(),
-    transactions: List<DashboardExpense> = emptyList(),
-    modifier: Modifier = Modifier,
-    onCategoryClick: ((CategorySpending) -> Unit)? = null,
-    onViewAllTransactions: (() -> Unit)? = null
+ categories: List<CategorySpending>,
+ categoryTrends: Map<Long, CategoryTrendInfo> = emptyMap(),
+ transactions: List<DashboardExpense> = emptyList(),
+ modifier: Modifier = Modifier,
+ onCategoryClick: ((CategorySpending) -> Unit)? = null,
+ onViewAllTransactions: (() -> Unit)? = null,
+ currency: String = "EUR"
 ) {
     var selectedCategory by remember { mutableStateOf<CategorySpending?>(null) }
     
@@ -65,7 +66,8 @@ fun RetroTopCategoriesCard(
             trendInfo = trendInfo,
             transactions = categoryTransactions,
             onDismiss = { selectedCategory = null },
-            onViewAll = onViewAllTransactions
+            onViewAll = onViewAllTransactions,
+            currency = currency
         )
     }
 
@@ -97,13 +99,14 @@ fun RetroTopCategoriesCard(
                 // Category rows with RPG bars
                 categories.take(5).forEachIndexed { index, category ->
                     val trendInfo = categoryTrends[category.category.id]
-                    RetroCategoryRow(
-                        rank = index + 1,
-                        category = category,
-                        trendInfo = trendInfo,
-                        isTopRank = index == 0,
-                        onClick = { onCategoryClick?.invoke(category) ?: run { selectedCategory = category } }
-                    )
+        RetroCategoryRow(
+            rank = index + 1,
+            category = category,
+            trendInfo = trendInfo,
+            isTopRank = index == 0,
+            onClick = { onCategoryClick?.invoke(category) ?: run { selectedCategory = category } },
+            currency = currency
+        )
                     if (index < categories.size - 1 && index < 4) {
                         Spacer(modifier = Modifier.height(8.dp))
                     }
@@ -200,7 +203,8 @@ private fun RetroCategoryRow(
     category: CategorySpending,
     trendInfo: CategoryTrendInfo?,
     isTopRank: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    currency: String = "EUR"
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "champion_pulse")
     
@@ -321,7 +325,7 @@ private fun RetroCategoryRow(
                     ) {
                         // Amount
                         Text(
-                            text = CurrencyFormatter.format(category.total, showCents = false),
+                            text = CurrencyFormatter.format(category.total, currency, showCents = false),
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -413,7 +417,8 @@ private fun RetroCategoryDetailDialog(
     trendInfo: CategoryTrendInfo?,
     transactions: List<DashboardExpense> = emptyList(),
     onDismiss: () -> Unit,
-    onViewAll: (() -> Unit)? = null
+    onViewAll: (() -> Unit)? = null,
+    currency: String = "EUR"
 ) {
     var showTransactions by remember { mutableStateOf(true) }
     var visibleTransactionCount by remember { mutableStateOf(5) }
@@ -477,7 +482,7 @@ private fun RetroCategoryDetailDialog(
                         )
                         
                         Text(
-                            text = CurrencyFormatter.format(category.total),
+                            text = CurrencyFormatter.format(category.total, currency),
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -548,16 +553,18 @@ private fun RetroCategoryDetailDialog(
                     .padding(12.dp)
             ) {
                 if (showTransactions) {
-                    RetroTransactionsSection(
-                        transactions = transactions,
-                        visibleCount = visibleTransactionCount,
-                        onShowMore = { visibleTransactionCount += 5 }
-                    )
+            RetroTransactionsSection(
+                transactions = transactions,
+                visibleCount = visibleTransactionCount,
+                onShowMore = { visibleTransactionCount += 5 },
+                currency = currency
+            )
                 } else {
-                    RetroAnalyticsSection(
-                        category = category,
-                        trendInfo = trendInfo
-                    )
+            RetroAnalyticsSection(
+                category = category,
+                trendInfo = trendInfo,
+                currency = currency
+            )
                 }
             }
             
@@ -648,7 +655,8 @@ private fun RetroToggleButton(
 private fun RetroTransactionsSection(
     transactions: List<DashboardExpense>,
     visibleCount: Int,
-    onShowMore: () -> Unit
+    onShowMore: () -> Unit,
+    currency: String = "EUR"
 ) {
     Column {
         Text(
@@ -696,7 +704,7 @@ private fun RetroTransactionsSection(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = CurrencyFormatter.format(expense.amount),
+                        text = CurrencyFormatter.format(expense.amount, currency),
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
@@ -751,7 +759,8 @@ private fun RetroTransactionsSection(
 @Composable
 private fun RetroAnalyticsSection(
     category: CategorySpending,
-    trendInfo: CategoryTrendInfo?
+    trendInfo: CategoryTrendInfo?,
+    currency: String = "EUR"
 ) {
     Column {
         Text(
@@ -767,25 +776,25 @@ private fun RetroAnalyticsSection(
         )
         
         // Current stats
-        RetroStatRowCategories("THIS MONTH", CurrencyFormatter.format(category.total), RetroColorsCategories.NeonWhite)
-        
-        if (trendInfo?.previousTotal != null) {
-            Spacer(modifier = Modifier.height(4.dp))
-            val change = category.total - trendInfo.previousTotal
-            val changeText = if (change >= 0) {
-                "+${CurrencyFormatter.format(change)}"
-            } else {
-                "-${CurrencyFormatter.format(kotlin.math.abs(change))}"
-            }
-            val changeColor = if (change > 0) RetroColorsCategories.NeonRed else if (change < 0) RetroColorsCategories.NeonGreen else RetroColorsCategories.NeonWhite
-            RetroStatRowCategories("LAST MONTH", CurrencyFormatter.format(trendInfo.previousTotal), RetroColorsCategories.NeonWhite.copy(alpha = 0.7f))
-            Spacer(modifier = Modifier.height(4.dp))
-            RetroStatRowCategories("CHANGE", changeText, changeColor)
-        }
-        
-        if (trendInfo?.averageOverMonths != null) {
-            Spacer(modifier = Modifier.height(4.dp))
-            RetroStatRowCategories("3-MO AVG", CurrencyFormatter.format(trendInfo.averageOverMonths), RetroColorsCategories.NeonCyan)
+ RetroStatRowCategories("THIS MONTH", CurrencyFormatter.format(category.total, currency), RetroColorsCategories.NeonWhite)
+
+ if (trendInfo?.previousTotal != null) {
+ Spacer(modifier = Modifier.height(4.dp))
+ val change = category.total - trendInfo.previousTotal
+ val changeText = if (change >= 0) {
+ "+${CurrencyFormatter.format(change, currency)}"
+ } else {
+ "-${CurrencyFormatter.format(kotlin.math.abs(change), currency)}"
+ }
+ val changeColor = if (change > 0) RetroColorsCategories.NeonRed else if (change < 0) RetroColorsCategories.NeonGreen else RetroColorsCategories.NeonWhite
+ RetroStatRowCategories("LAST MONTH", CurrencyFormatter.format(trendInfo.previousTotal, currency), RetroColorsCategories.NeonWhite.copy(alpha = 0.7f))
+ Spacer(modifier = Modifier.height(4.dp))
+ RetroStatRowCategories("CHANGE", changeText, changeColor)
+ }
+
+ if (trendInfo?.averageOverMonths != null) {
+ Spacer(modifier = Modifier.height(4.dp))
+ RetroStatRowCategories("3-MO AVG", CurrencyFormatter.format(trendInfo.averageOverMonths, currency), RetroColorsCategories.NeonCyan)
         }
         
         Spacer(modifier = Modifier.height(8.dp))

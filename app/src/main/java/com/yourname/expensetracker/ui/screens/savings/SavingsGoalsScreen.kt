@@ -77,23 +77,25 @@ fun SavingsGoalsScreen(
                 .padding(16.dp)
         ) {
             // Gamification Header
-            GamificationHeader(
-                level = state.userLevel,
-                title = state.levelTitle,
-                totalSaved = state.totalSaved,
-                streak = state.streak
-            )
+        GamificationHeader(
+            level = state.userLevel,
+            title = state.levelTitle,
+            totalSaved = state.totalSaved,
+            streak = state.streak,
+            homeCurrency = state.homeCurrency
+        )
 
             Spacer(modifier = Modifier.height(16.dp))
 
             // Monthly Savings Sweep Recommendation
             val sweepRec = state.sweepRecommendation
             if (sweepRec != null) {
-                SweepRecommendationCard(
-                    recommendation = sweepRec,
-                    onAccept = { viewModel.acceptSweepRecommendation() },
-                    onDismiss = { viewModel.dismissSweepRecommendation() }
-                )
+            SweepRecommendationCard(
+                recommendation = sweepRec,
+                onAccept = { viewModel.acceptSweepRecommendation() },
+                onDismiss = { viewModel.dismissSweepRecommendation() },
+                homeCurrency = state.homeCurrency
+            )
                 
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -124,10 +126,11 @@ fun SavingsGoalsScreen(
                     modifier = Modifier.height(120.dp)
                 ) {
                     items(state.smartRecommendations.take(3)) { rec ->
-                        SmartRecommendationCard(
-                            rec = rec,
-                            onSave = { recommendationToConfirm = rec }
-                        )
+            SmartRecommendationCard(
+                rec = rec,
+                onSave = { recommendationToConfirm = rec },
+                homeCurrency = state.homeCurrency
+            )
                     }
                 }
                 
@@ -157,12 +160,13 @@ fun SavingsGoalsScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(state.goals) { goal ->
-                        GoalCard(
-                            goal = goal,
-                            dateFormat = dateFormat,
-                            onClick = { viewModel.selectGoal(goal) },
-                            onQuickAdd = { viewModel.contributeToGoal(goal.id, 10.0) }
-                        )
+            GoalCard(
+                goal = goal,
+                dateFormat = dateFormat,
+                onClick = { viewModel.selectGoal(goal) },
+                onQuickAdd = { viewModel.contributeToGoal(goal.id, 10.0) },
+                homeCurrency = state.homeCurrency
+            )
                     }
                 }
             }
@@ -205,7 +209,7 @@ fun SavingsGoalsScreen(
                     Text(
                         stringResource(
                             R.string.savings_contribute_dialog_message_format,
-                            CurrencyFormatter.format(recommendation.recommendedAmount)
+                            CurrencyFormatter.format(recommendation.recommendedAmount, state.homeCurrency)
                         )
                     )
                 },
@@ -219,7 +223,7 @@ fun SavingsGoalsScreen(
                             recommendationToConfirm = null
                             val savedMessage = context.getString(
                                 R.string.savings_saved_amount_message_format,
-                                CurrencyFormatter.format(recommendation.recommendedAmount)
+                                CurrencyFormatter.format(recommendation.recommendedAmount, state.homeCurrency)
                             )
                             scope.launch {
                                 snackbarHostState.showSnackbar(
@@ -247,7 +251,8 @@ private fun GamificationHeader(
     level: Int,
     title: String,
     totalSaved: Double,
-    streak: SavingsStreak?
+    streak: SavingsStreak?,
+    homeCurrency: String = "EUR"
 ) {
     Card(
         modifier = Modifier.fillMaxWidth()
@@ -286,7 +291,7 @@ private fun GamificationHeader(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = stringResource(R.string.savings_label_total_saved, CurrencyFormatter.format(totalSaved)),
+                text = stringResource(R.string.savings_label_total_saved, CurrencyFormatter.format(totalSaved, homeCurrency)),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
@@ -305,7 +310,8 @@ private fun GamificationHeader(
 @Composable
 private fun SmartRecommendationCard(
     rec: SmartRecommendation,
-    onSave: () -> Unit
+    onSave: () -> Unit,
+    homeCurrency: String = "EUR"
 ) {
     Card(
         modifier = Modifier
@@ -329,7 +335,7 @@ private fun SmartRecommendationCard(
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = stringResource(R.string.savings_safe_to_save, CurrencyFormatter.format(rec.recommendedAmount)),
+                    text = stringResource(R.string.savings_safe_to_save, CurrencyFormatter.format(rec.recommendedAmount, homeCurrency)),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
@@ -504,7 +510,8 @@ private fun GoalCard(
     goal: SavingsGoal,
     dateFormat: SimpleDateFormat,
     onClick: () -> Unit,
-    onQuickAdd: () -> Unit
+    onQuickAdd: () -> Unit,
+    homeCurrency: String = "EUR"
 ) {
     val progress = (goal.currentAmount / goal.targetAmount).coerceIn(0.0, 1.0)
     val isCompleted = goal.currentAmount >= goal.targetAmount
@@ -565,11 +572,11 @@ private fun GoalCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = CurrencyFormatter.format(goal.currentAmount),
+                    text = CurrencyFormatter.format(goal.currentAmount, homeCurrency),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = stringResource(R.string.savings_of_target, CurrencyFormatter.format(goal.targetAmount)),
+                    text = stringResource(R.string.savings_of_target, CurrencyFormatter.format(goal.targetAmount, homeCurrency)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -692,7 +699,8 @@ private fun LifestyleRecommendationCard(
 private fun SweepRecommendationCard(
     recommendation: SavingsSweepRecommendation,
     onAccept: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    homeCurrency: String = "EUR"
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM d", Locale.getDefault()) }
     val monthEndDate = remember(recommendation.monthEnd) { Date(recommendation.monthEnd) }
@@ -740,7 +748,7 @@ private fun SweepRecommendationCard(
             Text(
                 text = stringResource(
                     R.string.savings_safe_to_save_sweep_format,
-                    CurrencyFormatter.format(recommendation.safeSweepAmount)
+                    CurrencyFormatter.format(recommendation.safeSweepAmount, homeCurrency)
                 ),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
@@ -753,8 +761,8 @@ private fun SweepRecommendationCard(
             Text(
                 text = stringResource(
                     R.string.savings_underspend_buffer_format,
-                    CurrencyFormatter.format(recommendation.totalUnderspend),
-                    CurrencyFormatter.format(recommendation.riskBuffer)
+                    CurrencyFormatter.format(recommendation.totalUnderspend, homeCurrency),
+                    CurrencyFormatter.format(recommendation.riskBuffer, homeCurrency)
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
@@ -817,7 +825,7 @@ private fun SweepRecommendationCard(
 }
 
 @Composable
-private fun GoalAllocationRow(allocation: GoalAllocation) {
+private fun GoalAllocationRow(allocation: GoalAllocation, homeCurrency: String = "EUR") {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -843,7 +851,7 @@ private fun GoalAllocationRow(allocation: GoalAllocation) {
         }
         
         Text(
-            text = "+${CurrencyFormatter.format(allocation.suggestedAllocation)}",
+            text = "+${CurrencyFormatter.format(allocation.suggestedAllocation, homeCurrency)}",
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary

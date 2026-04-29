@@ -30,10 +30,11 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 
 @Composable
 fun ForecastTimeline(
-    pastPoints: List<Double>,
-    projectedPoints: List<Double>,
-    budgetLimit: Double,
-    modifier: Modifier = Modifier
+ pastPoints: List<Double>,
+ projectedPoints: List<Double>,
+ budgetLimit: Double,
+ modifier: Modifier = Modifier,
+ currency: String = "EUR"
 ) {
     Column(modifier = modifier) {
         Text(
@@ -123,21 +124,21 @@ fun ForecastTimeline(
         val currentPoint = pastPoints.lastOrNull() ?: 0.0
         val projectedEnd = projectedPoints.lastOrNull() ?: currentPoint
         val chartSummary = if (hasValidBudget) {
-            stringResource(
-                R.string.forecast_timeline_summary_with_budget,
-                CurrencyFormatter.format(currentPoint, showCents = false),
-                CurrencyFormatter.format(projectedEnd, showCents = false),
-                CurrencyFormatter.format(minPoint, showCents = false),
-                CurrencyFormatter.format(maxPoint, showCents = false),
-                CurrencyFormatter.format(budgetLimit, showCents = false)
-            )
-        } else {
-            stringResource(
-                R.string.forecast_timeline_summary_without_budget,
-                CurrencyFormatter.format(currentPoint, showCents = false),
-                CurrencyFormatter.format(projectedEnd, showCents = false),
-                CurrencyFormatter.format(minPoint, showCents = false),
-                CurrencyFormatter.format(maxPoint, showCents = false),
+ stringResource(
+ R.string.forecast_timeline_summary_with_budget,
+ CurrencyFormatter.format(currentPoint, currency, showCents = false),
+ CurrencyFormatter.format(projectedEnd, currency, showCents = false),
+ CurrencyFormatter.format(minPoint, currency, showCents = false),
+ CurrencyFormatter.format(maxPoint, currency, showCents = false),
+ CurrencyFormatter.format(budgetLimit, currency, showCents = false)
+ )
+ } else {
+ stringResource(
+ R.string.forecast_timeline_summary_without_budget,
+ CurrencyFormatter.format(currentPoint, currency, showCents = false),
+ CurrencyFormatter.format(projectedEnd, currency, showCents = false),
+ CurrencyFormatter.format(minPoint, currency, showCents = false),
+ CurrencyFormatter.format(maxPoint, currency, showCents = false),
                 noBudgetSetText
             )
         }

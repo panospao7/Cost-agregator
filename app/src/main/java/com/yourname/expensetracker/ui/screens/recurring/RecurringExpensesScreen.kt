@@ -57,8 +57,13 @@ class RecurringExpensesViewModel @Inject constructor(
     private val recurringExpenseRepository: RecurringExpenseRepository,
     private val plannedExpenseRepository: PlannedExpenseRepository,
     private val recurringExpenseEngine: RecurringExpenseEngine,
-    private val expenseRepository: ExpenseRepository
+    private val expenseRepository: ExpenseRepository,
+    private val currencySettingsRepository: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 ) : ViewModel() {
+
+    private val _homeCurrency = currencySettingsRepository.homeCurrency()
+        .stateIn(viewModelScope, SharingStarted.Lazily, "EUR")
+    val homeCurrency: StateFlow<String> = _homeCurrency
 
     // Helper flow to trigger updates
     private val refreshTrigger = MutableStateFlow(0)
@@ -193,6 +198,7 @@ fun RecurringExpensesScreen(
 ) {
     val patterns by viewModel.allPatterns.collectAsState()
     val planned by viewModel.plannedExpenses.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState()
     
     var selectedTabIndex by remember { mutableStateOf(0) }
     val recurringTabTitle = stringResource(R.string.recurring_tab_recurring)
@@ -295,12 +301,13 @@ fun RecurringExpensesScreen(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(planned, key = { it.id }) { item ->
-                            PlannedExpenseItem(
-                                expense = item,
-                                onDelete = { viewModel.deletePlannedExpense(item) }
-                            )
-                        }
+                    items(planned, key = { it.id }) { item ->
+                        PlannedExpenseItem(
+                            expense = item,
+                            homeCurrency = homeCurrency,
+                            onDelete = { viewModel.deletePlannedExpense(item) }
+                        )
+                    }
                     }
                 }
             }
@@ -311,6 +318,7 @@ fun RecurringExpensesScreen(
 @Composable
 fun PlannedExpenseItem(
     expense: com.yourname.expensetracker.domain.model.PlannedExpense,
+    homeCurrency: String = "EUR",
     onDelete: () -> Unit
 ) {
     val context = LocalContext.current
@@ -338,8 +346,8 @@ fun PlannedExpenseItem(
                     fontWeight = FontWeight.Bold
                 )
                 // Remember expensive string calculations
-                val amountAndPriority = remember(expense.amount, expense.priority) {
-                    "${CurrencyFormatter.format(expense.amount)} • ${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }}"
+        val amountAndPriority = remember(expense.amount, expense.priority, homeCurrency) {
+                "${CurrencyFormatter.format(expense.amount, homeCurrency)} • ${expense.priority.name.lowercase().replaceFirstChar { it.uppercase() }}"
                 }
                 Text(
                     text = amountAndPriority,

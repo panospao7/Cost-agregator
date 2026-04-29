@@ -48,7 +48,7 @@ class SavingsGamificationEngine @Inject constructor(
         )
     }
     
-    suspend fun getAchievements(userId: String = "default"): List<SavingsAchievement> {
+    suspend fun getAchievements(userId: String = "default", homeCurrency: String = "EUR"): List<SavingsAchievement> {
         val goals = savingsGoalRepository.observeSavingsGoals().first()
         val contributionMetrics = analyzeContributionHistory()
         val sortedGoals = goals.sortedBy { it.createdAt }
@@ -101,7 +101,7 @@ class SavingsGamificationEngine @Inject constructor(
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_CENTURY_CLUB),
                 description = UiText.fromKey(
                     DomainTextKeys.SAVINGS_ACHIEVEMENT_DESC_SAVE_TOTAL_FORMAT,
-                    UiTextArg.Money(100.0, showCents = false)
+                    UiTextArg.Money(100.0, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                 ),
                 icon = "💯",
                 isUnlocked = totalSaved >= 100,
@@ -109,7 +109,7 @@ class SavingsGamificationEngine @Inject constructor(
                 progress = (totalSaved / 100.0).coerceIn(0.0, 1.0),
                 requirement = UiText.fromKey(
                     DomainTextKeys.SAVINGS_ACHIEVEMENT_REQ_SAVED_FORMAT,
-                    UiTextArg.Money(100.0, showCents = false)
+                    UiTextArg.Money(100.0, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                 )
             ),
             SavingsAchievement(
@@ -130,7 +130,7 @@ class SavingsGamificationEngine @Inject constructor(
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_GRAND_SAVER),
                 description = UiText.fromKey(
                     DomainTextKeys.SAVINGS_ACHIEVEMENT_DESC_SAVE_TOTAL_FORMAT,
-                    UiTextArg.Money(1000.0, showCents = false)
+                    UiTextArg.Money(1000.0, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                 ),
                 icon = "💰",
                 isUnlocked = totalSaved >= 1000,
@@ -138,7 +138,7 @@ class SavingsGamificationEngine @Inject constructor(
                 progress = (totalSaved / 1000.0).coerceIn(0.0, 1.0),
                 requirement = UiText.fromKey(
                     DomainTextKeys.SAVINGS_ACHIEVEMENT_REQ_SAVED_FORMAT,
-                    UiTextArg.Money(1000.0, showCents = false)
+                    UiTextArg.Money(1000.0, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                 )
             )
         )

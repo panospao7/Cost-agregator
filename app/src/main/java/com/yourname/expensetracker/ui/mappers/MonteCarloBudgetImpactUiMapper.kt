@@ -14,10 +14,10 @@ data class MonteCarloBudgetImpactUi(
 class MonteCarloBudgetImpactUiMapper(
     private val context: Context
 ) {
-    fun map(impact: MonteCarloBudgetImpact): MonteCarloBudgetImpactUi {
+    fun map(impact: MonteCarloBudgetImpact, homeCurrency: String = "EUR"): MonteCarloBudgetImpactUi {
         val hasMeaningfulOverrun = impact.expectedOverrun > 0.0
         val formattedOverrun = if (hasMeaningfulOverrun) {
-            CurrencyFormatter.format(impact.expectedOverrun)
+            CurrencyFormatter.format(impact.expectedOverrun, homeCurrency)
         } else {
             null
         }

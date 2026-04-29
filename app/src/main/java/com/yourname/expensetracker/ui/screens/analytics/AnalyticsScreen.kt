@@ -144,11 +144,11 @@ fun AnalyticsScreen(
                     item { StatisticalHighlights(stats) }
                     
                     // NEW: Percentile Grid - Shows P10, P25, P50, P75, P90
-                    item { PercentileGridCard(percentiles = stats.percentiles) }
+                    item { PercentileGridCard(percentiles = stats.percentiles, currency = state.homeCurrency) }
                     
                     // NEW: Transaction Histogram - Visual distribution of transaction sizes
                     if (stats.histogramBins.isNotEmpty()) {
-                        item { TransactionHistogramChart(bins = stats.histogramBins) }
+                        item { TransactionHistogramChart(bins = stats.histogramBins, currency = state.homeCurrency) }
                     }
                 }
 
@@ -206,7 +206,7 @@ fun AnalyticsScreen(
                             totalSpent = state.currentTotal
                         )
                     }
-                    items(state.categoryBreakdown) { CategoryItem(it) }
+                    items(state.categoryBreakdown) { CategoryItem(it, homeCurrency = state.homeCurrency) }
                 }
 
                 // 6b. Budget vs Actual
@@ -248,7 +248,7 @@ fun AnalyticsScreen(
                     }
                 } else if (state.merchantBreakdown.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_top_merchants)) }
-                    items(state.merchantBreakdown.take(8)) { MerchantItem(it) }
+                    items(state.merchantBreakdown.take(8)) { MerchantItem(it, homeCurrency = state.homeCurrency) }
                 }
 
                 // 8.5. Top Spending Places (B5 — LocationInsightsEngine)
@@ -263,7 +263,7 @@ fun AnalyticsScreen(
                 if (state.areaSpending.isNotEmpty()) {
                     item { AnalyticsSectionHeader(stringResource(R.string.analytics_section_spending_by_area), stringResource(R.string.analytics_section_spending_by_area_subtitle)) }
                     items(state.areaSpending.take(6)) { area ->
-                        AreaSpendingItem(area)
+                        AreaSpendingItem(area, homeCurrency = state.homeCurrency)
                     }
                 }
 
@@ -271,38 +271,38 @@ fun AnalyticsScreen(
                 state.travelInsight?.let { travel ->
                     if (travel.travelSpend > 0 || travel.localSpend > 0) {
                         item { AnalyticsSectionHeader(stringResource(R.string.analytics_section_travel_vs_home), stringResource(R.string.analytics_section_travel_vs_home_subtitle)) }
-                        item { TravelInsightCard(travel) }
+                        item { TravelInsightCard(travel, homeCurrency = state.homeCurrency) }
                     }
                 }
 
                 // 9. Velocity Anomalies
                 if (state.velocityAnomalies.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_velocity_anomalies)) }
-                    items(state.velocityAnomalies) { VelocityAnomalyCard(it) }
+                    items(state.velocityAnomalies) { VelocityAnomalyCard(it, homeCurrency = state.homeCurrency) }
                 }
 
                 // 10. Year-over-Year Comparison
                 state.yearOverYear?.let { yoy ->
                     item { SectionHeader(stringResource(R.string.analytics_section_yoy_comparison)) }
-                    item { YearOverYearCard(yoy) }
+                    item { YearOverYearCard(yoy, homeCurrency = state.homeCurrency) }
                 }
 
                 // 11. Post-Salary Sequential Pattern
                 state.postSalaryPattern?.let { pattern ->
                     item { SectionHeader(stringResource(R.string.analytics_section_post_salary)) }
-                    item { PostSalaryPatternCard(pattern) }
+                    item { PostSalaryPatternCard(pattern, homeCurrency = state.homeCurrency) }
                 }
 
                 // 12. Suspect / Duplicate Transactions
                 if (state.suspectTransactions.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_suspect_duplicates)) }
-                    items(state.suspectTransactions) { SuspectTransactionCard(it) }
+                    items(state.suspectTransactions) { SuspectTransactionCard(it, homeCurrency = state.homeCurrency) }
                 }
 
                 // 13. Recurring
                 if (state.recurring.isNotEmpty()) {
                     item { SectionHeader(stringResource(R.string.analytics_section_subscription_detection)) }
-                    items(state.recurring) { RecurringItem(it) }
+                    items(state.recurring) { RecurringItem(it, homeCurrency = state.homeCurrency) }
                 }
 
                 // 14. Spending Personality Profile (F13)
@@ -767,7 +767,7 @@ fun TotalSpentHero(state: AnalyticsState) {
                 Text(
                     text = stringResource(
                         R.string.analytics_vs_last_period_format,
-                        CurrencyFormatter.format(prevTotal, showCents = false)
+                        CurrencyFormatter.format(prevTotal, state.homeCurrency, showCents = false)
                     ),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
@@ -1119,7 +1119,7 @@ fun InsightsRow(insights: List<SpendingInsight>) {
 }
 
 @Composable
-fun CategoryItem(item: AnalyticsCategoryBreakdown) {
+fun CategoryItem(item: AnalyticsCategoryBreakdown, homeCurrency: String = "EUR") {
     val categoryColor = remember(item.category.color) {
         try { Color(android.graphics.Color.parseColor(item.category.color)) }
         catch (e: Exception) { Color.Gray }
@@ -1143,7 +1143,7 @@ fun CategoryItem(item: AnalyticsCategoryBreakdown) {
         Column(modifier = Modifier.weight(1f)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(item.category.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Text(CurrencyFormatter.format(item.total), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Text(CurrencyFormatter.format(item.total, homeCurrency), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
             }
             Spacer(modifier = Modifier.height(6.dp))
             LinearProgressIndicator(
@@ -1166,7 +1166,7 @@ fun CategoryItem(item: AnalyticsCategoryBreakdown) {
 }
 
 @Composable
-fun MerchantItem(item: MerchantBreakdown) {
+fun MerchantItem(item: MerchantBreakdown, homeCurrency: String = "EUR") {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -1190,13 +1190,13 @@ fun MerchantItem(item: MerchantBreakdown) {
                 Text(item.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 Text(stringResource(R.string.analytics_visits_avg_format, item.transactionCount, item.averageTransaction), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text(CurrencyFormatter.format(item.totalSpent), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            Text(CurrencyFormatter.format(item.totalSpent, homeCurrency), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
         }
     }
 }
 
 @Composable
-fun RecurringItem(item: RecurringCandidate) {
+fun RecurringItem(item: RecurringCandidate, homeCurrency: String = "EUR") {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1229,7 +1229,7 @@ fun RecurringItem(item: RecurringCandidate) {
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(CurrencyFormatter.format(item.amount), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                Text(CurrencyFormatter.format(item.amount, homeCurrency), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                 Text(item.confidence.let { if (it > 0.8) "High confidence" else "Plausible" }, style = MaterialTheme.typography.labelSmall, color = if (item.confidence > 0.8) SemanticColors.SuccessGreen else MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -1238,7 +1238,7 @@ fun RecurringItem(item: RecurringCandidate) {
 
 // ── Feature 4: Spending Velocity Anomaly Card ──────────────────────────
 @Composable
-fun VelocityAnomalyCard(anomaly: VelocityAnomaly) {
+fun VelocityAnomalyCard(anomaly: VelocityAnomaly, homeCurrency: String = "EUR") {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1277,7 +1277,7 @@ fun VelocityAnomalyCard(anomaly: VelocityAnomaly) {
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    CurrencyFormatter.format(anomaly.dayTotal),
+                    CurrencyFormatter.format(anomaly.dayTotal, homeCurrency),
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Bold,
                     color = SemanticColors.DangerRed
@@ -1288,7 +1288,7 @@ fun VelocityAnomalyCard(anomaly: VelocityAnomaly) {
                     color = SemanticColors.DangerRed.copy(alpha = 0.8f)
                 )
                 Text(
-                    "vs. ${CurrencyFormatter.format(anomaly.monthDailyAvg, showCents = false)}/day",
+                    "vs. ${CurrencyFormatter.format(anomaly.monthDailyAvg, homeCurrency, showCents = false)}/day",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                 )
@@ -1299,7 +1299,7 @@ fun VelocityAnomalyCard(anomaly: VelocityAnomaly) {
 
 // ── Feature 3: Year-over-Year Comparison Card (fixed colors, Task B) ──
 @Composable
-fun YearOverYearCard(yoy: YearOverYearComparison) {
+fun YearOverYearCard(yoy: YearOverYearComparison, homeCurrency: String = "EUR") {
     val currentYearColor = MaterialTheme.colorScheme.primary
     val priorYearColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
 
@@ -1323,7 +1323,7 @@ fun YearOverYearCard(yoy: YearOverYearComparison) {
                         color = currentYearColor
                     )
                     Text(
-                        CurrencyFormatter.format(yoy.currentYearTotal),
+                        CurrencyFormatter.format(yoy.currentYearTotal, homeCurrency),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = currentYearColor
@@ -1351,7 +1351,7 @@ fun YearOverYearCard(yoy: YearOverYearComparison) {
                         color = priorYearColor
                     )
                     Text(
-                        CurrencyFormatter.format(yoy.priorYearTotal),
+                        CurrencyFormatter.format(yoy.priorYearTotal, homeCurrency),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = priorYearColor
@@ -1433,7 +1433,7 @@ fun YearOverYearCard(yoy: YearOverYearComparison) {
 
 // ── Feature 5: Post-Salary Sequential Pattern Card ───────────────────
 @Composable
-fun PostSalaryPatternCard(pattern: PostSalaryPattern) {
+fun PostSalaryPatternCard(pattern: PostSalaryPattern, homeCurrency: String = "EUR") {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -1454,7 +1454,7 @@ fun PostSalaryPatternCard(pattern: PostSalaryPattern) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        "${CurrencyFormatter.format(pattern.avgTotalSpentIn7Days, showCents = false)} in first 7 days",
+                        "${CurrencyFormatter.format(pattern.avgTotalSpentIn7Days, homeCurrency, showCents = false)} in first 7 days",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -1497,7 +1497,7 @@ fun PostSalaryPatternCard(pattern: PostSalaryPattern) {
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(cat.categoryName, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                                Text(CurrencyFormatter.format(cat.avgSpendAfterSalary, showCents = false), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                Text(CurrencyFormatter.format(cat.avgSpendAfterSalary, homeCurrency, showCents = false), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                             }
                             Spacer(modifier = Modifier.height(3.dp))
                             LinearProgressIndicator(
@@ -1516,7 +1516,7 @@ fun PostSalaryPatternCard(pattern: PostSalaryPattern) {
 
 // ── Feature 6: Suspect / Duplicate Transaction Card ───────────────────
 @Composable
-fun SuspectTransactionCard(item: SuspectTransaction) {
+fun SuspectTransactionCard(item: SuspectTransaction, homeCurrency: String = "EUR") {
     val (bgColor, iconEmoji) = when (item.reason) {
         SuspectReason.NEAR_DUPLICATE -> SemanticColors.DangerRed.copy(alpha = 0.08f) to "⚠️"
         SuspectReason.ROUND_AMOUNT   -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f) to "💰"
@@ -1557,7 +1557,7 @@ fun SuspectTransactionCard(item: SuspectTransaction) {
                 Text(dateLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
             }
             Text(
-                CurrencyFormatter.format(item.amount),
+                CurrencyFormatter.format(item.amount, homeCurrency),
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.error
@@ -1568,7 +1568,7 @@ fun SuspectTransactionCard(item: SuspectTransaction) {
 
 // ── Location: Area Spending Item (B1) ─────────────────────────────────
 @Composable
-fun AreaSpendingItem(area: AreaSpending) {
+fun AreaSpendingItem(area: AreaSpending, homeCurrency: String = "EUR") {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1590,13 +1590,13 @@ fun AreaSpendingItem(area: AreaSpending) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(area.areaName, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    "${area.transactionCount} transactions · avg ${CurrencyFormatter.format(area.avgTransaction, showCents = false)}",
+                    "${area.transactionCount} transactions · avg ${CurrencyFormatter.format(area.avgTransaction, homeCurrency, showCents = false)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Text(
-                CurrencyFormatter.format(area.totalSpend),
+                CurrencyFormatter.format(area.totalSpend, homeCurrency),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Bold
@@ -1607,7 +1607,7 @@ fun AreaSpendingItem(area: AreaSpending) {
 
 // ── Location: Travel vs Home Card (B2) ────────────────────────────────
 @Composable
-fun TravelInsightCard(travel: TravelInsight) {
+fun TravelInsightCard(travel: TravelInsight, homeCurrency: String = "EUR") {
     val totalSpend = travel.homeSpend + travel.localSpend + travel.travelSpend
 
     BentoCard {
@@ -1646,7 +1646,7 @@ fun TravelInsightCard(travel: TravelInsight) {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        CurrencyFormatter.format(spend, showCents = false),
+                        CurrencyFormatter.format(spend, homeCurrency, showCents = false),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.width(56.dp)
@@ -1678,7 +1678,7 @@ fun TravelInsightCard(travel: TravelInsight) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            CurrencyFormatter.format(trip.totalSpend, showCents = false),
+                            CurrencyFormatter.format(trip.totalSpend, homeCurrency, showCents = false),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold
                         )

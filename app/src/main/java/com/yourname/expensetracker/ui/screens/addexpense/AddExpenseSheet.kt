@@ -201,10 +201,10 @@ fun AddExpenseSheet(
                     isError = state.amountError != null,
                     supportingText = state.amountError?.let { { Text(it) } },
                     leadingIcon = {
-                        val currencySymbol = remember {
-                            CurrencyFormatter.format(0.0, showCents = false)
-                                .replace(Regex("[0-9\\s.,]"), "")
-                                .ifBlank { CurrencyFormatter.format(1.0, showCents = false).replace(Regex("[0-9\\s.,]"), "") }
+ val currencySymbol = remember(state.homeCurrency) {
+ CurrencyFormatter.format(0.0, state.homeCurrency, showCents = false)
+ .replace(Regex("[0-9\\s.,]"), "")
+ .ifBlank { CurrencyFormatter.format(1.0, state.homeCurrency, showCents = false).replace(Regex("[0-9\\s.,]"), "") }
                         }
                         Text(
                             text = currencySymbol,

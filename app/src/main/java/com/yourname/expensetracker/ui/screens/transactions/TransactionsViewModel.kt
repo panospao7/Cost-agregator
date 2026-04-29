@@ -22,6 +22,7 @@ import kotlinx.coroutines.withContext
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import javax.inject.Inject
 
 /**
@@ -39,8 +40,9 @@ class TransactionsViewModel @Inject constructor(
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val recurringExpenseRepository: com.yourname.expensetracker.data.repository.RecurringExpenseRepository,
     private val merchantLocationRepository: com.yourname.expensetracker.data.repository.MerchantLocationRepository,
-    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
-    val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
+ private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
+ val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
+ private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
     companion object {
@@ -116,8 +118,12 @@ class TransactionsViewModel @Inject constructor(
     private val _successMessage = MutableSharedFlow<String>()
     val successMessage: SharedFlow<String> = _successMessage.asSharedFlow()
 
-    // Refresh trigger for pull-to-refresh
-    private val _refreshTrigger = MutableStateFlow(0)
+ // Refresh trigger for pull-to-refresh
+ private val _refreshTrigger = MutableStateFlow(0)
+
+ private val _homeCurrency = currencySettingsRepository.homeCurrency()
+ .stateIn(viewModelScope, SharingStarted.Lazily, "EUR")
+ val homeCurrency: StateFlow<String> = _homeCurrency
 
     /**
      * Main transactions flow with reactive filtering.

@@ -149,7 +149,7 @@ class InsightsEngine @Inject constructor(
 
     // === Legacy Compatibility ===
 
-    fun getLegacyInsights(snapshot: InsightsSnapshot): List<SpendingInsight> {
+    fun getLegacyInsights(snapshot: InsightsSnapshot, homeCurrency: String = "EUR"): List<SpendingInsight> {
         val insights = mutableListOf<SpendingInsight>()
 
         // 1. Monthly Comparison (Spending Increase/Decrease)
@@ -164,9 +164,9 @@ class InsightsEngine @Inject constructor(
                                 comparison.changePercentage.toInt()
                             ),
                             UiText.fromKey(
-                                DomainTextKeys.ANALYTICS_INSIGHT_SPENDING_UP_DESCRIPTION_FORMAT,
-                                formatCurrency(comparison.currentTotal),
-                                formatCurrency(comparison.previousTotal ?: 0.0)
+            DomainTextKeys.ANALYTICS_INSIGHT_SPENDING_UP_DESCRIPTION_FORMAT,
+                        formatCurrency(comparison.currentTotal, homeCurrency),
+                        formatCurrency(comparison.previousTotal ?: 0.0, homeCurrency)
                             ),
                             (comparison.changePercentage / 100).coerceAtMost(1.0f).toFloat()
                         )
@@ -180,8 +180,8 @@ class InsightsEngine @Inject constructor(
                                 (-comparison.changePercentage).toInt()
                             ),
                             UiText.fromKey(
-                                DomainTextKeys.ANALYTICS_INSIGHT_SPENDING_DOWN_DESCRIPTION_FORMAT,
-                                formatCurrency((comparison.previousTotal ?: 0.0) - comparison.currentTotal)
+            DomainTextKeys.ANALYTICS_INSIGHT_SPENDING_DOWN_DESCRIPTION_FORMAT,
+                        formatCurrency((comparison.previousTotal ?: 0.0) - comparison.currentTotal, homeCurrency)
                             ),
                             0.3f
                         )
@@ -219,9 +219,9 @@ class InsightsEngine @Inject constructor(
                                 catInsight.changeFromPrevious.toInt()
                             ),
                             UiText.fromKey(
-                                DomainTextKeys.ANALYTICS_INSIGHT_CATEGORY_UP_DESCRIPTION_FORMAT,
-                                formatCurrency(catInsight.currentTotal),
-                                formatCurrency(catInsight.previousTotal ?: 0.0)
+                        DomainTextKeys.ANALYTICS_INSIGHT_CATEGORY_UP_DESCRIPTION_FORMAT,
+                        formatCurrency(catInsight.currentTotal, homeCurrency),
+                        formatCurrency(catInsight.previousTotal ?: 0.0, homeCurrency)
                             ),
                             0.7f
                         )
@@ -241,7 +241,7 @@ class InsightsEngine @Inject constructor(
                                 DomainTextKeys.ANALYTICS_INSIGHT_RECURRING_TITLE_FORMAT,
                                 recurring.merchant
                             ),
-                            UiText.from("${formatCurrency(recurring.avgAmount)} • $cadenceLabel"),
+                            UiText.from("${formatCurrency(recurring.avgAmount, homeCurrency)} • $cadenceLabel"),
                             0.5f
                         )
                     )
@@ -259,8 +259,8 @@ class InsightsEngine @Inject constructor(
                         largest.merchant
                     ),
                     UiText.fromKey(
-                        DomainTextKeys.ANALYTICS_INSIGHT_LARGEST_TRANSACTION_DESCRIPTION_FORMAT,
-                        formatCurrency(largest.effectiveAmount),
+                    DomainTextKeys.ANALYTICS_INSIGHT_LARGEST_TRANSACTION_DESCRIPTION_FORMAT,
+                        formatCurrency(largest.effectiveAmount, homeCurrency),
                         formatDate(largest.date)
                     ),
                     0.25f
@@ -564,7 +564,7 @@ class InsightsEngine @Inject constructor(
         return buildSpendingPace(currentMonth, previousMonth, recentExpenses)
     }
 
-    private fun formatCurrency(amount: Double): String = CurrencyFormatter.format(amount)
+    private fun formatCurrency(amount: Double, currency: String = "EUR"): String = CurrencyFormatter.format(amount, currency)
     
     private fun formatDate(dateMs: Long): String {
          return DateFormatterUtils.formatTimestampJavaTime(dateMs, "MMM dd")

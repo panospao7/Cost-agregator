@@ -33,7 +33,8 @@ fun CategoryBreakdownSheet(
     periodLabel: String,
     categories: List<CategoryBreakdown>,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currency: String = "EUR"
 ) {
     val displayCategories = categories.take(5)
     val hasMore = categories.size > 5
@@ -75,15 +76,16 @@ fun CategoryBreakdownSheet(
                 } catch (_: Exception) {
                     Color.Gray
                 }
-                CategoryRow(
-                    category = CategorySpending(
-                        name = breakdown.category.name,
-                        icon = breakdown.category.icon,
-                        color = color,
-                        amount = breakdown.totalAmount,
-                        percentage = (breakdown.percentageOfTotal / 100.0).toFloat()
-                    )
-                )
+            CategoryRow(
+                category = CategorySpending(
+                    name = breakdown.category.name,
+                    icon = breakdown.category.icon,
+                    color = color,
+                    amount = breakdown.totalAmount,
+                    percentage = (breakdown.percentageOfTotal / 100.0).toFloat()
+                ),
+                currency = currency
+            )
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
@@ -125,7 +127,7 @@ fun CategoryBreakdownSheet(
 }
 
 @Composable
-private fun CategoryRow(category: CategorySpending) {
+private fun CategoryRow(category: CategorySpending, currency: String = "EUR") {
     Card(
         colors = CardDefaults.cardColors(containerColor = SemanticColors.GlassSurface),
         shape = RoundedCornerShape(12.dp)
@@ -165,7 +167,7 @@ private fun CategoryRow(category: CategorySpending) {
                 }
 
                 Text(
-                    text = CurrencyFormatter.format(category.amount),
+                    text = CurrencyFormatter.format(category.amount, currency),
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontWeight = FontWeight.Bold,
                         fontFeatureSettings = "tnum"

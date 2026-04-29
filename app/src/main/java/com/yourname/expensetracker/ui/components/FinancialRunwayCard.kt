@@ -28,7 +28,8 @@ fun FinancialRunwayCard(
     committedExpenses: Double,
     likelyExpenses: Double,
     status: DashboardWidget.RunwayStatus,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currency: String = "EUR"
 ) {
     // Guard negative days
     val safeDays = daysRemaining.coerceAtLeast(0)
@@ -151,7 +152,7 @@ fun FinancialRunwayCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        CurrencyFormatter.format(discretionaryRemaining, showCents = false),
+                        CurrencyFormatter.format(discretionaryRemaining, currency, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.TextPrimary
@@ -164,7 +165,7 @@ fun FinancialRunwayCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        CurrencyFormatter.format(averageDailyDiscretionarySpend),
+                        CurrencyFormatter.format(averageDailyDiscretionarySpend, currency),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.TextPrimary
@@ -177,7 +178,7 @@ fun FinancialRunwayCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        CurrencyFormatter.format(monthlyIncome, showCents = false),
+                        CurrencyFormatter.format(monthlyIncome, currency, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.SuccessGreen
@@ -197,7 +198,7 @@ fun FinancialRunwayCard(
                             color = SemanticColors.WarningOrange.copy(alpha = 0.1f)
                         ) {
                             Text(
-                                "${CurrencyFormatter.format(committedExpenses, showCents = false)} committed",
+                                "${CurrencyFormatter.format(committedExpenses, currency, showCents = false)} committed",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.WarningOrange,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -210,7 +211,7 @@ fun FinancialRunwayCard(
                             color = SemanticColors.PrimaryIndigo.copy(alpha = 0.1f)
                         ) {
                             Text(
-                                "${CurrencyFormatter.format(likelyExpenses, showCents = false)} planned",
+                                "${CurrencyFormatter.format(likelyExpenses, currency, showCents = false)} planned",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.PrimaryIndigo,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)

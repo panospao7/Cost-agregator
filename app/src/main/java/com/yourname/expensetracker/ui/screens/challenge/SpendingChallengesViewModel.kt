@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.challenge.ActiveChallengesSnapshot
 import com.yourname.expensetracker.domain.challenge.NoSpendStatus
 import com.yourname.expensetracker.domain.challenge.SpendingChallenge
 import com.yourname.expensetracker.domain.challenge.SpendingChallengeManager
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,8 +22,9 @@ import javax.inject.Inject
 
 @HiltViewModel
 class SpendingChallengesViewModel @Inject constructor(
-    private val challengeManager: SpendingChallengeManager,
-    private val categoryRepository: CategoryRepository
+ private val challengeManager: SpendingChallengeManager,
+ private val categoryRepository: CategoryRepository,
+ private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
     data class CreateChallengeUiState(
@@ -52,14 +54,18 @@ class SpendingChallengesViewModel @Inject constructor(
     private val _createChallengeUiState = MutableStateFlow(CreateChallengeUiState())
     val createChallengeUiState: StateFlow<CreateChallengeUiState> = _createChallengeUiState.asStateFlow()
 
-    private val _createChallengeEvents = MutableSharedFlow<CreateChallengeEvent>(extraBufferCapacity = 1)
-    val createChallengeEvents: SharedFlow<CreateChallengeEvent> = _createChallengeEvents.asSharedFlow()
+ private val _createChallengeEvents = MutableSharedFlow<CreateChallengeEvent>(extraBufferCapacity = 1)
+ val createChallengeEvents: SharedFlow<CreateChallengeEvent> = _createChallengeEvents.asSharedFlow()
+
+ private val _homeCurrency = MutableStateFlow("EUR")
+ val homeCurrency: StateFlow<String> = _homeCurrency.asStateFlow()
     
-    init {
-        loadCategories()
-        checkNoSpendStatus()
-        loadActiveChallenges()
-    }
+ init {
+ loadCategories()
+ checkNoSpendStatus()
+ loadActiveChallenges()
+ collectHomeCurrency()
+ }
 
     private fun loadCategories() {
         viewModelScope.launch {
@@ -139,7 +145,15 @@ class SpendingChallengesViewModel @Inject constructor(
                 )
             }
 
-            _createChallengeUiState.value = _createChallengeUiState.value.copy(isCreating = false)
-        }
-    }
+ _createChallengeUiState.value = _createChallengeUiState.value.copy(isCreating = false)
+ }
+ }
+
+ private fun collectHomeCurrency() {
+ viewModelScope.launch {
+ currencySettingsRepository.homeCurrency().collect { hc ->
+ _homeCurrency.value = hc
+ }
+ }
+ }
 }

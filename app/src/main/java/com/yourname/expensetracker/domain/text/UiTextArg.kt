@@ -3,7 +3,8 @@ package com.yourname.expensetracker.domain.text
 sealed interface UiTextArg {
     data class Money(
         val amount: Double,
-        val currency: String? = null,
+        val currency: String = "EUR",
+        val currencyAssumption: String = "LEGACY_DEFAULT",
         val showCents: Boolean = true
     ) : UiTextArg
 

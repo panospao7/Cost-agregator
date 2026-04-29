@@ -47,6 +47,7 @@ fun SpendingChallengesScreen(
     val activeChallenges by viewModel.activeChallenges.collectAsState()
     val challengesAvailability by viewModel.challengesAvailability.collectAsState()
     val createChallengeUiState by viewModel.createChallengeUiState.collectAsState()
+ val homeCurrency by viewModel.homeCurrency.collectAsState()
     val completedActionKeys by actionRegistry.completedActions.collectAsState()
     var showCreateDialog by rememberSaveable(initialShowCreateDialog) {
         mutableStateOf(initialShowCreateDialog)
@@ -121,7 +122,7 @@ fun SpendingChallengesScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
-                NoSpendStreakCard(noSpendStatus)
+                NoSpendStreakCard(noSpendStatus, homeCurrency = homeCurrency)
             }
             
             item {
@@ -178,10 +179,11 @@ fun SpendingChallengesScreen(
                 }
             } else {
                 items(activeChallenges, key = { it.id }) { challenge ->
-                    ActiveChallengeCard(
-                        challenge = challenge,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+        ActiveChallengeCard(
+            challenge = challenge,
+            modifier = Modifier.fillMaxWidth(),
+            homeCurrency = homeCurrency
+        )
                 }
             }
         }
@@ -240,7 +242,8 @@ private fun ChallengesUnavailableCard(
 @Composable
 private fun ActiveChallengeCard(
     challenge: SpendingChallenge,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    homeCurrency: String = "EUR"
 ) {
     Card(modifier = modifier) {
         Column(
@@ -276,9 +279,10 @@ private fun ActiveChallengeCard(
 
             challenge.targetAmount?.let { targetAmount ->
                 Text(
-                    text = formatChallengeTargetText(
-                        challenge = challenge,
-                        targetAmount = targetAmount
+ text = formatChallengeTargetText(
+ challenge = challenge,
+ targetAmount = targetAmount,
+ homeCurrency = homeCurrency
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -290,13 +294,14 @@ private fun ActiveChallengeCard(
 
 @Composable
 private fun formatChallengeTargetText(
-    challenge: SpendingChallenge,
-    targetAmount: Double
+ challenge: SpendingChallenge,
+ targetAmount: Double,
+ homeCurrency: String
 ): String {
-    return when (challenge.type) {
-        ChallengeType.REDUCE_SPENDING -> {
-            val baseline = challenge.baselineAmount?.let(CurrencyFormatter::format)
-            val reduction = CurrencyFormatter.format(targetAmount)
+ return when (challenge.type) {
+ ChallengeType.REDUCE_SPENDING -> {
+ val baseline = challenge.baselineAmount?.let { CurrencyFormatter.format(it, homeCurrency) }
+ val reduction = CurrencyFormatter.format(targetAmount, homeCurrency)
             if (baseline != null) {
                 stringResource(
                     R.string.challenges_target_reduce_with_baseline_format,
@@ -309,14 +314,14 @@ private fun formatChallengeTargetText(
         }
 
         else -> stringResource(
-            R.string.challenges_target_generic_format,
-            CurrencyFormatter.format(targetAmount)
+ R.string.challenges_target_generic_format,
+ CurrencyFormatter.format(targetAmount, homeCurrency)
         )
     }
 }
 
 @Composable
-private fun NoSpendStreakCard(status: NoSpendStatus?) {
+private fun NoSpendStreakCard(status: NoSpendStatus?, homeCurrency: String = "EUR") {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -371,7 +376,7 @@ private fun NoSpendStreakCard(status: NoSpendStatus?) {
                 status.savedToday?.let { saved ->
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = stringResource(R.string.challenges_saved_today_format, CurrencyFormatter.format(saved)),
+                        text = stringResource(R.string.challenges_saved_today_format, CurrencyFormatter.format(saved, homeCurrency)),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onTertiaryContainer
                     )

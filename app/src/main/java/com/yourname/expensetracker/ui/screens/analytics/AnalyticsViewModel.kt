@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.location.PlaceInsight
 import com.yourname.expensetracker.domain.location.TravelDetectionEngine
 import com.yourname.expensetracker.domain.location.TravelInsight
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -71,7 +72,8 @@ data class AnalyticsState(
     val travelInsight: TravelInsight? = null,
     // F13: Spending Personality Profile
     val personalityProfile: SpendingPersonalityProfile? = null,
-    val isLoading: Boolean = true
+    val isLoading: Boolean = true,
+    val homeCurrency: String = "EUR"
 )
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)
@@ -87,8 +89,9 @@ class AnalyticsViewModel @Inject constructor(
     private val locationInsightsEngine: LocationInsightsEngine,
     private val areaSpendingEngine: AreaSpendingEngine,
     private val travelDetectionEngine: TravelDetectionEngine,
-    private val spendingPersonalityClassifier: SpendingPersonalityClassifier,
-    private val timeProvider: TimeProvider
+ private val spendingPersonalityClassifier: SpendingPersonalityClassifier,
+ private val timeProvider: TimeProvider,
+ private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
     private data class PeriodCacheKey(
@@ -137,6 +140,9 @@ class AnalyticsViewModel @Inject constructor(
 
     private val _selectedPeriod = MutableStateFlow(TimePeriod.MONTH)
 
+ private val _homeCurrency = currencySettingsRepository.homeCurrency()
+ .stateIn(viewModelScope, SharingStarted.Lazily, "EUR")
+
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val state: StateFlow<AnalyticsState> = combine(
         categoryRepository.allCategories.catch { emit(emptyList()) },
@@ -176,7 +182,7 @@ class AnalyticsViewModel @Inject constructor(
             val freshness = inputs.expenseFreshness
             val budgetFreshness = inputs.budgetFreshness
 
-            emit(AnalyticsState(isLoading = true, selectedPeriod = period))
+            emit(AnalyticsState(isLoading = true, selectedPeriod = period, homeCurrency = _homeCurrency.value))
 
             if (
                 freshness.dataVersion != lastExpenseDataVersion ||
@@ -204,7 +210,7 @@ class AnalyticsViewModel @Inject constructor(
 
             val cached = analyticsCache[cacheKey]
             if (cached != null) {
-                emit(cached.copy(isLoading = false, selectedPeriod = period))
+                emit(cached.copy(isLoading = false, selectedPeriod = period, homeCurrency = _homeCurrency.value))
                 return@flow
             }
 
@@ -328,7 +334,7 @@ class AnalyticsViewModel @Inject constructor(
 
         // Insights
         val insightsSnapshot = insightsEngine.generateInsights(analyticsCategories, allExpenseSnapshots)
-        val insights = insightsEngine.getLegacyInsights(insightsSnapshot)
+        val insights = insightsEngine.getLegacyInsights(insightsSnapshot, _homeCurrency.value)
         // Note: dayOfWeekPattern is now computed period-aware below from currentExpenses
 
         // Recurring (use the list from snapshot but mapped to legacy if needed, or just legacy detection)
@@ -529,35 +535,36 @@ class AnalyticsViewModel @Inject constructor(
             null
         }
 
-        return AnalyticsState(
-            selectedPeriod = period,
-            currentTotal = currentTotal,
-            previousTotal = if (previousTotal > 0) previousTotal else null,
-            changePercent = changePercent,
-            transactionCount = currentExpenses.size,
-            categoryBreakdown = categoryBreakdown,
-            merchantBreakdown = merchantBreakdown,
-            dailyTotals = dailyTotals,
-            insights = insights,
-            recurring = recurring,
-            yearOverYear = yearOverYear,
-            velocityAnomalies = velocityAnomalies,
-            postSalaryPattern = postSalaryPattern,
-            suspectTransactions = suspectTransactions,
-            dayOfWeekPattern = dayOfWeekPattern,
-            budgetVsActual = budgetVsActual,
-            statisticalInsights = advResult.stats,
-            enhancedCategories = advResult.cats,
-            enhancedMerchants = advResult.merchs,
-            spendingPatterns = advResult.patterns,
-            hourOfDayPattern = hourOfDayPattern,
-            currentDateRange = Pair(currentStart, currentEnd),
-            locationInsights = locationInsights,
-            areaSpending = areaSpending,
-            travelInsight = travelInsight,
-            personalityProfile = personalityProfile,
-            isLoading = false
-        )
+ return AnalyticsState(
+ selectedPeriod = period,
+ currentTotal = currentTotal,
+ previousTotal = if (previousTotal > 0) previousTotal else null,
+ changePercent = changePercent,
+ transactionCount = currentExpenses.size,
+ categoryBreakdown = categoryBreakdown,
+ merchantBreakdown = merchantBreakdown,
+ dailyTotals = dailyTotals,
+ insights = insights,
+ recurring = recurring,
+ yearOverYear = yearOverYear,
+ velocityAnomalies = velocityAnomalies,
+ postSalaryPattern = postSalaryPattern,
+ suspectTransactions = suspectTransactions,
+ dayOfWeekPattern = dayOfWeekPattern,
+ budgetVsActual = budgetVsActual,
+ statisticalInsights = advResult.stats,
+ enhancedCategories = advResult.cats,
+ enhancedMerchants = advResult.merchs,
+ spendingPatterns = advResult.patterns,
+ hourOfDayPattern = hourOfDayPattern,
+ currentDateRange = Pair(currentStart, currentEnd),
+ locationInsights = locationInsights,
+ areaSpending = areaSpending,
+ travelInsight = travelInsight,
+ personalityProfile = personalityProfile,
+ isLoading = false,
+ homeCurrency = _homeCurrency.value
+ )
     }
 
 

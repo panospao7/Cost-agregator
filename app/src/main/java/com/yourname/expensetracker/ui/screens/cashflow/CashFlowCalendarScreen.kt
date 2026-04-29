@@ -187,13 +187,14 @@ fun CashFlowCalendarScreen(
                 ) {
                     items(days) { dayCell ->
                         if (dayCell != null) {
-                            DayCellView(
-                                dayCell = dayCell,
-                                isSelected = state.selectedDate?.let { selected ->
-                                    normalizeDateKey(selected) == normalizeDateKey(dayCell.date)
-                                } ?: false,
-                                onClick = { viewModel.selectDate(dayCell.date) }
-                            )
+                DayCellView(
+                    dayCell = dayCell,
+                    isSelected = state.selectedDate?.let { selected ->
+                        normalizeDateKey(selected) == normalizeDateKey(dayCell.date)
+                    } ?: false,
+                    onClick = { viewModel.selectDate(dayCell.date) },
+                    homeCurrency = state.homeCurrency
+                )
                         } else {
                             Box(modifier = Modifier.aspectRatio(1f))
                         }
@@ -205,10 +206,11 @@ fun CashFlowCalendarScreen(
                 ModalBottomSheet(
                     onDismissRequest = { viewModel.selectDate(null) }
                 ) {
-                    DailyCashFlowDetails(
-                        selectedDateLabel = selectedDateFormat.format(selectedDate),
-                        cashFlow = selectedCashFlow
-                    )
+            DailyCashFlowDetails(
+                selectedDateLabel = selectedDateFormat.format(selectedDate),
+                cashFlow = selectedCashFlow,
+                homeCurrency = state.homeCurrency
+            )
                 }
             }
         }
@@ -225,7 +227,8 @@ data class DayCell(
 private fun DayCellView(
     dayCell: DayCell,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    homeCurrency: String = "EUR"
 ) {
     val backgroundColor = when {
         isSelected -> MaterialTheme.colorScheme.primaryContainer
@@ -253,7 +256,7 @@ private fun DayCellView(
             if (dayCell.cashFlow != null) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = CurrencyFormatter.format(dayCell.cashFlow.endingBalance, showCents = false),
+                    text = CurrencyFormatter.format(dayCell.cashFlow.endingBalance, homeCurrency, showCents = false),
                     style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.Center
                 )
@@ -313,7 +316,8 @@ private fun normalizeDateKey(date: Date): Long {
 @Composable
 private fun DailyCashFlowDetails(
     selectedDateLabel: String,
-    cashFlow: DailyCashFlow?
+    cashFlow: DailyCashFlow?,
+    homeCurrency: String = "EUR"
 ) {
     Column(
         modifier = Modifier
@@ -343,24 +347,24 @@ private fun DailyCashFlowDetails(
         val recurringTotal = cashFlow.predictedRecurring.sumOf { it.averageAmount }
 
         Text(
-            text = "Ending balance: ${CurrencyFormatter.format(cashFlow.endingBalance)}",
+            text = "Ending balance: ${CurrencyFormatter.format(cashFlow.endingBalance, homeCurrency)}",
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold
         )
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Income: ${CurrencyFormatter.format(incomeTotal)}",
+            text = "Income: ${CurrencyFormatter.format(incomeTotal, homeCurrency)}",
             style = MaterialTheme.typography.bodyMedium,
             color = SemanticColors.StatusGreen
         )
         Text(
-            text = "Expenses: ${CurrencyFormatter.format(expensesTotal)}",
+            text = "Expenses: ${CurrencyFormatter.format(expensesTotal, homeCurrency)}",
             style = MaterialTheme.typography.bodyMedium,
             color = SemanticColors.StatusRed
         )
         Text(
-            text = "Recurring: ${CurrencyFormatter.format(recurringTotal)}",
+            text = "Recurring: ${CurrencyFormatter.format(recurringTotal, homeCurrency)}",
             style = MaterialTheme.typography.bodyMedium,
             color = SemanticColors.StatusYellow
         )
@@ -371,7 +375,7 @@ private fun DailyCashFlowDetails(
             Text(text = "Income items", fontWeight = FontWeight.SemiBold)
             cashFlow.income.take(3).forEach { income ->
                 Text(
-                    text = "• ${income.merchant}: +${CurrencyFormatter.format(abs(income.amount))}",
+                    text = "• ${income.merchant}: +${CurrencyFormatter.format(abs(income.amount), homeCurrency)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -383,7 +387,7 @@ private fun DailyCashFlowDetails(
             Text(text = "Expense items", fontWeight = FontWeight.SemiBold)
             cashFlow.expenses.take(3).forEach { expense ->
                 Text(
-                    text = "• ${expense.merchant}: -${CurrencyFormatter.format(expense.amount)}",
+                    text = "• ${expense.merchant}: -${CurrencyFormatter.format(expense.amount, homeCurrency)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -395,7 +399,7 @@ private fun DailyCashFlowDetails(
             Text(text = "Recurring items", fontWeight = FontWeight.SemiBold)
             cashFlow.predictedRecurring.take(3).forEach { recurring ->
                 Text(
-                    text = "• ${recurring.merchantName}: -${CurrencyFormatter.format(recurring.averageAmount)}",
+                    text = "• ${recurring.merchantName}: -${CurrencyFormatter.format(recurring.averageAmount, homeCurrency)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

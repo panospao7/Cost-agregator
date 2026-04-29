@@ -32,7 +32,8 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 @Composable
 fun MonteCarloForecastCard(
     result: MonteCarloResult,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currency: String = "EUR"
 ) {
     val confidenceColor = when (result.confidence.level) {
         ConfidenceLevel.HIGH -> SemanticColors.SuccessGreen
@@ -105,7 +106,7 @@ fun MonteCarloForecastCard(
                             color = SemanticColors.TextSecondary
                         )
             Text(
-                text = CurrencyFormatter.format(result.percentile50, showCents = false),
+                text = CurrencyFormatter.format(result.percentile50, currency, showCents = false),
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.ExtraBold,
                 color = SemanticColors.TextPrimary
@@ -148,7 +149,7 @@ fun MonteCarloForecastCard(
                             color = probabilityColor ?: SemanticColors.TextPrimary
                         )
                         Text(
-                            "of ${CurrencyFormatter.format(result.budgetAmount, showCents = false)}",
+                            "of ${CurrencyFormatter.format(result.budgetAmount, currency, showCents = false)}",
                             style = MaterialTheme.typography.labelSmall,
                             color = SemanticColors.TextMuted
                         )
@@ -171,7 +172,7 @@ fun MonteCarloForecastCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        CurrencyFormatter.format(result.spentToDate, showCents = false),
+                        CurrencyFormatter.format(result.spentToDate, currency, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.TextPrimary
@@ -186,7 +187,7 @@ fun MonteCarloForecastCard(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        CurrencyFormatter.format(result.knownUpcoming, showCents = false),
+                        CurrencyFormatter.format(result.knownUpcoming, currency, showCents = false),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = SemanticColors.WarningOrange

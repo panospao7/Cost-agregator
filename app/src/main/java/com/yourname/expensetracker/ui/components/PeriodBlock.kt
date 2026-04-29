@@ -24,7 +24,8 @@ fun PeriodBlock(
     period: PeriodTotal,
     isSelected: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currency: String = "EUR"
 ) {
     val backgroundColor = when (period.status) {
         PeriodStatus.UNDER_AVERAGE -> SemanticColors.SuccessGreen
@@ -61,7 +62,7 @@ fun PeriodBlock(
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = CurrencyFormatter.format(period.totalAmount, showCents = false),
+                text = CurrencyFormatter.format(period.totalAmount, currency, showCents = false),
                 style = MaterialTheme.typography.labelSmall,
                 color = Color.White,
                 fontWeight = FontWeight.ExtraBold,

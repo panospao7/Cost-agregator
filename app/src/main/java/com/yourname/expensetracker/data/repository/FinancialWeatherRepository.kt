@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import kotlinx.coroutines.flow.first
 import timber.log.Timber
 
 @Singleton
@@ -32,6 +34,7 @@ class FinancialWeatherRepository @Inject constructor(
     private val synthesisEngine: SynthesisEngine,
     private val narrativeGenerator: NarrativeGenerator,
     private val analyticsRepository: AnalyticsRepository,
+    private val currencySettingsRepository: CurrencySettingsRepository,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
 ) {
     fun getFinancialWeather(): Flow<FinancialWeather> = combine(
@@ -58,7 +61,8 @@ class FinancialWeatherRepository @Inject constructor(
         val forecast = synthesisEngine.synthesize(assembledInput)
         
         // 4. Generate Narrative
-        val narrative = narrativeGenerator.generate(forecast, assembledInput.budgetStatuses)
+        val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (_: Exception) { "EUR" }
+        val narrative = narrativeGenerator.generate(forecast, assembledInput.budgetStatuses, homeCurrency)
 
         // 5. Map to UI Model
         FinancialWeather(

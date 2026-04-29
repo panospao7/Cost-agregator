@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.budget.BudgetAutopilotRecommendations
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.domain.budget.CategoryBudgetRecommendation
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -25,7 +26,8 @@ data class BudgetUiState(
     val autopilotLoading: Boolean = false,
     val autopilotError: String? = null,
     val isLoading: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val homeCurrency: String = "EUR"
 )
 
 @HiltViewModel
@@ -34,7 +36,8 @@ class BudgetViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val offsetEngine: SharedExpenseBudgetOffsetEngine,
     private val autopilotEngine: BudgetAutopilotEngine,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -60,21 +63,30 @@ class BudgetViewModel @Inject constructor(
                 }
             }
 
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val _homeCurrency = currencySettingsRepository.homeCurrency()
+        .stateIn(viewModelScope, SharingStarted.Lazily, "EUR")
+
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val uiState: StateFlow<BudgetUiState> = combine(
-        adjustedBudgetStatuses,
-        _suggestionsRefreshTrigger.flatMapLatest { flow { emit(budgetRepository.getSuggestions()) } },
-        _manualState,
-        _autopilotRecommendations,
-        _autopilotLoading
-    ) { statuses, suggestions, manual, autopilot, autopilotLoading ->
+        combine(
+            adjustedBudgetStatuses,
+            _suggestionsRefreshTrigger.flatMapLatest { flow { emit(budgetRepository.getSuggestions()) } }
+        ) { statuses, suggestions -> statuses to suggestions },
+        combine(
+            _manualState,
+            _autopilotRecommendations,
+            _autopilotLoading
+        ) { manual, autopilot, autopilotLoading -> Triple(manual, autopilot, autopilotLoading) },
+        _homeCurrency
+    ) { (statuses, suggestions), (manual, autopilot, autopilotLoading), hc ->
         BudgetUiState(
             budgets = statuses,
             suggestions = suggestions,
             autopilotRecommendations = autopilot?.categoryRecommendations ?: emptyList(),
             autopilotLoading = autopilotLoading,
             isLoading = manual is ManualState.Loading,
-            error = (manual as? ManualState.Error)?.message
+            error = (manual as? ManualState.Error)?.message,
+            homeCurrency = hc
         )
     }
     .catch { e ->

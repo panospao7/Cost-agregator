@@ -105,6 +105,7 @@ fun TransactionsScreen(
     val isLoadingMore by viewModel.isLoadingMoreState.collectAsState()
     val hasReachedEnd by viewModel.hasReachedEnd.collectAsState()
     val tabCounts by viewModel.tabTransactionCounts.collectAsState()
+ val homeCurrency by viewModel.homeCurrency.collectAsState()
     val ownershipFilter by viewModel.ownershipFilter.collectAsState()
     val sortOrder by viewModel.sortOrder.collectAsState()
     val debugActionsEnabled = BuildConfig.DEBUG
@@ -466,11 +467,12 @@ fun TransactionsScreen(
                         groupedTransactions.forEach { (dateString, items) ->
                             // Date header
                             stickyHeader {
-                                DateHeader(
-                                    date = dateString,
-                                    totalAmount = items.sumOf { it.expense.signedEffectiveAmount() },
-                                    itemCount = items.size
-                                )
+            DateHeader(
+                    date = dateString,
+                    totalAmount = items.sumOf { it.expense.signedEffectiveAmount() },
+                    itemCount = items.size,
+                    homeCurrency = homeCurrency
+                )
                             }
                             
                             // Transactions for this date
@@ -792,7 +794,8 @@ private fun EmptyTransactionsState(
 private fun DateHeader(
     date: String,
     totalAmount: Double,
-    itemCount: Int
+    itemCount: Int,
+    homeCurrency: String = "EUR"
 ) {
     Box(
         modifier = Modifier
@@ -839,7 +842,7 @@ private fun DateHeader(
                     }
                 ) {
                     Text(
-                        text = CurrencyFormatter.formatWithSign(totalAmount, CurrencyConverter.DEFAULT_BASE_CURRENCY),
+                        text = CurrencyFormatter.formatWithSign(totalAmount, homeCurrency),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = when {

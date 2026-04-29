@@ -206,16 +206,17 @@ fun BudgetScreen(
 
                 // F9: AI Budget Autopilot Banner
                 item {
-                    AutopilotBanner(
-                        recommendations = uiState.autopilotRecommendations,
-                        isLoading = uiState.autopilotLoading,
-                        onGenerate = { viewModel.generateAutopilotRecommendations() },
-                        onApply = { recommendation ->
-                            viewModel.applyAutopilotRecommendation(recommendation)
-                        },
-                        onApplyAll = { viewModel.applyAllAutopilotRecommendations() },
-                        onDismiss = { viewModel.dismissAllAutopilotRecommendations() }
-                    )
+        AutopilotBanner(
+            recommendations = uiState.autopilotRecommendations,
+            isLoading = uiState.autopilotLoading,
+            onGenerate = { viewModel.generateAutopilotRecommendations() },
+            onApply = { recommendation ->
+                viewModel.applyAutopilotRecommendation(recommendation)
+            },
+            onApplyAll = { viewModel.applyAllAutopilotRecommendations() },
+            onDismiss = { viewModel.dismissAllAutopilotRecommendations() },
+            homeCurrency = uiState.homeCurrency
+        )
                 }
 
                 if (uiState.budgets.isEmpty()) {
@@ -933,7 +934,8 @@ fun AutopilotBanner(
     onGenerate: () -> Unit,
     onApply: (CategoryBudgetRecommendation) -> Unit,
     onApplyAll: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    homeCurrency: String = "EUR"
 ) {
     var expanded by remember { mutableStateOf(false) }
     val hasRecommendations = recommendations.isNotEmpty()
@@ -1025,10 +1027,11 @@ fun AutopilotBanner(
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 recommendations.take(3).forEach { recommendation ->
-                    AutopilotRecommendationItem(
-                        recommendation = recommendation,
-                        onApply = { onApply(recommendation) }
-                    )
+        AutopilotRecommendationItem(
+            recommendation = recommendation,
+            onApply = { onApply(recommendation) },
+            homeCurrency = homeCurrency
+        )
                     Spacer(modifier = Modifier.height(8.dp))
                 }
                 
@@ -1078,7 +1081,8 @@ fun AutopilotBanner(
 @Composable
 fun AutopilotRecommendationItem(
     recommendation: CategoryBudgetRecommendation,
-    onApply: () -> Unit
+    onApply: () -> Unit,
+    homeCurrency: String = "EUR"
 ) {
     val trendColor = when (recommendation.trend) {
         BudgetTrend.INCREASING -> SemanticColors.DangerRed
@@ -1137,7 +1141,7 @@ fun AutopilotRecommendationItem(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
-                        text = CurrencyFormatter.format(recommendation.currentBudget, showCents = false),
+                        text = CurrencyFormatter.format(recommendation.currentBudget, homeCurrency, showCents = false),
                         style = MaterialTheme.typography.bodySmall,
                         textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1148,7 +1152,7 @@ fun AutopilotRecommendationItem(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = CurrencyFormatter.format(recommendation.recommendedBudget, showCents = false),
+                        text = CurrencyFormatter.format(recommendation.recommendedBudget, homeCurrency, showCents = false),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (recommendation.delta > 0) SemanticColors.DangerRed else SemanticColors.SuccessGreen

@@ -68,11 +68,7 @@ fun UiText.asString(): String {
 private fun List<Any>.resolveArgs(): List<Any> = map { arg ->
     when (arg) {
         is UiTextArg.Money -> {
-            if (arg.currency != null) {
-                CurrencyFormatter.format(arg.amount, arg.currency)
-            } else {
-                CurrencyFormatter.format(arg.amount, showCents = arg.showCents)
-            }
+            CurrencyFormatter.format(arg.amount, arg.currency, arg.showCents)
         }
 
         is UiTextArg.Percent -> "%1$.${arg.decimals}f%%".format(arg.value)

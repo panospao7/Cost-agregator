@@ -29,7 +29,8 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 @Composable
 fun PercentileGridCard(
     percentiles: TransactionPercentiles,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currency: String = "EUR"
 ) {
     val a11yContentDesc = stringResource(R.string.a11y_percentile_range_format, percentiles.p25, percentiles.p75)
     
@@ -57,11 +58,11 @@ fun PercentileGridCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                PercentileColumn(stringResource(R.string.percentile_small), percentiles.p10, isSmall = true)
-                PercentileColumn(stringResource(R.string.percentile_low), percentiles.p25, isSecondary = true)
-                PercentileColumn(stringResource(R.string.percentile_typical), percentiles.p50, isPrimary = true)
-                PercentileColumn(stringResource(R.string.percentile_high), percentiles.p75, isSecondary = true)
-                PercentileColumn(stringResource(R.string.percentile_large), percentiles.p90, isLarge = true)
+        PercentileColumn(stringResource(R.string.percentile_small), percentiles.p10, isSmall = true, currency = currency)
+        PercentileColumn(stringResource(R.string.percentile_low), percentiles.p25, isSecondary = true, currency = currency)
+        PercentileColumn(stringResource(R.string.percentile_typical), percentiles.p50, isPrimary = true, currency = currency)
+        PercentileColumn(stringResource(R.string.percentile_high), percentiles.p75, isSecondary = true, currency = currency)
+        PercentileColumn(stringResource(R.string.percentile_large), percentiles.p90, isLarge = true, currency = currency)
             }
             
             Spacer(modifier = Modifier.height(4.dp))
@@ -108,7 +109,8 @@ private fun PercentileColumn(
     isPrimary: Boolean = false,
     isSecondary: Boolean = false,
     isSmall: Boolean = false,
-    isLarge: Boolean = false
+    isLarge: Boolean = false,
+    currency: String = "EUR"
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -130,7 +132,7 @@ private fun PercentileColumn(
         )
         
         Text(
-            text = CurrencyFormatter.format(value, showCents = false),
+            text = CurrencyFormatter.format(value, currency, showCents = false),
             style = when {
                 isPrimary -> MaterialTheme.typography.titleMedium
                 isSecondary -> MaterialTheme.typography.bodyLarge
@@ -153,7 +155,8 @@ private fun PercentileColumn(
 @Composable
 fun TransactionHistogramChart(
     bins: List<HistogramBin>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currency: String = "EUR"
 ) {
     if (bins.isEmpty()) return
     
@@ -236,7 +239,7 @@ fun TransactionHistogramChart(
                         
                         // X-axis label (amount range)
                         Text(
-                            text = CurrencyFormatter.format(bin.rangeStart, showCents = false),
+                            text = CurrencyFormatter.format(bin.rangeStart, currency, showCents = false),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center

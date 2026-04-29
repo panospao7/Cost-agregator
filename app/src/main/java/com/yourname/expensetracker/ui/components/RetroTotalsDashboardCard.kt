@@ -51,25 +51,27 @@ fun RetroTotalsDashboardCard(
     onLevelChanged: (PeriodLevel) -> Unit,
     onEnterStage: (PeriodTotal) -> Unit,
     onViewAnalysis: (PeriodTotal) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currency: String = "EUR"
 ) {
     var showStageDialog by remember { mutableStateOf<PeriodTotal?>(null) }
     
     showStageDialog?.let { period ->
-        RetroStageDialog(
-            period = period,
-            currentLevel = currentLevel,
-            averageAmount = averageAmount,
-            onDismiss = { showStageDialog = null },
-            onEnterStage = {
-                showStageDialog = null
-                onEnterStage(period)
-            },
-            onViewAnalysis = {
-                showStageDialog = null
-                onViewAnalysis(period)
-            }
-        )
+    RetroStageDialog(
+        period = period,
+        currentLevel = currentLevel,
+        averageAmount = averageAmount,
+        onDismiss = { showStageDialog = null },
+        onEnterStage = {
+            showStageDialog = null
+            onEnterStage(period)
+        },
+        onViewAnalysis = {
+            showStageDialog = null
+            onViewAnalysis(period)
+        },
+        currency = currency
+    )
     }
 
     Box(
@@ -112,23 +114,24 @@ fun RetroTotalsDashboardCard(
                     RetroLoadingIndicator()
                 } else {
                     // Stage Select Grid - tapping drills down immediately (except for days which are leaf nodes)
-                    RetroStageGrid(
-                        periods = periods,
-                        selectedPeriod = selectedPeriod,
-                        averageAmount = averageAmount,
-                        currentLevel = currentLevel,
-                        onStageSelected = { period ->
-                            if (currentLevel != PeriodLevel.DAY) {
-                                // Drill down for year/month/week levels
-                                onEnterStage(period)
-                            }
-                            // Days don't drill - they're leaf nodes
-                        },
-                        onStageLongPress = { period ->
-                            // Show dialog on long press for all levels including days
-                            showStageDialog = period
-                        }
-                    )
+        RetroStageGrid(
+            periods = periods,
+            selectedPeriod = selectedPeriod,
+            averageAmount = averageAmount,
+            currentLevel = currentLevel,
+            onStageSelected = { period ->
+                if (currentLevel != PeriodLevel.DAY) {
+                    // Drill down for year/month/week levels
+                    onEnterStage(period)
+                }
+                // Days don't drill - they're leaf nodes
+            },
+            onStageLongPress = { period ->
+                // Show dialog on long press for all levels including days
+                showStageDialog = period
+            },
+            currency = currency
+        )
                 }
                 
                 // Selected stage indicator
@@ -316,7 +319,8 @@ private fun RetroStageGrid(
     averageAmount: Double,
     currentLevel: PeriodLevel,
     onStageSelected: (PeriodTotal) -> Unit,
-    onStageLongPress: (PeriodTotal) -> Unit
+    onStageLongPress: (PeriodTotal) -> Unit,
+    currency: String = "EUR"
 ) {
     val columns = when {
         periods.size <= 4 -> 2
@@ -334,14 +338,15 @@ private fun RetroStageGrid(
             ) {
                 rowPeriods.forEach { period ->
                     val isSelected = period.periodKey == selectedPeriod?.periodKey
-                    RetroStageCard(
-                        period = period,
-                        isSelected = isSelected,
-                        averageAmount = averageAmount,
-                        onClick = { onStageSelected(period) },
-                        onLongClick = { onStageLongPress(period) },
-                        modifier = Modifier.weight(1f)
-                    )
+            RetroStageCard(
+                period = period,
+                isSelected = isSelected,
+                averageAmount = averageAmount,
+                onClick = { onStageSelected(period) },
+                onLongClick = { onStageLongPress(period) },
+                modifier = Modifier.weight(1f),
+                currency = currency
+            )
                 }
                 // Fill remaining space in last row
                 if (rowPeriods.size < columns) {
@@ -362,7 +367,8 @@ private fun RetroStageCard(
     averageAmount: Double,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currency: String = "EUR"
 ) {
     // Calculate medal based on spending vs average
     val percentageOfAvg = if (averageAmount > 0) (period.totalAmount / averageAmount) * 100 else 100.0
@@ -452,7 +458,7 @@ private fun RetroStageCard(
             
             // Amount (score)
             Text(
-                text = CurrencyFormatter.format(period.totalAmount, showCents = false),
+                text = CurrencyFormatter.format(period.totalAmount, currency, showCents = false),
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold
@@ -598,7 +604,8 @@ private fun RetroStageDialog(
     averageAmount: Double,
     onDismiss: () -> Unit,
     onEnterStage: () -> Unit,
-    onViewAnalysis: () -> Unit
+    onViewAnalysis: () -> Unit,
+    currency: String = "EUR"
 ) {
     val percentageOfAvg = if (averageAmount > 0) (period.totalAmount / averageAmount) * 100 else 100.0
     val percentage = period.totalAmount / if (averageAmount > 0) averageAmount else 1.0
@@ -768,10 +775,10 @@ private fun RetroStageDialog(
                     Spacer(modifier = Modifier.height(12.dp))
                     
                     // Comparison stats
-                    RetroStatRowTotals("STAGE BUDGET", CurrencyFormatter.format(averageAmount), RetroColorsTotals.NeonCyan)
+                    RetroStatRowTotals("STAGE BUDGET", CurrencyFormatter.format(averageAmount, currency), RetroColorsTotals.NeonCyan)
                     Spacer(modifier = Modifier.height(4.dp))
                     val diff = period.totalAmount - averageAmount
-                    val diffText = CurrencyFormatter.formatWithSign(diff)
+                    val diffText = CurrencyFormatter.formatWithSign(diff, currency)
                     val diffColor = if (diff > 0) RetroColorsTotals.NeonRed else if (diff < 0) RetroColorsTotals.NeonGreen else RetroColorsTotals.NeonWhite
                     RetroStatRowTotals("DIFFERENCE", diffText, diffColor)
                 }

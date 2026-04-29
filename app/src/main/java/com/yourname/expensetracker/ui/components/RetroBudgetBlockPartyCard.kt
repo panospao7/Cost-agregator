@@ -49,23 +49,25 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
  */
 @Composable
 fun RetroBudgetBlockPartyCard(
-    days: List<DayBudgetStatus>,
-    modifier: Modifier = Modifier,
-    onNavigateToDay: ((Long) -> Unit)? = null
+ days: List<DayBudgetStatus>,
+ modifier: Modifier = Modifier,
+ onNavigateToDay: ((Long) -> Unit)? = null,
+ currency: String = "EUR"
 ) {
     var selectedDay by remember { mutableStateOf<DayBudgetStatus?>(null) }
 
     selectedDay?.let { day ->
-        RetroDayAtAGlanceDialog(
-            day = day,
-            onDismiss = { selectedDay = null },
-            onViewTransactions = if (onNavigateToDay != null) {
-                {
-                    selectedDay = null
-                    onNavigateToDay(day.date)
-                }
-            } else null
-        )
+    RetroDayAtAGlanceDialog(
+        day = day,
+        onDismiss = { selectedDay = null },
+        onViewTransactions = if (onNavigateToDay != null) {
+            {
+                selectedDay = null
+                onNavigateToDay(day.date)
+            }
+        } else null,
+        currency = currency
+    )
     }
 
     Box(
@@ -794,7 +796,8 @@ private object RetroColorsV2 {
 private fun RetroDayAtAGlanceDialog(
     day: DayBudgetStatus,
     onDismiss: () -> Unit,
-    onViewTransactions: (() -> Unit)? = null
+    onViewTransactions: (() -> Unit)? = null,
+    currency: String = "EUR"
 ) {
     val dateStr = DateFormatterUtils.formatTimestampJavaTime(day.date, "MMM dd")
     
@@ -874,7 +877,7 @@ private fun RetroDayAtAGlanceDialog(
                         val balance = day.targetBudget - day.actualSpent
                         val balanceColor = if (balance >= 0) RetroColorsV2.NeonGreen else RetroColorsV2.NeonRed
                         Text(
-                            text = CurrencyFormatter.formatWithSign(balance),
+                            text = CurrencyFormatter.formatWithSign(balance, currency),
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -911,7 +914,7 @@ private fun RetroDayAtAGlanceDialog(
                     // Base target
                     RetroStatRowV3(
                         label = "BASE",
-                        value = CurrencyFormatter.format(day.baseTarget),
+                        value = CurrencyFormatter.format(day.baseTarget, currency),
                         color = RetroColorsV2.NeonWhite.copy(alpha = 0.9f)
                     )
                     
@@ -922,7 +925,7 @@ private fun RetroDayAtAGlanceDialog(
                         val labelText = if (itemCount == 1) "RECURRING" else "RECURRING ($itemCount)"
                         RetroStatRowV3(
                             label = labelText,
-                            value = "+${CurrencyFormatter.format(day.recurringImpact)}",
+                            value = "+${CurrencyFormatter.format(day.recurringImpact, currency)}",
                             color = RetroColorsV2.NeonWhite.copy(alpha = 0.7f)
                         )
                     }
@@ -934,7 +937,7 @@ private fun RetroDayAtAGlanceDialog(
                         val labelText = if (itemCount == 1) "PLANNED" else "PLANNED ($itemCount)"
                         RetroStatRowV3(
                             label = labelText,
-                            value = "+${CurrencyFormatter.format(day.plannedImpact)}",
+                            value = "+${CurrencyFormatter.format(day.plannedImpact, currency)}",
                             color = RetroColorsV2.NeonWhite.copy(alpha = 0.7f)
                         )
                     }
@@ -960,7 +963,7 @@ private fun RetroDayAtAGlanceDialog(
                     // Total
                     RetroStatRowV3(
                         label = "TOTAL TARGET",
-                        value = CurrencyFormatter.format(day.targetBudget),
+                        value = CurrencyFormatter.format(day.targetBudget, currency),
                         color = RetroColorsV2.NeonCyan,
                         isBold = true
                     )
@@ -979,7 +982,7 @@ private fun RetroDayAtAGlanceDialog(
                     
                     RetroStatRowV3(
                         label = "SPENT",
-                        value = CurrencyFormatter.format(day.actualSpent),
+                        value = CurrencyFormatter.format(day.actualSpent, currency),
                         color = if (isOverBudget) RetroColorsV2.NeonRed else RetroColorsV2.NeonGreen,
                         isBold = true
                     )
@@ -992,7 +995,7 @@ private fun RetroDayAtAGlanceDialog(
                         val diffColor = if (diff >= 0) RetroColorsV2.NeonGreen else RetroColorsV2.NeonRed
                         RetroStatRowV3(
                             label = diffText,
-                            value = CurrencyFormatter.format(kotlin.math.abs(diff)),
+                            value = CurrencyFormatter.format(kotlin.math.abs(diff), currency),
                             color = diffColor
                         )
                     }
@@ -1028,7 +1031,7 @@ private fun RetroDayAtAGlanceDialog(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = CurrencyFormatter.format(exp.amount),
+                                    text = CurrencyFormatter.format(exp.amount, currency),
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold

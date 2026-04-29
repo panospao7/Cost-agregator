@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsRecomm
 import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
 import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
@@ -18,18 +19,19 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class SavingsGoalsState(
-    val goals: List<SavingsGoal> = emptyList(),
-    val smartRecommendations: List<SmartRecommendation> = emptyList(),
-    val lifestyleRecommendation: LifestyleSavingsRecommendation? = null,
-    val sweepRecommendation: SavingsSweepRecommendation? = null,
-    val isSweepAvailable: Boolean = false,
-    val streak: SavingsStreak? = null,
-    val achievements: List<SavingsAchievement> = emptyList(),
-    val userLevel: Int = 1,
-    val levelTitle: String = "Savings Rookie",
-    val isLoading: Boolean = false,
-    val selectedGoal: SavingsGoal? = null,
-    val totalSaved: Double = 0.0
+ val goals: List<SavingsGoal> = emptyList(),
+ val smartRecommendations: List<SmartRecommendation> = emptyList(),
+ val lifestyleRecommendation: LifestyleSavingsRecommendation? = null,
+ val sweepRecommendation: SavingsSweepRecommendation? = null,
+ val isSweepAvailable: Boolean = false,
+ val streak: SavingsStreak? = null,
+ val achievements: List<SavingsAchievement> = emptyList(),
+ val userLevel: Int = 1,
+ val levelTitle: String = "Savings Rookie",
+ val isLoading: Boolean = false,
+ val selectedGoal: SavingsGoal? = null,
+ val totalSaved: Double = 0.0,
+ val homeCurrency: String = "EUR"
 )
 
 data class SmartRecommendation(
@@ -47,20 +49,22 @@ class SavingsGoalsViewModel @Inject constructor(
     private val smartSavingsEngine: SmartSavingsEngine,
     private val gamificationEngine: SavingsGamificationEngine,
     private val lifestyleSavingsPromptUseCase: LifestyleSavingsPromptUseCase,
-    private val monthlySavingsSweepUseCase: MonthlySavingsSweepUseCase,
-    private val timeProvider: TimeProvider
+ private val monthlySavingsSweepUseCase: MonthlySavingsSweepUseCase,
+ private val timeProvider: TimeProvider,
+ private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SavingsGoalsState())
     val state: StateFlow<SavingsGoalsState> = _state.asStateFlow()
     private var goalsCollectionJob: Job? = null
 
-    init {
-        loadGoals()
-        loadGamification()
-        loadLifestyleRecommendation()
-        checkSweepAvailability()
-    }
+ init {
+ loadGoals()
+ loadGamification()
+ loadLifestyleRecommendation()
+ checkSweepAvailability()
+ collectHomeCurrency()
+ }
 
     private fun loadGoals() {
         goalsCollectionJob?.cancel()
@@ -77,10 +81,11 @@ class SavingsGoalsViewModel @Inject constructor(
                     val level = gamificationEngine.calculateLevel(totalSaved)
                     val title = gamificationEngine.getLevelTitle(level)
                     
-                    val portfolioRecommendations = smartSavingsEngine.calculatePortfolioRecommendations(
-                        goals = goals,
-                        timeHorizon = SmartSavingsEngine.TimeHorizon.MONTH
-                    )
+            val portfolioRecommendations = smartSavingsEngine.calculatePortfolioRecommendations(
+                goals = goals,
+                timeHorizon = SmartSavingsEngine.TimeHorizon.MONTH,
+                homeCurrency = currencySettingsRepository.homeCurrency().first()
+            )
 
                     // Generate smart recommendations
                     val recommendations = portfolioRecommendations.mapNotNull { goalRecommendation ->
@@ -114,7 +119,7 @@ class SavingsGoalsViewModel @Inject constructor(
     private fun loadGamification() {
         viewModelScope.launch {
             val streak = gamificationEngine.calculateStreak()
-            val achievements = gamificationEngine.getAchievements()
+            val achievements = gamificationEngine.getAchievements(homeCurrency = currencySettingsRepository.homeCurrency().first())
             
             _state.update {
                 it.copy(
@@ -249,10 +254,18 @@ class SavingsGoalsViewModel @Inject constructor(
         _state.update { it.copy(selectedGoal = goal) }
     }
 
-    fun refresh() {
-        loadGoals()
-        loadGamification()
-        loadLifestyleRecommendation()
-        checkSweepAvailability()
-    }
+ fun refresh() {
+ loadGoals()
+ loadGamification()
+ loadLifestyleRecommendation()
+ checkSweepAvailability()
+ }
+
+ private fun collectHomeCurrency() {
+ viewModelScope.launch {
+ currencySettingsRepository.homeCurrency().collect { hc ->
+ _state.update { it.copy(homeCurrency = hc) }
+ }
+ }
+ }
 }

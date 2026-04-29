@@ -83,6 +83,7 @@ fun HomeScreen(
     val state by viewModel.dashboard.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val recommendations by viewModel.recommendations.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState()
 
     LaunchedEffect(viewModel) {
         viewModel.navigationActions.collect { action ->
@@ -410,9 +411,10 @@ fun HomeScreen(
                                         )
                                     }
                                 ) {
-                                    SpendingTrendChart(
-                                        series = widget.series
-                                    )
+            SpendingTrendChart(
+                series = widget.series,
+                currency = homeCurrency
+            )
                                 }
                             }
                             is DashboardWidget.NaturalLanguageInsight -> {
@@ -484,9 +486,9 @@ fun HomeScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        StatLabel(stringResource(R.string.widget_today), CurrencyFormatter.format(widget.todaySpent), modifier = Modifier.weight(1f))
-                                        StatLabel(stringResource(R.string.widget_week), CurrencyFormatter.format(widget.weekSpent), modifier = Modifier.weight(1f))
-                                        StatLabel(stringResource(R.string.widget_month), CurrencyFormatter.format(widget.monthSpent), modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_today), CurrencyFormatter.format(widget.todaySpent, homeCurrency), modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_week), CurrencyFormatter.format(widget.weekSpent, homeCurrency), modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_month), CurrencyFormatter.format(widget.monthSpent, homeCurrency), modifier = Modifier.weight(1f))
                                     }
                                 }
                             }
@@ -577,23 +579,24 @@ fun HomeScreen(
                                 }
                             }
                             is DashboardWidget.FinancialWeatherWidget -> {
-                                FinancialWeatherCard(
-                                    state = widget.weather.state,
-                                    headline = widget.weather.headline,
-                                    summary = widget.weather.summary,
-                                    icon = widget.weather.icon,
-                                    totalCommitted = widget.weather.totalCommitted,
-                                    totalLikely = widget.weather.totalLikely,
-                                    discretionaryBudget = widget.weather.discretionaryBudget,
-                                    pastSpendingPoints = widget.weather.pastSpendingPoints,
-                                    projectedSpendingPoints = widget.weather.projectedSpendingPoints,
-                                    upcomingItems = widget.weather.upcomingItems,
-                                    referenceNowMillis = state.referenceNowMillis,
-                                    totalRecurringCount = widget.weather.totalRecurringCount,
-                                    details = widget.weather.details,
-                                    onManageClick = onNavigateToRecurring,
-                                    onPlanClick = { showAddPlannedExpenseDialog = true }
-                                )
+        FinancialWeatherCard(
+            state = widget.weather.state,
+            headline = widget.weather.headline,
+            summary = widget.weather.summary,
+            icon = widget.weather.icon,
+            totalCommitted = widget.weather.totalCommitted,
+            totalLikely = widget.weather.totalLikely,
+            discretionaryBudget = widget.weather.discretionaryBudget,
+            pastSpendingPoints = widget.weather.pastSpendingPoints,
+            projectedSpendingPoints = widget.weather.projectedSpendingPoints,
+            upcomingItems = widget.weather.upcomingItems,
+            referenceNowMillis = state.referenceNowMillis,
+            totalRecurringCount = widget.weather.totalRecurringCount,
+            details = widget.weather.details,
+            currency = homeCurrency,
+            onManageClick = onNavigateToRecurring,
+            onPlanClick = { showAddPlannedExpenseDialog = true }
+        )
                             }
                             is DashboardWidget.TotalsDashboard -> {
                                 val widgetId = HomeViewModel.getWidgetId(widget)
@@ -601,58 +604,62 @@ fun HomeScreen(
                                 val totalsState by viewModel.totalsDrillDownState.collectAsState()
                                 
                                 if (widgetStyle == WidgetStyle.RETRO) {
-                                    RetroTotalsDashboardCard(
-                                        periods = totalsState.periodTotals,
-                                        currentLevel = totalsState.currentLevel.toPeriodLevel(),
-                                        selectedPeriod = totalsState.selectedPeriod,
-                                        isLoading = totalsState.isLoading,
-                                        averageAmount = if (totalsState.periodTotals.isNotEmpty()) {
-                                            totalsState.periodTotals.map { it.totalAmount }.average()
-                                        } else 0.0,
-                                        onPeriodSelected = { viewModel.drillDownToPeriod(it) },
-                                        onLevelChanged = { if (it.ordinal < totalsState.currentLevel.ordinal) viewModel.drillUp() },
-                                        onEnterStage = { period ->
-                                            // Drill down into the selected period
-                                            viewModel.drillDownToPeriod(period)
-                                        },
-                                        onViewAnalysis = { period ->
-                                            // Load breakdown for this specific period
-                                            viewModel.loadCategoryBreakdownForPeriod(period)
-                                            showCategoryBreakdown = true 
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
+                RetroTotalsDashboardCard(
+                    periods = totalsState.periodTotals,
+                    currentLevel = totalsState.currentLevel.toPeriodLevel(),
+                    selectedPeriod = totalsState.selectedPeriod,
+                    isLoading = totalsState.isLoading,
+                    averageAmount = if (totalsState.periodTotals.isNotEmpty()) {
+                        totalsState.periodTotals.map { it.totalAmount }.average()
+                    } else 0.0,
+                    onPeriodSelected = { viewModel.drillDownToPeriod(it) },
+                    onLevelChanged = { if (it.ordinal < totalsState.currentLevel.ordinal) viewModel.drillUp() },
+                    onEnterStage = { period ->
+                        // Drill down into the selected period
+                        viewModel.drillDownToPeriod(period)
+                    },
+                    onViewAnalysis = { period ->
+                        // Load breakdown for this specific period
+                        viewModel.loadCategoryBreakdownForPeriod(period)
+                        showCategoryBreakdown = true
+                    },
+                    currency = homeCurrency,
+                    modifier = Modifier.fillMaxWidth()
+                )
                                 } else {
-                                    TotalsDashboardCard(
-                                        periods = totalsState.periodTotals,
-                                        currentLevel = totalsState.currentLevel.toPeriodLevel(),
-                                        selectedPeriod = totalsState.selectedPeriod,
-                                        isLoading = totalsState.isLoading,
-                                        onPeriodSelected = { viewModel.drillDownToPeriod(it) },
-                                        onLevelChanged = { if (it.ordinal < totalsState.currentLevel.ordinal) viewModel.drillUp() },
-                                        onShowCategoryBreakdown = { 
-                                            viewModel.loadCategoryBreakdownForCurrentPeriod()
-                                            showCategoryBreakdown = true 
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
+                TotalsDashboardCard(
+                    periods = totalsState.periodTotals,
+                    currentLevel = totalsState.currentLevel.toPeriodLevel(),
+                    selectedPeriod = totalsState.selectedPeriod,
+                    isLoading = totalsState.isLoading,
+                    onPeriodSelected = { viewModel.drillDownToPeriod(it) },
+                    onLevelChanged = { if (it.ordinal < totalsState.currentLevel.ordinal) viewModel.drillUp() },
+                    onShowCategoryBreakdown = {
+                        viewModel.loadCategoryBreakdownForCurrentPeriod()
+                        showCategoryBreakdown = true
+                    },
+                    currency = homeCurrency,
+                    modifier = Modifier.fillMaxWidth()
+                )
                                 }
                             }
                             is DashboardWidget.FinancialRunway -> {
-                                FinancialRunwayCard(
-                                    daysRemaining = widget.daysRemaining,
-                                    discretionaryRemaining = widget.discretionaryRemaining,
-                                    averageDailyDiscretionarySpend = widget.averageDailyDiscretionarySpend,
-                                    monthlyIncome = widget.monthlyIncome,
-                                    committedExpenses = widget.committedExpenses,
-                                    likelyExpenses = widget.likelyExpenses,
-                                    status = widget.status
-                                )
+            FinancialRunwayCard(
+                daysRemaining = widget.daysRemaining,
+                discretionaryRemaining = widget.discretionaryRemaining,
+                averageDailyDiscretionarySpend = widget.averageDailyDiscretionarySpend,
+                monthlyIncome = widget.monthlyIncome,
+                committedExpenses = widget.committedExpenses,
+                likelyExpenses = widget.likelyExpenses,
+                status = widget.status,
+                currency = homeCurrency
+            )
                             }
                             is DashboardWidget.MonteCarloForecast -> {
-                                MonteCarloForecastCard(
-                                    result = widget.result
-                                )
+            MonteCarloForecastCard(
+                result = widget.result,
+                currency = homeCurrency
+            )
                             }
                             
                             is DashboardWidget.NoSpendStreak -> {
@@ -687,10 +694,11 @@ fun HomeScreen(
                                     onAction = { onNavigateToFeature(NavigationDestination.SavingsGoals) }
                                 )
                             }
-                            is DashboardWidget.MoneyRadar -> {
-                                com.yourname.expensetracker.ui.components.dashboard.MoneyRadarWidget(
-                                    data = widget.data,
-                                    onActionClick = { action ->
+                is DashboardWidget.MoneyRadar -> {
+                    com.yourname.expensetracker.ui.components.dashboard.MoneyRadarWidget(
+                        data = widget.data,
+                        homeCurrency = homeCurrency,
+                        onActionClick = { action ->
                                         when (action) {
                                             is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.ViewBills -> {
                                                 onNavigateToRecurring()
@@ -711,32 +719,34 @@ fun HomeScreen(
                                 )
                             }
                             is DashboardWidget.FinancialStressForecast -> {
-                                FinancialStressForecastCard(
-                                    result = widget.result,
-                                    onActionClick = { recommendation ->
-                                        // Navigate based on recommendation type
-                                        when {
-                                            recommendation.contains("subscriptions", ignoreCase = true) -> {
-                                                onNavigateToRecurring()
-                                            }
-                                            recommendation.contains("spending", ignoreCase = true) -> {
-                                                onNavigateToTransactions(
-                                                    TransactionFilter(dateRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis()))
-                                                )
-                                            }
-                                            recommendation.contains("emergency", ignoreCase = true) -> {
-                                                onNavigateToFeature(NavigationDestination.SavingsGoals)
-                                            }
-                                        }
-                                    }
-                                )
+            FinancialStressForecastCard(
+                result = widget.result,
+                currency = homeCurrency,
+                onActionClick = { recommendation ->
+                    // Navigate based on recommendation type
+                    when {
+                        recommendation.contains("subscriptions", ignoreCase = true) -> {
+                            onNavigateToRecurring()
+                        }
+                        recommendation.contains("spending", ignoreCase = true) -> {
+                            onNavigateToTransactions(
+                                TransactionFilter(dateRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis()))
+                            )
+                        }
+                        recommendation.contains("emergency", ignoreCase = true) -> {
+                            onNavigateToFeature(NavigationDestination.SavingsGoals)
+                        }
+                    }
+                }
+            )
                             }
-                            is DashboardWidget.SavingsSweepPrompt -> {
-                                SavingsSweepPromptCard(
-                                    widget = widget,
-                                    onAction = { onNavigateToFeature(NavigationDestination.SavingsGoals) }
-                                )
-                            }
+                is DashboardWidget.SavingsSweepPrompt -> {
+                    SavingsSweepPromptCard(
+                        widget = widget,
+                        homeCurrency = homeCurrency,
+                        onAction = { onNavigateToFeature(NavigationDestination.SavingsGoals) }
+                    )
+                }
                             else -> {
                                 // Fallback for any unhandled widget types
                                 Box(modifier = Modifier.fillMaxWidth())
@@ -836,17 +846,19 @@ fun HomeScreen(
             } ?: false
             
             if (isRetroStyle) {
-                RetroCategoryBreakdownSheet(
-                    periodLabel = totalsState.selectedPeriod?.periodLabel ?: stringResource(R.string.label_period),
-                    categories = totalsState.categoryBreakdown,
-                    onDismiss = { showCategoryBreakdown = false }
-                )
+            RetroCategoryBreakdownSheet(
+                periodLabel = totalsState.selectedPeriod?.periodLabel ?: stringResource(R.string.label_period),
+                categories = totalsState.categoryBreakdown,
+                currency = homeCurrency,
+                onDismiss = { showCategoryBreakdown = false }
+            )
             } else {
-                CategoryBreakdownSheet(
-                    periodLabel = totalsState.selectedPeriod?.periodLabel ?: stringResource(R.string.label_period),
-                    categories = totalsState.categoryBreakdown,
-                    onDismiss = { showCategoryBreakdown = false }
-                )
+            CategoryBreakdownSheet(
+                periodLabel = totalsState.selectedPeriod?.periodLabel ?: stringResource(R.string.label_period),
+                categories = totalsState.categoryBreakdown,
+                currency = homeCurrency,
+                onDismiss = { showCategoryBreakdown = false }
+            )
             }
         }
     }
@@ -1056,7 +1068,7 @@ fun CategorySpendingRow(item: DomainCategorySpending) {
         Spacer(modifier = Modifier.width(12.dp))
         Column(horizontalAlignment = Alignment.End) {
             Text(
-                CurrencyFormatter.format(item.total),
+                CurrencyFormatter.format(item.total, item.currency),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -1120,10 +1132,10 @@ fun RecentExpenseRow(expense: DashboardExpense, categoryColor: Color? = null) {
                 )
             }
         }
-        Text(
-            CurrencyFormatter.format(expense.amount),
-            fontWeight = FontWeight.Bold
-        )
+    Text(
+        CurrencyFormatter.format(expense.amount, expense.currency),
+        fontWeight = FontWeight.Bold
+    )
     }
 }
 
@@ -1419,6 +1431,7 @@ private fun FeaturesMenu(
 @Composable
 private fun SavingsSweepPromptCard(
     widget: DashboardWidget.SavingsSweepPrompt,
+    homeCurrency: String,
     onAction: () -> Unit
 ) {
     androidx.compose.material3.Card(modifier = Modifier.fillMaxWidth()) {
@@ -1432,16 +1445,16 @@ private fun SavingsSweepPromptCard(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Safe to sweep ${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(widget.sweepAmount)}",
+                text = "Safe to sweep ${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(widget.sweepAmount, homeCurrency)}",
                 style = MaterialTheme.typography.bodyLarge
             )
             Text(
-                text = "Underspend ${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(widget.underspend)} • Buffer ${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(widget.riskBuffer)}",
+                text = "Underspend ${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(widget.underspend, homeCurrency)} • Buffer ${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(widget.riskBuffer, homeCurrency)}",
                 style = MaterialTheme.typography.bodySmall
             )
             widget.goalAllocations.firstOrNull()?.let { topGoal ->
                 Text(
-                    text = "Top allocation: ${topGoal.goalName} (${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(topGoal.suggestedAmount)})",
+                    text = "Top allocation: ${topGoal.goalName} (${com.yourname.expensetracker.domain.util.CurrencyFormatter.format(topGoal.suggestedAmount, homeCurrency)})",
                     style = MaterialTheme.typography.bodySmall
                 )
             }

@@ -26,33 +26,35 @@ import kotlinx.coroutines.isActive
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 
 data class AddExpenseState(
-    val merchant: String = "",
-    val amount: String = "",
-    val selectedCategoryId: Long? = null,
-    val paymentMethod: PaymentMethod = PaymentMethod.CASH,
-    val transactionType: TransactionType = TransactionType.PURCHASE,
-    val date: Long = 0L,
-    val notes: String = "",
-    val showNotes: Boolean = false,
-    val showTransactionType: Boolean = false,
-    val isRecurring: Boolean = false,
-    val recurrenceFrequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY,
-    val suggestions: List<MerchantSuggestion> = emptyList(),
-    val showSuggestions: Boolean = false,
-    val isSaving: Boolean = false,
-    val saveResult: SaveResult? = null,
-    val merchantError: String? = null,
-    val amountError: String? = null,
-    val transferDirection: TransferDirection? = null,
-    val transferAccountName: String = "",
-    val isNotMine: Boolean = false,
-    val ownerName: String = "",
-    val isSharedExpense: Boolean = false,
-    val sharedWithName: String = "",
-    val mySharePercentage: String = "",
-    val myShareAmount: String = ""
+ val merchant: String = "",
+ val amount: String = "",
+ val selectedCategoryId: Long? = null,
+ val paymentMethod: PaymentMethod = PaymentMethod.CASH,
+ val transactionType: TransactionType = TransactionType.PURCHASE,
+ val date: Long = 0L,
+ val notes: String = "",
+ val showNotes: Boolean = false,
+ val showTransactionType: Boolean = false,
+ val isRecurring: Boolean = false,
+ val recurrenceFrequency: RecurrenceFrequency = RecurrenceFrequency.MONTHLY,
+ val suggestions: List<MerchantSuggestion> = emptyList(),
+ val showSuggestions: Boolean = false,
+ val isSaving: Boolean = false,
+ val saveResult: SaveResult? = null,
+ val merchantError: String? = null,
+ val amountError: String? = null,
+ val transferDirection: TransferDirection? = null,
+ val transferAccountName: String = "",
+ val isNotMine: Boolean = false,
+ val ownerName: String = "",
+ val isSharedExpense: Boolean = false,
+ val sharedWithName: String = "",
+ val mySharePercentage: String = "",
+ val myShareAmount: String = "",
+ val homeCurrency: String = "EUR"
 )
 
 sealed class SaveResult {
@@ -65,8 +67,9 @@ sealed class SaveResult {
 class AddExpenseViewModel @Inject constructor(
     private val manualExpenseRepository: ManualExpenseRepository,
     private val expenseRepository: com.yourname.expensetracker.data.repository.ExpenseRepository,
-    private val categoryRepository: CategoryRepository,
-    private val timeProvider: TimeProvider
+ private val categoryRepository: CategoryRepository,
+ private val timeProvider: TimeProvider,
+ private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AddExpenseState(date = timeProvider.now()))
@@ -75,8 +78,18 @@ class AddExpenseViewModel @Inject constructor(
     val categories: StateFlow<List<Category>> = categoryRepository.allCategories
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private var searchJob: Job? = null
-    private var initialValuesApplied: Boolean = false
+ private var searchJob: Job? = null
+ private var initialValuesApplied: Boolean = false
+
+ private var homeCurrencyJob: Job? = null
+
+ init {
+ homeCurrencyJob = viewModelScope.launch {
+ currencySettingsRepository.homeCurrency().collect { hc ->
+ _state.update { it.copy(homeCurrency = hc) }
+ }
+ }
+ }
 
     fun updateMerchant(value: String) {
         val sanitized = value.take(100) // Max 100 chars
@@ -350,7 +363,7 @@ class AddExpenseViewModel @Inject constructor(
                 val result = manualExpenseRepository.addManualExpense(
                     merchant = merchantTrimmed,
                     amount = normalizedAmount,
-                    currency = "EUR",
+                    currency = _state.value.homeCurrency,
                     categoryId = currentState.selectedCategoryId,
                     transactionType = currentState.transactionType,
                     paymentMethod = currentState.paymentMethod,

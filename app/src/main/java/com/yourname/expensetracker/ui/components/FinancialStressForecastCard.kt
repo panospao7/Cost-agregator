@@ -21,9 +21,10 @@ import java.util.*
 
 @Composable
 fun FinancialStressForecastCard(
-    result: StressForecastResult,
-    onActionClick: ((String) -> Unit)? = null,
-    modifier: Modifier = Modifier
+ result: StressForecastResult,
+ onActionClick: ((String) -> Unit)? = null,
+ modifier: Modifier = Modifier,
+ currency: String = "EUR"
 ) {
     val overallRisk = result.overallRiskLevel
     val (backgroundColor, accentColor, riskIcon) = getRiskColors(overallRisk)
@@ -143,7 +144,7 @@ fun FinancialStressForecastCard(
             // Selected horizon details
             val currentHorizon = result.horizons.getOrNull(selectedHorizon)
             currentHorizon?.let { horizon ->
-                HorizonDetailView(horizon, accentColor)
+                HorizonDetailView(horizon, accentColor, currency)
             }
 
             // Recommendations
@@ -176,7 +177,8 @@ fun FinancialStressForecastCard(
 @Composable
 private fun HorizonDetailView(
     horizon: StressHorizon,
-    accentColor: androidx.compose.ui.graphics.Color
+    accentColor: androidx.compose.ui.graphics.Color,
+    currency: String = "EUR"
 ) {
     Column {
         // Balance row
@@ -193,7 +195,7 @@ private fun HorizonDetailView(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = CurrencyFormatter.format(horizon.projectedBalance, showCents = false),
+                    text = CurrencyFormatter.format(horizon.projectedBalance, currency, showCents = false),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = if (horizon.projectedBalance < 0) SemanticColors.DangerRed else SemanticColors.TextPrimary
@@ -238,7 +240,7 @@ private fun HorizonDetailView(
                     Text("⚠️", fontSize = 14.sp)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Min projected: ${CurrencyFormatter.format(horizon.minProjectedBalance, showCents = false)}",
+                        text = "Min projected: ${CurrencyFormatter.format(horizon.minProjectedBalance, currency, showCents = false)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.DangerRed
                     )
@@ -254,17 +256,17 @@ private fun HorizonDetailView(
         ) {
             BreakdownItem(
                 label = "Recurring (${horizon.daysAhead}d total)",
-                value = "-${CurrencyFormatter.format(horizon.recurringObligations, showCents = false)}",
+                value = "-${CurrencyFormatter.format(horizon.recurringObligations, currency, showCents = false)}",
                 color = SemanticColors.WarningOrange
             )
             BreakdownItem(
                 label = "Income",
-                value = "+${CurrencyFormatter.format(horizon.expectedIncome, showCents = false)}",
+                value = "+${CurrencyFormatter.format(horizon.expectedIncome, currency, showCents = false)}",
                 color = SemanticColors.SuccessGreen
             )
             BreakdownItem(
                 label = "Buffer",
-                value = CurrencyFormatter.format(horizon.discretionaryBuffer, showCents = false),
+                value = CurrencyFormatter.format(horizon.discretionaryBuffer, currency, showCents = false),
                 color = SemanticColors.PrimaryIndigo
             )
         }

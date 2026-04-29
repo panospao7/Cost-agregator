@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.location.HeatmapPoint
 import com.yourname.expensetracker.domain.location.LocationInsightsEngine
 import com.yourname.expensetracker.domain.location.PlaceInsight
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,38 +54,35 @@ enum class DateRangePreset {
 }
 
 data class SpendingMapState(
-    val isLoading: Boolean = true,
-    val locationPermissionGranted: Boolean = false,
-    val showPermissionRationale: Boolean = false,
-    val deviceLatitude: Double? = null,
-    val deviceLongitude: Double? = null,
-    val markers: List<MapExpenseMarker> = emptyList(),
-    val heatmapPoints: List<HeatmapPoint> = emptyList(),
-    val placeInsights: List<PlaceInsight> = emptyList(),
-    val selectedMarker: MapExpenseMarker? = null,
-    // When Overpass returns multiple candidates for the selected marker
-    val overpassCandidates: List<NearbyPoi> = emptyList(),
-    val showCorrectionSheet: Boolean = false,
-    // Pending correction context — set while the bottom sheet is open
-    val pendingCorrectionMerchant: String? = null,
-    val pendingCorrectionLat: Double? = null,
-    val pendingCorrectionLon: Double? = null,
-    val pendingCorrectionAddress: String? = null,
-    val pendingCorrectionOsmId: String? = null,
-    // Stats
-    val totalLocatedExpenses: Int = 0,
-    val totalUnlocatedExpenses: Int = 0,
-    val isResolvingLocation: Boolean = false,
-    val snackbarMessage: String? = null,
-    // Feature E: unlocated expenses list
-    val unlocatedExpenses: List<Expense> = emptyList(),
-    val expenseToPin: Expense? = null,
-    val selectedCategories: Set<String> = emptySet(),
-    val selectedDateRangePreset: DateRangePreset? = null,
-    val dateRangeStartMs: Long? = null,
-    val dateRangeEndMs: Long? = null,
-    val availableCategories: List<MapCategoryFilterOption> = emptyList(),
-    val highlightedMerchantQuery: String? = null
+ val isLoading: Boolean = true,
+ val locationPermissionGranted: Boolean = false,
+ val showPermissionRationale: Boolean = false,
+ val deviceLatitude: Double? = null,
+ val deviceLongitude: Double? = null,
+ val markers: List<MapExpenseMarker> = emptyList(),
+ val heatmapPoints: List<HeatmapPoint> = emptyList(),
+ val placeInsights: List<PlaceInsight> = emptyList(),
+ val selectedMarker: MapExpenseMarker? = null,
+ val overpassCandidates: List<NearbyPoi> = emptyList(),
+ val showCorrectionSheet: Boolean = false,
+ val pendingCorrectionMerchant: String? = null,
+ val pendingCorrectionLat: Double? = null,
+ val pendingCorrectionLon: Double? = null,
+ val pendingCorrectionAddress: String? = null,
+ val pendingCorrectionOsmId: String? = null,
+ val totalLocatedExpenses: Int = 0,
+ val totalUnlocatedExpenses: Int = 0,
+ val isResolvingLocation: Boolean = false,
+ val snackbarMessage: String? = null,
+ val unlocatedExpenses: List<Expense> = emptyList(),
+ val expenseToPin: Expense? = null,
+ val selectedCategories: Set<String> = emptySet(),
+ val selectedDateRangePreset: DateRangePreset? = null,
+ val dateRangeStartMs: Long? = null,
+ val dateRangeEndMs: Long? = null,
+ val availableCategories: List<MapCategoryFilterOption> = emptyList(),
+ val highlightedMerchantQuery: String? = null,
+ val homeCurrency: String = "EUR"
 )
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
@@ -97,8 +95,9 @@ class SpendingMapViewModel @Inject constructor(
     private val locationProvider: ForegroundLocationProvider,
     private val merchantLocationRepository: MerchantLocationRepository,
     private val heatmapEngine: SpendingHeatmapEngine,
-    private val insightsEngine: LocationInsightsEngine,
-    val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
+ private val insightsEngine: LocationInsightsEngine,
+ val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
+ private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SpendingMapState())
@@ -121,12 +120,17 @@ class SpendingMapViewModel @Inject constructor(
             refreshStats()
         }
         // Feature E: collect unlocated expenses for the bottom panel
-        viewModelScope.launch(Dispatchers.IO) {
-            expenseRepository.getUnlocatedExpensesFlow(100).collect { expenses ->
-                _state.update { it.copy(unlocatedExpenses = expenses) }
-            }
-        }
-    }
+ viewModelScope.launch(Dispatchers.IO) {
+ expenseRepository.getUnlocatedExpensesFlow(100).collect { expenses ->
+ _state.update { it.copy(unlocatedExpenses = expenses) }
+ }
+ }
+ viewModelScope.launch(Dispatchers.IO) {
+ currencySettingsRepository.homeCurrency().collect { hc ->
+ _state.update { it.copy(homeCurrency = hc) }
+ }
+ }
+ }
 
     // ── Public API ────────────────────────────────────────────────────────────
 

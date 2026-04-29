@@ -39,6 +39,7 @@ import com.yourname.expensetracker.service.NavigationAction
 import com.yourname.expensetracker.service.NavigationTargetResolver
 import com.yourname.expensetracker.service.RecommendationDismissalHandler
 import com.yourname.expensetracker.service.RecommendationStateManager
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.widget.model.StyledWidgets
 import com.yourname.expensetracker.domain.widget.model.WidgetStyle
 import com.yourname.expensetracker.domain.widget.model.WidgetStyleConfig
@@ -122,7 +123,8 @@ class HomeViewModel @Inject constructor(
     private val navigationTargetResolver: NavigationTargetResolver,
     private val recommendationDismissalHandler: RecommendationDismissalHandler,
     private val totalsAggregationEngine: TotalsAggregationEngine,
-    private val advancedAnalyticsEngine: com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
+    private val advancedAnalyticsEngine: com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
     private val _totalsDrillDownState = MutableStateFlow(PeriodDrillDownState(
@@ -140,6 +142,9 @@ class HomeViewModel @Inject constructor(
     private val isEditMode = MutableStateFlow(false)
     private val dashboardReloadTrigger = MutableStateFlow(0)
     private val _categoryTrends = MutableStateFlow<Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo>>(emptyMap())
+    val homeCurrency: StateFlow<String> = currencySettingsRepository.homeCurrency()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "EUR")
+
     private val dateKeyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     private fun dashboardBriefingKeyForToday(): String =
         "dashboard_home:${dateKeyFormat.format(Date(timeProvider.now()))}"

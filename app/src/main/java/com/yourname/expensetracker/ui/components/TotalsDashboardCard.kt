@@ -44,7 +44,8 @@ fun TotalsDashboardCard(
     onPeriodSelected: (PeriodTotal) -> Unit,
     onLevelChanged: (PeriodLevel) -> Unit,
     onShowCategoryBreakdown: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currency: String = "EUR"
 ) {
     BentoCard(
         modifier = modifier,
@@ -72,21 +73,23 @@ fun TotalsDashboardCard(
         Spacer(modifier = Modifier.height(16.dp))
 
         selectedPeriod?.let { period ->
-            CurrentPeriodSummary(
-                label = period.periodLabel,
-                total = period.totalAmount,
-                status = period.status
-            )
+    CurrentPeriodSummary(
+        label = period.periodLabel,
+        total = period.totalAmount,
+        status = period.status,
+        currency = currency
+    )
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        PeriodGridView(
-            periods = periods,
-            currentLevel = currentLevel,
-            selectedPeriod = selectedPeriod,
-            isLoading = isLoading,
-            onPeriodSelected = onPeriodSelected
-        )
+    PeriodGridView(
+        periods = periods,
+        currentLevel = currentLevel,
+        selectedPeriod = selectedPeriod,
+        isLoading = isLoading,
+        onPeriodSelected = onPeriodSelected,
+        currency = currency
+    )
 
         // Only show legend and button if we have data
         if (periods.isNotEmpty() && !isLoading) {
@@ -114,7 +117,8 @@ fun TotalsDashboardCard(
 private fun CurrentPeriodSummary(
     label: String,
     total: Double,
-    status: PeriodStatus
+    status: PeriodStatus,
+    currency: String = "EUR"
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val statusColor = when (status) {
@@ -150,7 +154,7 @@ private fun CurrentPeriodSummary(
                     color = SemanticColors.TextSecondary
                 )
                 Text(
-                    text = CurrencyFormatter.format(total),
+                    text = CurrencyFormatter.format(total, currency),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = statusColor

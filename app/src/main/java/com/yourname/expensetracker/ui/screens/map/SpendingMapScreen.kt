@@ -360,13 +360,14 @@ fun SpendingMapScreen(
                 exit = fadeOut()
             ) {
                 state.selectedMarker?.let { marker ->
-                    MarkerDetailCard(
-                        marker = marker,
-                        isResolvingLocation = state.isResolvingLocation,
-                        onReResolve = { viewModel.onResolveLocationForMarker(marker) },
-                        onCorrectPin = { viewModel.onOpenCorrectionSheet(marker) },
-                        onDismiss = { viewModel.onMarkerSelected(null) }
-                    )
+            MarkerDetailCard(
+                marker = marker,
+                isResolvingLocation = state.isResolvingLocation,
+                onReResolve = { viewModel.onResolveLocationForMarker(marker) },
+                onCorrectPin = { viewModel.onOpenCorrectionSheet(marker) },
+                onDismiss = { viewModel.onMarkerSelected(null) },
+                homeCurrency = state.homeCurrency
+            )
                 }
             }
 
@@ -591,7 +592,8 @@ private fun MarkerDetailCard(
     isResolvingLocation: Boolean,
     onReResolve: () -> Unit,
     onCorrectPin: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    homeCurrency: String = "EUR"
 ) {
     Card(
         modifier = Modifier
@@ -607,7 +609,7 @@ private fun MarkerDetailCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = marker.merchant, style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        text = CurrencyFormatter.format(marker.amount),
+                        text = CurrencyFormatter.format(marker.amount, homeCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary
                     )

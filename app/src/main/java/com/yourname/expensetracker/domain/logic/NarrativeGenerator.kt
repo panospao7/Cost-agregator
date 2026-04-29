@@ -18,8 +18,9 @@ import javax.inject.Singleton
 class NarrativeGenerator @Inject constructor() {
 
     fun generate(
-        forecast: FinancialForecast, 
-        budgetStatuses: List<BudgetStatusSnapshot>
+        forecast: FinancialForecast,
+        budgetStatuses: List<BudgetStatusSnapshot>,
+        homeCurrency: String = "EUR"
     ): WeatherNarrative {
         val components = forecast.components
         val risk = components.riskLevel
@@ -44,7 +45,7 @@ class NarrativeGenerator @Inject constructor() {
                 headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_CLOUDY),
                 summary = UiText.fromKey(
                     DomainTextKeys.WEATHER_SUMMARY_CLOUDY_FORMAT,
-                    UiTextArg.Money(discretionary)
+                    UiTextArg.Money(discretionary, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY")
                 )
             )
             risk == RiskLevel.LOW && discretionary > 100.0 -> WeatherNarrative(
@@ -53,7 +54,7 @@ class NarrativeGenerator @Inject constructor() {
                 headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_CLEAR),
                 summary = UiText.fromKey(
                     DomainTextKeys.WEATHER_SUMMARY_CLEAR_FORMAT,
-                    UiTextArg.Money(discretionary)
+                    UiTextArg.Money(discretionary, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY")
                 )
             )
             risk == RiskLevel.LOW -> WeatherNarrative(
@@ -62,7 +63,7 @@ class NarrativeGenerator @Inject constructor() {
                 headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_PARTLY_CLOUDY),
                 summary = UiText.fromKey(
                     DomainTextKeys.WEATHER_SUMMARY_PARTLY_CLOUDY_FORMAT,
-                    UiTextArg.Money(discretionary)
+                    UiTextArg.Money(discretionary, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY")
                 )
             )
             risk == RiskLevel.MEDIUM -> WeatherNarrative(
@@ -71,7 +72,7 @@ class NarrativeGenerator @Inject constructor() {
                 headline = UiText.fromKey(DomainTextKeys.WEATHER_HEADLINE_PARTLY_CLOUDY),
                 summary = UiText.fromKey(
                     DomainTextKeys.WEATHER_SUMMARY_PARTLY_CLOUDY_FORMAT,
-                    UiTextArg.Money(discretionary)
+                    UiTextArg.Money(discretionary, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY")
                 )
             )
             else -> WeatherNarrative(
@@ -82,12 +83,13 @@ class NarrativeGenerator @Inject constructor() {
             )
         }
 
-        return basic.copy(details = buildDetails(forecast, budgetStatuses))
+        return basic.copy(details = buildDetails(forecast, budgetStatuses, homeCurrency))
     }
 
     private fun buildDetails(
         forecast: FinancialForecast,
-        budgetStatuses: List<BudgetStatusSnapshot>
+        budgetStatuses: List<BudgetStatusSnapshot>,
+        homeCurrency: String = "EUR"
     ): List<NarrativeSection> {
         val sections = mutableListOf<NarrativeSection>()
         val components = forecast.components
@@ -108,31 +110,31 @@ class NarrativeGenerator @Inject constructor() {
                                 UiText.fromKey(
                                     DomainTextKeys.NARRATIVE_BUDGET_EXCEEDED_SPENT_FORMAT,
                                     name,
-                                    UiTextArg.Money(it.spentAmount, showCents = false)
+                                    UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                                 )
                             } ?: UiText.fromKey(
                                 DomainTextKeys.NARRATIVE_TOTAL_BUDGET_EXCEEDED_SPENT_FORMAT,
-                                UiTextArg.Money(it.spentAmount, showCents = false)
+                                UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                             )
                             BudgetHealthStatus.CRITICAL -> it.categoryName?.let { name ->
                                 UiText.fromKey(
                                     DomainTextKeys.NARRATIVE_BUDGET_CRITICAL_SPENT_FORMAT,
                                     name,
-                                    UiTextArg.Money(it.spentAmount, showCents = false)
+                                    UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                                 )
                             } ?: UiText.fromKey(
                                 DomainTextKeys.NARRATIVE_TOTAL_BUDGET_CRITICAL_SPENT_FORMAT,
-                                UiTextArg.Money(it.spentAmount, showCents = false)
+                                UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                             )
                             BudgetHealthStatus.WARNING -> UiText.fromKey(
                                 DomainTextKeys.NARRATIVE_BUDGET_WARNING_SPENT_FORMAT,
-                                it.categoryName ?: UiTextArg.Money(it.spentAmount, showCents = false),
-                                UiTextArg.Money(it.spentAmount, showCents = false)
+                                it.categoryName ?: UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false),
+                                UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                             )
                             BudgetHealthStatus.ON_TRACK -> UiText.fromKey(
                                 DomainTextKeys.NARRATIVE_BUDGET_ON_TRACK_SPENT_FORMAT,
-                                it.categoryName ?: UiTextArg.Money(it.spentAmount, showCents = false),
-                                UiTextArg.Money(it.spentAmount, showCents = false)
+                                it.categoryName ?: UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false),
+                                UiTextArg.Money(it.spentAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                             )
                         }
                     }
@@ -159,7 +161,7 @@ class NarrativeGenerator @Inject constructor() {
                     items = listOf(
                         UiText.fromKey(
                             DomainTextKeys.NARRATIVE_GOAL_RESERVES_LOCKED_FORMAT,
-                            UiTextArg.Money(components.goalReserves, showCents = false)
+                            UiTextArg.Money(components.goalReserves, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                         )
                     )
                 )
@@ -177,18 +179,18 @@ class NarrativeGenerator @Inject constructor() {
                     title = UiText.fromKey(DomainTextKeys.NARRATIVE_COMMITTED_PLANS),
                     icon = "🎯",
                     items = importantPlans.map {
-                        if (it.priority == PlannedExpensePriority.MUST) {
-                            UiText.fromKey(
-                                DomainTextKeys.NARRATIVE_MUST_PLAN_FORMAT,
-                                it.description,
-                                UiTextArg.Money(it.amount, showCents = false)
-                            )
-                        } else {
-                            UiText.fromKey(
-                                DomainTextKeys.NARRATIVE_LIKELY_PLAN_FORMAT,
-                                it.description,
-                                UiTextArg.Money(it.amount, showCents = false)
-                            )
+        if (it.priority == PlannedExpensePriority.MUST) {
+                    UiText.fromKey(
+                        DomainTextKeys.NARRATIVE_MUST_PLAN_FORMAT,
+                        it.description,
+                        UiTextArg.Money(it.amount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
+                    )
+                } else {
+                    UiText.fromKey(
+                        DomainTextKeys.NARRATIVE_LIKELY_PLAN_FORMAT,
+                        it.description,
+                        UiTextArg.Money(it.amount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
+                    )
                         }
                     }
                 )
@@ -204,7 +206,7 @@ class NarrativeGenerator @Inject constructor() {
                     items = listOf(
                         UiText.fromKey(
                             DomainTextKeys.NARRATIVE_HABIT_FORECAST_FORMAT,
-                            UiTextArg.Money(components.predictedDiscretionary, showCents = false)
+                            UiTextArg.Money(components.predictedDiscretionary, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                         )
                     )
                 )

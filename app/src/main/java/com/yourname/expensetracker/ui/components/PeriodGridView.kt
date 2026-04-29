@@ -18,7 +18,8 @@ fun PeriodGridView(
     selectedPeriod: PeriodTotal?,
     isLoading: Boolean,
     onPeriodSelected: (PeriodTotal) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currency: String = "EUR"
 ) {
     val columns = when (currentLevel) {
         PeriodLevel.YEAR -> 4
@@ -82,11 +83,12 @@ fun PeriodGridView(
                     ) {
                         rowPeriods.forEach { period ->
                             Box(modifier = Modifier.weight(1f)) {
-                                PeriodBlock(
-                                    period = period,
-                                    isSelected = selectedPeriod?.periodKey == period.periodKey,
-                                    onClick = { onPeriodSelected(period) }
-                                )
+                PeriodBlock(
+                    period = period,
+                    isSelected = selectedPeriod?.periodKey == period.periodKey,
+                    onClick = { onPeriodSelected(period) },
+                    currency = currency
+                )
                             }
                         }
                         if (rowPeriods.size < columns) {

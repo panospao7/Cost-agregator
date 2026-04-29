@@ -44,7 +44,8 @@ fun RetroCategoryBreakdownSheet(
     periodLabel: String,
     categories: List<CategoryBreakdown>,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currency: String = "EUR"
 ) {
     var showAll by remember { mutableStateOf(false) }
     val displayCount = if (showAll) categories.size else minOf(5, categories.size)
@@ -184,12 +185,13 @@ fun RetroCategoryBreakdownSheet(
                         else -> null
                     }
                     
-                    RetroCategoryBreakdownRow(
-                        breakdown = breakdown,
-                        percentage = percentage,
-                        medal = medal,
-                        rank = index + 1
-                    )
+        RetroCategoryBreakdownRow(
+                breakdown = breakdown,
+                percentage = percentage,
+                medal = medal,
+                rank = index + 1,
+                currency = currency
+            )
                 }
             }
             
@@ -278,7 +280,8 @@ private fun RetroCategoryBreakdownRow(
     breakdown: CategoryBreakdown,
     percentage: Float,
     medal: String?,
-    rank: Int
+    rank: Int,
+    currency: String = "EUR"
 ) {
     val categoryColor = try {
         Color(android.graphics.Color.parseColor(breakdown.category.color))
@@ -379,7 +382,7 @@ private fun RetroCategoryBreakdownRow(
                 ) {
                     // Amount
                     Text(
-                        text = CurrencyFormatter.format(breakdown.totalAmount, showCents = false),
+                        text = CurrencyFormatter.format(breakdown.totalAmount, currency, showCents = false),
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold

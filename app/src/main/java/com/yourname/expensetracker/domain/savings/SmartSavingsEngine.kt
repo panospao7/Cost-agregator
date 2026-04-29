@@ -53,22 +53,24 @@ class SmartSavingsEngine @Inject constructor(
 
     suspend fun calculateSafeToSaveAmount(
         goal: SavingsGoal,
-        timeHorizon: TimeHorizon = TimeHorizon.MONTH
+        timeHorizon: TimeHorizon = TimeHorizon.MONTH,
+        homeCurrency: String = "EUR"
     ): SavingsRecommendation {
-        return calculatePortfolioRecommendations(listOf(goal), timeHorizon)
+        return calculatePortfolioRecommendations(listOf(goal), timeHorizon, homeCurrency)
             .firstOrNull()
             ?.recommendation
             ?: SavingsRecommendation(
                 safeAmount = 0.0,
                 confidence = 0.40,
-                impact = generateImpactMessage(0.0, goal, timeHorizon),
+                impact = generateImpactMessage(0.0, goal, timeHorizon, homeCurrency),
                 source = RecommendationSource.BUDGET_SURPLUS
             )
     }
 
     suspend fun calculatePortfolioRecommendations(
         goals: List<SavingsGoal>,
-        timeHorizon: TimeHorizon = TimeHorizon.MONTH
+        timeHorizon: TimeHorizon = TimeHorizon.MONTH,
+        homeCurrency: String = "EUR"
     ): List<GoalSavingsRecommendation> {
         val incompleteGoals = goals.filter { goal ->
             (goal.targetAmount - goal.currentAmount) > 0.0
@@ -90,7 +92,7 @@ class SmartSavingsEngine @Inject constructor(
                 goal = goal,
                 recommendation = portfolioRecommendation.copy(
                     safeAmount = allocatedAmount,
-                    impact = generateImpactMessage(allocatedAmount, goal, timeHorizon)
+                    impact = generateImpactMessage(allocatedAmount, goal, timeHorizon, homeCurrency)
                 )
             )
         }
@@ -383,7 +385,8 @@ class SmartSavingsEngine @Inject constructor(
     private fun generateImpactMessage(
         amount: Double,
         goal: SavingsGoal,
-        timeHorizon: TimeHorizon
+        timeHorizon: TimeHorizon,
+        homeCurrency: String = "EUR"
     ): String {
         val remaining = goal.targetAmount - goal.currentAmount
         if (remaining <= 0) {
@@ -414,7 +417,7 @@ class SmartSavingsEngine @Inject constructor(
 
             else -> UiText.fromKey(
                 DomainTextKeys.SAVINGS_IMPACT_STEADY_PROGRESS_FORMAT,
-                UiTextArg.Money(goal.targetAmount, showCents = false)
+                UiTextArg.Money(goal.targetAmount, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
             ).asFallbackString()
         }
     }

@@ -38,22 +38,23 @@ import androidx.compose.material.icons.filled.EventNote
 
 @Composable
 fun FinancialWeatherCard(
-    state: WeatherState,
-    headline: UiText,
-    summary: UiText,
-    icon: String,
-    totalCommitted: Double,
-    totalLikely: Double,
-    discretionaryBudget: Double,
-    pastSpendingPoints: List<Double> = emptyList(),
-    projectedSpendingPoints: List<Double> = emptyList(),
-    upcomingItems: List<UpcomingItem> = emptyList(),
-    referenceNowMillis: Long,
-    details: List<com.yourname.expensetracker.domain.model.NarrativeSection> = emptyList(),
-    totalRecurringCount: Int = 0,
-    onManageClick: () -> Unit = {},
-    onPlanClick: () -> Unit = {},
-    modifier: Modifier = Modifier
+ state: WeatherState,
+ headline: UiText,
+ summary: UiText,
+ icon: String,
+ totalCommitted: Double,
+ totalLikely: Double,
+ discretionaryBudget: Double,
+ pastSpendingPoints: List<Double> = emptyList(),
+ projectedSpendingPoints: List<Double> = emptyList(),
+ upcomingItems: List<UpcomingItem> = emptyList(),
+ referenceNowMillis: Long,
+ details: List<com.yourname.expensetracker.domain.model.NarrativeSection> = emptyList(),
+ totalRecurringCount: Int = 0,
+ onManageClick: () -> Unit = {},
+ onPlanClick: () -> Unit = {},
+ modifier: Modifier = Modifier,
+ currency: String = "EUR"
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -164,9 +165,9 @@ fun FinancialWeatherCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                ForecastMetric("COMMITTED", totalCommitted, SemanticColors.TextSecondary)
-                ForecastMetric("LIKELY", totalLikely, SemanticColors.TextSecondary)
-                ForecastMetric("AVAILABLE", discretionaryBudget, textColor)
+            ForecastMetric("COMMITTED", totalCommitted, SemanticColors.TextSecondary, currency = currency)
+            ForecastMetric("LIKELY", totalLikely, SemanticColors.TextSecondary, currency = currency)
+            ForecastMetric("AVAILABLE", discretionaryBudget, textColor, currency = currency)
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -260,7 +261,7 @@ fun FinancialWeatherCard(
                 Spacer(modifier = Modifier.height(12.dp))
                 
                 upcomingItems.take(3).forEach { item ->
-                    UpcomingRow(item = item, referenceNowMillis = referenceNowMillis)
+                    UpcomingRow(item = item, referenceNowMillis = referenceNowMillis, currency = currency)
                     Spacer(modifier = Modifier.height(12.dp))
                 }
             } else {
@@ -313,7 +314,7 @@ fun FinancialWeatherCard(
 }
 
 @Composable
-fun ForecastMetric(label: String, amount: Double, color: Color) {
+fun ForecastMetric(label: String, amount: Double, color: Color, currency: String = "EUR") {
     Column {
         Text(
             text = label,
@@ -323,7 +324,7 @@ fun ForecastMetric(label: String, amount: Double, color: Color) {
             letterSpacing = 0.5.sp
         )
         Text(
-            text = CurrencyFormatter.format(amount, showCents = false),
+            text = CurrencyFormatter.format(amount, currency, showCents = false),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             color = color
@@ -332,7 +333,7 @@ fun ForecastMetric(label: String, amount: Double, color: Color) {
 }
 
 @Composable
-fun UpcomingRow(item: UpcomingItem, referenceNowMillis: Long) {
+fun UpcomingRow(item: UpcomingItem, referenceNowMillis: Long, currency: String = "EUR") {
     val daysUntil = TimePeriodUtils.daysBetween(
         TimePeriodUtils.getStartOfDay(referenceNowMillis),
         TimePeriodUtils.getStartOfDay(item.date)
@@ -398,7 +399,7 @@ fun UpcomingRow(item: UpcomingItem, referenceNowMillis: Long) {
         }
         
         Text(
-            text = CurrencyFormatter.format(item.amount, showCents = false),
+            text = CurrencyFormatter.format(item.amount, currency, showCents = false),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
             color = SemanticColors.TextPrimary
