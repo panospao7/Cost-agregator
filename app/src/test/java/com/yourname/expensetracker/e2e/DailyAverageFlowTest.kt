@@ -4,7 +4,7 @@ import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.createExpense
 import com.yourname.expensetracker.dateToMillis
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
-import com.yourname.expensetracker.domain.analytics.PeriodRange
+import com.yourname.expensetracker.domain.analytics.AnalyticsPeriodRange
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -33,7 +33,7 @@ class DailyAverageFlowTest : ViewModelTestUtils() {
         val vmState = pipeline.awaitViewModelState(testDispatcher)
         val vmRange = vmState.currentDateRange
         val vmAverage = if (vmRange != null) {
-            val vmPeriod = PeriodRange(
+            val vmPeriod = AnalyticsPeriodRange(
                 period = AnalyticsPeriod.CUSTOM,
                 startMs = vmRange.first,
                 endMs = vmRange.second,

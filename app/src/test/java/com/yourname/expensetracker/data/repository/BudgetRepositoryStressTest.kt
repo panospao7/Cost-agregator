@@ -8,6 +8,8 @@ import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -38,11 +40,14 @@ class BudgetRepositoryStressTest {
     private val budgetCalculator = mockk<BudgetCalculator>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
+    private val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
+    private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
 
     private lateinit var repository: BudgetRepository
 
     @Before
     fun setup() {
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { budgetDao.insert(any()) } returns 1L
         coEvery { budgetDao.insertAndActivateOverall(any()) } returns 1L
         coEvery { budgetDao.insertAndActivateCategory(any()) } returns 1L
@@ -65,7 +70,9 @@ class BudgetRepositoryStressTest {
             budgetCalculator,
             timeProvider,
             offsetEngine,
-            TimeBoundaryTicker(timeProvider)
+            TimeBoundaryTicker(timeProvider),
+            currencyConverter,
+            currencySettingsRepository
         )
     }
 
@@ -403,7 +410,8 @@ class BudgetRepositoryStressTest {
         val realCalc = BudgetCalculator(timeProvider)
         val repo = BudgetRepository(
             budgetDao, categoryDao, expenseDao, realCalc,
-            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider)
+            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
+            currencyConverter, currencySettingsRepository
         )
 
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))

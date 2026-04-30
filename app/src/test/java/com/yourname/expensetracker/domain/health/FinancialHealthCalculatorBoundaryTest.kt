@@ -4,8 +4,11 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -65,7 +68,7 @@ class FinancialHealthCalculatorBoundaryTest {
     fun `expense at exactly midnight belongs to the new day not the previous day`() {
         // "now" = April 2, 2026 at noon (so "today" is April 2)
         val now = toEpochMs(2026, 4, 2, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now))
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
 
         // Expense at exactly midnight April 2 should be IN today
         val midnightApril2 = toEpochMs(2026, 4, 2, 0, 0, 0)
@@ -105,7 +108,7 @@ class FinancialHealthCalculatorBoundaryTest {
     fun `expense at start of next day is excluded from today via half-open`() {
         // "now" = April 2, 2026 at 18:00
         val now = toEpochMs(2026, 4, 2, 18, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now))
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
 
         // Expense at start of April 3 (exclusive end of April 2)
         val startApril3 = toEpochMs(2026, 4, 3, 0, 0, 0)
@@ -148,7 +151,7 @@ class FinancialHealthCalculatorBoundaryTest {
     fun `Sunday expense belongs to the same week as the preceding Monday`() {
         // Now = Sunday April 5, 2026 at noon
         val sundayNow = toEpochMs(2026, 4, 5, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(sundayNow))
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(sundayNow), mockk(), mockk())
 
         // Monday March 30 expense
         val mondayExpense = expense(1L, toEpochMs(2026, 3, 30, 10, 0), 50.0)
@@ -214,7 +217,7 @@ class FinancialHealthCalculatorBoundaryTest {
     @Test
     fun `month range is half-open and expense on 1st of next month is excluded`() {
         val midApril = toEpochMs(2026, 4, 15, 10, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(midApril))
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(midApril), mockk(), mockk())
 
         val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(midApril)
 
@@ -239,7 +242,7 @@ class FinancialHealthCalculatorBoundaryTest {
     fun `daily spending grouping uses start-of-day for keys`() {
         // Two expenses on the same day at different times should group together
         val now = toEpochMs(2026, 4, 1, 18, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now))
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
 
         val morningExpense = expense(1L, toEpochMs(2026, 3, 30, 8, 0), 10.0)
         val eveningExpense = expense(2L, toEpochMs(2026, 3, 30, 20, 0), 15.0)
@@ -275,7 +278,7 @@ class FinancialHealthCalculatorBoundaryTest {
     fun `calculator produces valid scores across all periods`() {
         // Comprehensive test: expenses spread across today, this week, this month
         val now = toEpochMs(2026, 4, 15, 14, 0)  // Wednesday April 15
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now))
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
 
         val expenses = listOf(
             // Today
@@ -314,7 +317,7 @@ class FinancialHealthCalculatorBoundaryTest {
     @Test
     fun `empty expense list produces valid default scores`() {
         val now = toEpochMs(2026, 4, 15, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now))
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
 
         val result = calculator.calculateHealthScores(
             expenses = emptyList(),
@@ -333,7 +336,7 @@ class FinancialHealthCalculatorBoundaryTest {
     @Test
     fun `empty budget list does not award all budgets on track bonus`() {
         val now = toEpochMs(2026, 4, 15, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now))
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
 
         val result = calculator.calculateHealthScores(
             expenses = emptyList(),
@@ -354,7 +357,7 @@ class FinancialHealthCalculatorBoundaryTest {
     @Test
     fun `excellent status is reachable when component score is near ceiling`() {
         val now = toEpochMs(2026, 4, 15, 14, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now))
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
 
         val result = calculator.calculateHealthScores(
             expenses = emptyList(),

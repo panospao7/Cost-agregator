@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.createExpense
+import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
@@ -64,7 +65,7 @@ class InsightsEngineDeepTest {
             repeat(4) { add(createExpense(date = "2026-03-${it + 1}", amount = 100.0, category = "Food")) }
         }
 
-        val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() })
+        val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() }, "EUR")
 
         assertApproxEquals(600.0, snapshot.monthlyComparison.currentTotal)
         assertApproxEquals(200.0, snapshot.monthlyComparison.changeAmount ?: 0.0)
@@ -85,7 +86,7 @@ class InsightsEngineDeepTest {
             paceStatus = PaceStatus.OVER_PACE
         )
 
-        val snapshot = engine.generateInsights(categories, emptyList())
+        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
 
         val pace = snapshot.spendingPace
         assertEquals(PaceStatus.OVER_PACE, pace.paceStatus)
@@ -103,7 +104,7 @@ class InsightsEngineDeepTest {
             createExpense(date = "2026-04-04", amount = 100.0, category = "Transport")
         )
 
-        val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() })
+        val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() }, "EUR")
         val food = snapshot.categoryInsights.first { it.category.id == 1L }
         val transport = snapshot.categoryInsights.first { it.category.id == 2L }
 
@@ -122,7 +123,7 @@ class InsightsEngineDeepTest {
             createExpense(date = "2026-04-12", amount = 120.0, merchant = "Beta").toSnapshot().copy(merchantKey = "beta_key")
         )
 
-        val snapshot = engine.generateInsights(categories, allExpenses)
+        val snapshot = engine.generateInsights(categories, allExpenses, "EUR")
 
         assertEquals("Alpha", snapshot.topMerchants.first().merchant)
         assertTrue(snapshot.topMerchants.first().isLikelyRecurring)
@@ -139,7 +140,7 @@ class InsightsEngineDeepTest {
         )
         val mondayNormal = createExpense(date = "2026-03-09", amount = 30.0, merchant = "Normal")
 
-        val snapshot = engine.generateInsights(categories, listOf(mondayShared, mondayNormal).map { it.toSnapshot() })
+        val snapshot = engine.generateInsights(categories, listOf(mondayShared, mondayNormal).map { it.toSnapshot() }, "EUR")
         val monday = snapshot.dayOfWeekPattern.first { it.dayName == "Mon" }
 
         assertApproxEquals(70.0, monday.totalSpent)
@@ -156,7 +157,7 @@ class InsightsEngineDeepTest {
             createExpense(date = "2026-04-03", amount = 30.0)
         )
 
-        val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() })
+        val snapshot = engine.generateInsights(categories, expenses.map { it.toSnapshot() }, "EUR")
 
         // Canonical expectation: avg=(20+50+30)/3=33.33, median=30
         assertApproxEquals(33.33, snapshot.averageTransactionSize, 0.1)
@@ -166,7 +167,7 @@ class InsightsEngineDeepTest {
     @Test
     fun `empty dataset yields safe defaults`() = runTest {
         every { timeProvider.now() } returns dateMs(2026, 4, 10)
-        val snapshot = engine.generateInsights(categories, emptyList())
+        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
 
         assertApproxEquals(0.0, snapshot.monthlyComparison.currentTotal)
         assertTrue(snapshot.categoryInsights.isEmpty())

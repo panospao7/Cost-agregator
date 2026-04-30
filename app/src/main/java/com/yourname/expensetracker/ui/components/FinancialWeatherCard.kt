@@ -54,7 +54,7 @@ fun FinancialWeatherCard(
  onManageClick: () -> Unit = {},
  onPlanClick: () -> Unit = {},
  modifier: Modifier = Modifier,
- currency: String = "EUR"
+ currency: String
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -314,7 +314,7 @@ fun FinancialWeatherCard(
 }
 
 @Composable
-fun ForecastMetric(label: String, amount: Double, color: Color, currency: String = "EUR") {
+fun ForecastMetric(label: String, amount: Double, color: Color, currency: String) {
     Column {
         Text(
             text = label,
@@ -324,7 +324,7 @@ fun ForecastMetric(label: String, amount: Double, color: Color, currency: String
             letterSpacing = 0.5.sp
         )
         Text(
-            text = CurrencyFormatter.format(amount, currency, showCents = false),
+            text = CurrencyFormatter.formatMoney(amount, currency, showCents = false),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             color = color
@@ -333,7 +333,7 @@ fun ForecastMetric(label: String, amount: Double, color: Color, currency: String
 }
 
 @Composable
-fun UpcomingRow(item: UpcomingItem, referenceNowMillis: Long, currency: String = "EUR") {
+fun UpcomingRow(item: UpcomingItem, referenceNowMillis: Long, currency: String) {
     val daysUntil = TimePeriodUtils.daysBetween(
         TimePeriodUtils.getStartOfDay(referenceNowMillis),
         TimePeriodUtils.getStartOfDay(item.date)

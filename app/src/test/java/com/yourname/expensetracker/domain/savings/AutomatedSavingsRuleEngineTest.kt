@@ -7,6 +7,8 @@ import com.yourname.expensetracker.data.repository.AutomatedSavingsRuleStateRepo
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
@@ -32,6 +34,8 @@ class AutomatedSavingsRuleEngineTest {
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var categoryRepository: CategoryRepository
     private lateinit var savingsGoalRepository: SavingsGoalRepository
+    private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var timeProvider: FakeTimeProvider
     private lateinit var stateFile: File
     private var stateScope: CoroutineScope? = null
@@ -41,6 +45,8 @@ class AutomatedSavingsRuleEngineTest {
         expenseRepository = mockk(relaxed = true)
         categoryRepository = mockk(relaxed = true)
         savingsGoalRepository = mockk(relaxed = true)
+        analyticsCurrencyNormalizer = mockk(relaxed = true)
+        currencySettingsRepository = mockk(relaxed = true)
         timeProvider = FakeTimeProvider(1_700_000_000_000L)
         stateFile = Files.createTempFile("automated-savings-rule-engine", ".preferences_pb").toFile()
 
@@ -268,9 +274,10 @@ class AutomatedSavingsRuleEngineTest {
         engine = AutomatedSavingsRuleEngine(
             expenseRepository = expenseRepository,
             categoryRepository = categoryRepository,
-            savingsGoalRepository = savingsGoalRepository,
             timeProvider = timeProvider,
-            ruleStateRepository = stateRepository
+            ruleStateRepository = stateRepository,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository
         )
     }
 }

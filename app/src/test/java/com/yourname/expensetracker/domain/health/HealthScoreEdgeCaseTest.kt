@@ -12,6 +12,8 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
@@ -46,6 +48,9 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
         savingsGoalRepository = mockk(relaxed = true)
         recurringExpenseEngine = mockk(relaxed = true)
         healthScoreHistoryDao = mockk(relaxed = true)
+        val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
+        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
 
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
@@ -63,7 +68,9 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
             savingsGoalRepository = savingsGoalRepository,
             recurringExpenseEngine = recurringExpenseEngine,
             healthScoreHistoryDao = healthScoreHistoryDao,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository
         )
     }
 

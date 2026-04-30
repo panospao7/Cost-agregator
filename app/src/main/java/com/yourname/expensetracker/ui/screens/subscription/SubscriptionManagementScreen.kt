@@ -33,8 +33,8 @@ import com.yourname.expensetracker.ui.components.emptystate.ContextualActionRegi
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
-import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -49,6 +49,7 @@ fun SubscriptionManagementScreen(
     actionRegistry: ContextualActionRegistry
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
     val completedActionKeys by actionRegistry.completedActions.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf<SubscriptionInfo?>(null) }
@@ -167,7 +168,8 @@ fun SubscriptionManagementScreen(
                         item {
                             TotalCostCard(
                                 monthlyTotal = uiState.totalMonthlyCost,
-                                annualTotal = uiState.totalAnnualCost
+                                annualTotal = uiState.totalAnnualCost,
+                                homeCurrency = homeCurrency
                             )
                         }
                         
@@ -182,16 +184,17 @@ fun SubscriptionManagementScreen(
                                 )
                             }
                             
-                            items(
-                                uiState.detectedCandidates,
-                                key = { it.id }
-                            ) { candidate ->
-                                SubscriptionCandidateCard(
-                                    candidate = candidate,
-                                    onAccept = { viewModel.acceptCandidate(it) },
-                                    onReject = { viewModel.rejectCandidate(it.id) }
-                                )
-                            }
+                        items(
+                            uiState.detectedCandidates,
+                            key = { it.id }
+                        ) { candidate ->
+                            SubscriptionCandidateCard(
+                                candidate = candidate,
+                                homeCurrency = homeCurrency,
+                                onAccept = { viewModel.acceptCandidate(it) },
+                                onReject = { viewModel.rejectCandidate(it.id) }
+                            )
+                        }
                         }
                         
                         // Active Subscriptions Header
@@ -214,6 +217,7 @@ fun SubscriptionManagementScreen(
                         ) { subscription ->
                             SubscriptionCard(
                                 subscription = subscription,
+                                homeCurrency = homeCurrency,
                                 onToggleStatus = { viewModel.toggleSubscriptionStatus(it) },
                                 onDelete = { showDeleteConfirm = it },
                                 onRecordUsage = { viewModel.recordUsage(it) }
@@ -240,6 +244,7 @@ fun SubscriptionManagementScreen(
                         ) { subscription ->
                             SubscriptionCard(
                                 subscription = subscription,
+                                homeCurrency = homeCurrency,
                                 onToggleStatus = { viewModel.toggleSubscriptionStatus(it) },
                                 onDelete = { showDeleteConfirm = it },
                                 onRecordUsage = null
@@ -364,8 +369,7 @@ private fun SummaryCard(
 }
 
 @Composable
-private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double, homeCurrency: String) {
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -393,12 +397,12 @@ private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column {
-                    Text(
-                        text = currencyFormat.format(monthlyTotal),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = SemanticColors.TextPrimary,
-                        fontWeight = FontWeight.Bold
-                    )
+                Text(
+                    text = CurrencyFormatter.format(monthlyTotal, homeCurrency),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = SemanticColors.TextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
                     Text(
                         text = stringResource(R.string.label_per_month),
                         style = MaterialTheme.typography.bodySmall,
@@ -407,12 +411,12 @@ private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double) {
                 }
                 
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = currencyFormat.format(annualTotal),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = SemanticColors.PrimaryIndigo,
-                        fontWeight = FontWeight.Bold
-                    )
+                Text(
+                    text = CurrencyFormatter.format(annualTotal, homeCurrency),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = SemanticColors.PrimaryIndigo,
+                    fontWeight = FontWeight.Bold
+                )
                     Text(
                         text = stringResource(R.string.label_per_year),
                         style = MaterialTheme.typography.bodySmall,
@@ -427,11 +431,11 @@ private fun TotalCostCard(monthlyTotal: Double, annualTotal: Double) {
 @Composable
 private fun SubscriptionCard(
     subscription: SubscriptionInfo,
+    homeCurrency: String,
     onToggleStatus: (Long) -> Unit,
     onDelete: (SubscriptionInfo) -> Unit,
     onRecordUsage: ((Long) -> Unit)?
 ) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
     
     Card(
@@ -491,7 +495,7 @@ private fun SubscriptionCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${currencyFormat.format(subscription.subscription.amount)} ${subscription.subscription.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                    text = "${CurrencyFormatter.format(subscription.subscription.amount, homeCurrency)} ${subscription.subscription.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
                     style = MaterialTheme.typography.bodyLarge,
                     color = SemanticColors.TextPrimary
                 )
@@ -533,7 +537,7 @@ private fun SubscriptionCard(
                     )
                     
                     Text(
-                        text = stringResource(R.string.label_per_use_format, currencyFormat.format(subscription.costPerUse)),
+                        text = stringResource(R.string.label_per_use_format, CurrencyFormatter.format(subscription.costPerUse, homeCurrency)),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.PrimaryIndigo,
                         fontWeight = FontWeight.Medium
@@ -576,10 +580,10 @@ private fun SubscriptionCard(
 @Composable
 private fun SubscriptionCandidateCard(
     candidate: com.yourname.expensetracker.data.database.entity.SubscriptionCandidate,
+    homeCurrency: String,
     onAccept: (com.yourname.expensetracker.data.database.entity.SubscriptionCandidate) -> Unit,
     onReject: (com.yourname.expensetracker.data.database.entity.SubscriptionCandidate) -> Unit
 ) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -651,14 +655,14 @@ private fun SubscriptionCandidateCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = currencyFormat.format(candidate.averageAmount),
+                    text = CurrencyFormatter.format(candidate.averageAmount, homeCurrency),
                     style = MaterialTheme.typography.bodyLarge,
                     color = SemanticColors.TextPrimary,
                     fontWeight = FontWeight.Medium
                 )
                 
                 Text(
-                    text = stringResource(R.string.label_estimated_annual, currencyFormat.format(candidate.estimatedAnnualCost)),
+                    text = stringResource(R.string.label_estimated_annual, CurrencyFormatter.format(candidate.estimatedAnnualCost, homeCurrency)),
                     style = MaterialTheme.typography.bodySmall,
                     color = SemanticColors.TextSecondary
                 )

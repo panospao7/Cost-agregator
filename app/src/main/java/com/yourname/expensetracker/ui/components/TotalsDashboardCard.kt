@@ -154,7 +154,7 @@ private fun CurrentPeriodSummary(
                     color = SemanticColors.TextSecondary
                 )
                 Text(
-                    text = CurrencyFormatter.format(total, currency),
+                    text = CurrencyFormatter.formatMoney(total, currency),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = statusColor

@@ -24,7 +24,7 @@ fun FinancialStressForecastCard(
  result: StressForecastResult,
  onActionClick: ((String) -> Unit)? = null,
  modifier: Modifier = Modifier,
- currency: String = "EUR"
+ currency: String
 ) {
     val overallRisk = result.overallRiskLevel
     val (backgroundColor, accentColor, riskIcon) = getRiskColors(overallRisk)
@@ -178,7 +178,7 @@ fun FinancialStressForecastCard(
 private fun HorizonDetailView(
     horizon: StressHorizon,
     accentColor: androidx.compose.ui.graphics.Color,
-    currency: String = "EUR"
+    currency: String
 ) {
     Column {
         // Balance row

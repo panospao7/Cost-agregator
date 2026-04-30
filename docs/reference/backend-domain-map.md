@@ -1,6 +1,6 @@
 # Backend Domain Layer Map
 
-**Refreshed:** April 22, 2026  
+**Refreshed:** May 1, 2026  
 **Scope:** Current domain inventory across business, AI, dashboard, and shared UI text models
 
 ---
@@ -25,6 +25,7 @@
 | Directory | Current focus |
 |-----------|---------------|
 | `common/` | Shared helpers such as hashing and general-purpose utilities |
+| `core/money/` | **NEW — Type-safe money primitives**: `CurrencyCode`, `MoneyAmount`, `MoneyAggregate`, `MoneyBucket`, `ConvertedMoney`, `ConversionFailure`, `CurrencyAssumption`, `MoneyMappers`, `MoneyFormatUtils` |
 | `dto/` | Cross-layer transfer objects for AI, review, and category references |
 | `ai/` | AI capability routing, policy, and model-backed services |
 | `bank/` | Bank API integration and connection orchestration |
@@ -303,12 +304,30 @@ Domain Layer (This Document)
 | `UpcomingItem.kt` | description, date, amount, type | Upcoming transaction | Reminders, dashboard |
 | `BlockPartyDay.kt` | date, totalSpent, transactionCount | Daily summary | Dashboard |
 
+### Core Money Types (New — `core/money/`)
+**Directory:** `core/money/`
+
+| File | Purpose | Key Details |
+|------|---------|-------------|
+| `CurrencyCode.kt` | Type-safe ISO 4217 currency code (inline value class) | Replaces raw `String` codes; `parse()` returns null for invalid input |
+| `MoneyAmount.kt` | Amount + currency pair | Throws on mixed-currency `plus()`/`minus()`; supports `times()`, `abs()` |
+| `ConvertedMoney.kt` | Full conversion trace | Original + converted + rate + timestamp + `ConversionStatus` (SUCCESS, FAILED_MISSING_RATE, SAME_CURRENCY, APPROXIMATE_RATE, LEGACY_NOT_CONVERTED) |
+| `MoneyBucket.kt` | Per-currency subtotal | Currency, amount, transaction count |
+| `MoneyAggregate.kt` | **Primary aggregation return type** | `displayAmount`, `displayCurrency`, `sourceBuckets`, `conversionFailures`, `isPartial`, `warningMessage` — replaces raw `Double` totals |
+| `ConversionFailure.kt` | Failed conversion record | `originalAmount` (MoneyAmount), `targetCurrency`, `reason` (MISSING_RATE, INVALID_AMOUNT, RATE_STALE, UNKNOWN) |
+| `CurrencyAssumption.kt` | Enum for why a currency was assigned | `UNKNOWN`, `ASSUMED_HOME_CURRENCY`, `ASSUMED_LEGACY_EUR`, `USER_CONFIRMED`, `PARSED_FROM_SOURCE` |
+| `MoneyMappers.kt` | Bridge utilities | Maps `ConversionResult` → `ConvertedMoney`, `FailedConversion` → `ConversionFailure`, `Expense` → `MoneyAmount` |
+| `MoneyFormatUtils.kt` | Extension formatting | `MoneyAmount.formatMoney()`, `.formatMoneyCompact()`, `.formatMoneyWithSign()` |
+
 ### Budget Models
 **Directory:** `model/budget/`
 
 | File | Purpose |
 |------|---------|
 | `MonteCarloBudgetImpact.kt` | Probabilistic budget scenarios |
+| `BudgetStatus` | Now includes `effectiveLimit` (rollover-aware) separated from `baseLimit`; `currency` and `conversionFailures` fields |
+
+**Key change:** `effectiveLimit` is the rolled-over spend limit (base limit + any rollover surplus). `Budget.amount` stores the original base limit and is never mutated by rollover calculation.
 
 ### Dashboard Models
 **Directory:** `model/dashboard/`
@@ -549,7 +568,8 @@ interface AiCapabilityRouter {
 |---------|---------|
 | `CurrencyConverter.kt` | FX rate application |
 | `CurrencyRatesRepository.kt` | FX data source |
-| `CurrencySettingsRepository.kt` | Currency preferences |
+| `CurrencySettingsRepository.kt` | Currency preferences (now includes `emergencyBuffer()`) |
+| `AnalyticsCurrencyNormalizer.kt` | Per-expense home-currency normalization for analytics engines |
 | `NotificationSubscriptionDetector.kt` | Recurring bill detection |
 | `SubscriptionManagerEngine.kt` | Subscription lifecycle |
 | `AutomatedSavingsRuleEngine.kt` | Auto-savings setup |
@@ -584,7 +604,7 @@ interface AiCapabilityRouter {
 | `DateFormatterUtils.kt` | Date formatting | dateKey(), monthDay(), etc. |
 | `AmountUtils.kt` | Numeric amount handling | Parse, format, round |
 | `AmountExtractionUtils.kt` | Amount extraction from text | Regex-based parsing |
-| `CurrencyFormatter.kt` | Currency display | Format with symbol |
+| `CurrencyFormatter.kt` | Currency display | **New:** `formatMoney(amount, currencyCode)` / `formatMoneyCompact()` / `formatMoneyWithSign()` — require explicit currency. Old `format(amount)` deprecated. |
 | `CurrencyNormalizer.kt` | Currency code normalization | Canonical form |
 | `StatisticsUtils.kt` | Statistical calculations | StdDev, median, etc. |
 | `StringDistanceUtils.kt` | String similarity | Levenshtein, fuzzy match |

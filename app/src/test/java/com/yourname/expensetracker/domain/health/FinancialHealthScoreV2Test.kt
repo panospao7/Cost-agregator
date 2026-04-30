@@ -13,6 +13,8 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
@@ -47,6 +49,9 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         savingsGoalRepository = mockk()
         recurringExpenseEngine = mockk()
         healthScoreHistoryDao = mockk(relaxed = true)
+        val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
+        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
 
         every { timeProvider.now() } returns now
         coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns emptyList()
@@ -62,7 +67,9 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             savingsGoalRepository = savingsGoalRepository,
             recurringExpenseEngine = recurringExpenseEngine,
             healthScoreHistoryDao = healthScoreHistoryDao,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository
         )
     }
 

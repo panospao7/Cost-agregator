@@ -2,11 +2,13 @@ package com.yourname.expensetracker.ui.screens.lifestyle
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -17,8 +19,11 @@ private const val LOAD_ERROR_MESSAGE = "Failed to load data"
 
 @HiltViewModel
 class LifestyleInflationViewModel @Inject constructor(
-    private val lifestyleDetector: LifestyleInflationDetector
+    private val lifestyleDetector: LifestyleInflationDetector,
+    currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
+
+    val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
 
     private var analysisJob: Job? = null
     private var latestAnalysisRequestId: Long = 0

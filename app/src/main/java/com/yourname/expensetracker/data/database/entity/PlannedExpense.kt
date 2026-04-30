@@ -26,6 +26,8 @@ data class PlannedExpense(
     val id: Long = 0,
     val description: String,
     val amount: Double,
+    @ColumnInfo(defaultValue = "'EUR'") val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "'LEGACY_DEFAULT'") val currencyAssumption: String = "LEGACY_DEFAULT",
     val date: Long, // Planned date
     val categoryId: Long? = null,
     @ColumnInfo(defaultValue = "0") val isRecurring: Boolean = false,

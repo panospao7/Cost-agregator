@@ -774,7 +774,10 @@ AND LENGTH(:merchantKey) >= 8
         transactionType: String
     ): List<Expense>
 
-    @Deprecated("Unsafe: raw SUM across mixed currencies. Use MultiCurrencyRepository.getCategoryTotalsInHomeCurrency() for currency-aware aggregation.")
+    @Deprecated(
+        "Returns raw Double without currency conversion. Use MultiCurrencyRepository.getHomeCurrencyPurchaseTotal() for currency-safe aggregation.",
+        ReplaceWith("multiCurrencyRepository.getHomeCurrencyPurchaseTotal(start, end).displayAmount")
+    )
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -794,6 +797,10 @@ AND LENGTH(:merchantKey) >= 8
         """)
     fun getCategorySpentInPeriodFlow(categoryId: Long, startMs: Long, endMs: Long): Flow<Double>
 
+    @Deprecated(
+        "Returns raw Double without currency conversion. Use MultiCurrencyRepository.getHomeCurrencyPurchaseTotal() for currency-safe aggregation.",
+        ReplaceWith("multiCurrencyRepository.getHomeCurrencyPurchaseTotal(start, end).displayAmount")
+    )
     @Query("""
         SELECT categoryId, COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) AS total
         FROM expenses
@@ -918,7 +925,10 @@ AND LENGTH(:merchantKey) >= 8
     @Query("SELECT * FROM expenses WHERE transactionType = :type AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC LIMIT :limit")
     fun getExpensesByTypeBetweenFlow(startDate: Long, endDate: Long, type: String, limit: Int): Flow<List<Expense>>
 
-    @Deprecated("Unsafe: raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.", ReplaceWith("MultiCurrencyRepository.getTotalExpensesInHomeCurrency()"))
+    @Deprecated(
+        "Returns raw Double without currency conversion. Use MultiCurrencyRepository.getHomeCurrencyPurchaseTotal() for currency-safe aggregation.",
+        ReplaceWith("multiCurrencyRepository.getHomeCurrencyPurchaseTotal(start, end).displayAmount")
+    )
     @Query("""
         SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses
         WHERE ${SPENDING_TYPE_SQL}
@@ -938,6 +948,7 @@ AND LENGTH(:merchantKey) >= 8
      *
      * Used by [SharedBudgetManager] to replace uncapped row scans (A.9 Batch 4).
      */
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses
         WHERE date >= :startDate AND date < :endDate
@@ -1125,6 +1136,7 @@ AND LENGTH(:merchantKey) >= 8
      * Useful for forecasting/autopilot engines that need complete monthly
      * aggregates without fetching raw rows.
      */
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
                SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
@@ -1142,6 +1154,7 @@ AND LENGTH(:merchantKey) >= 8
      * Used by [BudgetForecastingEngine] for budgets without a categoryId.
      * Replaces capped [getExpensesByTypeBetween] row reads with aggregate SQL (A.9).
      */
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
                SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
@@ -1160,6 +1173,7 @@ AND LENGTH(:merchantKey) >= 8
      * Used by [BudgetForecastingEngine] for category-specific budgets.
      * Replaces raw row reads from [getExpensesByCategory] with aggregate SQL (A.9).
      */
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey,
                SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
@@ -1174,6 +1188,7 @@ AND LENGTH(:merchantKey) >= 8
     """)
     suspend fun getMonthlySpendingTotalsByCategoryBetween(categoryId: Long, startDate: Long, endDate: Long): List<MonthlySpendingTotal>
 
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT merchantKey as merchantKey, MIN(merchant) as merchant,
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as cnt 
@@ -1187,6 +1202,7 @@ AND LENGTH(:merchantKey) >= 8
     """)
     suspend fun getMerchantTotalsBetween(startDate: Long, endDate: Long): List<MerchantTotal>
 
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT categoryId, SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as txCount
         FROM expenses 
@@ -1205,6 +1221,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("SELECT MIN(date) FROM expenses WHERE isNotMine = 0")
     suspend fun getOldestExpenseDate(): Long?
 
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query(
         """
         SELECT CAST(strftime('%Y%m%d', date/1000, 'unixepoch', 'localtime') AS INTEGER) as dayEpoch,
@@ -1224,7 +1241,10 @@ AND LENGTH(:merchantKey) >= 8
 
     // === Tier 1 & 2 Analytics Queries ===
 
-    @Deprecated("Unsafe: raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
+    @Deprecated(
+        "Returns raw Double without currency conversion. Use MultiCurrencyRepository.getHomeCurrencyPurchaseTotal() for currency-safe aggregation.",
+        ReplaceWith("multiCurrencyRepository.getHomeCurrencyPurchaseTotal(start, end).displayAmount")
+    )
     // Monthly total for a specific month range
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
@@ -1244,6 +1264,7 @@ AND LENGTH(:merchantKey) >= 8
     suspend fun getCountForPeriod(startMs: Long, endMs: Long): Int
 
     // Category totals for a period
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT categoryId, SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as txCount
         FROM expenses 
@@ -1365,6 +1386,7 @@ AND LENGTH(:merchantKey) >= 8
     suspend fun getRecentTransactionsForMerchant(merchantKey: String, limit: Int = 10): List<ExpenseWithCategoryName>
 
     // Daily spending totals for a period (for pace calculation)
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT CAST(strftime('%Y%m%d', date/1000, 'unixepoch', 'localtime') AS INTEGER) as dayEpoch,
                MIN(date) as startDate, MAX(date) as endDate,
@@ -1428,6 +1450,7 @@ AND LENGTH(:merchantKey) >= 8
     @Query("SELECT * FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date DESC")
     fun getDepositsBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
 
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND date >= :startMs AND date < :endMs AND isNotMine = 0")
     suspend fun getTotalDepositsForPeriod(startMs: Long, endMs: Long): Double
 
@@ -1443,6 +1466,7 @@ AND LENGTH(:merchantKey) >= 8
     """)
     suspend fun getMonthlyDeposits(): List<MonthlyDepositTotal>
 
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses WHERE transactionType = 'DEPOSIT' AND isNotMine = 0")
     suspend fun getTotalDeposits(): Double
 
@@ -1627,6 +1651,7 @@ AND LENGTH(:merchantKey) >= 8
 
     // === Monthly/Weekly Totals Dashboard Queries ===
 
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT date(date/1000, 'unixepoch', 'localtime', '-6 days', 'weekday 1') as weekKey,
                MIN(date) as startDate,
@@ -1642,6 +1667,7 @@ AND LENGTH(:merchantKey) >= 8
     """)
     suspend fun getWeeklyTotalsForPeriod(startMs: Long, endMs: Long): List<WeeklyTotal>
 
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') as monthKey,
                MIN(date) as startDate,
@@ -1657,6 +1683,7 @@ AND LENGTH(:merchantKey) >= 8
     """)
     suspend fun getMonthlyTotalsForPeriod(startMs: Long, endMs: Long): List<MonthlyTotal>
 
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT CAST(strftime('%Y%m%d', date/1000, 'unixepoch', 'localtime') AS INTEGER) as dayEpoch,
                MIN(date) as startDate,
@@ -1672,6 +1699,7 @@ AND LENGTH(:merchantKey) >= 8
     """)
     suspend fun getDailyTotalsWithDatesForPeriod(startMs: Long, endMs: Long): List<DailyTotal>
 
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT AVG(daily_total) FROM (
             SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) as daily_total
@@ -1684,6 +1712,7 @@ AND LENGTH(:merchantKey) >= 8
     """)
     suspend fun getAverageDailySpend(startMs: Long, endMs: Long): Double?
 
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT c.id, c.name, c.icon, c.color,
                SUM(${EFFECTIVE_AMOUNT_E_SQL}) as total,
@@ -1719,6 +1748,7 @@ AND LENGTH(:merchantKey) >= 8
     """)
     fun getBusinessExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
     
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
         WHERE isBusinessExpense = 1 
@@ -1727,6 +1757,7 @@ AND LENGTH(:merchantKey) >= 8
     """)
     suspend fun getTotalBusinessExpensesBetween(startDate: Long, endDate: Long): Double?
     
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT businessCategory,
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total,
@@ -1741,6 +1772,7 @@ AND LENGTH(:merchantKey) >= 8
     """)
     suspend fun getBusinessExpensesByCategory(startDate: Long, endDate: Long): List<BusinessCategoryTotal>
     
+    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT businessProject,
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total,

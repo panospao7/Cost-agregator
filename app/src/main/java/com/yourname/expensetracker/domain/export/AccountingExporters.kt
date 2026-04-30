@@ -21,8 +21,8 @@ class QuickBooksIIFExporter {
     }
 
     fun writeHeader(writer: Appendable) {
-        writer.append("!TRNS\tDATE\tACCNT\tAMOUNT\tMEMO\tNAME\tCLASS\n")
-        writer.append("!SPL\tDATE\tACCNT\tAMOUNT\tMEMO\tNAME\tCLASS\n")
+        writer.append("!TRNS\tDATE\tACCNT\tAMOUNT\tCURRENCY\tMEMO\tNAME\tCLASS\n")
+        writer.append("!SPL\tDATE\tACCNT\tAMOUNT\tCURRENCY\tMEMO\tNAME\tCLASS\n")
         writer.append("!ENDTRNS\n")
     }
 
@@ -35,8 +35,8 @@ class QuickBooksIIFExporter {
         val memo = escapeIifField(expense.notes ?: "")
         val name = escapeIifField(expense.merchant)
 
-        writer.append("TRNS\t${escapeIifField(date)}\t${escapeIifField(fundingAccount)}\t$amount\t$memo\t$name\t\n")
-        writer.append("SPL\t${escapeIifField(date)}\t${escapeIifField(categoryAccount)}\t$splitAmount\t$memo\t$name\t\n")
+        writer.append("TRNS\t${escapeIifField(date)}\t${escapeIifField(fundingAccount)}\t$amount\t${escapeIifField(expense.currency)}\t$memo\t$name\t\n")
+        writer.append("SPL\t${escapeIifField(date)}\t${escapeIifField(categoryAccount)}\t$splitAmount\t${escapeIifField(expense.currency)}\t$memo\t$name\t\n")
         writer.append("ENDTRNS\n")
     }
 
@@ -60,7 +60,7 @@ class XeroCSVExporter {
     }
 
     fun writeHeader(writer: Appendable) {
-        writer.append("Date,Description,Amount,Account,Reference\n")
+        writer.append("Date,Description,Amount,Currency,Account,Reference,OriginalCurrency,HomeCurrency,ConversionRate,OriginalAmount\n")
     }
 
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
@@ -69,8 +69,16 @@ class XeroCSVExporter {
         val amount = escapeCsvField(CurrencyFormatter.formatForExport(expense.amount))
         val account = escapeCsvField(categories[expense.categoryId] ?: "Uncategorized")
         val reference = expense.id.toString()
+        val conversionRate = expense.conversionRateUsed?.let { CurrencyFormatter.formatForExport(it) } ?: ""
+        val originalAmount = expense.originalAmount?.let { CurrencyFormatter.formatForExport(it) } ?: ""
 
-        writer.append("${escapeCsvField(date)},$description,$amount,$account,$reference\n")
+        writer.append(
+            "${escapeCsvField(date)},$description,$amount,${escapeCsvField(expense.currency)}," +
+                "$account,$reference," +
+                "${escapeCsvField(expense.originalCurrency)}," +
+                "${escapeCsvField(expense.homeCurrency)}," +
+                "$conversionRate,$originalAmount\n"
+        )
     }
 
     private fun escapeCsvField(field: String): String {
@@ -111,7 +119,7 @@ class FreshBooksExporter {
     }
 
     fun writeHeader(writer: Appendable) {
-        writer.append("date,description,amount,category,vendor\n")
+        writer.append("date,description,amount,currency,category,vendor,originalCurrency,homeCurrency,conversionRate,originalAmount\n")
     }
 
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
@@ -120,8 +128,16 @@ class FreshBooksExporter {
         val amount = escapeCsvField(CurrencyFormatter.formatForExport(expense.amount))
         val category = escapeCsvField(categories[expense.categoryId] ?: "Uncategorized")
         val vendor = escapeCsvField(expense.merchant)
+        val conversionRate = expense.conversionRateUsed?.let { CurrencyFormatter.formatForExport(it) } ?: ""
+        val originalAmount = expense.originalAmount?.let { CurrencyFormatter.formatForExport(it) } ?: ""
 
-        writer.append("${escapeCsvField(date)},$description,$amount,$category,$vendor\n")
+        writer.append(
+            "${escapeCsvField(date)},$description,$amount,${escapeCsvField(expense.currency)}," +
+                "$category,$vendor," +
+                "${escapeCsvField(expense.originalCurrency)}," +
+                "${escapeCsvField(expense.homeCurrency)}," +
+                "$conversionRate,$originalAmount\n"
+        )
     }
 
     private fun escapeCsvField(field: String): String {

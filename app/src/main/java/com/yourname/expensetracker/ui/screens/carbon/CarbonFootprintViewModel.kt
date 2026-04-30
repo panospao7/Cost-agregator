@@ -3,12 +3,14 @@ package com.yourname.expensetracker.ui.screens.carbon
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.carbon.CarbonFootprintCalculator
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -20,8 +22,11 @@ private const val LOAD_ERROR_MESSAGE = "Failed to load data"
 @HiltViewModel
 class CarbonFootprintViewModel @Inject constructor(
     private val calculator: CarbonFootprintCalculator,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
+
+    val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
 
     private var loadReportJob: Job? = null
     private var latestLoadRequestId: Long = 0

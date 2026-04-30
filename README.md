@@ -252,18 +252,19 @@ copies or substantial portions of the Software.
 
 ## 📊 Stats
 
-- **Total Features:** 22
+- **Total Features:** 22 (including fully-implemented multi-currency support)
 - **Total Commits:** 17
-- **Database Version:** 46
-- **Entities:** 31
+- **Database Version:** 92
+- **Entities:** 46+
 - **UI Screens:** 40+
-- **Lines of Code:** 50,000+
+- **Lines of Code:** 60,000+
 - **Test Coverage:** 80%+
+- **Multi-Currency Architecture:** 7-phase refactoring completed May 2026 — type-safe money primitives, currency-aware aggregation across all 10+ pipelines, CI guardrails, canonical test fixture
 
 ---
 
 **Made with ❤️ using Kotlin and Jetpack Compose**
 
-*Last updated: March 31, 2026*
+*Last updated: May 1, 2026*
 
 > ✅ Smoke test passed — workflow system operational (2026-04-01)

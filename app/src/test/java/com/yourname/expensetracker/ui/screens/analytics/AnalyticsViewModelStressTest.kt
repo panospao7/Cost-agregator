@@ -1,9 +1,12 @@
 package com.yourname.expensetracker.ui.screens.analytics
 
 import app.cash.turbine.test
+import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.TimePeriod
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.*
@@ -37,6 +40,9 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
     private lateinit var travelDetectionEngine: com.yourname.expensetracker.domain.location.TravelDetectionEngine
     private lateinit var spendingPersonalityClassifier: com.yourname.expensetracker.domain.analytics.SpendingPersonalityClassifier
     private lateinit var timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+    private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
+    private lateinit var currencyConverter: CurrencyConverter
+    private lateinit var currencySettingsRepository: TestCurrencySettingsRepository
 
     private lateinit var viewModel: AnalyticsViewModel
 
@@ -55,29 +61,32 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
         travelDetectionEngine = mockk(relaxed = true)
         spendingPersonalityClassifier = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
+        analyticsCurrencyNormalizer = mockk(relaxed = true)
+        currencyConverter = mockk(relaxed = true)
+        currencySettingsRepository = TestCurrencySettingsRepository()
 
         every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         every { categoryRepository.allCategories } returns flowOf(emptyList())
-        coEvery { analyticsRepository.getSpendingSummary(any(), any()) } returns flowOf(
+        every { analyticsRepository.getSpendingSummary(any(), any()) } returns flowOf(
             com.yourname.expensetracker.data.repository.SpendingSummary(
                 totalSpent = 0.0,
                 previousTotalSpent = null,
                 changePercent = null,
                 dailyHistory = emptyList(),
                 previousDailyHistory = emptyList(),
-                transactionCount = 0
+                transactionCount = 0,
+                currency = "EUR"
             )
         )
-        coEvery { analyticsRepository.getCategoryBreakdown(any(), any()) } returns flowOf(emptyList())
-        coEvery { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
+        every { analyticsRepository.getCategoryBreakdown(any(), any()) } returns flowOf(emptyList())
+        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { timeProvider.now() } returns System.currentTimeMillis()
-        coEvery { insightsEngine.generateInsights(any(), any()) } returns mockk(relaxed = true)
+        coEvery { insightsEngine.generateInsights(any(), any(), any(), any()) } returns mockk(relaxed = true)
         every { insightsEngine.getLegacyInsights(any()) } returns emptyList()
-        coEvery { insightsEngine.buildDailyTotals(any(), any()) } returns emptyMap()
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
         val now = System.currentTimeMillis()
-        every { advancedAnalyticsEngine.getPeriodRange(any(), any(), any()) } returns com.yourname.expensetracker.domain.analytics.PeriodRange(
+        every { advancedAnalyticsEngine.getPeriodRange(any(), any(), any()) } returns com.yourname.expensetracker.domain.analytics.AnalyticsPeriodRange(
             period = com.yourname.expensetracker.domain.analytics.AnalyticsPeriod.MONTH,
             startMs = now - 30L * 24 * 60 * 60 * 1000,
             endMs = now,
@@ -115,11 +124,14 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
             recurringExpenseEngine,
             analyticsRepository,
             advancedAnalyticsEngine,
+            analyticsCurrencyNormalizer,
             locationInsightsEngine,
             areaSpendingEngine,
             travelDetectionEngine,
             spendingPersonalityClassifier,
-            timeProvider
+            timeProvider,
+            currencyConverter,
+            currencySettingsRepository
         )
     }
 
@@ -204,14 +216,15 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
             val end = secondArg<Long>()
             allExpenses.filter { it.date in start until end }
         }
-        coEvery { analyticsRepository.getSpendingSummary(any(), any()) } returns flowOf(
+        every { analyticsRepository.getSpendingSummary(any(), any()) } returns flowOf(
             com.yourname.expensetracker.data.repository.SpendingSummary(
                 totalSpent = 120.0,
                 previousTotalSpent = null,
                 changePercent = null,
                 dailyHistory = emptyList(),
                 previousDailyHistory = emptyList(),
-                transactionCount = 1
+                transactionCount = 1,
+                currency = "EUR"
             )
         )
 
@@ -223,11 +236,14 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
             recurringExpenseEngine,
             analyticsRepository,
             advancedAnalyticsEngine,
+            analyticsCurrencyNormalizer,
             locationInsightsEngine,
             areaSpendingEngine,
             travelDetectionEngine,
             spendingPersonalityClassifier,
-            timeProvider
+            timeProvider,
+            currencyConverter,
+            currencySettingsRepository
         )
 
         testDispatcher.scheduler.advanceTimeBy(400)

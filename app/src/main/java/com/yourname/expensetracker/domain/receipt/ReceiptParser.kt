@@ -122,7 +122,7 @@ class ReceiptParser @Inject constructor(
         )
     )
 
-    fun parse(rawText: String): ParsedReceipt {
+    fun parse(rawText: String, homeCurrency: String = "EUR"): ParsedReceipt {
         // 1. Pre-process text to fix OCR spacing issues and Greek characters
         val cleanedText = normalizeGreekOcr(rawText)
         val lines = cleanedText.lines().filter { it.isNotBlank() }
@@ -166,7 +166,8 @@ class ReceiptParser @Inject constructor(
             subtotal = finalSubtotal,
             tax = tax,
             date = date,
-            currency = detectCurrency(cleanedText),
+            // Fallback chain: detected currency → explicit homeCurrency → "EUR" last resort
+            currency = detectCurrency(cleanedText) ?: homeCurrency,
             lineItems = lineItems,
             confidence = confidence
         )
@@ -686,7 +687,7 @@ class ReceiptParser @Inject constructor(
         return java.lang.String.format(Locale.US, "%.4f", value)
     }
 
-    private fun detectCurrency(text: String): String {
+    private fun detectCurrency(text: String): String? {
         return when {
             text.contains("€") || 
             text.contains("EUR", ignoreCase = true) ||
@@ -699,7 +700,7 @@ class ReceiptParser @Inject constructor(
             text.contains("£") || 
             (text.contains("GBP", ignoreCase = true) && !text.contains("OYP") && !text.contains("OYR")) -> "GBP"
             
-            else -> "EUR" // Default for Greek receipts
+            else -> null // Currency not detected
         }
     }
 

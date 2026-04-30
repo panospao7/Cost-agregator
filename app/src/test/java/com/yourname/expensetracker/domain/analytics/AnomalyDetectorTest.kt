@@ -35,7 +35,8 @@ class AnomalyDetectorTest {
         val anomalies = detector.detect(
             monthPeriod = month,
             categoryMap = mapOf(1L to category),
-            allExpenses = expenses.map { it.toSnapshot() }
+            allExpenses = expenses.map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertTrue("No anomaly expected when effective amounts are in-range", anomalies.isEmpty())
@@ -61,7 +62,8 @@ class AnomalyDetectorTest {
         val anomalies = detector.detect(
             monthPeriod = month,
             categoryMap = mapOf(7L to category),
-            allExpenses = expenses.map { it.toSnapshot() }
+            allExpenses = expenses.map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertTrue("Tight distribution should not produce false positives", anomalies.isEmpty())
@@ -99,7 +101,8 @@ class AnomalyDetectorTest {
         val anomalies = detector.detect(
             monthPeriod = month,
             categoryMap = mapOf(8L to category),
-            allExpenses = contextual.map { it.toSnapshot() }
+            allExpenses = contextual.map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertTrue("Extreme contextual outlier should be detected", anomalies.any { it.expense.id == 199L })
@@ -126,7 +129,8 @@ class AnomalyDetectorTest {
         val anomalies = detector.detect(
             monthPeriod = month,
             categoryMap = mapOf(9L to category),
-            allExpenses = expenses.map { it.toSnapshot() }
+            allExpenses = expenses.map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertTrue("Flat baseline spike should be detected", anomalies.any { it.expense.id == 5L })

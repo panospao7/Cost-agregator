@@ -195,7 +195,7 @@ fun DayBlock(day: DayBudgetStatus, onClick: () -> Unit, currency: String = "EUR"
         BlockStatus.NO_DATA -> "No spending data"
     }
     val isInteractive = day.status != BlockStatus.FUTURE
-    val blockDescription = "Day ${day.dayOfMonth}, $stateLabel. Spent ${CurrencyFormatter.format(day.actualSpent, currency)} of ${CurrencyFormatter.format(day.targetBudget, currency)} target."
+    val blockDescription = "Day ${day.dayOfMonth}, $stateLabel. Spent ${CurrencyFormatter.formatMoney(day.actualSpent, currency)} of ${CurrencyFormatter.formatMoney(day.targetBudget, currency)} target."
     val indicatorGlyph = when (day.status) {
         BlockStatus.UNDER_BUDGET -> "✓"
         BlockStatus.OVER_BUDGET -> "!"

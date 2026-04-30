@@ -2,11 +2,18 @@ package com.yourname.expensetracker.domain.forecasting
 
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -33,7 +40,10 @@ class FinancialStressForecastEngine @Inject constructor(
     private val recurringPatternsProvider: MergedRecurringPatternsProvider,
     private val expenseRepository: ExpenseRepository,
     private val budgetRepository: BudgetRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val multiCurrencyRepository: MultiCurrencyRepository
 ) {
     companion object {
         private const val TAG = "FinancialStressForecast"
@@ -41,17 +51,20 @@ class FinancialStressForecastEngine @Inject constructor(
         private const val DAYS_30 = 30
         private const val DAYS_60 = 60
         private const val DAYS_90 = 90
-        private const val DEFAULT_EMERGENCY_BUFFER = 500.0 // EUR
+        // Note: 500.0 is in home currency units
+        private const val DEFAULT_EMERGENCY_BUFFER_FALLBACK = 500.0
         private const val SEED = 42L
     }
 
     /**
      * Compute financial stress forecast for multiple horizons (30/60/90 days).
-     * 
+     *
+     * @param displayCurrency The currency to display results in. If null, resolves from settings.
      * @return StressForecastResult containing forecasts for all horizons
      */
-    suspend fun computeStressForecast(): StressForecastResult {
+    suspend fun computeStressForecast(displayCurrency: String? = null): StressForecastResult {
         val startTime = System.currentTimeMillis()
+        val resolvedDisplayCurrency = resolveDisplayCurrency(displayCurrency)
         
         return try {
             val now = timeProvider.now()
@@ -62,26 +75,49 @@ class FinancialStressForecastEngine @Inject constructor(
             val currentBalance = resolveStartingBalanceBaseline()
             val patterns = recurringPatternsProvider.getConfirmedPatterns()
 
+            // Normalize purchases and deposits to display currency
+            val ninetyDaysAgo = now - (90 * TimePeriodUtils.DAY_IN_MILLIS)
+            val sixtyDaysAgo = now - (60 * TimePeriodUtils.DAY_IN_MILLIS)
+
+            // Pre-fetch and normalize deposits for income estimation
+            val rawDeposits = expenseRepository.getDepositsBetween(ninetyDaysAgo, now)
+            val normDeposits = analyticsCurrencyNormalizer.normalizeExpenses(rawDeposits, resolvedDisplayCurrency)
+            val normalizedDeposits = normDeposits.includedExpenses
+
+            // Pre-fetch and normalize expenses for Monte Carlo simulation
+            val rawExpenses = expenseRepository.getExpensesBetween(sixtyDaysAgo, now)
+            val normExpenses = analyticsCurrencyNormalizer.normalizeExpenses(rawExpenses, resolvedDisplayCurrency)
+            val normalizedExpenses = normExpenses.includedExpenses
+
             // Calculate horizons
             val horizon30 = calculateHorizon(
                 daysAhead = DAYS_30,
                 currentBalance = currentBalance,
                 patterns = patterns,
-                now = now
+                now = now,
+                normalizedExpenses = normalizedExpenses,
+                normalizedDeposits = normalizedDeposits,
+                displayCurrency = resolvedDisplayCurrency
             )
             
             val horizon60 = calculateHorizon(
                 daysAhead = DAYS_60,
                 currentBalance = currentBalance,
                 patterns = patterns,
-                now = now
+                now = now,
+                normalizedExpenses = normalizedExpenses,
+                normalizedDeposits = normalizedDeposits,
+                displayCurrency = resolvedDisplayCurrency
             )
             
             val horizon90 = calculateHorizon(
                 daysAhead = DAYS_90,
                 currentBalance = currentBalance,
                 patterns = patterns,
-                now = now
+                now = now,
+                normalizedExpenses = normalizedExpenses,
+                normalizedDeposits = normalizedDeposits,
+                displayCurrency = resolvedDisplayCurrency
             )
             
             val horizons = listOf(horizon30, horizon60, horizon90)
@@ -93,7 +129,7 @@ class FinancialStressForecastEngine @Inject constructor(
             val earliestCrunchDate = findEarliestCrunchDate(horizons, now)
             
             // Generate recommendations
-            val recommendations = generateRecommendations(horizons, patterns)
+            val recommendations = generateRecommendations(horizons, patterns, resolvedDisplayCurrency)
             
             val duration = System.currentTimeMillis() - startTime
             Timber.d("$TAG: Stress forecast computed in ${duration}ms - Risk: $overallRiskLevel")
@@ -102,7 +138,8 @@ class FinancialStressForecastEngine @Inject constructor(
                 horizons = horizons,
                 overallRiskLevel = overallRiskLevel,
                 earliestCrunchDate = earliestCrunchDate,
-                recommendations = recommendations
+                recommendations = recommendations,
+                displayCurrency = resolvedDisplayCurrency
             )
             
         } catch (e: Exception) {
@@ -111,14 +148,16 @@ class FinancialStressForecastEngine @Inject constructor(
             StressForecastResult(
                 horizons = createDefaultHorizons(
                     fallbackRiskLevel = StressRiskLevel.MODERATE,
-                    fallbackCrunchProbability = 0.20
+                    fallbackCrunchProbability = 0.20,
+                    displayCurrency = resolvedDisplayCurrency
                 ),
                 overallRiskLevel = StressRiskLevel.MODERATE,
                 earliestCrunchDate = null,
                 recommendations = listOf(
                     "Stress forecast is temporarily unavailable due to a calculation issue.",
                     "Showing a degraded estimate. Please retry shortly and verify your recent transactions."
-                )
+                ),
+                displayCurrency = resolvedDisplayCurrency
             )
         }
     }
@@ -130,7 +169,10 @@ class FinancialStressForecastEngine @Inject constructor(
         daysAhead: Int,
         currentBalance: Double,
         patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
-        now: Long
+        now: Long,
+        normalizedExpenses: List<ExpenseSnapshot>,
+        normalizedDeposits: List<ExpenseSnapshot>,
+        displayCurrency: String
     ): StressHorizon {
         val horizonStart = TimePeriodUtils.getStartOfDay(now)
         val horizonEnd = now + (daysAhead * TimePeriodUtils.DAY_IN_MILLIS)
@@ -138,11 +180,11 @@ class FinancialStressForecastEngine @Inject constructor(
         // 1. Calculate recurring obligations within this horizon
         val recurringOutflows = calculateRecurringOutflows(patterns, horizonStart, horizonEnd)
         
-        // 2. Estimate expected income
-        val expectedIncome = estimateIncome(daysAhead)
+        // 2. Estimate expected income using pre-normalized deposits
+        val expectedIncome = estimateIncome(daysAhead, normalizedDeposits)
         
-        // 3. Run Monte Carlo for discretionary spending
-        val mcResult = runMonteCarloSimulation(daysAhead, patterns)
+        // 3. Run Monte Carlo for discretionary spending using pre-normalized expenses
+        val mcResult = runMonteCarloSimulation(daysAhead, patterns, normalizedExpenses, displayCurrency)
         
         // 4. Calculate projected balance
         val projectedBalance = currentBalance + expectedIncome - recurringOutflows - mcResult.percentile50
@@ -160,7 +202,8 @@ class FinancialStressForecastEngine @Inject constructor(
         val riskLevel = classifyRiskLevel(crunchProbability)
         
         // 7. Calculate discretionary buffer
-        val discretionaryBuffer = (projectedBalance - DEFAULT_EMERGENCY_BUFFER).coerceAtLeast(0.0)
+        val emergencyBuffer = getEmergencyBuffer()
+        val discretionaryBuffer = (projectedBalance - emergencyBuffer).coerceAtLeast(0.0)
         
         return StressHorizon(
             daysAhead = daysAhead,
@@ -170,12 +213,14 @@ class FinancialStressForecastEngine @Inject constructor(
             riskLevel = riskLevel,
             recurringObligations = recurringOutflows,
             expectedIncome = expectedIncome,
-            discretionaryBuffer = discretionaryBuffer
+            discretionaryBuffer = discretionaryBuffer,
+            displayCurrency = displayCurrency
         )
     }
 
     /**
      * Calculate recurring outflows for a time period.
+     * TODO: Convert pattern.averageAmount to display currency if pattern.currency differs from display currency.
      */
     private fun calculateRecurringOutflows(
         patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
@@ -215,15 +260,14 @@ class FinancialStressForecastEngine @Inject constructor(
     }
 
     /**
-     * Estimate expected income for the horizon based on historical deposits.
+     * Estimate expected income for the horizon based on normalized historical deposits.
      */
-    private suspend fun estimateIncome(daysAhead: Int): Double {
-        // Look back 90 days to estimate monthly income
-        val now = timeProvider.now()
-        val ninetyDaysAgo = now - (90 * TimePeriodUtils.DAY_IN_MILLIS)
-        
-        val deposits = expenseRepository.getDepositsBetween(ninetyDaysAgo, now)
-        val totalDeposits = deposits.sumOf { it.effectiveAmount }
+    private suspend fun estimateIncome(
+        daysAhead: Int,
+        normalizedDeposits: List<ExpenseSnapshot>
+    ): Double {
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 83
+        val totalDeposits = normalizedDeposits.sumOf { it.effectiveAmount }
         
         // Average monthly income based on 90-day window
         val avgMonthlyIncome = totalDeposits / 3.0 // 3 months
@@ -238,15 +282,12 @@ class FinancialStressForecastEngine @Inject constructor(
      */
     private suspend fun runMonteCarloSimulation(
         daysAhead: Int,
-        patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>
+        patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
+        normalizedExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String
     ): MonteCarloHorizonResult {
-        // Get historical spending for the last 60 days
-        val now = timeProvider.now()
-        val sixtyDaysAgo = now - (60 * TimePeriodUtils.DAY_IN_MILLIS)
-        
-        val expenses = expenseRepository.getExpensesBetween(sixtyDaysAgo, now)
-        val purchases = expenses.filter { 
-            it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine 
+        val purchases = normalizedExpenses.filter { 
+            it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine 
         }
 
         val recurringMerchantKeys = patterns
@@ -278,16 +319,21 @@ class FinancialStressForecastEngine @Inject constructor(
                 percentile50 = percentile(fallbackTotals, 0.50),
                 percentile75 = percentile(fallbackTotals, 0.75),
                 percentile90 = percentile(fallbackTotals, 0.90),
-                simulatedTotals = fallbackTotals.toList()
+                simulatedTotals = fallbackTotals.toList(),
+                displayCurrency = displayCurrency
             )
         }
 
         // Build empirical distribution of daily discretionary totals, including
         // zero-spend days so sparse history does not overstate routine spending.
+        // SAFE: discretionaryPurchases derived from normalizedExpenses normalized at line 89
         val discretionaryTotalsByDay = discretionaryPurchases
             .groupBy { TimePeriodUtils.getStartOfDay(it.date) }
             .mapValues { (_, txns) -> txns.sumOf { it.effectiveAmount } }
 
+        val sixtyDaysAgo = discretionaryPurchases.minOfOrNull { it.date }
+            ?: (timeProvider.now() - (60 * TimePeriodUtils.DAY_IN_MILLIS))
+        val now = timeProvider.now()
         val sampleStartDay = TimePeriodUtils.getStartOfDay(sixtyDaysAgo)
         val sampleEndDay = TimePeriodUtils.getStartOfDay(now)
         val dailyTotals = mutableListOf<Double>()
@@ -324,7 +370,8 @@ class FinancialStressForecastEngine @Inject constructor(
             percentile50 = percentile(simulatedTotals, 0.50),
             percentile75 = percentile(simulatedTotals, 0.75),
             percentile90 = percentile(simulatedTotals, 0.90),
-            simulatedTotals = simulatedTotals.toList()
+            simulatedTotals = simulatedTotals.toList(),
+            displayCurrency = displayCurrency
         )
     }
 
@@ -382,9 +429,10 @@ class FinancialStressForecastEngine @Inject constructor(
     /**
      * Generate personalized recommendations based on forecast.
      */
-    private fun generateRecommendations(
+    private suspend fun generateRecommendations(
         horizons: List<StressHorizon>,
-        patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>
+        patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
+        displayCurrency: String
     ): List<String> {
         val recommendations = mutableListOf<String>()
         
@@ -408,9 +456,11 @@ class FinancialStressForecastEngine @Inject constructor(
             }
             
             // Check emergency buffer
+            val emergencyBuffer = getEmergencyBuffer()
             val minBuffer = horizons.minOf { it.discretionaryBuffer }
-            if (minBuffer < DEFAULT_EMERGENCY_BUFFER) {
-                recommendations.add("Your emergency buffer is low. Aim for at least €${DEFAULT_EMERGENCY_BUFFER.toInt()}.")
+            if (minBuffer < emergencyBuffer) {
+                val formattedBuffer = CurrencyFormatter.format(emergencyBuffer, displayCurrency)
+                recommendations.add("Your emergency buffer is low. Aim for at least $formattedBuffer.")
             }
         }
         
@@ -419,7 +469,8 @@ class FinancialStressForecastEngine @Inject constructor(
         }
         
         // Add positive reinforcement when healthy
-        if (!anyRisk && horizons.all { it.projectedBalance > DEFAULT_EMERGENCY_BUFFER }) {
+        val emergencyBuffer = getEmergencyBuffer()
+        if (!anyRisk && horizons.all { it.projectedBalance > emergencyBuffer }) {
             recommendations.add("Great job! Your financial stress level is low. Keep up the good habits.")
         }
         
@@ -435,11 +486,29 @@ class FinancialStressForecastEngine @Inject constructor(
     }
 
     /**
+     * Resolve the emergency buffer amount in the home/display currency.
+     * Defaults to [DEFAULT_EMERGENCY_BUFFER_FALLBACK] if the setting is unavailable.
+     */
+    private suspend fun getEmergencyBuffer(): Double {
+        return runCatching { currencySettingsRepository.emergencyBuffer().first() }
+            .getOrElse { DEFAULT_EMERGENCY_BUFFER_FALLBACK }
+    }
+
+    /**
+     * Resolve the display currency from the optional parameter or settings.
+     */
+    private suspend fun resolveDisplayCurrency(fallback: String?): String {
+        return fallback ?: runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+    }
+
+    /**
      * Create default horizons for error case.
      */
     private fun createDefaultHorizons(
         fallbackRiskLevel: StressRiskLevel = StressRiskLevel.LOW,
-        fallbackCrunchProbability: Double = 0.0
+        fallbackCrunchProbability: Double = 0.0,
+        displayCurrency: String = ""
     ): List<StressHorizon> {
         return listOf(DAYS_30, DAYS_60, DAYS_90).map { days ->
             StressHorizon(
@@ -450,7 +519,8 @@ class FinancialStressForecastEngine @Inject constructor(
                 riskLevel = fallbackRiskLevel,
                 recurringObligations = 0.0,
                 expectedIncome = 0.0,
-                discretionaryBuffer = 0.0
+                discretionaryBuffer = 0.0,
+                displayCurrency = displayCurrency
             )
         }
     }
@@ -485,7 +555,8 @@ data class StressForecastResult(
     val horizons: List<StressHorizon>,
     val overallRiskLevel: StressRiskLevel,
     val earliestCrunchDate: Long?,
-    val recommendations: List<String>
+    val recommendations: List<String>,
+    val displayCurrency: String = ""
 )
 
 /**
@@ -499,7 +570,8 @@ data class StressHorizon(
     val riskLevel: StressRiskLevel,
     val recurringObligations: Double,
     val expectedIncome: Double,
-    val discretionaryBuffer: Double
+    val discretionaryBuffer: Double,
+    val displayCurrency: String = ""
 )
 
 /**
@@ -522,5 +594,6 @@ private data class MonteCarloHorizonResult(
     val percentile50: Double,
     val percentile75: Double,
     val percentile90: Double,
-    val simulatedTotals: List<Double>
+    val simulatedTotals: List<Double>,
+    val displayCurrency: String = ""
 )

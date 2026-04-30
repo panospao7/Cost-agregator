@@ -36,6 +36,7 @@ class AnomalyDetector @Inject constructor() {
             id = id,
             amount = amount,
             effectiveAmount = effectiveAmount,
+            currency = currency,
             merchant = merchant,
             date = date,
             categoryId = categoryId
@@ -106,7 +107,8 @@ class AnomalyDetector @Inject constructor() {
     fun detect(
         monthPeriod: MonthPeriod,
         categoryMap: Map<Long, AnalyticsCategoryRef>,
-        allExpenses: List<ExpenseSnapshot>
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String = "EUR"
     ): List<AnomalyTransaction> {
 
         val monthExpenses = allExpenses.filter { expense ->
@@ -133,7 +135,7 @@ class AnomalyDetector @Inject constructor() {
 
             // ── 1. IQR ────────────────────────────────────────────────────────
             if (amounts.size >= MIN_SAMPLES_GLOBAL) {
-                val iqrOutliers = detectIqr(expenses, amounts, category, categoryAvg)
+                val iqrOutliers = detectIqr(expenses, amounts, category, categoryAvg, displayCurrency)
                 iqrOutliers.forEach { anomaly ->
                     flagged.merge(anomaly.expense.id, anomaly) { existing, new ->
                         // MAD > IQR > CONTEXTUAL > MULTIPLIER in priority
@@ -145,7 +147,7 @@ class AnomalyDetector @Inject constructor() {
 
             // ── 2. MAD ────────────────────────────────────────────────────────
             if (amounts.size >= MIN_SAMPLES_GLOBAL) {
-                val madOutliers = detectMad(expenses, amounts, category, categoryAvg)
+                val madOutliers = detectMad(expenses, amounts, category, categoryAvg, displayCurrency)
                 madOutliers.forEach { anomaly ->
                     flagged.merge(anomaly.expense.id, anomaly) { existing, new ->
                         if (new.detectionMethod.ordinal > existing.detectionMethod.ordinal) new
@@ -155,7 +157,7 @@ class AnomalyDetector @Inject constructor() {
             }
 
             // ── 3. Contextual ─────────────────────────────────────────────────
-            val contextualOutliers = detectContextual(expenses, category, categoryAvg)
+            val contextualOutliers = detectContextual(expenses, category, categoryAvg, displayCurrency)
             contextualOutliers.forEach { anomaly ->
                 // Only add contextual if not already flagged by a stronger method
                 if (!flagged.containsKey(anomaly.expense.id)) {
@@ -176,6 +178,7 @@ class AnomalyDetector @Inject constructor() {
             .sortedByDescending { it.deviationMultiple }
     }
 
+
     // ─── Detection methods ────────────────────────────────────────────────────
 
     /**
@@ -189,7 +192,8 @@ class AnomalyDetector @Inject constructor() {
         expenses: List<ExpenseSnapshot>,
         amounts: List<Double>,
         category: AnalyticsCategoryRef?,
-        categoryAvg: Double
+        categoryAvg: Double,
+        displayCurrency: String
     ): List<AnomalyTransaction> {
         val sorted = amounts.sorted()
         val q1 = percentile(sorted, 25.0)
@@ -201,7 +205,8 @@ class AnomalyDetector @Inject constructor() {
                 category = category,
                 categoryAvg = categoryAvg,
                 baseline = q3,
-                detectionMethod = AnomalyMethod.IQR
+                detectionMethod = AnomalyMethod.IQR,
+                displayCurrency = displayCurrency
             )
         }
 
@@ -214,7 +219,8 @@ class AnomalyDetector @Inject constructor() {
                 deviationMultiple = if (categoryAvg > 0) (expense.effectiveAmount / categoryAvg).toFloat() else 0f,
                 category = category,
                 detectionMethod = AnomalyMethod.IQR,
-                categoryAvg = categoryAvg
+                categoryAvg = categoryAvg,
+                displayCurrency = displayCurrency
             )
         }
     }
@@ -232,7 +238,8 @@ class AnomalyDetector @Inject constructor() {
         expenses: List<ExpenseSnapshot>,
         amounts: List<Double>,
         category: AnalyticsCategoryRef?,
-        categoryAvg: Double
+        categoryAvg: Double,
+        displayCurrency: String
     ): List<AnomalyTransaction> {
         val sorted = amounts.sorted()
         val median = percentile(sorted, 50.0)
@@ -246,7 +253,8 @@ class AnomalyDetector @Inject constructor() {
                 category = category,
                 categoryAvg = categoryAvg,
                 baseline = median,
-                detectionMethod = AnomalyMethod.MAD
+                detectionMethod = AnomalyMethod.MAD,
+                displayCurrency = displayCurrency
             )
         }
 
@@ -260,7 +268,8 @@ class AnomalyDetector @Inject constructor() {
                 deviationMultiple = if (categoryAvg > 0) (expense.effectiveAmount / categoryAvg).toFloat() else 0f,
                 category = category,
                 detectionMethod = AnomalyMethod.MAD,
-                categoryAvg = categoryAvg
+                categoryAvg = categoryAvg,
+                displayCurrency = displayCurrency
             )
         }
     }
@@ -277,7 +286,8 @@ class AnomalyDetector @Inject constructor() {
     private fun detectContextual(
         expenses: List<ExpenseSnapshot>,
         category: AnalyticsCategoryRef?,
-        categoryAvg: Double
+        categoryAvg: Double,
+        displayCurrency: String
     ): List<AnomalyTransaction> {
         val result = mutableListOf<AnomalyTransaction>()
 
@@ -301,7 +311,8 @@ class AnomalyDetector @Inject constructor() {
                     categoryAvg = categoryAvg,
                     baseline = q3,
                     detectionMethod = AnomalyMethod.CONTEXTUAL,
-                    contextualNote = "Unusual for a $day ${slot.label}"
+                    contextualNote = "Unusual for a $day ${slot.label}",
+                    displayCurrency = displayCurrency
                 )
                 continue
             }
@@ -320,7 +331,8 @@ class AnomalyDetector @Inject constructor() {
                             category = category,
                             detectionMethod = AnomalyMethod.CONTEXTUAL,
                             contextualNote = "Unusual for a $day ${slot.label}",
-                            categoryAvg = categoryAvg
+                            categoryAvg = categoryAvg,
+                            displayCurrency = displayCurrency
                         )
                     )
                 }
@@ -351,7 +363,8 @@ class AnomalyDetector @Inject constructor() {
         categoryAvg: Double,
         baseline: Double,
         detectionMethod: AnomalyMethod,
-        contextualNote: String? = null
+        contextualNote: String? = null,
+        displayCurrency: String
     ): List<AnomalyTransaction> {
         if (baseline <= 0.0) return emptyList()
 
@@ -366,7 +379,8 @@ class AnomalyDetector @Inject constructor() {
                     category = category,
                     detectionMethod = detectionMethod,
                     contextualNote = contextualNote,
-                    categoryAvg = categoryAvg
+                    categoryAvg = categoryAvg,
+                    displayCurrency = displayCurrency
                 )
             }
 

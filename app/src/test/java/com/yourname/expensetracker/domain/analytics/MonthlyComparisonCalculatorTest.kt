@@ -33,7 +33,8 @@ class MonthlyComparisonCalculatorTest {
         val comparison = calculator.calculate(
             currentMonth = currentMonth,
             previousMonth = previousMonth,
-            allExpenses = goldenMarchAndFebruaryExpenses().map { it.toSnapshot() }
+            allExpenses = goldenMarchAndFebruaryExpenses().map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertApproxEquals(1283.59, comparison.currentTotal, 0.01)
@@ -66,7 +67,8 @@ class MonthlyComparisonCalculatorTest {
                 createExpense("2026-03-04", 100.0, merchant = "A", id = 1L),
                 createExpense("2026-03-09", 200.0, merchant = "B", id = 2L),
                 createExpense("2026-02-15", 999.0, type = TransactionType.DEPOSIT, merchant = "Salary", id = 3L)
-            ).map { it.toSnapshot() }
+            ).map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertApproxEquals(300.0, comparison.currentTotal, 0.01)
@@ -106,7 +108,8 @@ class MonthlyComparisonCalculatorTest {
                 createExpense("2026-02-02", 20.0, merchant = "P2", id = 7L),
                 createExpense("2026-02-02", 30.0, effectiveAmount = 0.0, merchant = "P3", isNotMine = true, id = 8L),
                 createExpense("2026-02-03", 400.0, type = TransactionType.DEPOSIT, merchant = "Bonus", id = 9L)
-            ).map { it.toSnapshot() }
+            ).map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertEquals(3, comparison.currentCount)

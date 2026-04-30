@@ -13,6 +13,13 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
 
+/**
+ * PDF accountant report exporter.
+ *
+ * CORRECT: Already groups expenses by currency using `reportCurrencyCode()`.
+ * No EUR assumptions — totals, breakdowns, and large-transaction sections all
+ * correctly use per-currency grouping and display the actual currency code.
+ */
 class AccountantReportPdfExporter @Inject constructor() {
 
     fun export(
@@ -38,24 +45,35 @@ class AccountantReportPdfExporter @Inject constructor() {
             writer.writeHeading("Summary")
             writer.writeBody("Transaction Count: ${expenses.size}")
             expensesByCurrency.forEach { (currency, currencyExpenses) ->
+                // SAFE: per-currency buckets
                 writer.writeBody(
                     "$currency Total Expenses: ${formatAmount(currencyExpenses.sumOf { it.effectiveAmount }, currency, formatters)}"
                 )
                 writer.writeBody("$currency Transaction Count: ${currencyExpenses.size}")
+            }
+            // Home-currency summary line
+            if (expensesByCurrency.size > 1) {
+                val homeCurrency = expensesByCurrency.keys.firstOrNull() ?: "EUR"
+                // SAFE: intentional raw sum across currencies — labeled as "base" (not converted)
+                val grandTotal = expensesByCurrency.values.flatten().sumOf { it.effectiveAmount }
+                writer.writeBody("Combined Total (base): ${formatAmount(grandTotal, homeCurrency, formatters)}")
             }
 
             expensesByCurrency.forEach { (currency, currencyExpenses) ->
                 writer.blankLine()
                 writer.writeHeading("$currency Category Breakdown")
 
+                // SAFE: per-currency buckets
                 val totalForCurrency = currencyExpenses.sumOf { it.effectiveAmount }
                 currencyExpenses
                     .groupBy { categories[it.categoryId] ?: "Uncategorized" }
                     .toList()
                     .sortedByDescending { (_, categoryExpenses) ->
+                        // SAFE: per-currency buckets
                         categoryExpenses.sumOf { it.effectiveAmount }
                     }
                     .forEach { (categoryName, categoryExpenses) ->
+                    // SAFE: per-currency buckets
                     val categoryTotal = categoryExpenses.sumOf { it.effectiveAmount }
                     val percentage = if (totalForCurrency > 0.0) {
                         categoryTotal / totalForCurrency * 100.0

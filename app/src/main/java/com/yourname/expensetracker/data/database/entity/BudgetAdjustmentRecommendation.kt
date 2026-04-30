@@ -50,6 +50,7 @@ data class BudgetAdjustmentRecommendation(
     val currentBudget: Double,               // Current budget amount
     val recommendedBudget: Double,           // AI-recommended amount
     val delta: Double,                       // Difference (recommended - current)
+    @ColumnInfo(defaultValue = "'EUR'") val currency: String = "EUR",
     val deltaPercentage: Double,             // Delta as percentage
     val reason: String,                      // Human-readable explanation
     val confidence: Double,                   // Confidence score (0.0 - 1.0)

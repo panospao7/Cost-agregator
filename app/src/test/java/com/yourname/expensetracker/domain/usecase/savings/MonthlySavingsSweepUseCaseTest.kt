@@ -12,7 +12,9 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
@@ -43,6 +45,8 @@ class MonthlySavingsSweepUseCaseTest {
     private lateinit var plannedExpenseRepository: PlannedExpenseRepository
     private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
     private lateinit var timeProvider: TimeProvider
+    private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
 
     private lateinit var useCase: MonthlySavingsSweepUseCase
 
@@ -58,13 +62,16 @@ class MonthlySavingsSweepUseCaseTest {
         plannedExpenseRepository = mockk()
         monteCarloSimulator = mockk()
         timeProvider = mockk()
+        analyticsCurrencyNormalizer = mockk()
+        currencySettingsRepository = mockk()
 
         every { timeProvider.now() } returns withinWindowNow
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
         every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
 
         useCase = MonthlySavingsSweepUseCase(
@@ -74,7 +81,9 @@ class MonthlySavingsSweepUseCaseTest {
             recurringExpenseRepository = recurringExpenseRepository,
             plannedExpenseRepository = plannedExpenseRepository,
             monteCarloSimulator = monteCarloSimulator,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository
         )
     }
 
@@ -359,7 +368,8 @@ class MonthlySavingsSweepUseCaseTest {
                 logNormalSigma = 1.0,
                 daysRemaining = 2,
                 computedAt = withinWindowNow
-            )
+            ),
+            displayCurrency = "EUR"
         )
     }
 

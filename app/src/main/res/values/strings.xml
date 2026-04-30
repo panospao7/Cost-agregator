@@ -921,7 +921,7 @@
     <string name="location_not_now_button">Not now</string>
     <string name="analytics_transaction_distribution">Transaction Distribution</string>
     <string name="analytics_transactions_total">%d total</string>
-    <string name="analytics_peak_format">Peak: %1$d%% of transactions are €%2$.0f-€%3$.0f</string>
+    <string name="analytics_peak_format">Peak: %1$d%% of transactions are %2$s-%3$s</string>
     <string name="recommendation_high_priority">High priority</string>
     <string name="recommendation_medium_priority">Medium priority</string>
     <string name="recommendation_low_priority">Low priority</string>
@@ -936,8 +936,8 @@
     <string name="percentile_typical">Typical</string>
     <string name="percentile_high">High</string>
     <string name="percentile_large">Large</string>
-    <string name="a11y_percentile_range_format">Transaction size profile. Most transactions fall between €%1$.0f and €%2$.0f</string>
-    <string name="percentile_range_format">Most transactions fall between €%1$.0f - €%2$.0f</string>
+    <string name="a11y_percentile_range_format">Transaction size profile. Most transactions fall between %1$s and %2$s</string>
+    <string name="percentile_range_format">Most transactions fall between %1$s - %2$s</string>
     <string name="health_day">DAY</string>
     <string name="health_week">WEEK</string>
     <string name="health_month">MONTH</string>
@@ -1015,7 +1015,7 @@
     <string name="chart_legend_budget_limit">Budget limit</string>
     
     <!-- Statistical Visualizations -->
-    <string name="analytics_merchant_visits_format">%1$d visits · Avg €%2$.2f</string>
+    <string name="analytics_merchant_visits_format">%1$d visits · Avg %2$s</string>
     <string name="analytics_loyalty_label">Loyalty</string>
     <string name="analytics_streak_format">%d months</string>
     <string name="analytics_streak_label">streak</string>
@@ -1024,9 +1024,9 @@
     <string name="analytics_velocity_accelerating">Accelerating</string>
     <string name="analytics_velocity_slowing">Slowing</string>
     <string name="analytics_velocity_steady">Steady</string>
-    <string name="analytics_percentile_p25_format">P25: €%1$.0f</string>
-    <string name="analytics_percentile_p75_format">P75: €%1$.0f</string>
-    <string name="analytics_percentile_p25_p75_format">P25: €%1$.0f · P75: €%2$.0f</string>
+    <string name="analytics_percentile_p25_format">P25: %1$s</string>
+    <string name="analytics_percentile_p75_format">P75: %1$s</string>
+    <string name="analytics_percentile_p25_p75_format">P25: %1$s · P75: %2$s</string>
     
     <!-- Content Descriptions -->
     <string name="cd_back">Back</string>
@@ -1818,13 +1818,13 @@
     <string name="analytics_spending_distribution">Spending Distribution</string>
     <string name="analytics_spending_by_hour">Spending by Hour of Day</string>
     <string name="analytics_spending_by_dow">Spending by Day of Week</string>
-    <string name="analytics_peak_spending_format">Peak spending at %1$s (€%2$.0f)</string>
-    <string name="analytics_peak_most_format">Most: %1$s (€%2$.0f)</string>
-    <string name="analytics_peak_least_format">Least: %1$s (€%2$.0f)</string>
+    <string name="analytics_peak_spending_format">Peak spending at %1$s (%2$s)</string>
+    <string name="analytics_peak_most_format">Most: %1$s (%2$s)</string>
+    <string name="analytics_peak_least_format">Least: %1$s (%2$s)</string>
     <string name="analytics_hour_midnight">midnight</string>
     <string name="analytics_hour_noon">noon</string>
     <string name="analytics_budget_utilization">BUDGET UTILIZATION</string>
-    <string name="analytics_budget_range_format">€%1$.0f / €%2$.0f</string>
+    <string name="analytics_budget_range_format">%1$s / %2$s</string>
     <string name="analytics_period_selector_cd_format">%1$s period, %2$s</string>
     <string name="analytics_total_transactions_format">%1$d transactions recorded in this period.</string>
     <string name="analytics_vs_last_period_format">vs. %1$s last period</string>
@@ -1841,7 +1841,9 @@
     <string name="analytics_chart_12am">12a</string>
     <string name="analytics_chart_12pm">12p</string>
     <string name="analytics_percent_of_total_format">%1$d%% of total spending  ·  %2$d transactions</string>
-    <string name="analytics_visits_avg_format">%1$d visits · avg €%2$.2f/visit</string>
+    <string name="analytics_visits_avg_format">%1$d visits · avg %2$s/visit</string>
+    <string name="analytics_conversion_warning_title">Some analytics totals are partial</string>
+    <string name="analytics_conversion_warning_count_format">%1$d excluded transaction(s)</string>
     
     <!-- Feature Integration - Menu Items -->
     <string name="menu_investment_portfolio">Investment Portfolio</string>

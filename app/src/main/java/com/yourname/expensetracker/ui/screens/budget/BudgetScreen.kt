@@ -410,12 +410,12 @@ fun BudgetCard(
     val budgetInactiveString = stringResource(R.string.budget_status_inactive)
     val adjustedSpend = status.adjustedSpendBreakdown
     val displaySpend = adjustedSpend?.effectiveSpend ?: status.spentAmount
-    val displayPercentUsed = if (status.budget.amount > 0.0) {
-        (displaySpend / status.budget.amount).toFloat()
+    val displayPercentUsed = if (status.effectiveLimit > 0.0) {
+        (displaySpend / status.effectiveLimit).toFloat()
     } else {
         0f
     }
-    val displayRemainingAmount = status.budget.amount - displaySpend
+    val displayRemainingAmount = status.effectiveLimit - displaySpend
     val hasPendingReimbursements = adjustedSpend?.pendingReimbursements?.let { it > 0.01 } == true
     val displayHealthStatus = when {
         displayPercentUsed >= 1.0f -> BudgetHealthStatus.EXCEEDED
@@ -434,14 +434,14 @@ fun BudgetCard(
         }
     }
 
-    val cardDescription = remember(displaySpend, status.budget.amount, displayPercentUsed, displayHealthStatus) {
+    val cardDescription = remember(displaySpend, status.effectiveLimit, status.budget.amount, displayPercentUsed, displayHealthStatus) {
         val statusText = if (status.budget.isActive) budgetActiveString else budgetInactiveString
         context.getString(
             R.string.budget_cd_format,
             status.category?.name ?: "Overall Budget",
             statusText,
             displaySpend,
-            status.budget.amount,
+            status.effectiveLimit,
             (displayPercentUsed * 100).toInt(),
             displayHealthStatus.name.lowercase().replaceFirstChar { it.titlecase() }
         )
@@ -556,10 +556,18 @@ fun BudgetCard(
                     fontSize = 14.sp
                 )
                 Text(
-                    text = stringResource(R.string.budget_limit_format, status.budget.amount),
+                    text = stringResource(R.string.budget_limit_format, status.effectiveLimit),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                // Show base limit reference when rollover has inflated effectiveLimit
+                if (status.effectiveLimit != status.budget.amount) {
+                    Text(
+                        text = "(base: ${status.budget.amount})",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Spacer(Modifier.height(8.dp))
@@ -604,7 +612,7 @@ fun BudgetCard(
 
             if (displayPercentUsed > 1f) {
                 Text(
-                    text = stringResource(R.string.budget_over_format, displaySpend - status.budget.amount),
+                    text = stringResource(R.string.budget_over_format, displaySpend - status.effectiveLimit),
                     color = SemanticColors.DangerRed,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,

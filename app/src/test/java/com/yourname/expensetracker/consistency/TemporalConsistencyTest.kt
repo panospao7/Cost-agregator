@@ -3,6 +3,7 @@ package com.yourname.expensetracker.consistency
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.createExpense
+import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.domain.analytics.PaceStatus
@@ -47,7 +48,8 @@ class TemporalConsistencyTest : AnalyticsEngineTestBase() {
                     createExpense("2026-03-01", 100.0),
                     createExpense("2026-03-15", 50.0),
                     createExpense("2026-02-10", 280.0)
-                )
+                ).toExpenseSnapshots(),
+                displayCurrency = "EUR"
             )
 
             assertEquals(15, pace.daysElapsed)
@@ -86,7 +88,8 @@ class TemporalConsistencyTest : AnalyticsEngineTestBase() {
                     createExpense("2026-03-28", 40.0),
                     createExpense("2026-03-29", 60.0),
                     createExpense("2026-02-14", 280.0)
-                )
+                ).toExpenseSnapshots(),
+                displayCurrency = "EUR"
             )
 
             val expectedDaysElapsed = TimePeriodUtils.daysBetween(currentMonthStart, fakeTime.now()) + 1
@@ -126,7 +129,8 @@ class TemporalConsistencyTest : AnalyticsEngineTestBase() {
                     createExpense("2024-02-01", 100.0),
                     createExpense("2024-02-29", 25.0),
                     createExpense("2024-01-10", 310.0)
-                )
+                ).toExpenseSnapshots(),
+                displayCurrency = "EUR"
             )
 
             assertEquals(29, pace.daysInMonth)
@@ -163,7 +167,8 @@ class TemporalConsistencyTest : AnalyticsEngineTestBase() {
                 currentMonthStart = expectedStart,
                 previousMonthStart = previousMonthStart,
                 previousMonthEnd = expectedStart,
-                allExpenses = emptyList()
+                allExpenses = emptyList(),
+                displayCurrency = "EUR"
             )
 
             assertApproxEquals(0.0, pace.currentMonthSpent, 0.0)

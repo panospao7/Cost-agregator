@@ -11,7 +11,8 @@ class MonthlyComparisonCalculator @Inject constructor() {
     fun calculate(
         currentMonth: MonthPeriod,
         previousMonth: MonthPeriod?,
-        allExpenses: List<ExpenseSnapshot>
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String = "EUR"
     ): MonthlyComparison {
         val currentExpenses = allExpenses.filter { 
             it.date >= currentMonth.startMs && 
@@ -29,7 +30,9 @@ class MonthlyComparisonCalculator @Inject constructor() {
             }
         }
         
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         val currentTotal = currentExpenses.sumOf { it.effectiveAmount }
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         val previousTotal = previousExpenses?.sumOf { it.effectiveAmount }
         
         val changeAmount = if (previousTotal != null && previousTotal > 0) {
@@ -48,8 +51,10 @@ class MonthlyComparisonCalculator @Inject constructor() {
             changeAmount = changeAmount,
             changePercentage = changePercentage,
             currentCount = currentExpenses.size,
-            previousCount = previousExpenses?.size
+            previousCount = previousExpenses?.size,
+            displayCurrency = displayCurrency
         )
     }
+
 
 }

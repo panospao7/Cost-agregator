@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.createExpense
+import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.BudgetRepository
@@ -32,6 +34,8 @@ class AdvancedAnalyticsEngineDeepTest {
     private lateinit var categoryRepository: CategoryRepository
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var timeProvider: TimeProvider
+    private val currencySettingsRepository = TestCurrencySettingsRepository()
+    private val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer()
 
     private val food = Category(id = 1L, name = "Food", icon = "🍽️", color = "#FF0000")
 
@@ -46,6 +50,8 @@ class AdvancedAnalyticsEngineDeepTest {
             expenseRepository,
             categoryRepository,
             budgetRepository,
+            currencySettingsRepository,
+            analyticsCurrencyNormalizer,
             timeProvider,
             Dispatchers.Unconfined,
             Dispatchers.Unconfined

@@ -33,7 +33,10 @@ data class MonteCarloResult(
     val confidence: SimulationConfidence,
 
     /** Metadata about the simulation run. */
-    val metadata: SimulationMetadata
+    val metadata: SimulationMetadata,
+
+    /** Currency in which all monetary values in this result are denominated. */
+    val displayCurrency: String
 )
 
 /**

@@ -251,13 +251,32 @@ Owns holdings, portfolio tracking, and investment metrics.
 
 ## SEGMENT 16: Currency & Exchange
 
-Owns currency normalization, exchange-rate handling, and multi-currency calculations.
+Owns currency normalization, exchange-rate handling, multi-currency calculations, and type-safe money primitives.
 
-**Representative files**
-- `domain/util/CurrencyNormalizer.kt`
-- `domain/currency/CurrencyConverter.kt`
-- `domain/currency/CurrencyRatesRepository.kt`
-- `data/database/entity/ExchangeRate.kt`
+**Representative files — domain/core/money/**
+- `domain/core/money/CurrencyCode.kt` — Type-safe ISO 4217 value class
+- `domain/core/money/MoneyAmount.kt` — Amount + currency pair with safe arithmetic
+- `domain/core/money/ConvertedMoney.kt` — Conversion result with rate metadata
+- `domain/core/money/MoneyBucket.kt` — Per-currency subtotal bucket
+- `domain/core/money/MoneyAggregate.kt` — Primary aggregation return type (replaces raw Double)
+- `domain/core/money/ConversionFailure.kt` — Failed conversion record
+- `domain/core/money/CurrencyAssumption.kt` — Why a currency was assigned (UNKNOWN, ASSUMED_LEGACY_EUR, etc.)
+- `domain/core/money/MoneyMappers.kt` — Bridge from legacy ConversionResult → ConvertedMoney
+- `domain/core/money/MoneyFormatUtils.kt` — MoneyAmount extension formatting functions
+
+**Representative files — legacy + new**
+- `domain/currency/CurrencyConverter.kt` — Currency conversion engine
+- `domain/currency/CurrencyRatesRepository.kt` — FX rate data source
+- `domain/currency/ExchangeRateContracts.kt` — Exchange rate store contract
+- `domain/currency/CurrencySettingsRepository.kt` — Currency preferences + emergencyBuffer()
+- `data/repository/MultiCurrencyRepository.kt` — **Canonical aggregation backbone** (wired into 10+ pipelines)
+- `data/database/entity/ExchangeRate.kt` — Exchange rate entity (now with `validDate`)
+- `domain/util/CurrencyNormalizer.kt` — Legacy currency code normalizer
+- `domain/util/CurrencyFormatter.kt` — Format utilities (new formatMoney/formatMoneyCompact methods)
+- `domain/analytics/AnalyticsCurrencyNormalizer.kt` — Per-expense home-currency normalization
+- `scripts/currency_guardrails.ps1` — CI guardrails against currency regressions
+
+**Boundary note:** AnalyticsCurrencyNormalizer lives in domain/analytics/ but is logically part of the currency infrastructure. MultiCurrencyRepository is the canonical entry point for all currency-aware aggregation; raw DAO aggregation methods are deprecated.
 
 ## SEGMENT 17: Tax Calculation & Reporting
 

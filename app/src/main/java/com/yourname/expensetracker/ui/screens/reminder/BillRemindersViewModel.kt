@@ -2,10 +2,12 @@ package com.yourname.expensetracker.ui.screens.reminder
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.reminder.BillReminder
 import com.yourname.expensetracker.domain.reminder.BillReminderManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -13,8 +15,11 @@ import javax.inject.Inject
 
 @HiltViewModel
 class BillRemindersViewModel @Inject constructor(
-    private val billReminderManager: BillReminderManager
+    private val billReminderManager: BillReminderManager,
+    currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
+
+    val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
     
     private val _reminders = MutableStateFlow<List<BillReminder>>(emptyList())
     val reminders: StateFlow<List<BillReminder>> = _reminders.asStateFlow()

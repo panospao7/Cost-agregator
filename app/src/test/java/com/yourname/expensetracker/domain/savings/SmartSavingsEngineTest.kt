@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
@@ -35,6 +36,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
     private lateinit var budgetCalculator: BudgetCalculator
     private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
     private lateinit var savingsGoalRepository: SavingsGoalRepository
+    private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
     private lateinit var engine: SmartSavingsEngine
 
     private val now = LocalDate.of(2026, 4, 15)
@@ -51,6 +53,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         budgetCalculator = mockk(relaxed = true)
         monteCarloSimulator = mockk(relaxed = true)
         savingsGoalRepository = mockk(relaxed = true)
+        analyticsCurrencyNormalizer = mockk(relaxed = true)
 
         io.mockk.every { timeProvider.now() } returns now
 
@@ -60,8 +63,8 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             budgetRepository = budgetRepository,
             budgetCalculator = budgetCalculator,
             monteCarloSimulator = monteCarloSimulator,
-            savingsGoalRepository = savingsGoalRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer
         )
     }
 
@@ -280,6 +283,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         spentToDate = 0.0,
         knownUpcoming = 0.0,
         confidence = SimulationConfidence(0.8, ConfidenceLevel.HIGH, "test"),
-        metadata = SimulationMetadata(0, 0, 0, 0.0, 0.0, 0, now)
+        metadata = SimulationMetadata(0, 0, 0, 0.0, 0.0, 0, now),
+        displayCurrency = "EUR"
     )
 }

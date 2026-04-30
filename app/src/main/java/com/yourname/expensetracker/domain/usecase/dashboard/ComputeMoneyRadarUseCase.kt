@@ -269,6 +269,8 @@ class ComputeMoneyRadarUseCase @Inject constructor(
                         !it.isNotMine &&
                         it.date <= now
                 }
+                // SAFE: Callers must normalize through AnalyticsCurrencyNormalizer before invoking this use case.
+                // This sum operates on pre-normalized amounts only.
                 .sumOf { it.effectiveAmount }
             
             // Include known upcoming recurring obligations in next 7 days

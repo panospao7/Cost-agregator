@@ -68,7 +68,7 @@ class DashboardContractsAdapter @Inject constructor(
             statuses.map { status ->
                 BudgetStatusSnapshot(
                     budgetCategoryId = status.budget.categoryId,
-                    budgetAmount = status.budget.amount,
+                    budgetAmount = status.effectiveLimit,
                     categoryName = status.category?.name,
                     spentAmount = status.spentAmount,
                     remainingAmount = status.remainingAmount,

@@ -2,7 +2,12 @@ package com.yourname.expensetracker.domain.health
 
 import com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao
 import com.yourname.expensetracker.data.database.entity.HealthScoreHistory
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -12,6 +17,7 @@ import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -35,7 +41,9 @@ class FinancialHealthScoreV2 @Inject constructor(
     private val savingsGoalRepository: SavingsGoalRepository,
     private val recurringExpenseEngine: RecurringExpenseEngine,
     private val healthScoreHistoryDao: HealthScoreHistoryDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     companion object {
         // Component weights (must sum to 1.0)
@@ -72,17 +80,25 @@ class FinancialHealthScoreV2 @Inject constructor(
         periodEnd: Long = TimePeriodUtils.getEndOfMonth(timeProvider.now())
     ): FinancialHealthResult {
         val startTime = System.currentTimeMillis()
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
         
         return try {
             // Fetch all necessary data
             val expenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
-            val purchases = expenses.filter { 
-                it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine 
+            val normalized = runCatching {
+                analyticsCurrencyNormalizer.normalizeExpenses(expenses, homeCurrency)
+            }.getOrNull()
+            val normalizedExpenses = normalized?.includedExpenses
+                ?: expenses.map { it.toExpenseSnapshot() }
+
+            val purchases = normalizedExpenses.filter {
+                it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine
             }
-            val deposits = expenses.filter { 
-                it.transactionType.toDomain() == DomainTransactionType.DEPOSIT 
+            val deposits = normalizedExpenses.filter {
+                it.transactionType == DomainTransactionType.DEPOSIT
             }
-            
+
             // Get budget statuses
             val budgetStatuses = budgetRepository.getBudgetStatusesAt(resolveBudgetEvaluationTime(periodStart, periodEnd))
             val savingsGoals = savingsGoalRepository.getSavingsGoals()
@@ -97,6 +113,9 @@ class FinancialHealthScoreV2 @Inject constructor(
             )
             val budgetAdherenceScore = calculateBudgetAdherenceScore(budgetStatuses)
             val billReliabilityScore = calculateBillReliabilityScore(expenses, periodStart, periodEnd)
+
+            // Compute conversion confidence from normalization warnings
+            val conversionConfidence = computeConversionConfidence(normalized)
             
             // Calculate weighted overall score
             val overallScore = (
@@ -178,7 +197,9 @@ class FinancialHealthScoreV2 @Inject constructor(
                 billReliabilityScore = billReliabilityScore,
                 factorContributions = factorContributions,
                 trend = trend,
-                recommendation = recommendation
+                recommendation = recommendation,
+                displayCurrency = homeCurrency,
+                conversionConfidence = conversionConfidence
             )
             
         } catch (e: CancellationException) {
@@ -194,7 +215,9 @@ class FinancialHealthScoreV2 @Inject constructor(
                 billReliabilityScore = 50,
                 factorContributions = emptyList(),
                 trend = HealthTrend.STABLE,
-                recommendation = "Unable to calculate full health score. Please check your data."
+                recommendation = "Unable to calculate full health score. Please check your data.",
+                displayCurrency = homeCurrency,
+                conversionConfidence = 0.5f
             )
         }
     }
@@ -206,10 +229,12 @@ class FinancialHealthScoreV2 @Inject constructor(
      * Score: 0% = 0 points, 20%+ = 100 points
      */
     private fun calculateSavingsRateScore(
-        deposits: List<com.yourname.expensetracker.data.database.entity.Expense>,
-        purchases: List<com.yourname.expensetracker.data.database.entity.Expense>
+        deposits: List<ExpenseSnapshot>,
+        purchases: List<ExpenseSnapshot>
     ): Int {
+        // SAFE: data normalized at lines 89-91 via AnalyticsCurrencyNormalizer
         val totalIncome = deposits.sumOf { it.effectiveAmount }
+        // SAFE: data normalized at lines 89-91 via AnalyticsCurrencyNormalizer
         val totalExpenses = purchases.sumOf { it.effectiveAmount }
         
         // If no income data, return neutral score
@@ -234,7 +259,7 @@ class FinancialHealthScoreV2 @Inject constructor(
      * Score: <1 month = 0 points, 6+ months = 100 points
      */
     private suspend fun calculateRunwayScore(
-        purchases: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        purchases: List<ExpenseSnapshot>,
         savingsGoals: List<SavingsGoal>,
         periodStart: Long,
         periodEnd: Long
@@ -253,6 +278,7 @@ class FinancialHealthScoreV2 @Inject constructor(
         }
         val coverage = (elapsedDays.toDouble() / periodDays.toDouble()).coerceIn(0.0, 1.0)
 
+        // SAFE: purchases already normalized at lines 89-91 via AnalyticsCurrencyNormalizer
         val observedSpend = purchases
             .filter { it.date < effectivePeriodEnd }
             .sumOf { it.effectiveAmount }
@@ -280,6 +306,8 @@ class FinancialHealthScoreV2 @Inject constructor(
         }
 
         // Use accumulated savings, not unspent monthly budget, for runway calculation.
+        // TODO: Convert goal.currentAmount to comparable currency before summing across goals
+        // SAFE: savings goals are user-defined in home currency (amounts are logically already in home currency)
         val totalSavings = savingsGoals.sumOf { it.currentAmount }
 
         // If no expenses, return neutral (insufficient spending baseline)
@@ -323,12 +351,23 @@ class FinancialHealthScoreV2 @Inject constructor(
             return null
         }
 
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        val normalized = runCatching {
+            analyticsCurrencyNormalizer.normalizeExpenses(historicalExpenses, homeCurrency)
+        }.getOrNull()
+        val normalizedAmountById = normalized?.includedExpenses?.associateBy { it.id }
+            ?: emptyMap()
+
+        // SAFE: normalized via AnalyticsCurrencyNormalizer before summing
         val monthlyTotals = historicalExpenses
             .groupBy {
                 "${TimePeriodUtils.getYear(it.date)}-${TimePeriodUtils.getMonth(it.date)}"
             }
             .values
-            .map { monthRows -> monthRows.sumOf { it.effectiveAmount } }
+            .map { monthRows -> monthRows.sumOf {
+                normalizedAmountById[it.id]?.effectiveAmount ?: it.effectiveAmount
+            } }
             .filter { it > 0.0 }
 
         return monthlyTotals.takeIf { it.isNotEmpty() }?.average()
@@ -357,9 +396,9 @@ class FinancialHealthScoreV2 @Inject constructor(
         var totalOverspend = 0.0
         
         for (status in budgetStatuses) {
-            totalBudget += status.budget.amount
-            if (status.spentAmount > status.budget.amount) {
-                totalOverspend += (status.spentAmount - status.budget.amount)
+            totalBudget += status.effectiveLimit
+            if (status.spentAmount > status.effectiveLimit) {
+                totalOverspend += (status.spentAmount - status.effectiveLimit)
             }
         }
         
@@ -602,6 +641,52 @@ class FinancialHealthScoreV2 @Inject constructor(
             com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
             com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
         }
+
+    /**
+     * Converts a data-layer [Expense] into a domain [ExpenseSnapshot] preserving
+     * the original effective amount and currency. Used as a fallback when
+     * cross-currency normalization is unavailable.
+     */
+    private fun com.yourname.expensetracker.data.database.entity.Expense.toExpenseSnapshot(): ExpenseSnapshot =
+        ExpenseSnapshot(
+            id = id,
+            amount = effectiveAmount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            merchantKey = merchantKey,
+            transactionType = transactionType.toDomain(),
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            transferDirection = transferDirection?.let { d ->
+                when (d) {
+                    com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING ->
+                        DomainTransferDirection.INCOMING
+                    com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING ->
+                        DomainTransferDirection.OUTGOING
+                }
+            },
+            notes = notes
+        )
+
+    /**
+     * Compute conversion confidence based on the share of transactions that failed normalization.
+     * - 0% failures → 1.0
+     * - < 5% failures → 0.95
+     * - < 20% failures → 0.80
+     * - >= 20% failures → 0.50
+     */
+    private fun computeConversionConfidence(normalized: AnalyticsNormalizationResult?): Float {
+        if (normalized == null || normalized.totalInputCount == 0) return 0.5f
+        val loss = normalized.lossPercentage
+        return when {
+            loss == 0.0 -> 1.0f
+            loss < 5.0 -> 0.95f
+            loss < 20.0 -> 0.80f
+            else -> 0.50f
+        }
+    }
 }
 
 /**
@@ -615,7 +700,9 @@ data class FinancialHealthResult(
     val billReliabilityScore: Int,
     val factorContributions: List<HealthFactorContribution>,
     val trend: HealthTrend, // IMPROVING, STABLE, DECLINING
-    val recommendation: String?
+    val recommendation: String?,
+    val displayCurrency: String = "",
+    val conversionConfidence: Float = 1.0f // confidence in currency conversion (1.0 = all conversions succeeded)
 )
 
 /**

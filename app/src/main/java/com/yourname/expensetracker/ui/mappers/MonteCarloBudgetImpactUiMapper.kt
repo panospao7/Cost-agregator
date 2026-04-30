@@ -17,7 +17,7 @@ class MonteCarloBudgetImpactUiMapper(
     fun map(impact: MonteCarloBudgetImpact, homeCurrency: String = "EUR"): MonteCarloBudgetImpactUi {
         val hasMeaningfulOverrun = impact.expectedOverrun > 0.0
         val formattedOverrun = if (hasMeaningfulOverrun) {
-            CurrencyFormatter.format(impact.expectedOverrun, homeCurrency)
+            CurrencyFormatter.formatMoney(impact.expectedOverrun, homeCurrency)
         } else {
             null
         }

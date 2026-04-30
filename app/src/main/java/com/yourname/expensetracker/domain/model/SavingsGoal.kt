@@ -7,6 +7,8 @@ data class SavingsGoal(
     val currentAmount: Double,
     val targetDate: Long?,
     val protectionLevel: GoalProtectionLevel,
+    val currency: String = "EUR",
+    val currencyAssumption: String = "LEGACY_DEFAULT",
     val createdAt: Long
 ) {
     init {

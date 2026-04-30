@@ -4,6 +4,7 @@ data class NaturalLanguageExpense(
     val id: Long,
     val amount: Double,
     val effectiveAmount: Double,
+    val currency: String,
     val merchant: String,
     val date: Long,
     val categoryId: Long?

@@ -28,7 +28,7 @@ class DayOfWeekAnalyzerTest {
             createExpense("2026-03-07", 60.0, merchant = "Sat Merchant", id = 7L)
         )
 
-        val insights = analyzer.analyze(startDate = start, endDate = end, allExpenses = expenses.map { it.toSnapshot() })
+        val insights = analyzer.analyze(startDate = start, endDate = end, allExpenses = expenses.map { it.toSnapshot() }, displayCurrency = "EUR")
 
         assertEquals(listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"), insights.map { it.dayName })
 
@@ -52,7 +52,8 @@ class DayOfWeekAnalyzerTest {
         val insights = analyzer.analyze(
             startDate = start,
             endDate = end,
-            allExpenses = goldenMarchExpenses().map { it.toSnapshot() }
+            allExpenses = goldenMarchExpenses().map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         val weekendTotal = insights.filter { it.dayIndex == 5 || it.dayIndex == 6 }.sumOf { it.totalSpent }
@@ -68,7 +69,7 @@ class DayOfWeekAnalyzerTest {
         val start = startOfMonth(2026, 3)
         val end = startOfMonth(2026, 4)
 
-        val insights = analyzer.analyze(startDate = start, endDate = end, allExpenses = emptyList())
+        val insights = analyzer.analyze(startDate = start, endDate = end, allExpenses = emptyList(), displayCurrency = "EUR")
 
         assertEquals(7, insights.size)
         assertEquals(listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"), insights.map { it.dayName })
@@ -91,7 +92,7 @@ class DayOfWeekAnalyzerTest {
             createExpense("2026-03-05", 20.0, merchant = "Thu Low", id = 103L)
         )
 
-        val insights = analyzer.analyze(startDate = start, endDate = end, allExpenses = expenses.map { it.toSnapshot() })
+        val insights = analyzer.analyze(startDate = start, endDate = end, allExpenses = expenses.map { it.toSnapshot() }, displayCurrency = "EUR")
 
         assertEquals(listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"), insights.map { it.dayName })
         assertEquals(listOf(0, 1, 2, 3, 4, 5, 6), insights.map { it.dayIndex })

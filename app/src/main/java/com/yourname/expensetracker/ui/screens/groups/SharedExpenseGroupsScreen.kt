@@ -26,10 +26,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.domain.logic.SplitCalculator
+import com.yourname.expensetracker.domain.currency.SupportedCurrency
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -45,7 +46,7 @@ fun SharedExpenseGroupsScreen(
     viewModel: SharedExpenseGroupsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+    val groupCurrency = uiState.selectedGroup?.currency ?: uiState.homeCurrency
     
     Scaffold(
         containerColor = SemanticColors.BaseNavy,
@@ -145,7 +146,7 @@ fun SharedExpenseGroupsScreen(
                     // Group Detail View
                     GroupDetailContent(
                         group = uiState.selectedGroup!!,
-                        currencyFormat = currencyFormat,
+                        groupCurrency = groupCurrency,
                         onDeleteGroup = { viewModel.deleteGroup(it) }
                     )
                 }
@@ -153,7 +154,7 @@ fun SharedExpenseGroupsScreen(
                     // Groups List View
                     GroupsListContent(
                         groups = uiState.groups,
-                        currencyFormat = currencyFormat,
+                        groupCurrency = groupCurrency,
                         onGroupClick = { viewModel.selectGroup(it) }
                     )
                 }
@@ -166,7 +167,8 @@ fun SharedExpenseGroupsScreen(
                 onDismiss = { viewModel.toggleCreateGroup(false) },
                 onCreate = { name, desc, currency ->
                     viewModel.createGroup(name, desc, currency)
-                }
+                },
+                homeCurrency = uiState.homeCurrency
             )
         }
         
@@ -201,7 +203,7 @@ fun SharedExpenseGroupsScreen(
 @Composable
 private fun GroupsListContent(
     groups: List<GroupWithDetails>,
-    currencyFormat: NumberFormat,
+    groupCurrency: String,
     onGroupClick: (GroupWithDetails) -> Unit
 ) {
     if (groups.isEmpty()) {
@@ -216,7 +218,7 @@ private fun GroupsListContent(
             items(groups, key = { it.group.id }) { group ->
                 GroupCard(
                     group = group,
-                    currencyFormat = currencyFormat,
+                    groupCurrency = groupCurrency,
                     onClick = { onGroupClick(group) }
                 )
             }
@@ -227,7 +229,7 @@ private fun GroupsListContent(
 @Composable
 private fun GroupCard(
     group: GroupWithDetails,
-    currencyFormat: NumberFormat,
+    groupCurrency: String,
     onClick: () -> Unit
 ) {
     Card(
@@ -293,7 +295,7 @@ private fun GroupCard(
                 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = currencyFormat.format(group.totalSpent),
+                        text = CurrencyFormatter.format(group.totalSpent, groupCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         color = SemanticColors.PrimaryIndigo,
                         fontWeight = FontWeight.Bold
@@ -312,7 +314,7 @@ private fun GroupCard(
 @Composable
 private fun GroupDetailContent(
     group: GroupWithDetails,
-    currencyFormat: NumberFormat,
+    groupCurrency: String,
     onDeleteGroup: (Long) -> Unit
 ) {
     LazyColumn(
@@ -342,7 +344,7 @@ private fun GroupDetailContent(
                         color = SemanticColors.TextSecondary
                     )
                     Text(
-                        text = currencyFormat.format(group.totalSpent),
+                        text = CurrencyFormatter.format(group.totalSpent, groupCurrency),
                         style = MaterialTheme.typography.headlineMedium,
                         color = SemanticColors.PrimaryIndigo,
                         fontWeight = FontWeight.Bold
@@ -365,7 +367,7 @@ private fun GroupDetailContent(
             MemberBalanceCard(
                 member = member,
                 balance = group.memberBalances[member.id] ?: 0.0,
-                currencyFormat = currencyFormat
+                groupCurrency = groupCurrency
             )
         }
 
@@ -373,7 +375,7 @@ private fun GroupDetailContent(
             SettlementPlanSection(
                 members = group.members,
                 memberBalances = group.memberBalances,
-                currencyFormat = currencyFormat
+                groupCurrency = groupCurrency
             )
         }
         
@@ -392,7 +394,7 @@ private fun GroupDetailContent(
             items(group.expenses, key = { it.expense.id }) { expense ->
                 ExpenseCard(
                     expense = expense,
-                    currencyFormat = currencyFormat
+                    groupCurrency = groupCurrency
                 )
             }
         }
@@ -420,7 +422,7 @@ private fun GroupDetailContent(
 private fun SettlementPlanSection(
     members: List<GroupMember>,
     memberBalances: Map<Long, Double>,
-    currencyFormat: NumberFormat
+    groupCurrency: String
 ) {
     val memberNames = remember(members) { members.associate { it.id to it.name } }
     var settledTransferKeys by remember(memberBalances) { mutableStateOf(setOf<String>()) }
@@ -468,7 +470,7 @@ private fun SettlementPlanSection(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "$fromName → $toName: ${currencyFormat.format(amount)}",
+                            text = "$fromName → $toName: ${CurrencyFormatter.format(amount, groupCurrency)}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = SemanticColors.TextPrimary,
                             modifier = Modifier.weight(1f)
@@ -516,13 +518,11 @@ internal fun isSettledBalance(
 private fun MemberBalanceCard(
     member: GroupMember,
     balance: Double,
-    currencyFormat: NumberFormat
+    groupCurrency: String
 ) {
-    val currencyFractionDigits = currencyFormat.maximumFractionDigits
-        .coerceAtLeast(currencyFormat.minimumFractionDigits)
-    val displayBalance = roundedBalanceForDisplay(balance, currencyFractionDigits)
+    val displayBalance = roundedBalanceForDisplay(balance)
     val isPositive = displayBalance > 0
-    val isZero = isSettledBalance(balance, currencyFractionDigits)
+    val isZero = isSettledBalance(balance)
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -564,9 +564,9 @@ private fun MemberBalanceCard(
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = when {
-                        isPositive -> stringResource(R.string.label_gets_back_format, currencyFormat.format(displayBalance))
+                        isPositive -> stringResource(R.string.label_gets_back_format, CurrencyFormatter.format(displayBalance, groupCurrency))
                         isZero -> stringResource(R.string.label_settled_up)
-                        else -> stringResource(R.string.label_owes_format, currencyFormat.format(-displayBalance))
+                        else -> stringResource(R.string.label_owes_format, CurrencyFormatter.format(-displayBalance, groupCurrency))
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = when {
@@ -584,7 +584,7 @@ private fun MemberBalanceCard(
 @Composable
 private fun ExpenseCard(
     expense: GroupExpenseWithDetails,
-    currencyFormat: NumberFormat
+    groupCurrency: String
 ) {
     val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
     
@@ -612,7 +612,7 @@ private fun ExpenseCard(
                 )
                 
                 Text(
-                    text = currencyFormat.format(expense.expense.totalAmount),
+                    text = CurrencyFormatter.format(expense.expense.totalAmount, groupCurrency),
                     style = MaterialTheme.typography.bodyLarge,
                     color = SemanticColors.PrimaryIndigo,
                     fontWeight = FontWeight.Bold
@@ -675,12 +675,13 @@ private fun EmptyGroupsState() {
 @Composable
 private fun CreateGroupDialog(
     onDismiss: () -> Unit,
-    onCreate: (String, String?, String) -> Unit
+    onCreate: (String, String?, String) -> Unit,
+    homeCurrency: String = "EUR"
 ) {
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
-    var currency by remember { mutableStateOf("EUR") }
-    val currencies = listOf("EUR", "USD", "GBP")
+    var currency by remember { mutableStateOf(homeCurrency) }
+    val currencies = SupportedCurrency.values().map { it.code }
     
     AlertDialog(
         onDismissRequest = onDismiss,

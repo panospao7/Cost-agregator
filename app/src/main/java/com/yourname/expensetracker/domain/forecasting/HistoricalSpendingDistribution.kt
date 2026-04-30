@@ -1,10 +1,13 @@
 package com.yourname.expensetracker.domain.forecasting
 
-import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -24,7 +27,9 @@ import kotlin.math.sqrt
 @Singleton
 class HistoricalSpendingDistribution @Inject constructor(
     private val expenseRepository: ExpenseRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     companion object {
         /** Look back 18 months for historical data. */
@@ -43,7 +48,7 @@ class HistoricalSpendingDistribution @Inject constructor(
      * @return [DistributionFit] with mu, sigma, qualifying week count, and raw weekly totals;
      *         or null if there is insufficient data to fit.
      */
-    suspend fun computeDistribution(): DistributionFit? {
+    suspend fun computeDistribution(homeCurrency: String = "EUR"): DistributionFit? {
         val now = timeProvider.now()
 
         // Lookback start: 18 months ago, snapped to the start of that week (Monday)
@@ -58,12 +63,21 @@ class HistoricalSpendingDistribution @Inject constructor(
             return null
         }
 
-        // Fetch all qualifying expenses in the range
-        val allExpenses = expenseRepository.getExpensesBetween(lookbackStart, currentWeekStart)
+        // Resolve authoritative home currency if the default placeholder was passed
+        val resolvedHomeCurrency = if (homeCurrency == "EUR") {
+            runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault("EUR")
+        } else {
+            homeCurrency
+        }
 
-        val spendingExpenses = allExpenses.filter { expense ->
-            (expense.transactionType.toDomain() == DomainTransactionType.PURCHASE ||
-                expense.transactionType.toDomain() == DomainTransactionType.WITHDRAWAL) &&
+        // Fetch all qualifying expenses in the range and normalize to home currency
+        val allExpenses = expenseRepository.getExpensesBetween(lookbackStart, currentWeekStart)
+        val normalized = analyticsCurrencyNormalizer.normalizeExpenses(allExpenses, resolvedHomeCurrency)
+        val normalizedExpenses = normalized.includedExpenses
+
+        val spendingExpenses = normalizedExpenses.filter { expense ->
+            (expense.transactionType == DomainTransactionType.PURCHASE ||
+                expense.transactionType == DomainTransactionType.WITHDRAWAL) &&
                 !expense.isNotMine
         }
 
@@ -89,7 +103,8 @@ class HistoricalSpendingDistribution @Inject constructor(
                 qualifyingWeekCount = qualifyingWeeks.size,
                 totalWeeksExamined = totalWeeksExamined,
                 trimmedWeeklyTotals = qualifyingWeeks.map { it.total },
-                allWeeklyTotals = weeklyData.map { it.total }
+                allWeeklyTotals = weeklyData.map { it.total },
+                displayCurrency = resolvedHomeCurrency
             )
         }
 
@@ -106,10 +121,10 @@ class HistoricalSpendingDistribution @Inject constructor(
             Timber.w("Trimmed data is empty or contains non-positive values; falling back to untrimmed")
             val fallback = sortedTotals.filter { it > 0.0 }
             if (fallback.size < 2) return null
-            return fitLogNormal(fallback, qualifyingWeeks.size, totalWeeksExamined, weeklyData.map { it.total })
+            return fitLogNormal(fallback, qualifyingWeeks.size, totalWeeksExamined, weeklyData.map { it.total }, resolvedHomeCurrency)
         }
 
-        return fitLogNormal(trimmed, qualifyingWeeks.size, totalWeeksExamined, weeklyData.map { it.total })
+        return fitLogNormal(trimmed, qualifyingWeeks.size, totalWeeksExamined, weeklyData.map { it.total }, resolvedHomeCurrency)
     }
 
     /**
@@ -119,12 +134,12 @@ class HistoricalSpendingDistribution @Inject constructor(
      * and [TimePeriodUtils.getStartOfDay] for distinct-day counting.
      */
     private fun groupIntoWeeks(
-        expenses: List<Expense>,
+        expenses: List<ExpenseSnapshot>,
         rangeStart: Long,
         rangeEnd: Long
     ): List<WeekData> {
         // Build a map: weekStartTimestamp -> list of expenses
-        val weekMap = mutableMapOf<Long, MutableList<Expense>>()
+        val weekMap = mutableMapOf<Long, MutableList<ExpenseSnapshot>>()
         for (expense in expenses) {
             val weekStart = TimePeriodUtils.getStartOfWeek(expense.date)
             weekMap.getOrPut(weekStart) { mutableListOf() }.add(expense)
@@ -140,6 +155,7 @@ class HistoricalSpendingDistribution @Inject constructor(
 
         return allWeekStarts.mapIndexed { index, weekStart ->
             val weekExpenses = weekMap[weekStart] ?: emptyList()
+            // SAFE: weekExpenses derived from normalized expenses at line 75 via AnalyticsCurrencyNormalizer
             val total = weekExpenses.sumOf { it.effectiveAmount }
 
             // Count distinct calendar days with transactions (DST-safe)
@@ -167,7 +183,8 @@ class HistoricalSpendingDistribution @Inject constructor(
         weeklyTotals: List<Double>,
         qualifyingWeekCount: Int,
         totalWeeksExamined: Int,
-        allWeeklyTotals: List<Double>
+        allWeeklyTotals: List<Double>,
+        displayCurrency: String = "EUR"
     ): DistributionFit {
         val logValues = weeklyTotals.map { ln(it) }
         val mu = logValues.average()
@@ -184,7 +201,8 @@ class HistoricalSpendingDistribution @Inject constructor(
             qualifyingWeekCount = qualifyingWeekCount,
             totalWeeksExamined = totalWeeksExamined,
             trimmedWeeklyTotals = weeklyTotals,
-            allWeeklyTotals = allWeeklyTotals
+            allWeeklyTotals = allWeeklyTotals,
+            displayCurrency = displayCurrency
         )
     }
 
@@ -227,7 +245,10 @@ data class DistributionFit(
     val trimmedWeeklyTotals: List<Double>,
 
     /** All weekly totals (before trimming, but after quality filter is applied to the fit — this is pre-filter). */
-    val allWeeklyTotals: List<Double>
+    val allWeeklyTotals: List<Double>,
+
+    /** Currency in which all amounts in this fit are denominated. */
+    val displayCurrency: String = "EUR"
 ) {
     /** Whether this fit has enough data to be usable for simulation. */
     val isUsable: Boolean get() = qualifyingWeekCount >= 4 && sigma > 0.0

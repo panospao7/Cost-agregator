@@ -47,7 +47,9 @@ data class ExpenseQueryFilters(
     val categoryIds: Set<Long> = emptySet(),
     val transactionTypes: Set<DomainTransactionType> = emptySet(),
     val ownership: QueryOwnershipScope = QueryOwnershipScope.ALL,
+    /** Raw amount floor filter. Not currency-aware — compares against effectiveAmount regardless of currency. */
     val minAmount: Double? = null,
+    /** Raw amount ceiling filter. Not currency-aware — compares against effectiveAmount regardless of currency. */
     val maxAmount: Double? = null
 )
 

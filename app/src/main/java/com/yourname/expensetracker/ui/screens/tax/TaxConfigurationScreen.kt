@@ -24,12 +24,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.tax.TaxBracket
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.text.NumberFormat
-import java.util.Currency
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -256,8 +254,6 @@ private fun VatRateCard(vatRate: Double) {
 
 @Composable
 private fun TaxBracketCard(bracket: TaxBracket, currency: String) {
-    val currencyFormat = remember(currency) { buildCurrencyFormat(currency) }
-    
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -293,9 +289,9 @@ private fun TaxBracketCard(bracket: TaxBracket, currency: String) {
             Spacer(modifier = Modifier.height(4.dp))
             
             val rangeText = when {
-                bracket.maxIncome == null -> "Above ${currencyFormat.format(bracket.minIncome)}"
-                bracket.minIncome == 0.0 -> "Up to ${currencyFormat.format(bracket.maxIncome)}"
-                else -> "${currencyFormat.format(bracket.minIncome)} - ${currencyFormat.format(bracket.maxIncome)}"
+                bracket.maxIncome == null -> "Above ${CurrencyFormatter.format(bracket.minIncome, currency)}"
+                bracket.minIncome == 0.0 -> "Up to ${CurrencyFormatter.format(bracket.maxIncome, currency)}"
+                else -> "${CurrencyFormatter.format(bracket.minIncome, currency)} - ${CurrencyFormatter.format(bracket.maxIncome, currency)}"
             }
             
             Text(
@@ -314,7 +310,6 @@ private fun SampleCalculatorCard(
     estimate: com.yourname.expensetracker.domain.tax.TaxEstimate?,
     currency: String
 ) {
-    val currencyFormat = remember(currency) { buildCurrencyFormat(currency) }
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -361,7 +356,7 @@ private fun SampleCalculatorCard(
                             color = SemanticColors.TextSecondary
                         )
                         Text(
-                            text = currencyFormat.format(it.estimatedIncome),
+                            text = CurrencyFormatter.format(it.estimatedIncome, currency),
                             color = SemanticColors.TextPrimary,
                             fontWeight = FontWeight.Medium
                         )
@@ -376,7 +371,7 @@ private fun SampleCalculatorCard(
                             color = SemanticColors.TextSecondary
                         )
                         Text(
-                            text = currencyFormat.format(it.taxableIncome),
+                            text = CurrencyFormatter.format(it.taxableIncome, currency),
                             color = SemanticColors.TextPrimary,
                             fontWeight = FontWeight.Medium
                         )
@@ -391,7 +386,7 @@ private fun SampleCalculatorCard(
                             color = SemanticColors.TextSecondary
                         )
                         Text(
-                            text = currencyFormat.format(it.deductibleExpenses),
+                            text = CurrencyFormatter.format(it.deductibleExpenses, currency),
                             color = SemanticColors.TextPrimary,
                             fontWeight = FontWeight.Medium
                         )
@@ -409,7 +404,7 @@ private fun SampleCalculatorCard(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = currencyFormat.format(it.estimatedIncomeTax),
+                            text = CurrencyFormatter.format(it.estimatedIncomeTax, currency),
                             color = Color(0xFFF44336),
                             fontWeight = FontWeight.Bold
                         )
@@ -425,7 +420,7 @@ private fun SampleCalculatorCard(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = currencyFormat.format(it.estimatedVatPaid),
+                            text = CurrencyFormatter.format(it.estimatedVatPaid, currency),
                             color = Color(0xFFF44336),
                             fontWeight = FontWeight.Bold
                         )
@@ -459,7 +454,7 @@ private fun SampleCalculatorCard(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = currencyFormat.format(netIncome),
+                            text = CurrencyFormatter.format(netIncome, currency),
                             color = Color(0xFF4CAF50),
                             fontWeight = FontWeight.Bold
                         )
@@ -467,12 +462,6 @@ private fun SampleCalculatorCard(
                 }
             }
         }
-    }
-}
-
-private fun buildCurrencyFormat(currencyCode: String): NumberFormat {
-    return NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
-        runCatching { currency = Currency.getInstance(currencyCode) }
     }
 }
 

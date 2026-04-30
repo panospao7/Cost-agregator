@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.analytics
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.createExpense
+import com.yourname.expensetracker.toExpenseSnapshots
 import io.mockk.every
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -29,7 +30,8 @@ class SpendingPaceGoldenTest : AnalyticsEngineTestBase() {
             currentMonthStart = march2026Start,
             previousMonthStart = february2026Start,
             previousMonthEnd = march2026Start,
-            allExpenses = allExpenses
+            allExpenses = allExpenses.toExpenseSnapshots(),
+            displayCurrency = "EUR"
         )
 
         assertApproxEquals(991.79, result.currentMonthSpent, 0.01)
@@ -51,7 +53,8 @@ class SpendingPaceGoldenTest : AnalyticsEngineTestBase() {
             currentMonthStart = march2026Start,
             previousMonthStart = february2026Start,
             previousMonthEnd = march2026Start,
-            allExpenses = allExpenses
+            allExpenses = allExpenses.toExpenseSnapshots(),
+            displayCurrency = "EUR"
         )
 
         assertApproxEquals(31.0, result.daysElapsed.toDouble(), 0.0)

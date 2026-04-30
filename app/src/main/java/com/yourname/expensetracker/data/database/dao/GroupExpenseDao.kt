@@ -36,12 +36,14 @@ interface GroupExpenseDao {
     @Query("SELECT * FROM group_expenses WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): GroupExpense?
     
+    @Deprecated("Raw SUM without currency grouping. All expenses in a group share the same currency (group.defaultCurrency), but prefer currency-aware aggregates for safety.")
     @Query("""
         SELECT SUM(totalAmount) FROM group_expenses 
         WHERE groupId = :groupId AND paidById = :paidById
     """)
     suspend fun getTotalPaidByMember(groupId: Long, paidById: Long): Double?
     
+    @Deprecated("Raw SUM without currency grouping. All expenses in a group share the same currency (group.defaultCurrency), but prefer currency-aware aggregates for safety.")
     @Query("""
         SELECT SUM(totalAmount) FROM group_expenses 
         WHERE groupId = :groupId

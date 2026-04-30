@@ -26,6 +26,7 @@ data class AnalyticsPeriodRange(
 data class EnhancedCategoryAnalytics(
     val category: AnalyticsCategoryRef,
     val period: AnalyticsPeriodRange,
+    val displayCurrency: String,
     
     // Core metrics
     val totalSpent: Double,
@@ -71,6 +72,7 @@ enum class CategoryTrendDirection {
 data class EnhancedMerchantAnalytics(
     val merchant: String,
     val period: AnalyticsPeriodRange,
+    val displayCurrency: String,
     
     // Core metrics
     val totalSpent: Double,
@@ -140,7 +142,8 @@ data class DayOfWeekStats(
     val totalSpent: Double,
     val transactionCount: Int,
     val averagePerDay: Double,
-    val percentageOfWeek: Float
+    val percentageOfWeek: Float,
+    val displayCurrency: String
 )
 
 data class WeekendWeekdayComparison(
@@ -150,7 +153,8 @@ data class WeekendWeekdayComparison(
     val weekendCount: Int,
     val weekdayAveragePerTransaction: Double,
     val weekendAveragePerTransaction: Double,
-    val weekendToWeekdayRatio: Float
+    val weekendToWeekdayRatio: Float,
+    val displayCurrency: String
 )
 
 enum class TimeSlot {
@@ -184,6 +188,7 @@ enum class SpendingPatternType {
  */
 data class StatisticalInsights(
     val period: AnalyticsPeriodRange,
+    val displayCurrency: String,
     
     // Transaction size distribution
     val histogramBins: List<HistogramBin>,
@@ -215,7 +220,8 @@ data class HistogramBin(
     val rangeEnd: Double,
     val count: Int,
     val total: Double,
-    val percentage: Float
+    val percentage: Float,
+    val displayCurrency: String
 )
 
 data class TransactionPercentiles(
@@ -225,7 +231,8 @@ data class TransactionPercentiles(
     val p75: Double,
     val p90: Double,
     val p95: Double,
-    val p99: Double
+    val p99: Double,
+    val displayCurrency: String
 )
 
 data class AnalyticsCategoryRef(
@@ -239,6 +246,7 @@ data class AnalyticsTransactionSummary(
     val id: Long,
     val amount: Double,
     val effectiveAmount: Double,
+    val currency: String,
     val merchant: String,
     val date: Long,
     val categoryId: Long?

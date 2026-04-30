@@ -10,6 +10,8 @@ import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.logic.CustomSplitMode
 import com.yourname.expensetracker.domain.logic.CustomSplitParser
 import com.yourname.expensetracker.domain.groups.GroupValidationError
@@ -29,6 +31,7 @@ class GroupsRepositoryImpl @Inject constructor(
     private val memberDao: GroupMemberDao,
     private val groupExpenseDao: GroupExpenseDao,
     private val coordinator: GroupTransactionCoordinator,
+    private val currencySettingsRepository: CurrencySettingsRepository,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : GroupsRepository {
 
@@ -113,7 +116,8 @@ class GroupsRepositoryImpl @Inject constructor(
         customSplitsJson: String?,
         date: Long
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
-        val groupCurrency = groupDao.getById(groupId)?.defaultCurrency ?: "EUR"
+        val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (_: Exception) { "EUR" }
+        val groupCurrency = groupDao.getById(groupId)?.defaultCurrency ?: homeCurrency
 
         coordinator.addExpenseWithLink(
             groupId = groupId,

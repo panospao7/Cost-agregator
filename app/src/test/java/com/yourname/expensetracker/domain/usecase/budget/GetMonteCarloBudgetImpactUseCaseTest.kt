@@ -217,7 +217,8 @@ class GetMonteCarloBudgetImpactUseCaseTest {
                 logNormalSigma = 1.0,
                 daysRemaining = 12,
                 computedAt = 1_700_000_000_000L
-            )
+            ),
+            displayCurrency = "EUR"
         )
     }
 }

@@ -17,9 +17,8 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsDashboardData
 import com.yourname.expensetracker.domain.analytics.DashboardInsight
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.components.asString
-import java.text.NumberFormat
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,7 +82,11 @@ fun AdvancedAnalyticsScreen(
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         item {
-                            CashflowOverviewCard(data)
+                            CashflowOverviewCard(data, state.homeCurrency)
+                        }
+
+                        if (data.conversionWarnings.isNotEmpty()) {
+                            item { AnalyticsWarningsCard(data.conversionWarnings) }
                         }
                         
                         if (data.insights.isNotEmpty()) {
@@ -119,9 +122,7 @@ fun AdvancedAnalyticsScreen(
 }
 
 @Composable
-private fun CashflowOverviewCard(data: AnalyticsDashboardData) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.GERMANY)
-    
+private fun CashflowOverviewCard(data: AnalyticsDashboardData, currency: String) {
     Card(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -143,17 +144,17 @@ private fun CashflowOverviewCard(data: AnalyticsDashboardData) {
             ) {
                 CashflowItem(
                     label = stringResource(R.string.analytics_income),
-                    value = currencyFormat.format(data.totalIncome),
+                    value = CurrencyFormatter.format(data.totalIncome, currency),
                     color = MaterialTheme.colorScheme.tertiary
                 )
                 CashflowItem(
                     label = stringResource(R.string.analytics_spent),
-                    value = currencyFormat.format(data.totalSpent),
+                    value = CurrencyFormatter.format(data.totalSpent, currency),
                     color = MaterialTheme.colorScheme.error
                 )
                 CashflowItem(
                     label = stringResource(R.string.analytics_net),
-                    value = currencyFormat.format(data.netCashflow),
+                    value = CurrencyFormatter.format(data.netCashflow, currency),
                     color = if (data.netCashflow >= 0) 
                         MaterialTheme.colorScheme.tertiary 
                     else 
@@ -229,8 +230,6 @@ private fun InsightCard(insight: DashboardInsight) {
 
 @Composable
 private fun CategoryCard(category: com.yourname.expensetracker.domain.analytics.AnalyticsDashboardCategoryBreakdown) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.GERMANY)
-    
     Card(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -247,13 +246,13 @@ private fun CategoryCard(category: com.yourname.expensetracker.domain.analytics.
                     style = MaterialTheme.typography.titleLarge
                 )
                 Text(
-                    text = stringResource(R.string.analytics_percent_of_total_format, String.format("%.1f", category.percentage)),
+                    text = stringResource(R.string.analytics_percent_of_total_simple_format, String.format("%.1f", category.percentage)),
                     style = MaterialTheme.typography.bodySmall
                 )
             }
             
             Text(
-                text = currencyFormat.format(category.amount),
+                text = CurrencyFormatter.format(category.amount, category.displayCurrency),
                 style = MaterialTheme.typography.titleLarge
             )
         }

@@ -61,6 +61,9 @@ import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import kotlin.math.roundToInt
 import java.util.Locale
 
+private fun formatAmount(amount: Double, currency: String, showCents: Boolean = true): String =
+    CurrencyFormatter.format(amount, currency, showCents)
+
 private fun Double.toSafeChartAmount(): Float {
     if (!isFinite()) return 0f
     val rounded = ((this * 100.0).roundToInt() / 100.0).toFloat()
@@ -139,6 +142,10 @@ fun AnalyticsScreen(
                 // 2. Main Hero Bento: Total Spent + Change
                 item { TotalSpentHero(state) }
 
+                if (state.conversionWarnings.isNotEmpty()) {
+                    item { AnalyticsWarningsCard(state.conversionWarnings) }
+                }
+
                 // 3. Statistical Highlights (daily avg, largest spend, volatility)
                 state.statisticalInsights?.let { stats ->
                     item { StatisticalHighlights(stats) }
@@ -167,7 +174,7 @@ fun AnalyticsScreen(
 
                 // 5c. Hour-of-Day Spending Chart (period-aware)
                 if (state.hourOfDayPattern.isNotEmpty()) {
-                    item { HourOfDayChartBento(state.hourOfDayPattern) }
+                    item { HourOfDayChartBento(state.hourOfDayPattern, state.homeCurrency) }
                 }
 
                 // 5d. Spending Patterns (weekend vs weekday, detected behaviors)
@@ -231,6 +238,7 @@ fun AnalyticsScreen(
                             totalSpent = merch.totalSpent,
                             transactionCount = merch.transactionCount,
                             averagePerVisit = merch.averagePerVisit,
+                            currency = merch.displayCurrency,
                             loyaltyScore = merch.loyaltyScore,
                             consecutiveMonthsVisited = merch.consecutiveMonthsVisited,
                             consistencyRating = merch.consistencyRating.name,
@@ -255,7 +263,7 @@ fun AnalyticsScreen(
                 if (state.locationInsights.isNotEmpty()) {
                     item { AnalyticsSectionHeader(stringResource(R.string.analytics_section_top_places), stringResource(R.string.analytics_section_top_places_subtitle)) }
                     items(state.locationInsights.take(5)) { insight ->
-                        PlaceInsightCard(insight)
+                        PlaceInsightCard(insight, homeCurrency = state.homeCurrency)
                     }
                 }
 
@@ -325,13 +333,13 @@ fun StatisticalHighlights(stats: StatisticalInsights) {
             BentoCard(modifier = Modifier.weight(1f)) {
                 Text(stringResource(R.string.analytics_stat_daily_average), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SemanticColors.TextSecondary)
                 Spacer(modifier = Modifier.height(8.dp))
-                AmountText(stats.averageDailySpend, style = MaterialTheme.typography.headlineMedium)
+                AmountText(stats.averageDailySpend, currency = stats.displayCurrency, style = MaterialTheme.typography.headlineMedium)
             }
             BentoCard(modifier = Modifier.weight(1f)) {
                 Text(stringResource(R.string.analytics_stat_largest_spend), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SemanticColors.TextSecondary)
                 Spacer(modifier = Modifier.height(8.dp))
                 stats.largestTransaction?.let {
-                    AmountText(it.amount, style = MaterialTheme.typography.headlineMedium)
+                    AmountText(it.amount, currency = it.currency, style = MaterialTheme.typography.headlineMedium)
                     Text(it.merchant, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -396,7 +404,7 @@ fun EnhancedCategoryItem(
                     Text(stringResource(R.string.analytics_transactions_format, item.transactionCount), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    AmountText(item.totalSpent, style = MaterialTheme.typography.titleMedium)
+                    AmountText(item.totalSpent, currency = item.displayCurrency, style = MaterialTheme.typography.titleMedium)
                     item.changePercent?.let { change ->
                         Text(
                             text = "${if (change > 0) "+" else ""}${String.format("%.1f", change)}%",
@@ -467,7 +475,8 @@ fun EnhancedCategoryItem(
             CategoryPercentileBadge(
                 percentile25 = item.percentile25,
                 percentile75 = item.percentile75,
-                velocity = item.velocity
+                velocity = item.velocity,
+                currency = item.displayCurrency
             )
         }
     }
@@ -522,7 +531,7 @@ private fun EnhancedMerchantItem(
                     )
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    AmountText(item.totalSpent, style = MaterialTheme.typography.titleMedium)
+                    AmountText(item.totalSpent, currency = item.displayCurrency, style = MaterialTheme.typography.titleMedium)
                     item.priceChangePercent?.let { change ->
                         val priceChangeStr = stringResource(
                             R.string.analytics_merchant_prices_format,
@@ -543,7 +552,7 @@ private fun EnhancedMerchantItem(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                StatMicro(stringResource(R.string.analytics_stat_micro_avg_visit), item.averagePerVisit)
+                StatMicro(stringResource(R.string.analytics_stat_micro_avg_visit), item.averagePerVisit, item.displayCurrency)
                 StatMicro(stringResource(R.string.analytics_stat_micro_loyalty), "${item.loyaltyScore.toInt()}/100")
                 item.predictedNextVisitDate?.let {
                     val daysUntil = ((it - System.currentTimeMillis()) / (1000 * 60 * 60 * 24)).toInt()
@@ -634,7 +643,7 @@ fun SpendingPatternsCard(analysis: SpendingPatternAnalysis) {
 
 // ── Hour-of-Day Chart (new, Task D) ───────────────────────────────────
 @Composable
-fun HourOfDayChartBento(hourOfDayPattern: List<Pair<Int, Double>>) {
+fun HourOfDayChartBento(hourOfDayPattern: List<Pair<Int, Double>>, currency: String = "EUR") {
     BentoCard {
         Column {
             Text(
@@ -686,7 +695,7 @@ fun HourOfDayChartBento(hourOfDayPattern: List<Pair<Int, Double>>) {
                     else -> "${h - 12}pm"
                 }
                 Text(
-                    text = stringResource(R.string.analytics_peak_spending_format, label, total),
+                    text = stringResource(R.string.analytics_peak_spending_format, label, formatAmount(total, currency, showCents = false)),
                     style = MaterialTheme.typography.labelSmall,
                     color = SemanticColors.PrimaryIndigo.copy(alpha = 0.8f)
                 )
@@ -697,11 +706,11 @@ fun HourOfDayChartBento(hourOfDayPattern: List<Pair<Int, Double>>) {
 
 // ── Shared helper composables ─────────────────────────────────────────
 @Composable
-fun StatMicro(label: String, value: Any) {
+fun StatMicro(label: String, value: Any, currency: String = "EUR") {
     Column {
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (value is Double) {
-            AmountText(value, style = MaterialTheme.typography.labelMedium)
+            AmountText(value, currency = currency, style = MaterialTheme.typography.labelMedium)
         } else {
             Text(value.toString(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
         }
@@ -730,6 +739,7 @@ fun TotalSpentHero(state: AnalyticsState) {
             Spacer(modifier = Modifier.height(4.dp))
             AmountText(
                 amount = state.currentTotal,
+                currency = state.homeCurrency,
                 style = MaterialTheme.typography.displayMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
@@ -914,14 +924,14 @@ fun DayOfWeekChartBento(dayOfWeekPattern: List<DayOfWeekInsight>) {
                     ) {
                         highest?.let {
                             Text(
-                                stringResource(R.string.analytics_peak_most_format, it.dayName, it.totalSpent),
+                                stringResource(R.string.analytics_peak_most_format, it.dayName, formatAmount(it.totalSpent, it.displayCurrency, showCents = false)),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.DangerRed.copy(alpha = 0.8f)
                             )
                         }
                         lowest?.let {
                             Text(
-                                stringResource(R.string.analytics_peak_least_format, it.dayName, it.totalSpent),
+                                stringResource(R.string.analytics_peak_least_format, it.dayName, formatAmount(it.totalSpent, it.displayCurrency, showCents = false)),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SemanticColors.SuccessGreen.copy(alpha = 0.8f)
                             )
@@ -984,7 +994,11 @@ fun BudgetVsActualChart(items: List<BudgetVsActualItem>) {
                             )
                             Text(
                                 text = if (hasValidBudget) {
-                                    stringResource(R.string.analytics_budget_range_format, item.actualSpent, item.budgetAmount)
+                                    stringResource(
+                                        R.string.analytics_budget_range_format,
+                                        formatAmount(item.actualSpent, item.displayCurrency, showCents = false),
+                                        formatAmount(item.budgetAmount, item.displayCurrency, showCents = false)
+                                    )
                                 } else {
                                     stringResource(R.string.forecast_no_budget_set)
                                 },
@@ -1119,7 +1133,7 @@ fun InsightsRow(insights: List<SpendingInsight>) {
 }
 
 @Composable
-fun CategoryItem(item: AnalyticsCategoryBreakdown, homeCurrency: String = "EUR") {
+fun CategoryItem(item: AnalyticsCategoryBreakdown, homeCurrency: String = item.displayCurrency) {
     val categoryColor = remember(item.category.color) {
         try { Color(android.graphics.Color.parseColor(item.category.color)) }
         catch (e: Exception) { Color.Gray }
@@ -1166,7 +1180,7 @@ fun CategoryItem(item: AnalyticsCategoryBreakdown, homeCurrency: String = "EUR")
 }
 
 @Composable
-fun MerchantItem(item: MerchantBreakdown, homeCurrency: String = "EUR") {
+fun MerchantItem(item: MerchantBreakdown, homeCurrency: String = item.displayCurrency) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -1188,7 +1202,15 @@ fun MerchantItem(item: MerchantBreakdown, homeCurrency: String = "EUR") {
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(item.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                Text(stringResource(R.string.analytics_visits_avg_format, item.transactionCount, item.averageTransaction), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    stringResource(
+                        R.string.analytics_visits_avg_format,
+                        item.transactionCount,
+                        formatAmount(item.averageTransaction, item.displayCurrency)
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             Text(CurrencyFormatter.format(item.totalSpent, homeCurrency), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
         }
@@ -1196,7 +1218,7 @@ fun MerchantItem(item: MerchantBreakdown, homeCurrency: String = "EUR") {
 }
 
 @Composable
-fun RecurringItem(item: RecurringCandidate, homeCurrency: String = "EUR") {
+fun RecurringItem(item: RecurringCandidate, homeCurrency: String = item.displayCurrency) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1238,7 +1260,7 @@ fun RecurringItem(item: RecurringCandidate, homeCurrency: String = "EUR") {
 
 // ── Feature 4: Spending Velocity Anomaly Card ──────────────────────────
 @Composable
-fun VelocityAnomalyCard(anomaly: VelocityAnomaly, homeCurrency: String = "EUR") {
+fun VelocityAnomalyCard(anomaly: VelocityAnomaly, homeCurrency: String = anomaly.displayCurrency) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1299,7 +1321,7 @@ fun VelocityAnomalyCard(anomaly: VelocityAnomaly, homeCurrency: String = "EUR") 
 
 // ── Feature 3: Year-over-Year Comparison Card (fixed colors, Task B) ──
 @Composable
-fun YearOverYearCard(yoy: YearOverYearComparison, homeCurrency: String = "EUR") {
+fun YearOverYearCard(yoy: YearOverYearComparison, homeCurrency: String = yoy.displayCurrency) {
     val currentYearColor = MaterialTheme.colorScheme.primary
     val priorYearColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
 
@@ -1433,7 +1455,7 @@ fun YearOverYearCard(yoy: YearOverYearComparison, homeCurrency: String = "EUR") 
 
 // ── Feature 5: Post-Salary Sequential Pattern Card ───────────────────
 @Composable
-fun PostSalaryPatternCard(pattern: PostSalaryPattern, homeCurrency: String = "EUR") {
+fun PostSalaryPatternCard(pattern: PostSalaryPattern, homeCurrency: String = pattern.displayCurrency) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -1516,7 +1538,7 @@ fun PostSalaryPatternCard(pattern: PostSalaryPattern, homeCurrency: String = "EU
 
 // ── Feature 6: Suspect / Duplicate Transaction Card ───────────────────
 @Composable
-fun SuspectTransactionCard(item: SuspectTransaction, homeCurrency: String = "EUR") {
+fun SuspectTransactionCard(item: SuspectTransaction, homeCurrency: String = item.currency) {
     val (bgColor, iconEmoji) = when (item.reason) {
         SuspectReason.NEAR_DUPLICATE -> SemanticColors.DangerRed.copy(alpha = 0.08f) to "⚠️"
         SuspectReason.ROUND_AMOUNT   -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f) to "💰"
@@ -1684,6 +1706,39 @@ fun TravelInsightCard(travel: TravelInsight, homeCurrency: String = "EUR") {
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun AnalyticsWarningsCard(warnings: List<AnalyticsConversionWarning>) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = stringResource(R.string.analytics_conversion_warning_title),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            warnings.forEach { warning ->
+                Text(
+                    text = buildString {
+                        append(warning.message)
+                        append(" ")
+                        append(stringResource(R.string.analytics_conversion_warning_count_format, warning.affectedTransactionCount))
+                        if (warning.sourceCurrencies.isNotEmpty()) {
+                            append(" (")
+                            append(warning.sourceCurrencies.joinToString())
+                            append(")")
+                        }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
             }
         }
     }

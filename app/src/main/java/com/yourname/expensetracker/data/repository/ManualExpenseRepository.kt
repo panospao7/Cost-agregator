@@ -74,7 +74,7 @@ class ManualExpenseRepository @Inject constructor(
     suspend fun addManualExpense(
         merchant: String,
         amount: Double,
-        currency: String = "EUR",
+        currency: String, // Callers must explicitly pass home currency
         categoryId: Long?,
         transactionType: TransactionType = TransactionType.PURCHASE,
         paymentMethod: PaymentMethod = PaymentMethod.CASH,

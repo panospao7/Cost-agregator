@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.AnalyticsEngineTestBase
+import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.toExpenseSnapshots
+import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -18,6 +21,8 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
 
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var dashboard: AdvancedAnalyticsDashboard
+    private val currencySettingsRepository = TestCurrencySettingsRepository()
+    private val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer()
 
     @Before
     override fun setUp() {
@@ -27,6 +32,8 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
             expenseDao = expenseDao,
             expenseRepository = expenseRepository,
             categoryRepository = categoryRepository,
+            currencySettingsRepository = currencySettingsRepository,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             timeProvider = timeProvider
         )
     }
@@ -48,10 +55,10 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
         )
 
         // Stubs use half-open [rangeStart, rangeEnd) semantics: date >= rangeStart && date < rangeEnd
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
             val rangeStart = firstArg<Long>()
             val rangeEnd = secondArg<Long>()
-            all.filter { it.date >= rangeStart && it.date < rangeEnd }
+            all.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
         }
 
         val result = dashboard.generateDashboardData(start, end)
@@ -93,10 +100,10 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
         )
 
         // Half-open stub: [rangeStart, rangeEnd)
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
             val rangeStart = firstArg<Long>()
             val rangeEnd = secondArg<Long>()
-            all.filter { it.date >= rangeStart && it.date < rangeEnd }
+            all.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
         }
 
         val result = dashboard.generateDashboardData(start, end)
@@ -120,7 +127,7 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
             exp("2026-03-01", 100.0, TransactionType.PURCHASE),
             exp("2026-03-02", 50.0, TransactionType.PURCHASE)
         )
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns expenses.toExpenseSnapshots()
 
         val result = dashboard.generateDashboardData(start, end)
         assertApproxEquals(150.0, result.totalSpent)
@@ -130,7 +137,7 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `no expenses and empty dataset return zeros and stable shapes`() = runTest {
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
         val result = dashboard.generateDashboardData(ms("2026-03-01"), ms("2026-04-01"))
 
         assertEquals(0.0, result.totalSpent, 0.0)
@@ -149,7 +156,7 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
             exp("2026-03-01", 100.0, TransactionType.PURCHASE),
             exp("2026-03-02", 100.0, TransactionType.DEPOSIT)
         )
-        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns data
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns data.toExpenseSnapshots()
 
         val result = dashboard.generateDashboardData(start, end)
         assertApproxEquals(0.0, result.netCashflow)

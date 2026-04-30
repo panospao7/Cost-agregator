@@ -1,5 +1,9 @@
 package com.yourname.expensetracker.domain.groups
 
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import java.math.BigDecimal
 import java.math.RoundingMode
 import javax.inject.Inject
@@ -15,7 +19,8 @@ data class Settlement(
     val toMemberId: Long,
     val toMemberName: String,
     val amount: Double,
-    val usedGreedyFallback: Boolean = false
+    val usedGreedyFallback: Boolean = false,
+    val currency: String // MUST be explicitly provided by callers
 )
 
 /**
@@ -25,7 +30,9 @@ data class Settlement(
  * minimizing number of transfers with deterministic ordering.
  */
 @Singleton
-class SettlementCalculator @Inject constructor() {
+class SettlementCalculator @Inject constructor(
+    private val currencySettingsRepository: CurrencySettingsRepository
+) {
 
     /**
      * Calculate an optimal settlement plan to balance all debts.
@@ -34,6 +41,14 @@ class SettlementCalculator @Inject constructor() {
     fun calculateSettlements(balances: Map<Long, MemberBalance>): List<Settlement> {
         if (balances.isEmpty()) return emptyList()
 
+        // If all members share the same currency, settle in that currency.
+        // Otherwise, fall back to the user's home currency.
+        val distinctCurrencies = balances.values.map { it.currency }.distinct()
+        val groupCurrency = if (distinctCurrencies.size == 1) {
+            distinctCurrencies.first()
+        } else {
+            getHomeCurrencySync()
+        }
         val normalized = normalizeBalancesToCents(balances)
         val debtors = normalized
             .filter { it.netCents < 0 }
@@ -57,7 +72,8 @@ class SettlementCalculator @Inject constructor() {
                 toMemberId = it.toMemberId,
                 toMemberName = it.toMemberName,
                 amount = centsToAmount(it.amountCents),
-                usedGreedyFallback = transferPlan.usedGreedyFallback
+                usedGreedyFallback = transferPlan.usedGreedyFallback,
+                currency = groupCurrency
             )
         }
     }
@@ -73,9 +89,9 @@ class SettlementCalculator @Inject constructor() {
     /**
      * Get a summary of who owes what to whom as a readable string.
      *
-     * @param currencySymbol Currency symbol to display in formatted amounts.
+     * @param groupCurrency ISO 4217 currency code for formatting amounts.
      */
-    fun getSettlementSummary(settlements: List<Settlement>, currencySymbol: String): String {
+    fun getSettlementSummary(settlements: List<Settlement>, groupCurrency: String): String {
         if (settlements.isEmpty()) {
             return "All settled up! No payments needed."
         }
@@ -85,12 +101,12 @@ class SettlementCalculator @Inject constructor() {
 
         var totalVolumeCents = 0L
         for ((index, settlement) in settlements.withIndex()) {
-            builder.append("${index + 1}. ${settlement.fromMemberName} pays ${settlement.toMemberName}: ${currencySymbol}${String.format("%.2f", settlement.amount)}\n")
+            builder.append("${index + 1}. ${settlement.fromMemberName} pays ${settlement.toMemberName}: ${CurrencyFormatter.format(settlement.amount, groupCurrency)}\n")
             totalVolumeCents += amountToCents(settlement.amount)
         }
 
         val totalVolume = centsToAmount(totalVolumeCents)
-        builder.append("\nTotal to settle: ${currencySymbol}${String.format("%.2f", totalVolume)}")
+        builder.append("\nTotal to settle: ${CurrencyFormatter.format(totalVolume, groupCurrency)}")
         builder.append("\n${settlements.size} transaction${if (settlements.size > 1) "s" else ""} needed")
         if (settlements.any { it.usedGreedyFallback }) {
             builder.append("\n(Approximate plan used due to solver budget limit)")
@@ -371,6 +387,18 @@ class SettlementCalculator @Inject constructor() {
         return BigDecimal.valueOf(cents)
             .movePointLeft(2)
             .toDouble()
+    }
+
+    /**
+     * Synchronously retrieve the user's home currency.
+     * Used as a fallback when balances use mixed currencies.
+     */
+    private fun getHomeCurrencySync(): String = runBlocking {
+        try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (_: Exception) {
+            "EUR"
+        }
     }
 
     private companion object {

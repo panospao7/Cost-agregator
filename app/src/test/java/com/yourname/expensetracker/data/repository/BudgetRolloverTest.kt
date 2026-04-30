@@ -9,6 +9,8 @@ import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -44,6 +46,8 @@ class BudgetRolloverTest {
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
+    private val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
+    private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
 
     /** Real calculator — required so rollover window iteration terminates correctly. */
     private lateinit var budgetCalculator: BudgetCalculator
@@ -62,6 +66,7 @@ class BudgetRolloverTest {
         every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
 
         budgetRepository = BudgetRepository(
             budgetDao,
@@ -70,7 +75,9 @@ class BudgetRolloverTest {
             budgetCalculator,
             timeProvider,
             offsetEngine,
-            TimeBoundaryTicker(timeProvider)
+            TimeBoundaryTicker(timeProvider),
+            currencyConverter,
+            currencySettingsRepository
         )
     }
 
@@ -347,7 +354,8 @@ class BudgetRolloverTest {
         val calc = BudgetCalculator(timeProvider)
         val repo = BudgetRepository(
             budgetDao, categoryDao, expenseDao, calc,
-            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider)
+            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
+            currencyConverter, currencySettingsRepository
         )
 
         // Budget: anchor 2025-01-31, monthly, amount €1 000, rollover = true

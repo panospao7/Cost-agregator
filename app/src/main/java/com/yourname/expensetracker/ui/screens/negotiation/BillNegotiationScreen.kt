@@ -25,8 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.negotiation.SmartBillNegotiationEngine
-import java.text.NumberFormat
-import java.util.Locale
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 
 enum class NegotiationOutcome(@StringRes val displayNameRes: Int) {
     SUCCESS(R.string.negotiation_outcome_success),
@@ -51,6 +50,7 @@ fun BillNegotiationScreen(
 ) {
     val opportunities by viewModel.opportunities.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
     var selectedOpportunity by remember { mutableStateOf<SmartBillNegotiationEngine.NegotiationOpportunity?>(null) }
     var showScriptDialog by remember { mutableStateOf(false) }
     var showOutcomeDialog by remember { mutableStateOf(false) }
@@ -103,11 +103,10 @@ fun BillNegotiationScreen(
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                             )
                             
-                            val totalYearlySavings = opportunities.sumOf { it.potentialYearlySavings }
-                            val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
-                            
-                            Text(
-                                text = numberFormat.format(totalYearlySavings),
+                        val totalYearlySavings = opportunities.sumOf { it.potentialYearlySavings }
+                        
+                        Text(
+                            text = CurrencyFormatter.format(totalYearlySavings, homeCurrency),
                                 style = MaterialTheme.typography.headlineLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -128,19 +127,20 @@ fun BillNegotiationScreen(
                         EmptyNegotiationState()
                     }
                 } else {
-                    items(opportunities) { opportunity ->
-                        NegotiationOpportunityCard(
-                            opportunity = opportunity,
-                            onViewScript = {
-                                selectedOpportunity = opportunity
-                                showScriptDialog = true
-                            },
-                            onRecordOutcome = {
-                                selectedOpportunity = opportunity
-                                showOutcomeDialog = true
-                            }
-                        )
-                    }
+                items(opportunities) { opportunity ->
+                    NegotiationOpportunityCard(
+                        opportunity = opportunity,
+                        homeCurrency = homeCurrency,
+                        onViewScript = {
+                            selectedOpportunity = opportunity
+                            showScriptDialog = true
+                        },
+                        onRecordOutcome = {
+                            selectedOpportunity = opportunity
+                            showOutcomeDialog = true
+                        }
+                    )
+                }
                 }
             }
         }
@@ -150,6 +150,7 @@ fun BillNegotiationScreen(
     if (showScriptDialog && selectedOpportunity != null) {
         NegotiationScriptDialog(
             opportunity = selectedOpportunity!!,
+            homeCurrency = homeCurrency,
             onDismiss = { showScriptDialog = false }
         )
     }
@@ -158,6 +159,7 @@ fun BillNegotiationScreen(
     if (showOutcomeDialog && selectedOpportunity != null) {
         OutcomeRecordingDialog(
             opportunity = selectedOpportunity!!,
+            homeCurrency = homeCurrency,
             onDismiss = { showOutcomeDialog = false },
             onSave = { outcome, savings, notes ->
                 viewModel.recordOutcome(
@@ -175,10 +177,10 @@ fun BillNegotiationScreen(
 @Composable
 fun NegotiationOpportunityCard(
     opportunity: SmartBillNegotiationEngine.NegotiationOpportunity,
+    homeCurrency: String,
     onViewScript: () -> Unit,
     onRecordOutcome: () -> Unit
 ) {
-    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     
     val powerColor = when (opportunity.negotiationPower) {
         SmartBillNegotiationEngine.NegotiationPower.STRONG -> MaterialTheme.colorScheme.primary
@@ -250,6 +252,7 @@ fun NegotiationOpportunityCard(
                 PriceColumn(
                     label = stringResource(R.string.bill_negotiation_current_label),
                     price = opportunity.currentPrice,
+                    homeCurrency = homeCurrency,
                     isStrikethrough = true
                 )
                 
@@ -263,6 +266,7 @@ fun NegotiationOpportunityCard(
                 PriceColumn(
                     label = stringResource(R.string.bill_negotiation_target_label),
                     price = opportunity.competitivePrice,
+                    homeCurrency = homeCurrency,
                     isHighlight = true
                 )
                 
@@ -275,7 +279,7 @@ fun NegotiationOpportunityCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = numberFormat.format(opportunity.potentialMonthlySavings),
+                        text = CurrencyFormatter.format(opportunity.potentialMonthlySavings, homeCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
@@ -358,10 +362,10 @@ fun NegotiationOpportunityCard(
 fun PriceColumn(
     label: String,
     price: Double,
+    homeCurrency: String,
     isStrikethrough: Boolean = false,
     isHighlight: Boolean = false
 ) {
-    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     
     Column(
         horizontalAlignment = Alignment.CenterHorizontally
@@ -372,7 +376,7 @@ fun PriceColumn(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
-            text = numberFormat.format(price),
+            text = CurrencyFormatter.format(price, homeCurrency),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             textDecoration = if (isStrikethrough) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
@@ -413,6 +417,7 @@ fun ServiceTypeIcon(serviceType: SmartBillNegotiationEngine.ServiceType) {
 @Composable
 fun NegotiationScriptDialog(
     opportunity: SmartBillNegotiationEngine.NegotiationOpportunity,
+    homeCurrency: String,
     onDismiss: () -> Unit
 ) {
     val script = opportunity.negotiationScript
@@ -461,7 +466,7 @@ fun NegotiationScriptDialog(
                     )
                     
                     opportunity.retentionOffers.forEach { offer ->
-                        RetentionOfferCard(offer = offer)
+                        RetentionOfferCard(offer = offer, homeCurrency = homeCurrency)
                     }
                 }
                 
@@ -521,7 +526,7 @@ fun ScriptSection(
 }
 
 @Composable
-fun RetentionOfferCard(offer: SmartBillNegotiationEngine.RetentionOffer) {
+fun RetentionOfferCard(offer: SmartBillNegotiationEngine.RetentionOffer, homeCurrency: String) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -557,9 +562,8 @@ fun RetentionOfferCard(offer: SmartBillNegotiationEngine.RetentionOffer) {
             }
             
             offer.discount?.let {
-                val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
                 Text(
-                    text = numberFormat.format(it),
+                    text = CurrencyFormatter.format(it, homeCurrency),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold
@@ -579,13 +583,13 @@ fun RetentionOfferCard(offer: SmartBillNegotiationEngine.RetentionOffer) {
 @Composable
 fun OutcomeRecordingDialog(
     opportunity: SmartBillNegotiationEngine.NegotiationOpportunity,
+    homeCurrency: String,
     onDismiss: () -> Unit,
     onSave: (outcome: NegotiationOutcome, savings: Double?, notes: String) -> Unit
 ) {
     var selectedOutcome by remember { mutableStateOf(NegotiationOutcome.SUCCESS) }
     var savingsAmount by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
-    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -635,7 +639,7 @@ fun OutcomeRecordingDialog(
                         onValueChange = { savingsAmount = it },
                         label = { Text(stringResource(R.string.bill_negotiation_actual_savings_label)) },
                         placeholder = { Text(stringResource(R.string.bill_negotiation_savings_placeholder)) },
-                        prefix = { Text(numberFormat.currency.symbol) },
+                        prefix = { Text(CurrencyFormatter.getCurrencySymbol(homeCurrency)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth()
                     )

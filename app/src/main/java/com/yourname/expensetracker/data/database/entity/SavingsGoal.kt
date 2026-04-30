@@ -13,6 +13,10 @@ data class SavingsGoal(
     @ColumnInfo(defaultValue = "0.0") val currentAmount: Double = 0.0,
     val targetDate: Long? = null,
     val protectionLevel: GoalProtectionLevel = GoalProtectionLevel.WARNING,
+    @ColumnInfo(defaultValue = "'EUR'")
+    val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "'LEGACY_DEFAULT'")
+    val currencyAssumption: String = "LEGACY_DEFAULT",
     val createdAt: Long = System.currentTimeMillis()
 )
 

@@ -10,10 +10,13 @@ import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.model.BudgetSnapshot
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -36,7 +39,10 @@ class BudgetRepository @Inject constructor(
     private val budgetCalculator: BudgetCalculator,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
     private val offsetEngine: SharedExpenseBudgetOffsetEngine,
-    private val timeBoundaryTicker: TimeBoundaryTicker
+    private val timeBoundaryTicker: TimeBoundaryTicker,
+    private val currencyConverter: CurrencyConverter,
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val multiCurrencyRepository: MultiCurrencyRepository
 ) {
     data class DebugBudgetSnapshot(
         val budgets: List<Budget>
@@ -49,9 +55,14 @@ class BudgetRepository @Inject constructor(
 
     suspend fun getActiveBudgetSnapshots(): List<BudgetSnapshot> =
         getActiveBudgets().map { budget ->
+            val converted = convertBudgetAmountToHomeCurrency(
+                amount = budget.amount,
+                sourceCurrency = budget.currency
+            )
             BudgetSnapshot(
                 categoryId = budget.categoryId,
-                amount = budget.amount
+                amount = converted.displayAmount,
+                currency = converted.displayCurrency.code
             )
         }
     
@@ -113,8 +124,19 @@ class BudgetRepository @Inject constructor(
         // Use aggregate SQL queries instead of fetching raw rows.
         // getCategorySpentInPeriod / getTotalForPeriod already filter by
         // transactionType = 'PURCHASE' AND isNotMine = 0 and use effectiveAmount.
-        val spent = getAggregateSpent(budget.categoryId, window.start, window.end)
-        var limit = budget.amount
+        val initialLimitAggregate = convertBudgetAmountToHomeCurrency(
+            amount = budget.amount,
+            sourceCurrency = budget.currency
+        )
+        val spentAggregate = getAggregateSpent(budget.categoryId, window.start, window.end)
+        val spent = spentAggregate.displayAmount
+        val baseLimit = initialLimitAggregate.displayAmount
+        var budgetWarningMessage = initialLimitAggregate.warningMessage
+        var budgetIsPartial = initialLimitAggregate.isPartial || spentAggregate.isPartial
+
+        // Compute effectiveLimit: base amount plus any rollover surplus from prior periods.
+        // budget.amount stays as the original base limit (no mutation).
+        var effectiveLimit = baseLimit
 
         // LOG-002: Implement Compounding Rollover - BUG-2 FIX
         if (budget.rollover) {
@@ -131,17 +153,17 @@ class BudgetRepository @Inject constructor(
                     budget.period, budgetFirstStart, currentWindow.end
                 )
             }
-            var effectiveLimit = budget.amount
+            var runningEffectiveLimit = baseLimit
             for (period in periods) {
-                val spentInPeriod = getAggregateSpent(budget.categoryId, period.start, period.end)
-                val surplus = (effectiveLimit - spentInPeriod).coerceAtLeast(0.0)
-                effectiveLimit = budget.amount + surplus
+                val spentInPeriod = getAggregateSpent(budget.categoryId, period.start, period.end).displayAmount
+                val surplus = (runningEffectiveLimit - spentInPeriod).coerceAtLeast(0.0)
+                runningEffectiveLimit = baseLimit + surplus
             }
-            limit = effectiveLimit
+            effectiveLimit = runningEffectiveLimit
         }
 
-        val percent = if (limit > 0) (spent / limit).toFloat() else 0f
-        val remaining = (limit - spent).coerceAtLeast(0.0)
+        val percent = if (effectiveLimit > 0) (spent / effectiveLimit).toFloat() else 0f
+        val remaining = (effectiveLimit - spent).coerceAtLeast(0.0)
 
         val health = when {
             percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
@@ -151,14 +173,24 @@ class BudgetRepository @Inject constructor(
         }
 
         return BudgetStatus(
-            budget = budget.copy(amount = limit),
+            budget = budget.copy(
+                amount = baseLimit,                   // Keep original base limit, NOT the rollover-inflated amount
+                currency = initialLimitAggregate.displayCurrency.code
+            ),
             category = categoryMap[budget.categoryId],
             spentAmount = spent,
             remainingAmount = remaining,
             percentUsed = percent,
             healthStatus = health,
             periodStart = periodStart,
-            periodEnd = periodEnd
+            periodEnd = periodEnd,
+            effectiveLimit = effectiveLimit,            // Store the rolled-over limit separately
+            currency = initialLimitAggregate.displayCurrency.code,
+            isPartial = budgetIsPartial,
+            conversionWarning = listOfNotNull(budgetWarningMessage, spentAggregate.warningMessage)
+                .distinct()
+                .takeIf { it.isNotEmpty() }
+                ?.joinToString(" ")
         )
     }
 
@@ -170,14 +202,57 @@ class BudgetRepository @Inject constructor(
      * `transactionType = 'PURCHASE' AND isNotMine = 0` and use the
      * effective-amount SQL helper, matching the previous in-memory logic.
      */
-    private suspend fun getAggregateSpent(categoryId: Long?, start: Long, end: Long): Double {
-        // TODO: CURRENCY-FOUNDATION — This uses raw SUM across mixed currencies.
-        // Should be replaced with MultiCurrencyRepository for currency-aware aggregation
-        // that converts expenses to budget.currency before summing.
+    private suspend fun getAggregateSpent(
+        categoryId: Long?,
+        start: Long,
+        end: Long
+    ): com.yourname.expensetracker.domain.core.money.MoneyAggregate {
         return if (categoryId != null) {
-            expenseDao.getCategorySpentInPeriod(categoryId, start, end)
+            multiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals(start, end)[categoryId]
+                ?: com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(
+                    CurrencyCode(MultiCurrencyRepository.DEFAULT_HOME_CURRENCY)
+                )
         } else {
-            expenseDao.getTotalForPeriod(start, end)
+            multiCurrencyRepository.getHomeCurrencyPurchaseTotal(start, end)
+        }
+    }
+
+    private suspend fun convertBudgetAmountToHomeCurrency(
+        amount: Double,
+        sourceCurrency: String
+    ): com.yourname.expensetracker.domain.core.money.MoneyAggregate {
+        val homeCurrency = resolveHomeCurrency()
+        if (sourceCurrency.equals(homeCurrency, ignoreCase = true)) {
+            return com.yourname.expensetracker.domain.core.money.MoneyAggregate.singleCurrency(
+                amount = amount,
+                currency = CurrencyCode(homeCurrency)
+            )
+        }
+
+        val conversion = currencyConverter.convert(amount, sourceCurrency, homeCurrency)
+        if (conversion != null) {
+            return com.yourname.expensetracker.domain.core.money.MoneyAggregate.singleCurrency(
+                amount = conversion.convertedAmount,
+                currency = CurrencyCode(homeCurrency)
+            )
+        }
+
+        Timber.w("Failed to convert budget amount $amount from $sourceCurrency to $homeCurrency, using original amount")
+        return com.yourname.expensetracker.domain.core.money.MoneyAggregate.singleCurrency(
+            amount = amount,
+            currency = CurrencyCode(sourceCurrency)
+        ).copy(
+            isPartial = true,
+            warningMessage = "Budget limit could not be converted from $sourceCurrency to $homeCurrency"
+        )
+    }
+
+    private suspend fun resolveHomeCurrency(): String {
+        return try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to read home currency, defaulting to EUR")
+            "EUR"
         }
     }
 

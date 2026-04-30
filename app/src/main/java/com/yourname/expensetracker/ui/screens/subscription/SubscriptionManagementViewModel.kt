@@ -7,12 +7,14 @@ import com.yourname.expensetracker.data.database.entity.SubscriptionCandidate
 import com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
 import com.yourname.expensetracker.data.database.entity.SubscriptionUsage
 import com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -57,8 +59,11 @@ data class PriceChangeInfo(
 @HiltViewModel
 class SubscriptionManagementViewModel @Inject constructor(
     private val repository: SubscriptionManagementRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
+
+    val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
     
     private val _uiState = MutableStateFlow(SubscriptionManagementUiState())
     val uiState: StateFlow<SubscriptionManagementUiState> = _uiState.asStateFlow()

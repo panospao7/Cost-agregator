@@ -1,7 +1,12 @@
 package com.yourname.expensetracker.verification
 
 import com.yourname.expensetracker.AnalyticsEngineTestBase
+import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.generateInsights
+import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.testCurrencyConverter
+import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.CategoryTotalResult
 import com.yourname.expensetracker.data.database.dao.DailyTotal
@@ -20,7 +25,6 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.FinancialWeatherRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
-import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.model.dashboard.DashboardCategory
@@ -28,6 +32,7 @@ import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionTy
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsDashboard
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
+import com.yourname.expensetracker.domain.analytics.AnalyticsPeriodRange
 import com.yourname.expensetracker.domain.analytics.AnomalyDetector
 import com.yourname.expensetracker.domain.analytics.CategoryInsightEngine
 import com.yourname.expensetracker.domain.analytics.DayOfWeekAnalyzer
@@ -35,13 +40,14 @@ import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.MerchantInsightEngine
 import com.yourname.expensetracker.domain.analytics.MonthlyComparisonCalculator
 import com.yourname.expensetracker.domain.analytics.PaceStatus
-import com.yourname.expensetracker.domain.analytics.PeriodRange
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
 import com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.carbon.CarbonFootprintCalculator
+import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
+import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.groups.GroupSplitType
 import com.yourname.expensetracker.domain.groups.SharedExpenseDataPort
 import com.yourname.expensetracker.domain.groups.SharedExpenseMember
@@ -61,7 +67,9 @@ import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarData
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.UrgencyLevel
+import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
+import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.every
@@ -127,10 +135,14 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         )
 
         totalsEngine = TotalsAggregationEngine(expenseRepository, timeProvider, Dispatchers.Unconfined)
+        val currencySettingsRepository = TestCurrencySettingsRepository()
+        val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(testCurrencyConverter())
         advancedEngine = AdvancedAnalyticsEngine(
             expenseRepository = expenseRepository,
             categoryRepository = categoryRepository,
             budgetRepository = budgetRepository,
+            currencySettingsRepository = currencySettingsRepository,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             timeProvider = timeProvider,
             defaultDispatcher = Dispatchers.Unconfined,
             ioDispatcher = Dispatchers.Unconfined
@@ -176,23 +188,33 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
 
         val savingsGoalRepository = mockk<SavingsGoalRepository>(relaxed = true)
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns emptyList()
 
         val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
+        val forecastInputAssembler = ForecastInputAssembler(timeProvider)
+        val mergedRecurringPatternsProvider = MergedRecurringPatternsProvider(
+            expenseRepository = expenseRepository,
+            recurringExpenseRepository = mockk(relaxed = true),
+            recurringExpenseEngine = recurringExpenseEngine,
+            forecastInputAssembler = forecastInputAssembler,
+            timeProvider = timeProvider
+        )
 
         val synthesisEngine = SynthesisEngine(timeProvider)
         val weatherRepository = FinancialWeatherRepository(
             expenseRepository = expenseRepository,
-            insightsEngine = insightsEngine,
             budgetRepository = budgetRepository,
             recurringExpenseRepository = recurringExpenseRepository,
-            recurringExpenseEngine = recurringExpenseEngine,
+            mergedRecurringPatternsProvider = mergedRecurringPatternsProvider,
             plannedExpenseRepository = plannedExpenseRepository,
             savingsGoalRepository = savingsGoalRepository,
+            forecastInputAssembler = forecastInputAssembler,
             synthesisEngine = synthesisEngine,
             narrativeGenerator = NarrativeGenerator(),
             analyticsRepository = mockk<AnalyticsRepository>(relaxed = true),
+            currencySettingsRepository = TestCurrencySettingsRepository(),
             timeProvider = timeProvider
         )
 
@@ -211,15 +233,17 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             primaryCta = null
         )
         val stressForecastEngine = mockk<com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine>(relaxed = true)
+        val monthlySavingsSweepUseCase = mockk<MonthlySavingsSweepUseCase>(relaxed = true)
 
         val useCase = ComputeDashboardWidgetsUseCase(
             insightsEngine = insightsEngine,
             synthesisEngine = synthesisEngine,
             monteCarloSimulator = mockk(relaxed = true),
             timeProvider = timeProvider,
-            healthCalculator = FinancialHealthCalculator(timeProvider),
+            healthCalculator = FinancialHealthCalculator(timeProvider, analyticsCurrencyNormalizer, currencySettingsRepository),
             healthScoreV2 = healthScoreV2,
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
+            monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
             stressForecastEngine = stressForecastEngine
         )
@@ -310,7 +334,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         )
         coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns expenses
 
-        val calculator = CarbonFootprintCalculator(expenseDao)
+        val calculator = CarbonFootprintCalculator(expenseDao, timeProvider)
         val report = calculator.calculateCarbonFootprint(ms(2026, 3, 1), ms(2026, 4, 1))
 
         val expectedTotal = 10.0 * 2.3 + 20.0 * 0.55 + 40.0 * 0.25
@@ -337,7 +361,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             currentMonthStart = ms(2026, 3, 1),
             previousMonthStart = ms(2026, 2, 1),
             previousMonthEnd = ms(2026, 3, 1),
-            allExpenses = lifestyleData
+            allExpenses = lifestyleData.toExpenseSnapshots()
         )
 
         assertTrue(report.lifestyleCreepDetected)
@@ -409,7 +433,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
 
         val insights = insightsEngine.generateInsights(categories, expenses)
         val advancedTotal = advancedEngine.getCategoryAnalytics(
-            PeriodRange(AnalyticsPeriod.CUSTOM, marchStart, aprilStart, "Mar 2026", null)
+            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, marchStart, aprilStart, "Mar 2026", null)
         ).sumOf { it.totalSpent }
         val totalsTotal = totalsEngine.getDailyTotalsForRange(marchStart, aprilStart).sumOf { it.totalAmount }
         val categorySum = totalsEngine.getCategoryBreakdown(marchStart, aprilStart, "Mar 2026").sumOf { it.totalAmount }
@@ -417,7 +441,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             currentMonthStart = marchStart,
             previousMonthStart = ms(2026, 2, 1),
             previousMonthEnd = marchStart,
-            allExpenses = expenses
+            allExpenses = expenses.toExpenseSnapshots()
         )
         val ids = expenses.map { it.id }.toSet()
 
@@ -455,8 +479,10 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             budgetRepository = mockk(relaxed = true),
             budgetForecastDao = mockk {
                 coEvery { insert(any()) } returns 1L
+                coEvery { insertWithDeactivation(any()) } returns 1L
             },
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            ioDispatcher = Dispatchers.Unconfined
         )
 
         val forecast = engine.generateForecast(
@@ -478,18 +504,18 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(emptyList())
         every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(emptyList())
 
-        val insights = insightsEngine.generateInsights(categories, emptyList())
+        val insights = insightsEngine.generateInsights(categories, emptyList<Expense>())
         val advancedStats = advancedEngine.getStatisticalInsights(
-            PeriodRange(AnalyticsPeriod.CUSTOM, ms(2026, 3, 1), ms(2026, 4, 1), "Mar", null)
+            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, ms(2026, 3, 1), ms(2026, 4, 1), "Mar", null)
         )
         val dailyTotals = totalsEngine.getDailyTotalsForRange(ms(2026, 3, 1), ms(2026, 4, 1))
-        val carbon = CarbonFootprintCalculator(expenseDao).calculateCarbonFootprint(ms(2026, 3, 1), ms(2026, 4, 1))
+        val carbon = CarbonFootprintCalculator(expenseDao, timeProvider).calculateCarbonFootprint(ms(2026, 3, 1), ms(2026, 4, 1))
         val lifestyle = LifestyleInflationDetector(expenseDao).analyzeLifestyleInflation(6)
 
         val sharedManager = SharedExpenseManager(
             sharedExpenseDataPort = mockk {
-                coEvery { getGroupMembersOnce(any()) } returns emptyList()
-                coEvery { getGroupExpensesOnce(any()) } returns emptyList()
+                coEvery { getGroupMembersOnce(any()) } returns emptyList<SharedExpenseMember>()
+                coEvery { getGroupExpensesOnce(any()) } returns emptyList<SharedGroupExpense>()
             },
             timeProvider = timeProvider,
             ioDispatcher = Dispatchers.Unconfined
@@ -524,13 +550,15 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         val insights = insightsEngine.generateInsights(categories, expenses)
         val totals = totalsEngine.getDailyTotalsForRange(start, end).sumOf { it.totalAmount }
         val advanced = advancedEngine.getCategoryAnalytics(
-            PeriodRange(AnalyticsPeriod.CUSTOM, start, end, "Mar 2026", null)
+            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, start, end, "Mar 2026", null)
         ).sumOf { it.totalSpent }
 
         val dashboard = AdvancedAnalyticsDashboard(
             expenseDao = expenseDao,
             expenseRepository = expenseRepository,
             categoryRepository = categoryRepository,
+            currencySettingsRepository = TestCurrencySettingsRepository(),
+            analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(testCurrencyConverter()),
             timeProvider = timeProvider
         ).generateDashboardData(start, end).totalSpent
 

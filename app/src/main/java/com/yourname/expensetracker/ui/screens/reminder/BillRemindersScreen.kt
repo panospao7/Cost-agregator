@@ -17,9 +17,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.reminder.BillReminder
 import com.yourname.expensetracker.domain.reminder.ReminderUrgency
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -31,6 +31,7 @@ fun BillRemindersScreen(
 ) {
     val reminders by viewModel.reminders.collectAsState()
     val monthlyTotal by viewModel.monthlyTotal.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
     
     Scaffold(
         topBar = {
@@ -52,7 +53,7 @@ fun BillRemindersScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                MonthlyBillsCard(monthlyTotal)
+                MonthlyBillsCard(monthlyTotal, homeCurrency)
             }
             
             item {
@@ -66,6 +67,7 @@ fun BillRemindersScreen(
             items(reminders) { reminder ->
                 BillReminderCard(
                     reminder = reminder,
+                    homeCurrency = homeCurrency,
                     onMarkPaid = { viewModel.markBillPaid(reminder.recurringExpenseId) }
                 )
             }
@@ -74,8 +76,7 @@ fun BillRemindersScreen(
 }
 
 @Composable
-private fun MonthlyBillsCard(total: Double) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.GERMANY)
+private fun MonthlyBillsCard(total: Double, homeCurrency: String) {
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -96,7 +97,7 @@ private fun MonthlyBillsCard(total: Double) {
                 style = MaterialTheme.typography.labelLarge
             )
             Text(
-                text = currencyFormat.format(total),
+                text = CurrencyFormatter.format(total, homeCurrency),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -115,9 +116,9 @@ private fun MonthlyBillsCard(total: Double) {
 @Composable
 private fun BillReminderCard(
     reminder: BillReminder,
+    homeCurrency: String,
     onMarkPaid: () -> Unit
 ) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.GERMANY)
     val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
     
     Card(
@@ -176,7 +177,7 @@ private fun BillReminderCard(
                 }
                 
                 Text(
-                    text = currencyFormat.format(reminder.amount),
+                    text = CurrencyFormatter.format(reminder.amount, homeCurrency),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )

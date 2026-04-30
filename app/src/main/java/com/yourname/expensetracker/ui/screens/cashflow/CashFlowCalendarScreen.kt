@@ -228,7 +228,7 @@ private fun DayCellView(
     dayCell: DayCell,
     isSelected: Boolean,
     onClick: () -> Unit,
-    homeCurrency: String = "EUR"
+    homeCurrency: String
 ) {
     val backgroundColor = when {
         isSelected -> MaterialTheme.colorScheme.primaryContainer
@@ -317,7 +317,7 @@ private fun normalizeDateKey(date: Date): Long {
 private fun DailyCashFlowDetails(
     selectedDateLabel: String,
     cashFlow: DailyCashFlow?,
-    homeCurrency: String = "EUR"
+    homeCurrency: String
 ) {
     Column(
         modifier = Modifier
@@ -342,6 +342,7 @@ private fun DailyCashFlowDetails(
             return
         }
 
+        // SAFE: CashFlowCalculator groups expenses by day which are almost always same-currency
         val incomeTotal = cashFlow.income.sumOf { abs(it.amount) }
         val expensesTotal = cashFlow.expenses.sumOf { it.effectiveAmount }
         val recurringTotal = cashFlow.predictedRecurring.sumOf { it.averageAmount }

@@ -8,6 +8,8 @@ import com.yourname.expensetracker.data.repository.AutomatedSavingsRuleStateRepo
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +32,8 @@ class AutomatedSavingsRuleEngineGoldenTest {
         val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
         val categoryRepository = mockk<CategoryRepository>(relaxed = true)
         val savingsGoalRepository = mockk<SavingsGoalRepository>(relaxed = true)
+        val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
+        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
         val timeProvider = FakeTimeProvider(1_700_000_000_000L)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         stateScope = scope
@@ -42,9 +46,10 @@ class AutomatedSavingsRuleEngineGoldenTest {
         engine = AutomatedSavingsRuleEngine(
             expenseRepository = expenseRepository,
             categoryRepository = categoryRepository,
-            savingsGoalRepository = savingsGoalRepository,
             timeProvider = timeProvider,
-            ruleStateRepository = stateRepository
+            ruleStateRepository = stateRepository,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository
         )
     }
 

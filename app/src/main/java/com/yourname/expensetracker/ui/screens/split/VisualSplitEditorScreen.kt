@@ -31,11 +31,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.SplitShare
 import com.yourname.expensetracker.data.database.entity.SplitTemplate
 import com.yourname.expensetracker.domain.split.EnhancedSplitManager
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.text.NumberFormat
-import java.util.Currency
-import java.util.Locale
 
 private const val DEFAULT_SPLIT_COLOR = "#FF6B6B"
 
@@ -102,7 +100,7 @@ internal fun buildCompletedSplitShares(
 @Composable
 fun VisualSplitEditorScreen(
     totalAmount: Double,
-    currencyCode: String = defaultCurrencyCode(),
+    currencyCode: String,
     expenseId: Long? = null,
     templateId: Long? = null,
     onSplitComplete: (List<SplitShare>, SplitTemplate.SplitType) -> Unit,
@@ -161,8 +159,6 @@ fun VisualSplitEditorScreen(
     var selectedTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
     val canApplyToExpense = expenseId != null
     
-    val numberFormat = remember(currencyCode) { buildCurrencyFormat(currencyCode) }
-    
     // Load template if templateId is provided
     LaunchedEffect(templateId) {
         templateId?.let { id ->
@@ -214,13 +210,13 @@ fun VisualSplitEditorScreen(
                 ) {
                     currentSplit?.let { split ->
                         if (split.remainingAmount != 0.0) {
-                            Text(
-                                text = stringResource(R.string.visual_split_remaining_format, numberFormat.format(split.remainingAmount)),
-                                color = if (split.remainingAmount > 0) MaterialTheme.colorScheme.primary 
-                                        else MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            )
+                        Text(
+                            text = stringResource(R.string.visual_split_remaining_format, CurrencyFormatter.format(split.remainingAmount, currencyCode)),
+                            color = if (split.remainingAmount > 0) MaterialTheme.colorScheme.primary 
+                                    else MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
                         }
                     }
                     
@@ -282,7 +278,7 @@ fun VisualSplitEditorScreen(
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
                         Text(
-                            text = numberFormat.format(totalAmount),
+                            text = CurrencyFormatter.format(totalAmount, currencyCode),
                             style = MaterialTheme.typography.headlineLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -594,7 +590,6 @@ fun ParticipantSplitCard(
     onRemove: () -> Unit,
     canRemove: Boolean
 ) {
-    val numberFormat = remember(currencyCode) { buildCurrencyFormat(currencyCode) }
     var percentageState by rememberSaveable(stateSaver = SplitTextFieldStateSaver) {
         mutableStateOf(SplitTextFieldState.initial(participant.percentage ?: percentage))
     }
@@ -659,7 +654,7 @@ fun ParticipantSplitCard(
             when (splitType) {
                 SplitTemplate.SplitType.EQUAL -> {
                     Text(
-                        text = stringResource(R.string.visual_split_equal_split_format, numberFormat.format(assignedAmount)),
+                        text = stringResource(R.string.visual_split_equal_split_format, CurrencyFormatter.format(assignedAmount, currencyCode)),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -681,7 +676,7 @@ fun ParticipantSplitCard(
                             singleLine = true
                         )
                         Spacer(modifier = Modifier.width(12.dp))
-                        val amountPrefix = stringResource(R.string.visual_split_amount_prefix_format, numberFormat.format(assignedAmount))
+                        val amountPrefix = stringResource(R.string.visual_split_amount_prefix_format, CurrencyFormatter.format(assignedAmount, currencyCode))
                         Text(
                             text = amountPrefix,
                             style = MaterialTheme.typography.bodyMedium,
@@ -731,14 +726,4 @@ private fun sanitizeColorHex(rawColor: String?, fallback: String = DEFAULT_SPLIT
     return if (validLength && validChars) normalized else fallback
 }
 
-private fun buildCurrencyFormat(currencyCode: String): NumberFormat {
-    val fallbackCurrency = Currency.getInstance(defaultCurrencyCode())
-    return NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
-        currency = runCatching { Currency.getInstance(currencyCode) }.getOrDefault(fallbackCurrency)
-    }
-}
 
-private fun defaultCurrencyCode(): String {
-    return runCatching { Currency.getInstance(Locale.getDefault()).currencyCode }
-        .getOrDefault("EUR")
-}

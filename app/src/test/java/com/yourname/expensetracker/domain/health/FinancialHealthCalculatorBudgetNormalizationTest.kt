@@ -4,8 +4,11 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.time.LocalDateTime
@@ -16,7 +19,7 @@ class FinancialHealthCalculatorBudgetNormalizationTest {
     @Test
     fun `daily spending target normalizes monthly budget by actual overlap`() {
         val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now))
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
         val (todayStart, todayEnd) = TimePeriodUtils.getDayRange(now)
         val monthStart = TimePeriodUtils.getStartOfMonth(now)
         val monthEnd = TimePeriodUtils.getEndOfMonth(now)
@@ -46,7 +49,7 @@ class FinancialHealthCalculatorBudgetNormalizationTest {
     @Test
     fun `weekly spending target does not double count overall and category budgets`() {
         val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now))
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
         val (weekStart, weekEnd) = TimePeriodUtils.getWeekRange(now)
         val monthStart = TimePeriodUtils.getStartOfMonth(now)
         val monthEnd = TimePeriodUtils.getEndOfMonth(now)
@@ -86,7 +89,7 @@ class FinancialHealthCalculatorBudgetNormalizationTest {
     @Test
     fun `monthly spending target sums overlapping mixed budget windows`() {
         val now = toEpochMs(2026, 4, 15, 12, 0)
-        val calculator = FinancialHealthCalculator(FakeTimeProvider(now))
+        val calculator = FinancialHealthCalculator(FakeTimeProvider(now), mockk(), mockk())
         val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(now)
         val (weekStart, weekEnd) = TimePeriodUtils.getWeekRange(now)
 

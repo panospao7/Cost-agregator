@@ -43,6 +43,7 @@ class GreeceTaxConfiguration : TaxConfiguration {
     
     override fun getCountryCode(): String = "GR"
     
+    @Deprecated("Use currencySettingsRepository.homeCurrency() for user's tax currency. This is a Greece-specific default.")
     override fun getCurrency(): String = "EUR"
 }
 

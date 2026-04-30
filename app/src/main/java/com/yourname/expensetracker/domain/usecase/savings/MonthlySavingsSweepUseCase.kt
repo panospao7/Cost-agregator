@@ -4,10 +4,14 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
+import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
@@ -40,10 +44,12 @@ class MonthlySavingsSweepUseCase @Inject constructor(
     private val recurringExpenseRepository: RecurringExpenseRepository,
     private val plannedExpenseRepository: PlannedExpenseRepository,
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     companion object {
-        /** Minimum safe sweep amount to show recommendation (EUR) */
+        /** Minimum safe sweep amount to show recommendation (in home currency) */
         const val MIN_SWEEP_AMOUNT = 5.0
 
         /** Days before month-end to start showing sweep recommendations */
@@ -70,6 +76,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
      */
     suspend fun computeSweepRecommendation(): SavingsSweepRecommendation? {
         val now = timeProvider.now()
+        val homeCurrency = currencySettingsRepository.homeCurrency().first()
         val calendar = Calendar.getInstance().apply { timeInMillis = now }
 
         // Check if we're within the recommendation window (last N days of month)
@@ -107,8 +114,8 @@ class MonthlySavingsSweepUseCase @Inject constructor(
             return null
         }
 
-        // Calculate spent to date for Monte Carlo
-        val spentToDate = calculateSpentToDate(monthStart.timeInMillis, now)
+        // Calculate spent to date for Monte Carlo (normalized to home currency)
+        val spentToDate = calculateSpentToDate(monthStart.timeInMillis, now, homeCurrency)
         val knownUpcoming = calculateKnownUpcomingObligations(now, nextMonthStart.timeInMillis)
 
         // Run Monte Carlo simulation
@@ -199,18 +206,20 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         val underspend = selectedStatuses.sumOf { status ->
             status.remainingAmount.coerceAtLeast(0.0)
         }
-        val totalBudgeted = selectedStatuses.sumOf { it.budget.amount }
+        val totalBudgeted = selectedStatuses.sumOf { it.effectiveLimit }
         val totalSpent = selectedStatuses.sumOf { it.spentAmount }
 
         return Triple(underspend, totalBudgeted, totalSpent)
     }
 
     /**
-     * Calculate total spending from month start to current time.
+     * Calculate total spending from month start to current time (normalized to home currency).
      */
-    private suspend fun calculateSpentToDate(monthStart: Long, now: Long): Double {
-        val expenses = expenseRepository.getExpensesBetween(monthStart, now)
-        return expenses
+    private suspend fun calculateSpentToDate(monthStart: Long, now: Long, homeCurrency: String): Double {
+        val rawExpenses = expenseRepository.getExpenseSnapshotsBetween(monthStart, now)
+        val normalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawExpenses, homeCurrency)
+        // SAFE: normalized via AnalyticsCurrencyNormalizer at line 220
+        return normalized.includedExpenses
             .filter { it.transactionType.isSpendingType() && !it.isNotMine }
             .sumOf { it.effectiveAmount }
     }
@@ -416,10 +425,10 @@ data class SavingsSweepRecommendation(
     /**
      * Get a human-readable summary of the sweep recommendation.
      */
-    fun getSummary(): String {
-        return "Safe to save: €${String.format("%.2f", safeSweepAmount)} " +
-               "(underspend: €${String.format("%.2f", totalUnderspend)}, " +
-               "risk buffer: €${String.format("%.2f", riskBuffer)})"
+    fun getSummary(displayCurrency: String = "EUR"): String {
+        return "Safe to save: ${CurrencyFormatter.format(safeSweepAmount, displayCurrency)} " +
+               "(underspend: ${CurrencyFormatter.format(totalUnderspend, displayCurrency)}, " +
+               "risk buffer: ${CurrencyFormatter.format(riskBuffer, displayCurrency)})"
     }
 
     /**
@@ -469,11 +478,18 @@ data class GoalAllocation(
 }
 
 /**
- * Extension to check if transaction type is a spending type.
+ * Extension to check if transaction type is a spending type (data-layer TransactionType).
  */
 private fun com.yourname.expensetracker.data.database.entity.TransactionType.isSpendingType(): Boolean {
     return this == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE ||
            this == com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL
+}
+
+/**
+ * Extension to check if transaction type is a spending type (domain-layer DomainTransactionType).
+ */
+private fun DomainTransactionType.isSpendingType(): Boolean {
+    return this == DomainTransactionType.PURCHASE || this == DomainTransactionType.WITHDRAWAL
 }
 
 /**

@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.carbon
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -9,12 +11,15 @@ import java.time.Instant
 import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.first
 import kotlin.math.roundToInt
 
 @Singleton
 class CarbonFootprintCalculator @Inject constructor(
     private val expenseDao: ExpenseDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     
     // CO2 emission factors (kg CO2 per euro spent) - simplified estimates
@@ -421,16 +426,29 @@ class CarbonFootprintCalculator @Inject constructor(
         return alternatives
     }
     
-    private fun calculateMonthlyTrend(expenses: List<Expense>): List<MonthlyEmission> {
+    private suspend fun calculateMonthlyTrend(expenses: List<Expense>): List<MonthlyEmission> {
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        val normalized = runCatching {
+            analyticsCurrencyNormalizer.normalizeExpenses(expenses, homeCurrency)
+        }.getOrNull()
+        val normalizedAmountById = normalized?.includedExpenses?.associateBy { it.id }
+            ?: emptyMap()
+
         val byMonth = expenses.groupBy { expense ->
             Instant.ofEpochMilli(expense.date)
                 .atZone(ZoneId.systemDefault())
                 .toLocalDate()
                 .withDayOfMonth(1)
         }
-        
+
         return byMonth.map { (month, monthExpenses) ->
-            val total = monthExpenses.sumOf { it.effectiveAmount * getEmissionFactor(it) }
+            // SAFE: normalized via AnalyticsCurrencyNormalizer before summing
+            val total = monthExpenses.sumOf { expense ->
+                val amount = normalizedAmountById[expense.id]?.effectiveAmount
+                    ?: expense.effectiveAmount
+                amount * getEmissionFactor(expense)
+            }
             MonthlyEmission(
                 month = month.toString(),
                 emissionsKg = total,

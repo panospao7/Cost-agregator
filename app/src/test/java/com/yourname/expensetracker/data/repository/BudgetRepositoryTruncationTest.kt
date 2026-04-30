@@ -9,6 +9,8 @@ import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -42,18 +44,22 @@ class BudgetRepositoryTruncationTest {
     private val budgetCalculator = mockk<BudgetCalculator>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
+    private val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
+    private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
 
     private lateinit var repository: BudgetRepository
 
     @Before
     fun setup() {
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
 
         repository = BudgetRepository(
             budgetDao, categoryDao, expenseDao, budgetCalculator,
-            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider)
+            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
+            currencyConverter, currencySettingsRepository
         )
     }
 
@@ -194,7 +200,8 @@ class BudgetRepositoryTruncationTest {
         val realCalc = BudgetCalculator(timeProvider)
         val repo = BudgetRepository(
             budgetDao, categoryDao, expenseDao, realCalc,
-            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider)
+            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
+            currencyConverter, currencySettingsRepository
         )
 
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
@@ -372,7 +379,8 @@ class BudgetRepositoryTruncationTest {
         val realCalc = BudgetCalculator(timeProvider)
         val repo = BudgetRepository(
             budgetDao, categoryDao, expenseDao, realCalc,
-            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider)
+            timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
+            currencyConverter, currencySettingsRepository
         )
 
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))

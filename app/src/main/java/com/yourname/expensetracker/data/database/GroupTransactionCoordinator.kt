@@ -448,7 +448,7 @@ class GroupTransactionCoordinator @Inject constructor(
                     description = description,
                     amount = amount,
                     paidById = paidById,
-                    currency = group.defaultCurrency,
+                    currency = currency,
                     splitType = splitType,
                     customSplitsJson = customSplitsJson,
                     date = date,
@@ -459,7 +459,7 @@ class GroupTransactionCoordinator @Inject constructor(
 
                 val payer = members.first { it.id == paidById }
 
-                val expenseCurrency = group.defaultCurrency
+                val expenseCurrency = currency
 
                 val currentUserShare = resolveCurrentUserShare(
                     groupId = groupId,

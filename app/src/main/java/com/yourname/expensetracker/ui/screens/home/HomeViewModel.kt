@@ -409,7 +409,7 @@ class HomeViewModel @Inject constructor(
                 val period = advancedAnalyticsEngine.getPeriodRange(
                     com.yourname.expensetracker.domain.analytics.AnalyticsPeriod.MONTH
                 )
-                val analytics = advancedAnalyticsEngine.getCategoryAnalytics(period)
+                val (analytics, _) = advancedAnalyticsEngine.getCategoryAnalytics(period, displayCurrency = homeCurrency.value)
                 
                 val trends = analytics.associate { analytic ->
                     analytic.category.id to com.yourname.expensetracker.ui.components.CategoryTrendInfo(

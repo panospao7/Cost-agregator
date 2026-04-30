@@ -34,7 +34,9 @@ class InsightsEngine @Inject constructor(
 
     suspend fun generateInsights(
         categories: List<AnalyticsCategoryRef>,
-        allExpenses: List<ExpenseSnapshot>
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String = "EUR",
+        conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
     ): InsightsSnapshot = coroutineScope {
         val now = timeProvider.now()
         val currentMonth = getMonthPeriod(now)
@@ -45,39 +47,35 @@ class InsightsEngine @Inject constructor(
         // Start all independent queries in parallel with error handling
         val monthlyComparisonDeferred = async {
             try {
-                monthlyComparisonCalculator.calculate(currentMonth, previousMonth, allExpenses)
+                monthlyComparisonCalculator.calculate(currentMonth, previousMonth, allExpenses, displayCurrency)
             } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: monthlyComparison branch failed"); null }
         }
         val categoryInsightsDeferred = async {
             try {
-                categoryInsightEngine.calculate(currentMonth, previousMonth, categoryMap, allExpenses)
+                categoryInsightEngine.calculate(currentMonth, previousMonth, categoryMap, allExpenses, displayCurrency)
             } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: categoryInsights branch failed"); null }
         }
         val topMerchantsDeferred = async {
             try {
-                merchantInsightEngine.calculate(allExpenses)
+                merchantInsightEngine.calculate(allExpenses, displayCurrency)
             } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: topMerchants branch failed"); null }
         }
         val spendingPaceDeferred = async { 
-            try { buildSpendingPace(currentMonth, previousMonth, allExpenses) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: spendingPace branch failed"); null }
+            try { buildSpendingPace(currentMonth, previousMonth, allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: spendingPace branch failed"); null }
         }
         val anomaliesDeferred = async { 
-            try { findAnomalies(currentMonth, categoryMap, allExpenses) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: anomalies branch failed"); null }
+            try { findAnomalies(currentMonth, categoryMap, allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: anomalies branch failed"); null }
         }
         val recurringExpensesDeferred = async { 
-            try { findRecurringExpenses(allExpenses) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: recurringExpenses branch failed"); emptyList() }
+            try { findRecurringExpenses(allExpenses, displayCurrency) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: recurringExpenses branch failed"); emptyList() }
         }
         
         val threeMonthsAgo = getMonthPeriod(now, -2)
         val dayOfWeekPatternDeferred = async {
             try {
-                dayOfWeekAnalyzer.analyze(threeMonthsAgo.startMs, currentMonth.endMs, allExpenses)
+                dayOfWeekAnalyzer.analyze(threeMonthsAgo.startMs, currentMonth.endMs, allExpenses, displayCurrency)
             } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: dayOfWeekPattern branch failed"); null }
         }
-        val largestTransactionDeferred = async { 
-            try { expenseRepository.getLargestExpenseSnapshotForPeriod(currentMonth.startMs, currentMonth.endMs) } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.e(e, "InsightsEngine: largestTransaction branch failed"); null }
-        }
-
         // Await all results with error resilience
         val monthlyComparison = monthlyComparisonDeferred.await()
         val categoryInsights = categoryInsightsDeferred.await()
@@ -86,7 +84,6 @@ class InsightsEngine @Inject constructor(
         val anomalies = anomaliesDeferred.await()
         val recurringExpenses = recurringExpensesDeferred.await()
         val dayOfWeekPattern = dayOfWeekPatternDeferred.await()
-        val largestTransaction = largestTransactionDeferred.await()
 
         // Transaction size stats
         val currentMonthPurchases = allExpenses.filter {
@@ -95,6 +92,7 @@ class InsightsEngine @Inject constructor(
                     && it.date < currentMonth.endMs
                     && !it.isNotMine
         }
+        val largestTransaction = currentMonthPurchases.maxByOrNull { it.effectiveAmount }
         val avgTxSize = if (currentMonthPurchases.isNotEmpty())
             currentMonthPurchases.map { it.effectiveAmount }.average() else 0.0
         val medianTxSize = calculateMedian(currentMonthPurchases.map { it.effectiveAmount })
@@ -112,7 +110,8 @@ class InsightsEngine @Inject constructor(
                 changeAmount = null,
                 changePercentage = null,
                 currentCount = 0,
-                previousCount = null
+                previousCount = null,
+                displayCurrency = displayCurrency
             ),
             categoryInsights = categoryInsights ?: emptyList(),
             topMerchants = topMerchants ?: emptyList(),
@@ -124,7 +123,8 @@ class InsightsEngine @Inject constructor(
                 previousMonthTotal = null,
                 averageMonthlyTotal = null,
                 pacePercentage = 0f,
-                paceStatus = PaceStatus.NO_BASELINE
+                paceStatus = PaceStatus.NO_BASELINE,
+                displayCurrency = displayCurrency
             ),
             anomalies = anomalies ?: emptyList(),
             recurringExpenses = recurringExpenses,
@@ -132,15 +132,18 @@ class InsightsEngine @Inject constructor(
             largestTransaction = largestTransaction?.toAnalyticsSummary(),
             averageTransactionSize = avgTxSize,
             medianTransactionSize = medianTxSize,
-            totalMonthsOfData = totalMonthsOfData
+            totalMonthsOfData = totalMonthsOfData,
+            displayCurrency = displayCurrency,
+            conversionWarnings = conversionWarnings
         )
     }
 
     private fun ExpenseSnapshot.toAnalyticsSummary(): AnalyticsTransactionSummary {
         return AnalyticsTransactionSummary(
             id = id,
-            amount = amount,
+            amount = effectiveAmount,
             effectiveAmount = effectiveAmount,
+            currency = currency,
             merchant = merchant,
             date = date,
             categoryId = categoryId
@@ -290,13 +293,15 @@ class InsightsEngine @Inject constructor(
     private fun buildSpendingPace(
         currentMonth: MonthPeriod,
         previousMonth: MonthPeriod,
-        allExpenses: List<ExpenseSnapshot>
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String
     ): SpendingPace {
         val canonicalPace = spendingPaceCalculator.calculate(
             currentMonthStart = currentMonth.startMs,
             previousMonthStart = previousMonth.startMs,
             previousMonthEnd = previousMonth.endMs,
-            allExpenses = allExpenses
+            allExpenses = allExpenses,
+            displayCurrency = displayCurrency
         )
 
         // Preserve Insights-specific enrichment while delegating pace math.
@@ -310,7 +315,8 @@ class InsightsEngine @Inject constructor(
             previousMonthTotal = canonicalPace.previousMonthTotal,
             averageMonthlyTotal = avgMonthly,
             pacePercentage = canonicalPace.pacePercentage,
-            paceStatus = canonicalPace.paceStatus
+            paceStatus = canonicalPace.paceStatus,
+            displayCurrency = displayCurrency
         )
     }
 
@@ -353,7 +359,8 @@ class InsightsEngine @Inject constructor(
     private suspend fun findAnomalies(
         currentMonth: MonthPeriod,
         categoryMap: Map<Long, AnalyticsCategoryRef>,
-        allExpenses: List<ExpenseSnapshot>
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String
     ): List<AnomalyTransaction> = coroutineScope {
 
         // ── Path 1: merchant-level DB-backed detection (existing logic) ────────
@@ -420,13 +427,14 @@ class InsightsEngine @Inject constructor(
                 category          = candidate.expense.categoryId
                     ?.let { categoryMap[it] }
                     ?.let { category -> category },
-                detectionMethod   = AnomalyMethod.MULTIPLIER
+                detectionMethod   = AnomalyMethod.MULTIPLIER,
+                displayCurrency = displayCurrency
             )
         }
 
         // ── Path 2: statistical in-memory detection (IQR / MAD / contextual) ──
         val statisticalAnomalies: List<AnomalyTransaction> =
-            anomalyDetector.detect(currentMonth, analyticsCategoryMap, allExpenses)
+            anomalyDetector.detect(currentMonth, analyticsCategoryMap, allExpenses, displayCurrency)
 
         // ── Merge: deduplicate by expense.id; statistical results fill gaps ────
         val merged = mutableMapOf<Long, AnomalyTransaction>()
@@ -465,7 +473,10 @@ class InsightsEngine @Inject constructor(
 
     // === Recurring Expenses ===
 
-    private suspend fun findRecurringExpenses(allExpenses: List<ExpenseSnapshot>): List<RecurringExpense> {
+    private suspend fun findRecurringExpenses(
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String
+    ): List<RecurringExpense> {
         // Use the centralized engine
         val patterns = recurringExpenseEngine.getPatternsFromSnapshots(allExpenses)
         
@@ -487,7 +498,8 @@ class InsightsEngine @Inject constructor(
                 frequency = pattern.previousDates.size.coerceAtLeast(1),
                 intervalDays = intervalDays,
                 amountVariation = 0.0, // Pattern doesn't expose this raw stat easily, but could add to Pattern if needed.
-                isStable = pattern.amountVariancePercent < 0.1
+                isStable = pattern.amountVariancePercent < 0.1,
+                displayCurrency = displayCurrency
             )
         }
     }
@@ -541,6 +553,7 @@ class InsightsEngine @Inject constructor(
         }
     }
 
+
     private fun countDistinctMonths(expenses: List<ExpenseSnapshot>): Int {
         if (expenses.isEmpty()) return 0
         return expenses.map { expense ->
@@ -550,7 +563,7 @@ class InsightsEngine @Inject constructor(
 
     // === Exposed Suspend Functions for Repository Usage ===
     
-    suspend fun getSpendingPaceSuspend(expenses: List<ExpenseSnapshot>? = null): SpendingPace {
+    suspend fun getSpendingPaceSuspend(expenses: List<ExpenseSnapshot>? = null, displayCurrency: String = "EUR"): SpendingPace {
         val now = timeProvider.now()
         val currentMonth = getMonthPeriod(now)
         val previousMonth = getPreviousMonthPeriod(currentMonth)
@@ -561,7 +574,7 @@ class InsightsEngine @Inject constructor(
             expenseRepository.getExpenseSnapshotsBetween(sixMonthsAgo, now)
         }
         
-        return buildSpendingPace(currentMonth, previousMonth, recentExpenses)
+        return buildSpendingPace(currentMonth, previousMonth, recentExpenses, displayCurrency = displayCurrency)
     }
 
     private fun formatCurrency(amount: Double, currency: String = "EUR"): String = CurrencyFormatter.format(amount, currency)

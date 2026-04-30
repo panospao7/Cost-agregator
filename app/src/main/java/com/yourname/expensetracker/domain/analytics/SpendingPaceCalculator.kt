@@ -21,7 +21,8 @@ class SpendingPaceCalculator @Inject constructor(
         currentMonthStart: Long,
         previousMonthStart: Long,
         previousMonthEnd: Long,
-        allExpenses: List<ExpenseSnapshot>
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String = "EUR"
     ): SpendingPace {
         val now = timeProvider.now()
         val currentMonthEnd = TimePeriodUtils.getEndOfMonth(currentMonthStart)
@@ -36,6 +37,7 @@ class SpendingPaceCalculator @Inject constructor(
                 it.transactionType == DomainTransactionType.PURCHASE && 
                 !it.isNotMine 
             }
+            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
             .sumOf { it.effectiveAmount }
         
         val previousMonthSpent = allExpenses
@@ -45,6 +47,7 @@ class SpendingPaceCalculator @Inject constructor(
                 it.transactionType == DomainTransactionType.PURCHASE &&
                 !it.isNotMine
             }
+            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
             .sumOf { it.effectiveAmount }
 
         // Canonical pace formula used across analytics engines:
@@ -94,9 +97,11 @@ class SpendingPaceCalculator @Inject constructor(
             previousMonthTotal = if (hasBaseline) previousMonthSpent else null,
             averageMonthlyTotal = null,
             pacePercentage = pacePercentage,
-            paceStatus = paceStatus
+            paceStatus = paceStatus,
+            displayCurrency = displayCurrency
         )
     }
+
     
     private fun calculateProjectedTotal(
         monthSpent: Double,

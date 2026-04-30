@@ -8,6 +8,7 @@ import androidx.room.PrimaryKey
 /**
  * Entity to store financial stress forecast snapshots for trend tracking.
  * Each record represents a snapshot of the stress forecast at a specific point in time.
+ *
  */
 @Entity(
     tableName = "stress_forecast_snapshots",
@@ -86,5 +87,6 @@ data class StressForecastSnapshot(
      * Whether this record has been synced to cloud
      */
     @ColumnInfo(defaultValue = "0")
-    val isSynced: Boolean = false
+    val isSynced: Boolean = false,
+    @ColumnInfo(defaultValue = "'EUR'") val currency: String = "EUR"
 )

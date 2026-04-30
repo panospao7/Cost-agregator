@@ -25,10 +25,10 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -40,6 +40,7 @@ fun ManualRecurringExpenseScreen(
     viewModel: ManualRecurringExpenseViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf<ManualRecurringExpense?>(null) }
     
@@ -121,7 +122,7 @@ fun ManualRecurringExpenseScreen(
                         
                         // Total Monthly Card
                         item {
-                            TotalMonthlyCard(totalMonthly = uiState.totalMonthly)
+                            TotalMonthlyCard(totalMonthly = uiState.totalMonthly, homeCurrency = homeCurrency)
                         }
                         
                         val activeExpenses = uiState.recurringExpenses.filter { it.isActive }
@@ -138,6 +139,7 @@ fun ManualRecurringExpenseScreen(
                             items(activeExpenses, key = { it.id }) { expense ->
                                 RecurringExpenseCard(
                                     expense = expense,
+                                    homeCurrency = homeCurrency,
                                     onToggleStatus = { viewModel.toggleStatus(it.id, it.isActive) },
                                     onDelete = { showDeleteConfirm = it },
                                     onMarkPaid = { viewModel.markAsPaid(it) }
@@ -161,6 +163,7 @@ fun ManualRecurringExpenseScreen(
                             items(inactiveExpenses, key = { it.id }) { expense ->
                                 RecurringExpenseCard(
                                     expense = expense,
+                                    homeCurrency = homeCurrency,
                                     onToggleStatus = { viewModel.toggleStatus(it.id, it.isActive) },
                                     onDelete = { showDeleteConfirm = it },
                                     onMarkPaid = null
@@ -291,8 +294,7 @@ private fun SummaryCard(
 }
 
 @Composable
-private fun TotalMonthlyCard(totalMonthly: Double) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+private fun TotalMonthlyCard(totalMonthly: Double, homeCurrency: String) {
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -315,7 +317,7 @@ private fun TotalMonthlyCard(totalMonthly: Double) {
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = currencyFormat.format(totalMonthly),
+                text = CurrencyFormatter.format(totalMonthly, homeCurrency),
                 style = MaterialTheme.typography.headlineSmall,
                 color = SemanticColors.PrimaryIndigo,
                 fontWeight = FontWeight.Bold
@@ -327,11 +329,11 @@ private fun TotalMonthlyCard(totalMonthly: Double) {
 @Composable
 private fun RecurringExpenseCard(
     expense: ManualRecurringExpense,
+    homeCurrency: String,
     onToggleStatus: (ManualRecurringExpense) -> Unit,
     onDelete: (ManualRecurringExpense) -> Unit,
     onMarkPaid: ((ManualRecurringExpense) -> Unit)?
 ) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
     val isUpcoming = expense.nextDate <= System.currentTimeMillis() + (7 * 24 * 60 * 60 * 1000)
     
@@ -395,7 +397,7 @@ private fun RecurringExpenseCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${currencyFormat.format(expense.amount)} ${expense.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                    text = "${CurrencyFormatter.format(expense.amount, homeCurrency)} ${expense.frequency.name.lowercase().replaceFirstChar { it.uppercase() }}",
                     style = MaterialTheme.typography.bodyLarge,
                     color = SemanticColors.TextPrimary
                 )

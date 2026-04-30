@@ -1,6 +1,6 @@
 # ExpenseTracker Dependency Injection & Infrastructure Map
 
-**Refreshed:** April 22, 2026  
+**Refreshed:** May 1, 2026  
 **Scope:** Current DI architecture analysis  
 **Framework:** Hilt/Dagger2 with SingletonComponent
 
@@ -36,6 +36,7 @@ app/src/main/java/com/yourname/expensetracker/di/
 ├── SubscriptionModule.kt               (Subscription management)
 ├── TaxModule.kt                        (Tax configuration)
 │
+├── ParserModule.kt                     (NEW — GreekBankParser with injected homeCurrency)
 ├── ExportModule.kt                     (Export formatters)
 ├── BackupRepositoryModule.kt           (Database backups)
 ├── EmailIngestionModule.kt             (Email receipt parsing)
@@ -325,8 +326,9 @@ Background resolution (search):
 |--------------|---------------------------|-------|
 | `bindCurrencySettingsRepository()` | `CurrencySettingsRepository` ← `CurrencySettingsRepositoryImpl` | `@Singleton` |
 | `bindCurrencyRatesRepository()` | `CurrencyRatesRepository` ← `CurrencyRatesRepositoryImpl` | `@Singleton` |
+| `bindExchangeRateStore()` | `ExchangeRateStore` ← `ExchangeRateStoreAdapter` | `@Singleton` |
 
-**Note:** CurrencyConverter and MultiCurrencyRepository use constructor injection (@Inject) - no DI module needed.
+**Note:** CurrencyConverter, MultiCurrencyRepository, and AnalyticsCurrencyNormalizer use constructor injection (@Inject) — no DI module needed.
 
 ---
 
@@ -462,6 +464,22 @@ Background resolution (search):
 | `provideAppleReceiptParser()` | `AppleReceiptParser` | `@Singleton` | No-arg constructor |
 
 **Purpose:** Feature F14 - Email receipt ingestion from providers.
+
+---
+
+#### **ParserModule.kt**
+- **File:** `ParserModule.kt`
+- **Install Scope:** `SingletonComponent`
+- **Type:** Object module with @Provides methods
+- **Purpose:** Provides `GreekBankParser` with injected `homeCurrency` from `CurrencySettingsRepository` (previously hardcoded to EUR).
+
+**@Provides Methods:**
+
+| Method | Returns | Scope | Dependencies |
+|--------|---------|-------|---|
+| `provideGreekBankParser()` | `GreekBankParser` | `@Singleton` | CurrencyNormalizer, MerchantCleaner, CurrencySettingsRepository |
+
+**Note:** This module was added to remove the hardcoded `homeCurrency = "EUR"` default from GreekBankParser. Other parsers (Revolut, GoogleWallet, SMS) also accept `homeCurrency` parameter.
 
 ---
 
@@ -641,7 +659,8 @@ These classes use `@Inject` constructors and are NOT explicitly provided by modu
 - `BudgetRecommendationEngine`
 - `InvestmentTracker`
 - `CurrencyConverter`
-- `MultiCurrencyRepository`
+- `MultiCurrencyRepository` — **wired into 10+ consumers** (Dashboard, Budget, Analytics, Forecast, Health, Savings, Groups, Export, AI/Query, Anomaly)
+- `AnalyticsCurrencyNormalizer` — **injected into analytics, forecast, health, and savings engines**
 
 **Data/Services:**
 - `AndroidForegroundLocationProvider`
@@ -1066,21 +1085,22 @@ fun provideEmptyStateRegistry(
 | 8 | SecurityModule.kt | Object | Singleton | SecureKeyStorage | ✅ | AES-256-GCM key storage |
 | 9 | ServiceModule.kt | Object | Singleton | Gson, Location, Geocoding | ✅ | Location cascade, utilities |
 | 10 | AiModule.kt | Abstract | Singleton | 18 binds + 6 provides | ✅ | Hybrid AI services |
-| 11 | CurrencyModule.kt | Abstract | Singleton | 2 repositories | ✅ | Currency conversion |
+| 11 | CurrencyModule.kt | Abstract | Singleton | 3 repositories + ExchangeRateStore | ✅ | Currency conversion + multi-currency aggregation |
 | 12 | TimeModule.kt | Abstract | Singleton | TimeProvider | ✅ | System time abstraction |
 | 13 | GroupsModule.kt | Object | Singleton | Repository, 3 use cases | ✅ | Group expense sharing |
 | 14 | CashFlowModule.kt | Object | Singleton | CashFlowCalculator | ✅ | Cash flow analysis |
 | 15 | SavingsModule.kt | Object | Singleton | 3 savings engines | ✅ | Savings gamification |
 | 16 | SubscriptionModule.kt | Object | Singleton | Manager engine | ⚠️ | MINIMAL pass-through |
 | 17 | TaxModule.kt | Object | Singleton | Greece tax config | ✅ | Extensible tax rules |
-| 18 | ExportModule.kt | Object | Singleton | 3 exporters | ✅ | QB, Xero, FreshBooks |
-| 19 | BackupRepositoryModule.kt | Object | Singleton | Backup repository | ✅ | Database backup support |
-| 20 | EmailIngestionModule.kt | Object | Singleton | 3 email parsers | ✅ | Amazon, Uber, Apple |
-| 21 | OcrImprovementsModule.kt | Object | Singleton | OCR pipeline | ✅ | OCR enhancements |
-| 22 | DashboardContractsModule.kt | Object | Singleton | Dashboard contracts | ✅ | Current dashboard bindings |
-| 23 | DashboardAnomalyModule.kt | Object | Singleton | Anomaly orchestration | ✅ | Current anomaly bindings |
-| 24 | EmptyStateModule.kt | Object | Singleton | ContextualActionRegistry | ✅ | Registry wiring |
-| 25 | EmptyStateRegistryInitializer.kt | Object | runtime | Registry init | ✅ | Registry bootstrap |
+| 18 | ParserModule.kt | Object | Singleton | GreekBankParser | ✅ | GreekBankParser with injected homeCurrency |
+| 19 | ExportModule.kt | Object | Singleton | 3 exporters | ✅ | QB, Xero, FreshBooks |
+| 20 | BackupRepositoryModule.kt | Object | Singleton | Backup repository | ✅ | Database backup support |
+| 21 | EmailIngestionModule.kt | Object | Singleton | 3 email parsers | ✅ | Amazon, Uber, Apple |
+| 22 | OcrImprovementsModule.kt | Object | Singleton | OCR pipeline | ✅ | OCR enhancements |
+| 23 | DashboardContractsModule.kt | Object | Singleton | Dashboard contracts | ✅ | Current dashboard bindings |
+| 24 | DashboardAnomalyModule.kt | Object | Singleton | Anomaly orchestration | ✅ | Current anomaly bindings |
+| 25 | EmptyStateModule.kt | Object | Singleton | ContextualActionRegistry | ✅ | Registry wiring |
+| 26 | EmptyStateRegistryInitializer.kt | Object | runtime | Registry init | ✅ | Registry bootstrap |
 
 ---
 

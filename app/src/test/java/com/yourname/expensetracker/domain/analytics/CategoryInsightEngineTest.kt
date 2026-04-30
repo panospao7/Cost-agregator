@@ -45,7 +45,8 @@ class CategoryInsightEngineTest {
             currentMonth = currentMonth,
             previousMonth = previousMonth,
             categoryMap = categoryMap,
-            allExpenses = goldenMarchAndFebruaryExpensesWithRentCategory().map { it.toSnapshot() }
+            allExpenses = goldenMarchAndFebruaryExpensesWithRentCategory().map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         val groceries = insights.find { it.category.id == 2L }
@@ -96,7 +97,8 @@ class CategoryInsightEngineTest {
             currentMonth = currentMonth,
             previousMonth = null,
             categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
-            allExpenses = expenses.map { it.toSnapshot() }
+            allExpenses = expenses.map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertEquals(1, insights.size)
@@ -118,7 +120,8 @@ class CategoryInsightEngineTest {
             currentMonth = currentMonth,
             previousMonth = null,
             categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
-            allExpenses = emptyList()
+            allExpenses = emptyList(),
+            displayCurrency = "EUR"
         )
 
         assertTrue(insights.isEmpty())
@@ -145,7 +148,8 @@ class CategoryInsightEngineTest {
             currentMonth = currentMonth,
             previousMonth = null,
             categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
-            allExpenses = expenses.map { it.toSnapshot() }
+            allExpenses = expenses.map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         // Only PURCHASE transactions should be included
@@ -175,7 +179,8 @@ class CategoryInsightEngineTest {
             currentMonth = currentMonth,
             previousMonth = null,
             categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
-            allExpenses = expenses.map { it.toSnapshot() }
+            allExpenses = expenses.map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         val totalAcrossInsights = insights.sumOf { it.currentTotal }
@@ -202,7 +207,8 @@ class CategoryInsightEngineTest {
             currentMonth = currentMonth,
             previousMonth = null,
             categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
-            allExpenses = expenses.map { it.toSnapshot() }
+            allExpenses = expenses.map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertEquals(1, insights.size)
@@ -235,7 +241,8 @@ class CategoryInsightEngineTest {
             currentMonth = currentMonth,
             previousMonth = null,
             categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
-            allExpenses = expenses.map { it.toSnapshot() }
+            allExpenses = expenses.map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         // Total from purchases: 200 + 60 + 40 = 300
@@ -278,7 +285,8 @@ class CategoryInsightEngineTest {
             currentMonth = currentMonth,
             previousMonth = previousMonth,
             categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
-            allExpenses = expenses.map { it.toSnapshot() }
+            allExpenses = expenses.map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         val groceries = insights.find { it.category.id == 2L }
@@ -310,7 +318,8 @@ class CategoryInsightEngineTest {
             currentMonth = currentMonth,
             previousMonth = null,
             categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
-            allExpenses = expenses.map { it.toSnapshot() }
+            allExpenses = expenses.map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertTrue(insights.isEmpty())
@@ -337,7 +346,8 @@ class CategoryInsightEngineTest {
             currentMonth = currentMonth,
             previousMonth = null,
             categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
-            allExpenses = expenses.map { it.toSnapshot() }
+            allExpenses = expenses.map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertEquals(3, insights.size)
@@ -381,7 +391,8 @@ class CategoryInsightEngineTest {
             currentMonth = currentMonth,
             previousMonth = previousMonth,
             categoryMap = TEST_CATEGORIES.toAnalyticsCategoryMap(),
-            allExpenses = (currentExpenses + previousExpenses).map { it.toSnapshot() }
+            allExpenses = (currentExpenses + previousExpenses).map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         val groceries = insights.first { it.category.id == 2L }

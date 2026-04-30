@@ -16,12 +16,14 @@ import com.yourname.expensetracker.domain.forecasting.StressRiskLevel
 import com.yourname.expensetracker.domain.health.FinancialHealthResult
 import com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
 import com.yourname.expensetracker.domain.health.HealthTrend
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeMoneyRadarUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarData
 import com.yourname.expensetracker.domain.usecase.dashboard.UrgencyLevel
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
+import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -52,7 +54,7 @@ class DashboardWidgetConsistencyStressTest {
     fun setup() {
         every { timeProvider.now() } returns ts(2024, 5, 15)
         val insightsEngine = mockk<com.yourname.expensetracker.domain.analytics.InsightsEngine>(relaxed = true)
-        coEvery { insightsEngine.getSpendingPaceSuspend(any<List<Expense>>()) } returns SpendingPace(
+        coEvery { insightsEngine.getSpendingPaceSuspend(any()) } returns SpendingPace(
             currentMonthSpent = 500.0,
             daysElapsed = 15,
             daysInMonth = 30,
@@ -60,7 +62,8 @@ class DashboardWidgetConsistencyStressTest {
             previousMonthTotal = 800.0,
             averageMonthlyTotal = 800.0,
             pacePercentage = 100f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
+            displayCurrency = "EUR"
         )
         val monteCarloSimulator = mockk<com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator>(relaxed = true)
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
@@ -89,6 +92,7 @@ class DashboardWidgetConsistencyStressTest {
             primaryCta = null
         )
         val stressForecastEngine = mockk<FinancialStressForecastEngine>(relaxed = true)
+        val monthlySavingsSweepUseCase = mockk<MonthlySavingsSweepUseCase>(relaxed = true)
         coEvery { stressForecastEngine.computeStressForecast() } returns StressForecastResult(
             horizons = listOf(
                 StressHorizon(30, 0.0, 0.0, 0.0, StressRiskLevel.LOW, 0.0, 0.0, 0.0)
@@ -106,6 +110,7 @@ class DashboardWidgetConsistencyStressTest {
             healthCalculator = healthCalculator,
             healthScoreV2 = healthScoreV2,
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
+            monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
             stressForecastEngine = stressForecastEngine
         )
@@ -163,8 +168,8 @@ class DashboardWidgetConsistencyStressTest {
             pendingCount = 0,
             weather = FinancialWeather(
                 state = WeatherState.UNKNOWN,
-                headline = "",
-                summary = "",
+                headline = UiText.DynamicString(""),
+                summary = UiText.DynamicString(""),
                 icon = "",
                 riskLevel = 0,
                 totalCommitted = 0.0,

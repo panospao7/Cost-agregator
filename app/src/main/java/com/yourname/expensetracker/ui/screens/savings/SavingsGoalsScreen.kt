@@ -252,7 +252,7 @@ private fun GamificationHeader(
     title: String,
     totalSaved: Double,
     streak: SavingsStreak?,
-    homeCurrency: String = "EUR"
+    homeCurrency: String
 ) {
     Card(
         modifier = Modifier.fillMaxWidth()
@@ -311,7 +311,7 @@ private fun GamificationHeader(
 private fun SmartRecommendationCard(
     rec: SmartRecommendation,
     onSave: () -> Unit,
-    homeCurrency: String = "EUR"
+    homeCurrency: String
 ) {
     Card(
         modifier = Modifier
@@ -511,7 +511,7 @@ private fun GoalCard(
     dateFormat: SimpleDateFormat,
     onClick: () -> Unit,
     onQuickAdd: () -> Unit,
-    homeCurrency: String = "EUR"
+    homeCurrency: String
 ) {
     val progress = (goal.currentAmount / goal.targetAmount).coerceIn(0.0, 1.0)
     val isCompleted = goal.currentAmount >= goal.targetAmount
@@ -700,7 +700,7 @@ private fun SweepRecommendationCard(
     recommendation: SavingsSweepRecommendation,
     onAccept: () -> Unit,
     onDismiss: () -> Unit,
-    homeCurrency: String = "EUR"
+    homeCurrency: String
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM d", Locale.getDefault()) }
     val monthEndDate = remember(recommendation.monthEnd) { Date(recommendation.monthEnd) }
@@ -796,7 +796,7 @@ private fun SweepRecommendationCard(
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 recommendation.goalAllocations.take(3).forEach { allocation ->
-                    GoalAllocationRow(allocation)
+                    GoalAllocationRow(allocation, homeCurrency = homeCurrency)
                 }
             }
             
@@ -825,7 +825,7 @@ private fun SweepRecommendationCard(
 }
 
 @Composable
-private fun GoalAllocationRow(allocation: GoalAllocation, homeCurrency: String = "EUR") {
+private fun GoalAllocationRow(allocation: GoalAllocation, homeCurrency: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()

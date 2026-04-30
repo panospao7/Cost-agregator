@@ -68,6 +68,10 @@ data class SavingsSweepPlan(
     /** Confidence score when computed */
     val confidence: Double,
 
+    /** Currency of all monetary fields in this plan */
+    @ColumnInfo(defaultValue = "'EUR'")
+    val currency: String = "EUR",
+
     /** When this plan was computed */
     val computedAt: Long = System.currentTimeMillis()
 )

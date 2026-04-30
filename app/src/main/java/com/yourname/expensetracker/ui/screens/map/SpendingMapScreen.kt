@@ -429,7 +429,7 @@ fun SpendingMapScreen(
                         )
                     }
                     items(state.placeInsights.take(10)) { insight ->
-                        PlaceInsightCard(insight)
+                        PlaceInsightCard(insight, homeCurrency = state.homeCurrency)
                     }
                 }
             }
@@ -593,7 +593,7 @@ private fun MarkerDetailCard(
     onReResolve: () -> Unit,
     onCorrectPin: () -> Unit,
     onDismiss: () -> Unit,
-    homeCurrency: String = "EUR"
+    homeCurrency: String
 ) {
     Card(
         modifier = Modifier

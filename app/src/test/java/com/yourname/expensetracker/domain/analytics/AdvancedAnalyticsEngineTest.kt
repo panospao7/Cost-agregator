@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.TestCurrencySettingsRepository
+import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -25,6 +27,8 @@ class AdvancedAnalyticsEngineTest {
     private lateinit var categoryRepository: CategoryRepository
     private lateinit var budgetRepository: BudgetRepository
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val currencySettingsRepository = TestCurrencySettingsRepository()
+    private val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer()
 
     @Before
     fun setup() {
@@ -36,6 +40,8 @@ class AdvancedAnalyticsEngineTest {
             expenseRepository,
             categoryRepository,
             budgetRepository,
+            currencySettingsRepository,
+            analyticsCurrencyNormalizer,
             timeProvider,
             Dispatchers.Unconfined,
             Dispatchers.Unconfined

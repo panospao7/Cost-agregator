@@ -19,8 +19,8 @@ import com.yourname.expensetracker.domain.investment.InvestmentPerformance
 import com.yourname.expensetracker.domain.investment.PortfolioSummary
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import java.text.NumberFormat
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,6 +31,7 @@ fun InvestmentPortfolioScreen(
 ) {
     val portfolioSummary by viewModel.portfolioSummary.collectAsState()
     val investments by viewModel.investments.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
     
     Scaffold(
         topBar = {
@@ -57,7 +58,7 @@ fun InvestmentPortfolioScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
-                PortfolioSummaryCard(portfolioSummary)
+                PortfolioSummaryCard(portfolioSummary, homeCurrency)
             }
             
             item {
@@ -69,15 +70,14 @@ fun InvestmentPortfolioScreen(
             }
             
             items(investments) { investment ->
-                InvestmentCard(investment)
+                InvestmentCard(investment, homeCurrency)
             }
         }
     }
 }
 
 @Composable
-private fun PortfolioSummaryCard(summary: PortfolioSummary) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.GERMANY)
+private fun PortfolioSummaryCard(summary: PortfolioSummary, homeCurrency: String) {
     val percentFormat = NumberFormat.getPercentInstance().apply { maximumFractionDigits = 2 }
     
     Card(
@@ -98,7 +98,7 @@ private fun PortfolioSummaryCard(summary: PortfolioSummary) {
             )
             
             Text(
-                text = currencyFormat.format(summary.totalValue),
+                text = CurrencyFormatter.format(summary.totalValue, homeCurrency),
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -111,11 +111,11 @@ private fun PortfolioSummaryCard(summary: PortfolioSummary) {
             ) {
                 SummaryItem(
                     label = stringResource(R.string.label_invested),
-                    value = currencyFormat.format(summary.totalInvested)
+                    value = CurrencyFormatter.format(summary.totalInvested, homeCurrency)
                 )
                 SummaryItem(
                     label = stringResource(R.string.label_gain_loss),
-                    value = currencyFormat.format(summary.totalGainLoss),
+                    value = CurrencyFormatter.format(summary.totalGainLoss, homeCurrency),
                     isPositive = summary.totalGainLoss >= 0
                 )
                 SummaryItem(
@@ -153,8 +153,7 @@ private fun SummaryItem(
 }
 
 @Composable
-private fun InvestmentCard(performance: InvestmentPerformance) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.GERMANY)
+private fun InvestmentCard(performance: InvestmentPerformance, homeCurrency: String) {
     val percentFormat = NumberFormat.getPercentInstance().apply { maximumFractionDigits = 2 }
     
     Card(
@@ -185,7 +184,7 @@ private fun InvestmentCard(performance: InvestmentPerformance) {
                 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = currencyFormat.format(performance.currentValue),
+                        text = CurrencyFormatter.format(performance.currentValue, homeCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )

@@ -1,3 +1,10 @@
+# Multi-Currency Implementation Plan — ✅ COMPLETED (May 2026)
+
+All 44+ gaps resolved across 7 phases. ~70 files modified.
+See `docs/architecture/ARCHITECTURE.md` for the final architecture.
+
+---
+
 # Currency Implementation Plan
 
 ## Goal

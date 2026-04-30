@@ -26,9 +26,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpense
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchEngine
-import java.text.NumberFormat
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -41,6 +40,8 @@ fun NaturalLanguageSearchScreen(
     val query by viewModel.query.collectAsState()
     val results by viewModel.results.collectAsState()
     val interpretation by viewModel.interpretation.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
+    val totalInHomeCurrency by viewModel.totalInHomeCurrency.collectAsState()
     
     Scaffold(
         topBar = {
@@ -120,7 +121,9 @@ fun NaturalLanguageSearchScreen(
                     SearchResultsContent(
                         interpretation = interpretation,
                         results = results,
-                        onViewTransaction = onViewTransaction
+                        onViewTransaction = onViewTransaction,
+                        homeCurrency = homeCurrency,
+                        totalInHomeCurrency = totalInHomeCurrency
                     )
                 }
                 is SearchState.Empty -> {
@@ -173,9 +176,10 @@ fun InterpretingState() {
 fun SearchResultsContent(
     interpretation: NaturalLanguageSearchEngine.QueryInterpretation?,
     results: List<NaturalLanguageExpense>,
-    onViewTransaction: (Long) -> Unit
+    onViewTransaction: (Long) -> Unit,
+    homeCurrency: String,
+    totalInHomeCurrency: Double
 ) {
-    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -190,7 +194,7 @@ fun SearchResultsContent(
             
             // Summary for totals
             if (interp.queryType == NaturalLanguageSearchEngine.QueryType.TOTAL_AMOUNT) {
-                val total = results.sumOf { it.effectiveAmount }
+                // Total is computed in ViewModel with currency conversion for mixed-currency results
                 
                 item {
                     Card(
@@ -210,7 +214,7 @@ fun SearchResultsContent(
                             )
                             
                             Text(
-                                text = numberFormat.format(total),
+                                text = CurrencyFormatter.format(totalInHomeCurrency, homeCurrency),
                                 style = MaterialTheme.typography.headlineLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -241,7 +245,8 @@ fun SearchResultsContent(
         items(results) { expense ->
             TransactionResultCard(
                 expense = expense,
-                onClick = { onViewTransaction(expense.id) }
+                onClick = { onViewTransaction(expense.id) },
+                homeCurrency = homeCurrency
             )
         }
     }
@@ -369,9 +374,9 @@ fun ExtractedChip(icon: androidx.compose.ui.graphics.vector.ImageVector, label: 
 @Composable
 fun TransactionResultCard(
     expense: NaturalLanguageExpense,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    homeCurrency: String
 ) {
-    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     val dateFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy")
     val date = java.time.Instant.ofEpochMilli(expense.date)
         .atZone(java.time.ZoneId.systemDefault())
@@ -418,7 +423,7 @@ fun TransactionResultCard(
             }
             
             Text(
-                text = numberFormat.format(expense.amount),
+                text = CurrencyFormatter.format(expense.amount, homeCurrency),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )

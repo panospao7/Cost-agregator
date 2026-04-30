@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupsRepository
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.logic.CustomSplitMode
 import com.yourname.expensetracker.domain.logic.CustomSplitParseResult
@@ -25,6 +26,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -38,7 +40,8 @@ data class GroupsUiState(
     val selectedGroup: GroupWithDetails? = null,
     val creatingGroup: Boolean = false,
     val addingMember: Boolean = false,
-    val addingExpense: Boolean = false
+    val addingExpense: Boolean = false,
+    val homeCurrency: String = "EUR"
 )
 
 data class GroupWithDetails(
@@ -46,7 +49,8 @@ data class GroupWithDetails(
     val members: List<GroupMember>,
     val expenses: List<GroupExpenseWithDetails>,
     val totalSpent: Double,
-    val memberBalances: Map<Long, Double> // memberId -> balance (positive = owed, negative = owes)
+    val memberBalances: Map<Long, Double>, // memberId -> balance (positive = owed, negative = owes)
+    val currency: String = group.defaultCurrency,
 )
 
 data class GroupExpenseWithDetails(
@@ -62,7 +66,8 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     private val addGroupExpenseUseCase: AddGroupExpenseUseCase,
     private val deleteGroupUseCase: DeleteGroupUseCase,
     private val manualExpenseRepository: ManualExpenseRepository,
-    private val expenseRepository: ExpenseRepository
+    private val expenseRepository: ExpenseRepository,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(GroupsUiState())
@@ -74,8 +79,9 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     
     private fun loadGroups() {
         viewModelScope.launch {
+            val homeCurrency = currencySettingsRepository.homeCurrency().first()
             val previousState = _uiState.value
-            _uiState.value = previousState.copy(isLoading = true)
+            _uiState.value = previousState.copy(isLoading = true, homeCurrency = homeCurrency)
             
             try {
                 val groupsWithDetails: List<GroupWithDetails> = groupsRepository
@@ -95,7 +101,8 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                             members = aggregate.members,
                             expenses = expensesWithDetails,
                             totalSpent = aggregate.expenses.sumOf { it.totalAmount },
-                            memberBalances = calculateBalances(aggregate.expenses, aggregate.members)
+                            memberBalances = calculateBalances(aggregate.expenses, aggregate.members),
+                            currency = aggregate.group.defaultCurrency,
                         )
                     }
                 
@@ -108,7 +115,8 @@ class SharedExpenseGroupsViewModel @Inject constructor(
                     groups = groupsWithDetails,
                     isLoading = false,
                     error = null,
-                    selectedGroup = refreshedSelectedGroup
+                    selectedGroup = refreshedSelectedGroup,
+                    homeCurrency = homeCurrency
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -213,7 +221,8 @@ class SharedExpenseGroupsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val group = groupsRepository.getGroupById(groupId)
-                val currency = group?.defaultCurrency ?: "EUR"
+                val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (_: Exception) { "EUR" }
+                val currency = group?.defaultCurrency ?: homeCurrency
                 val payer = groupsRepository.getMemberById(paidById)
                 val groupMembers = resolveGroupMembers(groupId)
 

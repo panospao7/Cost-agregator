@@ -17,13 +17,13 @@ object AmountExtractionUtils {
     val DATE_MMDDYYYY_PATTERN = Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})""")
     val DATE_ISO_PATTERN = Regex("""(\d{4})-(\d{2})-(\d{2})""")
 
-    fun extractAmount(text: String): Pair<Double, String>? {
+    fun extractAmount(text: String): Pair<Double, String?>? {
         val amountMatch = AMOUNT_PATTERN.find(text) ?: return null
         val amountStr = amountMatch.groupValues[1]
         val amount = AmountUtils.parseAmount(amountStr) ?: return null
 
         val currencyMatch = CURRENCY_CODE_PATTERN.find(text)
-        val currency = currencyMatch?.value?.uppercase() ?: "EUR"
+        val currency = currencyMatch?.value?.uppercase() // null if no currency code found — caller MUST handle
 
         return amount to currency
     }

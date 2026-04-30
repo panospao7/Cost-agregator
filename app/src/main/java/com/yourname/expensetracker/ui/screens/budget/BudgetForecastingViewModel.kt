@@ -11,8 +11,10 @@ import com.yourname.expensetracker.domain.budget.BudgetRecommendation
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationBudget
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationForecast
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationRiskLevel
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -32,8 +34,11 @@ data class BudgetForecastUiState(
 @HiltViewModel
 class BudgetForecastingViewModel @Inject constructor(
     private val forecastingEngine: BudgetForecastingEngine,
-    private val recommendationEngine: BudgetRecommendationEngine
+    private val recommendationEngine: BudgetRecommendationEngine,
+    currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
+
+    val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
     
     private val _uiState = MutableStateFlow(BudgetForecastUiState())
     val uiState: StateFlow<BudgetForecastUiState> = _uiState.asStateFlow()

@@ -35,6 +35,17 @@ interface CurrencySettingsRepository {
     suspend fun areRatesStale(thresholdMs: Long = 24 * 60 * 60 * 1000): Boolean
     
     /**
+     * Get the emergency buffer amount in home currency units.
+     * Default is 500.0 (in home currency).
+     */
+    fun emergencyBuffer(): Flow<Double>
+
+    /**
+     * Set the emergency buffer amount.
+     */
+    suspend fun setEmergencyBuffer(amount: Double)
+
+    /**
      * Clear all currency settings.
      */
     suspend fun clear()

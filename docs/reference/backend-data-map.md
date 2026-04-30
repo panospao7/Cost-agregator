@@ -1,6 +1,6 @@
 # Data Layer Architecture Map
 **Expense Tracker | Comprehensive Data Layer Reference**  
-*Refreshed: April 2026 | Current schema and adapter map*
+*Refreshed: May 2026 | Current schema and adapter map*
 
 ---
 
@@ -145,12 +145,16 @@ data/
 ### Core Financial (7)
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
-| **Expense** | `expenses` | Core transaction record with location, business, share fields | `rawNotificationId` → raw_notifications, `categoryId` → categories | 12: rawNotificationId, transactionType+date, categoryId+date, merchant+date, dedupeKey (unique), latitude+longitude, merchantKey, isBusinessExpense |
+| **Expense** | `expenses` | Core transaction record with location, business, share fields, and multi-currency snapshot | `rawNotificationId` → raw_notifications, `categoryId` → categories | 12: rawNotificationId, transactionType+date, categoryId+date, merchant+date, dedupeKey (unique), latitude+longitude, merchantKey, isBusinessExpense |
+| | | *New columns (Phase 7):* `baseAmount` (Double), `baseCurrency` (String), `exchangeRateUsed` (Double) — stable historical conversion snapshot | | |
 | **Category** | `categories` | User-defined or system expense categories | None | isDefault |
 | **Budget** | `budgets` | Period-based spend limits with warnings | `categoryId` → categories | categoryId, isActive |
+| | | *New columns:* `currency` (String), `currencyAssumption` (String) — explicit budget currency with LEGACY_DEFAULT assumption | | |
 | **PlannedExpense** | `planned_expenses` | Future planned transactions | `categoryId` → categories | date, categoryId |
+| | | *New columns:* `currency` (String), `currencyAssumption` (String) | | |
 | **RecurringExpense** | `manual_recurring_expenses` | Subscriptions & repeating expenses (v12) | None | None (added v40: isActive, isSubscription) |
 | **SavingsGoal** | `savings_goals` | Savings targets with progress | None | None |
+| | | *New columns:* `currency` (String), `currencyAssumption` (String) | | |
 | **Investment** | `investments` | Portfolio holdings with price tracking (v45) | None | type, symbol, isActive |
 | **InvestmentValue** | `investment_values` | Historical price snapshots (v45) | `investmentId` → investments | investmentId+timestamp, timestamp |
 
@@ -185,12 +189,20 @@ data/
 | **PromptStateEntity** | `prompt_states` | LLM prompt versioning & A/B testing | None | None |
 | **SpendingPersonalityProfileEntity** | `spending_personality_profiles` | User spending behavior analysis results | None | None |
 
+### Spending Challenges (1)
+| Entity | Table | Purpose | Foreign Keys | Indices |
+|--------|-------|---------|--------------|---------|
+| **SpendingChallengeEntity** | `spending_challenges` | Spending challenge creation & tracking | None | None |
+| | | *New column:* `currency` (String) — for `targetAmount` and `baselineAmount` | | |
+
 ### Budgeting & Forecasting (6)
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
 | **BudgetForecast** | `budget_forecasts` | AI-predicted budget outcomes (v44) | `budgetId` → budgets | budgetId, forecastDate, isActive |
 | **BudgetAdjustmentRecommendation** | `budget_adjustments` | Suggested budget changes | None | None |
+| | | *New column:* `currency` (String) | | |
 | **StressForecastSnapshot** | `stress_forecast_snapshots` | Financial stress scoring snapshots | None | None |
+| | | *New column:* `currency` (String) — all monetary fields in the snapshot use this currency | | |
 | **HealthScoreHistory** | `health_score_history` | Financial health metric evolution | None | None |
 | **SavingsSweepPlan** | `savings_sweep_plans` | Automatic savings routing rules | None | None |
 | **SubscriptionCandidate** | `subscription_candidates` | Detected recurring charges for user confirmation | None | None |
@@ -214,7 +226,8 @@ data/
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
 | **BankConnection** | `bank_connections` | Open Banking API credentials (v46) | `defaultCategoryId` → categories | bankId, isActive, lastSync |
-| **ExchangeRate** | `exchange_rates` | Currency pair conversion rates (v42) | None | fromCurrency+toCurrency (unique), lastUpdated |
+| **ExchangeRate** | `exchange_rates` | Currency pair conversion rates (v42) | None | fromCurrency+toCurrency+validDate (unique), lastUpdated |
+| | | *New column:* `validDate` (Long) — enables historical rate lookups. Unique constraint expanded to include validDate. | | |
 | **SourceStats** | `source_stats` | Notification source statistics (v14) | None | None |
 
 ### Misc. Business (3)
@@ -222,6 +235,7 @@ data/
 |--------|-------|---------|--------------|---------|
 | **MileageTracking** | `mileage_tracking` | Business trip mileage deductions (v41) | `linkedExpenseId` → expenses | linkedExpenseId, date, isBusinessTrip |
 | **AnomalyAlert** | `anomaly_alerts` | Fraud/unusual transaction flags | None | None |
+| | | *New columns:* `currency` (String), `baseAmount` (Double?), `baseCurrency` (String?) | | |
 | **BlockedPackage** | `blocked_packages` | Notification sources to ignore | None | None |
 
 ---
@@ -356,11 +370,11 @@ data/
 | Repository | Purpose | Key Methods |
 |------------|---------|------------|
 | **BusinessExpenseRepository** | Business vs. personal separation & deductions | markAsBusinessExpense, calculateDeductions, getTaxDeductibleTotal, assignToProject, getBusinessExpensesByCategory, generateDeductionReport |
-| **MultiCurrencyRepository** | Currency conversion & rates (v42) | convertAmount, getExchangeRate, updateRate, getHistoricalRate, bulkConvert, setBaseCurrency |
+| **MultiCurrencyRepository** | **Canonical multi-currency aggregation backbone** — aggregates per-currency totals via DAO then converts to home currency. Wired into 10+ pipelines. | getTotalExpensesInHomeCurrency, getHomeCurrencyCategoryTotals, getHomeCurrencyDailyHistory, getMerchantTotalsInHomeCurrency, getHomeCurrencyMonthlyHistory | ExpenseDao, CurrencyConverter, CurrencySettingsRepository |
 | **GroupsRepositoryImpl** | Shared expense groups & splits (v43) | createGroup, addMember, createGroupExpense, calculateSplits, settleDebts, getGroupBalance |
 | **InvestmentRepository** | Portfolio tracking (v45) | insertInvestment, getPortfolio, updateCurrentPrice, calculateGainLoss, getPerformanceStats, calculateYield |
 | **MerchantCategoryRepository** | Merchant → category auto-assignment | suggestCategory, recordAssociation, getBulkSuggestions, updateMapping, getAccuracy |
-| **CurrencySettingsRepositoryImpl** | Default currency & conversion settings | setBaseCurrency, getBaseCurrency, setDisplayCurrency, getCurrencyFormat |
+| **CurrencySettingsRepositoryImpl** | Default currency & conversion settings | setBaseCurrency, getBaseCurrency, setDisplayCurrency, getCurrencyFormat, **emergencyBuffer** (configurable emergency fund threshold) |
 | **PromptStateRepository** | LLM prompt versioning & A/B testing | recordPromptVersion, getActiveVersion, logPromptUsage, measureAccuracy |
 | **MerchantRulesRepository** | Merchant normalization rules engine | applyRules, recordRule, getRulesByMerchant, evaluateMatchConfidence |
 
@@ -674,6 +688,23 @@ SharedExpenseDataPortAdapter
 ---
 
 ## Overlapping & Redundant Queries
+
+### 🚨 Deprecated DAO Methods (Multi-Currency Refactoring)
+
+The following `ExpenseDao` methods are deprecated — use `MultiCurrencyRepository` instead:
+
+- `getTotalSpentBetween` → `MultiCurrencyRepository.getTotalExpensesInHomeCurrency()`
+- `getTotalForPeriod` → `MultiCurrencyRepository.getHomeCurrencyCategoryTotals()`
+- `getCategorySpentInPeriod` → `MultiCurrencyRepository.getHomeCurrencyCategoryTotals()`
+- 22+ other `@Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")` methods
+
+Safe grouped-by-currency DAO helpers still available:
+- `getAllSpentBetweenByCurrency()` → returns `List<CurrencyTotal>`
+- `getAllCategoryTotalsBetweenByCurrency()` → returns `List<CategoryCurrencyTotal>`
+- `getMerchantTotalsByCurrency()` → returns `List<MerchantCurrencyTotal>`
+- `getMonthlyTotalsByCurrency()` → returns `List<MonthlyCurrencyTotal>`
+
+---
 
 ### ⚠️ Potential Query Redundancy (Review Needed)
 

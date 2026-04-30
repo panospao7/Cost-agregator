@@ -41,7 +41,6 @@ import java.util.*
 fun MoneyRadarWidget(
     data: MoneyRadarData,
     onActionClick: (MoneyRadarAction) -> Unit = {},
-    homeCurrency: String = "EUR",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -424,13 +423,6 @@ private fun RadarPrimaryAction(
             )
         }
     }
-}
-
-/**
- * Helper to format amount with currency.
- */
-private fun formatAmount(amount: Double, currency: String = "EUR"): String {
-    return CurrencyFormatter.format(amount, currency)
 }
 
 /**

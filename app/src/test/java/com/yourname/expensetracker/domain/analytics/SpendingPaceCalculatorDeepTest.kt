@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.analytics
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.createExpense
+import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.every
@@ -36,7 +37,8 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
                 currentMonthStart = createDate(2026, 4, 1),
                 previousMonthStart = createDate(2026, 3, 1),
                 previousMonthEnd = createDate(2026, 4, 1),
-                allExpenses = expenses
+                allExpenses = expenses.toExpenseSnapshots(),
+                displayCurrency = "EUR"
             )
 
             // daysElapsed = 16, currentDailyRate = 100
@@ -58,7 +60,8 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
                 currentMonthStart = createDate(2026, 4, 1),
                 previousMonthStart = createDate(2026, 3, 1),
                 previousMonthEnd = createDate(2026, 4, 1),
-                allExpenses = listOf(createExpense(date = "2026-04-01", amount = 200.0))
+                allExpenses = listOf(createExpense(date = "2026-04-01", amount = 200.0)).toExpenseSnapshots(),
+                displayCurrency = "EUR"
             )
 
             // day=2, weight=2/7, linear=3000, conservative=600
@@ -78,7 +81,8 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
                 currentMonthStart = createDate(2026, 4, 1),
                 previousMonthStart = createDate(2026, 3, 1),
                 previousMonthEnd = createDate(2026, 4, 1),
-                allExpenses = listOf(createExpense(date = "2026-04-01", amount = 400.0))
+                allExpenses = listOf(createExpense(date = "2026-04-01", amount = 400.0)).toExpenseSnapshots(),
+                displayCurrency = "EUR"
             )
 
             // day=4, weight=4/7, linear=3000, conservative=1200
@@ -101,7 +105,8 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
                     createExpense(date = "2026-04-02", amount = 80.0, effectiveAmount = 0.0, isNotMine = true, merchant = "B"),
                     createExpense(date = "2026-04-03", amount = 250.0, type = TransactionType.DEPOSIT, merchant = "C"),
                     createExpense(date = "2026-04-04", amount = 60.0, merchant = "D")
-                )
+                ).toExpenseSnapshots(),
+                displayCurrency = "EUR"
             )
 
             assertApproxEquals(160.0, result.currentMonthSpent)
@@ -122,7 +127,8 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
                 allExpenses = listOf(
                     createExpense(date = "2026-04-01", amount = 90.0),
                     createExpense(date = "2026-03-01", amount = 620.0)
-                )
+                ).toExpenseSnapshots(),
+                displayCurrency = "EUR"
             )
             assertEquals(PaceStatus.UNDER_PACE, under.paceStatus)
 
@@ -133,7 +139,8 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
                 allExpenses = listOf(
                     createExpense(date = "2026-04-01", amount = 300.0),
                     createExpense(date = "2026-03-01", amount = 930.0)
-                )
+                ).toExpenseSnapshots(),
+                displayCurrency = "EUR"
             )
             assertEquals(PaceStatus.ON_PACE, on.paceStatus)
 
@@ -144,7 +151,8 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
                 allExpenses = listOf(
                     createExpense(date = "2026-04-01", amount = 2000.0),
                     createExpense(date = "2026-03-01", amount = 930.0)
-                )
+                ).toExpenseSnapshots(),
+                displayCurrency = "EUR"
             )
             assertEquals(PaceStatus.OVER_PACE, over.paceStatus)
         }
@@ -159,7 +167,8 @@ class SpendingPaceCalculatorDeepTest : AnalyticsEngineTestBase() {
                 currentMonthStart = createDate(2026, 4, 1),
                 previousMonthStart = createDate(2026, 3, 1),
                 previousMonthEnd = createDate(2026, 4, 1),
-                allExpenses = listOf(createExpense(date = "2026-04-05", amount = 120.0))
+                allExpenses = listOf(createExpense(date = "2026-04-05", amount = 120.0)).toExpenseSnapshots(),
+                displayCurrency = "EUR"
             )
 
             assertEquals(PaceStatus.NO_BASELINE, result.paceStatus)

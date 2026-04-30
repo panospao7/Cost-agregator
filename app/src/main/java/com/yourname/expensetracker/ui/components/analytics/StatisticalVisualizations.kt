@@ -32,7 +32,11 @@ fun PercentileGridCard(
     modifier: Modifier = Modifier,
     currency: String = "EUR"
 ) {
-    val a11yContentDesc = stringResource(R.string.a11y_percentile_range_format, percentiles.p25, percentiles.p75)
+    val a11yContentDesc = stringResource(
+        R.string.a11y_percentile_range_format,
+        CurrencyFormatter.format(percentiles.p25, currency, showCents = false),
+        CurrencyFormatter.format(percentiles.p75, currency, showCents = false)
+    )
     
     Card(
         modifier = modifier
@@ -92,7 +96,11 @@ fun PercentileGridCard(
             }
             
             Text(
-                text = stringResource(R.string.percentile_range_format, percentiles.p25, percentiles.p75),
+                text = stringResource(
+                    R.string.percentile_range_format,
+                    CurrencyFormatter.format(percentiles.p25, currency, showCents = false),
+                    CurrencyFormatter.format(percentiles.p75, currency, showCents = false)
+                ),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -252,7 +260,12 @@ fun TransactionHistogramChart(
             val peakBin = bins.maxByOrNull { it.count }
             peakBin?.let {
                 Text(
-                    text = stringResource(R.string.analytics_peak_format, it.percentage.toInt(), it.rangeStart, it.rangeEnd),
+                    text = stringResource(
+                        R.string.analytics_peak_format,
+                        it.percentage.toInt(),
+                        CurrencyFormatter.format(it.rangeStart, currency, showCents = false),
+                        CurrencyFormatter.format(it.rangeEnd, currency, showCents = false)
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -271,6 +284,7 @@ fun CategoryPercentileBadge(
     percentile25: Double,
     percentile75: Double,
     velocity: Double,
+    currency: String = "EUR",
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -284,7 +298,11 @@ fun CategoryPercentileBadge(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
         ) {
             Text(
-                text = stringResource(R.string.analytics_percentile_p25_p75_format, percentile25, percentile75),
+                text = stringResource(
+                    R.string.analytics_percentile_p25_p75_format,
+                    CurrencyFormatter.format(percentile25, currency, showCents = false),
+                    CurrencyFormatter.format(percentile75, currency, showCents = false)
+                ),
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -332,6 +350,7 @@ fun RichMerchantCard(
     totalSpent: Double,
     transactionCount: Int,
     averagePerVisit: Double,
+    currency: String = "EUR",
     loyaltyScore: Float,
     consecutiveMonthsVisited: Int,
     consistencyRating: String,
@@ -382,7 +401,11 @@ fun RichMerchantCard(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = stringResource(R.string.analytics_merchant_visits_format, transactionCount, averagePerVisit),
+                        text = stringResource(
+                            R.string.analytics_merchant_visits_format,
+                            transactionCount,
+                            CurrencyFormatter.format(averagePerVisit, currency)
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -390,6 +413,7 @@ fun RichMerchantCard(
                 
                 AmountText(
                     amount = totalSpent,
+                    currency = currency,
                     style = MaterialTheme.typography.titleMedium
                 )
             }

@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.components.common.EmptyStateType
 import com.yourname.expensetracker.ui.components.common.EnhancedEmptyState
@@ -97,6 +98,7 @@ fun LifestyleInflationScreen(
     val report by viewModel.report.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
     val completedActionKeys by actionRegistry.completedActions.collectAsState()
     var selectedPeriod by rememberSaveable { mutableStateOf(12) }
     
@@ -226,7 +228,7 @@ fun LifestyleInflationScreen(
                     
                     // Monthly Trend Chart
                     item {
-                        MonthlyTrendCard(monthlyData = data.monthlyData)
+                        MonthlyTrendCard(monthlyData = data.monthlyData, homeCurrency = homeCurrency)
                     }
                     
                     // Recommendations
@@ -587,8 +589,7 @@ fun CreepAlertCard(alert: LifestyleInflationDetector.LifestyleCreepAlert) {
 }
 
 @Composable
-fun MonthlyTrendCard(monthlyData: List<LifestyleInflationDetector.MonthlyLifestyleData>) {
-    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+fun MonthlyTrendCard(monthlyData: List<LifestyleInflationDetector.MonthlyLifestyleData>, homeCurrency: String) {
     val maxReferenceAmount = monthlyData
         .maxOfOrNull { maxOf(it.income, it.totalSpending) }
         ?.coerceAtLeast(1.0)

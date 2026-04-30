@@ -4,17 +4,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.repository.ManualRecurringExpenseRepository
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.text.NumberFormat
-import java.util.Locale
 import javax.inject.Inject
 
 /**
@@ -32,8 +32,11 @@ data class ManualRecurringExpenseUiState(
 @HiltViewModel
 class ManualRecurringExpenseViewModel @Inject constructor(
     private val recurringExpenseRepository: ManualRecurringExpenseRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
+
+    val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
     
     private val _uiState = MutableStateFlow(ManualRecurringExpenseUiState())
     val uiState: StateFlow<ManualRecurringExpenseUiState> = _uiState.asStateFlow()

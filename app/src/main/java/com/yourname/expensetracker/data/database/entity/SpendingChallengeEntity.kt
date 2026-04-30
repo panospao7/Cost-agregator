@@ -31,6 +31,7 @@ data class SpendingChallengeEntity(
     val startDate: Long,
     val endDate: Long,
     val targetAmount: Double? = null,
+    @ColumnInfo(defaultValue = "'EUR'") val currency: String = "EUR",
     val categoryId: Long? = null,
     @ColumnInfo(defaultValue = "1")
     val isActive: Boolean = true,

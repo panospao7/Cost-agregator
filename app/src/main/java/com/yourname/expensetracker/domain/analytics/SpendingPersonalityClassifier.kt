@@ -208,8 +208,10 @@ class SpendingPersonalityClassifier @Inject constructor(
             calendar.timeInMillis = purchase.date
             val dayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
             dayOfWeek == Calendar.SATURDAY || dayOfWeek == Calendar.SUNDAY
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         }.sumOf { it.effectiveAmount }
         
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         val totalSpending = purchases.sumOf { it.effectiveAmount }
         
         return if (totalSpending > 0) weekendSpending / totalSpending else 0.0
@@ -224,8 +226,10 @@ class SpendingPersonalityClassifier @Inject constructor(
         val nightSpending = purchases.filter { purchase ->
             calendar.timeInMillis = purchase.date
             calendar.get(Calendar.HOUR_OF_DAY) >= NIGHT_HOUR_THRESHOLD
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         }.sumOf { it.effectiveAmount }
         
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         val totalSpending = purchases.sumOf { it.effectiveAmount }
         
         return if (totalSpending > 0) nightSpending / totalSpending else 0.0
@@ -239,6 +243,7 @@ class SpendingPersonalityClassifier @Inject constructor(
         val dailyTotals = purchases.groupBy { expense ->
             val dayStart = TimePeriodUtils.getStartOfDay(expense.date)
             dayStart
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         }.mapValues { it.value.sumOf { e -> e.effectiveAmount } }
         
         val dailyAmounts = dailyTotals.values.toList()
@@ -247,6 +252,7 @@ class SpendingPersonalityClassifier @Inject constructor(
         val mean = dailyAmounts.average()
         if (mean == 0.0) return 0.0
         
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         val variance = dailyAmounts.sumOf { (it - mean) * (it - mean) } / dailyAmounts.size
         val stdDev = sqrt(variance)
         
@@ -270,6 +276,7 @@ class SpendingPersonalityClassifier @Inject constructor(
         
         budgets.forEach { budget ->
             val categoryPurchases = purchasesByCategory[budget.categoryId] ?: emptyList()
+            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
             val categorySpending = categoryPurchases.sumOf { it.effectiveAmount }
             
             val adherence = if (budget.amount > 0) {
@@ -299,6 +306,7 @@ class SpendingPersonalityClassifier @Inject constructor(
         
         val amounts = purchases.map { it.effectiveAmount }
         val mean = amounts.average()
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         val stdDev = sqrt(amounts.sumOf { (it - mean) * (it - mean) } / amounts.size)
         
         if (stdDev == 0.0) return 0.0

@@ -118,6 +118,10 @@ class CashFlowCalculator @Inject constructor(
             }
             
             // Calculate ending balance
+            // SAFE: Single-day expenses are almost always same-currency, so raw monetary
+            // summation via effectiveAmount is valid without cross-currency conversion.
+            // Multi-currency users should normalize expenses through AnalyticsCurrencyNormalizer
+            // before calling calculateDailyCashFlow().
             var dayIncome = 0.0
             for (inc in incomeList) {
                 dayIncome += inc.effectiveAmount

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.groups
 
+import android.util.Log
 import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
@@ -10,8 +11,11 @@ import com.yourname.expensetracker.domain.logic.CustomSplitParser
 import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,6 +32,7 @@ import javax.inject.Singleton
 class SharedExpenseManager @Inject constructor(
     private val sharedExpenseDataPort: SharedExpenseDataPort,
     private val timeProvider: TimeProvider,
+    private val currencySettingsRepository: CurrencySettingsRepository,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     
@@ -41,7 +46,7 @@ class SharedExpenseManager @Inject constructor(
         name: String,
         description: String? = null,
         memberNames: List<String>,
-        defaultCurrency: String = "EUR",
+        defaultCurrency: String, // Callers MUST supply home or group currency
         currentUserName: String = "Me"
     ): Long = withContext(ioDispatcher) {
         // Create domain group model — capture creation timestamp at the boundary
@@ -125,7 +130,7 @@ class SharedExpenseManager @Inject constructor(
         paidById: Long,
         description: String,
         totalAmount: Double,
-        currency: String = "EUR",
+        currency: String, // Callers MUST supply the group's currency
         splitType: GroupSplitType = GroupSplitType.EQUAL,
         customSplits: Map<Long, Double>? = null
     ): Long = withContext(ioDispatcher) {
@@ -219,6 +224,9 @@ class SharedExpenseManager @Inject constructor(
      */
     suspend fun calculateBalances(groupId: Long): Map<Long, MemberBalance> = 
         withContext(ioDispatcher) {
+            val group = sharedExpenseDataPort.getGroupOnce(groupId)
+            if (group == null) android.util.Log.w("SharedExpenseManager", "Group $groupId not found in calculateBalances, defaulting to home currency")
+            val groupCurrency = group?.defaultCurrency ?: getHomeCurrencySync()
             val members = sharedExpenseDataPort.getGroupMembersOnce(groupId)
             val expenses = sharedExpenseDataPort.getGroupExpensesOnce(groupId)
             val splitMembers = members.map { it.toGroupMember() }
@@ -263,12 +271,25 @@ class SharedExpenseManager @Inject constructor(
                     memberName = member.name,
                     paid = fromCents(paidCents),
                     shouldPay = fromCents(shouldPayCents),
-                    netBalance = fromCents(netCents)
+                    netBalance = fromCents(netCents),
+                    currency = groupCurrency
                 )
             }
 
             result
         }
+
+    /**
+     * Synchronously retrieve the user's home currency.
+     * Used as a fallback when no group context is available.
+     */
+    private fun getHomeCurrencySync(): String = runBlocking {
+        try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (_: Exception) {
+            "EUR"
+        }
+    }
 
     private fun toCents(amount: Double): Long {
         return java.math.BigDecimal.valueOf(amount)
@@ -411,5 +432,6 @@ data class MemberBalance(
     val memberName: String,
     val paid: Double,
     val shouldPay: Double,
-    val netBalance: Double // Positive = owed money, negative = owes money
+    val netBalance: Double, // Positive = owed money, negative = owes money
+    val currency: String // MUST be explicitly provided by callers
 )

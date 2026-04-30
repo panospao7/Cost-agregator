@@ -51,6 +51,10 @@ data class BudgetForecast(
     val actualSpending: Double? = null,
     val forecastAccuracy: Double? = null, // 0.0-1.0, how accurate was this forecast
     
+    // Currency
+    @ColumnInfo(defaultValue = "'EUR'")
+    val currency: String = "EUR",
+
     // Status
     @ColumnInfo(defaultValue = "1") val isActive: Boolean = true,
     val createdAt: Long = System.currentTimeMillis()

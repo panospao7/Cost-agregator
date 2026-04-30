@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.health.FinancialHealthResult
@@ -199,13 +200,14 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     private val synthesisEngine: SynthesisEngine,
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
     private val timeProvider: TimeProvider,
+    private val multiCurrencyRepository: MultiCurrencyRepository,
     private val healthCalculator: com.yourname.expensetracker.domain.health.FinancialHealthCalculator,
     private val healthScoreV2: com.yourname.expensetracker.domain.health.FinancialHealthScoreV2,
     private val lifestyleSavingsPromptUseCase: com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase,
     private val monthlySavingsSweepUseCase: com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase,
     private val computeMoneyRadarUseCase: ComputeMoneyRadarUseCase,
     private val stressForecastEngine: com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine,
-    private val forecastInputAssembler: ForecastInputAssembler = ForecastInputAssembler(timeProvider)
+    private val forecastInputAssembler: ForecastInputAssembler
 ) {
 
     /**
@@ -274,7 +276,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
     // ── Sub-methods to keep each function under the DEX 256-register limit ───
 
-    private fun buildContext(processedData: ProcessedDashboardData): ComputeContext {
+    private suspend fun buildContext(processedData: ProcessedDashboardData): ComputeContext {
         val data = processedData.data
         val summary = processedData.summary
         val expenses = data.expenses
@@ -313,9 +315,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             monthSpent = summary.totalSpent,
             txCount = summary.transactionCount,
             previousMonthTotal = summary.previousTotalSpent ?: 0.0,
-            todaySpent = todayPurchases.sumByCurrency(), // TODO: Replace with MultiCurrencyRepository.getHomeCurrencyPurchaseTotal for proper multi-currency conversion
+            todaySpent = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(todayStart, now).displayAmount,
             todayTxCount = todayPurchases.size,
-            weekSpent = purchases.filter { it.date >= weekStart }.sumByCurrency(), // TODO: Replace with MultiCurrencyRepository for proper multi-currency conversion
+            weekSpent = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(weekStart, now).displayAmount,
             overallBudget = overallBudget,
             totalBudgetAmount = overallBudget?.budgetAmount ?: 0.0,
             safeToSpend = data.weather.discretionaryBudget
@@ -372,9 +374,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val totalCommitted = forecast.components?.totalCommitted ?: 0.0
         val totalLikely = forecast.components?.totalLikely ?: 0.0
         val averageDailyBurn = if (ctx.dayOfMonth > 0) ctx.monthSpent / ctx.dayOfMonth else 0.0
-        val monthlyIncome = ctx.deposits
-            .filter { it.date >= ctx.monthStart }
-            .sumByCurrency() // TODO: Replace with MultiCurrencyRepository for proper multi-currency conversion
+        val monthlyIncome = multiCurrencyRepository.getHomeCurrencyTotal(ctx.monthStart, ctx.now).displayAmount
         val totalRemaining = ctx.data.data.weather.discretionaryBudget.coerceAtLeast(0.0)
 
         val runwayDays = if (averageDailyBurn > 0 && totalRemaining > 0) {
@@ -467,7 +467,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         runwayResult: RunwayResult
     ): DashboardWidget.MonteCarloForecast? {
         return try {
-            val spentToDate = runwayResult.purchasesThisMonth.sumOf { it.effectiveAmount }
+            // NOTE: spentToDate now uses MultiCurrencyRepository for proper multi-currency conversion.
+            val spentToDate = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ctx.monthStart, ctx.now).displayAmount
             val knownUpcoming = runwayResult.totalCommitted + runwayResult.totalLikely
             val budgetForMC = if (ctx.totalBudgetAmount > 0) ctx.totalBudgetAmount else null
 
@@ -861,25 +862,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         return streak
     }
 
-    /**
-     * Sum effective amounts across expenses, but only if all expenses share the same currency.
-     * If multiple currencies are present, logs a warning and returns the raw sum (with a comment
-     * that this is incorrect for mixed currencies).
-     *
-     * This is a TEMPORARY bridge until MultiCurrencyRepository is wired into the dashboard pipeline.
-     * The proper fix is to use MultiCurrencyRepository.getHomeCurrencyPurchaseTotal().
-     */
-    private fun List<DashboardExpense>.sumByCurrency(): Double {
-        if (isEmpty()) return 0.0
-        val currencies = map { it.currency }.distinct()
-        if (currencies.size > 1) {
-            Timber.w(
-                "Dashboard raw-sum across mixed currencies: %s. " +
-                    "This produces incorrect totals. Use MultiCurrencyRepository for currency-aware aggregation.",
-                currencies.joinToString(", ")
-            )
-        }
-        return sumOf { it.effectiveAmount }
-    }
+
 
 }

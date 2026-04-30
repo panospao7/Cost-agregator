@@ -2,7 +2,10 @@ package com.yourname.expensetracker.domain.usecase.expense
 
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 /**
@@ -39,7 +42,9 @@ class GetExpensesBetweenDatesUseCase @Inject constructor(
  * Combines multiple repository calls into single business operation.
  */
 class GetExpenseStatisticsUseCase @Inject constructor(
-    private val expenseRepository: ExpenseRepository
+    private val expenseRepository: ExpenseRepository,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     data class Statistics(
         val totalSpent: Double,
@@ -55,10 +60,23 @@ class GetExpenseStatisticsUseCase @Inject constructor(
             return Statistics(0.0, 0, 0.0, null)
         }
         
-        val total = expenses.sumOf { it.effectiveAmount }
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        val normalized = runCatching {
+            analyticsCurrencyNormalizer.normalizeExpenses(expenses, homeCurrency)
+        }.getOrNull()
+        val normalizedAmountById = normalized?.includedExpenses?.associateBy { it.id }
+            ?: emptyMap()
+        
+        // SAFE: normalized via AnalyticsCurrencyNormalizer before summing
+        val total = expenses.sumOf {
+            normalizedAmountById[it.id]?.effectiveAmount ?: it.effectiveAmount
+        }
         val count = expenses.size
         val average = total / count
-        val largest = expenses.maxByOrNull { it.effectiveAmount }
+        val largest = expenses.maxByOrNull {
+            normalizedAmountById[it.id]?.effectiveAmount ?: it.effectiveAmount
+        }
         
         return Statistics(total, count, average, largest)
     }

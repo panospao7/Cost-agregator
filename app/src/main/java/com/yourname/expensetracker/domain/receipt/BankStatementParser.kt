@@ -72,7 +72,7 @@ class BankStatementParser @Inject constructor(
      * Parse a list of text blocks (with spatial data) into multiple transactions.
      * Groups text into horizontal rows and then extracts data from each row.
      */
-    fun parse(blocks: List<TextBlock>): List<ParsedTransaction> {
+    fun parse(blocks: List<TextBlock>, homeCurrency: String = "EUR"): List<ParsedTransaction> {
         if (blocks.isEmpty()) return emptyList()
 
         // 1. Group blocks into rows based on vertical proximity
@@ -96,21 +96,21 @@ class BankStatementParser @Inject constructor(
             // Try parsers in order of specificity
             
             // 3. Try Revolut specific parsing (uses spatial data)
-            val revolutTx = tryParseRevolutTransaction(rowBlocks)
+            val revolutTx = tryParseRevolutTransaction(rowBlocks, homeCurrency)
             if (revolutTx != null) {
                 transactions.add(revolutTx)
                 continue
             }
 
             // 4. Try Greek NBG specific parsing
-            val greekNbgTx = tryParseGreekNbgTransaction(rowText)
+            val greekNbgTx = tryParseGreekNbgTransaction(rowText, homeCurrency)
             if (greekNbgTx != null) {
                 transactions.add(greekNbgTx)
                 continue
             }
 
             // 5. Fallback to generic parsing
-            val genericTx = extractTransactionFromRow(rowText, columnInfo)
+            val genericTx = extractTransactionFromRow(rowText, columnInfo, homeCurrency)
             if (genericTx != null) {
                 transactions.add(genericTx)
             }
@@ -260,7 +260,7 @@ class BankStatementParser @Inject constructor(
      * 
      * Uses horizontal positions to distinguish Money Out vs Money In.
      */
-    private fun tryParseRevolutTransaction(rowBlocks: List<TextBlock>): ParsedTransaction? {
+    private fun tryParseRevolutTransaction(rowBlocks: List<TextBlock>, homeCurrency: String = "EUR"): ParsedTransaction? {
         if (rowBlocks.isEmpty()) return null
         
         val rowText = rowBlocks.joinToString(" ") { it.text }
@@ -306,7 +306,7 @@ class BankStatementParser @Inject constructor(
             return null
         }
         
-        var currency = "EUR"
+        var currency = homeCurrency
         if (txAmountStr.contains("£")) currency = "GBP"
         if (txAmountStr.contains("$")) currency = "USD"
 
@@ -384,7 +384,7 @@ class BankStatementParser @Inject constructor(
     /**
      * Try to parse a Greek National Bank transaction line.
      */
-    private fun tryParseGreekNbgTransaction(rowText: String): ParsedTransaction? {
+    private fun tryParseGreekNbgTransaction(rowText: String, homeCurrency: String = "EUR"): ParsedTransaction? {
         val cleanRow = rowText.replace('\u00A0', ' ').trim()
         
         // Skip header rows and non-transaction rows
@@ -451,7 +451,7 @@ class BankStatementParser @Inject constructor(
             
             return ParsedTransaction(
                 amount = kotlin.math.abs(amount),
-                currency = "EUR",
+                currency = homeCurrency,
                 merchant = cleanedMerchant,
                 type = type,
                 confidence = 0.90f, // High confidence for structured format
@@ -505,7 +505,7 @@ class BankStatementParser @Inject constructor(
         }
     }
 
-    private fun extractTransactionFromRow(rowText: String, columnInfo: DateColumnInfo = DateColumnInfo(false, false)): ParsedTransaction? {
+    private fun extractTransactionFromRow(rowText: String, columnInfo: DateColumnInfo = DateColumnInfo(false, false), homeCurrency: String = "EUR"): ParsedTransaction? {
         // 1. Clean noise
         val cleanRow = rowText.replace('\u00A0', ' ').trim()
         
@@ -604,7 +604,7 @@ class BankStatementParser @Inject constructor(
         if (absAmount <= 0.0 || !absAmount.isFinite()) return null
         
         // Use more specific currency check
-        var currency = "EUR"
+        var currency = homeCurrency
         val currencyGroup = bestCandidate.leadingCurrency ?: bestCandidate.trailingCurrency
         if (currencyGroup != null && currencyGroup.matches(Regex("""^(?:[€$£]|EUR|USD|GBP)$""", RegexOption.IGNORE_CASE))) {
             currency = currencyNormalizer.normalize(currencyGroup)

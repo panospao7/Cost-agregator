@@ -557,7 +557,8 @@ class ComputeMoneyRadarUseCaseTest {
                 logNormalSigma = 1.0,
                 daysRemaining = 10,
                 computedAt = now
-            )
+            ),
+            displayCurrency = "EUR"
         )
     }
 

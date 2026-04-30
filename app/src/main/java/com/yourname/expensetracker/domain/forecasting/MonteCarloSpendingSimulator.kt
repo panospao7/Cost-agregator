@@ -49,7 +49,8 @@ class MonteCarloSpendingSimulator @Inject constructor(
     suspend fun simulate(
         spentToDate: Double,
         knownUpcoming: Double,
-        budgetAmount: Double?
+        budgetAmount: Double?,
+        displayCurrency: String = "EUR"
     ): MonteCarloResult? {
         val now = timeProvider.now()
         val calendar = Calendar.getInstance().apply { timeInMillis = now }
@@ -59,11 +60,11 @@ class MonteCarloSpendingSimulator @Inject constructor(
 
         // If it's the last day of the month, the "forecast" is just what we've spent + known upcoming
         if (daysRemaining == 0) {
-            return buildEndOfMonthResult(spentToDate, knownUpcoming, budgetAmount, now)
+            return buildEndOfMonthResult(spentToDate, knownUpcoming, budgetAmount, now, displayCurrency)
         }
 
         // Step 1: Get the historical distribution fit
-        val fit = historicalDistribution.computeDistribution()
+        val fit = historicalDistribution.computeDistribution(homeCurrency = displayCurrency)
 
         // Compute recency: count qualifying weeks in last 8 weeks for confidence scoring
         val recentWeeksQualifying = countRecentQualifyingWeeks(fit)
@@ -73,7 +74,7 @@ class MonteCarloSpendingSimulator @Inject constructor(
         if (fit == null || !fit.isUsable) {
             Timber.w("Distribution not usable; returning deterministic-only forecast")
             return buildDegradedResult(
-                spentToDate, knownUpcoming, budgetAmount, daysRemaining, confidence, fit, now
+                spentToDate, knownUpcoming, budgetAmount, daysRemaining, confidence, fit, now, displayCurrency
             )
         }
 
@@ -128,7 +129,8 @@ class MonteCarloSpendingSimulator @Inject constructor(
                 logNormalSigma = fit.sigma,
                 daysRemaining = daysRemaining,
                 computedAt = now
-            )
+            ),
+            displayCurrency = displayCurrency
         )
     }
 
@@ -139,10 +141,11 @@ class MonteCarloSpendingSimulator @Inject constructor(
         spentToDate: Double,
         knownUpcoming: Double,
         budgetAmount: Double?,
-        now: Long
+        now: Long,
+        displayCurrency: String = "EUR"
     ): MonteCarloResult {
         val total = spentToDate + knownUpcoming
-        val fit = historicalDistribution.computeDistribution()
+        val fit = historicalDistribution.computeDistribution(homeCurrency = displayCurrency)
         val confidence = dataQualityAssessor.assess(fit, countRecentQualifyingWeeks(fit))
 
         val probUnderBudget = if (budgetAmount != null && budgetAmount > 0) {
@@ -168,7 +171,8 @@ class MonteCarloSpendingSimulator @Inject constructor(
                 logNormalSigma = fit?.sigma ?: 0.0,
                 daysRemaining = 0,
                 computedAt = now
-            )
+            ),
+            displayCurrency = displayCurrency
         )
     }
 
@@ -183,7 +187,8 @@ class MonteCarloSpendingSimulator @Inject constructor(
         daysRemaining: Int,
         confidence: SimulationConfidence,
         fit: DistributionFit?,
-        now: Long
+        now: Long,
+        displayCurrency: String = "EUR"
     ): MonteCarloResult {
         val deterministicTotal = spentToDate + knownUpcoming
 
@@ -211,7 +216,8 @@ class MonteCarloSpendingSimulator @Inject constructor(
                 logNormalSigma = fit?.sigma ?: 0.0,
                 daysRemaining = daysRemaining,
                 computedAt = now
-            )
+            ),
+            displayCurrency = displayCurrency
         )
     }
 

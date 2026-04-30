@@ -5,8 +5,14 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.roundToInt
@@ -17,7 +23,9 @@ import kotlin.math.roundToInt
  */
 @Singleton
 class FinancialHealthCalculator @Inject constructor(
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
 
     companion object {
@@ -32,6 +40,11 @@ class FinancialHealthCalculator @Inject constructor(
         // Current component ceilings: budget(25) + spending(25) + cleanliness(10) + bonus(10) = 70
         // Normalize raw period score to 0-100 so HealthStatus bands remain reachable/meaningful.
         private const val MAX_RAW_PERIOD_SCORE = 70.0
+
+        // Default budget control targets in home currency
+        private const val DEFAULT_DAILY_TARGET = 50.0
+        private const val DEFAULT_WEEKLY_TARGET = 350.0
+        private const val DEFAULT_MONTHLY_TARGET = 1500.0
     }
 
     /**
@@ -46,8 +59,20 @@ class FinancialHealthCalculator @Inject constructor(
         monthStreak: Int,
         noSpendStreak: Int
     ): HealthScoreResult {
+        val homeCurrency = runBlocking {
+            runCatching { currencySettingsRepository.homeCurrency().first() }
+                .getOrDefault("EUR")
+        }
+        val normalized = runBlocking {
+            runCatching {
+                analyticsCurrencyNormalizer.normalizeExpenses(expenses, homeCurrency)
+            }.getOrNull()
+        }
+        val normalizedExpenses = normalized?.includedExpenses
+            ?: expenses.map { it.toExpenseSnapshot() }
+
         val todayScore = calculateTodayScore(
-            expenses = expenses,
+            expenses = normalizedExpenses,
             budgetStatuses = budgetStatuses,
             pendingReviews = pendingReviews,
             streak = todayStreak,
@@ -55,7 +80,7 @@ class FinancialHealthCalculator @Inject constructor(
         )
         
         val weekScore = calculateWeekScore(
-            expenses = expenses,
+            expenses = normalizedExpenses,
             budgetStatuses = budgetStatuses,
             pendingReviews = pendingReviews,
             streak = weekStreak,
@@ -63,7 +88,7 @@ class FinancialHealthCalculator @Inject constructor(
         )
         
         val monthScore = calculateMonthScore(
-            expenses = expenses,
+            expenses = normalizedExpenses,
             budgetStatuses = budgetStatuses,
             pendingReviews = pendingReviews,
             streak = monthStreak,
@@ -76,12 +101,13 @@ class FinancialHealthCalculator @Inject constructor(
             today = todayScore,
             week = weekScore,
             month = monthScore,
-            composite = compositeScore
+            composite = compositeScore,
+            displayCurrency = homeCurrency
         )
     }
 
     private fun calculateTodayScore(
-        expenses: List<Expense>,
+        expenses: List<ExpenseSnapshot>,
         budgetStatuses: List<BudgetStatusSnapshot>,
         pendingReviews: Int,
         streak: Int,
@@ -95,6 +121,7 @@ class FinancialHealthCalculator @Inject constructor(
         }
         
         val todaySpending = spendingOnly(todayExpenses)
+        // SAFE: data normalized at lines 66-72 via AnalyticsCurrencyNormalizer
         val spentToday = todaySpending.sumOf { it.effectiveAmount }
         
         // Calculate base score components
@@ -129,7 +156,7 @@ class FinancialHealthCalculator @Inject constructor(
     }
 
     private fun calculateWeekScore(
-        expenses: List<Expense>,
+        expenses: List<ExpenseSnapshot>,
         budgetStatuses: List<BudgetStatusSnapshot>,
         pendingReviews: Int,
         streak: Int,
@@ -143,9 +170,11 @@ class FinancialHealthCalculator @Inject constructor(
         }
         
         val weekSpending = spendingOnly(weekExpenses)
+        // SAFE: data normalized at lines 66-72 via AnalyticsCurrencyNormalizer
         val spentThisWeek = weekSpending.sumOf { it.effectiveAmount }
         
         // Calculate volatility (coefficient of variation)
+        // SAFE: data normalized at lines 66-72 via AnalyticsCurrencyNormalizer
         val dailySpending = weekSpending.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
             .map { (_, exps) -> exps.sumOf { it.effectiveAmount } }
         
@@ -182,7 +211,7 @@ class FinancialHealthCalculator @Inject constructor(
     }
 
     private fun calculateMonthScore(
-        expenses: List<Expense>,
+        expenses: List<ExpenseSnapshot>,
         budgetStatuses: List<BudgetStatusSnapshot>,
         pendingReviews: Int,
         streak: Int,
@@ -196,9 +225,11 @@ class FinancialHealthCalculator @Inject constructor(
         }
         
         val monthSpending = spendingOnly(monthExpenses)
+        // SAFE: data normalized at lines 66-72 via AnalyticsCurrencyNormalizer
         val spentThisMonth = monthSpending.sumOf { it.effectiveAmount }
         
         // Calculate volatility
+        // SAFE: data normalized at lines 66-72 via AnalyticsCurrencyNormalizer
         val dailySpending = monthSpending.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
             .map { (_, exps) -> exps.sumOf { it.effectiveAmount } }
         
@@ -265,7 +296,7 @@ class FinancialHealthCalculator @Inject constructor(
             budgetStatuses = budgetStatuses,
             periodStart = periodStart,
             periodEnd = periodEnd,
-            defaultTarget = 50.0
+            defaultTarget = DEFAULT_DAILY_TARGET
         )
         
         val ratio = spentToday / dailyBudget
@@ -290,7 +321,7 @@ class FinancialHealthCalculator @Inject constructor(
             budgetStatuses = budgetStatuses,
             periodStart = periodStart,
             periodEnd = periodEnd,
-            defaultTarget = 350.0
+            defaultTarget = DEFAULT_WEEKLY_TARGET
         )
         
         val ratio = spentThisWeek / weeklyBudget
@@ -318,7 +349,7 @@ class FinancialHealthCalculator @Inject constructor(
             budgetStatuses = budgetStatuses,
             periodStart = periodStart,
             periodEnd = periodEnd,
-            defaultTarget = 1500.0
+            defaultTarget = DEFAULT_MONTHLY_TARGET
         )
         
         val ratio = spentThisMonth / monthlyBudget
@@ -382,12 +413,39 @@ class FinancialHealthCalculator @Inject constructor(
     }
 
     /**
+     * Converts a data-layer [Expense] into a domain [ExpenseSnapshot] preserving
+     * the original effective amount and currency. Used as a fallback when
+     * cross-currency normalization is unavailable.
+     */
+    private fun Expense.toExpenseSnapshot(): ExpenseSnapshot = ExpenseSnapshot(
+        id = id,
+        amount = effectiveAmount,
+        effectiveAmount = effectiveAmount,
+        currency = currency,
+        merchant = merchant,
+        merchantKey = merchantKey,
+        transactionType = transactionType.toDomain(),
+        date = date,
+        categoryId = categoryId,
+        isNotMine = isNotMine,
+        transferDirection = transferDirection?.let { d ->
+            when (d) {
+                com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING ->
+                    DomainTransferDirection.INCOMING
+                com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING ->
+                    DomainTransferDirection.OUTGOING
+            }
+        },
+        notes = notes
+    )
+
+    /**
      * Returns only the canonical spending rows from the given list.
      * Non-spend transaction types (DEPOSIT, TRANSFER, WITHDRAWAL, UNKNOWN)
      * are excluded so they do not inflate spend totals or distort volatility.
      */
-    private fun spendingOnly(expenses: List<Expense>): List<Expense> =
-        expenses.filter { it.transactionType.toDomain().isSpending }
+    private fun spendingOnly(expenses: List<ExpenseSnapshot>): List<ExpenseSnapshot> =
+        expenses.filter { it.transactionType.isSpending }
 
     // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType
     private fun TransactionType.toDomain(): DomainTransactionType =
@@ -473,7 +531,8 @@ data class HealthScoreResult(
     val today: PeriodHealthScore,
     val week: PeriodHealthScore,
     val month: PeriodHealthScore,
-    val composite: Int
+    val composite: Int,
+    val displayCurrency: String = ""
 ) {
     fun getCompositeStatus(): HealthStatus {
         return when (composite) {

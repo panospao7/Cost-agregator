@@ -2,9 +2,11 @@ package com.yourname.expensetracker.ui.screens.price
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.price.PriceProtectionTracker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,8 +21,11 @@ import javax.inject.Inject
 
 @HiltViewModel
 class PriceProtectionViewModel @Inject constructor(
-    private val priceTracker: PriceProtectionTracker
+    private val priceTracker: PriceProtectionTracker,
+    currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
+
+    val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
 
     private val refreshSignals = MutableSharedFlow<Unit>(replay = 1)
 

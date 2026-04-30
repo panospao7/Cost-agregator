@@ -4,17 +4,21 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.analytics.AnomalyDetector
 import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryRef
+import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarningType
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnomalyMethod
 import com.yourname.expensetracker.domain.analytics.AnomalyTransaction
 import com.yourname.expensetracker.domain.analytics.MonthPeriod
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import kotlinx.coroutines.flow.first
 import timber.log.Timber
-import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -35,6 +39,8 @@ class AnomalyAlertOrchestrator @Inject constructor(
     private val notificationService: NotificationService,
     private val expenseDao: ExpenseDao,
     private val anomalyAlertRepository: AnomalyAlertRepository,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository,
     private val timeProvider: TimeProvider
 ) {
     private val inFlightExpenseIds = ConcurrentHashMap.newKeySet<Long>()
@@ -94,7 +100,32 @@ class AnomalyAlertOrchestrator @Inject constructor(
                     emptyList()
                 }
                 val allExpenses = historicalExpenses + listOf(expense.expense)
-                val expenseSnapshots = allExpenses.map { it.toSnapshot() }
+                val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault(expense.expense.currency)
+                val normalizedHistory = analyticsCurrencyNormalizer.normalizeSnapshots(
+                    allExpenses.map { it.toSnapshot() },
+                    homeCurrency
+                )
+                if (normalizedHistory.warnings.any { warning ->
+                        warning.type == AnalyticsConversionWarningType.INVALID_HOME_CURRENCY ||
+                            warning.type == AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY
+                    }) {
+                    Timber.w("Skipping anomaly alert for expense %s due to invalid analytics currency configuration", expenseId)
+                    return
+                }
+
+                val missingRateWarnings = normalizedHistory.warnings.filter { it.type == AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE }
+                if (missingRateWarnings.isNotEmpty()) {
+                    val totalExcluded = missingRateWarnings.sumOf { it.affectedTransactionCount }
+                    Timber.w("Anomaly alert for expense %s based on partial historical baseline — %d transaction(s) excluded due to missing exchange rates", expenseId, totalExcluded)
+                }
+
+                val excludedCurrentExpense = normalizedHistory.includedExpenses.none { it.id == expenseId }
+                if (excludedCurrentExpense) {
+                    Timber.w("Skipping anomaly alert for expense %s because current transaction could not be normalized", expenseId)
+                    return
+                }
+
+                val expenseSnapshots = normalizedHistory.includedExpenses
                 val categoryMap = expense.category
                     ?.let {
                         mapOf(
@@ -112,7 +143,8 @@ class AnomalyAlertOrchestrator @Inject constructor(
                 val anomalies = anomalyDetector.detect(
                     monthPeriod = detectionPeriod,
                     categoryMap = categoryMap,
-                    allExpenses = expenseSnapshots
+                    allExpenses = expenseSnapshots,
+                    displayCurrency = homeCurrency
                 )
 
                 // Check if this expense was flagged
@@ -139,7 +171,8 @@ class AnomalyAlertOrchestrator @Inject constructor(
                 }
 
                 // Build and send notification
-                val message = buildNotificationMessage(expense, expenseAnomalies)
+                val normalizedExpense = expenseSnapshots.firstOrNull { it.id == expenseId }
+                val message = buildNotificationMessage(normalizedExpense ?: expense.expense.toSnapshot(), expenseAnomalies)
                 val notificationId = ANOMALY_NOTIFICATION_BASE_ID + (expenseId % 100000).toInt()
 
                 // Record the alert in database
@@ -147,7 +180,7 @@ class AnomalyAlertOrchestrator @Inject constructor(
                     expenseId = expenseId,
                     merchant = expense.expense.merchant,
                     category = expense.category?.name,
-                    amount = expense.expense.effectiveAmount,
+                    amount = normalizedExpense?.effectiveAmount ?: expense.expense.effectiveAmount,
                     anomalyReason = buildAnomalyReason(expenseAnomalies),
                     severity = severity,
                     alertedAt = now
@@ -164,7 +197,14 @@ class AnomalyAlertOrchestrator @Inject constructor(
                     expenseId = expenseId
                 )
 
-                Timber.i("Anomaly alert sent for ${expense.expense.merchant}: €${expense.expense.effectiveAmount}")
+                Timber.i(
+                    "Anomaly alert sent for %s: %s",
+                    expense.expense.merchant,
+                    CurrencyFormatter.format(
+                        normalizedExpense?.effectiveAmount ?: expense.expense.effectiveAmount,
+                        normalizedExpense?.currency ?: homeCurrency
+                    )
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -254,17 +294,17 @@ class AnomalyAlertOrchestrator @Inject constructor(
 
     /**
      * Build the notification message.
-     * Format: "Unusual charge: €{amount} at {merchant} ({reason}). Tap to review."
+     * Format: "Unusual charge: {amount} at {merchant} ({reason}). Tap to review."
      */
     private fun buildNotificationMessage(
-        expense: ExpenseWithCategory,
+        expense: ExpenseSnapshot,
         anomalies: List<AnomalyTransaction>
     ): String {
-        val amount = String.format(Locale.US, "%.2f", expense.expense.effectiveAmount)
-        val merchant = expense.expense.merchant
+        val amount = CurrencyFormatter.format(expense.effectiveAmount, expense.currency)
+        val merchant = expense.merchant
         val reason = buildAnomalyReason(anomalies)
 
-        return "Unusual charge: €$amount at $merchant ($reason). Tap to review."
+        return "Unusual charge: $amount at $merchant ($reason). Tap to review."
     }
 
     /**

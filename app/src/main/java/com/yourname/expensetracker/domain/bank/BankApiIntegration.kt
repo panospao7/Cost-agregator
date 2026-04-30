@@ -296,7 +296,7 @@ class BankApiIntegration @Inject constructor(
                     id = "${bankId}_tx_${i}_${date}",
                     date = date,
                     amount = -(10..200).random().toDouble(),
-                    currency = "EUR",
+                    currency = "EUR", // STUB: currency defaults to EUR; real implementation should use home currency from settings
                     merchant = merchant,
                     description = "Purchase from $merchant",
                     reference = "REF${(1000..9999).random()}",

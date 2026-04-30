@@ -3,11 +3,15 @@ package com.yourname.expensetracker.domain.savings
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.AutomatedSavingsRuleStateRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.flow.first
 import java.util.Calendar
 import java.util.Locale
 import javax.inject.Inject
@@ -46,11 +50,21 @@ class AutomatedSavingsRuleEngine @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
     private val timeProvider: TimeProvider,
-    private val ruleStateRepository: AutomatedSavingsRuleStateRepository
+    private val ruleStateRepository: AutomatedSavingsRuleStateRepository,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
+    companion object {
+        // Default nearest-neighbor round-up in home currency
+        private const val DEFAULT_ROUND_UP_PRECISION = 5.0
+        // No-spend week thresholds and reward in home currency
+        private const val NO_SPEND_THRESHOLD = 5.0
+        private const val NO_SPEND_REWARD = 10.0
+    }
     suspend fun evaluateRules(
         expense: Expense,
-        rules: List<AutomatedSavingsRule>
+        rules: List<AutomatedSavingsRule>,
+        displayCurrency: String = "EUR"
     ): List<RuleExecution> {
         val executions = mutableListOf<RuleExecution>()
         
@@ -59,13 +73,13 @@ class AutomatedSavingsRuleEngine @Inject constructor(
             
             val execution = when (rule.ruleType) {
                 SavingsRuleType.PERCENTAGE_OF_INCOME -> 
-                    evaluatePercentageRule(expense, rule)
+                    evaluatePercentageRule(expense, rule, displayCurrency)
                 SavingsRuleType.ROUND_UP -> 
-                    evaluateRoundUpRule(expense, rule)
+                    evaluateRoundUpRule(expense, rule, displayCurrency)
                 SavingsRuleType.SPARE_CHANGE -> 
-                    evaluateSpareChangeRule(expense, rule)
+                    evaluateSpareChangeRule(expense, rule, displayCurrency)
                 SavingsRuleType.WEEKLY_NO_SPEND -> 
-                    evaluateWeeklyNoSpendRule(rule)
+                    evaluateWeeklyNoSpendRule(rule, displayCurrency)
                 SavingsRuleType.CUSTOM -> null
             }
             
@@ -78,7 +92,8 @@ class AutomatedSavingsRuleEngine @Inject constructor(
     
     private fun evaluatePercentageRule(
         expense: Expense,
-        rule: AutomatedSavingsRule
+        rule: AutomatedSavingsRule,
+        displayCurrency: String
     ): RuleExecution? {
         // Only process deposits (income)
         if (expense.transactionType.toDomain() != DomainTransactionType.DEPOSIT || expense.amount <= 0) {
@@ -109,14 +124,15 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         return RuleExecution(
             rule = rule,
             amount = amount,
-            reason = "${percentage}% of €${String.format("%.2f", normalizedIncome)} income",
+            reason = "${percentage}% of ${CurrencyFormatter.format(normalizedIncome, displayCurrency)} income",
             timestamp = timeProvider.now()
         )
     }
     
     private fun evaluateRoundUpRule(
         expense: Expense,
-        rule: AutomatedSavingsRule
+        rule: AutomatedSavingsRule,
+        displayCurrency: String
     ): RuleExecution? {
         // Only process purchases
         if (expense.transactionType.toDomain() != DomainTransactionType.PURCHASE) {
@@ -132,7 +148,8 @@ class AutomatedSavingsRuleEngine @Inject constructor(
             return null
         }
         
-        val roundUpTo = rule.roundUpTo ?: 5.0
+        // Default nearest-neighbor round-up in home currency
+        val roundUpTo = rule.roundUpTo ?: DEFAULT_ROUND_UP_PRECISION
         if (!roundUpTo.isFinite() || roundUpTo <= 0.0) {
             Timber.tag("AutomatedSavingsRuleEngine").w(
                 "Skipping ROUND_UP rule %s due to invalid roundUpTo=%s",
@@ -180,7 +197,7 @@ class AutomatedSavingsRuleEngine @Inject constructor(
             return RuleExecution(
                 rule = rule,
                 amount = roundUpAmount,
-                reason = "Round up €${String.format("%.2f", candidateAmount)} to €${String.format("%.2f", roundedTarget)}",
+                reason = "Round up ${CurrencyFormatter.format(candidateAmount, displayCurrency)} to ${CurrencyFormatter.format(roundedTarget, displayCurrency)}",
                 timestamp = timeProvider.now()
             )
         }
@@ -190,7 +207,8 @@ class AutomatedSavingsRuleEngine @Inject constructor(
     
     private fun evaluateSpareChangeRule(
         expense: Expense,
-        rule: AutomatedSavingsRule
+        rule: AutomatedSavingsRule,
+        displayCurrency: String
     ): RuleExecution? {
         // Save small purchases (coffee, snacks, etc.)
         if (expense.transactionType.toDomain() != DomainTransactionType.PURCHASE) {
@@ -210,7 +228,7 @@ class AutomatedSavingsRuleEngine @Inject constructor(
             return RuleExecution(
                 rule = rule,
                 amount = candidateAmount,
-                reason = "Spare change: ${expense.merchant} €${String.format("%.2f", candidateAmount)}",
+                reason = "Spare change: ${expense.merchant} ${CurrencyFormatter.format(candidateAmount, displayCurrency)}",
                 timestamp = timeProvider.now()
             )
         }
@@ -218,19 +236,23 @@ class AutomatedSavingsRuleEngine @Inject constructor(
     }
     
     private suspend fun evaluateWeeklyNoSpendRule(
-        rule: AutomatedSavingsRule
+        rule: AutomatedSavingsRule,
+        displayCurrency: String
     ): RuleExecution? {
         // Check if this week had any discretionary spending
         val now = timeProvider.now()
+        val homeCurrency = currencySettingsRepository.homeCurrency().first()
         val (weekStart, weekEnd) = TimePeriodUtils.getWeekRange(now)
-        val weekExpenses = expenseRepository.getExpensesBetween(weekStart, weekEnd)
+        val rawWeekExpenses = expenseRepository.getExpenseSnapshotsBetween(weekStart, weekEnd)
+        val weekNormalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawWeekExpenses, homeCurrency)
+        val weekExpenses = weekNormalized.includedExpenses
         val categoriesById = categoryRepository.getAll().associateBy { it.id }
         
         // Filter out essential spending (groceries, bills, etc.)
         var discretionarySpending = 0.0
         for (expense in weekExpenses) {
             if (
-                expense.transactionType.toDomain() == DomainTransactionType.PURCHASE &&
+                expense.transactionType == DomainTransactionType.PURCHASE &&
                 expense.effectiveAmount > 0 &&
                 !isEssentialCategory(expense.categoryId, categoriesById)
             ) {
@@ -239,8 +261,8 @@ class AutomatedSavingsRuleEngine @Inject constructor(
         }
         
         // If no discretionary spending, award savings
-        if (discretionarySpending < 5.0) {
-            val rewardAmount = 10.0 // €10 reward for no-spend week
+        if (discretionarySpending < NO_SPEND_THRESHOLD) {
+            val rewardAmount = NO_SPEND_REWARD
             val reservationResult = ruleStateRepository.reserveWeeklyNoSpendRewardWithinMonthlyCap(
                 ruleStableKey = ruleStableKey(rule),
                 weekStart = weekStart,

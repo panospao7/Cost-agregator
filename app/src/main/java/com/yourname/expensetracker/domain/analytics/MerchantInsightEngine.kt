@@ -14,7 +14,10 @@ class MerchantInsightEngine @Inject constructor() {
         private const val RECURRING_THRESHOLD = 3
     }
 
-    fun calculate(allExpenses: List<ExpenseSnapshot>): List<MerchantInsight> {
+    fun calculate(
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String = "EUR"
+    ): List<MerchantInsight> {
         val purchases = allExpenses.filter { 
             it.transactionType == DomainTransactionType.PURCHASE && 
             !it.isNotMine 
@@ -45,11 +48,13 @@ class MerchantInsightEngine @Inject constructor() {
                 totalSpent = total,
                 transactionCount = count,
                 isLikelyRecurring = count >= RECURRING_THRESHOLD && stdDev != null && stdDev / avg < 0.3,
-                stdDeviation = stdDev
+                stdDeviation = stdDev,
+                displayCurrency = displayCurrency
             )
         }
         .sortedByDescending { it.totalSpent }
         .take(TOP_MERCHANTS_LIMIT)
     }
+
 
 }

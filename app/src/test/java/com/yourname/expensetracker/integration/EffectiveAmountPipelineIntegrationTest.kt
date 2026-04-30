@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.integration
 
 import com.yourname.expensetracker.AnalyticsEngineTestBase
+import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.testCurrencyConverter
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.entity.Category
@@ -11,7 +14,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
-import com.yourname.expensetracker.domain.analytics.PeriodRange
+import com.yourname.expensetracker.domain.analytics.AnalyticsPeriodRange
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -42,6 +45,7 @@ class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
         )
         coEvery { categoryRepository.getAll() } returns categories
         coEvery { budgetRepository.getActiveBudgets() } returns emptyList()
+        coEvery { budgetRepository.getActiveBudgetSnapshots() } returns emptyList()
         coEvery { budgetForecastDao.insert(any()) } returns 1L
 
         val expenses = listOf(
@@ -114,10 +118,14 @@ class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
             transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
         )
         val totalsEngine = TotalsAggregationEngine(repository, timeProvider, Dispatchers.Unconfined)
+        val currencySettingsRepository = TestCurrencySettingsRepository()
+        val currencyConverter = testCurrencyConverter()
         val advancedEngine = AdvancedAnalyticsEngine(
             repository,
             categoryRepository,
             budgetRepository,
+            currencySettingsRepository,
+            testAnalyticsCurrencyNormalizer(currencyConverter),
             timeProvider,
             Dispatchers.Unconfined,
             Dispatchers.Unconfined
@@ -128,7 +136,7 @@ class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
         val repoTotal = repository.getTotalForPeriod(marchStart, aprilStart)
         val totalsTotal = totalsEngine.getDailyTotalsForRange(marchStart, aprilStart).sumOf { it.totalAmount }
         val advancedTotal = advancedEngine.getCategoryAnalytics(
-            PeriodRange(AnalyticsPeriod.CUSTOM, marchStart, aprilStart, "Mar", null)
+            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, marchStart, aprilStart, "Mar", null)
         ).sumOf { it.totalSpent }
 
         assertApproxEquals(expected, daoTotal, 0.0001)

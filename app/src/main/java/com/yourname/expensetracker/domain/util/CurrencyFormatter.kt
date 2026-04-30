@@ -12,12 +12,12 @@ object CurrencyFormatter {
     private const val DEFAULT_CURRENCY = "EUR"
     private val DEFAULT_SYMBOL = "€"
 
-    @Deprecated("Unsafe: currencyCode defaults to EUR silently. Use format(amount, explicitCurrencyCode) with an explicit currency.", level = DeprecationLevel.WARNING)
+    @Deprecated("Unsafe: currencyCode defaults to EUR silently. Use formatMoney(amount, currencyCode) with an explicit currency.", level = DeprecationLevel.WARNING)
     fun format(amount: Double, currencyCode: String = DEFAULT_CURRENCY, showCents: Boolean = true): String {
         return currencyNumberFormat(currencyCode, showCents).format(amount)
     }
 
-    @Deprecated("Unsafe: currencyCode defaults to EUR silently. Use formatCompact(amount, explicitCurrencyCode) with an explicit currency.", level = DeprecationLevel.WARNING)
+    @Deprecated("Unsafe: currencyCode defaults to EUR silently. Use formatMoneyCompact(amount, currencyCode) with an explicit currency.", level = DeprecationLevel.WARNING)
     fun formatCompact(amount: Double, currencyCode: String = DEFAULT_CURRENCY): String {
         val symbol = getCurrencySymbol(currencyCode)
         return when {
@@ -27,7 +27,7 @@ object CurrencyFormatter {
         }
     }
 
-    @Deprecated("Unsafe: currencyCode defaults to EUR silently. Use formatWithSign(amount, explicitCurrencyCode) with an explicit currency.", level = DeprecationLevel.WARNING)
+    @Deprecated("Unsafe: currencyCode defaults to EUR silently. Use formatMoneyWithSign(amount, currencyCode) with an explicit currency.", level = DeprecationLevel.WARNING)
     fun formatWithSign(amount: Double, currencyCode: String = DEFAULT_CURRENCY): String {
         val absolute = format(kotlin.math.abs(amount), currencyCode)
         return when {
@@ -35,6 +35,32 @@ object CurrencyFormatter {
             amount > 0 -> "+$absolute"
             else -> absolute
         }
+    }
+
+    // --- Non-deprecated replacements (require explicit currency) ---
+
+    /**
+     * Format a money amount with explicit currency.
+     * This is the safe replacement for the deprecated [format] overload.
+     */
+    fun formatMoney(amount: Double, currencyCode: String, showCents: Boolean = true): String {
+        return format(amount, currencyCode, showCents)
+    }
+
+    /**
+     * Format a money amount in compact notation (e.g., "€1.5K", "€2.3M") with explicit currency.
+     * Safe replacement for the deprecated [formatCompact] overload.
+     */
+    fun formatMoneyCompact(amount: Double, currencyCode: String): String {
+        return formatCompact(amount, currencyCode)
+    }
+
+    /**
+     * Format a money amount with explicit sign (+/-) and explicit currency.
+     * Safe replacement for the deprecated [formatWithSign] overload.
+     */
+    fun formatMoneyWithSign(amount: Double, currencyCode: String): String {
+        return formatWithSign(amount, currencyCode)
     }
 
     fun formatForExport(amount: Double, locale: Locale = Locale.getDefault()): String {

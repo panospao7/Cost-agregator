@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.analytics
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.UiText
@@ -11,6 +12,7 @@ import com.yourname.expensetracker.domain.text.UiTextArg
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,11 +21,13 @@ data class AnalyticsDashboardData(
     val totalSpent: Double,
     val totalIncome: Double,
     val netCashflow: Double,
+    val displayCurrency: String,
     val topCategories: List<AnalyticsDashboardCategoryBreakdown>,
     val topMerchants: List<DashboardMerchantBreakdown>,
     val monthlyTrend: List<MonthlyDataPoint>,
     val weeklyPattern: List<DayOfWeekSpending>,
-    val insights: List<DashboardInsight>
+    val insights: List<DashboardInsight>,
+    val conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
 )
 
 data class AnalyticsDashboardCategoryBreakdown(
@@ -31,26 +35,30 @@ data class AnalyticsDashboardCategoryBreakdown(
     val categoryName: UiText,
     val amount: Double,
     val percentage: Double,
-    val changeFromLastPeriod: Double
+    val changeFromLastPeriod: Double,
+    val displayCurrency: String
 )
 
 data class DashboardMerchantBreakdown(
     val merchant: String,
     val amount: Double,
-    val transactionCount: Int
+    val transactionCount: Int,
+    val displayCurrency: String
 )
 
 data class MonthlyDataPoint(
     val month: String,
     val spending: Double,
-    val income: Double
+    val income: Double,
+    val displayCurrency: String
 )
 
 data class DayOfWeekSpending(
     val dayOfWeek: Int, // 1 = Monday, 7 = Sunday
     val dayName: UiText,
     val averageSpending: Double,
-    val transactionCount: Int
+    val transactionCount: Int,
+    val displayCurrency: String
 )
 
 data class DashboardInsight(
@@ -81,6 +89,8 @@ class AdvancedAnalyticsDashboard @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
     private val timeProvider: TimeProvider
 ) {
     
@@ -88,13 +98,17 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         startDate: Long,
         endDate: Long
     ): AnalyticsDashboardData = withContext(Dispatchers.IO) {
-        val expenses = expenseRepository.getExpenseSnapshotsBetween(startDate, endDate)
+        val displayCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault("EUR")
+        val expensesRaw = expenseRepository.getExpenseSnapshotsBetween(startDate, endDate)
         val comparisonExpenses = if (endDate > startDate) {
             val comparisonStart = startDate - (endDate - startDate)
             expenseRepository.getExpenseSnapshotsBetween(comparisonStart, startDate)
         } else {
             emptyList()
         }
+        val expensesNormalization = analyticsCurrencyNormalizer.normalizeSnapshots(expensesRaw, displayCurrency)
+        val comparisonNormalization = analyticsCurrencyNormalizer.normalizeSnapshots(comparisonExpenses, displayCurrency)
+        val expenses = expensesNormalization.includedExpenses
         val categoryNamesById = categoryRepository.getAll().associate { it.id to it.name }
         
         // Calculate totals
@@ -115,18 +129,21 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             totalSpent = totalSpent,
             totalIncome = totalIncome,
             netCashflow = totalIncome - totalSpent,
-            topCategories = getTopCategories(expenses, comparisonExpenses, categoryNamesById),
-            topMerchants = getTopMerchants(expenses),
-            monthlyTrend = getMonthlyTrend(startDate, endDate),
-            weeklyPattern = getWeeklyPattern(expenses),
-            insights = generateInsights(expenses, totalSpent, totalIncome)
+            displayCurrency = displayCurrency,
+            topCategories = getTopCategories(expenses, comparisonNormalization.includedExpenses, categoryNamesById, displayCurrency),
+            topMerchants = getTopMerchants(expenses, displayCurrency),
+            monthlyTrend = getMonthlyTrend(startDate, endDate, displayCurrency),
+            weeklyPattern = getWeeklyPattern(expenses, displayCurrency),
+            insights = generateInsights(expenses, totalSpent, totalIncome),
+            conversionWarnings = (expensesNormalization.warnings + comparisonNormalization.warnings)
         )
     }
     
     private fun getTopCategories(
         expenses: List<ExpenseSnapshot>,
         comparisonExpenses: List<ExpenseSnapshot>,
-        categoryNamesById: Map<Long, String>
+        categoryNamesById: Map<Long, String>,
+        displayCurrency: String
     ): List<AnalyticsDashboardCategoryBreakdown> {
         val currentTotals = calculateCategoryTotals(expenses)
         val previousTotals = calculateCategoryTotals(comparisonExpenses)
@@ -144,12 +161,13 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                 changeFromLastPeriod = calculateChangeFromLastPeriod(
                     currentAmount = amount,
                     previousAmount = previousTotals[catId] ?: 0.0
-                )
+                ),
+                displayCurrency = displayCurrency
             )
         }.sortedByDescending { it.amount }.take(5)
     }
     
-    private fun getTopMerchants(expenses: List<ExpenseSnapshot>): List<DashboardMerchantBreakdown> {
+    private fun getTopMerchants(expenses: List<ExpenseSnapshot>, displayCurrency: String): List<DashboardMerchantBreakdown> {
         val merchantMap = mutableMapOf<String, Pair<Double, Int>>()
         
         for (expense in expenses) {
@@ -163,16 +181,19 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             DashboardMerchantBreakdown(
                 merchant = merchant,
                 amount = data.first,
-                transactionCount = data.second
+                transactionCount = data.second,
+                displayCurrency = displayCurrency
             )
         }.sortedByDescending { it.amount }.take(5)
     }
     
-    private suspend fun getMonthlyTrend(startDate: Long, endDate: Long): List<MonthlyDataPoint> {
+    private suspend fun getMonthlyTrend(startDate: Long, endDate: Long, displayCurrency: String): List<MonthlyDataPoint> {
         val result = mutableListOf<MonthlyDataPoint>()
         if (endDate <= startDate) return result
 
-        val monthlyBuckets = expenseRepository.getExpenseSnapshotsBetween(startDate, endDate)
+        val monthlyBuckets = analyticsCurrencyNormalizer
+            .normalizeSnapshots(expenseRepository.getExpenseSnapshotsBetween(startDate, endDate), displayCurrency)
+            .includedExpenses
             .groupBy(::buildMonthKey)
 
         val startYear = TimePeriodUtils.getYear(startDate)
@@ -218,7 +239,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                 }
             }
 
-            result.add(MonthlyDataPoint(monthKey, spending, income))
+            result.add(MonthlyDataPoint(monthKey, spending, income, displayCurrency))
 
             // Move to next month
             currentMonth++
@@ -260,7 +281,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         return String.format("%04d-%02d", year, month)
     }
     
-    private fun getWeeklyPattern(expenses: List<ExpenseSnapshot>): List<DayOfWeekSpending> {
+    private fun getWeeklyPattern(expenses: List<ExpenseSnapshot>, displayCurrency: String): List<DayOfWeekSpending> {
         val dayMap = mutableMapOf<Int, MutableList<Double>>()
         val dayNames = mapOf<Int, UiText>(
             1 to UiText.fromKey(DomainTextKeys.COMMON_DAY_MONDAY),
@@ -292,7 +313,8 @@ class AdvancedAnalyticsDashboard @Inject constructor(
                 dayOfWeek = day,
                 dayName = dayNames[day] ?: UiText.fromKey(DomainTextKeys.COMMON_UNKNOWN),
                 averageSpending = if (amounts.isNotEmpty()) amounts.average() else 0.0,
-                transactionCount = amounts.size
+                transactionCount = amounts.size,
+                displayCurrency = displayCurrency
             )
         }
     }

@@ -3,6 +3,8 @@ package com.yourname.expensetracker.domain.savings
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
@@ -29,6 +31,8 @@ class SavingsGamificationEngineTest {
     private lateinit var savingsGoalRepository: SavingsGoalRepository
     private lateinit var contributionHistoryRepository: SavingsContributionHistoryRepository
     private lateinit var timeProvider: FakeTimeProvider
+    private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var engine: SavingsGamificationEngine
     private val scopes = mutableListOf<CoroutineScope>()
 
@@ -37,11 +41,15 @@ class SavingsGamificationEngineTest {
         savingsGoalRepository = mockk(relaxed = true)
         timeProvider = FakeTimeProvider.forDate(2026, 4, 1)
         contributionHistoryRepository = createRepository(createStateFile(), timeProvider)
+        analyticsCurrencyNormalizer = mockk(relaxed = true)
+        currencySettingsRepository = mockk(relaxed = true)
 
         engine = SavingsGamificationEngine(
             savingsGoalRepository = savingsGoalRepository,
             contributionHistoryRepository = contributionHistoryRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository
         )
     }
 

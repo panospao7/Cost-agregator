@@ -2,9 +2,11 @@ package com.yourname.expensetracker.ui.screens.negotiation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.negotiation.SmartBillNegotiationEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -12,8 +14,11 @@ import javax.inject.Inject
 
 @HiltViewModel
 class BillNegotiationViewModel @Inject constructor(
-    private val negotiationEngine: SmartBillNegotiationEngine
+    private val negotiationEngine: SmartBillNegotiationEngine,
+    currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
+
+    val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
     
     private val _opportunities = MutableStateFlow<List<SmartBillNegotiationEngine.NegotiationOpportunity>>(emptyList())
     val opportunities: StateFlow<List<SmartBillNegotiationEngine.NegotiationOpportunity>> = _opportunities.asStateFlow()

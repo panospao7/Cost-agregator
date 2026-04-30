@@ -1,7 +1,12 @@
 package com.yourname.expensetracker.verification
 
 import com.yourname.expensetracker.AnalyticsEngineTestBase
+import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.testCurrencyConverter
+import com.yourname.expensetracker.toAnalyticsCategoryRefs
+import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -12,13 +17,13 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsDashboard
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
+import com.yourname.expensetracker.domain.analytics.AnalyticsPeriodRange
 import com.yourname.expensetracker.domain.analytics.AnomalyDetector
 import com.yourname.expensetracker.domain.analytics.CategoryInsightEngine
 import com.yourname.expensetracker.domain.analytics.DayOfWeekAnalyzer
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.MerchantInsightEngine
 import com.yourname.expensetracker.domain.analytics.MonthlyComparisonCalculator
-import com.yourname.expensetracker.domain.analytics.PeriodRange
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
@@ -61,6 +66,10 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
 
         val budgetRepository = mockk<BudgetRepository>(relaxed = true)
         coEvery { budgetRepository.getActiveBudgets() } returns emptyList()
+        coEvery { budgetRepository.getActiveBudgetSnapshots() } returns emptyList()
+        val currencySettingsRepository = TestCurrencySettingsRepository()
+        val currencyConverter = testCurrencyConverter()
+        val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(currencyConverter)
 
         spendingPaceCalculator = SpendingPaceCalculator(timeProvider)
         insightsEngine = InsightsEngine(
@@ -79,6 +88,8 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
             expenseRepository = repository,
             categoryRepository = categoryRepository,
             budgetRepository = budgetRepository,
+            currencySettingsRepository = currencySettingsRepository,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             timeProvider = timeProvider,
             defaultDispatcher = Dispatchers.Unconfined,
             ioDispatcher = Dispatchers.Unconfined
@@ -88,6 +99,8 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
             expenseDao = expenseDao,
             expenseRepository = repository,
             categoryRepository = categoryRepository,
+            currencySettingsRepository = currencySettingsRepository,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             timeProvider = timeProvider
         )
 
@@ -115,11 +128,11 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
 
         val repoTotal = repository.getTotalForPeriod(marchStart, aprilStart)
         val insightsTotal = insightsEngine
-            .generateInsights(testCategories, dataset)
+            .generateInsights(testCategories.toAnalyticsCategoryRefs(), dataset.toExpenseSnapshots(), "EUR")
             .monthlyComparison
             .currentTotal
         val advancedTotal = advancedAnalyticsEngine
-            .getCategoryAnalytics(PeriodRange(AnalyticsPeriod.MONTH, marchStart, aprilStart, "Mar 2026", null))
+            .getCategoryAnalytics(AnalyticsPeriodRange(AnalyticsPeriod.MONTH, marchStart, aprilStart, "Mar 2026", null))
             .sumOf { it.totalSpent }
         val dashboardTotal = dashboardEngine.generateDashboardData(marchStart, aprilStart).totalSpent
 
@@ -136,7 +149,7 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
 
         mockExpensesByRange(dataset)
 
-        val period = PeriodRange(AnalyticsPeriod.WEEK, start, end, "Mar 2-8", null)
+        val period = AnalyticsPeriodRange(AnalyticsPeriod.WEEK, start, end, "Mar 2-8", null)
         val advancedAvg = advancedAnalyticsEngine.getStatisticalInsights(period).averageDailySpend
         val repoTotal = repository.getTotalForPeriod(start, end)
         val periodDays = ((end - start) / TimePeriodUtils.DAY_IN_MILLIS).toInt()
@@ -161,7 +174,7 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
         val repoTotals = repository.getCategoryTotalsForPeriod(marchStart, aprilStart)
             .associate { it.categoryId to it.total }
 
-        val insightTotals = insightsEngine.generateInsights(testCategories, dataset)
+        val insightTotals = insightsEngine.generateInsights(testCategories.toAnalyticsCategoryRefs(), dataset.toExpenseSnapshots(), "EUR")
             .categoryInsights
             .associate { it.category.id to it.currentTotal }
 
@@ -188,12 +201,13 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
         mockExpensesByRange(dataset)
         io.mockk.every { timeProvider.now() } returns march15
 
-        val insightsPace = insightsEngine.generateInsights(testCategories, dataset).spendingPace.pacePercentage
+        val insightsPace = insightsEngine.generateInsights(testCategories.toAnalyticsCategoryRefs(), dataset.toExpenseSnapshots(), "EUR").spendingPace.pacePercentage
         val calculatorPace = spendingPaceCalculator.calculate(
             currentMonthStart = marchStart,
             previousMonthStart = februaryStart,
             previousMonthEnd = marchStart,
-            allExpenses = dataset
+            allExpenses = dataset.toExpenseSnapshots(),
+            displayCurrency = "EUR"
         ).pacePercentage
 
         // Canonical definition:
@@ -218,12 +232,13 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
         mockExpensesByRange(dataset)
         io.mockk.every { timeProvider.now() } returns march15
 
-        val insightsPace = insightsEngine.generateInsights(testCategories, dataset).spendingPace
+        val insightsPace = insightsEngine.generateInsights(testCategories.toAnalyticsCategoryRefs(), dataset.toExpenseSnapshots(), "EUR").spendingPace
         val calculatorPace = spendingPaceCalculator.calculate(
             currentMonthStart = marchStart,
             previousMonthStart = februaryStart,
             previousMonthEnd = marchStart,
-            allExpenses = dataset
+            allExpenses = dataset.toExpenseSnapshots(),
+            displayCurrency = "EUR"
         )
 
         assertEquals(0f, insightsPace.pacePercentage)
@@ -243,7 +258,7 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
         val repoCount = repository.getExpensesBetween(marchStart, aprilStart).size
 
         val advancedCount = advancedAnalyticsEngine
-            .getStatisticalInsights(PeriodRange(AnalyticsPeriod.MONTH, marchStart, aprilStart, "Mar 2026", null))
+            .getStatisticalInsights(AnalyticsPeriodRange(AnalyticsPeriod.MONTH, marchStart, aprilStart, "Mar 2026", null))
             .histogramBins
             .sumOf { it.count }
 

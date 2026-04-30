@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.e2e
 
 import com.yourname.expensetracker.TEST_CATEGORIES
+import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -31,6 +32,8 @@ import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsViewModel
+import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.testCurrencyConverter
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -85,6 +88,9 @@ internal fun buildPipeline(
     val travelDetectionEngine = mockk<TravelDetectionEngine>(relaxed = true)
 
     val timeProvider = FakeTimeProvider(nowMs)
+    val currencySettingsRepository = TestCurrencySettingsRepository()
+    val currencyConverter = testCurrencyConverter()
+    val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(currencyConverter)
 
     stubDao(expenseDao, expenses)
 
@@ -116,7 +122,7 @@ internal fun buildPipeline(
         transferDirectionAnalytics = transferDirectionAnalytics
     )
 
-    val analyticsRepository = AnalyticsRepository(expenseDao, categoryRepository)
+    val analyticsRepository = AnalyticsRepository(expenseDao, categoryRepository, currencySettingsRepository)
     val spendingPersonalityClassifier = mockk<SpendingPersonalityClassifier>(relaxed = true)
 
     val insightsEngine = InsightsEngine(
@@ -135,6 +141,8 @@ internal fun buildPipeline(
         expenseRepository = expenseRepository,
         categoryRepository = categoryRepository,
         budgetRepository = budgetRepository,
+        currencySettingsRepository = currencySettingsRepository,
+        analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
         timeProvider = timeProvider,
         defaultDispatcher = Dispatchers.Unconfined,
         ioDispatcher = Dispatchers.Unconfined
@@ -148,11 +156,14 @@ internal fun buildPipeline(
         recurringExpenseEngine = recurringExpenseEngine,
         analyticsRepository = analyticsRepository,
         advancedAnalyticsEngine = advancedAnalyticsEngine,
+        analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
         locationInsightsEngine = locationInsightsEngine,
         areaSpendingEngine = areaSpendingEngine,
         travelDetectionEngine = travelDetectionEngine,
         spendingPersonalityClassifier = spendingPersonalityClassifier,
-        timeProvider = timeProvider
+        timeProvider = timeProvider,
+        currencyConverter = currencyConverter,
+        currencySettingsRepository = currencySettingsRepository
     )
 
     return FlowPipeline(

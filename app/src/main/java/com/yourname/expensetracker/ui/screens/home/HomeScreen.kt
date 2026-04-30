@@ -486,7 +486,7 @@ fun HomeScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                    StatLabel(stringResource(R.string.widget_today), CurrencyFormatter.format(widget.todaySpent, homeCurrency), modifier = Modifier.weight(1f))
+                    StatLabel(stringResource(R.string.widget_today), CurrencyFormatter.formatMoney(widget.todaySpent, homeCurrency), modifier = Modifier.weight(1f))
                     StatLabel(stringResource(R.string.widget_week), CurrencyFormatter.format(widget.weekSpent, homeCurrency), modifier = Modifier.weight(1f))
                     StatLabel(stringResource(R.string.widget_month), CurrencyFormatter.format(widget.monthSpent, homeCurrency), modifier = Modifier.weight(1f))
                                     }
@@ -697,7 +697,6 @@ fun HomeScreen(
                 is DashboardWidget.MoneyRadar -> {
                     com.yourname.expensetracker.ui.components.dashboard.MoneyRadarWidget(
                         data = widget.data,
-                        homeCurrency = homeCurrency,
                         onActionClick = { action ->
                                         when (action) {
                                             is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.ViewBills -> {

@@ -27,7 +27,8 @@ class MerchantInsightEngineTest {
                 createExpense("2026-03-18", 52.10, merchant = "Lidl", category = "groceries", id = 9L),
                 createExpense("2026-03-30", 500.00, type = TransactionType.DEPOSIT, merchant = "Bonus", id = 14L),
                 createExpense("2026-03-31", 999.0, effectiveAmount = 0.0, merchant = "Other Person", isNotMine = true, id = 15L)
-            ).map { it.toSnapshot() }
+            ).map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertEquals("Rent Co", insights[0].merchant)
@@ -49,7 +50,8 @@ class MerchantInsightEngineTest {
                 createExpense("2026-03-18", 52.10, merchant = "Lidl", category = "groceries", id = 9L),
                 createExpense("2026-03-12", 24.50, merchant = "Restaurant A", category = "dining", id = 6L),
                 createExpense("2026-03-25", 17.50, merchant = "Restaurant A", category = "dining", id = 12L)
-            ).map { it.toSnapshot() }
+            ).map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         val lidl = insights.find { it.merchant == "Lidl" }
@@ -76,7 +78,8 @@ class MerchantInsightEngineTest {
 
                 createExpense("2026-03-03", 14.0, merchant = "Coffee Shop", id = 7L),
                 createExpense("2026-03-10", 14.0, merchant = "Coffee Shop", id = 8L)
-            ).map { it.toSnapshot() }
+            ).map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         val netflix = insights.find { it.merchant.equals("NETFLIX", ignoreCase = true) }
@@ -105,7 +108,8 @@ class MerchantInsightEngineTest {
                 createExpense("2026-03-01", 10.00, merchant = "NETFLIX", id = 1L),
                 createExpense("2026-03-08", 10.40, merchant = "Netflix", id = 2L),
                 createExpense("2026-03-15", 9.80, merchant = "netflix", id = 3L)
-            ).map { it.toSnapshot() }
+            ).map { it.toSnapshot() },
+            displayCurrency = "EUR"
         )
 
         assertEquals(1, insights.size)

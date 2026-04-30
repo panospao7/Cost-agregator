@@ -319,9 +319,71 @@ FinancialWeatherRepository
 
 ---
 
+### Multi-Currency Architecture (May 2026)
+
+A 7-phase refactoring (~70 files) introduced type-safe money primitives and wired currency-aware aggregation into all 10+ financial pipelines.
+
+#### New `domain/core/money/` Package
+
+| Type | File | Purpose |
+|------|------|---------|
+| `CurrencyCode` | `domain/core/money/CurrencyCode.kt` | Type-safe ISO 4217 wrapper (inline value class). Replaces raw `String` currency codes. |
+| `MoneyAmount` | `domain/core/money/MoneyAmount.kt` | Amount + currency pair. Prevents mixed-currency arithmetic via `require()` in `plus()`/`minus()`. |
+| `ConvertedMoney` | `domain/core/money/ConvertedMoney.kt` | Full conversion trace: original + converted + rate + timestamp + `ConversionStatus`. |
+| `MoneyBucket` | `domain/core/money/MoneyBucket.kt` | Per-currency subtotal (currency, amount, transaction count). Used before conversion. |
+| `MoneyAggregate` | `domain/core/money/MoneyAggregate.kt` | **Primary aggregation return type.** Replaces raw `Double`. Contains display amount, source buckets, conversion failures, `isPartial` flag. |
+| `ConversionFailure` | `domain/core/money/ConversionFailure.kt` | Records failed conversions with `FailureReason` (MISSING_RATE, INVALID_AMOUNT, RATE_STALE, UNKNOWN). |
+| `CurrencyAssumption` | `domain/core/money/CurrencyAssumption.kt` | Enum: `UNKNOWN`, `ASSUMED_HOME_CURRENCY`, `ASSUMED_LEGACY_EUR`, `USER_CONFIRMED`, `PARSED_FROM_SOURCE`. Prevents silent EUR defaults. |
+| `MoneyMappers` | `domain/core/money/MoneyMappers.kt` | Bridge from legacy `ConversionResult`/`FailedConversion` → new `ConvertedMoney`/`ConversionFailure`. |
+| `MoneyFormatUtils` | `domain/core/money/MoneyFormatUtils.kt` | `MoneyAmount` extension functions (`formatMoney()`, `formatMoneyCompact()`, `formatMoneyWithSign()`) delegating to `CurrencyFormatter`. |
+
+#### `MultiCurrencyRepository` — Canonical Aggregation Backbone
+
+**File:** `data/repository/MultiCurrencyRepository.kt`
+
+The central aggregation bridge. Data flow:
+
+```
+ExpenseDao (DAO)
+    │ getAllSpentBetweenByCurrency(startDate, endDate)
+    ▼
+List<CurrencyTotal>  ← per-currency grouped SQL (not raw mixed sum)
+    │
+    ▼
+CurrencyConverter.convertMultiple(amounts, homeCurrency)
+    │
+    ▼
+MoneyAggregate  ← displayAmount, sourceBuckets, conversionFailures, isPartial
+    │
+    ▼
+UI (HomeScreen, BudgetScreen, AnalyticsScreen, etc.)
+```
+
+Key methods: `getTotalExpensesInHomeCurrency()`, `getHomeCurrencyCategoryTotals()`, `getHomeCurrencyDailyHistory()`, `getMerchantTotalsInHomeCurrency()`.
+
+Wired into 10+ pipelines: Dashboard, Budget, Analytics, Forecast, Health, Savings, Groups, Export, AI/Query, Anomaly.
+
+#### `AnalyticsCurrencyNormalizer`
+
+**File:** `domain/analytics/AnalyticsCurrencyNormalizer.kt`
+
+Per-expense home-currency normalization used by analytics engines. Converts a list of `Expense` entities into `AnalyticsNormalizationResult` with per-currency buckets, converted amounts, and failure tracking. All analytics, forecasting, health, and savings engines normalize through this component before performing aggregation.
+
+#### Design Decisions
+
+1. **Safe defaults:** `CurrencyCode.parseOr()` falls back to a caller-provided default (not implicit EUR).
+2. **Currency assumption tracking:** `CurrencyAssumption` enum on every money-bearing entity records *why* a currency was assigned (legacy default, home currency, user-confirmed, parsed).
+3. **Partial aggregate handling:** `MoneyAggregate.isPartial = true` when some currencies could not be converted. UI must display a warning.
+4. **Deprecated unsafe paths:** 22+ `ExpenseDao` methods marked `@Deprecated("Use MultiCurrencyRepository for currency-aware aggregation")`.
+5. **Deprecated formatter overloads:** `CurrencyFormatter.format(amount)` — defaults to EUR silently; replaced by `formatMoney(amount, currencyCode)`.
+6. **DAOs remain raw grouped by currency:** Safe helpers like `getAllSpentBetweenByCurrency()` return `List<CurrencyTotal>` — the conversion happens in the repository.
+7. **History rate support:** `ExchangeRate` added `validDate` column; `Expense` added `baseAmount`, `baseCurrency`, `exchangeRateUsed` for stable historical reporting.
+
+---
+
 ## Database Schema
 
-### Version: v92
+### Version: v92 (post multi-currency migration)
 
 The Room schema in v92 is limited to the table families actually declared in `AppDatabase.kt`:
 

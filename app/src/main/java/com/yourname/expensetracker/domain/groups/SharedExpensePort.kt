@@ -9,7 +9,8 @@ data class SharedExpenseGroup(
     val id: Long = 0,
     val name: String,
     val description: String? = null,
-    val defaultCurrency: String = "EUR",
+    /** ISO 4217 currency code. All expenses in this group MUST use this currency. Callers MUST supply the actual currency. */
+    val defaultCurrency: String,
     val isActive: Boolean = true,
     val createdAt: Long = 0L, // sentinel — callers MUST supply an explicit boundary timestamp
     val createdBy: String = "me"
@@ -48,7 +49,8 @@ data class SharedGroupExpense(
     val date: Long,
     val description: String,
     val totalAmount: Double,
-    val currency: String = "EUR",
+    /** MUST match the group's defaultCurrency. Callers MUST supply the actual currency. */
+    val currency: String,
     val splitType: GroupSplitType = GroupSplitType.EQUAL,
     val customSplitsSerialized: String? = null,
     val isReimbursable: Boolean = false,

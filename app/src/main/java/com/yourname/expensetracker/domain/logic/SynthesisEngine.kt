@@ -384,6 +384,9 @@ class SynthesisEngine @Inject constructor(
 
             val dailyTarget = baseDiscretionaryRate + recurringOnDay + plannedOnDay
             val actualFromHistory = dailySpending.getOrNull(day - 1)?.toDouble()
+            // SAFE: Callers (ComputeDashboardWidgetsUseCase) must normalize expenses via
+            // AnalyticsCurrencyNormalizer before invoking SynthesisEngine.
+            // If adding a new caller, normalize first.
             val actualFromExpenses = expensesByDay[day]?.sumOf { it.effectiveAmount }
             // Fallback to per-day expense aggregation when daily history is unavailable.
             val actual = actualFromHistory ?: actualFromExpenses

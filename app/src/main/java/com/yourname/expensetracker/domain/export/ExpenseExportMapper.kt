@@ -17,7 +17,9 @@ object ExpenseExportMapper {
             categoryId = expense.categoryId,
             currency = expense.currency,
             transactionType = expense.transactionType,
-            sourceAccountName = expense.paymentMethod.toExportSourceAccountName()
+            sourceAccountName = expense.paymentMethod.toExportSourceAccountName(),
+            originalCurrency = expense.currency,
+            originalAmount = expense.amount
         )
     }
 }

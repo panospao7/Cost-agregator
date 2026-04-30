@@ -243,7 +243,7 @@ private fun ChallengesUnavailableCard(
 private fun ActiveChallengeCard(
     challenge: SpendingChallenge,
     modifier: Modifier = Modifier,
-    homeCurrency: String = "EUR"
+    homeCurrency: String
 ) {
     Card(modifier = modifier) {
         Column(
@@ -321,7 +321,7 @@ private fun formatChallengeTargetText(
 }
 
 @Composable
-private fun NoSpendStreakCard(status: NoSpendStatus?, homeCurrency: String = "EUR") {
+private fun NoSpendStreakCard(status: NoSpendStatus?, homeCurrency: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(

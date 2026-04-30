@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.toAnalyticsCategoryRefs
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
@@ -141,7 +142,7 @@ class InsightsEngineValidationTest {
         
         // When: Generate insights
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, emptyList())
+        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
         
         // Then: Percentage change should be 20%
         assertNotNull(snapshot.monthlyComparison.changePercentage)
@@ -169,7 +170,7 @@ class InsightsEngineValidationTest {
         
         // When: Generate insights
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, emptyList())
+        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
         
         // Then: No percentage change (no previous data)
         assertNull(snapshot.monthlyComparison.changePercentage)
@@ -193,7 +194,7 @@ class InsightsEngineValidationTest {
         
         // When: Generate insights
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, emptyList())
+        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
         
         // Then: Percentage change should be -20%
         assertNotNull(snapshot.monthlyComparison.changePercentage)
@@ -224,7 +225,7 @@ class InsightsEngineValidationTest {
         
         // When: Generate insights
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, expenses)
+        val snapshot = engine.generateInsights(categories, expenses, "EUR")
         
         // Then: Average transaction size should be (5 + 15 + 50 + 150 + 500) / 5 = 144
         assertEquals(144.0, snapshot.averageTransactionSize, 0.01)
@@ -247,7 +248,7 @@ class InsightsEngineValidationTest {
         
         // When: Generate insights
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, expenses)
+        val snapshot = engine.generateInsights(categories, expenses, "EUR")
         
         // Then: Should only consider purchases (100, 200, 150)
         // Average: (100 + 200 + 150) / 3 = 150
@@ -270,7 +271,7 @@ class InsightsEngineValidationTest {
         
         // When: Generate insights
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, expenses)
+        val snapshot = engine.generateInsights(categories, expenses, "EUR")
         
         // Then: Should only consider mine (100, 150)
         // Average: (100 + 150) / 2 = 125
@@ -324,7 +325,7 @@ class InsightsEngineValidationTest {
         
         // When: Generate insights
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, currentExpenses)
+        val snapshot = engine.generateInsights(categories, currentExpenses, "EUR")
         
         // Then: Projected total should be 1500 (500 * 30 / 10)
         assertEquals(1500.0, snapshot.spendingPace.projectedTotal, 0.01)
@@ -363,7 +364,7 @@ class InsightsEngineValidationTest {
         
         // When: Generate insights
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, currentExpenses)
+        val snapshot = engine.generateInsights(categories, currentExpenses, "EUR")
         
         // Then: Projected total should use conservative estimate (900, not 3000)
         assertEquals(900.0, snapshot.spendingPace.projectedTotal, 0.01)
@@ -392,7 +393,7 @@ class InsightsEngineValidationTest {
         )
 
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, expenses)
+        val snapshot = engine.generateInsights(categories, expenses, "EUR")
 
         verify(exactly = 1) {
             spendingPaceCalculator.calculate(any(), any(), any(), expenses)
@@ -424,7 +425,7 @@ class InsightsEngineValidationTest {
         
         // When: Generate insights
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, expenses)
+        val snapshot = engine.generateInsights(categories, expenses, "EUR")
         
         // Then: Day of week pattern should have correct totals
         val mondayInsight = snapshot.dayOfWeekPattern.find { it.dayName == "Mon" }
@@ -475,7 +476,7 @@ class InsightsEngineValidationTest {
             cat(id = 3, name = "Entertainment", icon = "ent", color = "#0000FF")
         )
         
-        val snapshot = engine.generateInsights(categories, emptyList())
+        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
         
         // Then: Percentages should be calculated correctly
         val foodInsight = snapshot.categoryInsights.find { it.category.id == 1L }
@@ -520,7 +521,7 @@ class InsightsEngineValidationTest {
         // When: Generate insights
         val categories = listOf(cat(id = 1, name = "Food", icon = "food", color = "#FF0000"))
         
-        val snapshot = engine.generateInsights(categories, emptyList())
+        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
         
         // Then: Change from previous should be 50% increase
         val foodInsight = snapshot.categoryInsights.find { it.category.id == 1L }

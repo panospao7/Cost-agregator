@@ -21,6 +21,9 @@ import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.data.repository.DeleteGroupMemberResult
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupDetailsAggregate
@@ -310,6 +313,11 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
 
         val sharedExpenseManager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, testDispatcher)
 
+        val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
+        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
+
         val budgetRepository = BudgetRepository(
             budgetDao = budgetDao,
             categoryDao = categoryDao,
@@ -322,7 +330,9 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
                 sharedExpenseManager = sharedExpenseManager,
                 timeProvider = timeProvider
             ),
-            timeBoundaryTicker = com.yourname.expensetracker.domain.util.TimeBoundaryTicker(timeProvider)
+            timeBoundaryTicker = com.yourname.expensetracker.domain.util.TimeBoundaryTicker(timeProvider),
+            currencyConverter = currencyConverter,
+            currencySettingsRepository = currencySettingsRepository
         )
 
         val savingsGoalDao = mockk<SavingsGoalDao>(relaxed = true)
@@ -364,7 +374,9 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             savingsGoalRepository = savingsGoalRepository,
             recurringExpenseEngine = recurringExpenseEngine,
             healthScoreHistoryDao = mockk<HealthScoreHistoryDao>(relaxed = true),
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository
         )
 
         val synthesisEngine = SynthesisEngine(timeProvider)
@@ -382,7 +394,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             synthesisEngine = synthesisEngine,
             monteCarloSimulator = monteCarloSimulator,
             timeProvider = timeProvider,
-            healthCalculator = FinancialHealthCalculator(timeProvider),
+            healthCalculator = FinancialHealthCalculator(timeProvider, analyticsCurrencyNormalizer, currencySettingsRepository),
             healthScoreV2 = healthScoreV2,
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,

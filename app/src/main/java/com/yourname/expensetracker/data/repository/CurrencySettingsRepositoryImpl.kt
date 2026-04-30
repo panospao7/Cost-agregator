@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -27,8 +28,11 @@ class CurrencySettingsRepositoryImpl @Inject constructor(
     companion object {
         private val HOME_CURRENCY_KEY = stringPreferencesKey("home_currency")
         private val LAST_RATE_UPDATE_KEY = longPreferencesKey("last_rate_update")
-        
+        private val EMERGENCY_BUFFER_KEY = doublePreferencesKey("emergency_buffer")
+
         private const val DEFAULT_CURRENCY = "EUR"
+        // Note: 500.0 is in home currency units
+        private const val DEFAULT_EMERGENCY_BUFFER_FALLBACK = 500.0
     }
     
     override fun homeCurrency(): Flow<String> = 
@@ -61,6 +65,17 @@ class CurrencySettingsRepositoryImpl @Inject constructor(
         return (now - lastUpdate) > thresholdMs
     }
     
+    override fun emergencyBuffer(): Flow<Double> =
+        context.currencyDataStore.data.map { prefs ->
+            prefs[EMERGENCY_BUFFER_KEY] ?: DEFAULT_EMERGENCY_BUFFER_FALLBACK
+        }
+
+    override suspend fun setEmergencyBuffer(amount: Double) {
+        context.currencyDataStore.edit { prefs ->
+            prefs[EMERGENCY_BUFFER_KEY] = amount
+        }
+    }
+
     override suspend fun clear() {
         context.currencyDataStore.edit { prefs ->
             prefs.clear()

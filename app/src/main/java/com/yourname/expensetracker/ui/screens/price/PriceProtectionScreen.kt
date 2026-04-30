@@ -25,12 +25,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.price.PriceProtectionTracker
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import kotlinx.coroutines.launch
-import java.text.NumberFormat
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,6 +42,7 @@ fun PriceProtectionScreen(
     val protectedItems by viewModel.protectedItems.collectAsState()
     val excludedTrackingKeys by viewModel.excludedTrackingKeys.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -102,9 +102,10 @@ fun PriceProtectionScreen(
             }
             
             when (selectedTab) {
-                0 -> PriceDropsTab(
+                0 ->                 PriceDropsTab(
                     priceDrops = priceDrops,
                     isLoading = isLoading,
+                    homeCurrency = homeCurrency,
                     onRefresh = { viewModel.refreshPriceDrops() },
                     onFileClaim = { url ->
                         val launched = openExternalUrl(context, url)
@@ -118,6 +119,7 @@ fun PriceProtectionScreen(
                 1 -> ProtectedItemsTab(
                     items = protectedItems,
                     isLoading = isLoading,
+                    homeCurrency = homeCurrency,
                     isTracked = { item ->
                         val key = "${item.receiptId}:${item.itemName.lowercase()}:${item.purchaseDate}"
                         key !in excludedTrackingKeys
@@ -143,7 +145,8 @@ fun PriceProtectionScreen(
                 )
                 2 -> DealsTab(
                     viewModel = viewModel,
-                    isLoading = isLoading
+                    isLoading = isLoading,
+                    homeCurrency = homeCurrency
                 )
             }
         }
@@ -154,10 +157,10 @@ fun PriceProtectionScreen(
 fun PriceDropsTab(
     priceDrops: List<PriceProtectionTracker.PriceDropAlert>,
     isLoading: Boolean,
+    homeCurrency: String,
     onRefresh: () -> Unit,
     onFileClaim: (String) -> Unit
 ) {
-    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     
     if (isLoading) {
         Box(
@@ -194,7 +197,7 @@ fun PriceDropsTab(
                         )
                         
                         Text(
-                            text = numberFormat.format(totalSavings),
+                            text = CurrencyFormatter.format(totalSavings, homeCurrency),
                             style = MaterialTheme.typography.headlineLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -212,7 +215,8 @@ fun PriceDropsTab(
             items(priceDrops) { alert ->
                 PriceDropCard(
                     alert = alert,
-                    onFileClaim = onFileClaim
+                    onFileClaim = onFileClaim,
+                    homeCurrency = homeCurrency
                 )
             }
         }
@@ -222,9 +226,9 @@ fun PriceDropsTab(
 @Composable
 fun PriceDropCard(
     alert: PriceProtectionTracker.PriceDropAlert,
-    onFileClaim: (String) -> Unit
+    onFileClaim: (String) -> Unit,
+    homeCurrency: String
 ) {
-    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     val dateFormatter = DateTimeFormatter.ofPattern("MMM dd")
     
     Card(
@@ -270,7 +274,7 @@ fun PriceDropCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = numberFormat.format(alert.item.purchasePrice),
+                        text = CurrencyFormatter.format(alert.item.purchasePrice, homeCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
                     )
@@ -289,7 +293,7 @@ fun PriceDropCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = numberFormat.format(alert.currentPrice),
+                        text = CurrencyFormatter.format(alert.currentPrice, homeCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.tertiary
                     )
@@ -302,7 +306,7 @@ fun PriceDropCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = numberFormat.format(alert.priceDrop),
+                        text = CurrencyFormatter.format(alert.priceDrop, homeCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
@@ -374,6 +378,7 @@ fun PriceDropCard(
 fun ProtectedItemsTab(
     items: List<PriceProtectionTracker.PriceProtectedItem>,
     isLoading: Boolean,
+    homeCurrency: String,
     isTracked: (PriceProtectionTracker.PriceProtectedItem) -> Boolean,
     onTrackItem: (PriceProtectionTracker.PriceProtectedItem) -> Unit,
     onRemoveFromTracking: (PriceProtectionTracker.PriceProtectedItem) -> Unit
@@ -425,6 +430,7 @@ fun ProtectedItemsTab(
             items(items) { item ->
                 ProtectedItemCard(
                     item = item,
+                    homeCurrency = homeCurrency,
                     isTracked = isTracked(item),
                     onTrackItem = { onTrackItem(item) },
                     onRemoveFromTracking = { pendingRemoval = item }
@@ -463,11 +469,11 @@ fun ProtectedItemsTab(
 @Composable
 fun ProtectedItemCard(
     item: PriceProtectionTracker.PriceProtectedItem,
+    homeCurrency: String,
     isTracked: Boolean,
     onTrackItem: () -> Unit,
     onRemoveFromTracking: () -> Unit
 ) {
-    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     val dateFormatter = DateTimeFormatter.ofPattern("MMM dd, yyyy")
     val purchaseDate = Instant.ofEpochMilli(item.purchaseDate)
         .atZone(ZoneId.systemDefault())
@@ -519,7 +525,7 @@ fun ProtectedItemCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = stringResource(R.string.price_price_label, numberFormat.format(item.purchasePrice)),
+                    text = stringResource(R.string.price_price_label, CurrencyFormatter.format(item.purchasePrice, homeCurrency)),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
@@ -575,7 +581,8 @@ fun ProtectedItemCard(
 @Composable
 fun DealsTab(
     viewModel: PriceProtectionViewModel,
-    isLoading: Boolean
+    isLoading: Boolean,
+    homeCurrency: String
 ) {
     val deals by viewModel.deals.collectAsState()
     val coupons by viewModel.coupons.collectAsState()
@@ -605,7 +612,7 @@ fun DealsTab(
                 }
                 
                 items(deals) { deal ->
-                    DealCard(deal = deal)
+                    DealCard(deal = deal, homeCurrency = homeCurrency)
                 }
             }
             
@@ -635,7 +642,7 @@ fun DealsTab(
                 }
                 
                 items(benefits) { benefit ->
-                    CreditCardBenefitCard(benefit = benefit)
+                    CreditCardBenefitCard(benefit = benefit, homeCurrency = homeCurrency)
                 }
             }
             
@@ -649,8 +656,7 @@ fun DealsTab(
 }
 
 @Composable
-fun DealCard(deal: PriceProtectionTracker.DealAlternative) {
-    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+fun DealCard(deal: PriceProtectionTracker.DealAlternative, homeCurrency: String) {
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -673,7 +679,7 @@ fun DealCard(deal: PriceProtectionTracker.DealAlternative) {
             ) {
                 Column {
                     Text(
-                        text = stringResource(R.string.price_current_label, numberFormat.format(deal.originalPrice)),
+                        text = stringResource(R.string.price_current_label, CurrencyFormatter.format(deal.originalPrice, homeCurrency)),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
@@ -700,7 +706,7 @@ fun DealCard(deal: PriceProtectionTracker.DealAlternative) {
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = stringResource(R.string.price_save_at_merchant, numberFormat.format(deal.savings), deal.betterMerchant),
+                text = stringResource(R.string.price_save_at_merchant, CurrencyFormatter.format(deal.savings, homeCurrency), deal.betterMerchant),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -749,8 +755,7 @@ fun CouponCard(coupon: PriceProtectionTracker.CouponMatch) {
 }
 
 @Composable
-fun CreditCardBenefitCard(benefit: PriceProtectionTracker.CreditCardBenefit) {
-    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
+fun CreditCardBenefitCard(benefit: PriceProtectionTracker.CreditCardBenefit, homeCurrency: String) {
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -799,7 +804,7 @@ fun CreditCardBenefitCard(benefit: PriceProtectionTracker.CreditCardBenefit) {
             }
             
             Text(
-                text = stringResource(R.string.price_plus_value_format, numberFormat.format(benefit.estimatedValue)),
+                text = stringResource(R.string.price_plus_value_format, CurrencyFormatter.format(benefit.estimatedValue, homeCurrency)),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary

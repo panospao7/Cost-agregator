@@ -3,6 +3,8 @@ package com.yourname.expensetracker.e2e
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.createExpense
+import com.yourname.expensetracker.toAnalyticsCategoryRefs
+import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.MerchantStats
@@ -92,7 +94,7 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
         val allExpenses = goldenMarchAndFebruaryExpenses()
         stubAnalyticsDao(allExpenses)
 
-        val snapshot = insightsEngine.generateInsights(analyticsCategories, allExpenses)
+        val snapshot = insightsEngine.generateInsights(analyticsCategories.toAnalyticsCategoryRefs(), allExpenses.toExpenseSnapshots(), "EUR")
 
         assertApproxEquals(1283.59, snapshot.monthlyComparison.currentTotal, 0.01)
         assertApproxEquals(1058.00, snapshot.monthlyComparison.previousTotal ?: 0.0, 0.01)
@@ -106,7 +108,7 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
         val allExpenses = goldenMarchAndFebruaryExpenses()
         stubAnalyticsDao(allExpenses)
 
-        val snapshot = insightsEngine.generateInsights(analyticsCategories, allExpenses)
+        val snapshot = insightsEngine.generateInsights(analyticsCategories.toAnalyticsCategoryRefs(), allExpenses.toExpenseSnapshots(), "EUR")
         val byCategoryId = snapshot.categoryInsights.associateBy { it.category.id }
 
         val groceries = byCategoryId.getValue(2L)
@@ -125,7 +127,7 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
         val allExpenses = goldenMarchAndFebruaryExpenses()
         stubAnalyticsDao(allExpenses)
 
-        val snapshot = insightsEngine.generateInsights(analyticsCategories, allExpenses)
+        val snapshot = insightsEngine.generateInsights(analyticsCategories.toAnalyticsCategoryRefs(), allExpenses.toExpenseSnapshots(), "EUR")
         val pace = snapshot.spendingPace
 
         assertApproxEquals(991.79, pace.currentMonthSpent, 0.01)
@@ -141,7 +143,7 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
         val allExpenses = goldenMarchAndFebruaryExpenses()
         stubAnalyticsDao(allExpenses)
 
-        val snapshot = insightsEngine.generateInsights(analyticsCategories, allExpenses)
+        val snapshot = insightsEngine.generateInsights(analyticsCategories.toAnalyticsCategoryRefs(), allExpenses.toExpenseSnapshots(), "EUR")
 
         assertTrue(snapshot.anomalies.isEmpty())
     }
@@ -190,7 +192,7 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
         )
         coEvery { expenseDao.getLargestExpenseForMerchant(merchantKey, any(), any()) } returns outlier
 
-        val snapshot = insightsEngine.generateInsights(analyticsCategories, allExpenses)
+        val snapshot = insightsEngine.generateInsights(analyticsCategories.toAnalyticsCategoryRefs(), allExpenses.toExpenseSnapshots(), "EUR")
         val detected = snapshot.anomalies.firstOrNull { it.expense.id == outlier.id }
 
         assertTrue(detected != null)

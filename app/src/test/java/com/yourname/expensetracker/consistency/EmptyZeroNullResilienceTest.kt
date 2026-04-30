@@ -15,8 +15,10 @@ import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.ExchangeRateStore
 import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.domain.groups.MemberBalance
@@ -68,6 +70,9 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
         recurringExpenseEngine = mockk()
         healthScoreHistoryDao = mockk(relaxed = true)
         exchangeRateStore = mockk(relaxed = true)
+        val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
+        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
 
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
@@ -85,7 +90,9 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
             savingsGoalRepository = savingsGoalRepository,
             recurringExpenseEngine = recurringExpenseEngine,
             healthScoreHistoryDao = healthScoreHistoryDao,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository
         )
 
         currencyConverter = CurrencyConverter(exchangeRateStore)
@@ -201,7 +208,8 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
             currentMonthStart = currentMonthStart,
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = emptyList()
+            allExpenses = emptyList(),
+            displayCurrency = "EUR"
         )
 
         // FinancialHealthScoreV2: no income + no expenses

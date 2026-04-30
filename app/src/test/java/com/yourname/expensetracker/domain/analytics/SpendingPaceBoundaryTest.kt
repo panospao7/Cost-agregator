@@ -38,28 +38,32 @@ class SpendingPaceBoundaryTest {
             currentMonthStart = currentMonthStart,
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = listOf(previous, expense(id = 2L, date = ms(2026, 4, 2), amount = 675.0))
+            allExpenses = listOf(previous, expense(id = 2L, date = ms(2026, 4, 2), amount = 675.0)),
+            displayCurrency = "EUR"
         )
 
         val at110 = calculator.calculate(
             currentMonthStart = currentMonthStart,
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = listOf(previous, expense(id = 3L, date = ms(2026, 4, 3), amount = 825.0))
+            allExpenses = listOf(previous, expense(id = 3L, date = ms(2026, 4, 3), amount = 825.0)),
+            displayCurrency = "EUR"
         )
 
         val below90 = calculator.calculate(
             currentMonthStart = currentMonthStart,
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = listOf(previous, expense(id = 4L, date = ms(2026, 4, 4), amount = 674.925))
+            allExpenses = listOf(previous, expense(id = 4L, date = ms(2026, 4, 4), amount = 674.925)),
+            displayCurrency = "EUR"
         )
 
         val above110 = calculator.calculate(
             currentMonthStart = currentMonthStart,
             previousMonthStart = previousMonthStart,
             previousMonthEnd = previousMonthEnd,
-            allExpenses = listOf(previous, expense(id = 5L, date = ms(2026, 4, 5), amount = 825.075))
+            allExpenses = listOf(previous, expense(id = 5L, date = ms(2026, 4, 5), amount = 825.075)),
+            displayCurrency = "EUR"
         )
 
         assertApproxEquals(90f, at90.pacePercentage, 0.001f)
@@ -87,7 +91,8 @@ class SpendingPaceBoundaryTest {
             allExpenses = listOf(
                 expense(id = 10L, date = ms(2026, 2, 10), amount = 100.0),
                 expense(id = 11L, date = ms(2026, 3, 1), amount = 800.0)
-            )
+            ),
+            displayCurrency = "EUR"
         )
 
         assertApproxEquals(800.0, result.currentMonthSpent, 0.01)
@@ -109,7 +114,8 @@ class SpendingPaceBoundaryTest {
             allExpenses = listOf(
                 expense(id = 20L, date = ms(2026, 3, 2), amount = 300.0),
                 expense(id = 21L, date = ms(2026, 3, 10), amount = 200.0)
-            )
+            ),
+            displayCurrency = "EUR"
         )
 
         assertApproxEquals(0f, result.pacePercentage, 0.001f)
@@ -131,7 +137,8 @@ class SpendingPaceBoundaryTest {
             allExpenses = listOf(
                 expense(id = 30L, date = ms(2026, 2, 10), amount = 100.0),
                 expense(id = 31L, date = ms(2026, 3, 3), amount = 22.5)
-            )
+            ),
+            displayCurrency = "EUR"
         )
 
         assertApproxEquals(90.0f, result.pacePercentage, 0.01f)

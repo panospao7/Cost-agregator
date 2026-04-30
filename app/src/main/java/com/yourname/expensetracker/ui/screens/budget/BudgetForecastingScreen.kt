@@ -27,10 +27,9 @@ import com.yourname.expensetracker.data.database.entity.BudgetForecast
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.domain.budget.BudgetRecommendation
 import com.yourname.expensetracker.domain.budget.RecommendationPriority
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.theme.SemanticColors
-import java.text.NumberFormat
-import java.util.Locale
 import kotlin.math.max
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -41,6 +40,7 @@ fun BudgetForecastingScreen(
     viewModel: BudgetForecastingViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
     
     // Generate forecast on first load
     LaunchedEffect(budget) {
@@ -110,6 +110,7 @@ fun BudgetForecastingScreen(
                         budget = uiState.budget!!,
                         forecast = uiState.forecast!!,
                         recommendations = uiState.recommendations,
+                        homeCurrency = homeCurrency,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -126,6 +127,7 @@ private fun ForecastContent(
     budget: Budget,
     forecast: BudgetForecast,
     recommendations: List<BudgetRecommendation>,
+    homeCurrency: String,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -139,7 +141,7 @@ private fun ForecastContent(
         
         // Forecast Details Card
         item {
-            ForecastDetailsCard(budget = budget, forecast = forecast)
+            ForecastDetailsCard(budget = budget, forecast = forecast, homeCurrency = homeCurrency)
         }
         
         // Confidence Score Card
@@ -160,7 +162,7 @@ private fun ForecastContent(
             }
             
             items(recommendations) { recommendation ->
-                RecommendationCard(recommendation = recommendation)
+                RecommendationCard(recommendation = recommendation, homeCurrency = homeCurrency)
             }
         }
     }
@@ -232,8 +234,7 @@ private fun RiskLevelCard(forecast: BudgetForecast) {
 }
 
 @Composable
-private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast) {
-    val currencyFormatter = NumberFormat.getCurrencyInstance(Locale.getDefault())
+private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast, homeCurrency: String) {
     val (lowForecast, baseForecast, highForecast) = remember(forecast.predictedSpending, forecast.confidenceScore) {
         calculateForecastBounds(
             predictedSpending = forecast.predictedSpending,
@@ -265,7 +266,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast) {
             // Budget Amount
             DetailRow(
                 label = stringResource(R.string.budget_forecast_limit_label),
-                value = currencyFormatter.format(budget.amount),
+                value = CurrencyFormatter.format(budget.amount, homeCurrency),
                 icon = Icons.Default.AccountBalanceWallet
             )
             
@@ -274,7 +275,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast) {
             // Predicted Spending
             DetailRow(
                 label = stringResource(R.string.budget_forecast_predicted_spending),
-                value = currencyFormatter.format(forecast.predictedSpending),
+                value = CurrencyFormatter.format(forecast.predictedSpending, homeCurrency),
                 icon = Icons.Default.TrendingUp,
                 valueColor = if (forecast.predictedSpending > budget.amount) 
                     SemanticColors.DangerRed else SemanticColors.TextPrimary
@@ -285,7 +286,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast) {
             // Predicted Remaining
             DetailRow(
                 label = stringResource(R.string.budget_forecast_predicted_remaining),
-                value = currencyFormatter.format(forecast.predictedRemaining),
+                value = CurrencyFormatter.format(forecast.predictedRemaining, homeCurrency),
                 icon = if (forecast.predictedRemaining >= 0) 
                     Icons.Default.Savings else Icons.Default.Warning,
                 valueColor = when {
@@ -303,7 +304,7 @@ private fun ForecastDetailsCard(budget: Budget, forecast: BudgetForecast) {
                 baseForecast = baseForecast,
                 highForecast = highForecast,
                 confidenceScore = forecast.confidenceScore,
-                currencyFormatter = currencyFormatter
+                homeCurrency = homeCurrency
             )
         }
     }
@@ -316,7 +317,7 @@ private fun ConfidenceIntervalSection(
     baseForecast: Double,
     highForecast: Double,
     confidenceScore: Double,
-    currencyFormatter: NumberFormat
+    homeCurrency: String
 ) {
     Text(
         text = "Forecast range (low / base / high)",
@@ -332,21 +333,21 @@ private fun ConfidenceIntervalSection(
         amount = lowForecast,
         budgetAmount = budgetAmount,
         color = SemanticColors.StatusGreen,
-        currencyFormatter = currencyFormatter
+        homeCurrency = homeCurrency
     )
     RangeRow(
         label = "Base",
         amount = baseForecast,
         budgetAmount = budgetAmount,
         color = SemanticColors.PrimaryIndigo,
-        currencyFormatter = currencyFormatter
+        homeCurrency = homeCurrency
     )
     RangeRow(
         label = "High",
         amount = highForecast,
         budgetAmount = budgetAmount,
         color = SemanticColors.StatusRed,
-        currencyFormatter = currencyFormatter
+        homeCurrency = homeCurrency
     )
 
     Spacer(modifier = Modifier.height(8.dp))
@@ -365,7 +366,7 @@ private fun RangeRow(
     amount: Double,
     budgetAmount: Double,
     color: Color,
-    currencyFormatter: NumberFormat
+    homeCurrency: String
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -379,7 +380,7 @@ private fun RangeRow(
                 color = SemanticColors.TextSecondary
             )
             Text(
-                text = currencyFormatter.format(amount),
+                text = CurrencyFormatter.format(amount, homeCurrency),
                 style = MaterialTheme.typography.bodySmall,
                 color = SemanticColors.TextPrimary,
                 fontWeight = FontWeight.Medium
@@ -535,7 +536,7 @@ private fun ConfidenceCard(forecast: BudgetForecast) {
 }
 
 @Composable
-private fun RecommendationCard(recommendation: BudgetRecommendation) {
+private fun RecommendationCard(recommendation: BudgetRecommendation, homeCurrency: String) {
     val priorityColor = when (recommendation.priority) {
         RecommendationPriority.CRITICAL -> SemanticColors.StatusDarkRed
         RecommendationPriority.HIGH -> SemanticColors.StatusRed
@@ -602,10 +603,8 @@ private fun RecommendationCard(recommendation: BudgetRecommendation) {
             recommendation.potentialSavings?.let { savings ->
                 Spacer(modifier = Modifier.height(8.dp))
                 
-                val currencyFormatter = NumberFormat.getCurrencyInstance(Locale.getDefault())
-                
                 Text(
-                    text = stringResource(R.string.budget_forecast_potential_savings_format, currencyFormatter.format(savings)),
+                    text = stringResource(R.string.budget_forecast_potential_savings_format, CurrencyFormatter.format(savings, homeCurrency)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = SemanticColors.StatusGreen,
                     fontWeight = FontWeight.SemiBold

@@ -44,6 +44,10 @@ data class AnomalyAlert(
     @ColumnInfo(name = "amount")
     val amount: Double,
 
+    @ColumnInfo(defaultValue = "'EUR'") val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "0.0") val baseAmount: Double? = null,
+    @ColumnInfo(defaultValue = "'EUR'") val baseCurrency: String? = null,
+
     @ColumnInfo(name = "anomalyReason")
     val anomalyReason: String,
 

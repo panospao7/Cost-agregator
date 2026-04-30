@@ -3,6 +3,8 @@ package com.yourname.expensetracker.e2e
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.createExpense
 import com.yourname.expensetracker.dateToMillis
+import com.yourname.expensetracker.toAnalyticsCategoryRefs
+import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -29,7 +31,7 @@ class MonthlyTotalFlowTest : ViewModelTestUtils() {
         val daoTotal = pipeline.expenseDao.getTotalForPeriod(startMs, endMs)
         val repoTotal = pipeline.expenseRepository.getTotalForPeriod(startMs, endMs)
         val engineTotal = pipeline.insightsEngine
-            .generateInsights(com.yourname.expensetracker.TEST_CATEGORIES, expenses)
+            .generateInsights(com.yourname.expensetracker.TEST_CATEGORIES.toAnalyticsCategoryRefs(), expenses.toExpenseSnapshots(), "EUR")
             .monthlyComparison
             .currentTotal
 

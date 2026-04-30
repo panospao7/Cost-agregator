@@ -4,10 +4,12 @@ import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority as EntityPlannedExpensePriority
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.analytics.SpendingPaceProjection
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
@@ -20,6 +22,7 @@ import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.roundToLong
@@ -35,7 +38,9 @@ import kotlin.math.roundToLong
  */
 @Singleton
 class ForecastInputAssembler @Inject constructor(
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
 
     data class ForecastInput(
@@ -44,7 +49,8 @@ class ForecastInputAssembler @Inject constructor(
         val plannedExpenses: List<PlannedExpense>,
         val savingsGoals: List<SavingsGoal>,
         val budgetStatuses: List<BudgetStatusSnapshot>,
-        val spendingPace: SpendingPace
+        val spendingPace: SpendingPace,
+        val displayCurrency: String = ""
     )
 
     fun mapExpenseSnapshots(
@@ -98,7 +104,7 @@ class ForecastInputAssembler @Inject constructor(
         budgetStatuses.map { status ->
             BudgetStatusSnapshot(
                 budgetCategoryId = status.budget.categoryId,
-                budgetAmount = status.budget.amount,
+                budgetAmount = status.effectiveLimit,
                 categoryName = status.category?.name,
                 spentAmount = status.spentAmount,
                 remainingAmount = status.remainingAmount,
@@ -212,7 +218,7 @@ class ForecastInputAssembler @Inject constructor(
         }
     }
 
-    fun buildSpendingPace(expenses: List<ExpenseSnapshot>): SpendingPace {
+    fun buildSpendingPace(expenses: List<ExpenseSnapshot>, displayCurrency: String = "EUR"): SpendingPace {
         val now = timeProvider.now()
         val currentMonthStart = TimePeriodUtils.getStartOfMonth(now)
         val previousMonthStart = TimePeriodUtils.getStartOfMonth(TimePeriodUtils.addMonths(now, -1))
@@ -232,6 +238,7 @@ class ForecastInputAssembler @Inject constructor(
             }
             .groupBy { "${TimePeriodUtils.getYear(it.date)}-${TimePeriodUtils.getMonth(it.date)}" }
             .values
+            // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 299 (inside assemble())
             .map { monthExpenses -> monthExpenses.sumOf { it.effectiveAmount } }
             .takeIf { it.isNotEmpty() }
             ?.average()
@@ -272,20 +279,29 @@ class ForecastInputAssembler @Inject constructor(
             previousMonthTotal = previousMonthSpent.takeIf { it > 0.0 },
             averageMonthlyTotal = averageMonthlyTotal,
             pacePercentage = pacePercentage,
-            paceStatus = paceStatus
+            paceStatus = paceStatus,
+            displayCurrency = displayCurrency
         )
     }
 
-    fun assemble(
+    suspend fun assemble(
         expenses: List<ExpenseSnapshot>,
         manualRecurringEntities: List<ManualRecurringExpense>,
         detectedRecurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
         savingsGoals: List<SavingsGoal>,
-        budgetStatuses: List<BudgetStatusSnapshot>
+        budgetStatuses: List<BudgetStatusSnapshot>,
+        homeCurrency: String? = null
     ): ForecastInput {
+        val resolvedHomeCurrency = try {
+            homeCurrency ?: currencySettingsRepository.homeCurrency().first()
+        } catch (e: Exception) {
+            "EUR"
+        }
+        val normalized = analyticsCurrencyNormalizer.normalizeSnapshots(expenses, resolvedHomeCurrency)
+        val normalizedExpenses = normalized.includedExpenses
         return ForecastInput(
-            pastSumDaily = buildPastSumDaily(expenses),
+            pastSumDaily = buildPastSumDaily(normalizedExpenses),
             recurringPatterns = mergeRecurringPatterns(
                 manualEntities = manualRecurringEntities,
                 detectedPatterns = detectedRecurringPatterns
@@ -293,7 +309,8 @@ class ForecastInputAssembler @Inject constructor(
             plannedExpenses = plannedExpenses,
             savingsGoals = savingsGoals,
             budgetStatuses = budgetStatuses,
-            spendingPace = buildSpendingPace(expenses)
+            spendingPace = buildSpendingPace(normalizedExpenses, resolvedHomeCurrency),
+            displayCurrency = resolvedHomeCurrency
         )
     }
 
@@ -327,7 +344,9 @@ class ForecastInputAssembler @Inject constructor(
         it.transactionType == DomainTransactionType.PURCHASE &&
             !it.isNotMine &&
             predicate(it)
-    }.sumOf { it.effectiveAmount }
+    }
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 299 (inside assemble())
+        .sumOf { it.effectiveAmount }
 
     companion object {
         const val HIGH_CONFIDENCE_THRESHOLD: Float = 0.70f

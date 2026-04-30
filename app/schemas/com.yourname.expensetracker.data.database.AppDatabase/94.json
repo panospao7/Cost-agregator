@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 94,
-    "identityHash": "24a521726a7e6616b55619243d76141d",
+    "identityHash": "86dab879660214b210a1c03a1c13d6b2",
     "entities": [
       {
         "tableName": "raw_notifications",
@@ -155,7 +155,7 @@
       },
       {
         "tableName": "expenses",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `amount` REAL NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `merchant` TEXT NOT NULL, `transactionType` TEXT NOT NULL, `date` INTEGER NOT NULL, `rawNotificationId` INTEGER, `categoryId` INTEGER, `createdAt` INTEGER NOT NULL DEFAULT 0, `paymentMethod` TEXT NOT NULL DEFAULT 'UNKNOWN', `isManualEntry` INTEGER NOT NULL DEFAULT 0, `notes` TEXT, `dedupeKey` TEXT, `transferDirection` TEXT, `transferAccountName` TEXT, `isNotMine` INTEGER NOT NULL DEFAULT 0, `ownerName` TEXT, `isSharedExpense` INTEGER NOT NULL DEFAULT 0, `sharedWithName` TEXT, `mySharePercentage` INTEGER, `myShareAmount` REAL, `latitude` REAL, `longitude` REAL, `locationSource` TEXT, `placeId` TEXT, `backfillAttempts` INTEGER NOT NULL DEFAULT 0, `resolvedAddress` TEXT, `merchantKey` TEXT, `isBusinessExpense` INTEGER NOT NULL DEFAULT 0, `businessPurpose` TEXT, `businessCategory` TEXT, `businessProject` TEXT, `requiresReceipt` INTEGER NOT NULL DEFAULT 0, `splitTemplateId` INTEGER, `splitVisualization` TEXT, FOREIGN KEY(`rawNotificationId`) REFERENCES `raw_notifications`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL , FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL , FOREIGN KEY(`splitTemplateId`) REFERENCES `split_templates`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `amount` REAL NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `merchant` TEXT NOT NULL, `transactionType` TEXT NOT NULL, `date` INTEGER NOT NULL, `rawNotificationId` INTEGER, `categoryId` INTEGER, `createdAt` INTEGER NOT NULL DEFAULT 0, `paymentMethod` TEXT NOT NULL DEFAULT 'UNKNOWN', `isManualEntry` INTEGER NOT NULL DEFAULT 0, `notes` TEXT, `dedupeKey` TEXT, `transferDirection` TEXT, `transferAccountName` TEXT, `isNotMine` INTEGER NOT NULL DEFAULT 0, `ownerName` TEXT, `isSharedExpense` INTEGER NOT NULL DEFAULT 0, `sharedWithName` TEXT, `mySharePercentage` INTEGER, `myShareAmount` REAL, `latitude` REAL, `longitude` REAL, `locationSource` TEXT, `placeId` TEXT, `backfillAttempts` INTEGER NOT NULL DEFAULT 0, `resolvedAddress` TEXT, `merchantKey` TEXT, `isBusinessExpense` INTEGER NOT NULL DEFAULT 0, `businessPurpose` TEXT, `businessCategory` TEXT, `businessProject` TEXT, `requiresReceipt` INTEGER NOT NULL DEFAULT 0, `splitTemplateId` INTEGER, `splitVisualization` TEXT, `baseAmount` REAL NOT NULL DEFAULT 0.0, `baseCurrency` TEXT NOT NULL DEFAULT 'EUR', `exchangeRateUsed` REAL NOT NULL DEFAULT 0.0, FOREIGN KEY(`rawNotificationId`) REFERENCES `raw_notifications`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL , FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL , FOREIGN KEY(`splitTemplateId`) REFERENCES `split_templates`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
         "fields": [
           {
             "fieldPath": "id",
@@ -354,6 +354,27 @@
             "fieldPath": "splitVisualization",
             "columnName": "splitVisualization",
             "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "baseAmount",
+            "columnName": "baseAmount",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0.0"
+          },
+          {
+            "fieldPath": "baseCurrency",
+            "columnName": "baseCurrency",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'EUR'"
+          },
+          {
+            "fieldPath": "exchangeRateUsed",
+            "columnName": "exchangeRateUsed",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0.0"
           }
         ],
         "primaryKey": {
@@ -1536,7 +1557,7 @@
       },
       {
         "tableName": "planned_expenses",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `description` TEXT NOT NULL, `amount` REAL NOT NULL, `date` INTEGER NOT NULL, `categoryId` INTEGER, `isRecurring` INTEGER NOT NULL DEFAULT 0, `priority` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `description` TEXT NOT NULL, `amount` REAL NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `currencyAssumption` TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT', `date` INTEGER NOT NULL, `categoryId` INTEGER, `isRecurring` INTEGER NOT NULL DEFAULT 0, `priority` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
         "fields": [
           {
             "fieldPath": "id",
@@ -1555,6 +1576,20 @@
             "columnName": "amount",
             "affinity": "REAL",
             "notNull": true
+          },
+          {
+            "fieldPath": "currency",
+            "columnName": "currency",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'EUR'"
+          },
+          {
+            "fieldPath": "currencyAssumption",
+            "columnName": "currencyAssumption",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'LEGACY_DEFAULT'"
           },
           {
             "fieldPath": "date",
@@ -1629,7 +1664,7 @@
       },
       {
         "tableName": "savings_goals",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `targetAmount` REAL NOT NULL, `currentAmount` REAL NOT NULL DEFAULT 0.0, `targetDate` INTEGER, `protectionLevel` TEXT NOT NULL, `createdAt` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `targetAmount` REAL NOT NULL, `currentAmount` REAL NOT NULL DEFAULT 0.0, `targetDate` INTEGER, `protectionLevel` TEXT NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `currencyAssumption` TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT', `createdAt` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -1666,6 +1701,20 @@
             "columnName": "protectionLevel",
             "affinity": "TEXT",
             "notNull": true
+          },
+          {
+            "fieldPath": "currency",
+            "columnName": "currency",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'EUR'"
+          },
+          {
+            "fieldPath": "currencyAssumption",
+            "columnName": "currencyAssumption",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'LEGACY_DEFAULT'"
           },
           {
             "fieldPath": "createdAt",
@@ -3377,7 +3426,7 @@
       },
       {
         "tableName": "exchange_rates",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `fromCurrency` TEXT NOT NULL, `toCurrency` TEXT NOT NULL, `rate` REAL NOT NULL, `lastUpdated` INTEGER NOT NULL, `source` TEXT NOT NULL DEFAULT 'manual')",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `fromCurrency` TEXT NOT NULL, `toCurrency` TEXT NOT NULL, `rate` REAL NOT NULL, `lastUpdated` INTEGER NOT NULL, `source` TEXT NOT NULL DEFAULT 'manual', `validDate` INTEGER NOT NULL DEFAULT 0)",
         "fields": [
           {
             "fieldPath": "id",
@@ -3415,6 +3464,13 @@
             "affinity": "TEXT",
             "notNull": true,
             "defaultValue": "'manual'"
+          },
+          {
+            "fieldPath": "validDate",
+            "columnName": "validDate",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
           }
         ],
         "primaryKey": {
@@ -3433,6 +3489,17 @@
             ],
             "orders": [],
             "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_exchange_rates_fromCurrency_toCurrency` ON `${TABLE_NAME}` (`fromCurrency`, `toCurrency`)"
+          },
+          {
+            "name": "index_exchange_rates_fromCurrency_toCurrency_validDate",
+            "unique": false,
+            "columnNames": [
+              "fromCurrency",
+              "toCurrency",
+              "validDate"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_exchange_rates_fromCurrency_toCurrency_validDate` ON `${TABLE_NAME}` (`fromCurrency`, `toCurrency`, `validDate`)"
           },
           {
             "name": "index_exchange_rates_lastUpdated",
@@ -3813,7 +3880,7 @@
       },
       {
         "tableName": "budget_forecasts",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `budgetId` INTEGER NOT NULL, `forecastDate` INTEGER NOT NULL, `targetPeriodStart` INTEGER NOT NULL, `targetPeriodEnd` INTEGER NOT NULL, `predictedSpending` REAL NOT NULL, `predictedRemaining` REAL NOT NULL, `confidenceScore` REAL NOT NULL, `riskLevel` TEXT NOT NULL, `overspendProbability` REAL NOT NULL, `recommendationsJson` TEXT, `actualSpending` REAL, `forecastAccuracy` REAL, `isActive` INTEGER NOT NULL DEFAULT 1, `createdAt` INTEGER NOT NULL, FOREIGN KEY(`budgetId`) REFERENCES `budgets`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `budgetId` INTEGER NOT NULL, `forecastDate` INTEGER NOT NULL, `targetPeriodStart` INTEGER NOT NULL, `targetPeriodEnd` INTEGER NOT NULL, `predictedSpending` REAL NOT NULL, `predictedRemaining` REAL NOT NULL, `confidenceScore` REAL NOT NULL, `riskLevel` TEXT NOT NULL, `overspendProbability` REAL NOT NULL, `recommendationsJson` TEXT, `actualSpending` REAL, `forecastAccuracy` REAL, `currency` TEXT NOT NULL DEFAULT 'EUR', `isActive` INTEGER NOT NULL DEFAULT 1, `createdAt` INTEGER NOT NULL, FOREIGN KEY(`budgetId`) REFERENCES `budgets`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "id",
@@ -3889,6 +3956,13 @@
             "fieldPath": "forecastAccuracy",
             "columnName": "forecastAccuracy",
             "affinity": "REAL"
+          },
+          {
+            "fieldPath": "currency",
+            "columnName": "currency",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'EUR'"
           },
           {
             "fieldPath": "isActive",
@@ -4550,7 +4624,7 @@
       },
       {
         "tableName": "anomaly_alerts",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `expenseId` INTEGER NOT NULL, `merchant` TEXT NOT NULL, `category` TEXT, `amount` REAL NOT NULL, `anomalyReason` TEXT NOT NULL, `severity` TEXT NOT NULL, `alertedAt` INTEGER NOT NULL, `dismissed` INTEGER NOT NULL DEFAULT 0, `dismissedAt` INTEGER, `userFeedback` TEXT, FOREIGN KEY(`expenseId`) REFERENCES `expenses`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `expenseId` INTEGER NOT NULL, `merchant` TEXT NOT NULL, `category` TEXT, `amount` REAL NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `baseAmount` REAL DEFAULT 0.0, `baseCurrency` TEXT DEFAULT 'EUR', `anomalyReason` TEXT NOT NULL, `severity` TEXT NOT NULL, `alertedAt` INTEGER NOT NULL, `dismissed` INTEGER NOT NULL DEFAULT 0, `dismissedAt` INTEGER, `userFeedback` TEXT, FOREIGN KEY(`expenseId`) REFERENCES `expenses`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "id",
@@ -4580,6 +4654,25 @@
             "columnName": "amount",
             "affinity": "REAL",
             "notNull": true
+          },
+          {
+            "fieldPath": "currency",
+            "columnName": "currency",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'EUR'"
+          },
+          {
+            "fieldPath": "baseAmount",
+            "columnName": "baseAmount",
+            "affinity": "REAL",
+            "defaultValue": "0.0"
+          },
+          {
+            "fieldPath": "baseCurrency",
+            "columnName": "baseCurrency",
+            "affinity": "TEXT",
+            "defaultValue": "'EUR'"
           },
           {
             "fieldPath": "anomalyReason",
@@ -4902,7 +4995,7 @@
       },
       {
         "tableName": "savings_sweep_plan",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `goalId` INTEGER NOT NULL, `monthEnd` INTEGER NOT NULL, `totalUnderspend` REAL NOT NULL, `riskBuffer` REAL NOT NULL, `safeSweepAmount` REAL NOT NULL, `allocatedAmount` REAL NOT NULL, `allocationPercentage` REAL NOT NULL, `status` TEXT NOT NULL, `actionedAt` INTEGER, `notes` TEXT, `confidence` REAL NOT NULL, `computedAt` INTEGER NOT NULL, FOREIGN KEY(`goalId`) REFERENCES `savings_goals`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `goalId` INTEGER NOT NULL, `monthEnd` INTEGER NOT NULL, `totalUnderspend` REAL NOT NULL, `riskBuffer` REAL NOT NULL, `safeSweepAmount` REAL NOT NULL, `allocatedAmount` REAL NOT NULL, `allocationPercentage` REAL NOT NULL, `status` TEXT NOT NULL, `actionedAt` INTEGER, `notes` TEXT, `confidence` REAL NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `computedAt` INTEGER NOT NULL, FOREIGN KEY(`goalId`) REFERENCES `savings_goals`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "id",
@@ -4973,6 +5066,13 @@
             "columnName": "confidence",
             "affinity": "REAL",
             "notNull": true
+          },
+          {
+            "fieldPath": "currency",
+            "columnName": "currency",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'EUR'"
           },
           {
             "fieldPath": "computedAt",
@@ -5172,7 +5272,7 @@
       },
       {
         "tableName": "budget_adjustment_recommendations",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `budgetId` INTEGER NOT NULL, `categoryId` INTEGER, `categoryName` TEXT NOT NULL, `currentBudget` REAL NOT NULL, `recommendedBudget` REAL NOT NULL, `delta` REAL NOT NULL, `deltaPercentage` REAL NOT NULL, `reason` TEXT NOT NULL, `confidence` REAL NOT NULL, `trend` TEXT NOT NULL, `status` TEXT NOT NULL, `generatedAt` INTEGER NOT NULL, `expiresAt` INTEGER, `appliedAt` INTEGER, `dismissedAt` INTEGER, FOREIGN KEY(`budgetId`) REFERENCES `budgets`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `budgetId` INTEGER NOT NULL, `categoryId` INTEGER, `categoryName` TEXT NOT NULL, `currentBudget` REAL NOT NULL, `recommendedBudget` REAL NOT NULL, `delta` REAL NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `deltaPercentage` REAL NOT NULL, `reason` TEXT NOT NULL, `confidence` REAL NOT NULL, `trend` TEXT NOT NULL, `status` TEXT NOT NULL, `generatedAt` INTEGER NOT NULL, `expiresAt` INTEGER, `appliedAt` INTEGER, `dismissedAt` INTEGER, FOREIGN KEY(`budgetId`) REFERENCES `budgets`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
         "fields": [
           {
             "fieldPath": "id",
@@ -5214,6 +5314,13 @@
             "columnName": "delta",
             "affinity": "REAL",
             "notNull": true
+          },
+          {
+            "fieldPath": "currency",
+            "columnName": "currency",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'EUR'"
           },
           {
             "fieldPath": "deltaPercentage",
@@ -5571,7 +5678,7 @@
       },
       {
         "tableName": "stress_forecast_snapshots",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `overallRiskLevel` TEXT NOT NULL, `days30ProjectedBalance` REAL NOT NULL, `days30MinBalance` REAL NOT NULL, `days30ProbabilityOfCrunch` REAL NOT NULL, `days30RiskLevel` TEXT NOT NULL, `days30RecurringObligations` REAL NOT NULL, `days30ExpectedIncome` REAL NOT NULL, `days30DiscretionaryBuffer` REAL NOT NULL, `days60ProjectedBalance` REAL NOT NULL, `days60MinBalance` REAL NOT NULL, `days60ProbabilityOfCrunch` REAL NOT NULL, `days60RiskLevel` TEXT NOT NULL, `days60RecurringObligations` REAL NOT NULL, `days60ExpectedIncome` REAL NOT NULL, `days60DiscretionaryBuffer` REAL NOT NULL, `days90ProjectedBalance` REAL NOT NULL, `days90MinBalance` REAL NOT NULL, `days90ProbabilityOfCrunch` REAL NOT NULL, `days90RiskLevel` TEXT NOT NULL, `days90RecurringObligations` REAL NOT NULL, `days90ExpectedIncome` REAL NOT NULL, `days90DiscretionaryBuffer` REAL NOT NULL, `earliestCrunchDate` INTEGER, `recommendationsJson` TEXT, `currentBalance` REAL NOT NULL, `computedAt` INTEGER NOT NULL DEFAULT 0, `isSynced` INTEGER NOT NULL DEFAULT 0)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `overallRiskLevel` TEXT NOT NULL, `days30ProjectedBalance` REAL NOT NULL, `days30MinBalance` REAL NOT NULL, `days30ProbabilityOfCrunch` REAL NOT NULL, `days30RiskLevel` TEXT NOT NULL, `days30RecurringObligations` REAL NOT NULL, `days30ExpectedIncome` REAL NOT NULL, `days30DiscretionaryBuffer` REAL NOT NULL, `days60ProjectedBalance` REAL NOT NULL, `days60MinBalance` REAL NOT NULL, `days60ProbabilityOfCrunch` REAL NOT NULL, `days60RiskLevel` TEXT NOT NULL, `days60RecurringObligations` REAL NOT NULL, `days60ExpectedIncome` REAL NOT NULL, `days60DiscretionaryBuffer` REAL NOT NULL, `days90ProjectedBalance` REAL NOT NULL, `days90MinBalance` REAL NOT NULL, `days90ProbabilityOfCrunch` REAL NOT NULL, `days90RiskLevel` TEXT NOT NULL, `days90RecurringObligations` REAL NOT NULL, `days90ExpectedIncome` REAL NOT NULL, `days90DiscretionaryBuffer` REAL NOT NULL, `earliestCrunchDate` INTEGER, `recommendationsJson` TEXT, `currentBalance` REAL NOT NULL, `computedAt` INTEGER NOT NULL DEFAULT 0, `isSynced` INTEGER NOT NULL DEFAULT 0, `currency` TEXT NOT NULL DEFAULT 'EUR')",
         "fields": [
           {
             "fieldPath": "id",
@@ -5740,6 +5847,13 @@
             "affinity": "INTEGER",
             "notNull": true,
             "defaultValue": "0"
+          },
+          {
+            "fieldPath": "currency",
+            "columnName": "currency",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'EUR'"
           }
         ],
         "primaryKey": {
@@ -5926,7 +6040,7 @@
       },
       {
         "tableName": "spending_challenges",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `type` TEXT NOT NULL, `startDate` INTEGER NOT NULL, `endDate` INTEGER NOT NULL, `targetAmount` REAL, `categoryId` INTEGER, `isActive` INTEGER NOT NULL DEFAULT 1, `baselineAmount` REAL, `baselineStartDate` INTEGER, `baselineEndDate` INTEGER, `createdAt` INTEGER NOT NULL DEFAULT 0, `updatedAt` INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `type` TEXT NOT NULL, `startDate` INTEGER NOT NULL, `endDate` INTEGER NOT NULL, `targetAmount` REAL, `currency` TEXT NOT NULL DEFAULT 'EUR', `categoryId` INTEGER, `isActive` INTEGER NOT NULL DEFAULT 1, `baselineAmount` REAL, `baselineStartDate` INTEGER, `baselineEndDate` INTEGER, `createdAt` INTEGER NOT NULL DEFAULT 0, `updatedAt` INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
         "fields": [
           {
             "fieldPath": "id",
@@ -5962,6 +6076,13 @@
             "fieldPath": "targetAmount",
             "columnName": "targetAmount",
             "affinity": "REAL"
+          },
+          {
+            "fieldPath": "currency",
+            "columnName": "currency",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'EUR'"
           },
           {
             "fieldPath": "categoryId",
@@ -6067,7 +6188,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '24a521726a7e6616b55619243d76141d')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '86dab879660214b210a1c03a1c13d6b2')"
     ]
   }
 }

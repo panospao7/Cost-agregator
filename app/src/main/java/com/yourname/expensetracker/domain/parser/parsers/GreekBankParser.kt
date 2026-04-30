@@ -8,7 +8,6 @@ import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import java.util.regex.Pattern
-import javax.inject.Inject
 
 /**
  * Parser for Greek banking apps (NBG, Alpha, Eurobank, Piraeus).
@@ -16,9 +15,10 @@ import javax.inject.Inject
  * - Χ (Χρέωση) = Debit/Outgoing
  * - Π (Πίστωση) = Credit/Incoming
  */
-class GreekBankParser @Inject constructor(
+class GreekBankParser(
     private val currencyNormalizer: CurrencyNormalizer,
-    private val merchantCleaner: MerchantCleaner
+    private val merchantCleaner: MerchantCleaner,
+    private val homeCurrency: String
 ) : AppNotificationParser {
 
     override val supportedPackages = setOf(
@@ -152,7 +152,7 @@ class GreekBankParser @Inject constructor(
     private fun tryExtract(matcher: java.util.regex.Matcher, fullText: String): ParsedTransaction? {
         // Try to find the amount (could be in group 1 or 2)
         var amountStr: String? = null
-        var currency = "EUR"
+        var currency = homeCurrency
         var merchant = "Unknown"
 
         for (i in 1..matcher.groupCount()) {
@@ -183,7 +183,7 @@ class GreekBankParser @Inject constructor(
 
     private fun tryExtractDeposit(matcher: java.util.regex.Matcher, fullText: String): ParsedTransaction? {
         var amountStr: String? = null
-        var currency = "EUR"
+        var currency = homeCurrency
 
         for (i in 1..matcher.groupCount()) {
             val group = matcher.group(i) ?: continue
@@ -246,7 +246,7 @@ class GreekBankParser @Inject constructor(
 
     private fun tryExtractTransfer(matcher: java.util.regex.Matcher, fullText: String): ParsedTransaction? {
         var amountStr: String? = null
-        var currency = "EUR"
+        var currency = homeCurrency
         var merchant = "Transfer"
 
         for (i in 1..matcher.groupCount()) {

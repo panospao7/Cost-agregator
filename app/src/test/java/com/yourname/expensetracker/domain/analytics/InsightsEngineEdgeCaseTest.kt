@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.toAnalyticsCategoryRefs
+import com.yourname.expensetracker.toExpenseSnapshot
+import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.dao.MerchantStats
 import com.yourname.expensetracker.data.database.entity.Category
@@ -60,7 +63,7 @@ class InsightsEngineEdgeCaseTest {
             Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF")
         )
         
-        val snapshot = engine.generateInsights(categories, emptyList())
+        val snapshot = engine.generateInsights(categories.toAnalyticsCategoryRefs(), emptyList(), "EUR")
         
         assertNotNull("Snapshot should not be null", snapshot)
         assertEquals(0.0, snapshot.monthlyComparison.currentTotal, 0.01)
@@ -76,7 +79,7 @@ class InsightsEngineEdgeCaseTest {
             makeExpense(merchant = "Test", amount = 10.0, daysAgo = 5)
         )
         
-        val snapshot = engine.generateInsights(categories, expenses)
+        val snapshot = engine.generateInsights(categories.toAnalyticsCategoryRefs(), expenses.toExpenseSnapshots(), "EUR")
         
         assertNotNull("Should handle single expense", snapshot)
     }
@@ -111,7 +114,7 @@ class InsightsEngineEdgeCaseTest {
             makeExpense(merchant = "Purchase", amount = 100.0, daysAgo = 0)
         )
         
-        val totals = engine.buildDailyTotals(expenses, 1)
+        val totals = engine.buildDailyTotals(expenses.toExpenseSnapshots(), 1)
         
         val totalSpent = totals.values.sum()
         assertEquals(50.0, totalSpent, 0.01)
@@ -124,7 +127,7 @@ class InsightsEngineEdgeCaseTest {
             makeExpense(merchant = "BigPurchase", amount = largeAmount, daysAgo = 1)
         )
         
-        val totals = engine.buildDailyTotals(expenses, 7)
+        val totals = engine.buildDailyTotals(expenses.toExpenseSnapshots(), 7)
         assertNotNull("Large amounts should not cause crash", totals)
     }
 
@@ -157,8 +160,9 @@ class InsightsEngineEdgeCaseTest {
         coEvery { expenseRepository.getLargestExpenseForMerchant(any(), any(), any()) } returns expense
 
         val snapshot = engine.generateInsights(
-            categories = listOf(Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF")),
-            allExpenses = listOf(expense)
+            categories = listOf(Category(id = 1L, name = "Food", icon = "food", color = "#FFFFFF")).toAnalyticsCategoryRefs(),
+            allExpenses = listOf(expense).toExpenseSnapshots(),
+            displayCurrency = "EUR"
         )
         assertTrue("Zero-average merchants must not generate divide-by-zero anomalies", snapshot.anomalies.isEmpty())
     }

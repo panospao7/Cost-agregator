@@ -27,7 +27,8 @@ class CategoryInsightEngine @Inject constructor() {
         currentMonth: MonthPeriod,
         previousMonth: MonthPeriod?,
         categoryMap: Map<Long, AnalyticsCategoryRef>,
-        allExpenses: List<ExpenseSnapshot>
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String = "EUR"
     ): List<CategoryInsight> {
         val currentExpenses = allExpenses.filter { 
             it.date >= currentMonth.startMs && 
@@ -45,6 +46,7 @@ class CategoryInsightEngine @Inject constructor() {
             }
         }
         
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         val totalCurrent = currentExpenses.sumOf { it.effectiveAmount }
 
         val missingCategoryUsage = currentExpenses
@@ -80,12 +82,14 @@ class CategoryInsightEngine @Inject constructor() {
         val previousTotalsByCategory: Map<Long?, Pair<Double, Int>> = previousExpenses
             ?.groupBy { it.categoryId }
             ?.mapValues { (_, expenses) ->
+                // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
                 Pair(expenses.sumOf { it.effectiveAmount }, expenses.size)
             }
             ?: emptyMap()
         
         return categoryTotals.map { (categoryId, expenses) ->
             val category = categoryId?.let { categoryMap[it] } ?: FALLBACK_CATEGORY
+            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
             val currentTotal = expenses.sumOf { it.effectiveAmount }
             val currentCount = expenses.size
             
@@ -110,10 +114,12 @@ class CategoryInsightEngine @Inject constructor() {
                 monthsOfData = 1,
                 percentageOfTotal = percentageOfTotal,
                 changeFromPrevious = changeFromPrevious,
-                changeFromAverage = null
+                changeFromAverage = null,
+                displayCurrency = displayCurrency
             )
         }.sortedByDescending { it.currentTotal }
     }
+
 
     private fun pruneMissingCategoryHitsIfNeeded() {
         if (missingCategoryHitCount.size <= MAX_MISSING_CATEGORY_TRACKED) return

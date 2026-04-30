@@ -1,13 +1,17 @@
 package com.yourname.expensetracker.domain.groups
 
+import android.util.Log
 import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupsRepository
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.di.IoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -24,6 +28,8 @@ import javax.inject.Singleton
 class SharedExpenseBudgetOffsetEngine @Inject constructor(
     private val groupsRepository: GroupsRepository,
     private val expenseRepository: ExpenseRepository,
+    private val currencyConverter: CurrencyConverter,
+    private val currencySettingsRepository: CurrencySettingsRepository,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     private companion object {
@@ -43,6 +49,10 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
         periodEnd: Long,
         categoryId: Long? = null
     ): BudgetSpendBreakdown = withContext(ioDispatcher) {
+        val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (e: Exception) {
+            android.util.Log.w("BudgetOffset", "Failed to read home currency, defaulting to EUR", e)
+            "EUR"
+        }
         val allPeriodExpenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
         val expenseCategoryMap = allPeriodExpenses.associateBy { it.id }
         val activeGroups = groupsRepository.getActiveGroupsWithDetails()
@@ -73,9 +83,14 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                 (categoryId == null || expense.categoryId == categoryId)
         }
 
-        val totalPersonalSpend = personalExpenses.sumOf { it.effectiveAmount }
-        var totalSharedSpend = 0.0
-        var totalReimbursed = 0.0
+        val personalPairs = personalExpenses.map { Pair(it.effectiveAmount, it.currency) }
+        val personalResult = currencyConverter.convertMultiple(personalPairs, homeCurrency)
+        val totalPersonalSpend = personalResult.total
+        if (personalResult.failedConversions.isNotEmpty()) {
+            android.util.Log.w("BudgetOffset", "Personal spend conversion failures: ${personalResult.failedConversions.size} transactions dropped")
+        }
+        val sharedSpendPairs = mutableListOf<Pair<Double, String>>()
+        val reimbursedPairs = mutableListOf<Pair<Double, String>>()
 
         for (scope in inScopeGroupExpenses) {
             for (groupExpense in scope.expenses) {
@@ -84,17 +99,35 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                         members = scope.members,
                         memberId = scope.currentUserMember.id
                     )) {
-                    totalSharedSpend += SplitCalculator.calculateMemberShare(
+                    val share = SplitCalculator.calculateMemberShare(
                         expense = groupExpense,
                         members = scope.members,
                         memberId = scope.currentUserMember.id
                     )
+                    sharedSpendPairs.add(Pair(share, groupExpense.currency))
                 }
 
                 if (groupExpense.isReimbursable && groupExpense.paidById == scope.currentUserMember.id) {
-                    totalReimbursed += groupExpense.reimbursedAmount.coerceAtLeast(0.0)
+                    val reimb = groupExpense.reimbursedAmount.coerceAtLeast(0.0)
+                    reimbursedPairs.add(Pair(reimb, groupExpense.currency))
                 }
             }
+        }
+
+        val sharedResult = if (sharedSpendPairs.isNotEmpty()) {
+            currencyConverter.convertMultiple(sharedSpendPairs, homeCurrency)
+        } else null
+        val totalSharedSpend = sharedResult?.total ?: 0.0
+        if (sharedResult != null && sharedResult.failedConversions.isNotEmpty()) {
+            android.util.Log.w("BudgetOffset", "Shared spend conversion failures: ${sharedResult.failedConversions.size} transactions dropped")
+        }
+
+        val reimbursedResult = if (reimbursedPairs.isNotEmpty()) {
+            currencyConverter.convertMultiple(reimbursedPairs, homeCurrency)
+        } else null
+        val totalReimbursed = reimbursedResult?.total ?: 0.0
+        if (reimbursedResult != null && reimbursedResult.failedConversions.isNotEmpty()) {
+            android.util.Log.w("BudgetOffset", "Reimbursed conversion failures: ${reimbursedResult.failedConversions.size} transactions dropped")
         }
 
         val netSharedLiability = totalSharedSpend
@@ -105,7 +138,8 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
             totalSharedSpend = totalSharedSpend,
             totalReimbursed = totalReimbursed,
             netSharedLiability = netSharedLiability,
-            effectiveBudgetSpend = effectiveBudgetSpend
+            effectiveBudgetSpend = effectiveBudgetSpend,
+            displayCurrency = homeCurrency
         )
     }
 
@@ -150,7 +184,8 @@ data class BudgetSpendBreakdown(
     val totalSharedSpend: Double,      // Sum of my shares in all shared expenses
     val totalReimbursed: Double,       // Sum of received reimbursements
     val netSharedLiability: Double,      // Accrual liability used for budgeting (equals sharedSpend)
-    val effectiveBudgetSpend: Double     // Personal + sharedSpend (what counts against budget)
+    val effectiveBudgetSpend: Double,     // Personal + sharedSpend (what counts against budget)
+    val displayCurrency: String = "EUR"
 ) {
     /**
      * Returns the amount pending reimbursement (positive = I'm owed money, negative = I owe money)

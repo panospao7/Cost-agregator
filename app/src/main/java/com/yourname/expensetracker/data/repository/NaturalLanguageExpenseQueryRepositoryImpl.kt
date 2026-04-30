@@ -36,6 +36,7 @@ class NaturalLanguageExpenseQueryRepositoryImpl @Inject constructor(
                     id = expense.id,
                     amount = expense.amount,
                     effectiveAmount = expense.effectiveAmount,
+                    currency = expense.currency,
                     merchant = expense.merchant,
                     date = expense.date,
                     categoryId = expense.categoryId

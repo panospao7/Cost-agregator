@@ -110,7 +110,12 @@ data class Expense(
 
     // Enhanced Split Transaction fields (v47)
     val splitTemplateId: Long? = null,  // Reference to SplitTemplate used
-    val splitVisualization: String? = null  // JSON with visual split data (pie chart segments, colors, etc.)
+    val splitVisualization: String? = null,  // JSON with visual split data (pie chart segments, colors, etc.)
+
+    // Historical conversion snapshot fields (D.19) — schema only, not populated yet
+    @ColumnInfo(defaultValue = "0.0") val baseAmount: Double = 0.0,
+    @ColumnInfo(defaultValue = "'EUR'") val baseCurrency: String = "EUR",
+    @ColumnInfo(defaultValue = "0.0") val exchangeRateUsed: Double = 0.0
 ) {
     /**
      * The amount that should be counted toward the user's own spending.

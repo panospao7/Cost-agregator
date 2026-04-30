@@ -2,11 +2,13 @@ package com.yourname.expensetracker.ui.screens.investment
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.investment.InvestmentPerformance
 import com.yourname.expensetracker.domain.investment.InvestmentTracker
 import com.yourname.expensetracker.domain.investment.PortfolioSummary
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -14,8 +16,11 @@ import javax.inject.Inject
 
 @HiltViewModel
 class InvestmentViewModel @Inject constructor(
-    private val investmentTracker: InvestmentTracker
+    private val investmentTracker: InvestmentTracker,
+    currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
+
+    val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
     
     private val _portfolioSummary = MutableStateFlow(
         PortfolioSummary(

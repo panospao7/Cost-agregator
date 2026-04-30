@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Category
@@ -9,6 +10,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
+import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -30,6 +32,8 @@ class AnalyticsStressTest {
         val categoryRepository = mockk<CategoryRepository>(relaxed = true)
         val budgetRepository = mockk<BudgetRepository>(relaxed = true)
         val timeProvider = mockk<TimeProvider>(relaxed = true)
+        val currencySettingsRepository = TestCurrencySettingsRepository()
+        val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer()
 
         val start = ms(2026, 3, 1)
         val end = ms(2026, 4, 1)
@@ -74,6 +78,8 @@ class AnalyticsStressTest {
             expenseRepository = repository,
             categoryRepository = categoryRepository,
             budgetRepository = budgetRepository,
+            currencySettingsRepository = currencySettingsRepository,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             timeProvider = timeProvider,
             defaultDispatcher = Dispatchers.Unconfined,
             ioDispatcher = Dispatchers.Unconfined
@@ -81,7 +87,7 @@ class AnalyticsStressTest {
 
         val startedAt = System.nanoTime()
         val analytics = engine.getCategoryAnalytics(
-            PeriodRange(AnalyticsPeriod.CUSTOM, start, end, "Mar 2026", null)
+            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, start, end, "Mar 2026", null)
         )
         val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
 

@@ -12,7 +12,12 @@ class DayOfWeekAnalyzer @Inject constructor() {
         private val DAY_NAMES = arrayOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
     }
 
-    fun analyze(startDate: Long, endDate: Long, allExpenses: List<ExpenseSnapshot>): List<DayOfWeekInsight> {
+    fun analyze(
+        startDate: Long,
+        endDate: Long,
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String = "EUR"
+    ): List<DayOfWeekInsight> {
         val expenses = allExpenses.filter { 
             it.date >= startDate && 
             it.date < endDate &&
@@ -31,6 +36,7 @@ class DayOfWeekAnalyzer @Inject constructor() {
         // Keep stable chronological weekday order (Mon -> Sun).
         return DAY_NAMES.indices.map { dayIndex ->
             val dayExpenses = byDayOfWeek[dayIndex] ?: emptyList()
+            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
             val total = dayExpenses.sumOf { it.effectiveAmount }
             val count = dayExpenses.size
 
@@ -39,9 +45,11 @@ class DayOfWeekAnalyzer @Inject constructor() {
                 dayIndex = dayIndex,
                 totalSpent = total,
                 transactionCount = count,
-                avgPerTransaction = if (count > 0) total / count else 0.0
+                avgPerTransaction = if (count > 0) total / count else 0.0,
+                displayCurrency = displayCurrency
             )
         }
     }
+
 
 }

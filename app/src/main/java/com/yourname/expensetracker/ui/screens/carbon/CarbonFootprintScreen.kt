@@ -22,9 +22,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.domain.carbon.CarbonFootprintCalculator
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import java.text.NumberFormat
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.ui.components.asString
@@ -73,6 +73,7 @@ fun CarbonFootprintScreen(
     val report by viewModel.report.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
+    val homeCurrency by viewModel.homeCurrency.collectAsState(initial = "")
     val completedActionKeys by actionRegistry.completedActions.collectAsState()
     var selectedPeriod by rememberSaveable { mutableIntStateOf(30) }
     
@@ -203,7 +204,7 @@ fun CarbonFootprintScreen(
                     
                     // Offset option
                     item {
-                        OffsetCard(report = data, onViewOffsetOptions = onViewOffsetOptions)
+                        OffsetCard(report = data, onViewOffsetOptions = onViewOffsetOptions, homeCurrency = homeCurrency)
                     }
                     
                     // Recommendations
@@ -234,7 +235,7 @@ fun CarbonFootprintScreen(
                         }
                         
                         items(data.alternatives) { alternative ->
-                            AlternativeCard(alternative = alternative)
+                            AlternativeCard(alternative = alternative, homeCurrency = homeCurrency)
                         }
                     }
                     }
@@ -597,9 +598,9 @@ fun BenchmarkRow(label: String, comparison: Int, averageValue: Double) {
 @Composable
 fun OffsetCard(
     report: CarbonFootprintCalculator.CarbonFootprintReport,
-    onViewOffsetOptions: () -> Unit
+    onViewOffsetOptions: () -> Unit,
+    homeCurrency: String
 ) {
-    val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -629,7 +630,7 @@ fun OffsetCard(
                 )
                 
                 Text(
-                    text = stringResource(R.string.carbon_offset_format, report.totalEmissionsKg, numberFormat.format(report.offsetCost)),
+                    text = stringResource(R.string.carbon_offset_format, report.totalEmissionsKg, CurrencyFormatter.format(report.offsetCost, homeCurrency)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
                 )
@@ -717,7 +718,7 @@ fun RecommendationCard(recommendation: CarbonFootprintCalculator.SustainabilityR
 }
 
 @Composable
-fun AlternativeCard(alternative: CarbonFootprintCalculator.SustainableAlternative) {
+fun AlternativeCard(alternative: CarbonFootprintCalculator.SustainableAlternative, homeCurrency: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -746,8 +747,6 @@ fun AlternativeCard(alternative: CarbonFootprintCalculator.SustainableAlternativ
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                val numberFormat = NumberFormat.getCurrencyInstance(Locale.getDefault())
-                
                 Text(
                     text = stringResource(R.string.carbon_reduction_format, alternative.co2Reduction),
                     style = MaterialTheme.typography.bodyMedium,
@@ -756,7 +755,7 @@ fun AlternativeCard(alternative: CarbonFootprintCalculator.SustainableAlternativ
                 )
                 
                 Text(
-                    text = stringResource(R.string.carbon_savings_format, numberFormat.format(alternative.costSavings)),
+                    text = stringResource(R.string.carbon_savings_format, CurrencyFormatter.format(alternative.costSavings, homeCurrency)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.tertiary,
                     fontWeight = FontWeight.Medium

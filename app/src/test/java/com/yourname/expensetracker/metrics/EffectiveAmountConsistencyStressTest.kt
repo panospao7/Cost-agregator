@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.metrics
 
+import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.DayOfWeekAnalyzer
@@ -58,7 +59,7 @@ class EffectiveAmountConsistencyStressTest {
         }
 
         val pace = spendingPaceCalculator.calculate(
-            monthStart, prevMonthStart, prevMonthEnd, expenses
+            monthStart, prevMonthStart, prevMonthEnd, expenses.toExpenseSnapshots(), "EUR"
         )
         assertEquals("All not-mine must sum to 0", 0.0, pace.currentMonthSpent, 0.001)
     }
@@ -95,7 +96,7 @@ class EffectiveAmountConsistencyStressTest {
         }
 
         val pace = spendingPaceCalculator.calculate(
-            monthStart, prevMonthStart, prevMonthEnd, expenses
+            monthStart, prevMonthStart, prevMonthEnd, expenses.toExpenseSnapshots(), "EUR"
         )
         assertEquals("Engine sum must match manual effectiveAmount sum", expectedSum, pace.currentMonthSpent, 0.01)
     }
@@ -120,7 +121,7 @@ class EffectiveAmountConsistencyStressTest {
             exp
         }
 
-        val result = monthlyComparisonCalculator.calculate(currentMonth, prevMonth, expenses)
+        val result = monthlyComparisonCalculator.calculate(currentMonth, prevMonth, expenses.toExpenseSnapshots(), "EUR")
         assertEquals("Sum of 1%..100% of 100 each", expectedSum, result.currentTotal, 0.01)
     }
 
@@ -139,7 +140,7 @@ class EffectiveAmountConsistencyStressTest {
             )
         }
 
-        val insights = dayOfWeekAnalyzer.analyze(start, end, expenses)
+        val insights = dayOfWeekAnalyzer.analyze(start, end, expenses.toExpenseSnapshots(), "EUR")
         val total = insights.sumOf { it.totalSpent }
         assertEquals("All 350 x 10 = 3500", 3500.0, total, 0.001)
     }

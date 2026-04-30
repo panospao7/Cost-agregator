@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.metrics
 
+import com.yourname.expensetracker.TestCurrencySettingsRepository
+import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.testCurrencyConverter
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
@@ -37,10 +40,14 @@ class TimePeriodAlignmentTest {
     fun setup() {
         every { timeProvider.now() } returns ts(2024, 5, 15)
         budgetCalculator = BudgetCalculator(timeProvider)
+        val currencySettingsRepository = TestCurrencySettingsRepository()
+        val currencyConverter = testCurrencyConverter()
         advancedAnalyticsEngine = AdvancedAnalyticsEngine(
             mockk(relaxed = true),
             mockk(relaxed = true),
             mockk(relaxed = true),
+            currencySettingsRepository,
+            testAnalyticsCurrencyNormalizer(currencyConverter),
             timeProvider,
             Dispatchers.Unconfined,
             Dispatchers.Unconfined

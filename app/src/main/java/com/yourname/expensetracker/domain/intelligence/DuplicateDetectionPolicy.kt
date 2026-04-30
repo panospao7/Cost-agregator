@@ -28,6 +28,7 @@ object DuplicateDetectionPolicy {
      * Default currency when none is provided.
      * Matches the Room column default on `Expense.currency`.
      */
+    @Deprecated("Use CurrencySettingsRepository.homeCurrency() instead of hardcoded EUR")
     const val DEFAULT_CURRENCY: String = "EUR"
 
     /**

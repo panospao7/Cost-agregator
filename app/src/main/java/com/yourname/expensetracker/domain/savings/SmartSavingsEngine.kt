@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
@@ -45,10 +46,17 @@ class SmartSavingsEngine @Inject constructor(
     private val budgetRepository: BudgetRepository,
     private val budgetCalculator: BudgetCalculator,
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
 ) {
     companion object {
         private const val DAY_IN_MILLIS = 24 * 60 * 60 * 1000L
+
+        // Default weekly/monthly/quarterly safe-save caps in home currency (configurable)
+        private const val DEFAULT_CAP_WEEK = 75.0
+        private const val DEFAULT_CAP_MONTH = 200.0
+        private const val DEFAULT_CAP_QUARTER = 500.0
+        private const val DEFAULT_FALLBACK_MONTHLY_DISCRETIONARY = 500.0
     }
 
     suspend fun calculateSafeToSaveAmount(
@@ -82,7 +90,8 @@ class SmartSavingsEngine @Inject constructor(
 
         val portfolioRecommendation = calculatePortfolioSafeToSaveAmount(
             sampleGoal = incompleteGoals.first(),
-            timeHorizon = timeHorizon
+            timeHorizon = timeHorizon,
+            homeCurrency = homeCurrency
         )
         val allocations = allocateAcrossGoals(incompleteGoals, portfolioRecommendation.safeAmount)
 
@@ -116,14 +125,15 @@ class SmartSavingsEngine @Inject constructor(
 
     private suspend fun calculatePortfolioSafeToSaveAmount(
         sampleGoal: SavingsGoal,
-        timeHorizon: TimeHorizon
+        timeHorizon: TimeHorizon,
+        homeCurrency: String
     ): SavingsRecommendation {
         val now = timeProvider.now()
         val budgetStatuses = budgetRepository.getBudgetStatuses().first()
 
         val budgetSurplus = calculateBudgetSurplus(budgetStatuses)
-        val spendingPace = analyzeSpendingPace(timeHorizon)
-        val monteCarloResult = runMonteCarloSimulation(sampleGoal, now, timeHorizon)
+        val spendingPace = analyzeSpendingPace(timeHorizon, homeCurrency)
+        val monteCarloResult = runMonteCarloSimulation(sampleGoal, now, timeHorizon, homeCurrency)
         val safeAmount = calculateWeightedSafeAmount(
             budgetSurplus = budgetSurplus,
             spendingPace = spendingPace,
@@ -209,18 +219,20 @@ class SmartSavingsEngine @Inject constructor(
         return remainingGap * urgencyMultiplier
     }
     
-    private suspend fun analyzeSpendingPace(timeHorizon: TimeHorizon): Double {
+    private suspend fun analyzeSpendingPace(timeHorizon: TimeHorizon, homeCurrency: String): Double {
         val now = timeProvider.now()
         val dayOfMonth = TimePeriodUtils.getDayOfMonth(now).coerceAtLeast(1)
         val daysInMonth = TimePeriodUtils.getDaysInMonth(now)
         
-        // Get current month's spending
+        // Get current month's spending (normalized to home currency)
         val monthStart = TimePeriodUtils.getStartOfMonth(now)
         
-        val expenses = expenseRepository.getExpensesBetween(monthStart, now)
+        val rawExpenses = expenseRepository.getExpenseSnapshotsBetween(monthStart, now)
+        val normalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawExpenses, homeCurrency)
+        val expenses = normalized.includedExpenses
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 231
         val totalSpent = expenses
-            .asSequence()
-            .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
+            .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
             .sumOf { it.effectiveAmount }
         
         // Calculate days elapsed and month length
@@ -242,11 +254,12 @@ class SmartSavingsEngine @Inject constructor(
         }
 
         val historyStart = now - (historyDays * 24 * 60 * 60 * 1000)
-        val historyExpenses = expenseRepository.getExpensesBetween(historyStart, now)
-            .asSequence()
-            .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
-            .toList()
+        val rawHistoryExpenses = expenseRepository.getExpenseSnapshotsBetween(historyStart, now)
+        val historyNormalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawHistoryExpenses, homeCurrency)
+        val historyExpenses = historyNormalized.includedExpenses
+            .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
 
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 257
         val totalHistorySpending = historyExpenses.sumOf { it.effectiveAmount }
         val monthlyBaselineSpending = if (historyDays > 0) {
             totalHistorySpending / historyDays.toDouble() * 30.0
@@ -267,25 +280,26 @@ class SmartSavingsEngine @Inject constructor(
     private suspend fun runMonteCarloSimulation(
         _goal: SavingsGoal,
         now: Long,
-        timeHorizon: TimeHorizon
+        timeHorizon: TimeHorizon,
+        homeCurrency: String
     ): Double {
         val simulationConfig = getSimulationConfig(timeHorizon)
         val monthStart = TimePeriodUtils.getStartOfMonth(now)
-        val monthExpenses = expenseRepository.getExpensesBetween(monthStart, now)
-        val monthPurchases = monthExpenses
-            .asSequence()
-            .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
-            .toList()
+        val rawMonthExpenses = expenseRepository.getExpenseSnapshotsBetween(monthStart, now)
+        val monthNormalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawMonthExpenses, homeCurrency)
+        val monthPurchases = monthNormalized.includedExpenses
+            .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 287
         val monthSpentToDate = monthPurchases.sumOf { it.effectiveAmount }
 
         val lookbackStart = now - (simulationConfig.lookbackDays * DAY_IN_MILLIS)
         val categoriesById = categoryRepository.getAll().associateBy { it.id }
-        val historicalPurchases = expenseRepository.getExpensesBetween(lookbackStart, now)
-            .asSequence()
-            .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
-            .toList()
+        val rawHistoricalPurchases = expenseRepository.getExpenseSnapshotsBetween(lookbackStart, now)
+        val historicalNormalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawHistoricalPurchases, homeCurrency)
+        val historicalPurchases = historicalNormalized.includedExpenses
+            .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 295
         val discretionaryHistoricalTotal = historicalPurchases
-            .asSequence()
             .filter {
                 isDiscretionaryCategory(it.categoryId, categoriesById)
             }
@@ -301,6 +315,7 @@ class SmartSavingsEngine @Inject constructor(
             simulationConfig.fallbackMonthlyDiscretionary
         }
 
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 295
         val averageHistoricalDailySpending = if (historicalPurchases.isNotEmpty()) {
             historicalPurchases.sumOf { it.effectiveAmount } / simulationConfig.lookbackDays.toDouble()
         } else {
@@ -315,19 +330,21 @@ class SmartSavingsEngine @Inject constructor(
         )
 
         val projectedHorizonSpending = when (timeHorizon) {
-            TimeHorizon.WEEK -> simulateWeeklyProjectedSpending(now, averageHistoricalDailySpending)
+            TimeHorizon.WEEK -> simulateWeeklyProjectedSpending(now, averageHistoricalDailySpending, homeCurrency)
             TimeHorizon.MONTH -> monthlyResult?.percentile50
                 ?: simulateProjectedSpendingForRange(
                     periodStart = monthStart,
                     periodEnd = TimePeriodUtils.getEndOfMonth(now),
                     now = now,
-                    averageHistoricalDailySpending = averageHistoricalDailySpending
+                    averageHistoricalDailySpending = averageHistoricalDailySpending,
+                    homeCurrency = homeCurrency
                 )
             TimeHorizon.QUARTER -> simulateProjectedSpendingForRange(
                 periodStart = TimePeriodUtils.getStartOfQuarter(now),
                 periodEnd = TimePeriodUtils.getEndOfQuarter(now),
                 now = now,
-                averageHistoricalDailySpending = averageHistoricalDailySpending
+                averageHistoricalDailySpending = averageHistoricalDailySpending,
+                homeCurrency = homeCurrency
             )
         }
 
@@ -353,10 +370,11 @@ class SmartSavingsEngine @Inject constructor(
         timeHorizon: TimeHorizon
     ): Double {
         // Weighted combination adjusted by time horizon
+        // Caps are in home currency (see DEFAULT_CAP_WEEK / _MONTH / _QUARTER)
         val (budgetWeight, paceWeight, monteCarloWeight, cap) = when (timeHorizon) {
-            TimeHorizon.WEEK -> HorizonWeights(0.30, 0.45, 0.25, 75.0)
-            TimeHorizon.MONTH -> HorizonWeights(0.40, 0.30, 0.30, 200.0)
-            TimeHorizon.QUARTER -> HorizonWeights(0.35, 0.20, 0.45, 500.0)
+            TimeHorizon.WEEK -> HorizonWeights(0.30, 0.45, 0.25, DEFAULT_CAP_WEEK)
+            TimeHorizon.MONTH -> HorizonWeights(0.40, 0.30, 0.30, DEFAULT_CAP_MONTH)
+            TimeHorizon.QUARTER -> HorizonWeights(0.35, 0.20, 0.45, DEFAULT_CAP_QUARTER)
         }
 
         val weighted =
@@ -481,32 +499,34 @@ class SmartSavingsEngine @Inject constructor(
                 lookbackDays = 28L,
                 projectedSpendingRiskBufferRatio = 0.30,
                 safeToSaveRatio = 0.20,
-                fallbackMonthlyDiscretionary = 500.0
+                fallbackMonthlyDiscretionary = DEFAULT_FALLBACK_MONTHLY_DISCRETIONARY
             )
             TimeHorizon.MONTH -> HorizonSimulationConfig(
                 lookbackDays = 90L,
                 projectedSpendingRiskBufferRatio = 0.30,
                 safeToSaveRatio = 0.20,
-                fallbackMonthlyDiscretionary = 500.0
+                fallbackMonthlyDiscretionary = DEFAULT_FALLBACK_MONTHLY_DISCRETIONARY
             )
             TimeHorizon.QUARTER -> HorizonSimulationConfig(
                 lookbackDays = 365L,
                 projectedSpendingRiskBufferRatio = 0.30,
                 safeToSaveRatio = 0.20,
-                fallbackMonthlyDiscretionary = 500.0
+                fallbackMonthlyDiscretionary = DEFAULT_FALLBACK_MONTHLY_DISCRETIONARY
             )
         }
     }
 
     private suspend fun simulateWeeklyProjectedSpending(
         now: Long,
-        averageHistoricalDailySpending: Double
+        averageHistoricalDailySpending: Double,
+        homeCurrency: String
     ): Double {
         return simulateProjectedSpendingForRange(
             periodStart = TimePeriodUtils.getStartOfWeek(now),
             periodEnd = TimePeriodUtils.getEndOfWeek(now),
             now = now,
-            averageHistoricalDailySpending = averageHistoricalDailySpending
+            averageHistoricalDailySpending = averageHistoricalDailySpending,
+            homeCurrency = homeCurrency
         )
     }
 
@@ -514,12 +534,14 @@ class SmartSavingsEngine @Inject constructor(
         periodStart: Long,
         periodEnd: Long,
         now: Long,
-        averageHistoricalDailySpending: Double
+        averageHistoricalDailySpending: Double,
+        homeCurrency: String
     ): Double {
-        val purchases = expenseRepository.getExpensesBetween(periodStart, now)
-            .asSequence()
-            .filter { it.transactionType.toDomain() == DomainTransactionType.PURCHASE && !it.isNotMine }
-            .toList()
+        val rawPurchases = expenseRepository.getExpenseSnapshotsBetween(periodStart, now)
+        val purchasesNormalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawPurchases, homeCurrency)
+        val purchases = purchasesNormalized.includedExpenses
+            .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
+        // SAFE: data normalized via AnalyticsCurrencyNormalizer at line 536
         val spentToDate = purchases.sumOf { it.effectiveAmount }
         val remainingDays = ((periodEnd - now).coerceAtLeast(0L)).toDouble() / DAY_IN_MILLIS.toDouble()
         return spentToDate + (averageHistoricalDailySpending * remainingDays)

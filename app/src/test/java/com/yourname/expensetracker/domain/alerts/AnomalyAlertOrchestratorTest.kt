@@ -10,6 +10,10 @@ import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.analytics.AnomalyDetector
 import com.yourname.expensetracker.domain.analytics.AnomalyMethod
 import com.yourname.expensetracker.domain.analytics.AnomalyTransaction
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.service.NotificationService
@@ -37,6 +41,8 @@ class AnomalyAlertOrchestratorTest {
     private val notificationService = mockk<NotificationService>(relaxed = true)
     private val expenseDao = mockk<ExpenseDao>()
     private val anomalyAlertDao = mockk<AnomalyAlertDao>()
+    private val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>()
+    private val currencySettingsRepository = mockk<CurrencySettingsRepository>()
     private val timeProvider = FakeTimeProvider(FIXED_NOW)
 
     private lateinit var orchestrator: AnomalyAlertOrchestrator
@@ -47,9 +53,60 @@ class AnomalyAlertOrchestratorTest {
             anomalyDetector = anomalyDetector,
             notificationService = notificationService,
             expenseDao = expenseDao,
-            anomalyAlertDao = anomalyAlertDao,
+            anomalyAlertRepository = object : AnomalyAlertRepository {
+                override suspend fun getLastAlertForExpense(expenseId: Long): StoredAnomalyAlert? {
+                    return anomalyAlertDao.getLastAlertForExpense(expenseId)?.toStoredAlert()
+                }
+
+                override suspend fun getLastAlertForMerchant(merchant: String, sinceMs: Long): StoredAnomalyAlert? {
+                    return anomalyAlertDao.getLastAlertForMerchant(merchant, sinceMs)?.toStoredAlert()
+                }
+
+                override suspend fun getLastAlertForCategory(category: String, sinceMs: Long): StoredAnomalyAlert? {
+                    return anomalyAlertDao.getLastAlertForCategory(category, sinceMs)?.toStoredAlert()
+                }
+
+                override suspend fun getLooksNormalCountForMerchant(merchant: String): Int {
+                    return anomalyAlertDao.getLooksNormalCountForMerchant(merchant)
+                }
+
+                override suspend fun insert(alert: NewAnomalyAlert): Long {
+                    return anomalyAlertDao.insert(
+                        AnomalyAlert(
+                            expenseId = alert.expenseId,
+                            merchant = alert.merchant,
+                            category = alert.category,
+                            amount = alert.amount,
+                            anomalyReason = alert.anomalyReason,
+                            severity = alert.severity,
+                            alertedAt = alert.alertedAt
+                        )
+                    )
+                }
+            },
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository,
             timeProvider = timeProvider
         )
+
+        every { currencySettingsRepository.homeCurrency() } returns kotlinx.coroutines.flow.flowOf("EUR")
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } answers {
+            val expenses = firstArg<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>()
+            AnalyticsNormalizationResult(
+                homeCurrency = secondArg(),
+                normalizedExpenses = expenses.map {
+                    NormalizedExpenseSnapshot(
+                        snapshot = it,
+                        originalCurrency = it.currency,
+                        originalEffectiveAmount = it.effectiveAmount,
+                        normalizedEffectiveAmount = it.effectiveAmount
+                    )
+                },
+                includedExpenses = expenses,
+                warnings = emptyList(),
+                latestRateTimestamp = null
+            )
+        }
     }
 
     @Test
@@ -59,19 +116,20 @@ class AnomalyAlertOrchestratorTest {
         val duplicateCurrent = expense.expense.copy()
 
         coEvery { expenseDao.getExpensesByCategory(7L, any(), any()) } returns listOf(historical, duplicateCurrent)
-        every { anomalyDetector.detect(any(), any(), any()) } returns emptyList()
+        every { anomalyDetector.detect(any(), any(), any(), any()) } returns emptyList()
 
         orchestrator.checkAndAlert(expense)
 
         val expectedLookback = TimePeriodUtils.addDays(FIXED_NOW, -90)
         coVerify(exactly = 1) { expenseDao.getExpensesByCategory(7L, expectedLookback, FIXED_NOW) }
 
-        val allExpensesSlot = slot<List<Expense>>()
+        val allExpensesSlot = slot<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>()
         verify {
             anomalyDetector.detect(
                 any(),
                 any(),
-                capture(allExpensesSlot)
+                capture(allExpensesSlot),
+                "EUR"
             )
         }
 
@@ -90,7 +148,7 @@ class AnomalyAlertOrchestratorTest {
         val anomaly = anomalyFor(expense.expense, deviation = 6.2f, method = AnomalyMethod.IQR)
 
         coEvery { expenseDao.getExpensesByCategory(eq(3L), any(), any()) } returns emptyList()
-        every { anomalyDetector.detect(any(), any(), any()) } returns listOf(anomaly)
+        every { anomalyDetector.detect(any(), any(), any(), any()) } returns listOf(anomaly)
         coEvery { anomalyAlertDao.getLastAlertForExpense(200L) } returns null
         coEvery { anomalyAlertDao.getLastAlertForMerchant("High Risk Shop", any()) } returns null
         coEvery { anomalyAlertDao.getLastAlertForCategory("Travel", any()) } returns null
@@ -115,7 +173,7 @@ class AnomalyAlertOrchestratorTest {
         assertEquals("HIGH", alertSlot.captured.severity)
         assertEquals(200L, alertSlot.captured.expenseId)
         assertTrue(messageSlot.captured.contains("High Risk Shop"))
-        assertTrue(messageSlot.captured.contains("€"))
+        assertTrue(messageSlot.captured.contains("120.00") || messageSlot.captured.contains("€120.00"))
     }
 
     @Test
@@ -124,7 +182,7 @@ class AnomalyAlertOrchestratorTest {
         val anomaly = anomalyFor(expense.expense, deviation = 7.0f, method = AnomalyMethod.MAD)
 
         coEvery { expenseDao.getExpensesByCategory(eq(1L), any(), any()) } returns emptyList()
-        every { anomalyDetector.detect(any(), any(), any()) } returns listOf(anomaly)
+        every { anomalyDetector.detect(any(), any(), any(), any()) } returns listOf(anomaly)
         coEvery { anomalyAlertDao.getLastAlertForExpense(300L) } returns null
         coEvery { anomalyAlertDao.getLastAlertForMerchant("Cooldown Merchant", any()) } returns previousAlert(merchant = "Cooldown Merchant")
 
@@ -141,7 +199,7 @@ class AnomalyAlertOrchestratorTest {
         val anomaly = anomalyFor(expense.expense, deviation = 5.1f, method = AnomalyMethod.IQR)
 
         coEvery { expenseDao.getExpensesByCategory(eq(2L), any(), any()) } returns emptyList()
-        every { anomalyDetector.detect(any(), any(), any()) } returns listOf(anomaly)
+        every { anomalyDetector.detect(any(), any(), any(), any()) } returns listOf(anomaly)
         coEvery { anomalyAlertDao.getLastAlertForExpense(301L) } returns null
         coEvery { anomalyAlertDao.getLastAlertForMerchant("Shop A", any()) } returns null
         coEvery { anomalyAlertDao.getLastAlertForCategory("Entertainment", any()) } returns previousAlert(merchant = "Other")
@@ -158,7 +216,7 @@ class AnomalyAlertOrchestratorTest {
         val anomaly = anomalyFor(expense.expense, deviation = 8.0f, method = AnomalyMethod.MAD)
 
         coEvery { expenseDao.getExpensesByCategory(eq(6L), any(), any()) } returns emptyList()
-        every { anomalyDetector.detect(any(), any(), any()) } returns listOf(anomaly)
+        every { anomalyDetector.detect(any(), any(), any(), any()) } returns listOf(anomaly)
         coEvery { anomalyAlertDao.getLastAlertForExpense(400L) } returns previousAlert(expenseId = 400L, merchant = "Duplicate Merchant")
 
         orchestrator.checkAndAlert(expense)
@@ -178,7 +236,7 @@ class AnomalyAlertOrchestratorTest {
             historyGate.await()
             emptyList()
         }
-        every { anomalyDetector.detect(any(), any(), any()) } returns listOf(anomaly)
+        every { anomalyDetector.detect(any(), any(), any(), any()) } returns listOf(anomaly)
         coEvery { anomalyAlertDao.getLastAlertForExpense(450L) } returns null
         coEvery { anomalyAlertDao.getLastAlertForMerchant("Single Flight Merchant", any()) } returns null
         coEvery { anomalyAlertDao.getLastAlertForCategory("Shopping", any()) } returns null
@@ -209,7 +267,7 @@ class AnomalyAlertOrchestratorTest {
         val anomaly = anomalyFor(expense.expense, deviation = 4.2f, method = AnomalyMethod.IQR)
 
         coEvery { expenseDao.getExpensesByCategory(eq(9L), any(), any()) } returns emptyList()
-        every { anomalyDetector.detect(any(), any(), any()) } returns listOf(anomaly)
+        every { anomalyDetector.detect(any(), any(), any(), any()) } returns listOf(anomaly)
         coEvery { anomalyAlertDao.getLastAlertForExpense(500L) } returns null
         coEvery { anomalyAlertDao.getLastAlertForMerchant("Trusted Merchant", any()) } returns null
         coEvery { anomalyAlertDao.getLastAlertForCategory("Utilities", any()) } returns null
@@ -226,11 +284,11 @@ class AnomalyAlertOrchestratorTest {
         val expense = expenseWithCategory(id = 600L, merchant = "First Purchase", categoryId = 11L, categoryName = "New Category")
 
         coEvery { expenseDao.getExpensesByCategory(eq(11L), any(), any()) } returns emptyList()
-        every { anomalyDetector.detect(any(), any(), any()) } returns emptyList()
+        every { anomalyDetector.detect(any(), any(), any(), any()) } returns emptyList()
 
         orchestrator.checkAndAlert(expense)
 
-        verify(exactly = 1) { anomalyDetector.detect(any(), any(), any()) }
+        verify(exactly = 1) { anomalyDetector.detect(any(), any(), any(), any()) }
         coVerify(exactly = 0) { anomalyAlertDao.insert(any()) }
         verify(exactly = 0) { notificationService.sendAnomalyAlert(any(), any(), any(), any()) }
     }
@@ -249,12 +307,12 @@ class AnomalyAlertOrchestratorTest {
             category = null
         )
 
-        every { anomalyDetector.detect(any(), any(), any()) } returns emptyList()
+        every { anomalyDetector.detect(any(), any(), any(), any()) } returns emptyList()
 
         orchestrator.checkAndAlert(uncategorized)
 
         coVerify(exactly = 0) { expenseDao.getExpensesByCategory(any(), any(), any()) }
-        verify(exactly = 1) { anomalyDetector.detect(any(), any(), any()) }
+        verify(exactly = 1) { anomalyDetector.detect(any(), any(), any(), any()) }
     }
 
     private fun expenseWithCategory(
@@ -304,7 +362,15 @@ class AnomalyAlertOrchestratorTest {
         deviation: Float,
         method: AnomalyMethod
     ): AnomalyTransaction = AnomalyTransaction(
-        expense = expense,
+        expense = com.yourname.expensetracker.domain.analytics.AnalyticsTransactionSummary(
+            id = expense.id,
+            amount = expense.effectiveAmount,
+            effectiveAmount = expense.effectiveAmount,
+            currency = expense.currency,
+            merchant = expense.merchant,
+            date = expense.date,
+            categoryId = expense.categoryId
+        ),
         merchantAvg = 20.0,
         deviationMultiple = deviation,
         category = null,
@@ -326,6 +392,22 @@ class AnomalyAlertOrchestratorTest {
         severity = "HIGH",
         alertedAt = alertedAt
     )
+
+    private fun AnomalyAlert.toStoredAlert(): StoredAnomalyAlert {
+        return StoredAnomalyAlert(
+            id = id,
+            expenseId = expenseId,
+            merchant = merchant,
+            category = category,
+            amount = amount,
+            anomalyReason = anomalyReason,
+            severity = severity,
+            alertedAt = alertedAt,
+            dismissed = dismissed,
+            dismissedAt = dismissedAt,
+            userFeedback = userFeedback
+        )
+    }
 
     companion object {
         private const val FIXED_NOW = 1_730_000_000_000L

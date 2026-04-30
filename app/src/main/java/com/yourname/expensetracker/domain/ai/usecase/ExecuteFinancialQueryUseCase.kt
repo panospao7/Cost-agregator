@@ -10,15 +10,31 @@ import com.yourname.expensetracker.domain.ai.model.QueryComparison
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.ai.model.QueryOwnershipScope
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.model.UiText
+import kotlinx.coroutines.flow.first
 import java.util.Locale
 import javax.inject.Inject
 
+/**
+ * Executes financial queries from AI-assistant interpretation.
+ *
+ * Currency handling: Per-currency totals are displayed side-by-side (e.g., "50.00 EUR + 100.00 USD")
+ * without conversion to home currency. This is intentional for transparency — the assistant shows
+ * what the user has in each currency. For single-currency users, this is always one line.
+ *
+ * Amount filters (minAmount/maxAmount) operate on raw effectiveAmount — they do not automatically
+ * convert to home currency. Queries like "expenses over $50" filter on the numeric value of
+ * effectiveAmount regardless of currency.
+ */
 class ExecuteFinancialQueryUseCase @Inject constructor(
     private val expenseRepository: ExpenseRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val currencyConverter: CurrencyConverter,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
 
     suspend operator fun invoke(intent: FinancialQueryIntent): FinancialQueryResult {
@@ -66,22 +82,32 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
     ): FinancialQueryResult {
         val categoriesById = categoryRepository.getAll().associateBy { it.id }
         val filtered = assistantFilteredExpenses(intent, period)
-        val rows = filtered.expenses
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        val groups = filtered.expenses
             .filter { it.expense.categoryId != null }
             .groupBy { it.expense.categoryId!! }
             .values
-            .sortedByDescending { grouped -> grouped.sumOf { it.expense.effectiveAmount } }
+        val sorted = groups.map { grouped ->
+            val byCurrency = grouped.groupBy { it.expense.currency }
+                // SAFE: per-currency bucket sum, then convertMultiple — correct multi-currency handling
+                .map { (currency, list) -> list.sumOf { it.expense.effectiveAmount } to currency }
+            val sortKey = if (byCurrency.size == 1) byCurrency.first().first
+            else currencyConverter.convertMultiple(byCurrency, homeCurrency).total
+            grouped to sortKey
+        }.sortedByDescending { it.second }
             .take(8)
-            .map { grouped ->
-                val categoryId = grouped.first().expense.categoryId!!
-                val currencyTotals = grouped.toCurrencyTotals()
-                FinancialQueryResult.Breakdown.Row(
-                    label = categoriesById[categoryId]?.name ?: "Unknown",
-                    amount = currencyTotals.singleOrNull()?.amount,
-                    count = grouped.size,
-                    valueText = formatCurrencyTotals(currencyTotals)
-                )
-            }
+            .map { it.first }
+        val rows = sorted.map { grouped ->
+            val categoryId = grouped.first().expense.categoryId!!
+            val currencyTotals = grouped.toCurrencyTotals()
+            FinancialQueryResult.Breakdown.Row(
+                label = categoriesById[categoryId]?.name ?: "Unknown",
+                amount = currencyTotals.singleOrNull()?.amount,
+                count = grouped.size,
+                valueText = formatCurrencyTotals(currencyTotals)
+            )
+        }
 
         return FinancialQueryResult.Breakdown(
             title = UiText.fromKey("domain_ai_top_categories"),
@@ -95,20 +121,30 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         period: PeriodRange
     ): FinancialQueryResult {
         val filtered = assistantFilteredExpenses(intent, period)
-        val merchantRows = filtered.expenses
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        val groups = filtered.expenses
             .groupBy { it.expense.merchantKey ?: it.expense.merchant }
             .values
-            .sortedByDescending { grouped -> grouped.sumOf { it.expense.effectiveAmount } }
+        val sorted = groups.map { grouped ->
+            val byCurrency = grouped.groupBy { it.expense.currency }
+                // SAFE: per-currency bucket sum, then convertMultiple — correct multi-currency handling
+                .map { (currency, list) -> list.sumOf { it.expense.effectiveAmount } to currency }
+            val sortKey = if (byCurrency.size == 1) byCurrency.first().first
+            else currencyConverter.convertMultiple(byCurrency, homeCurrency).total
+            grouped to sortKey
+        }.sortedByDescending { it.second }
             .take(8)
-            .map { grouped ->
-                val currencyTotals = grouped.toCurrencyTotals()
-                FinancialQueryResult.Breakdown.Row(
-                    label = grouped.minOf { it.expense.merchant },
-                    amount = currencyTotals.singleOrNull()?.amount,
-                    count = grouped.size,
-                    valueText = formatCurrencyTotals(currencyTotals)
-                )
-            }
+            .map { it.first }
+        val merchantRows = sorted.map { grouped ->
+            val currencyTotals = grouped.toCurrencyTotals()
+            FinancialQueryResult.Breakdown.Row(
+                label = grouped.minOf { it.expense.merchant },
+                amount = currencyTotals.singleOrNull()?.amount,
+                count = grouped.size,
+                valueText = formatCurrencyTotals(currencyTotals)
+            )
+        }
 
         return FinancialQueryResult.Breakdown(
             title = UiText.fromKey("domain_ai_top_merchants"),
@@ -230,7 +266,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         formatAmount(expense.effectiveAmount, expense.currency)
 
     private fun formatCurrencyTotals(currencyTotals: List<CurrencyTotal>): String = when {
-        currencyTotals.isEmpty() -> formatAmount(0.0, "EUR")
+        currencyTotals.isEmpty() -> formatAmount(0.0, "N/A")
         currencyTotals.size == 1 -> formatAmount(currencyTotals.first().amount, currencyTotals.first().currency)
         else -> currencyTotals.joinToString(" + ") { total ->
             formatAmount(total.amount, total.currency)
@@ -238,7 +274,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
     }
 
     private fun formatCurrencyAverages(currencyTotals: List<CurrencyTotal>): String = when {
-        currencyTotals.isEmpty() -> formatAmount(0.0, "EUR")
+        currencyTotals.isEmpty() -> formatAmount(0.0, "N/A")
         currencyTotals.size == 1 -> formatAmount(currencyTotals.first().amount / currencyTotals.first().count, currencyTotals.first().currency)
         else -> currencyTotals.joinToString(" • ") { total ->
             "${formatAmount(total.amount / total.count, total.currency)} avg"
@@ -248,13 +284,14 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
     private fun formatAmount(amount: Double, currency: String): String =
         String.format(Locale.US, "%.2f %s", amount, currency.normalizedCurrencyCode())
 
-    private fun String.normalizedCurrencyCode(): String = trim().uppercase(Locale.US).ifBlank { "EUR" }
+    private fun String.normalizedCurrencyCode(): String = trim().uppercase(Locale.US).ifBlank { "UNKNOWN" }
 
     private fun List<ExpenseWithCategory>.toCurrencyTotals(): List<CurrencyTotal> =
         groupBy { it.expense.currency.normalizedCurrencyCode() }
             .map { (currency, expenses) ->
                 CurrencyTotal(
                     currency = currency,
+                    // SAFE: per-currency bucket sum from addExpenseToBucket — correct multi-currency handling
                     amount = expenses.sumOf { it.expense.effectiveAmount },
                     count = expenses.size
                 )

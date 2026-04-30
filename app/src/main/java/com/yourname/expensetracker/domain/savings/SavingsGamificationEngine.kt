@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.savings
 
 import com.yourname.expensetracker.data.repository.SavingsContributionEvent
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.text.UiTextArg
@@ -34,8 +36,16 @@ data class SavingsAchievement(
 class SavingsGamificationEngine @Inject constructor(
     private val savingsGoalRepository: SavingsGoalRepository,
     private val contributionHistoryRepository: SavingsContributionHistoryRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
+    companion object {
+        // Achievement thresholds in home currency
+        private const val CENTURY_SAVER_THRESHOLD = 100.0
+        private const val GRAND_SAVER_THRESHOLD = 1000.0
+        private const val LEVEL_UP_EVERY = 500.0
+    }
     suspend fun calculateStreak(userId: String = "default"): SavingsStreak {
         val contributionMetrics = analyzeContributionHistory()
 
@@ -61,6 +71,7 @@ class SavingsGamificationEngine @Inject constructor(
         
         var totalSaved = 0.0
         for (goal in goals) {
+            // TODO: Convert goal.currentAmount to home currency before summing across goals
             totalSaved += goal.currentAmount
         }
         val goalCount = goals.size
@@ -101,15 +112,15 @@ class SavingsGamificationEngine @Inject constructor(
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_CENTURY_CLUB),
                 description = UiText.fromKey(
                     DomainTextKeys.SAVINGS_ACHIEVEMENT_DESC_SAVE_TOTAL_FORMAT,
-                    UiTextArg.Money(100.0, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
+                    UiTextArg.Money(CENTURY_SAVER_THRESHOLD, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                 ),
                 icon = "💯",
-                isUnlocked = totalSaved >= 100,
-                unlockedAt = if (totalSaved >= 100) totalSavedThresholds[100.0] else null,
-                progress = (totalSaved / 100.0).coerceIn(0.0, 1.0),
+                isUnlocked = totalSaved >= CENTURY_SAVER_THRESHOLD,
+                unlockedAt = if (totalSaved >= CENTURY_SAVER_THRESHOLD) totalSavedThresholds[CENTURY_SAVER_THRESHOLD] else null,
+                progress = (totalSaved / CENTURY_SAVER_THRESHOLD).coerceIn(0.0, 1.0),
                 requirement = UiText.fromKey(
                     DomainTextKeys.SAVINGS_ACHIEVEMENT_REQ_SAVED_FORMAT,
-                    UiTextArg.Money(100.0, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
+                    UiTextArg.Money(CENTURY_SAVER_THRESHOLD, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                 )
             ),
             SavingsAchievement(
@@ -130,23 +141,23 @@ class SavingsGamificationEngine @Inject constructor(
                 title = UiText.fromKey(DomainTextKeys.SAVINGS_GRAND_SAVER),
                 description = UiText.fromKey(
                     DomainTextKeys.SAVINGS_ACHIEVEMENT_DESC_SAVE_TOTAL_FORMAT,
-                    UiTextArg.Money(1000.0, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
+                    UiTextArg.Money(GRAND_SAVER_THRESHOLD, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                 ),
                 icon = "💰",
-                isUnlocked = totalSaved >= 1000,
-                unlockedAt = if (totalSaved >= 1000) totalSavedThresholds[1000.0] else null,
-                progress = (totalSaved / 1000.0).coerceIn(0.0, 1.0),
+                isUnlocked = totalSaved >= GRAND_SAVER_THRESHOLD,
+                unlockedAt = if (totalSaved >= GRAND_SAVER_THRESHOLD) totalSavedThresholds[GRAND_SAVER_THRESHOLD] else null,
+                progress = (totalSaved / GRAND_SAVER_THRESHOLD).coerceIn(0.0, 1.0),
                 requirement = UiText.fromKey(
                     DomainTextKeys.SAVINGS_ACHIEVEMENT_REQ_SAVED_FORMAT,
-                    UiTextArg.Money(1000.0, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
+                    UiTextArg.Money(GRAND_SAVER_THRESHOLD, currency = homeCurrency, currencyAssumption = "ASSUMED_HOME_CURRENCY", showCents = false)
                 )
             )
         )
     }
     
     fun calculateLevel(totalSaved: Double): Int {
-        // Level up every €500 saved
-        return (totalSaved / 500.0).toInt() + 1
+        // Level up every LEVEL_UP_EVERY in home currency
+        return (totalSaved / LEVEL_UP_EVERY).toInt() + 1
     }
     
     fun getLevelTitle(level: Int): String {
@@ -192,7 +203,7 @@ class SavingsGamificationEngine @Inject constructor(
         goals: List<com.yourname.expensetracker.domain.model.SavingsGoal>,
         contributions: List<SavingsContributionEvent>
     ): Map<Double, Long?> {
-        val thresholds = listOf(100.0, 1000.0)
+        val thresholds = listOf(CENTURY_SAVER_THRESHOLD, GRAND_SAVER_THRESHOLD)
         val unlocks = thresholds.associateWith { null as Long? }.toMutableMap()
         var cumulativeSaved = 0.0
 
