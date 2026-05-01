@@ -22,6 +22,10 @@ class NaturalLanguageSearchEngine @Inject constructor(
     
     private val datePatterns = listOf(
         // "last week", "this month", "yesterday", etc.
+        // "last week" / "last month" / "last year"
+        // NOTE: "last month" uses calendar-month semantics (previous calendar month, e.g. March 1–31 when
+        // querying in April), NOT a rolling 30-day window.  This is consistent with "this month" which also
+        // uses calendar boundaries.
         PatternWithExtractor(
             pattern = Regex("last (week|month|year)", RegexOption.IGNORE_CASE),
             extractor = { match ->
@@ -30,11 +34,19 @@ class NaturalLanguageSearchEngine @Inject constructor(
                 val end = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
                 val start = when (unit.lowercase()) {
                     "week" -> end.minusWeeks(1)
-                    "month" -> end.minusMonths(1)
+                    "month" -> {
+                        // Calendar month: start = first day of previous month
+                        end.withDayOfMonth(1).minusMonths(1)
+                    }
                     "year" -> end.minusYears(1)
                     else -> end.minusMonths(1)
                 }
-                DateRange(start, end)
+                val adjustedEnd = when (unit.lowercase()) {
+                    // Calendar month: end = last day of previous month (first of current month minus one day)
+                    "month" -> end.withDayOfMonth(1).minusDays(1)
+                    else -> end
+                }
+                DateRange(start, adjustedEnd)
             }
         ),
         PatternWithExtractor(
@@ -341,7 +353,8 @@ class NaturalLanguageSearchEngine @Inject constructor(
             "yesterday" -> today.minusDays(1)
             "today" -> today
             "last week" -> today.minusWeeks(1)
-            "last month" -> today.minusMonths(1)
+            // Calendar month semantics: first day of previous calendar month
+            "last month" -> today.withDayOfMonth(1).minusMonths(1)
             else -> today
         }
     }

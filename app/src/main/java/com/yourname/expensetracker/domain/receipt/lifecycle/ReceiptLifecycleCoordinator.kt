@@ -11,7 +11,9 @@ import com.yourname.expensetracker.domain.receipt.EmailReceiptData
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -62,8 +64,14 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val timeProvider: TimeProvider,
     private val bankStatementLifecycleProcessor: BankStatementLifecycleProcessor,
     private val sideEffectDispatcher: ReceiptSideEffectDispatcher,
-    private val duplicateDetector: ReceiptDuplicateDetector
+    private val duplicateDetector: ReceiptDuplicateDetector,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
+
+    companion object {
+        /** Last-resort fallback currency when no home currency can be resolved. */
+        private const val FALLBACK_CURRENCY = "EUR"
+    }
 
     /**
      * Processes a receipt input URI through the full lifecycle.
@@ -136,13 +144,58 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 else -> ReceiptProcessingStatus.OCR_COMPLETED.name
             }
 
-            // 5. Update receipt with asset info and lifecycle metadata
+            // ── Post-OCR text + semantic fingerprints ─────────────────────
+            val textFingerprint = if (receipt.rawOcrText.isNotBlank() &&
+                !receipt.rawOcrText.startsWith("Scan Failed") &&
+                !receipt.rawOcrText.startsWith("[OCR Failed")
+            ) {
+                duplicateDetector.computeTextFingerprintPublic(receipt.rawOcrText)
+            } else null
+
+            val semanticFingerprint = if (receipt.parsedMerchant != null && receipt.parsedTotal != null && receipt.parsedDate != null) {
+                duplicateDetector.computeSemanticFingerprintPublic(
+                    receipt.parsedMerchant,
+                    receipt.parsedTotal,
+                    receipt.parsedDate,
+                    receipt.currency
+                )
+            } else null
+
+            // ── Post-OCR dedup check ──────────────────────────────────────
+            val postOcrDup = duplicateDetector.checkDuplicate(
+                imageHash = null,  // already checked pre-OCR
+                textFingerprint = textFingerprint,
+                semanticFingerprint = semanticFingerprint,
+                externalSourceId = null
+            )
+
+            if (postOcrDup.isDuplicate && postOcrDup.matchType != "EXACT_HASH") {
+                // Update current receipt with fingerprints for future dedup
+                val withFingerprints = receipt.copy(
+                    imagePath = receipt.imagePath ?: assetPath,
+                    imageHash = fileHash ?: receipt.imageHash,
+                    sourceType = ReceiptSourceType.CAMERA.name,
+                    documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
+                    processingStatus = processingStatus,
+                    textFingerprint = textFingerprint,
+                    semanticFingerprint = semanticFingerprint,
+                    updatedAt = timeProvider.now()
+                )
+                scannedReceiptDao.update(withFingerprints)
+                // Return existing receipt as duplicate
+                val existing = scannedReceiptDao.getById(postOcrDup.existingReceiptId!!)
+                if (existing != null) return Result.success(existing)
+            }
+
+            // 5. Update receipt with asset info, lifecycle metadata, and fingerprints
             val updated = receipt.copy(
                 imagePath = receipt.imagePath ?: assetPath,
                 imageHash = fileHash ?: receipt.imageHash,
                 sourceType = ReceiptSourceType.CAMERA.name,
                 documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
                 processingStatus = processingStatus,
+                textFingerprint = textFingerprint,
+                semanticFingerprint = semanticFingerprint,
                 updatedAt = timeProvider.now()
             )
             scannedReceiptDao.update(updated)
@@ -196,6 +249,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             Timber.e(e, "processReceipt failed for %s, falling back to manual record", uri)
 
             // OCR/parse failed catastrophically — save manual record
+            val fallbackCurrency = runCatching {
+                currencySettingsRepository.homeCurrency().first()
+            }.getOrDefault(FALLBACK_CURRENCY)
+
             val manualReceipt = ScannedReceipt(
                 imagePath = assetPath,
                 rawOcrText = "[OCR Failed or Skipped]",
@@ -204,7 +261,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 parsedDate = null,
                 parsedItems = null,
                 parsedTaxAmount = null,
-                currency = "EUR",
+                currency = fallbackCurrency,
                 confidence = 0f,
                 sourceType = ReceiptSourceType.CAMERA.name,
                 documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
@@ -245,9 +302,58 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      *         [Result.failure] on error.
      */
     suspend fun processEmailReceipt(emailData: EmailReceiptData): Result<ScannedReceipt> {
-        // TODO: Will be implemented in PR 5
-        Timber.w("processEmailReceipt is not yet implemented (PR 5)")
-        return Result.failure(UnsupportedOperationException("processEmailReceipt will be implemented in PR 5"))
+        // 1. Check message ID dedup via sourceFingerprint
+        if (emailData.messageId.isNotBlank()) {
+            val existing = scannedReceiptDao.getBySourceFingerprint(emailData.messageId)
+            if (existing != null) {
+                return Result.success(existing)
+            }
+        }
+
+        // 2. Build receipt
+        val now = timeProvider.now()
+        val receipt = ScannedReceipt(
+            imagePath = null,  // email receipts have no image
+            rawOcrText = emailData.body,
+            parsedTotal = emailData.amount,
+            parsedMerchant = emailData.merchant,
+            parsedDate = emailData.date,
+            parsedItems = emailData.items,
+            parsedTaxAmount = null,
+            currency = emailData.currency ?: FALLBACK_CURRENCY,
+            confidence = 0.7f,
+            sourceType = ReceiptSourceType.EMAIL.name,
+            documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
+            processingStatus = if (emailData.merchant != null) ReceiptProcessingStatus.PARSED.name
+                               else ReceiptProcessingStatus.CAPTURED.name,
+            sourceFingerprint = emailData.messageId,
+            createdAt = now,
+            updatedAt = now
+        )
+
+        // 3. Save receipt
+        val savedId = scannedReceiptDao.insert(receipt)
+        val saved = receipt.copy(id = savedId)
+
+        // 4. Write event
+        receiptEventDao.insert(ReceiptEvent(
+            receiptId = savedId,
+            sourceType = ReceiptSourceType.EMAIL.name,
+            documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
+            eventType = "RECEIPT_SAVED",
+            occurredAt = now,
+            oldStatus = null,
+            newStatus = saved.processingStatus,
+            actor = "system:email_ingestion",
+            message = "Email receipt saved via lifecycle coordinator",
+            metadata = null,
+            errorDetails = null
+        ))
+
+        // 5. Dispatch side effects
+        sideEffectDispatcher.dispatchAfterSave(saved)
+
+        return Result.success(saved)
     }
 
     /**

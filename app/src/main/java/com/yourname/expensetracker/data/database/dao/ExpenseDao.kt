@@ -10,6 +10,7 @@ import androidx.room.Transaction
 import androidx.room.Update
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategoryName
 import com.yourname.expensetracker.domain.location.MerchantLocationGrid
@@ -781,6 +782,36 @@ AND LENGTH(:merchantKey) >= 8
         currency: String,
         transactionType: String
     ): List<Expense>
+
+    // ── Duplicate resolution queries ────────────────────────────────────────
+
+    /**
+     * Find the ID of an existing expense that matches the given duplicate-criteria fields.
+     * Returns the first matching ID or null if none found.
+     */
+    @Query("""
+        SELECT id FROM expenses
+        WHERE merchantKey = :merchantKey
+          AND ABS(amount - :amount) < 0.01
+          AND ABS(date - :date) < 300000
+          AND currency = :currency
+          AND transactionType = :transactionType
+        LIMIT 1
+    """)
+    suspend fun findDuplicateId(
+        merchantKey: String?,
+        amount: Double,
+        date: Long,
+        currency: String,
+        transactionType: TransactionType
+    ): Long?
+
+    /**
+     * Find the ID of an expense with a matching dedupeKey.
+     * Used for STRICT_EXTERNAL_ID deduplication mode.
+     */
+    @Query("SELECT id FROM expenses WHERE dedupeKey = :dedupeKey LIMIT 1")
+    suspend fun findIdByDedupeKey(dedupeKey: String): Long?
 
     @Deprecated(
         "Returns raw Double without currency conversion. Use MultiCurrencyRepository.getHomeCurrencyPurchaseTotal() for currency-safe aggregation.",

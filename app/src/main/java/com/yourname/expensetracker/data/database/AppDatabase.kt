@@ -5672,6 +5672,20 @@ val MIGRATION_94_95 = object : androidx.room.migration.Migration(94, 95) {
 // 2. Create receipt_events table for recording receipt lifecycle events.
 // 3. Create receipt_expense_links table for linking receipts to expenses.
 // 4. Backfill sourceType/documentType/processingStatus based on heuristics.
+/**
+ * Migration 95 → 96: Receipt lifecycle tables (Phase 4).
+ *
+ * FK note: The Room entities for [ReceiptEvent], [ReceiptExpenseLink],
+ * [RecurringOccurrence], and [RecurringReminderDelivery] do NOT declare
+ * foreign key annotations. The CREATE TABLE statements below intentionally
+ * omit FOREIGN KEY clauses to match the entity definitions. Room schema
+ * validation passes because the exported schema JSON (derived from Room
+ * annotations) matches the migration-created schema.
+ *
+ * If foreign keys are added to these entities in the future, the
+ * corresponding CREATE TABLE SQL in this migration MUST be updated to
+ * include them; otherwise Room's compile-time schema verification will fail.
+ */
 val MIGRATION_95_96 = object : androidx.room.migration.Migration(95, 96) {
     override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
         database.beginTransaction()
@@ -5769,12 +5783,21 @@ val MIGRATION_95_96 = object : androidx.room.migration.Migration(95, 96) {
     }
 }
 
-// Migration 96 -> 100: Recurring Occurrences and Reminder Deliveries (Phase 5, PR B).
-//
-// 1. CREATE TABLE recurring_occurrences with all columns + indices.
-// 2. CREATE TABLE recurring_reminder_deliveries with all columns + indices.
-// 3. Add sourceOccurrenceKey TEXT column to planned_expenses table.
-// 4. Add sourceRecurringRuleId INTEGER column to planned_expenses table.
+/**
+ * Migration 96 → 100: Recurring Occurrences and Reminder Deliveries (Phase 5, PR B).
+ *
+ * 1. CREATE TABLE recurring_occurrences with all columns + indices.
+ * 2. CREATE TABLE recurring_reminder_deliveries with all columns + indices.
+ * 3. Add sourceOccurrenceKey TEXT column to planned_expenses table.
+ * 4. Add sourceRecurringRuleId INTEGER column to planned_expenses table.
+ *
+ * FK note: The Room entities for [RecurringOccurrence] and
+ * [RecurringReminderDelivery] do NOT declare foreign key annotations
+ * (neither does [ReceiptEvent] or [ReceiptExpenseLink] from MIGRATION_95_96).
+ * The CREATE TABLE statements below intentionally omit FOREIGN KEY clauses
+ * to match the entity definitions. Room schema validation passes because
+ * the exported schema JSON matches the migration-created schema.
+ */
 val MIGRATION_96_100 = object : androidx.room.migration.Migration(96, 100) {
     override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
         database.beginTransaction()
