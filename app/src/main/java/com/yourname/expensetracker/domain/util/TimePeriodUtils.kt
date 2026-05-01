@@ -6,9 +6,23 @@ import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import java.time.temporal.WeekFields
 import java.util.Calendar
+import com.yourname.expensetracker.domain.core.time.PeriodKind
+import com.yourname.expensetracker.domain.core.time.PeriodRange
 
 /**
  * Canonical owner of all shared calendar boundary math for the ExpenseTracker app.
+ *
+ * ## Pure utility — no internal clock access
+ *
+ * This object **NEVER calls the system clock** internally. Every function is
+ * seeded from an explicit timestamp parameter (`now`, `timestamp`, `date`, etc.).
+ * The `Calendar.getInstance()` calls inside this utility create a new `Calendar`
+ * instance and then immediately set its `timeInMillis` to the **caller-provided**
+ * timestamp — they do NOT fetch the current wall-clock time.
+ *
+ * This design means [TimePeriodUtils] can always be tested with arbitrary
+ * timestamps without dependency injection, and is safe to use from any thread
+ * without mocking.
  *
  * ## Half-open interval contract
  *
@@ -36,6 +50,8 @@ import java.util.Calendar
  * does **not** perform UTC normalization — that concern belongs elsewhere.
  *
  * @see daysBetween for DST-safe calendar-day difference via `java.time.LocalDate`.
+ * @see TimeProvider for the single source of "now" that callers should use.
+ * @see PeriodRange for the typed period model in `domain.core.time`.
  */
 object TimePeriodUtils {
 
@@ -501,11 +517,115 @@ object TimePeriodUtils {
      * @param now Current timestamp (pass `timeProvider.now()`).
      * @param days Number of calendar days to look back.
      */
+    @Deprecated(
+        message = "Ambiguous semantics. Use getLastNCalendarDaysRange for calendar days including today, " +
+                "getLastNCompleteDaysRange for complete days excluding today, " +
+                "or getTrailingElapsedRange for exact elapsed intervals.",
+        replaceWith = ReplaceWith("getLastNCalendarDaysRange(now, days)")
+    )
     fun getLastNDaysRange(now: Long, days: Int): Pair<Long, Long> {
         val cal = Calendar.getInstance().apply { timeInMillis = now }
         cal.add(Calendar.DAY_OF_MONTH, -days)
         val start = getStartOfDay(cal.timeInMillis)
         return start to now
+    }
+
+    /**
+     * Parses a canonical month key (`yyyy-MM`) into a half-open `[start, end)` range.
+     *
+     * Delegates to [parseMonthKey] for key parsing and [getMonthRange] for the
+     * actual boundary computation.
+     *
+     * @param monthKey Month key in `yyyy-MM` format (e.g. `"2026-04"`).
+     * @return A `[startInclusive, endExclusive)` pair for the specified month.
+     * @throws IllegalArgumentException if the key format is invalid.
+     */
+    fun parseMonthKeyToRange(monthKey: String): Pair<Long, Long> {
+        val (year, month) = parseMonthKey(monthKey)
+        return getMonthRange(year, month)
+    }
+
+    /**
+     * Returns a half-open `[start, end)` range covering the last [days] calendar
+     * days **including today**.
+     *
+     * The start is midnight of the day [days]-1 days ago. The end is midnight
+     * of the day **after** [now] (exclusive), giving you full calendar days.
+     *
+     * Example: for `now = Apr 10 15:30` and `days = 3`:
+     * - Start = Apr 8 00:00
+     * - End   = Apr 11 00:00 (tomorrow's start)
+     *
+     * For calendar days **not** including today (i.e. complete days ending at
+     * today's start), see [getLastNCompleteDaysRange].
+     *
+     * @param now Reference timestamp (typically `timeProvider.now()`).
+     * @param days Number of calendar days to include (must be >= 1).
+     */
+    fun getLastNCalendarDaysRange(now: Long, days: Int): Pair<Long, Long> {
+        require(days >= 1) { "days must be >= 1, was $days" }
+        val start = addDays(getStartOfDay(now), -(days - 1))
+        val end = getEndOfDay(now)
+        return start to end
+    }
+
+    /**
+     * Returns a half-open `[start, end)` range covering [days] complete calendar
+     * days **ending at the start of today**.
+     *
+     * "Complete" means the range does not include the current partial day.
+     * This is useful for "last N full days" reports where today's incomplete
+     * data should be excluded.
+     *
+     * Example: for `now = Apr 10 15:30` and `days = 3`:
+     * - Start = Apr 7 00:00
+     * - End   = Apr 10 00:00 (today's start, exclusive)
+     *
+     * For calendar days **including** today, see [getLastNCalendarDaysRange].
+     *
+     * @param now Reference timestamp.
+     * @param days Number of complete days (must be >= 1).
+     */
+    fun getLastNCompleteDaysRange(now: Long, days: Int): Pair<Long, Long> {
+        require(days >= 1) { "days must be >= 1, was $days" }
+        val start = addDays(getStartOfDay(now), -days)
+        val end = getStartOfDay(now)
+        return start to end
+    }
+
+    /**
+     * Returns a half-open `[start, end)` range covering exactly [durationMs]
+     * milliseconds of elapsed time ending at [now].
+     *
+     * **Not for calendar-aligned reports.** This is a pure wall-clock interval
+     * computed as `now - durationMs` to `now`. It does not round to day
+     * boundaries and is NOT DST-safe for long durations spanning DST transitions.
+     * Use calendar helpers such as [getLastNCalendarDaysRange] or
+     * [getLastNCompleteDaysRange] for day-aligned ranges.
+     *
+     * @param now Reference timestamp (end of the interval).
+     * @param durationMs Duration in milliseconds (must be >= 0).
+     */
+    fun getTrailingElapsedRange(now: Long, durationMs: Long): Pair<Long, Long> {
+        require(durationMs >= 0) { "durationMs must be >= 0, was $durationMs" }
+        val start = now - durationMs
+        return start to now
+    }
+
+    /**
+     * Returns a 0-based day index within a period for sparkline or bucketing
+     * placement.
+     *
+     * The index is computed as [daysBetween]`(periodStart, timestamp)`, clamped
+     * to `>= 0`. For example, if [periodStart] is April 1 and [timestamp] is
+     * April 3, the result is 2 (the third day).
+     *
+     * @param timestamp The timestamp to locate within the period.
+     * @param periodStart The start of the period (inclusive).
+     * @return 0-based day offset from [periodStart], minimum 0.
+     */
+    fun getDayIndexForSparkline(timestamp: Long, periodStart: Long): Int {
+        return daysBetween(periodStart, timestamp).coerceAtLeast(0)
     }
 
     // ============================================================================
@@ -695,5 +815,28 @@ object TimePeriodUtils {
         val startDate = Instant.ofEpochMilli(startTimestamp).atZone(zone).toLocalDate()
         val endDate = Instant.ofEpochMilli(endTimestamp).atZone(zone).toLocalDate()
         return ChronoUnit.DAYS.between(startDate, endDate).toInt()
+    }
+
+    // ============================================================================
+    // TYPED PERIOD CONVERSION
+    // ============================================================================
+
+    /**
+     * Converts an untyped [Pair]<[Long],[Long]> range into a typed [PeriodRange].
+     *
+     * This is a convenience wrapper for callers that have existing [Pair] results
+     * from [TimePeriodUtils] helpers and need to pass them through typed APIs.
+     *
+     * @param pair The `(startInclusive, endExclusive)` pair from a range helper.
+     * @param kind The semantic kind of this period.
+     * @param label Optional human-readable label (defaults to empty string).
+     */
+    fun toPeriodRange(pair: Pair<Long, Long>, kind: PeriodKind, label: String = ""): PeriodRange {
+        return PeriodRange(
+            kind = kind,
+            startInclusiveMillis = pair.first,
+            endExclusiveMillis = pair.second,
+            label = label
+        )
     }
 }

@@ -360,7 +360,7 @@ class BudgetRepository @Inject constructor(
         
         // Use up to 3 months of history, but at least 1 month if available
         // If data is less than 15 days, results might be unreliable, but we'll try to extrapolate conservatively
-        val (threeMonthsAgo, _) = TimePeriodUtils.getLastNDaysRange(now, 90)
+        val (threeMonthsAgo, _) = TimePeriodUtils.getLastNCalendarDaysRange(now, 90)
         val effectiveStart = maxOf(oldestDate, threeMonthsAgo)
 
         val zone = ZoneId.systemDefault()

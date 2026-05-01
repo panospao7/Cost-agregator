@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.SplitItemAssignment
 import com.yourname.expensetracker.data.database.entity.SplitShare
 import com.yourname.expensetracker.data.database.entity.SplitTemplate
 import com.yourname.expensetracker.domain.util.Money
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.sum
 import com.yourname.expensetracker.domain.util.toMoney
 import kotlinx.coroutines.flow.Flow
@@ -25,7 +26,8 @@ import javax.inject.Singleton
 class EnhancedSplitManager @Inject constructor(
     private val splitTemplateDao: SplitTemplateDao,
     private val splitItemAssignmentDao: SplitItemAssignmentDao,
-    private val gson: Gson
+    private val gson: Gson,
+    private val timeProvider: TimeProvider
 ) {
     
     /**
@@ -156,7 +158,7 @@ class EnhancedSplitManager @Inject constructor(
     }
     
     suspend fun updateTemplate(template: SplitTemplate) {
-        splitTemplateDao.updateTemplate(template.copy(updatedAt = System.currentTimeMillis()))
+        splitTemplateDao.updateTemplate(template.copy(updatedAt = timeProvider.now()))
     }
     
     suspend fun deleteTemplate(template: SplitTemplate) {
@@ -169,7 +171,7 @@ class EnhancedSplitManager @Inject constructor(
     }
     
     suspend fun useTemplate(templateId: Long) {
-        splitTemplateDao.incrementUseCount(templateId)
+        splitTemplateDao.incrementUseCount(templateId, timeProvider.now())
     }
     
     fun parseShares(template: SplitTemplate): List<SplitShare> {
@@ -217,7 +219,7 @@ class EnhancedSplitManager @Inject constructor(
     }
     
     suspend fun markAssignmentAsPaid(assignmentId: Long) {
-        splitItemAssignmentDao.markAsPaid(assignmentId)
+        splitItemAssignmentDao.markAsPaid(assignmentId, timeProvider.now())
     }
     
     data class VisualSplitData(

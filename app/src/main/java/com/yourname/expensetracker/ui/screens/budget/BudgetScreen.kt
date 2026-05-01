@@ -201,7 +201,7 @@ fun BudgetScreen(
                 item { BudgetSummaryCard(uiState.budgets) }
 
                 if (uiState.suggestions.isNotEmpty()) {
-                    item { SuggestionsBanner(uiState.suggestions, categories, onAdd = { viewModel.addBudget(it) }) }
+                    item { SuggestionsBanner(uiState.suggestions, categories, uiState.referenceNowMillis, onAdd = { viewModel.addBudget(it) }) }
                 }
 
                 // F9: AI Budget Autopilot Banner
@@ -230,6 +230,7 @@ fun BudgetScreen(
             items(uiState.budgets, key = { it.budget.id }) { budgetStatus ->
                         BudgetCard(
                             status = budgetStatus,
+                            referenceNowMillis = uiState.referenceNowMillis,
                             onEdit = { editingBudget = budgetStatus },
                             onToggle = { isActive -> viewModel.toggleBudget(budgetStatus.budget.id, isActive) },
                             onDelete = { viewModel.deleteBudget(it) },
@@ -246,6 +247,7 @@ fun BudgetScreen(
         if (showAddDialog) {
             AddEditBudgetDialog(
                 initialCategoryId = preselectedCategoryIdForAdd,
+                referenceNowMillis = uiState.referenceNowMillis,
                 onDismiss = {
                     showAddDialog = false
                     preselectedCategoryIdForAdd = null
@@ -261,6 +263,7 @@ fun BudgetScreen(
         editingBudget?.let { status ->
             AddEditBudgetDialog(
                 initialBudget = status.budget,
+                referenceNowMillis = uiState.referenceNowMillis,
                 onDismiss = { editingBudget = null },
                 onConfirm = { viewModel.updateBudget(it) },
                 categories = categories
@@ -400,6 +403,7 @@ fun SummaryItem(label: String, count: Int, color: Color) {
 @Composable
 fun BudgetCard(
     status: BudgetStatus,
+    referenceNowMillis: Long,
     onEdit: () -> Unit,
     onToggle: (Boolean) -> Unit,
     onDelete: (Budget) -> Unit,
@@ -477,7 +481,7 @@ fun BudgetCard(
         }
     }
 
-    val nowMs = System.currentTimeMillis()
+    val nowMs = referenceNowMillis
     val totalPeriodMs = remember(status.periodStart, status.periodEnd) {
         (status.periodEnd - status.periodStart).coerceAtLeast(1L)
     }
@@ -688,6 +692,7 @@ fun AdjustedSpendBreakdownRow(breakdown: com.yourname.expensetracker.domain.budg
 fun SuggestionsBanner(
     suggestions: List<BudgetSuggestion>,
     categories: List<Category>,
+    referenceNowMillis: Long,
     onAdd: (Budget) -> Unit
 ) {
     var currentIndex by remember { mutableIntStateOf(0) }
@@ -747,7 +752,7 @@ fun SuggestionsBanner(
                             categoryId = suggestion.categoryId,
                             amount = suggestion.suggestedAmount,
                             period = BudgetPeriod.MONTHLY,
-                            startDate = System.currentTimeMillis()
+                            startDate = referenceNowMillis
                         ))
                     },
                     modifier = Modifier.semantics { 
@@ -797,6 +802,7 @@ fun AddEditBudgetDialog(
     initialBudget: Budget? = null,
     initialCategoryId: Long? = null,
     categories: List<Category>,
+    referenceNowMillis: Long,
     onDismiss: () -> Unit,
     onConfirm: (Budget) -> Unit
 ) {
@@ -889,7 +895,7 @@ fun AddEditBudgetDialog(
                             amount = amt,
                             period = period,
                             periodMode = periodMode,
-                            startDate = System.currentTimeMillis(),
+                            startDate = referenceNowMillis,
                             rollover = rollover
                         )
                         onConfirm(budgetToSave)

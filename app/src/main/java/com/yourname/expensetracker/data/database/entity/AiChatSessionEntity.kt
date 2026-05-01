@@ -14,6 +14,8 @@ import androidx.room.PrimaryKey
 data class AiChatSessionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val title: String? = null,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val updatedAt: Long = 0L
 )

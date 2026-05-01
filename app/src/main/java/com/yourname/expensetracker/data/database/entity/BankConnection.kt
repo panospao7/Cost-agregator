@@ -55,7 +55,8 @@ data class BankConnection(
     val lastErrorTime: Long? = null,
     @ColumnInfo(defaultValue = "0") val consecutiveErrors: Int = 0,
     
-    val createdAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L
 )
 
 enum class SyncStatus {

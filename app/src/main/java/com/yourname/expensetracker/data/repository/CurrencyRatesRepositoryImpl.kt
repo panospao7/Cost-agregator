@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -19,6 +20,7 @@ import javax.xml.parsers.DocumentBuilderFactory
 class CurrencyRatesRepositoryImpl @Inject constructor(
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
+    private val timeProvider: TimeProvider,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : CurrencyRatesRepository {
 
@@ -88,7 +90,7 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
             }
 
             currencyConverter.storeRates(rates, source = "ecb")
-            currencySettingsRepository.setLastRateUpdate(System.currentTimeMillis())
+            currencySettingsRepository.setLastRateUpdate(timeProvider.now())
             rates.size
         } finally {
             connection.disconnect()

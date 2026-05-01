@@ -57,7 +57,8 @@ data class PendingReview(
     val packageName: String,
     val notificationTitle: String?,
     val notificationText: String?,
-    val createdAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
     @ColumnInfo(defaultValue = "PENDING") val status: PendingReviewStatus = PendingReviewStatus.PENDING,
     // Transfer direction fields (v24)
     val suggestedDirection: String? = null,    // INCOMING, OUTGOING

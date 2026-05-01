@@ -83,7 +83,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     private fun calculateWeekRange(referenceDate: Long): Triple<Long, Long, String> {
         val start = TimePeriodUtils.getStartOfWeek(referenceDate)
-        val end = start + (7 * TimePeriodUtils.DAY_IN_MILLIS)
+        val end = TimePeriodUtils.getEndOfWeek(referenceDate)
         
         return Triple(
             start,
@@ -513,7 +513,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         }.mapValues { it.value.sumOf { e -> e.effectiveAmount } }
         
-        val periodDays = ((period.endMs - period.startMs) / TimePeriodUtils.DAY_IN_MILLIS).toInt().coerceAtLeast(1)
+        val periodDays = TimePeriodUtils.daysBetween(period.startMs, period.endMs).coerceAtLeast(1)
         
         // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         val totalAmount = purchases.sumOf { it.effectiveAmount }
@@ -737,7 +737,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         var totalDays = 0L
         
         for (i in 1 until sorted.size) {
-            val diff = (sorted[i] - sorted[i-1]) / TimePeriodUtils.DAY_IN_MILLIS
+            val diff = TimePeriodUtils.daysBetween(sorted[i-1], sorted[i])
             totalDays += diff.coerceAtLeast(0)
         }
         
@@ -749,7 +749,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         period: AnalyticsPeriodRange,
         avgDaysBetween: Double?
     ): MerchantVisitFrequency {
-        val periodDays = ((period.endMs - period.startMs) / TimePeriodUtils.DAY_IN_MILLIS).toInt()
+        val periodDays = TimePeriodUtils.daysBetween(period.startMs, period.endMs)
         
         return when {
             periodDays <= 0 -> MerchantVisitFrequency.RARE

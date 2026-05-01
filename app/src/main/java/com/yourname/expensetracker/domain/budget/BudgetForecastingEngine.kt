@@ -55,7 +55,7 @@ class BudgetForecastingEngine @Inject constructor(
         val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
         val elapsedEnd = now.coerceAtMost(periodEnd)
         val spentToDate = getSpentAmount(budget, periodStart, elapsedEnd)
-        val remainingForecastDays = ((periodEnd - elapsedEnd).coerceAtLeast(0L) / MILLIS_PER_DAY)
+        val remainingForecastDays = TimePeriodUtils.daysBetween(elapsedEnd, periodEnd).coerceAtLeast(0).toDouble()
         
         // Get historical spending data for this budget's category
         val historicalData = getHistoricalSpendingData(budget)

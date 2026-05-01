@@ -110,7 +110,7 @@ data class SpendingPersonalityProfileEntity(
                 featureScoresJson = featureScoresJson,
                 explanationJson = explanationJson,
                 coachingTipsJson = coachingTipsJson,
-                lastUpdated = System.currentTimeMillis(),
+                lastUpdated = 0L, // Must be set to timeProvider.now() by caller
                 analysisPeriodStart = analysisPeriodStart,
                 analysisPeriodEnd = analysisPeriodEnd,
                 transactionCount = transactionCount,

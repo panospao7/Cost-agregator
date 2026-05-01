@@ -10,6 +10,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 
 data class WarrantyTrackerState(
@@ -24,12 +25,14 @@ data class WarrantyTrackerState(
     val needsReviewCount: Int = 0,
     val autoDetectedWarranties: List<Warranty> = emptyList(),
     val showAutoDetectedOnly: Boolean = false,
-    val showNeedsReviewOnly: Boolean = false
+    val showNeedsReviewOnly: Boolean = false,
+    val referenceNowMillis: Long = 0L
 )
 
 @HiltViewModel
 class WarrantyTrackerViewModel @Inject constructor(
-    private val warrantyRepository: WarrantyTrackerRepository
+    private val warrantyRepository: WarrantyTrackerRepository,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(WarrantyTrackerState())
@@ -44,7 +47,7 @@ class WarrantyTrackerViewModel @Inject constructor(
     private fun loadWarranties() {
         warrantiesCollectorJob?.cancel()
         warrantiesCollectorJob = viewModelScope.launch {
-            _state.update { it.copy(isLoading = true) }
+            _state.update { it.copy(isLoading = true, referenceNowMillis = timeProvider.now()) }
             
             warrantyRepository.getAllWarranties()
                 .collect { warranties ->
@@ -65,6 +68,7 @@ class WarrantyTrackerViewModel @Inject constructor(
 
     private fun loadStats() {
         viewModelScope.launch {
+            _state.update { it.copy(referenceNowMillis = timeProvider.now()) }
             val activeCount = warrantyRepository.getActiveWarrantyCount()
             val expiringSoon = warrantyRepository.getWarrantiesExpiringSoon(30).size
             val protectedValue = warrantyRepository.getTotalProtectedValue()
@@ -148,7 +152,7 @@ class WarrantyTrackerViewModel @Inject constructor(
         viewModelScope.launch {
             val updated = warranty.copy(
                 needsReview = false,
-                updatedAt = System.currentTimeMillis()
+                updatedAt = timeProvider.now()
             )
             warrantyRepository.updateWarranty(updated)
             loadStats()

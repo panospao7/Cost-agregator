@@ -153,7 +153,7 @@ private fun RawTextTab(debugData: DebugData) {
                 
                 TextButton(
                     onClick = {
-                        clipboardManager.setText(AnnotatedString(debugData.toJson()))
+                        clipboardManager.setText(AnnotatedString(debugData.toJson(System.currentTimeMillis())))
                     }
                 ) {
                     Icon(Icons.Default.Code, null, Modifier.size(16.dp))
@@ -261,7 +261,7 @@ private fun ParsedDataTab(debugData: DebugData) {
                     
                     TextButton(
                         onClick = {
-                            clipboardManager.setText(AnnotatedString(debugData.toJson()))
+                            clipboardManager.setText(AnnotatedString(debugData.toJson(System.currentTimeMillis())))
                         },
                         modifier = Modifier.align(Alignment.End)
                     ) {
@@ -397,7 +397,7 @@ private fun LogsTab(debugData: DebugData) {
         ) {
             TextButton(
                 onClick = {
-                    clipboardManager.setText(AnnotatedString(debugData.toJson()))
+                    clipboardManager.setText(AnnotatedString(debugData.toJson(System.currentTimeMillis())))
                 }
             ) {
                 Icon(Icons.Default.Code, null, Modifier.size(16.dp))

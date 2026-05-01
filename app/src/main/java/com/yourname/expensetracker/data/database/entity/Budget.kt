@@ -49,7 +49,8 @@ data class Budget(
     @ColumnInfo(defaultValue = "0") val rollover: Boolean = false, // carry unspent to next period
     @ColumnInfo(defaultValue = "'EUR'") val currency: String = "EUR",
     @ColumnInfo(defaultValue = "'LEGACY_DEFAULT'") val currencyAssumption: String = "LEGACY_DEFAULT",
-    val createdAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
     val lastWarningNotifiedAt: Long? = null,
     val lastCriticalNotifiedAt: Long? = null,
     val lastExceededNotifiedAt: Long? = null

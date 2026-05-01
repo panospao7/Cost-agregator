@@ -24,7 +24,7 @@ interface BudgetForecastDao {
     @Query("SELECT * FROM budget_forecasts WHERE budgetId = :budgetId AND isActive = 1 ORDER BY forecastDate DESC LIMIT 1")
     suspend fun getLatestActiveForecast(budgetId: Long): BudgetForecast?
     
-    @Query("SELECT * FROM budget_forecasts WHERE budgetId = :budgetId AND targetPeriodStart <= :date AND targetPeriodEnd >= :date AND isActive = 1 LIMIT 1")
+    @Query("SELECT * FROM budget_forecasts WHERE budgetId = :budgetId AND targetPeriodStart <= :date AND targetPeriodEnd > :date AND isActive = 1 LIMIT 1")
     suspend fun getForecastForDate(budgetId: Long, date: Long): BudgetForecast?
     
     @Query("SELECT * FROM budget_forecasts WHERE isActive = 1 AND targetPeriodEnd < :now")

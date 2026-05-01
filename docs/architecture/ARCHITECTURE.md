@@ -123,6 +123,9 @@ domain/
 ├── service/                     # Domain service interfaces
 ├── usecase/                     # Use cases / orchestration
 ├── model/                       # Shared domain models
+├── core/
+│   ├── money/                   # Type-safe money primitives (CurrencyCode, MoneyAmount, etc.)
+│   └── time/                    # Typed time period models (PeriodRange, PeriodKind)
 ├── subscription/                # Subscription detection / management
 ├── tax/                         # Tax configuration and estimation
 ├── export/                      # Export flows
@@ -381,6 +384,31 @@ Per-expense home-currency normalization used by analytics engines. Converts a li
 
 ---
 
+### Time / Period Semantics Foundation (Phase 2 — May 2026)
+
+A 98-file cross-cutting refactoring established a single source of truth for time handling.
+
+#### New `domain/core/time/` Package
+
+| Type | File | Purpose |
+|------|------|---------|
+| `PeriodRange` | `domain/core/time/PeriodRange.kt` | Typed half-open period `[startInclusive, endExclusive)` with `kind`, `zoneId`, `label`, `contains()`, `isCalendarPeriod`. Replaces raw `Pair<Long, Long>`. |
+| `PeriodKind` | `domain/core/time/PeriodKind.kt` | Enum: `TODAY`, `THIS_WEEK`, `LAST_WEEK`, `LAST_7_DAYS`, `THIS_MONTH`, `LAST_MONTH`, `LAST_30_DAYS`, `THIS_QUARTER`, `LAST_QUARTER`, `THIS_YEAR`, `LAST_YEAR`, `CUSTOM`. Distinguishes calendar vs rolling semantics. |
+
+#### Key Contract Changes
+
+1. **`TimeProvider.now()` is the single source of "now"** (injected into 50+ classes). Direct `System.currentTimeMillis()`, `Instant.now()`, `LocalDate.now()` are forbidden in business logic (whitelist exceptions in `TIME_SEMANTICS.md`).
+2. **All period ranges are half-open** `[startInclusive, endExclusive)`. No more `23:59:59.999` endpoints.
+3. **Calendar labels use calendar-range helpers** (`getMonthRange`, `getWeekRange`, etc.). Rolling labels use rolling helpers (`getLastNCalendarDaysRange`, `getLastNCompleteDaysRange`). Never `getLastNDaysRange(30)` for "This Month".
+4. **Raw millis division** (`(end - start) / 86_400_000`) is replaced with DST-safe `TimePeriodUtils.daysBetween()`.
+5. **38 entity `System.currentTimeMillis()` defaults** migrated to `0L` sentinel.
+6. **`DateFormatterUtils`** — all 13 methods accept explicit timestamps (no internal `Instant.now()`).
+7. **`RecurrenceFrequency.days`** — removed from constructor, now a computed property.
+
+See [`docs/development/TIME_SEMANTICS.md`](../development/TIME_SEMANTICS.md) for full developer rules.
+
+---
+
 ## Database Schema
 
 ### Version: v92 (post multi-currency migration)
@@ -406,7 +434,7 @@ Use the database file and migration chain as the source of truth for the exact t
 - AI, location, groups, split, export, currency, tax, subscriptions, and security are represented in both domain and data layers
 - startup/background work is centralized through `MainApplication` and the `startup/` pipeline
 - database/schema and DI have expanded significantly; exact file lists should be read from the current codebase, not this summary
-- typed errors, time standardization, accessibility, and performance refactors are now cross-cutting concerns
+- typed errors, time standardization (half-open periods, single source of "now"), accessibility, and performance refactors are now cross-cutting concerns
 
 ---
 

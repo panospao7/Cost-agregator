@@ -169,7 +169,7 @@ class CashFlowCalculator @Inject constructor(
 
         val now = timeProvider.now()
         val startOfToday = TimePeriodUtils.getStartOfDay(now)
-        val futureDayStart = TimePeriodUtils.getLastNDaysRange(now, -daysAhead).first
+        val futureDayStart = TimePeriodUtils.addDays(TimePeriodUtils.getStartOfDay(now), daysAhead)
         val future = TimePeriodUtils.getEndOfDay(futureDayStart)
         
         val upcomingList = mutableListOf<RecurringPattern>()

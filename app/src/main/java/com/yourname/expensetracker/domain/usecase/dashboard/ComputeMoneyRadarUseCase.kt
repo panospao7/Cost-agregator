@@ -228,7 +228,7 @@ class ComputeMoneyRadarUseCase @Inject constructor(
             alerts
                 .filter { it.alertedAt >= thirtyDaysAgo }
                 .map { alert ->
-                    val daysAgo = ((now - alert.alertedAt) / ONE_DAY_MS).toInt().coerceAtLeast(0)
+                    val daysAgo = TimePeriodUtils.daysBetween(alert.alertedAt, now).coerceAtLeast(0)
                     AnomalyAlertSummary(
                         merchant = alert.merchant,
                         amount = alert.amount,

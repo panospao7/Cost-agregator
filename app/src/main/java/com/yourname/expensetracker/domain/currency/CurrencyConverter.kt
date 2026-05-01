@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.currency
 
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -64,7 +65,8 @@ data class MultiConversionAggregate(
 
 @Singleton
 class CurrencyConverter @Inject constructor(
-    private val exchangeRateStore: ExchangeRateStore
+    private val exchangeRateStore: ExchangeRateStore,
+    private val timeProvider: TimeProvider
 ) {
     companion object {
         const val DEFAULT_BASE_CURRENCY = "EUR"
@@ -86,7 +88,7 @@ class CurrencyConverter @Inject constructor(
                 convertedAmount = amount,
                 targetCurrency = toCurrency,
                 rateUsed = 1.0,
-                timestamp = System.currentTimeMillis()
+                timestamp = timeProvider.now()
             )
         }
 
@@ -185,7 +187,7 @@ class CurrencyConverter @Inject constructor(
             fromCurrency = fromCurrency.uppercase(),
             toCurrency = toCurrency.uppercase(),
             rate = rate,
-            lastUpdated = System.currentTimeMillis(),
+            lastUpdated = timeProvider.now(),
             source = source
         )
         exchangeRateStore.insertOrUpdate(exchangeRate)
@@ -207,7 +209,7 @@ class CurrencyConverter @Inject constructor(
                 fromCurrency = from.uppercase(),
                 toCurrency = to.uppercase(),
                 rate = rate,
-                lastUpdated = System.currentTimeMillis(),
+                lastUpdated = timeProvider.now(),
                 source = source
             )
         }

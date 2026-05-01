@@ -110,7 +110,7 @@ class SpendingThresholdCalculator @Inject constructor(
             }
 
             // Calculate from scratch (expensive I/O outside the lock)
-            val (startDate, endDate) = TimePeriodUtils.getLastNDaysRange(now, ANALYSIS_WINDOW_DAYS)
+            val (startDate, endDate) = TimePeriodUtils.getLastNCalendarDaysRange(now, ANALYSIS_WINDOW_DAYS)
             val amounts = expenseDao.getAmountsForPercentileCalc(startDate, endDate)
 
             if (amounts.isEmpty()) {

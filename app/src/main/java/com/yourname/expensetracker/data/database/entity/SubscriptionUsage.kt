@@ -25,7 +25,8 @@ data class SubscriptionUsage(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val subscriptionId: Long, // Foreign key to ManualRecurringExpense
-    val usedAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val usedAt: Long = 0L,
     val usageDurationMinutes: Int? = null, // Optional: how long they used it
     val usageType: String? = null // e.g., "watched_movie", " listened_music", "played_game"
 )

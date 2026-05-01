@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.ui.screens.debug
 
 import android.content.Context
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import kotlinx.coroutines.Dispatchers
@@ -17,7 +18,8 @@ import timber.log.Timber
  */
 @Singleton
 class DebugDataStorage @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val timeProvider: TimeProvider
 ) {
     private val file = File(context.filesDir, "last_debug_data.json")
     
@@ -27,7 +29,7 @@ class DebugDataStorage @Inject constructor(
     suspend fun save(debugData: DebugData) {
         withContext(Dispatchers.IO) {
             try {
-                file.writeText(debugData.toJson())
+                file.writeText(debugData.toJson(timeProvider.now()))
                 Timber.d("Saved debug data to ${file.absolutePath}")
             } catch (e: Exception) {
                 Timber.e(e, "Failed to save debug data: ${e.message}")

@@ -4,12 +4,15 @@ import android.content.Context
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.yourname.expensetracker.domain.export.*
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileWriter
+import java.time.Instant
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
@@ -38,7 +41,8 @@ class AccountingExportRepository @Inject constructor(
     private val quickBooksExporter: QuickBooksIIFExporter,
     private val xeroExporter: XeroCSVExporter,
     private val freshBooksExporter: FreshBooksExporter,
-    private val accountantReportPdfExporter: AccountantReportPdfExporter
+    private val accountantReportPdfExporter: AccountantReportPdfExporter,
+    private val timeProvider: TimeProvider
 ) {
     suspend fun exportExpenses(
         context: Context,
@@ -51,7 +55,7 @@ class AccountingExportRepository @Inject constructor(
             // exports are never silently truncated and row ordering is stable
             // (date ASC, id ASC, merchant COLLATE NOCASE ASC).
             val expenses = deterministicExpenseExportPager.fetchAllBetween(startDate, endDate)
-            
+
             if (expenses.isEmpty() && !format.allowsEmptyDataset()) {
                 return@withContext ExportResult(
                     success = false,
@@ -76,9 +80,10 @@ class AccountingExportRepository @Inject constructor(
                 .associateBy({ it.id }, { it.name })
 
             // Generate export
-            val timestamp = LocalDateTime.now().format(
-                DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss", Locale.US)
-            )
+            val timestamp = Instant.ofEpochMilli(timeProvider.now())
+                .atZone(ZoneId.systemDefault())
+                .toLocalDateTime()
+                .format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss", Locale.US))
             val fileName = when (format) {
                 ExportFormat.QUICKBOOKS_IIF -> "expenses_quickbooks_$timestamp.iif"
                 ExportFormat.XERO_CSV -> "expenses_xero_$timestamp.csv"

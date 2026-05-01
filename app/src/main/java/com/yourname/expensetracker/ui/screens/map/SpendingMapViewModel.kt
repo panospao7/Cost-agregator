@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.location.LocationInsightsEngine
 import com.yourname.expensetracker.domain.location.PlaceInsight
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -81,8 +82,9 @@ data class SpendingMapState(
  val dateRangeStartMs: Long? = null,
  val dateRangeEndMs: Long? = null,
  val availableCategories: List<MapCategoryFilterOption> = emptyList(),
- val highlightedMerchantQuery: String? = null,
- val homeCurrency: String = "EUR"
+  val highlightedMerchantQuery: String? = null,
+  val homeCurrency: String = "EUR",
+  val referenceNowMillis: Long = 0L
 )
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
@@ -97,10 +99,11 @@ class SpendingMapViewModel @Inject constructor(
     private val heatmapEngine: SpendingHeatmapEngine,
  private val insightsEngine: LocationInsightsEngine,
  val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
- private val currencySettingsRepository: CurrencySettingsRepository
+ private val currencySettingsRepository: CurrencySettingsRepository,
+ private val timeProvider: TimeProvider
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(SpendingMapState())
+    private val _state = MutableStateFlow(SpendingMapState(referenceNowMillis = timeProvider.now()))
     val state: StateFlow<SpendingMapState> = _state.asStateFlow()
 
     // Cached device location — refreshed once per permission grant, not on
@@ -425,7 +428,8 @@ class SpendingMapViewModel @Inject constructor(
             markers = markers,
             heatmapPoints = heatmap,
             placeInsights = insights,
-            availableCategories = availableCategories
+            availableCategories = availableCategories,
+            referenceNowMillis = timeProvider.now()
         ) }
     }
 

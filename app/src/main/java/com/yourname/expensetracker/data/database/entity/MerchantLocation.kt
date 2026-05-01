@@ -54,7 +54,8 @@ data class MerchantLocation(
     @ColumnInfo(defaultValue = "1.0") val confidence: Float = 1.0f,
 
     /** Epoch ms of the last successful resolution. Used for cache-staleness checks. */
-    val lastResolvedAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val lastResolvedAt: Long = 0L,
 
     /** How many expense rows share this cache entry (informational). */
     @ColumnInfo(defaultValue = "1") val hitCount: Int = 1

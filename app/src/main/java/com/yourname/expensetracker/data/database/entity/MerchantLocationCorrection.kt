@@ -65,7 +65,8 @@ data class MerchantLocationCorrection(
     /** Human-readable place name for the corrected location. */
     val displayAddress: String? = null,
 
-    val createdAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L
 ) {
     companion object {
         /**

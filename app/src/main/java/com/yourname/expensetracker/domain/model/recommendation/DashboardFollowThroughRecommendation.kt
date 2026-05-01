@@ -29,22 +29,20 @@ data class DashboardFollowThroughRecommendation(
     val recommendationText: String,
     val navigationTarget: String,
     val filterCriteria: String, // Serialized JSON of TransactionFilter
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis(),
+    val createdAt: Long,
+    val updatedAt: Long,
     val dismissedAt: Long? = null,
-    val expiresAt: Long = createdAt + SEVEN_DAYS_MILLIS,
+    val expiresAt: Long,
     val priority: RecommendationPriority = RecommendationPriority.MEDIUM,
     val category: String = "GENERAL",
     val sourceArtifactId: String = "",
     val status: RecommendationStatus = RecommendationStatus.ACTIVE
 ) {
     companion object {
-        private const val SEVEN_DAYS_MILLIS = 7L * 24 * 60 * 60 * 1000
-        
         /**
          * Check if this recommendation has expired based on current time.
          */
-        fun isExpired(expiresAt: Long, nowMillis: Long = System.currentTimeMillis()): Boolean {
+        fun isExpired(expiresAt: Long, nowMillis: Long): Boolean {
             return nowMillis >= expiresAt
         }
     }
@@ -52,7 +50,7 @@ data class DashboardFollowThroughRecommendation(
     /**
      * Check if this recommendation is currently active (not dismissed, not expired).
      */
-    fun isActive(nowMillis: Long = System.currentTimeMillis()): Boolean {
+    fun isActive(nowMillis: Long): Boolean {
         return status == RecommendationStatus.ACTIVE && 
                dismissedAt == null && 
                !isExpired(expiresAt, nowMillis)

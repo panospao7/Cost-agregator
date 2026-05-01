@@ -28,6 +28,7 @@ data class SubscriptionPriceHistory(
     val subscriptionId: Long, // Foreign key to ManualRecurringExpense
     val amount: Double,
     @ColumnInfo(defaultValue = "EUR") val currency: String = "EUR",
-    val recordedAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val recordedAt: Long = 0L,
     val changeReason: String? = null // e.g., "Annual increase", "Plan upgrade", "Promotional rate ended"
 )

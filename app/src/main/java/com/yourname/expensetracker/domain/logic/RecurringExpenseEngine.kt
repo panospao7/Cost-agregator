@@ -217,6 +217,11 @@ class RecurringExpenseEngine @Inject constructor(
             
         val mode = modeEntry.key
         
+        // NOTE: Frequency detection uses approximate day ranges as a heuristic.
+        // Detected frequencies should be advanced using RecurrenceCalculator
+        // (calendar-aware), not raw day multiplication, for correct behavior
+        // across month boundaries and leap years.
+
         // Map mode to known frequencies with non-overlapping ranges
         // Uses midpoints to avoid gaps between categories
         val frequency = when (mode) {

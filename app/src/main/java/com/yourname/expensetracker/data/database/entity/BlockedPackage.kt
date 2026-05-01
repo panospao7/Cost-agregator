@@ -7,5 +7,6 @@ import androidx.room.PrimaryKey
 data class BlockedPackage(
     @PrimaryKey
     val packageName: String,
-    val blockedAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val blockedAt: Long = 0L
 )

@@ -56,7 +56,8 @@ data class HealthScoreHistory(
      * When this score was calculated
      */
     @ColumnInfo(defaultValue = "0")
-    val calculatedAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val calculatedAt: Long = 0L,
     
     /**
      * Trend direction compared to previous calculation

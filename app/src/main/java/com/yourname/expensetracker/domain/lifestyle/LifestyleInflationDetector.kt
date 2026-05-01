@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import java.time.Instant
 import java.time.YearMonth
@@ -15,13 +16,14 @@ import kotlin.math.pow
 
 @Singleton
 class LifestyleInflationDetector @Inject constructor(
-    private val expenseDao: ExpenseDao
+    private val expenseDao: ExpenseDao,
+    private val timeProvider: TimeProvider
 ) {
     
     suspend fun analyzeLifestyleInflation(
         monthsToAnalyze: Int = 12
     ): LifestyleInflationReport {
-        val endDate = System.currentTimeMillis()
+        val endDate = timeProvider.now()
         val startDate = endDate - (monthsToAnalyze * 30L * 24 * 60 * 60 * 1000)
         
         // Get all expenses in the period

@@ -38,8 +38,10 @@ data class SpendingChallengeEntity(
     val baselineAmount: Double? = null,
     val baselineStartDate: Long? = null,
     val baselineEndDate: Long? = null,
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     @ColumnInfo(defaultValue = "0")
-    val createdAt: Long = System.currentTimeMillis(),
+    val createdAt: Long = 0L,
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     @ColumnInfo(defaultValue = "0")
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = 0L
 )

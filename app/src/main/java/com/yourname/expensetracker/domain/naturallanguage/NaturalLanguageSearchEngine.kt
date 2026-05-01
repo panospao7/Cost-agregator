@@ -1,13 +1,17 @@
 package com.yourname.expensetracker.domain.naturallanguage
 
+import com.yourname.expensetracker.domain.util.TimeProvider
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class NaturalLanguageSearchEngine @Inject constructor(
     private val expenseQueryRepository: NaturalLanguageExpenseQueryRepository,
-    private val speechInputGateway: SpeechInputGateway
+    private val speechInputGateway: SpeechInputGateway,
+    private val timeProvider: TimeProvider
 ) {
     
     private val amountPattern = Regex("""
@@ -22,7 +26,8 @@ class NaturalLanguageSearchEngine @Inject constructor(
             pattern = Regex("last (week|month|year)", RegexOption.IGNORE_CASE),
             extractor = { match ->
                 val unit = match.groupValues[1]
-                val end = LocalDate.now()
+                val now = timeProvider.now()
+                val end = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
                 val start = when (unit.lowercase()) {
                     "week" -> end.minusWeeks(1)
                     "month" -> end.minusMonths(1)
@@ -36,7 +41,8 @@ class NaturalLanguageSearchEngine @Inject constructor(
             pattern = Regex("this (week|month|year)", RegexOption.IGNORE_CASE),
             extractor = { match ->
                 val unit = match.groupValues[1]
-                val today = LocalDate.now()
+                val now = timeProvider.now()
+                val today = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
                 val start = when (unit.lowercase()) {
                     "week" -> today.minusDays(today.dayOfWeek.value.toLong() - 1)
                     "month" -> today.withDayOfMonth(1)
@@ -50,10 +56,12 @@ class NaturalLanguageSearchEngine @Inject constructor(
             pattern = Regex("(yesterday|today)", RegexOption.IGNORE_CASE),
             extractor = { match ->
                 val day = match.groupValues[1].lowercase()
+                val now = timeProvider.now()
+                val today = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
                 val date = when (day) {
-                    "yesterday" -> LocalDate.now().minusDays(1)
-                    "today" -> LocalDate.now()
-                    else -> LocalDate.now()
+                    "yesterday" -> today.minusDays(1)
+                    "today" -> today
+                    else -> today
                 }
                 DateRange(date, date)
             }
@@ -63,7 +71,9 @@ class NaturalLanguageSearchEngine @Inject constructor(
             extractor = { match ->
                 val month = match.groupValues[1]
                 val monthNum = java.time.Month.valueOf(month.uppercase()).value
-                val year = LocalDate.now().year
+                val now = timeProvider.now()
+                val today = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
+                val year = today.year
                 val start = LocalDate.of(year, monthNum, 1)
                 val end = start.withDayOfMonth(start.lengthOfMonth())
                 DateRange(start, end)
@@ -182,7 +192,7 @@ class NaturalLanguageSearchEngine @Inject constructor(
         } ?: 0L
         val endMs = dateRange?.end?.let {
             it.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-        } ?: System.currentTimeMillis()
+        } ?: timeProvider.now()
         return startMs to endMs
     }
     
@@ -325,7 +335,8 @@ class NaturalLanguageSearchEngine @Inject constructor(
     
     private fun parseRelativeDate(dateStr: String): LocalDate {
         // Simplified date parsing - production would be more sophisticated
-        val today = LocalDate.now()
+        val now = timeProvider.now()
+        val today = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
         return when (dateStr.lowercase()) {
             "yesterday" -> today.minusDays(1)
             "today" -> today

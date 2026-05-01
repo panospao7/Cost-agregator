@@ -38,19 +38,19 @@ object DateFormatterUtils {
     }
 
     // Thread-safe java.time formatters
-    fun javaTimeMonthDay(): String = javaTime("MMM dd").format(Instant.now().atZone(ZoneId.systemDefault()))
-    fun javaTimeMonthDayShort(): String = javaTime("MMM d").format(Instant.now().atZone(ZoneId.systemDefault()))
-    fun javaTimeFullDate(): String = javaTime("EEE, dd MMM yyyy").format(Instant.now().atZone(ZoneId.systemDefault()))
-    fun javaTimeDateTime(): String = javaTime("MMM dd, HH:mm").format(Instant.now().atZone(ZoneId.systemDefault()))
-    fun javaTimeMonthYear(): String = javaTime("MMMM yyyy").format(Instant.now().atZone(ZoneId.systemDefault()))
-    fun javaTimeTimeOnly(): String = javaTime("HH:mm").format(Instant.now().atZone(ZoneId.systemDefault()))
-    fun javaTimeTimeWithSeconds(): String = javaTime("HH:mm:ss").format(Instant.now().atZone(ZoneId.systemDefault()))
-    fun javaTimeTimeWithSecondsAndDate(): String = javaTime("HH:mm:ss dd/MM").format(Instant.now().atZone(ZoneId.systemDefault()))
-    fun javaTimeShortDate(): String = javaTime("dd/MM/yyyy").format(Instant.now().atZone(ZoneId.systemDefault()))
-    fun javaTimeShortDateWithTime(): String = javaTime("dd/MM/yyyy HH:mm").format(Instant.now().atZone(ZoneId.systemDefault()))
-    fun javaTimeIsoTimestamp(): String = javaTime("yyyy-MM-dd'T'HH:mm:ss").format(Instant.now().atZone(ZoneId.systemDefault()))
-    fun javaTimeDateKey(): String = javaTime("yyyy-MM-dd").format(Instant.now().atZone(ZoneId.systemDefault()))
-    fun javaTimeFullDateWithDay(): String = javaTime("EEEE, MMMM d, yyyy").format(Instant.now().atZone(ZoneId.systemDefault()))
+    fun javaTimeMonthDay(timestamp: Long): String = javaTime("MMM dd").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
+    fun javaTimeMonthDayShort(timestamp: Long): String = javaTime("MMM d").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
+    fun javaTimeFullDate(timestamp: Long): String = javaTime("EEE, dd MMM yyyy").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
+    fun javaTimeDateTime(timestamp: Long): String = javaTime("MMM dd, HH:mm").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
+    fun javaTimeMonthYear(timestamp: Long): String = javaTime("MMMM yyyy").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
+    fun javaTimeTimeOnly(timestamp: Long): String = javaTime("HH:mm").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
+    fun javaTimeTimeWithSeconds(timestamp: Long): String = javaTime("HH:mm:ss").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
+    fun javaTimeTimeWithSecondsAndDate(timestamp: Long): String = javaTime("HH:mm:ss dd/MM").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
+    fun javaTimeShortDate(timestamp: Long): String = javaTime("dd/MM/yyyy").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
+    fun javaTimeShortDateWithTime(timestamp: Long): String = javaTime("dd/MM/yyyy HH:mm").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
+    fun javaTimeIsoTimestamp(timestamp: Long): String = javaTime("yyyy-MM-dd'T'HH:mm:ss").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
+    fun javaTimeDateKey(timestamp: Long): String = javaTime("yyyy-MM-dd").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
+    fun javaTimeFullDateWithDay(timestamp: Long): String = javaTime("EEEE, MMMM d, yyyy").format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
 
     fun formatTimestampJavaTime(timestamp: Long, pattern: String): String {
         return Instant.ofEpochMilli(timestamp)

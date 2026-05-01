@@ -23,6 +23,7 @@ data class ExpenseGroup(
     val description: String? = null, // Optional description
     @ColumnInfo(defaultValue = "EUR") val defaultCurrency: String = "EUR",
     @ColumnInfo(defaultValue = "1") val isActive: Boolean = true,
-    val createdAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
     @ColumnInfo(defaultValue = "me") val createdBy: String = "me"   // User who created the group
 )

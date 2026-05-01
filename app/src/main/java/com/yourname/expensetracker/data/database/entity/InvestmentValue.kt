@@ -28,7 +28,8 @@ data class InvestmentValue(
     val id: Long = 0,
     val investmentId: Long,
     val price: Double,
-    val timestamp: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val timestamp: Long = 0L,
     val totalValue: Double,      // price * quantity
     val dayChange: Double? = null,
     val dayChangePercent: Double? = null

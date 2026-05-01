@@ -45,6 +45,10 @@ enum class ForecastHorizon(
     val isCalendarBound: Boolean
         get() = kind == Kind.REST_OF_MONTH
 
+    /**
+     * REST_OF_MONTH is calendar-bound. Use the [kind] property and compute the actual
+     * day count via [com.yourname.expensetracker.domain.util.TimePeriodUtils] at call sites.
+     */
     @Deprecated(
         message = "Use fixedDays and kind. REST_OF_MONTH is calendar-bound and has no fixed day count.",
         replaceWith = ReplaceWith("fixedDays")

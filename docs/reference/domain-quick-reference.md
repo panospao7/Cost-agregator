@@ -34,6 +34,73 @@
 | ...split an expense? | `EnhancedSplitManager` |
 | ...convert currency? | `CurrencyConverter` |
 
+## Key Types
+
+### `PeriodRange` (`domain/core/time/`)
+
+Typed half-open period model replacing raw `Pair<Long, Long>`:
+
+```kotlin
+data class PeriodRange(
+    val kind: PeriodKind,
+    val startInclusiveMillis: Long,
+    val endExclusiveMillis: Long,
+    val zoneId: ZoneId = ZoneId.systemDefault(),
+    val label: String = ""
+) {
+    fun contains(timestamp: Long): Boolean
+    val durationMillis: Long
+    val isCalendarPeriod: Boolean  // true for TODAY, THIS_WEEK, THIS_MONTH, etc.
+}
+```
+
+**Contract:** `timestamp >= startInclusiveMillis && timestamp < endExclusiveMillis`
+
+### `PeriodKind` (`domain/core/time/`)
+
+Semantic period classification:
+
+| Calendar periods | Rolling windows |
+|-----------------|-----------------|
+| `TODAY`, `THIS_WEEK`, `LAST_WEEK` | `LAST_7_DAYS` |
+| `THIS_MONTH`, `LAST_MONTH` | `LAST_30_DAYS` |
+| `THIS_QUARTER`, `LAST_QUARTER` | |
+| `THIS_YEAR`, `LAST_YEAR` | `CUSTOM` |
+
+**Rule:** Calendar labels **must** use calendar helpers (`getMonthRange`, `getWeekRange`). Rolling labels **must** use rolling helpers (`getLastNCalendarDaysRange`). Never mix them.
+
+### `TimeProvider` (`domain/util/`)
+
+Single source of "now" for the entire app:
+
+```kotlin
+interface TimeProvider {
+    fun now(): Long  // epoch milliseconds
+}
+```
+
+**Usage in a ViewModel:**
+```kotlin
+class MyViewModel @Inject constructor(
+    private val timeProvider: TimeProvider
+) {
+    fun loadMonth() {
+        val now = timeProvider.now()               // ✅ single capture
+        val range = TimePeriodUtils.getMonthRange(now)
+        // ...
+    }
+}
+```
+
+**In tests:**
+```kotlin
+val timeProvider = FakeTimeProvider.forDate(2026, 4, 15)
+val range = TimePeriodUtils.getMonthRange(timeProvider.now())
+// range = [April 1 00:00, May 1 00:00)
+```
+
+---
+
 ## Key Concepts
 
 ### The Insights Snapshot Pattern
@@ -241,12 +308,16 @@ Large files (potential refactor candidates):
 ## Common Gotchas
 
 1. **Period Range Direction:** Always `start < end`. BudgetCalculator validates this.
-2. **Merchant Normalization:** Must use canonical key (`MerchantKeyGenerator.generate()`) for lookups.
-3. **Category IDs:** Can be null. Treat as "Uncategorized" / "GENERAL".
-4. **Timezone Handling:** All timestamps are UTC milliseconds. No timezone conversion in domain.
-5. **Leap Year:** BudgetCalculator handles Feb 29 correctly.
-6. **Empty Lists:** Analytics gracefully handle zero transactions (return empty insights, not crash).
-7. **Null Safety:** Use `?.let { }` for optional fields (category, merchant, location).
+2. **Half-Open Contract:** All period ranges are `[startInclusive, endExclusive)`. Never use `23:59:59.999` as an endpoint — use midnight of the next period.
+3. **Calendar vs. Rolling:** Calendar labels ("This Month") must use calendar helpers (`getMonthRange`). Rolling labels ("Last 30 Days") must use rolling helpers (`getLastNCalendarDaysRange`). Confusing these was the #1 time bug.
+4. **No Direct `now()`:** Never call `System.currentTimeMillis()`, `Instant.now()`, or `LocalDate.now()` in business logic. Inject `TimeProvider` and call `timeProvider.now()`.
+5. **DST-Safe Day Math:** Do NOT use `(end - start) / 86_400_000` for day counts — use `TimePeriodUtils.daysBetween(start, end)`.
+6. **Merchant Normalization:** Must use canonical key (`MerchantKeyGenerator.generate()`) for lookups.
+7. **Category IDs:** Can be null. Treat as "Uncategorized" / "GENERAL".
+8. **Timezone Handling:** All timestamps are UTC milliseconds. No timezone conversion in domain.
+9. **Leap Year:** BudgetCalculator handles Feb 29 correctly.
+10. **Empty Lists:** Analytics gracefully handle zero transactions (return empty insights, not crash).
+11. **Null Safety:** Use `?.let { }` for optional fields (category, merchant, location).
 
 ## Integration Checklist
 

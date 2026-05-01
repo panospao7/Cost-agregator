@@ -20,7 +20,8 @@ data class PromptState(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val promptType: String,  // e.g., "LIFESTYLE_SAVINGS", "BUDGET_ALERT"
-    val createdAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
     val userAction: String? = null,  // "ACCEPTED", "DISMISSED", "DEFERRED"
     val actionDetails: String? = null,  // JSON with additional context
     @ColumnInfo(defaultValue = "0")

@@ -27,7 +27,8 @@ data class BudgetUiState(
     val autopilotError: String? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
-    val homeCurrency: String = "EUR"
+    val homeCurrency: String = "EUR",
+    val referenceNowMillis: Long = 0L
 )
 
 @HiltViewModel
@@ -86,7 +87,8 @@ class BudgetViewModel @Inject constructor(
             autopilotLoading = autopilotLoading,
             isLoading = manual is ManualState.Loading,
             error = (manual as? ManualState.Error)?.message,
-            homeCurrency = hc
+            homeCurrency = hc,
+            referenceNowMillis = timeProvider.now()
         )
     }
     .catch { e ->
@@ -239,7 +241,7 @@ class BudgetViewModel @Inject constructor(
                     totalRecommendedBudget = 0.0,
                     overallDelta = 0.0,
                     confidence = 0.0,
-                    generatedAt = System.currentTimeMillis()
+                    generatedAt = timeProvider.now()
                 )
             } finally {
                 _autopilotLoading.value = false
@@ -322,7 +324,7 @@ class BudgetViewModel @Inject constructor(
                     totalRecommendedBudget = 0.0,
                     overallDelta = 0.0,
                     confidence = 0.0,
-                    generatedAt = System.currentTimeMillis()
+                    generatedAt = timeProvider.now()
                 )
             } finally {
                 _autopilotLoading.value = false
@@ -340,7 +342,7 @@ class BudgetViewModel @Inject constructor(
             totalRecommendedBudget = 0.0,
             overallDelta = 0.0,
             confidence = 0.0,
-            generatedAt = System.currentTimeMillis()
+            generatedAt = timeProvider.now()
         )
     }
 }

@@ -46,8 +46,10 @@ data class Warranty(
     val notes: String? = null,
     @ColumnInfo(defaultValue = "ACTIVE") val status: WarrantyStatus = WarrantyStatus.ACTIVE,
     val claimedAt: Long? = null,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val updatedAt: Long = 0L,
     // F1: Receipt → Warranty Pipeline fields
     @ColumnInfo(defaultValue = "0") val autoDetected: Boolean = false,
     @ColumnInfo(defaultValue = "0.0") val extractionConfidence: Double = 0.0,

@@ -80,8 +80,9 @@ data class StressForecastSnapshot(
     /**
      * When this snapshot was computed
      */
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     @ColumnInfo(defaultValue = "0")
-    val computedAt: Long = System.currentTimeMillis(),
+    val computedAt: Long = 0L,
     
     /**
      * Whether this record has been synced to cloud

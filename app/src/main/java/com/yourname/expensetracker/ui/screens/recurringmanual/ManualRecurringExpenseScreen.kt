@@ -26,6 +26,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
@@ -140,6 +141,7 @@ fun ManualRecurringExpenseScreen(
                                 RecurringExpenseCard(
                                     expense = expense,
                                     homeCurrency = homeCurrency,
+                                    referenceNowMillis = uiState.referenceNowMillis,
                                     onToggleStatus = { viewModel.toggleStatus(it.id, it.isActive) },
                                     onDelete = { showDeleteConfirm = it },
                                     onMarkPaid = { viewModel.markAsPaid(it) }
@@ -164,6 +166,7 @@ fun ManualRecurringExpenseScreen(
                                 RecurringExpenseCard(
                                     expense = expense,
                                     homeCurrency = homeCurrency,
+                                    referenceNowMillis = uiState.referenceNowMillis,
                                     onToggleStatus = { viewModel.toggleStatus(it.id, it.isActive) },
                                     onDelete = { showDeleteConfirm = it },
                                     onMarkPaid = null
@@ -186,6 +189,7 @@ fun ManualRecurringExpenseScreen(
         // Add Dialog
         if (showAddDialog) {
             AddRecurringExpenseDialog(
+                referenceNowMillis = uiState.referenceNowMillis,
                 onDismiss = { showAddDialog = false },
                 onAdd = { merchant, amount, frequency, nextDate, note ->
                     viewModel.addRecurringExpense(merchant, amount, frequency, nextDate, note)
@@ -330,12 +334,13 @@ private fun TotalMonthlyCard(totalMonthly: Double, homeCurrency: String) {
 private fun RecurringExpenseCard(
     expense: ManualRecurringExpense,
     homeCurrency: String,
+    referenceNowMillis: Long,
     onToggleStatus: (ManualRecurringExpense) -> Unit,
     onDelete: (ManualRecurringExpense) -> Unit,
     onMarkPaid: ((ManualRecurringExpense) -> Unit)?
 ) {
     val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
-    val isUpcoming = expense.nextDate <= System.currentTimeMillis() + (7 * 24 * 60 * 60 * 1000)
+    val isUpcoming = expense.nextDate <= referenceNowMillis + (7 * TimePeriodUtils.DAY_IN_MILLIS)
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -452,6 +457,7 @@ private fun RecurringExpenseCard(
 
 @Composable
 private fun AddRecurringExpenseDialog(
+    referenceNowMillis: Long = System.currentTimeMillis(),
     onDismiss: () -> Unit,
     onAdd: (String, Double, RecurrenceFrequency, Long, String?) -> Unit
 ) {
@@ -460,7 +466,7 @@ private fun AddRecurringExpenseDialog(
     var frequency by remember { mutableStateOf(RecurrenceFrequency.MONTHLY) }
     var note by remember { mutableStateOf("") }
     var showDatePicker by remember { mutableStateOf(false) }
-    var nextDate by remember { mutableStateOf(System.currentTimeMillis()) }
+    var nextDate by remember { mutableStateOf(referenceNowMillis) }
     
     AlertDialog(
         onDismissRequest = onDismiss,

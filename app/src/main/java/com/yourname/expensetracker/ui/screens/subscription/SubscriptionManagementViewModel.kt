@@ -37,7 +37,8 @@ data class SubscriptionManagementUiState(
     val activeCount: Int = 0,
     val inactiveCount: Int = 0,
     val detectedCount: Int = 0,
-    val selectedSubscription: SubscriptionInfo? = null
+    val selectedSubscription: SubscriptionInfo? = null,
+    val referenceNowMillis: Long = 0L
 )
 
 data class SubscriptionInfo(
@@ -126,7 +127,8 @@ class SubscriptionManagementViewModel @Inject constructor(
                         totalAnnualCost = totalAnnual,
                         activeCount = subscriptionInfos.count { it.subscription.isActive },
                         inactiveCount = subscriptionInfos.count { !it.subscription.isActive },
-                        detectedCount = candidates.size
+                        detectedCount = candidates.size,
+                        referenceNowMillis = timeProvider.now()
                     )
                 }
             } catch (e: Exception) {

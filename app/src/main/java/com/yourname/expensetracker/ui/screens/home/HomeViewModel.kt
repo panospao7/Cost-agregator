@@ -33,6 +33,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidg
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
+import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.NavigationAction
@@ -725,7 +726,7 @@ class HomeViewModel @Inject constructor(
                         val now = timeProvider.now()
                         val (startOfMonth, endOfMonth) = TimePeriodUtils.getMonthRange(now)
                         
-                        val monthLabel = java.text.SimpleDateFormat("MMM yyyy", java.util.Locale.getDefault()).format(Date(now))
+                        val monthLabel = DateFormatterUtils.formatTimestampJavaTime(now, "MMM yyyy")
                         Triple(startOfMonth, endOfMonth, monthLabel)
                     }
                 }

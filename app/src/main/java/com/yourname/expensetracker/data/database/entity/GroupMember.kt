@@ -32,5 +32,6 @@ data class GroupMember(
     val name: String,              // Member name (e.g., "John", "Alice")
     val email: String? = null,     // Optional contact
     @ColumnInfo(defaultValue = "0") val isCurrentUser: Boolean = false, // Is this the app user?
-    val joinedAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val joinedAt: Long = 0L
 )

@@ -26,6 +26,7 @@
 |-----------|---------------|
 | `common/` | Shared helpers such as hashing and general-purpose utilities |
 | `core/money/` | **NEW — Type-safe money primitives**: `CurrencyCode`, `MoneyAmount`, `MoneyAggregate`, `MoneyBucket`, `ConvertedMoney`, `ConversionFailure`, `CurrencyAssumption`, `MoneyMappers`, `MoneyFormatUtils` |
+| `core/time/` | **NEW — Typed time period models**: `PeriodRange` (half-open `[start, end)` with kind/zone/label), `PeriodKind` (TODAY, THIS_WEEK, THIS_MONTH, LAST_7_DAYS, etc.) |
 | `dto/` | Cross-layer transfer objects for AI, review, and category references |
 | `ai/` | AI capability routing, policy, and model-backed services |
 | `bank/` | Bank API integration and connection orchestration |
@@ -293,7 +294,7 @@ Domain Layer (This Document)
 |------|--------|---------|-----------|
 | `Result.kt` | Success<T>, Error, Duplicate, Loading | Generic result wrapper | All use cases |
 | `UiText.kt` | Lazy string composition | UI-agnostic text rendering | Recommendations, AI responses |
-| `PeriodRange.kt` | start, end (Long) | Time window | Forecasting, analytics |
+| `PeriodRange.kt` | start, end (Long) | Time window (legacy; use `core/time/PeriodRange.kt` for new code) | Forecasting, analytics |
 | `PeriodTotal.kt` | period, total, count | Aggregated spending | Dashboard |
 | `CategoryBreakdown.kt` | category, amount, percentage | Category-level analytics | Dashboard, reports |
 | `CategoryInfo.kt` | id, name, icon, color | Category metadata | All engines |
@@ -303,6 +304,14 @@ Domain Layer (This Document)
 | `SavingsGoal.kt` | name, targetAmount, deadline, progress | Savings target | Savings use cases |
 | `UpcomingItem.kt` | description, date, amount, type | Upcoming transaction | Reminders, dashboard |
 | `BlockPartyDay.kt` | date, totalSpent, transactionCount | Daily summary | Dashboard |
+
+### Core Time Types (New — `core/time/`)
+**Directory:** `core/time/`
+
+| File | Purpose | Key Details |
+|------|---------|-------------|
+| `PeriodRange.kt` | Typed half-open period model | `[startInclusiveMillis, endExclusiveMillis)` with `kind` (PeriodKind), `zoneId`, `label`, `contains()` — replaces raw `Pair<Long, Long>` |
+| `PeriodKind.kt` | Semantic period classification | Enum: `TODAY`, `THIS_WEEK`, `LAST_WEEK`, `LAST_7_DAYS`, `THIS_MONTH`, `LAST_MONTH`, `LAST_30_DAYS`, `THIS_QUARTER`, `LAST_QUARTER`, `THIS_YEAR`, `LAST_YEAR`, `CUSTOM`; distinguishes calendar vs rolling semantics |
 
 ### Core Money Types (New — `core/money/`)
 **Directory:** `core/money/`
@@ -599,9 +608,9 @@ interface AiCapabilityRouter {
 | Utility | Purpose | Key Functions |
 |---------|---------|----------------|
 | `Money.kt` | Money type wrapper | Format, compare, convert |
-| `TimeProvider.kt` | System time abstraction | now() |
-| `TimePeriodUtils.kt` | Date range calculations | getMonthRange(), getWeekRange(), addDays(), etc. |
-| `DateFormatterUtils.kt` | Date formatting | dateKey(), monthDay(), etc. |
+| `TimeProvider.kt` | **Single source of "now"** — injected interface, never call `System.currentTimeMillis()` directly | `now()` |
+| `TimePeriodUtils.kt` | **Canonical calendar boundary math** — half-open contract `[start, end)`, no system clock calls internally | `getMonthRange()`, `getWeekRange()`, `getQuarterRange()`, `getYearRange()`, `getDayRange()`, `getLastNCalendarDaysRange()`, `getLastNCompleteDaysRange()`, `getTrailingElapsedRange()`, `getDayIndexForSparkline()`, `parseMonthKeyToRange()`, `toPeriodRange()`, `daysBetween()`, `addDays()` — `getLastNDaysRange()` deprecated |
+| `DateFormatterUtils.kt` | Date formatting — all 13 methods accept explicit timestamps (no `Instant.now()` internally) | `dateKey()`, `monthDay()`, etc. |
 | `AmountUtils.kt` | Numeric amount handling | Parse, format, round |
 | `AmountExtractionUtils.kt` | Amount extraction from text | Regex-based parsing |
 | `CurrencyFormatter.kt` | Currency display | **New:** `formatMoney(amount, currencyCode)` / `formatMoneyCompact()` / `formatMoneyWithSign()` — require explicit currency. Old `format(amount)` deprecated. |

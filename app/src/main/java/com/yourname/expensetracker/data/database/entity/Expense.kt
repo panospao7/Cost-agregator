@@ -65,7 +65,8 @@ data class Expense(
     
     val categoryId: Long? = null,
     
-    @ColumnInfo(defaultValue = "0") val createdAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    @ColumnInfo(defaultValue = "0") val createdAt: Long = 0L,
 
     @ColumnInfo(defaultValue = "UNKNOWN") val paymentMethod: PaymentMethod = PaymentMethod.UNKNOWN,
     @ColumnInfo(defaultValue = "0") val isManualEntry: Boolean = false,

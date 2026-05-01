@@ -261,6 +261,7 @@ fun SubscriptionManagementScreen(
         // Add Subscription Dialog
         if (showAddDialog) {
             AddSubscriptionDialog(
+                referenceNowMillis = uiState.referenceNowMillis,
                 onDismiss = { showAddDialog = false },
                 onAdd = { merchant, amount, frequency, category, nextDate ->
                     viewModel.addSubscription(merchant, amount, frequency, category, nextDate)
@@ -701,6 +702,7 @@ private fun SubscriptionCandidateCard(
 
 @Composable
 private fun AddSubscriptionDialog(
+    referenceNowMillis: Long,
     onDismiss: () -> Unit,
     onAdd: (String, Double, RecurrenceFrequency, String?, Long) -> Unit
 ) {
@@ -847,7 +849,7 @@ private fun AddSubscriptionDialog(
 
     if (showDatePicker) {
         val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = nextDate ?: System.currentTimeMillis()
+            initialSelectedDateMillis = nextDate ?: referenceNowMillis
         )
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },

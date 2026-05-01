@@ -22,7 +22,7 @@ class PriceProtectionTracker @Inject constructor(
     // Track items eligible for price protection
     suspend fun getPriceProtectedItems(): List<PriceProtectedItem> {
         val now = timeProvider.now()
-        val since = TimePeriodUtils.getLastNDaysRange(now, 30).first
+        val since = TimePeriodUtils.getLastNCalendarDaysRange(now, 30).first
         val recentReceipts = receiptDao.getRecentReceipts(since)
         
         return recentReceipts.flatMap { receipt ->

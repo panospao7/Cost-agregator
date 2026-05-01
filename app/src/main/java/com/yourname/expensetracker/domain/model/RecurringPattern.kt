@@ -29,20 +29,35 @@ data class RecurringPattern(
     }
 }
 
-enum class RecurrenceFrequency(
+enum class RecurrenceFrequency {
+    WEEKLY,
+    BIWEEKLY,
+    MONTHLY,
+    QUARTERLY,
+    SEMI_ANNUALLY,
+    ANNUALLY,
+    IRREGULAR;
+
+    /**
+     * Sentinel day count for backward compatibility only.
+     * Prefer [fixedIntervalDays] or [calendarMonths].
+     * The value 0 for [IRREGULAR] and 30 for [MONTHLY] are approximate
+     * and should not be used for calendar arithmetic.
+     */
     @Deprecated(
         message = "Use fixedIntervalDays/calendarMonths/isIrregular helpers instead of sentinel day counts.",
         replaceWith = ReplaceWith("fixedIntervalDays ?: 0")
     )
     val days: Int
-) {
-    WEEKLY(7),
-    BIWEEKLY(14),
-    MONTHLY(30),
-    QUARTERLY(90),
-    SEMI_ANNUALLY(180),
-    ANNUALLY(365),
-    IRREGULAR(0);
+        get() = when (this) {
+            WEEKLY -> 7
+            BIWEEKLY -> 14
+            MONTHLY -> 30
+            QUARTERLY -> 90
+            SEMI_ANNUALLY -> 180
+            ANNUALLY -> 365
+            IRREGULAR -> 0
+        }
 
     val fixedIntervalDays: Int?
         get() = when (this) {

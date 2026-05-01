@@ -55,6 +55,7 @@ import com.yourname.expensetracker.domain.analytics.*
 import com.yourname.expensetracker.domain.location.AreaSpending
 import com.yourname.expensetracker.domain.location.TravelInsight
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.ui.components.*
 import com.yourname.expensetracker.ui.components.analytics.PersonalityProfileCard
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
@@ -244,6 +245,7 @@ fun AnalyticsScreen(
                             consistencyRating = merch.consistencyRating.name,
                             priceChangePercent = merch.priceChangePercent,
                             predictedNextVisitDate = merch.predictedNextVisitDate,
+                            nowMs = state.referenceNowMillis,
                             onClick = {
                                 onNavigateToTransactions?.invoke(
                                     TransactionFilter(
@@ -486,6 +488,7 @@ fun EnhancedCategoryItem(
 @Composable
 private fun EnhancedMerchantItem(
     item: EnhancedMerchantAnalytics,
+    nowMs: Long,
     onClick: () -> Unit
 ) {
     // Remember expensive string calculations
@@ -555,7 +558,7 @@ private fun EnhancedMerchantItem(
                 StatMicro(stringResource(R.string.analytics_stat_micro_avg_visit), item.averagePerVisit, item.displayCurrency)
                 StatMicro(stringResource(R.string.analytics_stat_micro_loyalty), "${item.loyaltyScore.toInt()}/100")
                 item.predictedNextVisitDate?.let {
-                    val daysUntil = ((it - System.currentTimeMillis()) / (1000 * 60 * 60 * 24)).toInt()
+                    val daysUntil = TimePeriodUtils.daysBetween(nowMs, it)
                     val nextExpectedText = if (daysUntil <= 0) 
                         stringResource(R.string.analytics_next_expected_soon) 
                     else 

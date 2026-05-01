@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
@@ -36,7 +37,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class NominatimGeocodingService @Inject constructor(
-    @LocationHttpClient private val client: OkHttpClient
+    @LocationHttpClient private val client: OkHttpClient,
+    private val timeProvider: TimeProvider
 ) : GeocodingService {
 
     // B13 fix: rate-limit all Nominatim requests at the service level.
@@ -49,12 +51,12 @@ class NominatimGeocodingService @Inject constructor(
      * Wraps [block] with a mutex + delay to guarantee minimum spacing.
      */
     private suspend fun <T> withRateLimit(block: suspend () -> T): T = rateLimitMutex.withLock {
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         val elapsed = now - lastRequestAt
         if (elapsed < AppConfig.Location.NOMINATIM_MIN_INTERVAL_MS) {
             delay(AppConfig.Location.NOMINATIM_MIN_INTERVAL_MS - elapsed)
         }
-        lastRequestAt = System.currentTimeMillis()
+        lastRequestAt = timeProvider.now()
         block()
     }
 

@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.dto.AiArtifactRecord
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -12,7 +13,8 @@ import javax.inject.Singleton
 
 @Singleton
 class AiArtifactRepositoryImpl @Inject constructor(
-    private val dao: AiArtifactDao
+    private val dao: AiArtifactDao,
+    private val timeProvider: TimeProvider
 ) : AiArtifactRepository {
 
     override fun observeLatest(targetKey: String, capability: AiCapability): Flow<AiArtifactRecord?> =
@@ -25,10 +27,10 @@ class AiArtifactRepositoryImpl @Inject constructor(
         dao.upsert(artifact.toEntity())
 
     override suspend fun markDismissed(id: Long) =
-        dao.markDismissed(id)
+        dao.markDismissed(id, now = timeProvider.now())
 
     override suspend fun markApplied(id: Long) =
-        dao.markApplied(id)
+        dao.markApplied(id, now = timeProvider.now())
 
     override suspend fun deleteExpired(now: Long) =
         dao.deleteExpired(now)

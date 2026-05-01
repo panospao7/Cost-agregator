@@ -77,7 +77,8 @@ data class AnalyticsState(
     val isLoading: Boolean = true,
     val homeCurrency: String = "EUR",
     val conversionWarnings: List<AnalyticsConversionWarning> = emptyList(),
-    val latestRateTimestamp: Long? = null
+    val latestRateTimestamp: Long? = null,
+    val referenceNowMillis: Long = 0L
 )
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)
@@ -211,7 +212,7 @@ class AnalyticsViewModel @Inject constructor(
             val homeCurrency = inputs.homeCurrency
             val rateTimestamp = inputs.rateTimestamp
 
-            emit(AnalyticsState(isLoading = true, selectedPeriod = period, homeCurrency = homeCurrency, latestRateTimestamp = rateTimestamp))
+            emit(AnalyticsState(isLoading = true, selectedPeriod = period, homeCurrency = homeCurrency, latestRateTimestamp = rateTimestamp, referenceNowMillis = timeProvider.now()))
 
             if (
                 freshness.dataVersion != lastExpenseDataVersion ||
@@ -278,7 +279,7 @@ class AnalyticsViewModel @Inject constructor(
 
         val fullWindowStart = when (period) {
             TimePeriod.ALL -> 0L
-            else -> TimePeriodUtils.getLastNDaysRange(now, 365).first
+            else -> TimePeriodUtils.getStartOfYear(now)
         }
         val periodLength = currentEnd - currentStart
         val previousStart = currentStart - periodLength
@@ -644,7 +645,8 @@ class AnalyticsViewModel @Inject constructor(
   isLoading = false,
   homeCurrency = homeCurrency,
   conversionWarnings = mergeWarnings(conversionWarnings + advResult.warnings),
-  latestRateTimestamp = latestRateTimestamp
+  latestRateTimestamp = latestRateTimestamp,
+  referenceNowMillis = timeProvider.now()
   )
     }
 
@@ -797,9 +799,9 @@ class AnalyticsViewModel @Inject constructor(
                 Pair(start, com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfDay(now))
             }
             TimePeriod.WEEK -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getWeekRange(now, 0).let { (start, end) -> start to end }
-            TimePeriod.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 30)
-            TimePeriod.QUARTER -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 90)
-            TimePeriod.YEAR -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 365)
+            TimePeriod.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(now)
+            TimePeriod.QUARTER -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getQuarterRange(now)
+            TimePeriod.YEAR -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getYearRange(now)
             TimePeriod.ALL -> Pair(0L, now)
         }
     }

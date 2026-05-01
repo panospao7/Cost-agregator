@@ -20,6 +20,7 @@ import com.yourname.expensetracker.ui.components.AmountText
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
 /**
@@ -356,6 +357,7 @@ fun RichMerchantCard(
     consistencyRating: String,
     priceChangePercent: Float?,
     predictedNextVisitDate: Long?,
+    nowMs: Long = 0L,
     onClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -531,7 +533,7 @@ fun RichMerchantCard(
                 
                 // Predicted visit
                 predictedNextVisitDate?.let { date ->
-                    val daysUntil = ((date - System.currentTimeMillis()) / (1000 * 60 * 60 * 24)).toInt()
+                    val daysUntil = TimePeriodUtils.daysBetween(nowMs, date)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             text = "📅",

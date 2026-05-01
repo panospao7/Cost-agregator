@@ -33,7 +33,8 @@ data class Investment(
     
     // Current tracking
     val currentPrice: Double = purchasePrice,
-    val lastUpdated: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val lastUpdated: Long = 0L,
     
     // Notes and categorization
     val category: String? = null,    // "Tech", "Crypto", "Blue Chip"
@@ -44,7 +45,8 @@ data class Investment(
     val targetPrice: Double? = null,
     val stopLossPrice: Double? = null,
     
-    val createdAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L
 )
 
 enum class InvestmentType {

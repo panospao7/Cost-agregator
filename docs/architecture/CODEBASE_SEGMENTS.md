@@ -449,12 +449,15 @@ Owns application-layer orchestration use cases.
 Owns reusable helpers shared across segments.
 
 **Representative files**
-- `domain/util/TimeProvider.kt`
-- `domain/util/SystemTimeProvider.kt`
+- `domain/util/TimeProvider.kt` — Single source of "now" (interface, injected into 50+ classes)
+- `domain/util/SystemTimeProvider.kt` — Production clock implementation
 - `domain/util/AmountUtils.kt`
-- `domain/util/TimePeriodUtils.kt`
+- `domain/util/TimePeriodUtils.kt` — Canonical calendar boundary math; 7 new helpers in Phase 2 (parseMonthKeyToRange, getLastNCalendarDaysRange, getLastNCompleteDaysRange, getTrailingElapsedRange, getDayIndexForSparkline, toPeriodRange, daysBetween); `getLastNDaysRange` deprecated
+- `domain/util/DateFormatterUtils.kt` — 13 convenience methods, all accept explicit timestamps (no `Instant.now()`)
 - `domain/util/CommonPatterns.kt`
 - `domain/util/BKTree.kt`
+- `domain/core/time/PeriodRange.kt` — Typed half-open period model `[startInclusive, endExclusive)`
+- `domain/core/time/PeriodKind.kt` — Semantic period kind enum (TODAY, THIS_WEEK, THIS_MONTH, etc.)
 - `ui/util/ColorExtensions.kt`
 - `ui/util/HapticFeedback.kt`
 

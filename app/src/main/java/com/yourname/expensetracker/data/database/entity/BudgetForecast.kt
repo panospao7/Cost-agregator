@@ -57,7 +57,8 @@ data class BudgetForecast(
 
     // Status
     @ColumnInfo(defaultValue = "1") val isActive: Boolean = true,
-    val createdAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L
 )
 
 enum class ForecastRiskLevel {

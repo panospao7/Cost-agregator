@@ -28,6 +28,15 @@
 
 ## DOMAIN PACKAGE
 
+### Core Time Types (2 files)
+
+**Location:** `com.yourname.expensetracker.domain.core.time`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `core/time/PeriodRange.kt` | PeriodRange | Typed half-open period model `[startInclusive, endExclusive)` with kind (PeriodKind), zoneId, label, contains() | Model | PeriodKind | No |
+| `core/time/PeriodKind.kt` | PeriodKind | Semantic period enum: TODAY, THIS_WEEK, LAST_WEEK, LAST_7_DAYS, THIS_MONTH, LAST_MONTH, LAST_30_DAYS, THIS_QUARTER, LAST_QUARTER, THIS_YEAR, LAST_YEAR, CUSTOM | Enum | - | No |
+
 ### AI Subsystem (58 files)
 
 **Location:** `com.yourname.expensetracker.domain.ai`
@@ -421,9 +430,9 @@
 | `util/NotificationIdGenerator.kt` | NotificationIdGenerator | Generates notification IDs | Utility | - | No |
 | `util/StatisticsUtils.kt` | StatisticsUtils | Statistical functions | Utility | - | No |
 | `util/StringDistanceUtils.kt` | StringDistanceUtils | String distance algorithms | Utility | - | No |
-| `util/SystemTimeProvider.kt` | SystemTimeProvider | System time provider | Service | TimeProvider | No |
-| `util/TimePeriodUtils.kt` | TimePeriodUtils | Time period utilities | Utility | - | No |
-| `util/TimeProvider.kt` | TimeProvider | Time provider interface | Service | - | No |
+| `util/SystemTimeProvider.kt` | SystemTimeProvider | Production clock implementation | Service | TimeProvider | No |
+| `util/TimePeriodUtils.kt` | TimePeriodUtils | **Canonical calendar boundary math** — 7 new helpers in Phase 2: parseMonthKeyToRange, getLastNCalendarDaysRange, getLastNCompleteDaysRange, getTrailingElapsedRange, getDayIndexForSparkline, toPeriodRange, daysBetween; getLastNDaysRange deprecated. All functions are pure (no clock calls). | Utility | - | No |
+| `util/TimeProvider.kt` | TimeProvider | **Single source of "now"** — interface, injected into 50+ classes across domain/data/UI. Production impl: SystemTimeProvider. Test impl: FakeTimeProvider. | Service | - | No |
 
 ### Widget (2 files)
 

@@ -14,13 +14,13 @@ data class DebugData(
     val parserUsed: String = "Unknown",
     val issues: List<DebugIssue> = emptyList()
 ) {
-    fun toJson(): String {
+    fun toJson(timestamp: Long): String {
         val issueCounts = issues.groupingBy { it.severity }.eachCount()
 
         return buildString {
             appendLine("{")
             appendLine("  \"metadata\": {")
-            appendLine("    \"timestamp\": \"${DateFormatterUtils.javaTimeIsoTimestamp()}\",")
+            appendLine("    \"timestamp\": \"${DateFormatterUtils.javaTimeIsoTimestamp(timestamp)}\",")
             appendLine("    \"processingTimeMs\": $processingTimeMs,")
             appendLine("    \"parserUsed\": \"$parserUsed\"")
             appendLine("  },")

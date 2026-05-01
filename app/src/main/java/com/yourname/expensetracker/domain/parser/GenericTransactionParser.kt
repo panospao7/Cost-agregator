@@ -11,6 +11,7 @@ import java.util.regex.Pattern
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
+import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import java.time.LocalDate
 import java.time.ZoneId
@@ -25,7 +26,8 @@ import javax.inject.Singleton
 class GenericTransactionParser @Inject constructor(
     private val currencyNormalizer: CurrencyNormalizer,
     private val merchantCleaner: MerchantCleaner,
-    private val directionDetector: TransferDirectionDetector  // NEW: Direction detection
+    private val directionDetector: TransferDirectionDetector,  // NEW: Direction detection
+    private val timeProvider: TimeProvider
 ) {
 
     // Strong signals that this is a REAL transaction notification
@@ -305,7 +307,8 @@ class GenericTransactionParser @Inject constructor(
                     ?.toEpochMilli()
                     ?: continue
 
-                if (ts in 1..(System.currentTimeMillis() + 86_400_000)) return ts
+                val now = timeProvider.now()
+                if (ts in 1..now + 86_400_000) return ts
             } catch (e: Exception) {
                 Timber.w(e, "Failed to parse date from pattern")
             }

@@ -30,7 +30,8 @@ data class ExchangeRate(
     val fromCurrency: String,      // Source currency code (e.g., "USD")
     val toCurrency: String,        // Target currency code (e.g., "EUR")
     val rate: Double,              // Exchange rate (how much 1 unit of fromCurrency is worth in toCurrency)
-    val lastUpdated: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val lastUpdated: Long = 0L,
     @ColumnInfo(defaultValue = "manual") val source: String = "manual",  // "manual", "api", "cached"
     @ColumnInfo(defaultValue = "0") val validDate: Long = 0L
 )

@@ -51,6 +51,7 @@ import com.yourname.expensetracker.ui.components.PlaceInsightCard
 import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
@@ -240,10 +241,10 @@ fun SpendingMapScreen(
                     }
                 }
 
-                val now = System.currentTimeMillis()
-                val sevenDaysStart = now - 7L * 86_400_000L
-                val thirtyDaysStart = now - 30L * 86_400_000L
-                val ninetyDaysStart = now - 90L * 86_400_000L
+                val now = state.referenceNowMillis
+                val sevenDaysStart = now - 7L * TimePeriodUtils.DAY_IN_MILLIS
+                val thirtyDaysStart = now - 30L * TimePeriodUtils.DAY_IN_MILLIS
+                val ninetyDaysStart = now - 90L * TimePeriodUtils.DAY_IN_MILLIS
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),

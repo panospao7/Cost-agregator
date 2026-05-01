@@ -20,8 +20,10 @@ data class SplitTemplate(
     val shares: String, // JSON array of SplitShare objects
     val description: String? = null,
     @ColumnInfo(defaultValue = "0") val isDefault: Boolean = false,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val updatedAt: Long = 0L,
     @ColumnInfo(defaultValue = "0") val useCount: Int = 0
 ) {
     enum class SplitType {

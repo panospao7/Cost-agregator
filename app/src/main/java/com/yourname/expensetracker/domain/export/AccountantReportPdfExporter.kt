@@ -4,6 +4,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.util.TimeProvider
 import java.io.ByteArrayOutputStream
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
@@ -20,7 +21,9 @@ import javax.inject.Inject
  * No EUR assumptions — totals, breakdowns, and large-transaction sections all
  * correctly use per-currency grouping and display the actual currency code.
  */
-class AccountantReportPdfExporter @Inject constructor() {
+class AccountantReportPdfExporter @Inject constructor(
+    private val timeProvider: TimeProvider
+) {
 
     fun export(
         expenses: List<Expense>,
@@ -39,7 +42,7 @@ class AccountantReportPdfExporter @Inject constructor() {
 
             writer.writeTitle("Accountant Report")
             writer.writeBody("Period: $period")
-            writer.writeBody("Generated: ${formatters.formatTimestamp(System.currentTimeMillis())}")
+            writer.writeBody("Generated: ${formatters.formatTimestamp(timeProvider.now())}")
             writer.blankLine()
 
             writer.writeHeading("Summary")

@@ -41,6 +41,7 @@ class DashboardFollowThroughEngine @Inject constructor(
     
     companion object {
         private const val MAX_RECOMMENDATIONS = 5
+        private const val SEVEN_DAYS_MILLIS = 7L * 24 * 60 * 60 * 1000
         
         // Navigation target constants
         const val NAV_TARGET_TRANSACTION_LIST = "TRANSACTION_LIST"
@@ -122,11 +123,15 @@ class DashboardFollowThroughEngine @Inject constructor(
             
             val filterJson = filterSerializer.serialize(filter)
             
+            val now = timeProvider.now()
             DashboardFollowThroughRecommendation(
                 userId = userId,
                 recommendationText = insightText,
                 navigationTarget = NAV_TARGET_TRANSACTION_LIST,
                 filterCriteria = filterJson,
+                createdAt = now,
+                updatedAt = now,
+                expiresAt = now + SEVEN_DAYS_MILLIS,
                 priority = priority,
                 category = categoryId?.toString() ?: "GENERAL",
                 sourceArtifactId = sourceArtifactId
@@ -153,11 +158,15 @@ class DashboardFollowThroughEngine @Inject constructor(
         
         val filterJson = filterSerializer.serialize(filter)
         
+        val now = timeProvider.now()
         return DashboardFollowThroughRecommendation(
             userId = userId,
             recommendationText = recommendationText,
             navigationTarget = NAV_TARGET_TRANSACTION_LIST,
             filterCriteria = filterJson,
+            createdAt = now,
+            updatedAt = now,
+            expiresAt = now + SEVEN_DAYS_MILLIS,
             priority = RecommendationPriority.HIGH,
             category = transaction.categoryId?.toString() ?: "GENERAL",
             sourceArtifactId = aiArtifact?.id?.toString() ?: ""
@@ -174,7 +183,7 @@ class DashboardFollowThroughEngine @Inject constructor(
         
         // Filter: Show all transactions in this category for the last 30 days
         val nowMillis = timeProvider.now()
-        val (thirtyDaysAgo, rangeEnd) = TimePeriodUtils.getLastNDaysRange(nowMillis, 30)
+        val (thirtyDaysAgo, rangeEnd) = TimePeriodUtils.getLastNCalendarDaysRange(nowMillis, 30)
         
         val filter = DomainTransactionFilter(
             categoryId = transaction.categoryId,
@@ -184,11 +193,15 @@ class DashboardFollowThroughEngine @Inject constructor(
         
         val filterJson = filterSerializer.serialize(filter)
         
+        val now = timeProvider.now()
         return DashboardFollowThroughRecommendation(
             userId = userId,
             recommendationText = recommendationText,
             navigationTarget = NAV_TARGET_CATEGORY_DETAIL,
             filterCriteria = filterJson,
+            createdAt = now,
+            updatedAt = now,
+            expiresAt = now + SEVEN_DAYS_MILLIS,
             priority = RecommendationPriority.MEDIUM,
             category = transaction.categoryId?.toString() ?: "GENERAL",
             sourceArtifactId = aiArtifact?.id?.toString() ?: ""
@@ -211,11 +224,15 @@ class DashboardFollowThroughEngine @Inject constructor(
         
         val filterJson = filterSerializer.serialize(filter)
         
+        val now = timeProvider.now()
         return DashboardFollowThroughRecommendation(
             userId = userId,
             recommendationText = recommendationText,
             navigationTarget = NAV_TARGET_TRANSACTION_LIST,
             filterCriteria = filterJson,
+            createdAt = now,
+            updatedAt = now,
+            expiresAt = now + SEVEN_DAYS_MILLIS,
             priority = RecommendationPriority.MEDIUM,
             category = transaction.categoryId?.toString() ?: "GENERAL",
             sourceArtifactId = aiArtifact?.id?.toString() ?: ""
@@ -232,7 +249,7 @@ class DashboardFollowThroughEngine @Inject constructor(
         
         // Filter: Show all transactions from the last 7 days
         val nowMillis = timeProvider.now()
-        val (sevenDaysAgo, rangeEnd) = TimePeriodUtils.getLastNDaysRange(nowMillis, 7)
+        val (sevenDaysAgo, rangeEnd) = TimePeriodUtils.getLastNCalendarDaysRange(nowMillis, 7)
         
         val filter = DomainTransactionFilter(
             dateRange = Pair(sevenDaysAgo, rangeEnd),
@@ -241,11 +258,15 @@ class DashboardFollowThroughEngine @Inject constructor(
         
         val filterJson = filterSerializer.serialize(filter)
         
+        val now = timeProvider.now()
         return DashboardFollowThroughRecommendation(
             userId = userId,
             recommendationText = recommendationText,
             navigationTarget = NAV_TARGET_TRANSACTION_LIST,
             filterCriteria = filterJson,
+            createdAt = now,
+            updatedAt = now,
+            expiresAt = now + SEVEN_DAYS_MILLIS,
             priority = RecommendationPriority.LOW,
             category = "GENERAL",
             sourceArtifactId = aiArtifact?.id?.toString() ?: ""

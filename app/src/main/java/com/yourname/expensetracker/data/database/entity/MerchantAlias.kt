@@ -30,6 +30,8 @@ data class MerchantAlias(
     val canonicalId: Long,
     @ColumnInfo(defaultValue = "1") val occurrenceCount: Int = 1,
     @ColumnInfo(defaultValue = "0") val isUserDefined: Boolean = false,
-    val createdAt: Long = System.currentTimeMillis(),
-    val lastUsedAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val lastUsedAt: Long = 0L
 )

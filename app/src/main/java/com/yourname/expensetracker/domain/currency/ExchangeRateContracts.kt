@@ -9,7 +9,7 @@ data class DomainExchangeRate(
     val fromCurrency: String,
     val toCurrency: String,
     val rate: Double,
-    val lastUpdated: Long = System.currentTimeMillis(),
+    val lastUpdated: Long,
     val source: String = "manual"
 )
 

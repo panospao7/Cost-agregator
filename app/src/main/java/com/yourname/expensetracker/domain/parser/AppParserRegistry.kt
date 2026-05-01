@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.parser.parsers.GoogleWalletParser
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
 import com.yourname.expensetracker.domain.parser.parsers.SmsParser
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.NotificationFilter
 import timber.log.Timber
 import javax.inject.Inject
@@ -31,7 +32,9 @@ data class ParsedTransaction(
     val date: Long? = null,
     // Transfer direction fields (auto-detected for transfers/deposits)
     val transferDirection: ParsedTransferDirection? = null,
-    val transferAccountName: String? = null
+    val transferAccountName: String? = null,
+    @Deprecated("Should be set to timeProvider.now() by the caller. Default uses wall clock for backward compat.")
+    private val validationNowEpochMs: Long = System.currentTimeMillis()
 ) {
     /**
      * Helper property to quickly check if this is an incoming transaction
@@ -63,7 +66,7 @@ data class ParsedTransaction(
         }
         date?.let {
             require(it > 0) { "Date must be positive timestamp" }
-            require(it <= System.currentTimeMillis() + 86_400_000) { 
+            require(it <= validationNowEpochMs + 86_400_000) { 
                 "Date cannot be in the future" 
             }
         }
@@ -114,7 +117,8 @@ class AppParserRegistry @Inject constructor(
     private val smsParser: SmsParser,
     private val googleWalletParser: GoogleWalletParser,
     private val genericParser: GenericTransactionParser,
-    private val aiFallbackParser: com.yourname.expensetracker.domain.ai.service.NotificationFallbackParser
+    private val aiFallbackParser: com.yourname.expensetracker.domain.ai.service.NotificationFallbackParser,
+    private val timeProvider: TimeProvider
 ) {
     private val parsers = mutableListOf<AppNotificationParser>()
     private val packageToParserMap = mutableMapOf<String, AppNotificationParser>()

@@ -73,7 +73,8 @@ data class SavingsSweepPlan(
     val currency: String = "EUR",
 
     /** When this plan was computed */
-    val computedAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val computedAt: Long = 0L
 )
 
 /**

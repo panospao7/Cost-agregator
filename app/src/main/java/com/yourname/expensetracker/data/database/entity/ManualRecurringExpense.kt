@@ -23,7 +23,8 @@ data class ManualRecurringExpense(
     val frequency: RecurrenceFrequency,
     val nextDate: Long,
     val note: String? = null,
-    val createdAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
     
     // Subscription-specific fields (added in migration 39→40)
     @ColumnInfo(defaultValue = "0") val isSubscription: Boolean = false, // B4: default false; only true when explicitly a subscription

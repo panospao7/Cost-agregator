@@ -17,7 +17,8 @@ data class SavingsGoal(
     val currency: String = "EUR",
     @ColumnInfo(defaultValue = "'LEGACY_DEFAULT'")
     val currencyAssumption: String = "LEGACY_DEFAULT",
-    val createdAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L
 )
 
 enum class GoalProtectionLevel {

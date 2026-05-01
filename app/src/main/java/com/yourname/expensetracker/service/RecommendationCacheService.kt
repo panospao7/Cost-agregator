@@ -3,6 +3,7 @@ package com.yourname.expensetracker.service
 import com.yourname.expensetracker.data.repository.RecommendationRepository
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -25,6 +26,7 @@ import javax.inject.Singleton
 @Singleton
 class RecommendationCacheService @Inject constructor(
     private val repository: RecommendationRepository,
+    private val timeProvider: TimeProvider,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     companion object {
@@ -43,7 +45,7 @@ class RecommendationCacheService @Inject constructor(
     
     private data class CacheEntry(
         val recommendation: DashboardFollowThroughRecommendation,
-        val cachedAt: Long = System.currentTimeMillis()
+        val cachedAt: Long
     ) {
         fun isExpired(nowMillis: Long): Boolean {
             return (nowMillis - cachedAt) > TTL_MILLIS || DashboardFollowThroughRecommendation.isExpired(recommendation.expiresAt, nowMillis)
@@ -55,7 +57,7 @@ class RecommendationCacheService @Inject constructor(
      */
     suspend fun getById(id: String): DashboardFollowThroughRecommendation? {
         return withContext(ioDispatcher) {
-            val nowMillis = System.currentTimeMillis()
+            val nowMillis = timeProvider.now()
             
             // Check cache
             mutex.withLock {
@@ -74,7 +76,7 @@ class RecommendationCacheService @Inject constructor(
             // Update cache
             if (recommendation != null && recommendation.isActive(nowMillis)) {
                 mutex.withLock {
-                    cache[id] = CacheEntry(recommendation)
+                    cache[id] = CacheEntry(recommendation, timeProvider.now())
                 }
             }
             
@@ -88,7 +90,7 @@ class RecommendationCacheService @Inject constructor(
     suspend fun put(recommendation: DashboardFollowThroughRecommendation) {
         withContext(ioDispatcher) {
             mutex.withLock {
-                cache[recommendation.id] = CacheEntry(recommendation)
+                cache[recommendation.id] = CacheEntry(recommendation, timeProvider.now())
             }
         }
     }
@@ -98,9 +100,10 @@ class RecommendationCacheService @Inject constructor(
      */
     suspend fun putAll(recommendations: List<DashboardFollowThroughRecommendation>) {
         withContext(ioDispatcher) {
+            val now = timeProvider.now()
             mutex.withLock {
                 recommendations.forEach { recommendation ->
-                    cache[recommendation.id] = CacheEntry(recommendation)
+                    cache[recommendation.id] = CacheEntry(recommendation, now)
                 }
             }
         }
@@ -148,7 +151,7 @@ class RecommendationCacheService @Inject constructor(
      */
     suspend fun evictExpired() {
         withContext(ioDispatcher) {
-            val nowMillis = System.currentTimeMillis()
+            val nowMillis = timeProvider.now()
             
             mutex.withLock {
                 val keysToRemove = cache.entries

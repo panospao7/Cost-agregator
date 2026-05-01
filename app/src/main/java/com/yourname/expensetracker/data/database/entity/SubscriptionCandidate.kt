@@ -60,9 +60,9 @@ data class SubscriptionCandidate(
     /** User action: "accepted", "rejected", "pending" */
     @ColumnInfo(defaultValue = "pending") val userAction: String = "pending",
     
-    /** When the candidate was first detected */
-    val createdAt: Long = System.currentTimeMillis(),
+    /** When the candidate was first detected. Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
     
-    /** When the candidate was last updated */
-    val updatedAt: Long = System.currentTimeMillis()
+    /** When the candidate was last updated. Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val updatedAt: Long = 0L
 )

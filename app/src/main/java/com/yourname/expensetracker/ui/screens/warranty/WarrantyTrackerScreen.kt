@@ -266,6 +266,7 @@ fun WarrantyTrackerScreen(
                         WarrantyCard(
                             warranty = warranty,
                             dateFormat = dateFormat,
+                            referenceNowMillis = state.referenceNowMillis,
                             onMarkClaimed = { viewModel.markAsClaimed(warranty.id) },
                             onDelete = { viewModel.deleteWarranty(warranty) },
                             // F1: Review callbacks
@@ -419,13 +420,14 @@ private fun SummaryCard(
 private fun WarrantyCard(
     warranty: Warranty,
     dateFormat: SimpleDateFormat,
+    referenceNowMillis: Long,
     onMarkClaimed: () -> Unit,
     onDelete: () -> Unit,
     // F1: Review callbacks
     onConfirm: () -> Unit = {},
     onReject: () -> Unit = {}
 ) {
-    val daysRemaining = (warranty.warrantyEndDate - System.currentTimeMillis()) / (1000 * 60 * 60 * 24)
+    val daysRemaining = TimePeriodUtils.daysBetween(referenceNowMillis, warranty.warrantyEndDate)
     val isExpiringSoon = daysRemaining in 0..30
     val isExpired = daysRemaining < 0
     // F1: Check if auto-detected

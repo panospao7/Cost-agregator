@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -33,7 +34,8 @@ class LocationResolver @Inject constructor(
     private val merchantClusterPort: MerchantClusterPort,
     private val merchantCleaner: MerchantCleaner,
     private val canonicalizer: MerchantCanonicalizer,
-    private val greeklishNormalizer: GreeklishNormalizer
+    private val greeklishNormalizer: GreeklishNormalizer,
+    private val timeProvider: TimeProvider
 ) {
     /**
      * Resolve the location for an expense identified by [rawMerchantName].
@@ -59,7 +61,7 @@ class LocationResolver @Inject constructor(
         val cacheKey = merchantKey ?: MerchantKeyGenerator.generate(rawMerchantName)
 
         // ── Step 2: Compute recency, but defer device location lookup ──────────
-        val isRecent = (System.currentTimeMillis() - transactionDateMs) < AppConfig.Location.RECENT_TRANSACTION_THRESHOLD_MS
+        val isRecent = (timeProvider.now() - transactionDateMs) < AppConfig.Location.RECENT_TRANSACTION_THRESHOLD_MS
         var cachedDeviceLocation: Pair<Double, Double>? = null
         var hasLoadedDeviceLocation = false
 

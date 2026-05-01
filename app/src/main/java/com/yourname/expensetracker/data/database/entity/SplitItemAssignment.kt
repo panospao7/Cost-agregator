@@ -31,5 +31,6 @@ data class SplitItemAssignment(
     val assignedAmount: Double,
     @ColumnInfo(defaultValue = "0") val isPaid: Boolean = false,
     val paidAt: Long? = null,
-    val createdAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L
 )

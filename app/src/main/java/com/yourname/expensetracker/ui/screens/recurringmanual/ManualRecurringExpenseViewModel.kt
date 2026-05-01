@@ -26,7 +26,8 @@ data class ManualRecurringExpenseUiState(
     val error: String? = null,
     val totalMonthly: Double = 0.0,
     val activeCount: Int = 0,
-    val upcomingCount: Int = 0
+    val upcomingCount: Int = 0,
+    val referenceNowMillis: Long = 0L
 )
 
 @HiltViewModel
@@ -68,7 +69,8 @@ class ManualRecurringExpenseViewModel @Inject constructor(
                     error = null,
                     totalMonthly = totalMonthly,
                     activeCount = activeExpenses.size,
-                    upcomingCount = upcomingCount
+                    upcomingCount = upcomingCount,
+                    referenceNowMillis = timeProvider.now()
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(

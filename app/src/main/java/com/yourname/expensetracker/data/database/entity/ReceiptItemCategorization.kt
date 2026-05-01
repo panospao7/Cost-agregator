@@ -49,6 +49,8 @@ data class ReceiptItemCategorization(
     val userCorrectedAt: Long?,
     val taxAmount: Double?,
     @ColumnInfo(defaultValue = "0") val isNewCategorySuggestion: Boolean = false,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val updatedAt: Long = 0L
 )

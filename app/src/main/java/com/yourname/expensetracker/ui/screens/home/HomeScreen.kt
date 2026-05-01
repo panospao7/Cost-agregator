@@ -98,7 +98,11 @@ fun HomeScreen(
     }
 
     LaunchedEffect(Unit) {
-        val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+        val currentYear = if (state.referenceNowMillis > 0L) {
+            TimePeriodUtils.getYear(state.referenceNowMillis)
+        } else {
+            Calendar.getInstance().get(Calendar.YEAR)
+        }
         viewModel.loadTotalsForYear(currentYear)
     }
 
@@ -406,7 +410,7 @@ fun HomeScreen(
                                     modifier = Modifier.clickable {
                                         onNavigateToTransactions(
                                             TransactionFilter(
-                                                dateRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis())
+                                                dateRange = TimePeriodUtils.getMonthRange(state.referenceNowMillis)
                                             )
                                         )
                                     }
@@ -517,7 +521,7 @@ fun HomeScreen(
                                 
                                 if (widgetStyle == WidgetStyle.RETRO) {
                                     // Get recent transactions for this month to show in category dialog
-                                    val monthRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis())
+                                    val monthRange = TimePeriodUtils.getMonthRange(state.referenceNowMillis)
                                     val recentExpenses = remember(state.widgets) {
                                         state.widgets
                                             .filterIsInstance<DashboardWidget.RecentTransactions>()
@@ -698,25 +702,25 @@ fun HomeScreen(
                     com.yourname.expensetracker.ui.components.dashboard.MoneyRadarWidget(
                         data = widget.data,
                         onActionClick = { action ->
-                                        when (action) {
-                                            is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.ViewBills -> {
-                                                onNavigateToRecurring()
-                                            }
-                                            is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.ReviewAnomalies -> {
-                                                onNavigateToTransactions(
-                                                    TransactionFilter(dateRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis()))
-                                                )
-                                            }
-                                            is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.AdjustBudget -> {
-                                                if (action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.CRITICAL ||
-                                                    action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.HIGH) {
-                                                    onNavigateToAnalytics("month")
-                                                }
-                                            }
-                                        }
+                            when (action) {
+                                is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.ViewBills -> {
+                                    onNavigateToRecurring()
+                                }
+                                is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.ReviewAnomalies -> {
+                                    onNavigateToTransactions(
+                                        TransactionFilter(dateRange = TimePeriodUtils.getMonthRange(state.referenceNowMillis))
+                                    )
+                                }
+                                is com.yourname.expensetracker.domain.usecase.dashboard.MoneyRadarAction.AdjustBudget -> {
+                                    if (action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.CRITICAL ||
+                                        action.riskInfo.riskTier == com.yourname.expensetracker.domain.model.budget.MonteCarloBudgetImpact.RiskTier.HIGH) {
+                                        onNavigateToAnalytics("month")
                                     }
-                                )
+                                }
                             }
+                        }
+                    )
+                }
                             is DashboardWidget.FinancialStressForecast -> {
             FinancialStressForecastCard(
                 result = widget.result,
@@ -729,7 +733,7 @@ fun HomeScreen(
                         }
                         recommendation.contains("spending", ignoreCase = true) -> {
                             onNavigateToTransactions(
-                                TransactionFilter(dateRange = TimePeriodUtils.getMonthRange(System.currentTimeMillis()))
+                                TransactionFilter(dateRange = TimePeriodUtils.getMonthRange(state.referenceNowMillis))
                             )
                         }
                         recommendation.contains("emergency", ignoreCase = true) -> {
@@ -828,6 +832,7 @@ fun HomeScreen(
         if (showAddPlannedExpenseDialog) {
             AddPlannedExpenseDialog(
                 categories = categories,
+                referenceNowMillis = state.referenceNowMillis,
                 onDismiss = { showAddPlannedExpenseDialog = false },
                 onConfirm = { desc, amount, date, catId, priority ->
                     viewModel.addPlannedExpense(desc, amount, date, catId, priority)
@@ -1142,13 +1147,14 @@ fun RecentExpenseRow(expense: DashboardExpense, categoryColor: Color? = null) {
 @Composable
 fun AddPlannedExpenseDialog(
     categories: List<Category> = emptyList(),
+    referenceNowMillis: Long = System.currentTimeMillis(),
     onDismiss: () -> Unit,
     onConfirm: (String, Double, Long, Long?, PlannedExpensePriority) -> Unit
 ) {
     var description by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
     var priority by remember { mutableStateOf(PlannedExpensePriority.LIKELY) }
-    var date by remember { mutableStateOf(System.currentTimeMillis()) }
+    var date by remember { mutableStateOf(referenceNowMillis) }
     var selectedCategoryId by remember { mutableStateOf<Long?>(null) }
 
     AlertDialog(

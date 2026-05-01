@@ -3,13 +3,14 @@ package com.yourname.expensetracker.domain.receipt
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import java.util.regex.Pattern
-import java.util.Calendar
 import java.util.Locale
 import java.text.SimpleDateFormat
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 import com.yourname.expensetracker.BuildConfig
@@ -18,7 +19,8 @@ import timber.log.Timber
 @Singleton
 class BankStatementParser @Inject constructor(
     private val currencyNormalizer: CurrencyNormalizer,
-    private val merchantCleaner: MerchantCleaner
+    private val merchantCleaner: MerchantCleaner,
+    private val timeProvider: TimeProvider
 ) {
     companion object {
         // Header patterns for Greek National Bank
@@ -683,7 +685,8 @@ class BankStatementParser @Inject constructor(
         val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
         sdf.isLenient = false
 
-        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        val now = timeProvider.now()
+        val currentYear = TimePeriodUtils.getYear(now)
         val minYear = currentYear - 20
 
         val foundDates = mutableListOf<Long>()
@@ -731,7 +734,8 @@ class BankStatementParser @Inject constructor(
         val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
         sdf.isLenient = false
 
-        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        val now = timeProvider.now()
+        val currentYear = TimePeriodUtils.getYear(now)
         val minYear = currentYear - 20 // Allow up to 20 years of historical data
 
         for (pattern in datePatterns) {

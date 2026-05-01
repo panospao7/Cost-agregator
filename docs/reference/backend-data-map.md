@@ -138,6 +138,11 @@ data/
 | **Type Converters** | Custom: Enums, Lists, Dates |
 | **Export Schema** | ✓ Enabled (for migrations verification) |
 
+### Phase 2 Entity Changes (Time Semantics)
+
+- **38 entity timestamp defaults** migrated from `= System.currentTimeMillis()` to `= 0L` sentinel — entities no longer fetch wall-clock time at construction. All timestamps are now set explicitly by the caller.
+- **BudgetForecastDao** — `targetPeriodEnd >= :date` fixed to `targetPeriodEnd > :date` to match the half-open `[start, end)` contract.
+
 ---
 
 ## Entities Registry (46 Total)

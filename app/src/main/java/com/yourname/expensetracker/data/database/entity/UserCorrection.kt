@@ -42,5 +42,6 @@ data class UserCorrection(
     @ColumnInfo(defaultValue = "0") val wasApproved: Boolean = false,    // User confirmed it was correct
     val notificationTitle: String?,
     val notificationText: String?,
-    val createdAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L
 )

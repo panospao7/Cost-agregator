@@ -228,9 +228,39 @@ fun startOfMonth(year: Int, month: Int): Long {
 }
 
 /**
- * Gets the end of a month (last millisecond) in epoch milliseconds.
+ * Gets the half-open end of a month in epoch milliseconds.
+ *
+ * Returns the start of the **next** month (exclusive upper bound),
+ * consistent with the `[startInclusive, endExclusive)` convention.
+ *
+ * A timestamp `t` belongs to this month when:
+ * ```
+ * t >= startOfMonth(year, month) && t < endOfMonth(year, month)
+ * ```
  */
 fun endOfMonth(year: Int, month: Int): Long {
+    return LocalDate.of(year, month, 1)
+        .plusMonths(1)
+        .atStartOfDay(ZoneId.systemDefault())
+        .toInstant()
+        .toEpochMilli()
+}
+
+/**
+ * Gets the inclusive end of a month (last millisecond) in epoch milliseconds.
+ *
+ * **Deprecated**: Returns `23:59:59.999999999` of the last day of the month
+ * (inclusive end), which violates the half-open
+ * `[startInclusive, endExclusive)` convention.
+ *
+ * Use [endOfMonth] instead, which returns the half-open exclusive end
+ * (start of the next month).
+ */
+@Deprecated(
+    message = "Returns inclusive end (last millisecond). Use endOfMonth() which returns half-open exclusive end.",
+    replaceWith = ReplaceWith("endOfMonth(year, month)")
+)
+fun endOfMonthInclusive(year: Int, month: Int): Long {
     val lastDay = LocalDate.of(year, month, 1)
         .plusMonths(1)
         .minusDays(1)

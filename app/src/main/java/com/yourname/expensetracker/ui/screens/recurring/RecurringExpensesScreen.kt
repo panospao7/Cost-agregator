@@ -29,6 +29,8 @@ import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -58,7 +60,8 @@ class RecurringExpensesViewModel @Inject constructor(
     private val plannedExpenseRepository: PlannedExpenseRepository,
     private val recurringExpenseEngine: RecurringExpenseEngine,
     private val expenseRepository: ExpenseRepository,
-    private val currencySettingsRepository: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+    private val currencySettingsRepository: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     private val _homeCurrency = currencySettingsRepository.homeCurrency()
@@ -98,8 +101,9 @@ class RecurringExpensesViewModel @Inject constructor(
                 }
 
                 // Auto-detect patterns from transaction history (engine applies 6-month staleness filter)
+                val now = timeProvider.now()
                 val allExpenses = expenseRepository.getExpensesSince(
-                    System.currentTimeMillis() - (365L * 24 * 60 * 60 * 1000)
+                    TimePeriodUtils.getYearRange(now).first
                 )
                 val detectedPatterns = recurringExpenseEngine.getPatterns(allExpenses)
 

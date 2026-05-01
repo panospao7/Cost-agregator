@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -213,8 +214,8 @@ class SubscriptionManagerEngine @Inject constructor(
      */
     private suspend fun calculateUsageStats(subscription: ManualRecurringExpense): UsageStats {
         val now = timeProvider.now()
-        val monthStart = now - (30L * 24 * 60 * 60 * 1000)
-        val lastMonthStart = monthStart - (30L * 24 * 60 * 60 * 1000)
+        val monthStart = TimePeriodUtils.addMonths(now, -1)
+        val lastMonthStart = TimePeriodUtils.addMonths(monthStart, -1)
         
         // Get all usage data
         val allUsage = usageDao.getUsageSince(subscription.id, 0)
@@ -230,7 +231,8 @@ class SubscriptionManagerEngine @Inject constructor(
         var averageUsesPerMonth = 0.0
         if (allUsage.isNotEmpty()) {
             val oldestUsage = allUsage.minByOrNull { it.usedAt }?.usedAt ?: now
-            val monthsActive = ((now - oldestUsage) / (30L * 24 * 60 * 60 * 1000)).coerceAtLeast(1)
+            // Use calendar-aware month counting (DST-safe, handles varying month lengths)
+            val monthsActive = TimePeriodUtils.daysBetween(oldestUsage, now).coerceAtLeast(1) / 30
             averageUsesPerMonth = totalUses.toDouble() / monthsActive
         }
         
@@ -311,7 +313,7 @@ class SubscriptionManagerEngine @Inject constructor(
         }
         
         // Check for complete non-usage
-        if (usageStats.totalUses == 0 && subscription.createdAt < timeProvider.now() - (30L * 24 * 60 * 60 * 1000)) {
+        if (usageStats.totalUses == 0 && subscription.createdAt < TimePeriodUtils.addMonths(timeProvider.now(), -1)) {
             recommendations.add(SubscriptionRecommendation(
                 subscription = subscription,
                 type = RecommendationType.UNUSED,

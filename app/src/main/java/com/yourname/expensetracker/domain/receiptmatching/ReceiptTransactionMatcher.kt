@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.Normalizer
@@ -46,17 +47,19 @@ sealed class MatchResult {
 class ReceiptTransactionMatcher @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val merchantNormalizer: MerchantNormalizer,
-    private val stringDistance: StringDistanceUtils
+    private val stringDistance: StringDistanceUtils,
+    private val timeProvider: TimeProvider
 ) {
     suspend fun findBestMatch(
         receipt: ScannedReceipt,
         lookbackDays: Int = 7
     ): MatchResult = withContext(Dispatchers.Default) {
         // Get candidate transactions from last N days
+        val now = timeProvider.now()
         val startDate = receipt.parsedDate?.let { it - (lookbackDays * 86400000) } 
-            ?: (System.currentTimeMillis() - (lookbackDays * 86400000))
+            ?: (now - (lookbackDays * 86400000))
         val endDate = receipt.parsedDate?.let { it + (lookbackDays * 86400000) } 
-            ?: (System.currentTimeMillis() + (lookbackDays * 86400000))
+            ?: (now + (lookbackDays * 86400000))
         
         val candidates = expenseRepository.getExpensesBetween(startDate, endDate)
             .filter(::isReceiptCompatibleTransaction)

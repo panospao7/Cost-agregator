@@ -82,13 +82,13 @@ class CategorizationEngine @Inject constructor(
     }
 
     suspend fun categorize(merchant: String): CategorizationResult {
-        return categorizeWithContext(merchant, 0.0, System.currentTimeMillis())
+        return categorizeWithContext(merchant, 0.0, timeProvider.now())
     }
     
     suspend fun categorizeWithContext(
         merchant: String,
         amount: Double = 0.0,
-        timestamp: Long = System.currentTimeMillis()
+        timestamp: Long = timeProvider.now()
     ): CategorizationResult {
         
         val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = false)
@@ -212,7 +212,7 @@ class CategorizationEngine @Inject constructor(
     suspend fun debugCategorize(
         merchant: String,
         amount: Double = 0.0,
-        timestamp: Long = System.currentTimeMillis()
+        timestamp: Long = timeProvider.now()
     ): CategorizationDebugTrace {
         val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = false)
         val normalized = lookupResult.canonical.normalizedName.lowercase()

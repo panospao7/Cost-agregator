@@ -56,7 +56,8 @@ data class BudgetAdjustmentRecommendation(
     val confidence: Double,                   // Confidence score (0.0 - 1.0)
     val trend: BudgetTrend,                 // Trend direction
     val status: RecommendationStatus = RecommendationStatus.PENDING,
-    val generatedAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val generatedAt: Long = 0L,
     val expiresAt: Long? = null,             // Expiration time for recommendation
     val appliedAt: Long? = null,             // When user applied the recommendation
     val dismissedAt: Long? = null           // When user dismissed the recommendation
@@ -97,6 +98,7 @@ data class BudgetAdjustmentEvent(
     val delta: Double,
     val reason: String,
     val confidence: Double,
-    val appliedAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val appliedAt: Long = 0L,
     val appliedBy: String = "autopilot"      // "autopilot", "manual", "system"
 )

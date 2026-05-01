@@ -2,7 +2,6 @@ package com.yourname.expensetracker.domain.receipt
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.Calendar
 import java.util.Locale
 import java.util.regex.Pattern
 import java.text.SimpleDateFormat
@@ -11,11 +10,14 @@ import javax.inject.Singleton
 
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 
 @Singleton
 class ReceiptParser @Inject constructor(
-    private val merchantRules: MerchantRulesPolicy
+    private val merchantRules: MerchantRulesPolicy,
+    private val timeProvider: TimeProvider
 ) {
     companion object {
         // Pre-compiled regex patterns for performance (Issue 2.13)
@@ -596,7 +598,8 @@ class ReceiptParser @Inject constructor(
                 
                 // SANITY CHECK: Year must be reasonable (Dynamic range)
                 val yearInt = year.toIntOrNull() ?: 0
-                val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+                val now = timeProvider.now()
+                val currentYear = TimePeriodUtils.getYear(now)
                 if (yearInt in (currentYear - 10)..(currentYear + 1)) { 
                     try {
                         return sdf.parse("$d/$m/$year")?.time
@@ -731,7 +734,7 @@ class ReceiptParser @Inject constructor(
         if (date != null) {
             score += 0.15f
             // Bonus if date is recent
-            val daysDiff = (System.currentTimeMillis() - date) / (1000 * 60 * 60 * 24)
+            val daysDiff = TimePeriodUtils.daysBetween(date, timeProvider.now())
             if (daysDiff in 0..365) score += 0.05f
         }
         

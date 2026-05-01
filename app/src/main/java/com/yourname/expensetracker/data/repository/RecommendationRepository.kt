@@ -40,7 +40,8 @@ class RecommendationRepository @Inject constructor(
      * Get active recommendations for a user as a Flow.
      */
     fun observeActiveForUser(userId: String): Flow<List<DashboardFollowThroughRecommendation>> {
-        return dao.observeActiveByUser(userId).map { entities ->
+        val nowMillis = timeProvider.now()
+        return dao.observeActiveByUser(userId, nowMillis).map { entities ->
             entities.map { it.toDomain() }
         }
     }
@@ -50,7 +51,7 @@ class RecommendationRepository @Inject constructor(
      */
     suspend fun getActiveForUser(userId: String): List<DashboardFollowThroughRecommendation> {
         return withContext(ioDispatcher) {
-            dao.getActiveByUser(userId).map { it.toDomain() }
+            dao.getActiveByUser(userId, timeProvider.now()).map { it.toDomain() }
         }
     }
     
@@ -143,7 +144,7 @@ class RecommendationRepository @Inject constructor(
      */
     suspend fun dismiss(recommendationId: String) {
         withContext(ioDispatcher) {
-            dao.archive(recommendationId)
+            dao.archive(recommendationId, timeProvider.now())
         }
     }
     
@@ -199,7 +200,7 @@ class RecommendationRepository @Inject constructor(
      */
     suspend fun countActive(userId: String): Int {
         return withContext(ioDispatcher) {
-            dao.countActive(userId)
+            dao.countActive(userId, timeProvider.now())
         }
     }
     
@@ -208,7 +209,7 @@ class RecommendationRepository @Inject constructor(
      */
     suspend fun cleanupExpired(): Int {
         return withContext(ioDispatcher) {
-            dao.deleteExpired()
+            dao.deleteExpired(timeProvider.now())
         }
     }
     

@@ -32,6 +32,8 @@ data class MerchantCanonical(
     @ColumnInfo(defaultValue = "0.0") val totalSpent: Double = 0.0,
     @ColumnInfo(defaultValue = "0") val isVerified: Boolean = false,
     val logoUrl: String? = null,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val createdAt: Long = 0L,
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val updatedAt: Long = 0L
 )

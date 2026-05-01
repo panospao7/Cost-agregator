@@ -148,7 +148,8 @@ data class AnalyticsConversionWarning(
 )
 
 data class InsightsSnapshot(
-    val generatedAt: Long = System.currentTimeMillis(),
+    /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
+    val generatedAt: Long = 0L,
     val currentMonth: MonthPeriod,
     val monthlyComparison: MonthlyComparison,
     val categoryInsights: List<CategoryInsight>,

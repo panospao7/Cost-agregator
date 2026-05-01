@@ -765,9 +765,9 @@ class TransactionsViewModel @Inject constructor(
                 Pair(startOfDay, com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfDay(now))
             }
             TransactionTab.WEEK -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getWeekRange(now, 0).let { (start, end) -> start to end }
-            TransactionTab.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 30)
-            TransactionTab.QUARTER -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 90)
-            TransactionTab.YEAR -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getLastNDaysRange(now, 365)
+            TransactionTab.MONTH -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getMonthRange(now)
+            TransactionTab.QUARTER -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getQuarterRange(now)
+            TransactionTab.YEAR -> com.yourname.expensetracker.domain.util.TimePeriodUtils.getYearRange(now)
             TransactionTab.ALL -> Pair(0L, now)
         }
     }
