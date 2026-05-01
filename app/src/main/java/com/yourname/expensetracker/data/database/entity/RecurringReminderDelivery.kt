@@ -7,7 +7,7 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "recurring_reminder_deliveries",
     indices = [
-        Index(value = ["occurrenceId", "reminderWindow"]),
+        Index(value = ["occurrenceId", "reminderWindow"], unique = true),
         Index(value = ["status"]),
         Index(value = ["scheduledAt"])
     ]

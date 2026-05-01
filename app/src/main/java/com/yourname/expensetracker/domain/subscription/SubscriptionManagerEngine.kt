@@ -251,11 +251,14 @@ class SubscriptionManagerEngine @Inject constructor(
             (usesThisMonth.toDouble() / target) * 100
         } else 100.0 // No target = assume 100% usage
         
-        // Calculate cost per use
+        // Calculate cost per use using monthly-normalised amount
         val costPerUse = if (totalUses > 0) {
             // Monthly cost / average monthly uses
-            subscription.amount / averageUsesPerMonth
-        } else subscription.amount
+            val monthlyAmount = RecurrenceCalculator.toMonthlyAmount(subscription.amount, subscription.frequency)
+            monthlyAmount / averageUsesPerMonth
+        } else {
+            RecurrenceCalculator.toMonthlyAmount(subscription.amount, subscription.frequency)
+        }
         
         val lastUsedAt = allUsage.maxByOrNull { it.usedAt }?.usedAt
         
@@ -282,9 +285,10 @@ class SubscriptionManagerEngine @Inject constructor(
     ): List<SubscriptionRecommendation> {
         val recommendations = mutableListOf<SubscriptionRecommendation>()
         
-        // Check for recent price increases
+        // Check for recent price increases (90-day calendar-aware lookback)
+        val ninetyDaysAgo = TimePeriodUtils.getLastNCalendarDaysRange(timeProvider.now(), 90).first
         val recentPriceIncreases = priceHistory.filter { 
-            it.recordedAt > timeProvider.now() - (90L * 24 * 60 * 60 * 1000) && it.changePercent > 0
+            it.recordedAt > ninetyDaysAgo && it.changePercent > 0
         }
         
         for (increase in recentPriceIncreases) {

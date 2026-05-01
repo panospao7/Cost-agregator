@@ -6,13 +6,17 @@ import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationResult
+import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.abs
 
 /**
  * Orchestrates the full lifecycle of recurring-expense occurrences:
@@ -57,6 +61,13 @@ class RecurringLifecycleCoordinator @Inject constructor(
         val rule = manualRecurringExpenseDao.getById(ruleId)
             ?: throw IllegalArgumentException("Recurring rule not found: id=$ruleId")
 
+        // Use rule.nextDate as the expansion anchor. If it's before startDate,
+        // advance it by the frequency until it falls within the range.
+        var anchorDate = rule.nextDate
+        while (anchorDate < startDate && rule.frequency != RecurrenceFrequency.IRREGULAR) {
+            anchorDate = expander.advanceDate(anchorDate, rule.frequency)
+        }
+
         val request = RecurringOccurrenceExpander.ExpandRequest(
             merchant = rule.merchant,
             amount = rule.amount,
@@ -65,6 +76,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
             categoryId = null, // ManualRecurringExpense does not carry a categoryId
             startDate = startDate,
             endDate = endDate,
+            anchorDate = anchorDate,
             sourceType = SOURCE_TYPE_RECURRING_RULE,
             sourceId = rule.id
         )
@@ -79,22 +91,47 @@ class RecurringLifecycleCoordinator @Inject constructor(
     /**
      * Links an actual expense to a planned occurrence (marking it PAID).
      *
-     * Finds a PLANNED occurrence on the same calendar day as the expense with
-     * no linked expense yet. If a match is found, the occurrence is updated to
-     * PAID with the expense's amount and currency.
+     * Matching rules (all must hold):
+     * 1. Occurrence status is PLANNED and not yet linked.
+     * 2. Same calendar day.
+     * 3. Merchant key matches (case-insensitive, via [MerchantKeyGenerator]).
+     * 4. Amount within ±10% tolerance of the expected amount.
+     * 5. Same currency (case-insensitive).
+     * 6. Expense is not excluded: isNotMine, TRANSFER, and DEPOSIT are skipped.
      *
      * @param expenseId The ID of the expense to link.
      * @return `true` if a matching occurrence was found and linked.
      */
     suspend fun linkExpenseToOccurrence(expenseId: Long): Boolean {
         val expense = expenseDao.getById(expenseId) ?: return false
-        val expenseDayStart = TimePeriodUtils.getStartOfDay(expense.date)
-        val expenseDayEnd = expenseDayStart + 86_400_000L
 
-        // Find a PLANNED occurrence on the same calendar day with no linked expense
+        // Exclude non-ownership and non-spending types
+        if (expense.isNotMine) return false
+        if (expense.transactionType == TransactionType.TRANSFER ||
+            expense.transactionType == TransactionType.DEPOSIT
+        ) return false
+
+        val expenseDayStart = TimePeriodUtils.getStartOfDay(expense.date)
+        val expenseDayEnd = TimePeriodUtils.getEndOfDay(expense.date)
+        val expenseMerchantKey = MerchantKeyGenerator.generate(expense.merchant)
+
+        // Find PLANNED occurrences on the same calendar day with no linked expense
         val occurrences = occurrenceDao.getByDateRange(expenseDayStart, expenseDayEnd)
         val match = occurrences.firstOrNull { occ ->
-            occ.status == "PLANNED" && occ.linkedExpenseId == null
+            if (occ.status != "PLANNED" || occ.linkedExpenseId != null) return@firstOrNull false
+
+            // Merchant key match (case-insensitive)
+            val occMerchantKey = MerchantKeyGenerator.generate(occ.merchant.orEmpty())
+            if (occMerchantKey.isBlank() || expenseMerchantKey.isBlank()) return@firstOrNull false
+            if (occMerchantKey != expenseMerchantKey) return@firstOrNull false
+
+            // Amount within ±10% tolerance
+            if (!amountMatches(occ.expectedAmount, expense.amount)) return@firstOrNull false
+
+            // Same currency (case-insensitive)
+            if (!occ.expectedCurrency.equals(expense.currency, ignoreCase = true)) return@firstOrNull false
+
+            true
         } ?: return false
 
         val now = timeProvider.now()
@@ -109,6 +146,19 @@ class RecurringLifecycleCoordinator @Inject constructor(
             )
         )
         return true
+    }
+
+    /**
+     * Checks whether [actualAmount] is within ±10% of [expectedAmount].
+     * Both values must be finite; returns `false` for zero or negative expected amounts.
+     */
+    private fun amountMatches(expectedAmount: Double, actualAmount: Double): Boolean {
+        if (!expectedAmount.isFinite() || !actualAmount.isFinite()) return false
+        if (expectedAmount == 0.0) return false
+
+        val tolerance = abs(expectedAmount * 0.10)
+        val difference = abs(actualAmount - expectedAmount)
+        return difference <= tolerance
     }
 
     /**

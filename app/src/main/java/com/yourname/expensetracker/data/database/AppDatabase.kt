@@ -5847,7 +5847,7 @@ val MIGRATION_96_100 = object : androidx.room.migration.Migration(96, 100) {
                 )
             """.trimIndent())
 
-            database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_occurrenceId_reminderWindow ON recurring_reminder_deliveries (occurrenceId, reminderWindow)")
+            database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_occurrenceId_reminderWindow ON recurring_reminder_deliveries (occurrenceId, reminderWindow)")
             database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_status ON recurring_reminder_deliveries (status)")
             database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_scheduledAt ON recurring_reminder_deliveries (scheduledAt)")
 

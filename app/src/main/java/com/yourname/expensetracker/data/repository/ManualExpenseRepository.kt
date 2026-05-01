@@ -195,7 +195,7 @@ class ManualExpenseRepository @Inject constructor(
                             currency = currency,
                             note = recurringNote
                         )
-                        val recurringId = database.recurringExpenseDao().insert(recurringExpense)
+                        val recurringId = database.manualRecurringExpenseDao().insert(recurringExpense)
                         if (recurringId <= 0) {
                             throw IllegalStateException("Failed to create recurring expense rule")
                         }

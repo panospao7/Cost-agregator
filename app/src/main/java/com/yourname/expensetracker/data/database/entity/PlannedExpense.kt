@@ -37,7 +37,15 @@ data class PlannedExpense(
     /** Key linking this planned expense to a recurring occurrence (occurrenceKey). */
     val sourceOccurrenceKey: String? = null,
     /** ID of the recurring rule that generated this planned expense. */
-    val sourceRecurringRuleId: Long? = null
+    val sourceRecurringRuleId: Long? = null,
+    /** Status: PLANNED, FULFILLED, SKIPPED, CANCELLED */
+    @ColumnInfo(defaultValue = "'PLANNED'") val status: String = "PLANNED",
+    /** ID of the actual expense that fulfilled this planned expense (if any). */
+    val linkedActualExpenseId: Long? = null,
+    /** Unified merchant key (for matching with actual expenses). */
+    val merchantKey: String? = null,
+    /** Last update timestamp (must be set on every mutation). */
+    val updatedAt: Long = 0L
 )
 
 enum class PlannedExpensePriority {

@@ -52,8 +52,10 @@ class RecurringPlanProjectionService @Inject constructor(
         coordinator.generateOccurrences(ruleId, now, endDate)
 
         // 2. Fetch all occurrences for this rule
+        // Use start-of-day for `now` so occurrences due today at 00:00 are included
+        val start = TimePeriodUtils.getStartOfDay(now)
         val occurrences = coordinator.getOccurrences(ruleId)
-            .filter { it.status == "PLANNED" && it.dueDate in now until endDate }
+            .filter { it.status == "PLANNED" && it.dueDate >= start && it.dueDate < endDate }
 
         // 3. Create PlannedExpense rows for occurrences that have no match yet
         var created = 0

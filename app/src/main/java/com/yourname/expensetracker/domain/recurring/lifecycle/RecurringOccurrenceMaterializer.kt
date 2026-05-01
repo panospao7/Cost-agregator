@@ -1,10 +1,13 @@
 package com.yourname.expensetracker.domain.recurring.lifecycle
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
 import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -15,9 +18,14 @@ import javax.inject.Singleton
  * - New occurrences: INSERT with IGNORE (occurrenceKey unique constraint handles dedup)
  * - Existing occurrences: UPDATE if status changed (e.g., PLANNED → PAID)
  * - For PLANNED occurrences: create reminder deliveries for configured windows
+ *
+ * All persistence operations within [materialize] are wrapped in a single
+ * Room transaction so that occurrence inserts/updates and delivery inserts
+ * are atomic.
  */
 @Singleton
 class RecurringOccurrenceMaterializer @Inject constructor(
+    private val database: AppDatabase,
     private val occurrenceDao: RecurringOccurrenceDao,
     private val reminderDeliveryDao: RecurringReminderDeliveryDao,
     private val timeProvider: TimeProvider
@@ -39,7 +47,7 @@ class RecurringOccurrenceMaterializer @Inject constructor(
     suspend fun materialize(
         resolved: List<OccurrenceConflictResolver.ResolvedOccurrence>,
         reminderWindows: List<String> = listOf("DUE_DAY")
-    ): MaterializationResult {
+    ): MaterializationResult = database.withTransaction {
         var created = 0
         var updated = 0
         var skipped = 0
@@ -100,7 +108,7 @@ class RecurringOccurrenceMaterializer @Inject constructor(
             }
         }
 
-        return MaterializationResult(
+        MaterializationResult(
             created = created,
             updated = updated,
             skipped = skipped,
@@ -152,7 +160,7 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                 val prefix = window.removeSuffix("_DAYS_BEFORE")
                 val days = prefix.toIntOrNull()
                 if (days != null && days > 0) {
-                    dueDate - days * 86_400_000L
+                    TimePeriodUtils.addDays(dueDate, -days)
                 } else {
                     dueDate
                 }

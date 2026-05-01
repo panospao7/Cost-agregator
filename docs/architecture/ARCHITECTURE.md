@@ -720,6 +720,22 @@ Use the database file and migration chain as the source of truth for the exact t
 - Repositories: `GroupsRepository`, `GroupsRepositoryImpl`
 - Use Cases: `DeleteGroupMemberUseCase`, `DeleteGroupUseCase`, `AddGroupExpenseUseCase`
 
+### Post-Review Hardening (May 2026)
+
+Cross-cutting fixes applied after architecture review tightened correctness, consistency, and edge-case handling across Phases 3–5:
+
+**Transactional guarantees (Phase 3+4+5):** All coordinator operations (create, update, delete, link, unlink, materialize) now run inside a single Room transaction. Receipt delete performs post-commit file cleanup.
+
+**Validation hardening:** Full validation wired for future-date checks, transfer direction/account, expense ownership, and ISO 4217 currency codes in all paths.
+
+**Deduplication completeness:** `deduplicationMode` / `idempotencyKey` fully propagated through coordinators. `STRICT_EXTERNAL_ID` mode uses `idem:`-prefixed dedupeKeys. `BULK_IMPORT` runs standard dedup (no external-id skip). Text and semantic dedup now run post-OCR in the receipt pipeline. Duplicate detection returns real existing IDs (not placeholders).
+
+**Receipt lifecycle fixes:** `processEmailReceipt()` fully implemented with non-bank receipt relink prevention. Hardcoded EUR removed from receipt asset paths. Duplicate receipts correctly marked `DUPLICATE_DETECTED`. Asset double-persistence removed.
+
+**Recurring / materialization fixes:** `RecurringOccurrenceExpander` uses `rule.nextDate` as the expansion anchor. `ReminderDeliveryDao` unique index on (`occurrenceId`, `reminderWindow`). Materialization runs transactionally. `PlannedExpense` gains `status`, `linkedExpenseId`, `merchantKey` columns. Subscription cost-per-use normalized to monthly.
+
+**DI & code quality:** Hilt `@Inject` added to `RecurringOccurrenceExpander` and `OccurrenceConflictResolver`. `ManualExpenseRepository` and `SmartBillNegotiationEngine` DAO leaks fixed. `linkExpenseToOccurrence()` matches on merchant/amount/currency. NLP last-month uses calendar-month boundaries. Structured JSON snapshots for all audit events.
+
 ### Historical Addendum: Updated UI Layer Structure
 - New screen directories:
   - `groups/` - Shared expense groups

@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander.
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlin.math.abs
+import javax.inject.Inject
 
 /**
  * Resolves occurrence candidates against actual expenses to determine whether
@@ -12,7 +13,7 @@ import kotlin.math.abs
  *
  * Pure domain logic — no DI needed. Instantiate as a plain class.
  */
-class OccurrenceConflictResolver {
+class OccurrenceConflictResolver @Inject constructor() {
 
     /**
      * The resolved status of an occurrence candidate after matching against

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 100,
-    "identityHash": "bd280e71a64e2438cb7e478bd0176dcf",
+    "identityHash": "34c8212926435210382b193cc431ea79",
     "entities": [
       {
         "tableName": "raw_notifications",
@@ -1628,7 +1628,7 @@
       },
       {
         "tableName": "planned_expenses",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `description` TEXT NOT NULL, `amount` REAL NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `currencyAssumption` TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT', `date` INTEGER NOT NULL, `categoryId` INTEGER, `isRecurring` INTEGER NOT NULL DEFAULT 0, `priority` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `sourceOccurrenceKey` TEXT, `sourceRecurringRuleId` INTEGER, FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `description` TEXT NOT NULL, `amount` REAL NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `currencyAssumption` TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT', `date` INTEGER NOT NULL, `categoryId` INTEGER, `isRecurring` INTEGER NOT NULL DEFAULT 0, `priority` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `sourceOccurrenceKey` TEXT, `sourceRecurringRuleId` INTEGER, `status` TEXT NOT NULL DEFAULT 'PLANNED', `linkedActualExpenseId` INTEGER, `merchantKey` TEXT, `updatedAt` INTEGER NOT NULL, FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
         "fields": [
           {
             "fieldPath": "id",
@@ -1701,6 +1701,29 @@
             "fieldPath": "sourceRecurringRuleId",
             "columnName": "sourceRecurringRuleId",
             "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'PLANNED'"
+          },
+          {
+            "fieldPath": "linkedActualExpenseId",
+            "columnName": "linkedActualExpenseId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "merchantKey",
+            "columnName": "merchantKey",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
           }
         ],
         "primaryKey": {
@@ -6847,13 +6870,13 @@
         "indices": [
           {
             "name": "index_recurring_reminder_deliveries_occurrenceId_reminderWindow",
-            "unique": false,
+            "unique": true,
             "columnNames": [
               "occurrenceId",
               "reminderWindow"
             ],
             "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_recurring_reminder_deliveries_occurrenceId_reminderWindow` ON `${TABLE_NAME}` (`occurrenceId`, `reminderWindow`)"
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_recurring_reminder_deliveries_occurrenceId_reminderWindow` ON `${TABLE_NAME}` (`occurrenceId`, `reminderWindow`)"
           },
           {
             "name": "index_recurring_reminder_deliveries_status",
@@ -6878,7 +6901,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'bd280e71a64e2438cb7e478bd0176dcf')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '34c8212926435210382b193cc431ea79')"
     ]
   }
 }

@@ -23,4 +23,10 @@ interface PlannedExpenseDao {
 
     @Query("SELECT * FROM planned_expenses WHERE sourceOccurrenceKey = :key LIMIT 1")
     suspend fun getBySourceOccurrenceKey(key: String): PlannedExpense?
+
+    @Query("UPDATE planned_expenses SET status = :status, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateStatus(id: Long, status: String, updatedAt: Long)
+
+    @Query("UPDATE planned_expenses SET linkedActualExpenseId = :expenseId, status = 'FULFILLED', updatedAt = :updatedAt WHERE id = :id")
+    suspend fun linkToActualExpense(id: Long, expenseId: Long, updatedAt: Long)
 }

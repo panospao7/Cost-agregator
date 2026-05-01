@@ -5,7 +5,7 @@ import com.yourname.expensetracker.data.database.entity.RecurringReminderDeliver
 
 @Dao
 interface RecurringReminderDeliveryDao {
-    @Insert
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(delivery: RecurringReminderDelivery): Long
 
     @Insert

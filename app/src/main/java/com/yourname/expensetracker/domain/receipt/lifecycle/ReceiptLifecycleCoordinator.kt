@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
@@ -25,16 +27,16 @@ import javax.inject.Singleton
  * through any path (camera scan, gallery pick, email ingestion, bank statement
  * import, etc.).  It orchestrates the full lifecycle:
  *
- *   validate → persist asset → OCR / parse → dedupe → save → event logging
+ *   validate → OCR / parse → dedupe → save → event logging
  *   → post-save side effects (via [ReceiptSideEffectDispatcher])
  *
  * Full lifecycle phases:
  * 1. **Input Validation** — [ReceiptInputValidator] checks the URI is readable
  *    and has an acceptable MIME type.
- * 2. **Asset Persistence** — [ReceiptAssetStore] copies the file to app-local
- *    storage and computes an SHA-256 hash for deduplication.
- * 3. **OCR / Parse** — [ReceiptRepository.processReceipt] runs OCR and
+ * 2. **OCR / Parse** — [ReceiptRepository.processReceipt] runs OCR and
  *    parses the extracted text for merchant, total, date, and line items.
+ *    File persistence is owned by ReceiptRepository/OCR — the coordinator does NOT
+ *    create its own copy of the asset.
  * 4. **Deduplication** — [ReceiptDuplicateDetector] checks for existing
  *    receipts by hash, text fingerprint, semantic fingerprint, or external ID.
  * 5. **Database Save** — The [ScannedReceipt] is persisted via
@@ -49,11 +51,12 @@ import javax.inject.Singleton
  * As each existing processing path is migrated (PRs 4-8), its logic is moved
  * into this class and the old path is thinned or removed.
  *
- * @constructor Inject dependencies needed for validation, asset storage,
- *              processing, link management, event logging, and side effects.
+ * @constructor Inject dependencies needed for database transactions, validation,
+ *              asset storage, processing, link management, event logging, and side effects.
  */
 @Singleton
 class ReceiptLifecycleCoordinator @Inject constructor(
+    private val database: AppDatabase,
     private val receiptRepository: ReceiptRepository,
     private val receiptLinkService: ReceiptLinkService,
     private val assetStore: ReceiptAssetStore,
@@ -78,11 +81,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      *
      * Full implementation (PR 4):
      * 1. Validates the input URI.
-     * 2. Persists the receipt asset to app-local storage.
-     * 3. Computes a file hash for deduplication (best-effort).
-     * 4. Delegates to [ReceiptRepository.processReceipt] for OCR and parsing.
+     * 2. Delegates to [ReceiptRepository.processReceipt] for OCR, parsing, and file persistence.
+     *    File persistence is owned by ReceiptRepository/OCR — the coordinator does NOT
+     *    create its own copy of the asset.
+     * 3. Computes a file hash from the repository-managed image path for deduplication (best-effort).
+     * 4. Checks for duplicates (hash, text fingerprint, semantic fingerprint).
      * 5. Updates the receipt with lifecycle metadata (sourceType, documentType,
-     *    processingStatus, asset info) and writes a lifecycle event.
+     *    processingStatus, fingerprints) and writes a lifecycle event.
      * 6. If processing fails catastrophically, saves a manual record and
      *    writes an OCR_FAILED event.
      *
@@ -99,41 +104,40 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             return Result.failure(IllegalArgumentException(message))
         }
 
-        // 2. Persist asset to app-local storage
-        val assetPath = assetStore.persistReceiptAsset(uri).getOrElse { error ->
-            return Result.failure(IllegalStateException("Failed to persist receipt asset", error))
-        }
-
-        // 3. Compute file hash for deduplication (best-effort, non-fatal)
-        val fileHash = try {
-            assetStore.computeFileHash(assetPath).getOrNull()
-        } catch (_: Exception) {
-            null
-        }
-
-        // 3b. Check for duplicate receipt via file hash
-        if (fileHash != null) {
-            val dupResult = duplicateDetector.checkDuplicate(
-                imageHash = fileHash,
-                textFingerprint = null,
-                semanticFingerprint = null,
-                externalSourceId = null
-            )
-            if (dupResult.isDuplicate && dupResult.matchType == "EXACT_HASH") {
-                val existing = scannedReceiptDao.getById(dupResult.existingReceiptId!!)
-                if (existing != null) {
-                    Timber.i("Duplicate receipt detected by exact hash: existingId=${existing.id}")
-                    return Result.success(existing)
-                }
-            }
-        }
-
-        // 4. OCR + Parse via ReceiptRepository
+        // 2. OCR + Parse via ReceiptRepository
+        //    Ownership boundary: ReceiptRepository/OCR owns file persistence.
+        //    The coordinator works with the imagePath from the response, not its own copy.
         return try {
             val (receipt, _) = receiptRepository.processReceipt(
                 imageUri = uri,
                 autoCreateReview = false
             )
+
+            // 3. Compute file hash from repository-managed image path (best-effort, non-fatal)
+            val fileHash = receipt.imagePath?.let { path ->
+                try {
+                    assetStore.computeFileHash(path).getOrNull()
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
+            // 3b. Check for duplicate receipt via file hash
+            if (fileHash != null) {
+                val dupResult = duplicateDetector.checkDuplicate(
+                    imageHash = fileHash,
+                    textFingerprint = null,
+                    semanticFingerprint = null,
+                    externalSourceId = null
+                )
+                if (dupResult.isDuplicate && dupResult.matchType == "EXACT_HASH") {
+                    val existing = scannedReceiptDao.getById(dupResult.existingReceiptId!!)
+                    if (existing != null) {
+                        Timber.i("Duplicate receipt detected by exact hash: existingId=${existing.id}")
+                        return Result.success(existing)
+                    }
+                }
+            }
 
             // Determine processing status based on receipt content
             val isOcrFailure = receipt.rawOcrText == "[OCR Failed or Skipped]" ||
@@ -161,22 +165,22 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 )
             } else null
 
-            // ── Post-OCR dedup check ──────────────────────────────────────
+            // ── Post-OCR dedup check (text + semantic) ────────────────────
             val postOcrDup = duplicateDetector.checkDuplicate(
-                imageHash = null,  // already checked pre-OCR
+                imageHash = null,  // already checked above
                 textFingerprint = textFingerprint,
                 semanticFingerprint = semanticFingerprint,
                 externalSourceId = null
             )
 
             if (postOcrDup.isDuplicate && postOcrDup.matchType != "EXACT_HASH") {
-                // Update current receipt with fingerprints for future dedup
+                // Update current receipt with fingerprints and mark as duplicate
                 val withFingerprints = receipt.copy(
-                    imagePath = receipt.imagePath ?: assetPath,
+                    imagePath = receipt.imagePath,
                     imageHash = fileHash ?: receipt.imageHash,
                     sourceType = ReceiptSourceType.CAMERA.name,
                     documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
-                    processingStatus = processingStatus,
+                    processingStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
                     textFingerprint = textFingerprint,
                     semanticFingerprint = semanticFingerprint,
                     updatedAt = timeProvider.now()
@@ -187,9 +191,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 if (existing != null) return Result.success(existing)
             }
 
-            // 5. Update receipt with asset info, lifecycle metadata, and fingerprints
+            // 5. Update receipt with lifecycle metadata and fingerprints
             val updated = receipt.copy(
-                imagePath = receipt.imagePath ?: assetPath,
+                imagePath = receipt.imagePath,
                 imageHash = fileHash ?: receipt.imageHash,
                 sourceType = ReceiptSourceType.CAMERA.name,
                 documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
@@ -243,18 +247,19 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 // Non-fatal — receipt is already saved
             }
 
-            Timber.d("Receipt processed via coordinator: id=%d, assetPath=%s", updated.id, assetPath)
+            Timber.d("Receipt processed via coordinator: id=%d, imagePath=%s", updated.id, updated.imagePath)
             Result.success(updated)
         } catch (e: Exception) {
             Timber.e(e, "processReceipt failed for %s, falling back to manual record", uri)
 
             // OCR/parse failed catastrophically — save manual record
+            // Use the original URI string as a fallback image reference
             val fallbackCurrency = runCatching {
                 currencySettingsRepository.homeCurrency().first()
             }.getOrDefault(FALLBACK_CURRENCY)
 
             val manualReceipt = ScannedReceipt(
-                imagePath = assetPath,
+                imagePath = uri.toString(),
                 rawOcrText = "[OCR Failed or Skipped]",
                 parsedTotal = null,
                 parsedMerchant = null,
@@ -266,7 +271,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 sourceType = ReceiptSourceType.CAMERA.name,
                 documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
                 processingStatus = ReceiptProcessingStatus.OCR_FAILED.name,
-                imageHash = fileHash,
+                imageHash = null,
                 createdAt = timeProvider.now(),
                 updatedAt = timeProvider.now()
             )
@@ -320,7 +325,15 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             parsedDate = emailData.date,
             parsedItems = emailData.items,
             parsedTaxAmount = null,
-            currency = emailData.currency ?: FALLBACK_CURRENCY,
+            currency = emailData.currency ?: run {
+                val homeCurrency = currencySettingsRepository.homeCurrency().first()
+                if (homeCurrency.isNotBlank()) {
+                    Timber.d("Using home currency as fallback for email receipt: %s", homeCurrency)
+                    homeCurrency
+                } else {
+                    return Result.failure(IllegalStateException("Cannot resolve currency for email receipt"))
+                }
+            },
             confidence = 0.7f,
             sourceType = ReceiptSourceType.EMAIL.name,
             documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
@@ -435,10 +448,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      *
      * Performs a complete teardown in this order:
      * 1. Looks up the receipt by ID — returns failure if not found.
-     * 2. Writes a [ReceiptEvent] with eventType `RECEIPT_DELETED` for the audit trail.
-     * 3. Deletes all [ReceiptExpenseLink] rows referencing this receipt.
-     * 4. Deletes the physical asset file from app-local storage (if [ScannedReceipt.imagePath] is set).
-     * 5. Deletes the database row.
+     * 2. Within a database transaction: writes a [ReceiptEvent] with eventType `RECEIPT_DELETED`
+     *    for the audit trail, deletes all [ReceiptExpenseLink] rows, and deletes the database row.
+     * 3. POST-COMMIT: Deletes the physical asset file from app-local storage
+     *    (if [ScannedReceipt.imagePath] is set).
      *
      * @param receiptId The ID of the receipt to delete.
      * @return [Result.success] on completion, [Result.failure] on error.
@@ -449,31 +462,34 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             ?: return Result.failure(IllegalArgumentException("Receipt not found: $receiptId"))
 
         return try {
-            // 2. Write delete event for audit trail
-            receiptEventDao.insert(
-                ReceiptEvent(
-                    receiptId = receiptId,
-                    sourceType = receipt.sourceType,
-                    documentType = receipt.documentType,
-                    eventType = "RECEIPT_DELETED",
-                    occurredAt = timeProvider.now(),
-                    oldStatus = receipt.processingStatus,
-                    newStatus = "DELETED",
-                    actor = "system:coordinator",
-                    message = "Receipt deleted with asset cleanup",
-                    metadata = null,
-                    errorDetails = null
+            // Database operations inside a single transaction
+            database.withTransaction {
+                // 2. Write delete event for audit trail
+                receiptEventDao.insert(
+                    ReceiptEvent(
+                        receiptId = receiptId,
+                        sourceType = receipt.sourceType,
+                        documentType = receipt.documentType,
+                        eventType = "RECEIPT_DELETED",
+                        occurredAt = timeProvider.now(),
+                        oldStatus = receipt.processingStatus,
+                        newStatus = "DELETED",
+                        actor = "system:coordinator",
+                        message = "Receipt deleted with asset cleanup",
+                        metadata = null,
+                        errorDetails = null
+                    )
                 )
-            )
 
-            // 3. Delete all receipt-expense links
-            receiptExpenseLinkDao.deleteAllLinksForReceipt(receiptId)
+                // 3. Delete all receipt-expense links
+                receiptExpenseLinkDao.deleteAllLinksForReceipt(receiptId)
 
-            // 4. Delete the physical asset file (if one exists)
+                // 4. Delete the database row
+                scannedReceiptDao.delete(receipt)
+            }
+
+            // 5. POST-COMMIT: Delete the physical asset file (if one exists)
             receipt.imagePath?.let { assetStore.deleteAsset(it) }
-
-            // 5. Delete the database row
-            scannedReceiptDao.delete(receipt)
 
             Timber.d("Receipt deleted: id=%d, assetPath=%s", receiptId, receipt.imagePath)
             Result.success(Unit)

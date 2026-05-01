@@ -16,7 +16,9 @@ import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -73,7 +75,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         )
 
         // 3. Build Expense entity
-        val expense = Expense(
+        var expense = Expense(
             amount = request.amount,
             currency = request.currency,
             merchant = request.merchant,
@@ -132,22 +134,35 @@ class TransactionLifecycleCoordinator @Inject constructor(
         if (!skipDedup) {
             when (dedupMode) {
                 DeduplicationMode.STRICT_EXTERNAL_ID -> {
-                    // Check idempotencyKey (stored as dedupeKey) for exact-match dedup
-                    val idempotencyKey = request.idempotencyKey ?: request.externalFingerprint
-                    if (idempotencyKey != null) {
-                        val existingId = expenseDao.findIdByDedupeKey(idempotencyKey)
-                        if (existingId != null) {
-                            return CreateExpenseResult.DuplicateSkipped(
-                                existingExpenseId = existingId,
-                                reason = "Strict external ID duplicate: idempotencyKey=$idempotencyKey"
-                            )
-                        }
-                    }
+                    val key = request.idempotencyKey ?: request.externalFingerprint
+                    expense = expense.copy(dedupeKey = if (key != null) "idem:$key" else expense.dedupeKey)
+                    // Don't run range check, rely on unique dedupeKey index
                 }
 
                 DeduplicationMode.BULK_IMPORT -> {
-                    // Skip range-based check; rely on insertAtomic + dedupeKey unique index
-                    // (no-op here — the insertAtomic below will catch duplicates)
+                    // Run standard range-based dedup but mark result as bulk duplicate
+                    val isDuplicate = expenseDao.isDuplicateCurrencyAware(
+                        amount = expense.amount,
+                        merchant = expense.merchant,
+                        date = expense.date,
+                        currency = expense.currency,
+                        transactionType = expense.transactionType.name,
+                        merchantKey = expense.merchantKey,
+                        dedupeKey = expense.dedupeKey
+                    )
+                    if (isDuplicate) {
+                        val duplicateId = expenseDao.findDuplicateId(
+                            merchantKey = expense.merchantKey,
+                            amount = expense.amount,
+                            date = expense.date,
+                            currency = expense.currency,
+                            transactionType = expense.transactionType
+                        )
+                        return CreateExpenseResult.DuplicateSkipped(
+                            existingExpenseId = duplicateId ?: -1L,
+                            reason = "Bulk import duplicate: amount=${expense.amount}, merchant=${expense.merchant}, date=${expense.date}"
+                        )
+                    }
                 }
 
                 DeduplicationMode.SKIP_FOR_DEBUG_RESTORE -> {
@@ -271,26 +286,28 @@ class TransactionLifecycleCoordinator @Inject constructor(
             expense
         }
 
-        // 3. Persist the updated row
-        expenseDao.update(updatedExpense)
+        // 3. Persist the updated row + write event inside a single transaction
+        database.withTransaction {
+            expenseDao.update(updatedExpense)
 
-        // 4. Write lifecycle event with before/after snapshots
-        val afterSnapshot = expenseToSnapshot(updatedExpense)
-        transactionEventDao.insert(
-            TransactionEvent(
-                expenseId = expense.id,
-                eventType = LifecycleEventType.UPDATED.name,
-                source = source,
-                actor = null,
-                occurredAt = now,
-                dedupeKey = updatedExpense.dedupeKey,
-                duplicateExpenseId = null,
-                beforeSnapshot = beforeSnapshot,
-                afterSnapshot = afterSnapshot,
-                metadata = null,
-                reason = reason
+            // 4. Write lifecycle event with before/after snapshots
+            val afterSnapshot = expenseToSnapshot(updatedExpense)
+            transactionEventDao.insert(
+                TransactionEvent(
+                    expenseId = expense.id,
+                    eventType = LifecycleEventType.UPDATED.name,
+                    source = source,
+                    actor = null,
+                    occurredAt = now,
+                    dedupeKey = updatedExpense.dedupeKey,
+                    duplicateExpenseId = null,
+                    beforeSnapshot = beforeSnapshot,
+                    afterSnapshot = afterSnapshot,
+                    metadata = null,
+                    reason = reason
+                )
             )
-        )
+        }
     }
 
     /**
@@ -319,25 +336,28 @@ class TransactionLifecycleCoordinator @Inject constructor(
             val now = timeProvider.now()
             val snapshot = expenseToSnapshot(expense)
 
-            // 1. Write lifecycle event with structured JSON beforeSnapshot
-            transactionEventDao.insert(
-                TransactionEvent(
-                    expenseId = expense.id,
-                    eventType = LifecycleEventType.DELETED.name,
-                    source = "USER_ACTION",
-                    actor = null,
-                    occurredAt = now,
-                    dedupeKey = expense.dedupeKey,
-                    duplicateExpenseId = null,
-                    beforeSnapshot = snapshot,
-                    afterSnapshot = null,
-                    metadata = null,
-                    reason = null
+            // Write lifecycle event + delete inside a single transaction
+            database.withTransaction {
+                // 1. Write lifecycle event with structured JSON beforeSnapshot
+                transactionEventDao.insert(
+                    TransactionEvent(
+                        expenseId = expense.id,
+                        eventType = LifecycleEventType.DELETED.name,
+                        source = "USER_ACTION",
+                        actor = null,
+                        occurredAt = now,
+                        dedupeKey = expense.dedupeKey,
+                        duplicateExpenseId = null,
+                        beforeSnapshot = snapshot,
+                        afterSnapshot = null,
+                        metadata = null,
+                        reason = null
+                    )
                 )
-            )
 
-            // 2. Delete the expense
-            expenseDao.delete(expense)
+                // 2. Delete the expense
+                expenseDao.delete(expense)
+            }
 
             Result.success(Unit)
         } catch (e: Exception) {
@@ -355,7 +375,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * - Currency must be a valid 3-letter ISO code (uppercase)
      * - Date must be positive and not in the future (beyond now + 1 day)
      * - Transfer transactions require transferDirection and transferAccountName
-     * - Ownership conflict: isNotMine cannot be true for PURCHASE/WITHDRAWAL transaction types
+     * - Ownership conflict: cannot be both isNotMine and isSharedExpense
      */
     private fun validate(request: CreateExpenseRequest): List<String> {
         val errors = mutableListOf<String>()
@@ -388,7 +408,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         if (request.date <= 0) {
             errors.add("Date must be positive")
         }
-        if (request.date > now + 86_400_000L) { // now + 1 day
+        if (request.date > TimePeriodUtils.addDays(now, 1)) { // now + 1 day
             errors.add("Date cannot be in the future")
         }
 
@@ -402,21 +422,34 @@ class TransactionLifecycleCoordinator @Inject constructor(
             }
         }
 
-        // Ownership conflict: can't be isNotMine for spending-type transactions
-        if (request.isNotMine && (request.transactionType == TransactionType.PURCHASE ||
-                request.transactionType == TransactionType.WITHDRAWAL)) {
-            errors.add("Ownership conflict: isNotMine cannot be true for ${request.transactionType} transactions")
+        // Ownership conflict: can't be both isNotMine and isSharedExpense
+        if (request.isNotMine && request.isSharedExpense) {
+            errors.add("Cannot be both not-mine and shared")
         }
 
         return errors
     }
 
     private fun expenseToSnapshot(e: Expense): String {
-        return """{"id":${e.id},"amount":${e.amount},"currency":"${e.currency}","merchant":"${e.merchant}","date":${e.date},"type":"${e.transactionType}"}"""
+        return org.json.JSONObject().apply {
+            put("id", e.id)
+            put("amount", e.amount)
+            put("currency", e.currency)
+            put("merchant", e.merchant)
+            put("date", e.date)
+            put("type", e.transactionType)
+        }.toString()
     }
 
     private fun expenseToSnapshot(id: Long, e: Expense): String {
-        return """{"id":$id,"amount":${e.amount},"currency":"${e.currency}","merchant":"${e.merchant}","date":${e.date},"type":"${e.transactionType}"}"""
+        return org.json.JSONObject().apply {
+            put("id", id)
+            put("amount", e.amount)
+            put("currency", e.currency)
+            put("merchant", e.merchant)
+            put("date", e.date)
+            put("type", e.transactionType)
+        }.toString()
     }
 
     companion object {

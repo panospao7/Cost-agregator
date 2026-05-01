@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.recurring
 
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import javax.inject.Inject
 
 /**
  * Pure domain utility that expands a recurrence rule into concrete occurrence
@@ -9,7 +10,7 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
  *
  * No DI needed — instantiable as a plain class or used as a singleton.
  */
-class RecurringOccurrenceExpander {
+class RecurringOccurrenceExpander @Inject constructor() {
 
     /**
      * Request to expand a single recurrence rule into concrete occurrences.
@@ -19,8 +20,11 @@ class RecurringOccurrenceExpander {
      * @property currency ISO-4217 currency code.
      * @property frequency Recurrence frequency (WEEKLY, MONTHLY, etc.).
      * @property categoryId Optional category to assign to generated occurrences.
-     * @property startDate First possible occurrence date (inclusive, epoch ms).
-     * @property endDate Last possible occurrence date (exclusive, half-open, epoch ms).
+     * @property startDate Range start (inclusive, epoch ms) — used to FILTER output.
+     * @property endDate Range end (exclusive, half-open, epoch ms) — used to FILTER output.
+     * @property anchorDate The date to start expansion from (e.g. rule.nextDate).
+     *                      Occurrences before startDate are skipped but the iteration
+     *                      anchor is independent of the filter range.
      * @property sourceType Origin of this rule: "RECURRING_RULE", "DETECTED_PATTERN", or "SUBSCRIPTION".
      * @property sourceId ID of the rule or pattern signature that produced this expansion.
      */
@@ -32,6 +36,7 @@ class RecurringOccurrenceExpander {
         val categoryId: Long? = null,
         val startDate: Long,
         val endDate: Long,
+        val anchorDate: Long,
         val sourceType: String,
         val sourceId: Long
     )
@@ -64,11 +69,14 @@ class RecurringOccurrenceExpander {
     /**
      * Expands a recurrence rule into concrete occurrence candidates within a date range.
      *
+     * Iteration starts from [anchorDate] (not [startDate]), so that callers can
+     * control where the expansion begins (e.g. from [rule.nextDate]).
+     * Only occurrences where `dueDate` is in `[startDate, endDate)` are returned.
+     *
      * Uses calendar-aware advancement via [TimePeriodUtils.addDays], [TimePeriodUtils.addMonths],
      * and [TimePeriodUtils.addYears] to handle DST transitions, leap years, and varying month
      * lengths correctly.
      *
-     * Returns occurrences where `dueDate` is in `[startDate, endDate)`.
      * Returns an empty list for [RecurrenceFrequency.IRREGULAR].
      */
     fun expand(request: ExpandRequest): List<OccurrenceCandidate> {
@@ -79,30 +87,40 @@ class RecurringOccurrenceExpander {
         if (request.startDate >= request.endDate) return emptyList()
 
         val candidates = mutableListOf<OccurrenceCandidate>()
-        var currentDate = TimePeriodUtils.getStartOfDay(request.startDate)
+        var currentDate = TimePeriodUtils.getStartOfDay(request.anchorDate)
 
         while (currentDate < request.endDate) {
-            val occurrenceKey = buildOccurrenceKey(request.sourceId, currentDate, request.frequency)
+            // Only include occurrences that fall within the filter range
+            if (currentDate >= request.startDate) {
+                val occurrenceKey = buildOccurrenceKey(request.sourceId, currentDate, request.frequency)
 
-            candidates.add(
-                OccurrenceCandidate(
-                    occurrenceKey = occurrenceKey,
-                    dueDate = currentDate,
-                    expectedAmount = request.amount,
-                    expectedCurrency = request.currency,
-                    frequency = request.frequency.name,
-                    merchant = request.merchant,
-                    categoryId = request.categoryId,
-                    sourceType = request.sourceType,
-                    sourceId = request.sourceId
+                candidates.add(
+                    OccurrenceCandidate(
+                        occurrenceKey = occurrenceKey,
+                        dueDate = currentDate,
+                        expectedAmount = request.amount,
+                        expectedCurrency = request.currency,
+                        frequency = request.frequency.name,
+                        merchant = request.merchant,
+                        categoryId = request.categoryId,
+                        sourceType = request.sourceType,
+                        sourceId = request.sourceId
+                    )
                 )
-            )
+            }
 
             currentDate = advance(currentDate, request.frequency)
         }
 
         return candidates
     }
+
+    /**
+     * Advances [date] by one period according to [frequency].
+     * Public so that callers (e.g. [RecurringLifecycleCoordinator]) can advance
+     * an anchor date before constructing an [ExpandRequest].
+     */
+    fun advanceDate(date: Long, frequency: RecurrenceFrequency): Long = advance(date, frequency)
 
     /**
      * Builds the unique occurrence key: `"$sourceId|<dayStart>|<frequencyName>"`.
