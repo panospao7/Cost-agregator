@@ -9,6 +9,9 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
@@ -37,11 +40,19 @@ class LocationBackfillWorker @AssistedInject constructor(
     @Assisted workerParams: WorkerParameters,
     private val expenseRepository: ExpenseRepository,
     private val locationResolver: LocationResolver,
-    private val merchantLocationRepository: MerchantLocationRepository
+    private val merchantLocationRepository: MerchantLocationRepository,
+    private val privacyGate: PrivacyGate
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         Log.d(TAG, "Backfill worker started")
+
+        // Privacy gate check: background location backfill must be enabled
+        val gateCheck = privacyGate.check(PrivacyCapability.BACKGROUND_LOCATION_BACKFILL)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Log.w(TAG, "Backfill blocked by privacy gate: ${gateCheck.reason}")
+            return@withContext Result.success()
+        }
 
         // Evict stale merchant-location cache entries before geocoding new ones.
         // This prevents the resolver from returning outdated cached coordinates.

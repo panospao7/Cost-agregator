@@ -18,6 +18,9 @@ import androidx.core.app.NotificationCompat
 import timber.log.Timber
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.receiver.ServiceRestartReceiver
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -93,6 +96,9 @@ class NotificationCaptureService : NotificationListenerService() {
 
     @Inject
     lateinit var diagnostics: com.yourname.expensetracker.domain.debug.ServiceDiagnostics
+
+    @Inject
+    lateinit var privacyGate: PrivacyGate
 
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
@@ -302,6 +308,14 @@ class NotificationCaptureService : NotificationListenerService() {
 
         if (isShuttingDown) return
         workTracker.launch(serviceScope) {
+            // Check privacy gate before processing
+            when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
+                is PrivacyDecision.Denied -> {
+                    Timber.d("Privacy gate denied notification capture from $packageName")
+                    return@launch
+                }
+                is PrivacyDecision.Allowed -> { /* proceed */ }
+            }
             processNotification(sbn, packageName, title, text, bigText, extras)
         }
     }
@@ -408,6 +422,14 @@ class NotificationCaptureService : NotificationListenerService() {
 
         if (isShuttingDown) return
         workTracker.launch(serviceScope) {
+            // Check privacy gate before processing
+            when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
+                is PrivacyDecision.Denied -> {
+                    Timber.d("Privacy gate denied notification capture from $packageName")
+                    return@launch
+                }
+                is PrivacyDecision.Allowed -> { /* proceed */ }
+            }
             processNotification(sbn, packageName, title, text, bigText, extras)
         }
     }

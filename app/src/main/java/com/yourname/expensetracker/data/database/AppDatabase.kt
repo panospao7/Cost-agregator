@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 102
+const val APP_DATABASE_SCHEMA_VERSION = 104
 
 @Database(
     entities = [
@@ -67,7 +67,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 102
         ReceiptExpenseLink::class,
         RecurringOccurrence::class,
         RecurringReminderDelivery::class,
-        RecurringLifecycleEvent::class
+        RecurringLifecycleEvent::class,
+        PrivacyAuditEvent::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -127,6 +128,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recurringOccurrenceDao(): RecurringOccurrenceDao
     abstract fun recurringReminderDeliveryDao(): RecurringReminderDeliveryDao
     abstract fun recurringLifecycleEventDao(): RecurringLifecycleEventDao
+    abstract fun privacyAuditDao(): PrivacyAuditDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -5927,6 +5929,34 @@ val MIGRATION_101_102 = object : androidx.room.migration.Migration(101, 102) {
     }
 }
 
+// Migration 102 -> 103: Add privacy_audit_events table for privacy gate audit logging.
+val MIGRATION_102_103 = object : androidx.room.migration.Migration(102, 103) {
+    override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+        database.execSQL("""
+            CREATE TABLE IF NOT EXISTS privacy_audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                capability TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                reason TEXT,
+                context TEXT,
+                timestampMs INTEGER NOT NULL,
+                caller TEXT
+            )
+        """.trimIndent())
+        database.execSQL("CREATE INDEX IF NOT EXISTS index_privacy_audit_events_timestampMs ON privacy_audit_events (timestampMs)")
+        database.execSQL("CREATE INDEX IF NOT EXISTS index_privacy_audit_events_capability ON privacy_audit_events (capability)")
+        database.execSQL("CREATE INDEX IF NOT EXISTS index_privacy_audit_events_caller ON privacy_audit_events (caller)")
+    }
+}
+
+// Migration 103 -> 104: Add raw data retention columns for privacy purging support.
+val MIGRATION_103_104 = object : androidx.room.migration.Migration(103, 104) {
+    override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER DEFAULT NULL")
+        database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER DEFAULT NULL")
+    }
+}
+
 /**
       * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -6064,7 +6094,9 @@ MIGRATION_91_92,
         MIGRATION_95_96,
         MIGRATION_96_100,
         MIGRATION_100_101,
-        MIGRATION_101_102
+        MIGRATION_101_102,
+        MIGRATION_102_103,
+        MIGRATION_103_104
     )
     }
 }

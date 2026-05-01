@@ -1,0 +1,176 @@
+package com.yourname.expensetracker.data.privacy
+
+import android.content.Context
+import android.util.Log
+import androidx.hilt.work.HiltWorker
+import androidx.work.*
+import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
+import com.yourname.expensetracker.data.database.entity.PrivacyAuditEvent
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.util.TimeProvider
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedInject
+import java.util.concurrent.TimeUnit
+
+/**
+ * WorkManager worker that purges raw data (notification content, OCR text)
+ * after the retention period configured in [PrivacySettings].
+ *
+ * Runs daily via [PeriodicWorkRequest] and is safe to call multiple times:
+ * - Only rows whose `rawContentPurgedAt` / `rawOcrTextPurgedAt` IS NULL are candidates.
+ * - After purging, the column is set to the current timestamp so the row is not
+ *   processed again on subsequent runs.
+ * - Audit events are written for the count of purged rows per category.
+ */
+@HiltWorker
+class DataRetentionWorker @AssistedInject constructor(
+    @Assisted appContext: Context,
+    @Assisted workerParams: WorkerParameters,
+    private val privacySettingsRepository: PrivacySettingsRepository,
+    private val appDatabase: AppDatabase,
+    private val timeProvider: TimeProvider
+) : CoroutineWorker(appContext, workerParams) {
+
+    override suspend fun doWork(): Result {
+        Log.d(TAG, "Data retention worker started")
+        return try {
+            val settings = privacySettingsRepository.getSettings()
+            val now = timeProvider.now()
+
+            val notificationCutoff = now - settings.rawNotificationRetentionDays * DAY_MS
+            val ocrCutoff = now - settings.rawOcrRetentionDays * DAY_MS
+
+            val notificationDao = appDatabase.rawNotificationDao()
+            val receiptDao = appDatabase.scannedReceiptDao()
+            val auditDao = appDatabase.privacyAuditDao()
+
+            // 1. Purge raw notification content (title, text, bigText, extrasJson)
+            val notificationPurgeCount = purgeRawNotifications(notificationDao, notificationCutoff, now)
+            if (notificationPurgeCount > 0) {
+                Log.d(TAG, "Purged $notificationPurgeCount raw notifications")
+                auditDao.insert(
+                    PrivacyAuditEvent(
+                        capability = PrivacyCapability.RAW_NOTIFICATION_RETENTION.name,
+                        decision = "ALLOWED",
+                        reason = "Purged $notificationPurgeCount raw notifications older than ${settings.rawNotificationRetentionDays} days",
+                        context = "{\"purgedCount\": $notificationPurgeCount, \"retentionDays\": ${settings.rawNotificationRetentionDays}}",
+                        timestampMs = now,
+                        caller = "DataRetentionWorker"
+                    )
+                )
+            }
+
+            // 2. Purge raw OCR text from scanned_receipts
+            val ocrPurgeCount = purgeRawOcrText(receiptDao, ocrCutoff, now)
+            if (ocrPurgeCount > 0) {
+                Log.d(TAG, "Purged raw OCR text from $ocrPurgeCount scanned receipts")
+                auditDao.insert(
+                    PrivacyAuditEvent(
+                        capability = PrivacyCapability.RAW_OCR_RETENTION.name,
+                        decision = "ALLOWED",
+                        reason = "Purged raw OCR text from $ocrPurgeCount receipts older than ${settings.rawOcrRetentionDays} days",
+                        context = "{\"purgedCount\": $ocrPurgeCount, \"retentionDays\": ${settings.rawOcrRetentionDays}}",
+                        timestampMs = now,
+                        caller = "DataRetentionWorker"
+                    )
+                )
+            }
+
+            Log.d(TAG, "Data retention worker completed: notifications=$notificationPurgeCount ocr=$ocrPurgeCount")
+            Result.success()
+        } catch (e: Exception) {
+            Log.e(TAG, "Data retention worker failed", e)
+            Result.retry()
+        }
+    }
+
+    /**
+     * Nulls out raw content fields of [RawNotification] rows whose
+     * [RawNotification.capturedAt] is older than [cutoff] and that have not
+     * already been purged ([RawNotification.rawContentPurgedAt] IS NULL).
+     *
+     * @return number of rows updated
+     */
+    private suspend fun purgeRawNotifications(
+        dao: com.yourname.expensetracker.data.database.dao.RawNotificationDao,
+        cutoff: Long,
+        now: Long
+    ): Int {
+        // Find candidate rows — captured before cutoff, not yet purged
+        val candidates = dao.getUnpurgedRawNotificationsOlderThan(cutoff)
+        if (candidates.isEmpty()) return 0
+
+        // Null out the raw content columns
+        for (notification in candidates) {
+            dao.updateRawContentPurged(
+                id = notification.id,
+                rawContentPurgedAt = now,
+                // Clear raw fields
+                title = null,
+                text = null,
+                bigText = null,
+                subText = null,
+                extrasJson = null,
+                parseResult = null
+            )
+        }
+        return candidates.size
+    }
+
+    /**
+     * Nulls out [ScannedReceipt.rawOcrText] for rows whose [ScannedReceipt.createdAt]
+     * is older than [cutoff] and that have not already been purged
+     * ([ScannedReceipt.rawOcrTextPurgedAt] IS NULL).
+     *
+     * @return number of rows updated
+     */
+    private suspend fun purgeRawOcrText(
+        dao: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao,
+        cutoff: Long,
+        now: Long
+    ): Int {
+        val candidates = dao.getUnpurgedScannedReceiptsOlderThan(cutoff)
+        if (candidates.isEmpty()) return 0
+
+        for (receipt in candidates) {
+            dao.updateRawOcrTextPurged(
+                id = receipt.id,
+                rawOcrTextPurgedAt = now
+            )
+        }
+        return candidates.size
+    }
+
+    companion object {
+        const val TAG = "DataRetentionWorker"
+        const val WORK_NAME = "data_retention"
+
+        private const val DAY_MS = 24L * 60L * 60L * 1000L
+
+        /**
+         * Enqueue a daily data-retention job.
+         * Safe to call multiple times — uses [ExistingPeriodicWorkPolicy.KEEP].
+         */
+        fun schedule(context: Context) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
+                .build()
+
+            val request = PeriodicWorkRequestBuilder<DataRetentionWorker>(
+                repeatInterval = 1,
+                repeatIntervalTimeUnit = TimeUnit.DAYS
+            )
+                .setConstraints(constraints)
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                request
+            )
+            Log.d(TAG, "Data retention worker scheduled")
+        }
+    }
+}

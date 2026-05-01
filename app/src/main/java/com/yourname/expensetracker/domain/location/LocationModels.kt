@@ -104,6 +104,7 @@ sealed interface GeocodingError {
     data object NetworkError : GeocodingError
     data object Timeout : GeocodingError
     data object ParseError : GeocodingError
+    data object Disabled : GeocodingError
     data class HttpError(val code: Int) : GeocodingError
     data class Unknown(val message: String? = null) : GeocodingError
 }

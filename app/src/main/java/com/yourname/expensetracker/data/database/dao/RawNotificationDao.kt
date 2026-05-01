@@ -57,4 +57,45 @@ interface RawNotificationDao {
 
     @Query("UPDATE raw_notifications SET isRelevant = :isRelevant WHERE id = :id")
     suspend fun markRelevance(id: Long, isRelevant: Boolean)
+
+    // ── Raw data retention (Phase 6, Batch 3) ──────────────────────────────────
+
+    @Query("""
+        UPDATE raw_notifications
+        SET rawContentPurgedAt = :nowMs
+        WHERE capturedAt < :beforeMs
+          AND rawContentPurgedAt IS NULL
+    """)
+    suspend fun purgeRawContent(beforeMs: Long, nowMs: Long): Int
+
+    // ── Data retention worker support ──────────────────────────────────────────
+
+    @Query("""
+        SELECT * FROM raw_notifications
+        WHERE capturedAt < :cutoffMs
+          AND rawContentPurgedAt IS NULL
+    """)
+    suspend fun getUnpurgedRawNotificationsOlderThan(cutoffMs: Long): List<RawNotification>
+
+    @Query("""
+        UPDATE raw_notifications
+        SET rawContentPurgedAt = :rawContentPurgedAt,
+            title = :title,
+            text = :text,
+            bigText = :bigText,
+            subText = :subText,
+            extrasJson = :extrasJson,
+            parseResult = :parseResult
+        WHERE id = :id
+    """)
+    suspend fun updateRawContentPurged(
+        id: Long,
+        rawContentPurgedAt: Long,
+        title: String?,
+        text: String?,
+        bigText: String?,
+        subText: String?,
+        extrasJson: String?,
+        parseResult: String?
+    )
 }

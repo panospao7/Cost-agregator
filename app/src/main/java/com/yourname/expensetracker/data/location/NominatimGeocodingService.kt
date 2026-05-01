@@ -10,6 +10,9 @@ import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -38,7 +41,8 @@ import javax.inject.Singleton
 @Singleton
 class NominatimGeocodingService @Inject constructor(
     @LocationHttpClient private val client: OkHttpClient,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val privacyGate: PrivacyGate
 ) : GeocodingService {
 
     // B13 fix: rate-limit all Nominatim requests at the service level.
@@ -66,19 +70,26 @@ class NominatimGeocodingService @Inject constructor(
         biasLon: Double?,
         cityHint: String?,
         bounded: Boolean
-    ): GeocodingLookupResult = withRateLimit {
-        val url = buildUrl(merchantName, biasLat, biasLon, cityHint, bounded)
-        val safeLogRoute = buildSafeLogRoute(
-            query = merchantName,
-            biasLat = biasLat,
-            biasLon = biasLon,
-            cityHint = cityHint,
-            bounded = bounded,
-            useCountryFilter = true
-        )
-        when (val result = executeRequest(url, merchantName, biasLat != null, safeLogRoute)) {
-            is GeocodingBatchResult.Success -> GeocodingLookupResult.Success(result.results.firstOrNull())
-            is GeocodingBatchResult.Failure -> GeocodingLookupResult.Failure(result.error)
+    ): GeocodingLookupResult {
+        val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Log.w(TAG, "Geocoding blocked by privacy gate: ${gateCheck.reason}")
+            return GeocodingLookupResult.Failure(GeocodingError.Disabled)
+        }
+        return withRateLimit {
+            val url = buildUrl(merchantName, biasLat, biasLon, cityHint, bounded)
+            val safeLogRoute = buildSafeLogRoute(
+                query = merchantName,
+                biasLat = biasLat,
+                biasLon = biasLon,
+                cityHint = cityHint,
+                bounded = bounded,
+                useCountryFilter = true
+            )
+            when (val result = executeRequest(url, merchantName, biasLat != null, safeLogRoute)) {
+                is GeocodingBatchResult.Success -> GeocodingLookupResult.Success(result.results.firstOrNull())
+                is GeocodingBatchResult.Failure -> GeocodingLookupResult.Failure(result.error)
+            }
         }
     }
 
@@ -88,38 +99,43 @@ class NominatimGeocodingService @Inject constructor(
         biasLon: Double?,
         limit: Int,
         useGoogle: Boolean
-    ): GeocodingBatchResult = withRateLimit {
-        val queryHash = query.anonymizeForLog()
-        Log.d(TAG, "searchMultiple() OVERRIDE called — queryHash=$queryHash, hasBias=${biasLat != null && biasLon != null}, limit=$limit")
-        // No country filter for the interactive picker — the user may search for
-        // any merchant by name and should not be restricted to Greece-only results.
-        // The Greece viewbox is still sent as a soft bias so local results rank first.
-        val url = buildUrl(query, biasLat, biasLon, cityHint = null, bounded = false, useCountryFilter = false)
-        val safeLogRoute = buildSafeLogRoute(
-            query = query,
-            biasLat = biasLat,
-            biasLon = biasLon,
-            cityHint = null,
-            bounded = false,
-            useCountryFilter = false
-        )
-        executeRequest(url, query, biasLat != null, safeLogRoute)
+    ): GeocodingBatchResult {
+        val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Log.w(TAG, "Geocoding blocked by privacy gate: ${gateCheck.reason}")
+            return GeocodingBatchResult.Failure(GeocodingError.Disabled)
+        }
+        return withRateLimit {
+            val queryHash = query.anonymizeForLog()
+            Log.d(TAG, "searchMultiple() OVERRIDE called — queryHash=$queryHash, hasBias=${biasLat != null && biasLon != null}, limit=$limit")
+            val url = buildUrl(query, biasLat, biasLon, cityHint = null, bounded = false, useCountryFilter = false)
+            val safeLogRoute = buildSafeLogRoute(
+                query = query, biasLat = biasLat, biasLon = biasLon,
+                cityHint = null, bounded = false, useCountryFilter = false
+            )
+            executeRequest(url, query, biasLat != null, safeLogRoute)
+        }
     }
 
-    override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingLookupResult = withRateLimit {
-        val encoded = "%.7f".format(Locale.US, lat)
-        val encodedLon = "%.7f".format(Locale.US, lon)
-        val url = "${AppConfig.Location.NOMINATIM_BASE_URL}/reverse" +
-                "?lat=$encoded&lon=$encodedLon&format=json&addressdetails=1"
-        Log.d(TAG, "reverseGeocode() route=${buildSafeReverseLogRoute(lat, lon)}")
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", AppConfig.Location.NOMINATIM_USER_AGENT)
-            .header("Accept-Language", "el,en")
-            .build()
-        try {
-            // B16 fix: use response.use {} to ensure body is closed even on exceptions
-            client.executeCancellable(request).use { response ->
+    override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingLookupResult {
+        val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Log.w(TAG, "Reverse geocoding blocked by privacy gate: ${gateCheck.reason}")
+            return GeocodingLookupResult.Failure(GeocodingError.Disabled)
+        }
+        return withRateLimit {
+            val encoded = "%.7f".format(Locale.US, lat)
+            val encodedLon = "%.7f".format(Locale.US, lon)
+            val url = "${AppConfig.Location.NOMINATIM_BASE_URL}/reverse?lat=$encoded&lon=$encodedLon&format=json&addressdetails=1"
+            Log.d(TAG, "reverseGeocode() route=${buildSafeReverseLogRoute(lat, lon)}")
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", AppConfig.Location.NOMINATIM_USER_AGENT)
+                .header("Accept-Language", "el,en")
+                .build()
+            try {
+                // B16 fix: use response.use {} to ensure body is closed even on exceptions
+                client.executeCancellable(request).use { response ->
                 if (!response.isSuccessful) {
                     Log.w(TAG, "reverseGeocode HTTP ${response.code}")
                     return@withRateLimit GeocodingLookupResult.Failure(GeocodingError.HttpError(response.code))
@@ -159,6 +175,7 @@ class NominatimGeocodingService @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "reverseGeocode error: ${e.message}", e)
             GeocodingLookupResult.Failure(GeocodingError.Unknown(e.message))
+            }
         }
     }
 

@@ -69,5 +69,8 @@ data class ScannedReceipt(
     val ocrConfidence: Float? = null,
     val parseFailureReason: String? = null,
     /** Must be set to timeProvider.now() on update. 0L = unset (sentinel). */
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+
+    // Raw data retention: epoch ms when raw OCR text was purged, null = not yet purged
+    val rawOcrTextPurgedAt: Long? = null
 )

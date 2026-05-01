@@ -14,6 +14,9 @@ import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
@@ -38,7 +41,8 @@ class SmartReceiptAssistService @Inject constructor(
     private val noOpReceiptAssistService: NoOpReceiptAssistService,
     private val aiCapabilityRouter: AiCapabilityRouter,
     private val aiSettingsRepository: AiSettingsRepository,
-    private val aiPolicy: AiPolicy
+    private val aiPolicy: AiPolicy,
+    private val privacyGate: PrivacyGate
 ) : ReceiptAssistService {
 
     /**
@@ -91,12 +95,38 @@ class SmartReceiptAssistService @Inject constructor(
     private suspend fun executeWithFallback(
         input: ReceiptAssistInput
     ): AiServiceResult<ReceiptAssistSuggestion> {
+        // PRIVACY GATE: Early abort if cloud AI is disabled via privacy settings
+        val gateDecision = privacyGate.check(
+            capability = PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST,
+            context = mapOf("receiptId" to input.receiptId.toString())
+        )
+        if (gateDecision is PrivacyDecision.Denied) {
+            Timber.d("SmartReceiptAssist: Privacy gate denied cloud AI → falling through to deterministic fallback. reason=${gateDecision.reason}")
+            // Gate only blocks cloud — we still allow on-device and deterministic fallback.
+            // The route will be determined by aiCapabilityRouter below.
+        }
+
         val settings = aiSettingsRepository.settings().first()
         val routeDecision = aiCapabilityRouter.decide(AiCapability.RECEIPT_EXTRACTION, settings)
         val attempts = mutableListOf<AttemptDetails>()
         val orderedAttempts = orderedAttemptsFor(routeDecision.route)
         
         Timber.d("SmartReceiptAssist: Starting analysis for receipt ${input.receiptId}, route: ${routeDecision.route}")
+
+        // Privacy gate: if cloud AI is denied, force deterministic fallback
+        if (routeDecision.route == AiRoute.CLOUD) {
+            val cloudCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST)
+            if (cloudCheck is PrivacyDecision.Denied) {
+                Timber.d("SmartReceiptAssist: Cloud AI blocked by privacy gate: ${cloudCheck.reason}; falling back to deterministic")
+                val fallbackResult = noOpReceiptAssistService.suggest(input)
+                attempts.add(fallbackResult.toAttemptDetails(5, AttemptMethod.DETERMINISTIC_FALLBACK))
+                logAttemptSummary(input.receiptId, attempts)
+                return fallbackResult.withExecutionMetadata(
+                    usedImageInput = fallbackResult.actualUsedImageInput(),
+                    attempts = attempts
+                )
+            }
+        }
 
         if (routeDecision.route == AiRoute.DETERMINISTIC_FALLBACK || routeDecision.route == AiRoute.DISABLED) {
             Timber.d("SmartReceiptAssist: Router selected ${routeDecision.route}; skipping AI attempts")
@@ -210,16 +240,21 @@ class SmartReceiptAssistService @Inject constructor(
     }
     }
 
-    private fun shouldAttemptCloudVision(
+    private suspend fun shouldAttemptCloudVision(
         input: ReceiptAssistInput,
         settings: AiSettings,
         routeViability: RouteViability
     ): Boolean {
-        return routeViability.cloudAvailable &&
-            input.isImageAnalysisMode &&
-            input.imagePath != null &&
-            input.imageMimeType != null &&
-            settings.receiptImageCloudEnabled
+        if (!routeViability.cloudAvailable) return false
+        if (!input.isImageAnalysisMode || input.imagePath == null || input.imageMimeType == null) return false
+        if (!settings.receiptImageCloudEnabled) return false
+        // Privacy gate: check if receipt image cloud upload is allowed
+        val imageCheck = privacyGate.check(PrivacyCapability.RECEIPT_IMAGE_CLOUD_UPLOAD)
+        if (imageCheck is PrivacyDecision.Denied) {
+            Timber.d("SmartReceiptAssist: Cloud vision blocked by privacy gate: ${imageCheck.reason}")
+            return false
+        }
+        return true
     }
 
     private fun shouldAttemptOnDeviceVision(

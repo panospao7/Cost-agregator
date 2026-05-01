@@ -67,6 +67,7 @@ class GeoapifyGeocodingService @Inject constructor(
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", AppConfig.Location.NOMINATIM_USER_AGENT)
+            .header("X-Api-Key", apiKey)
             .build()
 
         return try {
@@ -140,11 +141,9 @@ class GeoapifyGeocodingService @Inject constructor(
                     "countrycode:gr"
                 }
             )
-            // Geoapify Geocoding API documents apiKey as a required query parameter.
-            // Header-based auth is not documented for this endpoint.
-            // IMPORTANT: never log the full URL (it includes secrets); use buildSafeLogRoute().
+            // API key is now sent via the X-Api-Key header (see searchMultiple method)
+            // to avoid leaking it in URLs/query params (server logs, proxies, etc.).
             // TODO(security): route Geoapify requests through backend proxy and remove client-side key usage.
-            .addQueryParameter("apiKey", apiKey)
             .build()
             .toString()
     }

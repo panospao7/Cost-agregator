@@ -40,5 +40,8 @@ data class RawNotification(
     // Processing status
     val isProcessed: Boolean = false,
     val isRelevant: Boolean? = null,  // null = unknown, true = expense, false = ignore
-    val parseResult: String? = null    // JSON of parsed data or error message
+    val parseResult: String? = null,    // JSON of parsed data or error message
+
+    // Raw data retention: epoch ms when raw content was purged, null = not yet purged
+    val rawContentPurgedAt: Long? = null
 )

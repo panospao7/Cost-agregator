@@ -7,6 +7,7 @@ import androidx.lifecycle.lifecycleScope
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.location.LocationBackfillWorker
 import com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker
+import com.yourname.expensetracker.data.privacy.DataRetentionWorker
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
 import com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
 import kotlinx.coroutines.launch
@@ -56,6 +57,7 @@ class AppStartupCoordinator @Inject constructor(
         LocationBackfillWorker.schedule(application)
         MerchantKeyBackfillWorker.schedule(application)
         WarrantyExpirationWorker.schedule(application)
+        DataRetentionWorker.schedule(application)
     }
 
     private fun syncProactiveBriefingWork() {

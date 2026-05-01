@@ -70,4 +70,34 @@ interface ScannedReceiptDao {
 
     @Query("SELECT * FROM scanned_receipts WHERE imagePath IS NOT NULL")
     suspend fun getAllWithImagePath(): List<ScannedReceipt>
+
+    // ── Raw data retention (Phase 6, Batch 3) ──────────────────────────────────
+
+    @Query("""
+        UPDATE scanned_receipts
+        SET rawOcrTextPurgedAt = :nowMs
+        WHERE createdAt < :beforeMs
+          AND rawOcrTextPurgedAt IS NULL
+    """)
+    suspend fun purgeRawOcrText(beforeMs: Long, nowMs: Long): Int
+
+    // ── Data retention worker support ──────────────────────────────────────────
+
+    @Query("""
+        SELECT * FROM scanned_receipts
+        WHERE createdAt < :cutoffMs
+          AND rawOcrTextPurgedAt IS NULL
+    """)
+    suspend fun getUnpurgedScannedReceiptsOlderThan(cutoffMs: Long): List<ScannedReceipt>
+
+    @Query("""
+        UPDATE scanned_receipts
+        SET rawOcrTextPurgedAt = :rawOcrTextPurgedAt,
+            rawOcrText = ''
+        WHERE id = :id
+    """)
+    suspend fun updateRawOcrTextPurged(
+        id: Long,
+        rawOcrTextPurgedAt: Long
+    )
 }

@@ -15,6 +15,9 @@ import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -40,7 +43,8 @@ import timber.log.Timber
 class CloudReceiptAssistService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient
+    @CloudAiHttpClient private val client: OkHttpClient,
+    private val privacyGate: PrivacyGate
 ) : ReceiptAssistService {
 
     private var apiKeyOverride: String? = null
@@ -49,14 +53,23 @@ class CloudReceiptAssistService @Inject constructor(
     constructor(
         aiSettingsRepository: AiSettingsRepository,
         secureKeyStorage: SecureKeyStorage
-    ) : this(aiSettingsRepository, secureKeyStorage, OkHttpClient())
+    ) : this(aiSettingsRepository, secureKeyStorage, OkHttpClient(), 
+        // Tests use a no-op gate by default
+        object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.Allowed
+        })
 
     // Secondary constructor for testing
     constructor(
         aiSettingsRepository: AiSettingsRepository,
         secureKeyStorage: SecureKeyStorage,
         apiKeyOverride: String
-    ) : this(aiSettingsRepository, secureKeyStorage, OkHttpClient()) {
+    ) : this(aiSettingsRepository, secureKeyStorage, OkHttpClient(),
+        object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.Allowed
+        }) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -71,6 +84,18 @@ class CloudReceiptAssistService @Inject constructor(
         if (apiKey.isBlank()) {
             Timber.d("CloudReceiptAssistService: Gemini API key missing, skipping.")
             return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
+        }
+
+        // PRIVACY GATE: Check cloud AI privacy gate before proceeding
+        val capability = if (input.isImageAnalysisMode) {
+            PrivacyCapability.RECEIPT_IMAGE_CLOUD_UPLOAD
+        } else {
+            PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST
+        }
+        val gateDecision = privacyGate.check(capability, mapOf("receiptId" to input.receiptId.toString()))
+        if (gateDecision is PrivacyDecision.Denied) {
+            Timber.d("CloudReceiptAssistService: privacy gate denied: ${gateDecision.reason}")
+            return AiServiceResult.Failure(AiServiceError.Disabled(gateDecision.reason))
         }
 
         val settings = aiSettingsRepository.settings().first()
