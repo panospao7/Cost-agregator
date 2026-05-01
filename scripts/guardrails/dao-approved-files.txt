@@ -1,7 +1,6 @@
 # Tier 1 — Core Lifecycle Owner
 TransactionLifecycleCoordinator.kt
 TransactionSideEffectDispatcher.kt
-ReviewQueueRepository.kt
 NotificationProcessingPipeline.kt
 
 # Tier 2 — Read-Only / Query Repositories
@@ -30,5 +29,23 @@ TaxEstimator.kt
 
 # Tier 4 — Infrastructure
 GroupTransactionCoordinator.kt
-EmailReceiptIngestionService.kt
 DatabaseModule.kt
+
+# Tier 5 — Receipt Lifecycle (ScannedReceiptDao access)
+# These files are part of the receipt lifecycle and are allowed direct
+# ScannedReceiptDao access for persistence and query operations.
+ReceiptLifecycleCoordinator.kt
+ReceiptLinkService.kt
+ReceiptDuplicateDetector.kt
+BankStatementLifecycleProcessor.kt
+ReceiptSideEffectDispatcher.kt
+
+# Tier 6 — Database / Migrations
+AppDatabase.kt
+# Test files (*Test.kt, *Test.kt) are allowed DAO access for verification purposes.
+
+# Formerly-approved files that no longer have direct ScannedReceiptDao access:
+# - ReviewQueueRepository.kt          → now delegates via ReceiptLinkService
+# - EmailReceiptIngestionService.kt   → now uses ReceiptLifecycleCoordinator
+# - WarrantyTrackerRepository.kt      → now uses ReceiptRepository
+# - PriceProtectionTracker.kt         → now uses ReceiptRepository

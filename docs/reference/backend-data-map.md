@@ -131,10 +131,10 @@ data/
 
 | Aspect | Details |
 |--------|---------|
-| **Version** | 95 |
-| **Total Entities** | 48 (TransactionEvent added; Expense.source column) |
-| **Total DAOs** | 47 (TransactionEventDao added) |
-| **Total Migrations** | 90 (MIGRATION_6_7 → MIGRATION_94_95) |
+| **Version** | 96 |
+| **Total Entities** | 50 (ReceiptEvent, ReceiptExpenseLink added; 10 new ScannedReceipt columns) |
+| **Total DAOs** | 49 (ReceiptEventDao, ReceiptExpenseLinkDao added) |
+| **Total Migrations** | 91 (MIGRATION_6_7 → MIGRATION_95_96) |
 | **Type Converters** | Custom: Enums, Lists, Dates |
 | **Export Schema** | ✓ Enabled (for migrations verification) |
 
@@ -149,6 +149,23 @@ data/
 - **TransactionEvent** — new entity for the `transaction_events` table. Immutable append-only log recording every CREATED/UPDATED/DELETED/etc. transition. Fields: `id`, `expenseId`, `eventType`, `source`, `actor`, `occurredAt`, `dedupeKey`, `duplicateExpenseId`, `beforeSnapshot`, `afterSnapshot`, `metadata`, `reason`. Indexed on `expenseId`, `source`, `occurredAt`, `eventType`.
 - **Single insertion point:** All expense creation now routes through `TransactionLifecycleCoordinator.createExpense()`. Direct `insertAtomic` calls are restricted to grandfathered files only (see `DAO_ACCESS_GUARDRAILS.md`).
 
+### Phase 4 Entity Changes (Receipt Lifecycle)
+
+- **ScannedReceipt** — 10 new columns for lifecycle and deduplication:
+  - `sourceType` (TEXT, default `'UNKNOWN'`) — ReceiptSourceType enum name
+  - `documentType` (TEXT, default `'UNKNOWN'`) — ReceiptDocumentType enum name
+  - `processingStatus` (TEXT, default `'CAPTURED'`) — ReceiptProcessingStatus enum name
+  - `sourceFingerprint` (TEXT, nullable) — external source ID for dedup (e.g. email messageId)
+  - `imageHash` (TEXT, nullable) — SHA-256 hex digest of receipt image file
+  - `textFingerprint` (TEXT, nullable) — SHA-256 of normalized OCR text
+  - `semanticFingerprint` (TEXT, nullable) — SHA-256 of merchant+amount+date+currency
+  - `ocrConfidence` (REAL, nullable) — OCR engine confidence score
+  - `parseFailureReason` (TEXT, nullable) — human-readable failure reason if parsing failed
+  - `updatedAt` (INTEGER, default 0L) — timestamp of last update; must be set explicitly via `timeProvider.now()`
+- **ReceiptEvent** — new entity for the `receipt_events` table. Immutable append-only log recording every receipt lifecycle transition (CAPTURED, OCR_FAILED, PARSED, EXPENSE_CREATED, RECEIPT_DELETED, etc.). Fields: `id`, `receiptId`, `sourceType`, `documentType`, `eventType`, `occurredAt`, `oldStatus`, `newStatus`, `actor`, `message`, `metadata`, `errorDetails`. Indexed on `receiptId`, `sourceType`, `documentType`, `occurredAt`, `eventType`.
+- **ReceiptExpenseLink** — new entity for the `receipt_expense_links` table. Many-to-many join between receipts and expenses. Fields: `id`, `receiptId`, `expenseId`, `linkType`, `confidence`, `source`, `createdAt`, `createdBy`, `isPrimary`, `metadata`. Unique constraint on `(receiptId, expenseId)`. Indexed on `receiptId`, `expenseId`, `linkType`, `createdAt`.
+- **Single insertion point:** All receipt processing now routes through `ReceiptLifecycleCoordinator.processReceiptInput()`. All receipt-expense link mutations go through `ReceiptLinkService.linkReceiptToExpense()` / `unlinkReceiptFromExpense()`.
+
 ### Database Version History
 
 | Version | Feature / Purpose |
@@ -156,6 +173,7 @@ data/
 | 92 | Multi-currency historical snapshot fields (baseAmount, baseCurrency, exchangeRateUsed) |
 | 93-94 | (intermediate schema updates) |
 | **95** | **Transaction Lifecycle Foundation: `source` column on expenses + `transaction_events` table** |
+| **96** | **Receipt Lifecycle Foundation: `receipt_events` + `receipt_expense_links` tables + 10 new columns on `scanned_receipts` (sourceType, documentType, processingStatus, fingerprints, hashes, ocrConfidence, parseFailureReason, updatedAt)** |
 
 ---
 
@@ -179,10 +197,13 @@ data/
 | **Investment** | `investments` | Portfolio holdings with price tracking (v45) | None | type, symbol, isActive |
 | **InvestmentValue** | `investment_values` | Historical price snapshots (v45) | `investmentId` → investments | investmentId+timestamp, timestamp |
 
-### Receipts & Items (7)
+### Receipts & Items (9)
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
-| **ScannedReceipt** | `scanned_receipts` | OCR-extracted receipt data with match status (v9) | `expenseId` → expenses | expenseId, createdAt, matchStatus |
+| **ScannedReceipt** | `scanned_receipts` | OCR-extracted receipt data with lifecycle metadata (v9) | `expenseId` → expenses | expenseId, createdAt, matchStatus, processingStatus |
+| | | *Phase 4 columns:* `sourceType` (TEXT, default UNKNOWN), `documentType` (TEXT, default UNKNOWN), `processingStatus` (TEXT, default CAPTURED), `sourceFingerprint` (TEXT, nullable), `imageHash` (TEXT, nullable), `textFingerprint` (TEXT, nullable), `semanticFingerprint` (TEXT, nullable), `ocrConfidence` (REAL, nullable), `parseFailureReason` (TEXT, nullable), `updatedAt` (INTEGER, default 0L) | | |
+| **ReceiptEvent** | `receipt_events` | Immutable receipt lifecycle audit log. Records every CAPTURED/OCR_FAILED/PARSED/EXPENSE_CREATED/DELETED transition with actor, status transitions, timestamps. Append-only. | None | receiptId, sourceType, documentType, occurredAt, eventType |
+| **ReceiptExpenseLink** | `receipt_expense_links` | Many-to-many join between receipts and expenses. Supports single and multi-link relationships with confidence, source, and metadata. | None | receiptId, expenseId, (receiptId, expenseId) unique, linkType, createdAt |
 | **ReceiptItemCategorization** | `receipt_item_categorizations` | AI-suggested categories per receipt line item (v37) | `receiptId` → scanned_receipts, `expenseId` → expenses | receiptId, expenseId, suggestedCategoryId, userCorrectedCategoryId |
 | **Warranty** | `warranties` | Product warranties extracted from receipts (v38) | `receiptId` → scanned_receipts, `expenseId` → expenses | receiptId, expenseId, warrantyEndDate, status |
 | **ReturnWindow** | `return_windows` | Product return periods from receipts (v38) | `receiptId` → scanned_receipts, `expenseId` → expenses | receiptId, expenseId, returnDeadline, status |
@@ -277,11 +298,13 @@ data/
 | **UserCorrectionDao** | user_corrections | insert, getAll, getForPackage, getApprovedCorrections, getRejectedCorrections | None (has indices on packageName, wasApproved, wasRejected) |
 | **RawNotificationDao** | raw_notifications | insert, getAll, getById, delete, getUnprocessed, markAsRelevant, deleteOldNotifications | getByPackageNameAndTime |
 
-### Receipt & Item Categorization (4)
+### Receipt & Item Categorization (6)
 
 | DAO | Table | Key Methods |
 |-----|-------|-------------|
-| **ScannedReceiptDao** | scanned_receipts | getAll, getById, insert, update, delete, getByExpenseId, getUnmatchedReceipts, updateMatchStatus, updateMatchConfidence | getReceiptsByStatus |
+| **ScannedReceiptDao** | scanned_receipts | getAll, getById, insert, update, delete, getByExpenseId, getUnmatchedReceipts, updateMatchStatus, updateMatchConfidence, getRecentReceipts, getAllWithImagePath | getReceiptsByStatus, getByImageHash, getByTextFingerprint, getBySemanticFingerprint, getBySourceFingerprint |
+| **ReceiptEventDao** | receipt_events | insert, getEventsForReceipt | None (append-only log) |
+| **ReceiptExpenseLinkDao** | receipt_expense_links | insert (REPLACE), getLinksForReceipt, getLinksForExpense, unlink, deleteAllLinksForReceipt | None |
 | **ReceiptItemCategorizationDao** | receipt_item_categorizations | insert, getById, getByReceiptId, getByExpenseId, updateUserCorrectedCategory | getUncorrectedItems, getConfidenceStats |
 | **WarrantyDao** | warranties | insert, getAll, getById, getByReceiptId, getByExpenseId, getActiveWarranties, getExpiringWarranties | getWarrantiesByStatus |
 | **ReturnWindowDao** | return_windows | insert, getAll, getById, getByReceiptId, getByExpenseId, getReturnableItems, getExpiredReturns | getReturnsByStatus |
@@ -578,20 +601,31 @@ suspend fun getExpensesDynamic(query: SupportSQLiteQuery): List<ExpenseWithCateg
 - DAOs return Flow for subscriptions
 - Repositories transform and aggregate
 
-### 9. **Coordinator Pattern (NEW — Phase 3)**
+### 9. **Coordinator Pattern (Phase 3) — Transaction Lifecycle**
 - `TransactionLifecycleCoordinator` is the single entry point for ALL expense CUD operations
 - Pipeline: validate → normalize → dedupe → insert atomic → event log → side effects
 - All creation paths (manual, notification, CSV, bank, email, group, receipt, review) converge through this coordinator
 - Direct `insertAtomic` calls restricted to grandfathered files (see `DAO_ACCESS_GUARDRAILS.md`)
 
-### 10. **Event Sourcing Lite (NEW — Phase 3)**
+### 10. **Event Sourcing Lite (Phase 3) — Transaction Events**
 - `transaction_events` table records every lifecycle transition as an immutable append-only row
 - Events include actor, timestamps, before/after JSON snapshots for full audit trail
 - Used for debugging, history reconstruction, and compliance
 
+### 11. **Coordinator Pattern (Phase 4) — Receipt Lifecycle**
+- `ReceiptLifecycleCoordinator` is the single entry point for ALL receipt processing
+- Pipeline: validate → persist asset → OCR/parse → dedupe → save → event logging → side effects
+- Receipt-expense linking centralized in `ReceiptLinkService` via `receipt_expense_links` join table
+- Side effects are gated by `ReceiptDocumentType` (RETAIL_RECEIPT, EMAIL_RECEIPT, BANK_STATEMENT, etc.)
+
+### 12. **Event Sourcing Lite (Phase 4) — Receipt Events**
+- `receipt_events` table records every receipt lifecycle transition (CAPTURED, OCR_FAILED, PARSED, EXPENSE_CREATED, DELETED, etc.)
+- Events include actor, status transitions, document type metadata, and error details
+- Used for audit, debugging, and reconstructing receipt processing history
+
 ---
 
-## Database Migrations Summary (46 Total, v6→v69)
+## Database Migrations Summary (47 Total, v6→v96)
 
 | Range | Feature Area | Count | Notes |
 |-------|--------------|-------|-------|
@@ -611,6 +645,7 @@ suspend fun getExpensesDynamic(query: SupportSQLiteQuery): List<ExpenseWithCateg
 | v47–50 | Schema Fixes | 4 | Enhanced splits, schema alignment, DEFAULT constraints normalization |
 | v51–93 | [TBD - check live file] | 43 | Intermediate schema updates |
 | v94–95 | Transaction Lifecycle Foundation (Phase 3) | 1 | Added `source` column to expenses, created `transaction_events` table |
+| v95→96 | Receipt Lifecycle Foundation (Phase 4) | 1 | Created `receipt_events` + `receipt_expense_links` tables; added 10 columns to `scanned_receipts` (sourceType, documentType, processingStatus, fingerprints, hashes, ocrConfidence, parseFailureReason, updatedAt) |
 
 ---
 
@@ -815,4 +850,4 @@ Totals omitted intentionally; current inventory is in flux.
 
 ---
 
-**Last Updated**: April 2026 | **Schema Version**: 69 | **Total Entities**: 46 | **Total DAOs**: 45 | **Total Repositories**: 36+
+**Last Updated**: May 2026 | **Schema Version**: 96 | **Total Entities**: 50 | **Total DAOs**: 49 | **Total Repositories**: 36+

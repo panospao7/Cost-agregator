@@ -101,19 +101,36 @@ Owns notification capture, parser routing, structured transaction extraction, an
 
 **Boundary note:** this segment stops at parsed/reviewable transactions; OCR belongs to Segment 4 and receipt-item AI belongs to Segment 5.
 
-## SEGMENT 4: Receipt Scanning (OCR)
+## SEGMENT 4: Receipt Scanning (OCR) & Receipt Lifecycle
 
-Owns receipt capture, OCR extraction, receipt parsing, and scanned-receipt review flow.
+Owns receipt capture, OCR extraction, receipt parsing, scanned-receipt review flow, and the **receipt lifecycle** (Phase 4).
 
 **Representative files**
 - `domain/receipt/ReceiptOcrService.kt`
 - `domain/receipt/ReceiptParser.kt`
 - `domain/receipt/BankStatementParser.kt`
+- `domain/receipt/ReceiptSourceType.kt` — Enum: CAMERA, GALLERY, FILE_IMPORT, EMAIL, etc.
+- `domain/receipt/ReceiptDocumentType.kt` — Enum: RETAIL_RECEIPT, EMAIL_RECEIPT, BANK_STATEMENT, etc.
+- `domain/receipt/ReceiptProcessingStatus.kt` — Enum: CAPTURED → DELETED (14 values)
+- `domain/receipt/EmailReceiptData.kt` — Structured email receipt data
+- `domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt` — **Single entry point for ALL receipt processing**
+- `domain/receipt/lifecycle/ReceiptLinkService.kt` — Centralized receipt-expense linking (join table)
+- `domain/receipt/lifecycle/ReceiptAssetStore.kt` — File persistence, hashing, backup manifest
+- `domain/receipt/lifecycle/ReceiptInputValidator.kt` — URI / MIME / size validation
+- `domain/receipt/lifecycle/ReceiptDuplicateDetector.kt` — 3-signal dedup (hash, text, semantic)
+- `domain/receipt/lifecycle/ReceiptSideEffectDispatcher.kt` — Document-type-gated downstream effects
+- `domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt` — Statement-specific processing
+- `data/database/entity/ReceiptEvent.kt` — Immutable receipt lifecycle event log (table: `receipt_events`)
+- `data/database/dao/ReceiptEventDao.kt` — DAO for receipt lifecycle events
+- `data/database/entity/ReceiptExpenseLink.kt` — Many-to-many receipt↔expense join (table: `receipt_expense_links`)
+- `data/database/dao/ReceiptExpenseLinkDao.kt` — DAO for receipt-expense links
 - `data/repository/ReceiptRepository.kt`
 - `ui/screens/receiptscan/ReceiptScanScreen.kt`
 - `ui/screens/receiptscan/ReceiptScanViewModel.kt`
 
 **Boundary note:** no item-level AI categorization here.
+
+**Boundary note:** All receipt processing paths now route through `ReceiptLifecycleCoordinator`. The `receipt_events` and `receipt_expense_links` tables are owned by this segment.
 
 ## SEGMENT 5: AI Receipt Item Categorization
 
@@ -533,12 +550,13 @@ Owns spending challenge creation, progress tracking, and challenge presentation.
 
 ## SEGMENT 38: Receipt Matching
 
-Owns receipt-to-transaction matching and reconciliation UI.
+Owns receipt-to-transaction matching and reconciliation UI. Link persistence goes through `ReceiptLinkService` (Segment 4).
 
 **Representative files**
+- `domain/receiptmatching/ReceiptTransactionMatcher.kt`
 - `ui/screens/receiptmatching/ReceiptMatchingScreen.kt`
 
-**Boundary note:** OCR capture stays in Segment 4 and item-level AI categorization stays in Segment 5.
+**Boundary note:** OCR capture stays in Segment 4 and item-level AI categorization stays in Segment 5. Link mutations via `ReceiptLinkService` are owned by Segment 4.
 
 ---
 

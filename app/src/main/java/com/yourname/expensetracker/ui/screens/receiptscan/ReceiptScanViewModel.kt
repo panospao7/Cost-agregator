@@ -29,6 +29,8 @@ import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.ui.screens.debug.DebugData
@@ -148,7 +150,9 @@ class ReceiptScanViewModel @Inject constructor(
     private val categorizeReceiptItemsUseCase: CategorizeReceiptItemsUseCase,
     private val receiptItemCategorizationRepository: ReceiptItemCategorizationRepository,
     private val aiArtifactRepository: AiArtifactRepository,
-    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
+    private val receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
+    private val receiptParser: ReceiptParser
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ReceiptScanState(
@@ -224,89 +228,37 @@ class ReceiptScanViewModel @Inject constructor(
             val parsingLogs = mutableListOf<String>()
             
             try {
-                // Manual scans do NOT auto-create review items (User confirms in this UI)
-                val (receipt, parsed) = receiptRepository.processReceipt(uri, autoCreateReview = false)
-                
-                val processingTime = timeProvider.now() - startTime
-                
-                // Create debug data
-                val debugData = DebugData(
-                    rawText = receipt.rawOcrText,
-                    parsedTransactions = listOfNotNull(
-                        parsed.total?.let { total ->
-                            ParsedTransaction(
-                                amount = total,
-                                currency = "EUR",
-                                merchant = parsed.merchantName ?: "Unknown",
-                                type = ParsedTransactionType.PURCHASE,
-                                confidence = parsed.confidence,
-                                date = parsed.date
-                            )
-                        }
-                    ),
-                    parsingLogs = if (parsed.confidence < 0.7f) {
-                        listOf("Low confidence parsing (${(parsed.confidence * 100).toInt()}%)")
-                    } else emptyList(),
-                    processingTimeMs = processingTime,
-                    parserUsed = "ReceiptParser"
-                )
+                val receiptResult = receiptLifecycleCoordinator.processReceiptInput(uri)
+                if (receiptResult.isFailure) {
+                    throw receiptResult.exceptionOrNull()!!
+                }
+                val receipt = receiptResult.getOrThrow()
 
-                _state.update {
-                    it.copy(
-                        step = ScanStep.REVIEW,
-                        imageUri = receipt.imagePath?.let { Uri.fromFile(java.io.File(it)) } ?: uri,
-                        parsedReceipt = parsed,
-                        receiptId = receipt.id,
-                        rawOcrText = receipt.rawOcrText,
-                        editMerchant = parsed.merchantName ?: "",
-                        editAmount = parsed.total?.let { total ->
-                            String.format("%.2f", total)
-                        } ?: "",
-                        editDate = parsed.date ?: timeProvider.now(),
-                        ocrConfidence = parsed.confidence,
-                        selectedCategoryId = null, // Will be auto-detected on save
-                        receiptAssistState = AiLoadState.Idle,
-                        receiptAssistMessage = null,
-                        receiptAssistDiagnostics = null,
-                        categoryAssistState = AiLoadState.Idle,
-                        categoryAssistMessage = null,
-                        categoryAssistDiagnostics = null,
-                        quickSavePreview = null,
-                        debugData = debugData
-                    ).clearItemAnalysisState()
-                }
-                
-                // Auto-trigger item categorization if AI enabled and items exist
-                if (parsed.lineItems.isNotEmpty()) {
-                    itemAnalysisJob?.cancel()
-                    itemAnalysisJob = viewModelScope.launch {
-                        val settings = aiSettingsRepository.settings().first()
-                        if (settings.aiEnabled && settings.receiptItemCategorizationEnabled) {
-                            analyzeReceiptItemsInternal(receipt.id)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                parsingLogs.add("OCR Error: ${e.message}")
-                
-                try {
-                    val (receipt, parsed) = receiptRepository.saveManualReceiptRecord(uri)
+                val isOcrFailure = receipt.processingStatus == ReceiptProcessingStatus.OCR_FAILED.name
+
+                if (isOcrFailure) {
+                    // OCR failure — show review step with empty fields for manual entry
                     val now = timeProvider.now()
-                    
+
                     val debugData = DebugData(
-                        rawText = "",
+                        rawText = receipt.rawOcrText,
                         parsedTransactions = emptyList(),
-                        parsingLogs = parsingLogs,
+                        parsingLogs = parsingLogs.also { it.add("OCR processing failed, manual entry available") },
                         processingTimeMs = timeProvider.now() - startTime,
                         parserUsed = "Manual (OCR Failed)"
                     )
-                    
+
+                    val emptyParsed = ReceiptParser.ParsedReceipt(
+                        merchantName = null, total = null, subtotal = null, tax = null,
+                        date = now, currency = "EUR", lineItems = emptyList(), confidence = 0f
+                    )
+
                     _state.update {
                         it.copy(
                             step = ScanStep.REVIEW,
-                            imageUri = uri,
+                            imageUri = receipt.imagePath?.let { Uri.fromFile(java.io.File(it)) } ?: uri,
                             tempCameraUri = null,
-                            parsedReceipt = parsed,
+                            parsedReceipt = emptyParsed,
                             receiptId = receipt.id,
                             rawOcrText = receipt.rawOcrText,
                             showRawText = false,
@@ -317,7 +269,7 @@ class ReceiptScanViewModel @Inject constructor(
                             paymentMethod = PaymentMethod.CARD,
                             notes = "",
                             ocrConfidence = 0f,
-                            errorMessage = "OCR Failed: ${e.message}. You can enter details manually.",
+                            errorMessage = "OCR could not be processed. You can enter details manually.",
                             isSaving = false,
                             saveResult = null,
                             receiptAssistState = AiLoadState.Idle,
@@ -330,37 +282,60 @@ class ReceiptScanViewModel @Inject constructor(
                             debugData = debugData
                         ).clearItemAnalysisState()
                     }
-                } catch (fallbackError: Exception) {
-                    parsingLogs.add("Fallback Error: ${fallbackError.message}")
-                    val now = timeProvider.now()
-                    
-                    val debugData = DebugData(
-                        rawText = "",
-                        parsedTransactions = emptyList(),
-                        parsingLogs = parsingLogs,
-                        processingTimeMs = timeProvider.now() - startTime,
-                        parserUsed = "Failed"
+                } else {
+                    // Normal success path
+                    val lineItems = receipt.parsedItems?.let {
+                        try { receiptParser.lineItemsFromJson(it) } catch (_: Exception) { emptyList() }
+                    } ?: emptyList()
+
+                    val parsed = ReceiptParser.ParsedReceipt(
+                        merchantName = receipt.parsedMerchant,
+                        total = receipt.parsedTotal,
+                        subtotal = null,
+                        tax = receipt.parsedTaxAmount,
+                        date = receipt.parsedDate,
+                        currency = receipt.currency,
+                        lineItems = lineItems,
+                        confidence = receipt.confidence
                     )
-                    
+
+                    val processingTime = timeProvider.now() - startTime
+
+                    val debugData = DebugData(
+                        rawText = receipt.rawOcrText,
+                        parsedTransactions = listOfNotNull(
+                            parsed.total?.let { total ->
+                                ParsedTransaction(
+                                    amount = total,
+                                    currency = parsed.currency,
+                                    merchant = parsed.merchantName ?: "Unknown",
+                                    type = ParsedTransactionType.PURCHASE,
+                                    confidence = parsed.confidence,
+                                    date = parsed.date
+                                )
+                            }
+                        ),
+                        parsingLogs = if (parsed.confidence < 0.7f) {
+                            listOf("Low confidence parsing (${(parsed.confidence * 100).toInt()}%)")
+                        } else emptyList(),
+                        processingTimeMs = processingTime,
+                        parserUsed = "ReceiptParser"
+                    )
+
                     _state.update {
                         it.copy(
-                            step = ScanStep.ERROR,
-                            imageUri = uri,
-                            tempCameraUri = null,
-                            parsedReceipt = null,
-                            receiptId = null,
-                            rawOcrText = "",
-                            showRawText = false,
-                            editMerchant = "",
-                            editAmount = "",
-                            editDate = now,
-                            selectedCategoryId = null,
-                            paymentMethod = PaymentMethod.CARD,
-                            notes = "",
-                            ocrConfidence = 0f,
-                            errorMessage = "Total failure: ${fallbackError.message}",
-                            isSaving = false,
-                            saveResult = null,
+                            step = ScanStep.REVIEW,
+                            imageUri = receipt.imagePath?.let { Uri.fromFile(java.io.File(it)) } ?: uri,
+                            parsedReceipt = parsed,
+                            receiptId = receipt.id,
+                            rawOcrText = receipt.rawOcrText,
+                            editMerchant = parsed.merchantName ?: "",
+                            editAmount = parsed.total?.let { total ->
+                                String.format("%.2f", total)
+                            } ?: "",
+                            editDate = parsed.date ?: timeProvider.now(),
+                            ocrConfidence = parsed.confidence,
+                            selectedCategoryId = null, // Will be auto-detected on save
                             receiptAssistState = AiLoadState.Idle,
                             receiptAssistMessage = null,
                             receiptAssistDiagnostics = null,
@@ -371,6 +346,58 @@ class ReceiptScanViewModel @Inject constructor(
                             debugData = debugData
                         ).clearItemAnalysisState()
                     }
+
+                    // Auto-trigger item categorization if AI enabled and items exist
+                    if (lineItems.isNotEmpty()) {
+                        itemAnalysisJob?.cancel()
+                        itemAnalysisJob = viewModelScope.launch {
+                            val settings = aiSettingsRepository.settings().first()
+                            if (settings.aiEnabled && settings.receiptItemCategorizationEnabled) {
+                                analyzeReceiptItemsInternal(receipt.id)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                parsingLogs.add("Processing Error: ${e.message}")
+                val now = timeProvider.now()
+
+                val debugData = DebugData(
+                    rawText = "",
+                    parsedTransactions = emptyList(),
+                    parsingLogs = parsingLogs,
+                    processingTimeMs = timeProvider.now() - startTime,
+                    parserUsed = "Failed"
+                )
+
+                _state.update {
+                    it.copy(
+                        step = ScanStep.ERROR,
+                        imageUri = uri,
+                        tempCameraUri = null,
+                        parsedReceipt = null,
+                        receiptId = null,
+                        rawOcrText = "",
+                        showRawText = false,
+                        editMerchant = "",
+                        editAmount = "",
+                        editDate = now,
+                        selectedCategoryId = null,
+                        paymentMethod = PaymentMethod.CARD,
+                        notes = "",
+                        ocrConfidence = 0f,
+                        errorMessage = "Total failure: ${e.message}",
+                        isSaving = false,
+                        saveResult = null,
+                        receiptAssistState = AiLoadState.Idle,
+                        receiptAssistMessage = null,
+                        receiptAssistDiagnostics = null,
+                        categoryAssistState = AiLoadState.Idle,
+                        categoryAssistMessage = null,
+                        categoryAssistDiagnostics = null,
+                        quickSavePreview = null,
+                        debugData = debugData
+                    ).clearItemAnalysisState()
                 }
             }
         }

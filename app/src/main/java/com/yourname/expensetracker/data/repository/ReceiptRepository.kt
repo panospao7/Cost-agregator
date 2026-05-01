@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.debug.DebugIssueDetector
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
@@ -64,7 +65,8 @@ class ReceiptRepository @Inject constructor(
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
     private val warrantyUseCase: AutoCreateWarrantyFromReceiptUseCase,
-    private val coordinator: TransactionLifecycleCoordinator
+    private val coordinator: TransactionLifecycleCoordinator,
+    private val receiptLinkService: ReceiptLinkService
 ) {
     private companion object {
         // Use the canonical policy for all duplicate detection constants.
@@ -305,7 +307,21 @@ class ReceiptRepository @Inject constructor(
      * Source-specific side effect that remains here:
      *  - Receipt-to-expense linking
      *  - Hybrid classifier correction learning
+     *
+     * @Deprecated Prefer using [TransactionLifecycleCoordinator.createExpense]
+     * directly with [ReceiptLinkService.linkReceiptToExpense] for the linking
+     * step. This method remains for backward compatibility but will be removed
+     * in a future release.
      */
+    @Deprecated(
+        message = "Use TransactionLifecycleCoordinator.createExpense() directly " +
+            "with ReceiptLinkService.linkReceiptToExpense() for receipt-expense linking. " +
+            "This method bypasses the full lifecycle and will be removed.",
+        replaceWith = ReplaceWith(
+            expression = "coordinator.createExpense(request)",
+            imports = ["com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator"]
+        )
+    )
     suspend fun createExpenseFromReceipt(
         receiptId: Long,
         merchant: String,
@@ -350,8 +366,13 @@ class ReceiptRepository @Inject constructor(
             is CreateExpenseResult.Created -> {
                 val expenseId = result.expenseId
 
-                // Link receipt to the newly created expense
-                scannedReceiptDao.linkToExpense(receiptId, expenseId)
+                // Link receipt to the newly created expense via ReceiptLinkService
+                receiptLinkService.linkReceiptToExpense(
+                    receiptId = receiptId,
+                    expenseId = expenseId,
+                    linkType = "DIRECT_SAVE",
+                    source = ExpenseSource.RECEIPT_SCAN.name
+                )
 
                 // ── Source-specific post-commit side effects ─────────────────
                 if (finalCategoryId != null) {
@@ -408,6 +429,14 @@ class ReceiptRepository @Inject constructor(
 
     suspend fun getReceiptById(id: Long): ScannedReceipt? {
         return scannedReceiptDao.getById(id)
+    }
+
+    suspend fun insertReceipt(receipt: ScannedReceipt): Long {
+        return scannedReceiptDao.insert(receipt)
+    }
+
+    suspend fun getRecentReceipts(since: Long, limit: Int = Int.MAX_VALUE): List<ScannedReceipt> {
+        return scannedReceiptDao.getRecentReceipts(since, limit)
     }
 
     suspend fun updateCategorizationStatus(receiptId: Long, status: CategorizationStatus) {
@@ -484,6 +513,16 @@ class ReceiptRepository @Inject constructor(
             failureCount = total - successCount,
             errors = errors
         )
+    }
+
+    /**
+     * Runs OCR on the given URI and returns the raw result.
+     *
+     * Used by [BankStatementLifecycleProcessor] to obtain OCR output without
+     * triggering the full statement processing pipeline.
+     */
+    suspend fun runStatementOcr(imageUri: Uri): OcrResult {
+        return ocrService.processUri(imageUri)
     }
 
     /**

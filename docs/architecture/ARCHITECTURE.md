@@ -29,8 +29,8 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v95
-- 570+ Kotlin files (~120 modified in Phases 2-3)
+- Database version: v96
+- 590+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4)
 - Destination-driven navigation via `NavigationDestination`
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
@@ -118,7 +118,19 @@ domain/
 ├── groups/                      # Shared expense and settlement flows
 ├── location/                    # Location enrichment and POI lookup
 ├── parser/                      # Notification parsing
-├── receipt/                     # OCR and receipt processing
+├── receipt/                     # OCR, receipt processing, lifecycle models
+│   ├── ReceiptSourceType.kt     # Enum: CAMERA, GALLERY, FILE_IMPORT, EMAIL, etc.
+│   ├── ReceiptDocumentType.kt   # Enum: RETAIL_RECEIPT, EMAIL_RECEIPT, BANK_STATEMENT, etc.
+│   ├── ReceiptProcessingStatus.kt # Enum: CAPTURED → DELETED (14 values)
+│   ├── EmailReceiptData.kt      # Structured email receipt data
+│   └── lifecycle/               # **NEW — Receipt lifecycle coordinator + services**
+│       ├── ReceiptLifecycleCoordinator.kt   # Single entry point for all receipt processing
+│       ├── ReceiptLinkService.kt            # Centralized receipt-expense linking (multi-link)
+│       ├── ReceiptAssetStore.kt             # File persistence, hash computation, backup manifest
+│       ├── ReceiptInputValidator.kt         # URI / MIME / size validation
+│       ├── ReceiptDuplicateDetector.kt      # 3-signal dedup (hash, text, semantic)
+│       ├── ReceiptSideEffectDispatcher.kt   # Document-type-gated downstream effects
+│       └── BankStatementLifecycleProcessor.kt # Statement-specific processing
 ├── split/                       # Split-template and expense splitting logic
 ├── service/                     # Domain service interfaces
 ├── usecase/                     # Use cases / orchestration
@@ -152,7 +164,7 @@ data/
 ├── location/                    # Geocoding services
 ├── security/                    # Secure storage / crypto helpers
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v95)
+│   ├── AppDatabase.kt          # Room database (v96)
 │   ├── entity/                  # Room entities across finance, AI, groups, location, and settings
 │   ├── dao/                     # Room DAOs
 │   ├── model/                   # Database models
@@ -252,7 +264,7 @@ FinancialWeatherRepository
 | Startup delegate | `startup/AppStartupDelegate.kt` | Hilt entry-point bootstrap |
 | Startup coordinator | `startup/AppStartupCoordinator.kt` | Lifecycle observer + startup jobs |
 | Main Activity | `ui/MainActivity.kt` | Navigation host + deep links |
-| Database | `data/database/AppDatabase.kt` | Room DB v95 |
+| Database | `data/database/AppDatabase.kt` | Room DB v96 |
 
 ### Core Engines
 | Engine | File | Purpose |
@@ -477,15 +489,66 @@ A 120+ file cross-cutting feature establishing a single, auditable entry point f
 
 ---
 
+### Receipt Lifecycle Architecture (Phase 4 — May 2026)
+
+A ~20-file cross-cutting feature establishing a single, auditable entry point for all receipt processing, with document-type-aware lifecycle management.
+
+#### New `domain/receipt/` Models
+
+| Type | File | Purpose |
+|------|------|---------|
+| `ReceiptSourceType` | `domain/receipt/ReceiptSourceType.kt` | Enum: CAMERA, GALLERY, FILE_IMPORT, EMAIL, BANK_STATEMENT, MANUAL_RECORD, BATCH_SCAN, DEBUG_IMPORT, UNKNOWN |
+| `ReceiptDocumentType` | `domain/receipt/ReceiptDocumentType.kt` | Enum: RETAIL_RECEIPT, EMAIL_RECEIPT, BANK_STATEMENT, MANUAL_PLACEHOLDER, PDF_RECEIPT, UNKNOWN |
+| `ReceiptProcessingStatus` | `domain/receipt/ReceiptProcessingStatus.kt` | Enum: 14 values from CAPTURED through DELETED, covering the full receipt lifecycle |
+| `EmailReceiptData` | `domain/receipt/EmailReceiptData.kt` | Structured email receipt with parsed financial fields (amount, merchant, currency, date, items) |
+
+#### New `domain/receipt/lifecycle/` Package
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `ReceiptLifecycleCoordinator` | `lifecycle/ReceiptLifecycleCoordinator.kt` | **Single entry point** for all receipt processing. Pipeline: validate → persist asset → OCR/parse → dedupe → save → event logging → side effects. Handles camera/gallery, email, bank statement, and manual receipt paths. |
+| `ReceiptLinkService` | `lifecycle/ReceiptLinkService.kt` | Centralized receipt-expense link management via `receipt_expense_links` join table. Supports many-to-many links (BANK_STATEMENT) and single links (all other types). Writes audit events for every link/unlink. |
+| `ReceiptAssetStore` | `lifecycle/ReceiptAssetStore.kt` | File persistence layer: copies receipt images to app-local storage, computes SHA-256 hashes, creates camera temp URIs via FileProvider, generates backup manifests. |
+| `ReceiptInputValidator` | `lifecycle/ReceiptInputValidator.kt` | URI/MIME/size validation: checks readability, supported MIME types (JPEG, PNG, WebP, PDF, HEIC), file size limit (50 MB), bitmap decode validity. |
+| `ReceiptDuplicateDetector` | `lifecycle/ReceiptDuplicateDetector.kt` | 3-signal deduplication: EXACT_HASH (SHA-256, 1.0 confidence), TEXT_FINGERPRINT (normalized OCR text, 0.95), SEMANTIC (merchant+amount+date+currency, 0.8), plus EXTERNAL_ID for email dedup. |
+| `ReceiptSideEffectDispatcher` | `lifecycle/ReceiptSideEffectDispatcher.kt` | Document-type-gated post-save effects: RETAIL_RECEIPT → warranty extraction, item categorization, transaction matching, price protection. EMAIL_RECEIPT → item categorization only. BANK_STATEMENT/MANUAL_PLACEHOLDER → no effects. |
+| `BankStatementLifecycleProcessor` | `lifecycle/BankStatementLifecycleProcessor.kt` | Statement-specific processing: OCR → parse transactions → create PendingReview entries → lifecycle events. Returns structured `BankStatementResult`. |
+
+#### Migration Paths (all now route through coordinator)
+
+| Path | PR | Status |
+|------|----|--------|
+| Camera/Gallery/File scan | PR 4 | Migrated |
+| Receipt→Expense save (with link service) | PR 4 | Migrated |
+| Review queue receipt linking | PR 5 | Migrated |
+| Bank statement processing | PR 5 | Migrated |
+| Email receipt ingestion | PR 5 | Migrated |
+| Warranty/Return/Price side effects | PR 6 | Document-type-gated |
+| Receipt matching | PR 7 | Migrated via LinkService |
+| Item categorization gating | PR 7 | Status-consistent + document-type gating |
+
+#### New DB Layer
+
+- `ReceiptEvent` — Room entity for `receipt_events` table (immutable lifecycle audit log for receipts)
+- `ReceiptEventDao` — DAO with `insert()` and `getEventsForReceipt()`
+- `ReceiptExpenseLink` — Room entity for `receipt_expense_links` table (many-to-many receipt↔expense join)
+- `ReceiptExpenseLinkDao` — DAO with `insert()`, `getLinksForReceipt()`, `getLinksForExpense()`, `unlink()`, `deleteAllLinksForReceipt()`
+- `ScannedReceipt` — 10 new columns: `sourceType`, `documentType`, `processingStatus`, `sourceFingerprint`, `imageHash`, `textFingerprint`, `semanticFingerprint`, `ocrConfidence`, `parseFailureReason`, `updatedAt`
+- Migration 95→96: adds `receipt_events` and `receipt_expense_links` tables, adds 10 columns to `scanned_receipts`
+
+---
+
 ## Database Schema
 
-### Version: v95 (post lifecycle migration)
+### Version: v96 (post receipt lifecycle migration)
 
-The Room schema in v95 includes all tables from v92 plus:
+The Room schema in v96 includes all tables from v95 plus:
 
-**New table:** `transaction_events` — immutable audit log for expense lifecycle transitions.
+**New table:** `receipt_events` — immutable audit log for receipt lifecycle transitions (capture, OCR, parsing, linking, deletion).
 
-**New column on `expenses`:** `source` (TEXT, nullable) — tracks the origin of each expense (MANUAL_ENTRY, NOTIFICATION_AUTO_ACCEPT, CSV_IMPORT, BANK_API_SYNC, etc.).
+**New table:** `receipt_expense_links` — many-to-many join table linking receipts to expenses (supports single and multi-link relationships).
+
+**New columns on `scanned_receipts`:** `sourceType`, `documentType`, `processingStatus`, `sourceFingerprint`, `imageHash`, `textFingerprint`, `semanticFingerprint`, `ocrConfidence`, `parseFailureReason`, `updatedAt` — full lifecycle metadata and deduplication fingerprints.
 
 The full schema now covers:
 

@@ -1,8 +1,8 @@
 package com.yourname.expensetracker.domain.price
 
 import com.google.common.truth.Truth.assertThat
-import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -19,14 +19,14 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class PriceProtectionTrackerTest {
 
-    private val receiptDao = mockk<ScannedReceiptDao>(relaxed = true)
+    private val receiptRepository = mockk<ReceiptRepository>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private lateinit var tracker: PriceProtectionTracker
 
     @Before
     fun setup() {
         every { timeProvider.now() } returns System.currentTimeMillis()
-        tracker = PriceProtectionTracker(receiptDao, timeProvider)
+        tracker = PriceProtectionTracker(receiptRepository, timeProvider)
     }
 
     @Test
@@ -34,19 +34,19 @@ class PriceProtectionTrackerTest {
         val thirtyDaysAgo = System.currentTimeMillis() - (30 * 24 * 60 * 60 * 1000)
         
         coEvery { 
-            receiptDao.getRecentReceipts(any()) 
+            receiptRepository.getRecentReceipts(any()) 
         } returns createMockReceipts()
         
         val items = tracker.getPriceProtectedItems()
         
         coVerify { 
-            receiptDao.getRecentReceipts(match { it <= thirtyDaysAgo }) 
+            receiptRepository.getRecentReceipts(match { it <= thirtyDaysAgo }) 
         }
     }
 
 	@Test
 	fun `getPriceProtectedItems returns eligible items`() = runTest {
-		coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(
+		coEvery { receiptRepository.getRecentReceipts(any()) } returns listOf(
 			createReceiptWithItem("Laptop Computer", "electronics", 999.0)
 		)
 
@@ -59,7 +59,7 @@ class PriceProtectionTrackerTest {
 
 	@Test
 	fun `isPriceProtectable identifies electronics correctly`() = runTest {
-		coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(
+		coEvery { receiptRepository.getRecentReceipts(any()) } returns listOf(
 			createReceiptWithItem("Laptop Computer", "electronics", 999.0)
 		)
 
@@ -71,7 +71,7 @@ class PriceProtectionTrackerTest {
 
     @Test
     fun `isPriceProtectable returns false for non-protectable items`() = runTest {
-        coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(
+        coEvery { receiptRepository.getRecentReceipts(any()) } returns listOf(
             createReceiptWithItem("Coffee", "beverage", 5.0)
         )
         
@@ -84,7 +84,7 @@ class PriceProtectionTrackerTest {
     @Test
     fun `isEligibleForPriceProtection returns true for recent purchases`() = runTest {
         val recentReceipt = createMockReceipt(daysOld = 10)
-        coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(recentReceipt)
+        coEvery { receiptRepository.getRecentReceipts(any()) } returns listOf(recentReceipt)
         
         val items = tracker.getPriceProtectedItems()
         
@@ -105,7 +105,7 @@ class PriceProtectionTrackerTest {
             confidence = 0.9f,
             createdAt = System.currentTimeMillis() - (35 * 24 * 60 * 60 * 1000)
         )
-        coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(oldReceipt)
+        coEvery { receiptRepository.getRecentReceipts(any()) } returns listOf(oldReceipt)
         
         val items = tracker.getPriceProtectedItems()
         
@@ -117,7 +117,7 @@ class PriceProtectionTrackerTest {
     fun `getReturnWindow returns correct days for different merchants`() {
         // Test via the tracker behavior
         val amazonReceipt = createMockReceipt(daysOld = 5, merchant = "Amazon Store")
-        coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(amazonReceipt)
+        coEvery { receiptRepository.getRecentReceipts(any()) } returns listOf(amazonReceipt)
         
         runTest {
             val items = tracker.getPriceProtectedItems()
@@ -129,7 +129,7 @@ class PriceProtectionTrackerTest {
 
     @Test
     fun `monitorPriceDrops emits alerts for price drops over 5 percent`() = runTest {
-        coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(
+        coEvery { receiptRepository.getRecentReceipts(any()) } returns listOf(
             createReceiptWithItem("Electronics Item", "electronics", 100.0)
         )
         
@@ -142,7 +142,7 @@ class PriceProtectionTrackerTest {
 
     @Test
     fun `monitorPriceDrops ignores small price drops`() = runTest {
-        coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(
+        coEvery { receiptRepository.getRecentReceipts(any()) } returns listOf(
             createReceiptWithItem("Appliance Item", "appliances", 100.0)
         )
         
@@ -154,7 +154,7 @@ class PriceProtectionTrackerTest {
 
     @Test
     fun `price drop alert contains correct savings information`() = runTest {
-        coEvery { receiptDao.getRecentReceipts(any()) } returns listOf(
+        coEvery { receiptRepository.getRecentReceipts(any()) } returns listOf(
             createReceiptWithItem("Laptop", "electronics", 1000.0)
         )
         

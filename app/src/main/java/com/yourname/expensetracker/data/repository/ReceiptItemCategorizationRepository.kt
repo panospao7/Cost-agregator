@@ -32,12 +32,15 @@ class ReceiptItemCategorizationRepository @Inject constructor(
     /**
      * Persists a full categorization result for a receipt.
      * Builds the Room entity from domain model fields here at the boundary.
+     *
+     * @return The number of items successfully inserted (0 if none).
      */
     suspend fun saveCategorizationResult(
         receiptId: Long,
         result: ReceiptItemCategorizationResult,
         now: Long
-    ) {
+    ): Int {
+        var insertedCount = 0
         result.items.forEach { item ->
             val alternativesJson = JSONArray().apply {
                 item.alternatives.forEach { alt ->
@@ -66,8 +69,12 @@ class ReceiptItemCategorizationRepository @Inject constructor(
                 createdAt = now,
                 updatedAt = now
             )
-            dao.insert(categorization)
+            val resultId = dao.insert(categorization)
+            if (resultId > 0) {
+                insertedCount++
+            }
         }
+        return insertedCount
     }
 
     suspend fun updateUserCorrection(

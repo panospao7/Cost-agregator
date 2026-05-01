@@ -6,6 +6,9 @@ import androidx.work.*
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
+import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
 import dagger.assisted.Assisted
@@ -21,6 +24,7 @@ class ReceiptMatchingWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val receiptRepository: ReceiptRepository,
     private val matcher: ReceiptTransactionMatcher,
+    private val receiptLinkService: ReceiptLinkService,
     private val notificationService: com.yourname.expensetracker.domain.service.NotificationService
 ) : CoroutineWorker(context, params) {
 
@@ -35,15 +39,25 @@ class ReceiptMatchingWorker @AssistedInject constructor(
             var suggested = 0
             
             for (receipt in unmatchedReceipts) {
+                // Document-type gating: skip incompatible receipts
+                if (receipt.documentType == ReceiptDocumentType.BANK_STATEMENT.name ||
+                    receipt.documentType == ReceiptDocumentType.MANUAL_PLACEHOLDER.name ||
+                    receipt.processingStatus == ReceiptProcessingStatus.OCR_FAILED.name) {
+                    Timber.d("Skipping receipt matching for receipt ${receipt.id}: documentType=${receipt.documentType}, processingStatus=${receipt.processingStatus}")
+                    continue
+                }
+
                 val matchResult = matcher.findBestMatch(receipt)
                 
                 when (matchResult) {
                     is MatchResult.AutoMatch -> {
-                        // Auto-link high confidence matches
-                        receiptRepository.linkReceiptToExpense(
+                        // Auto-link high confidence matches via ReceiptLinkService
+                        receiptLinkService.linkReceiptToExpense(
                             receiptId = receipt.id,
                             expenseId = matchResult.transaction.id,
-                            confidence = matchResult.score
+                            linkType = "AUTO_MATCH",
+                            source = "MATCHING_WORKER",
+                            confidence = matchResult.score.toFloat()
                         )
                         autoMatched++
                         
@@ -56,7 +70,7 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                         )
                     }
                     is MatchResult.Suggested -> {
-                        // Save as suggestion for manual review
+                        // Save as suggestion for manual review (no link service call for suggestions)
                         receiptRepository.saveMatchSuggestion(
                             receiptId = receipt.id,
                             suggestedExpenseId = matchResult.transaction.id,

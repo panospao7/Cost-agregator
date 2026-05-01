@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
@@ -48,7 +49,8 @@ class ReceiptTransactionMatcher @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val merchantNormalizer: MerchantNormalizer,
     private val stringDistance: StringDistanceUtils,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val receiptLinkService: ReceiptLinkService
 ) {
     suspend fun findBestMatch(
         receipt: ScannedReceipt,

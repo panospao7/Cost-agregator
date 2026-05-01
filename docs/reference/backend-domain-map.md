@@ -29,6 +29,7 @@
 | `core/time/` | **NEW — Typed time period models**: `PeriodRange` (half-open `[start, end)` with kind/zone/label), `PeriodKind` (TODAY, THIS_WEEK, THIS_MONTH, LAST_7_DAYS, etc.) |
 | `transaction/` | **NEW — Transaction lifecycle models**: `ExpenseSource`, `LifecycleEventType`, `DeduplicationMode`, `CreateExpenseRequest`, `CreateExpenseResult`, `ExpenseUpdates` |
 | `transaction/lifecycle/` | **NEW — Lifecycle coordinator + dispatcher**: `TransactionLifecycleCoordinator` (single entry point for CUD), `TransactionSideEffectDispatcher` (post-creation side effects) |
+| `receipt/lifecycle/` | **NEW — Receipt lifecycle coordinator + services**: `ReceiptLifecycleCoordinator` (single entry point for receipt processing), `ReceiptLinkService` (centralized receipt-expense linking), `ReceiptAssetStore` (file persistence), `ReceiptInputValidator` (URI/MIME validation), `ReceiptDuplicateDetector` (3-signal dedup), `ReceiptSideEffectDispatcher` (document-type-gated effects), `BankStatementLifecycleProcessor` (statement processing) |
 | `dto/` | Cross-layer transfer objects for AI, review, and category references |
 | `ai/` | AI capability routing, policy, and model-backed services |
 | `bank/` | Bank API integration and connection orchestration |
@@ -42,7 +43,7 @@
 | `lifestyle/` | Lifestyle inflation detection and savings prompts |
 | `naturallanguage/` | Speech input and natural-language expense queries |
 | `model/` | Dashboard, navigation, recommendation, widget, and AI presentation models |
-| `receipt/` | Receipt parsing and warranty extraction |
+| `receipt/` | Receipt parsing, lifecycle models, and warranty extraction |
 | `savings/` | Savings goals, automation, and sweep logic |
 | `usecase/` | Public application use cases for dashboard, budget, receipt, and AI flows |
 | `util/` | Shared numeric, date, text, and formatting utilities |
@@ -335,6 +336,29 @@ Domain Layer (This Document)
 | `TransactionLifecycleCoordinator.kt` | **Single entry point for ALL expense CUD** | Pipeline: validate → normalize → dedupe → insert atomic → event log → side effects. Injected by 10+ consumer classes. All migrated paths (Manual, Review, Notification, Receipt, CSV, Email, Group, Bank) route through this coordinator. |
 | `TransactionSideEffectDispatcher.kt` | Post-creation side effects | Best-effort dispatch: budget check via `BudgetMonitor`, anomaly alert via `AnomalyAlertOrchestrator`, merchant-category pattern learning via `MerchantCategoryRepository`. Failures are logged but not propagated. |
 
+### Receipt Lifecycle Coordinator & Services (New — `receipt/lifecycle/`)
+**Directory:** `receipt/lifecycle/`
+
+| Component | File | Purpose | Key Details |
+|-----------|------|---------|-------------|
+| `ReceiptLifecycleCoordinator` | `lifecycle/ReceiptLifecycleCoordinator.kt` | **Single entry point for ALL receipt processing** | Pipeline: validate → persist asset → OCR/parse → dedupe → save → event logging → side effects. Handles camera/gallery, email, bank statement paths. |
+| `ReceiptLinkService` | `lifecycle/ReceiptLinkService.kt` | Centralized receipt-expense linking | Manages many-to-many link table `receipt_expense_links`. Supports single links (RETAIL_RECEIPT) and multi-links (BANK_STATEMENT). Writes audit events for every link/unlink. |
+| `ReceiptAssetStore` | `lifecycle/ReceiptAssetStore.kt` | File persistence for receipt assets | Copies images to app-local storage, computes SHA-256 hash, creates camera temp URIs via FileProvider, generates backup manifests (`ReceiptAssetManifestEntry`). |
+| `ReceiptInputValidator` | `lifecycle/ReceiptInputValidator.kt` | URI/MIME/size validation | Checks readability, supported MIME types (JPEG, PNG, WebP, PDF, HEIC), file size limit (50 MB), image decode validity. Returns `ValidationResult`. |
+| `ReceiptDuplicateDetector` | `lifecycle/ReceiptDuplicateDetector.kt` | 3-signal deduplication | EXACT_HASH (SHA-256, 1.0), TEXT_FINGERPRINT (normalized OCR text, 0.95), SEMANTIC (merchant+amount+date+currency, 0.8), EXTERNAL_ID. Returns `DuplicateResult`. |
+| `ReceiptSideEffectDispatcher` | `lifecycle/ReceiptSideEffectDispatcher.kt` | Document-type-gated post-save effects | RETAIL_RECEIPT → warranty + categorization + matching + price protection. EMAIL_RECEIPT → categorization only. BANK_STATEMENT/MANUAL_PLACEHOLDER → no effects. |
+| `BankStatementLifecycleProcessor` | `lifecycle/BankStatementLifecycleProcessor.kt` | Statement-specific processing | OCR → parse transactions → create PendingReview entries → lifecycle events. Returns `BankStatementResult(receiptId, transactionsFound, reviewsCreated, duplicatesSkipped)`. |
+
+### Receipt Lifecycle Models (New — `receipt/`)
+**Directory:** `receipt/`
+
+| File | Purpose | Key Details |
+|------|---------|-------------|
+| `ReceiptSourceType.kt` | Enum of 9 receipt source types | CAMERA, GALLERY, FILE_IMPORT, EMAIL, BANK_STATEMENT, MANUAL_RECORD, BATCH_SCAN, DEBUG_IMPORT, UNKNOWN |
+| `ReceiptDocumentType.kt` | Enum of 6 document types | RETAIL_RECEIPT, EMAIL_RECEIPT, BANK_STATEMENT, MANUAL_PLACEHOLDER, PDF_RECEIPT, UNKNOWN |
+| `ReceiptProcessingStatus.kt` | Enum of 14 processing states | CAPTURED → VALIDATING → VALIDATION_FAILED → DUPLICATE_DETECTED → OCR_PENDING → OCR_RUNNING → OCR_FAILED → OCR_COMPLETED → PARSE_FAILED → PARSED → REVIEW_CREATED → EXPENSE_CREATED → SIDE_EFFECTS_COMPLETED → DELETED |
+| `EmailReceiptData.kt` | Structured email receipt data | Carries messageId, from, subject, body, receivedAt, amount, merchant, currency, date, items (JSON). Used by `ReceiptLifecycleCoordinator` for email receipt processing. |
+
 ### Core Money Types (New — `core/money/`)
 **Directory:** `core/money/`
 
@@ -519,18 +543,25 @@ interface AiCapabilityRouter {
 | `GreeklishNormalizer.kt` | Greek text normalization |
 | `MerchantCanonicalizer.kt` | Merchant name standardization |
 
-### Receipt Services
-**Directory:** `receipt/`
+### Receipt Services & Lifecycle
+**Directory:** `receipt/` and `receipt/lifecycle/`
 
-| Service | Purpose |
-|---------|---------|
-| `ReceiptOcrService.kt` | OCR engine invocation |
-| `ReceiptParser.kt` | Receipt format parsing |
-| `BankStatementParser.kt` | Bank statement extraction |
-| `EnhancedMerchantExtractor.kt` | Merchant name extraction |
-| `OcrLanguageProcessor.kt` | Multi-language OCR |
-| `OcrPreprocessingPipeline.kt` | Image preprocessing |
-| `WarrantyTextExtractor.kt` | Warranty clause extraction |
+| Service / Coordinator | File | Purpose |
+|------------------------|------|---------|
+| `ReceiptLifecycleCoordinator` | `lifecycle/ReceiptLifecycleCoordinator.kt` | **Single entry point** for all receipt processing (Phase 4). Orchestrates validate → persist → OCR → dedupe → save → event log → side effects. |
+| `ReceiptLinkService` | `lifecycle/ReceiptLinkService.kt` | Centralized receipt-expense linking via `receipt_expense_links` join table. Creates/removes links and writes audit events. |
+| `ReceiptAssetStore` | `lifecycle/ReceiptAssetStore.kt` | File persistence for receipt assets. Copies images to app-local storage, computes SHA-256 hashes, creates camera temp URIs, generates backup manifests. |
+| `ReceiptInputValidator` | `lifecycle/ReceiptInputValidator.kt` | URI/MIME/size validation before processing. |
+| `ReceiptDuplicateDetector` | `lifecycle/ReceiptDuplicateDetector.kt` | 3-signal deduplication: exact hash, text fingerprint, semantic fingerprint. |
+| `ReceiptSideEffectDispatcher` | `lifecycle/ReceiptSideEffectDispatcher.kt` | Document-type-aware downstream effects (warranty, categorization, matching, price protection). |
+| `BankStatementLifecycleProcessor` | `lifecycle/BankStatementLifecycleProcessor.kt` | Statement-specific lifecycle: OCR → parse → PendingReview creation → lifecycle events. |
+| `ReceiptOcrService.kt` | OCR engine invocation | |
+| `ReceiptParser.kt` | Receipt format parsing | |
+| `BankStatementParser.kt` | Bank statement extraction | |
+| `EnhancedMerchantExtractor.kt` | Merchant name extraction | |
+| `OcrLanguageProcessor.kt` | Multi-language OCR | |
+| `OcrPreprocessingPipeline.kt` | Image preprocessing | |
+| `WarrantyTextExtractor.kt` | Warranty clause extraction | |
 
 ### Location Services
 **Directory:** `location/`
@@ -805,33 +836,69 @@ New Transaction Created
         └──→ [DB] ExpenseRepository.update(categoryId)
 ```
 
-### Scenario 3: Receipt Processing
+### Scenario 3: Receipt Processing (Phase 4)
 
 ```
-User Selects Receipt Image
+User Selects Receipt Image (Camera/Gallery/File)
     │
-    ├──→ ProcessReceiptUseCase
+    ├──→ ReceiptLifecycleCoordinator.processReceiptInput(uri)
     │       │
-    │       ├──→ OcrPreprocessingPipeline (image enhancement)
+    │       ├──→ ReceiptInputValidator.validate(uri)
+    │       │       └── [checks readability, MIME, size, image decode]
     │       │
-    │       ├──→ ReceiptOcrService (OCR invocation)
-    │       │       └──→ [ML] ML Kit Text Recognition
+    │       ├──→ ReceiptAssetStore.persistReceiptAsset(uri)
+    │       │       └── [copy to app-local storage, compute SHA-256 hash]
     │       │
-    │       ├──→ ReceiptParser (line item extraction)
-    │       │       ├──→ AmountExtractionUtils (regex)
-    │       │       ├──→ EnhancedMerchantExtractor
-    │       │       └──→ WarrantyTextExtractor
+    │       ├──→ ReceiptDuplicateDetector.checkDuplicate(hash)
+    │       │       └── [EXACT_HASH / TEXT_FINGERPRINT / SEMANTIC]
     │       │
-    │       ├──→ CategorizeReceiptItemsUseCase
-    │       │       └──→ AI or CategorizationEngine
+    │       ├──→ ReceiptRepository.processReceipt(uri)
+    │       │       ├──→ OcrPreprocessingPipeline (image enhancement)
+    │       │       ├──→ ReceiptOcrService (OCR invocation)
+    │       │       │       └──→ [ML] ML Kit Text Recognition
+    │       │       ├──→ ReceiptParser (line item extraction)
+    │       │       │       ├──→ AmountExtractionUtils
+    │       │       │       ├──→ EnhancedMerchantExtractor
+    │       │       │       └──→ WarrantyTextExtractor
+    │       │       └──→ CategorizeReceiptItemsUseCase (AI)
     │       │
-    │       ├──→ ReceiptTransactionMatcher ([fuzzy] match to existing)
+    │       ├──→ ScannedReceiptDao.update (lifecycle metadata)
+    │       │       └── [sourceType, documentType, processingStatus, fingerprints]
     │       │
-    │       └──→ AutoCreateWarrantyFromReceiptUseCase
+    │       ├──→ ReceiptEventDao.insert (RECEIPT_SAVED / OCR_FAILED)
+    │       │
+    │       └──→ ReceiptSideEffectDispatcher.dispatchAfterSave()
+    │               ├──→ AutoCreateWarrantyFromReceiptUseCase (RETAIL_RECEIPT)
+    │               ├──→ CategorizeReceiptItemsUseCase (RETAIL_ + EMAIL_RECEIPT)
+    │               ├──→ ReceiptTransactionMatcher (RETAIL_RECEIPT)
+    │               └──→ PriceProtectionTracker (RETAIL_RECEIPT)
     │
-    └──Result: Expense + ReceiptItems
-        │
-        └──→ [DB] Persist
+    └──→ [DB] ScannedReceipt + ReceiptEvent persisted
+
+=== Bank Statement Path ===
+User Selects Statement Image/PDF
+    │
+    ├──→ ReceiptLifecycleCoordinator.processBankStatement(uri)
+    │       │
+    │       └──→ BankStatementLifecycleProcessor.processBankStatement(uri)
+    │               ├──→ ReceiptRepository.runStatementOcr(uri)
+    │               ├──→ BankStatementParser.parse(blocks)
+    │               ├──→ ScannedReceiptDao.insert (BANK_STATEMENT type)
+    │               ├──→ ReceiptEventDao.insert (RECEIPT_SAVED)
+    │               ├──→ [for each transaction] PendingReviewDao.insert
+    │               └──→ ReceiptEventDao.insert (PROCESSING_COMPLETE)
+    │
+    └──→ BankStatementResult(receiptId, transactionsFound, reviewsCreated, duplicatesSkipped)
+
+=== Email Receipt Path ===
+Email Ingestion Service (IMAP/POP3)
+    │
+    ├──→ EmailReceiptParser → EmailReceiptData
+    │
+    ├──→ ReceiptLifecycleCoordinator.saveEmailReceipt(receipt)
+    │       └── [sourceType=EMAIL, documentType=EMAIL_RECEIPT, status=PARSED]
+    │
+    └──→ ReceiptLinkService.linkReceiptToExpense() (when matched)
 ```
 
 ### Scenario 4: AI Query Execution

@@ -35,7 +35,8 @@ enum class MatchStatus {
     indices = [
         Index(value = ["expenseId"]),
         Index(value = ["createdAt"]),
-        Index(name = "index_scanned_receipts_matchStatus", value = ["matchStatus"])
+        Index(name = "index_scanned_receipts_matchStatus", value = ["matchStatus"]),
+        Index(value = ["processingStatus"])
     ]
 )
 data class ScannedReceipt(
@@ -55,5 +56,18 @@ data class ScannedReceipt(
     val suggestedExpenseId: Long? = null,
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     val createdAt: Long = 0L,
-    @ColumnInfo(defaultValue = "PENDING") val itemCategorizationStatus: CategorizationStatus = CategorizationStatus.PENDING
+    @ColumnInfo(defaultValue = "PENDING") val itemCategorizationStatus: CategorizationStatus = CategorizationStatus.PENDING,
+
+    // NEW Phase 4 fields
+    @ColumnInfo(defaultValue = "'UNKNOWN'") val sourceType: String = "UNKNOWN",
+    @ColumnInfo(defaultValue = "'UNKNOWN'") val documentType: String = "UNKNOWN",
+    @ColumnInfo(defaultValue = "'CAPTURED'") val processingStatus: String = "CAPTURED",
+    val sourceFingerprint: String? = null,
+    val imageHash: String? = null,
+    val textFingerprint: String? = null,
+    val semanticFingerprint: String? = null,
+    val ocrConfidence: Float? = null,
+    val parseFailureReason: String? = null,
+    /** Must be set to timeProvider.now() on update. 0L = unset (sentinel). */
+    val updatedAt: Long = 0L
 )

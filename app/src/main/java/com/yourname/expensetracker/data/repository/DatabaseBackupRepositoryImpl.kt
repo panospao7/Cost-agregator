@@ -21,6 +21,22 @@ import java.util.*
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Implementation of [DatabaseBackupRepository] that backs up and restores the
+ * SQLite database only.
+ *
+ * ## Known limitation — receipt images are NOT included
+ *
+ * This implementation only copies the Room database file (`.db`).  Receipt
+ * image assets stored by [ReceiptAssetStore] in `filesDir/receipts/` are
+ * **not** included in the backup.  A future PR will introduce an archive-based
+ * backup format (e.g. ZIP or TAR) that bundles both the database and the
+ * receipt image files together using [ReceiptAssetStore.generateBackupManifest].
+ *
+ * Meanwhile, receipt image files persist in app-private storage and survive
+ * app data clears only if the user explicitly backs them up via the OS backup
+ * mechanism.
+ */
 @Singleton
 class DatabaseBackupRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,

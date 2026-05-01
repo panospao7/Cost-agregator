@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.domain.usecase.warranty
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
+import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
@@ -19,14 +21,19 @@ import java.util.Calendar
 class AutoCreateWarrantyFromReceiptUseCaseTest {
 
     private val warrantyTrackerRepository = mockk<WarrantyTrackerRepository>()
+    private val receiptRepository = mockk<ReceiptRepository>(relaxed = true)
     private val timeProvider = FakeTimeProvider(FIXED_NOW)
 
     private lateinit var useCase: AutoCreateWarrantyFromReceiptUseCase
 
     @Before
     fun setup() {
+        // Default: any receipt lookup returns null (receipt not found or bypass)
+        coEvery { receiptRepository.getReceiptById(any()) } returns null
+
         useCase = AutoCreateWarrantyFromReceiptUseCase(
             warrantyTrackerRepository = warrantyTrackerRepository,
+            receiptRepository = receiptRepository,
             timeProvider = timeProvider
         )
     }

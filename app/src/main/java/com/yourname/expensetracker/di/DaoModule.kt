@@ -227,4 +227,14 @@ object DaoModule {
     @Singleton
     fun provideTransactionEventDao(database: AppDatabase): TransactionEventDao =
         database.transactionEventDao()
+
+    @Provides
+    @Singleton
+    fun provideReceiptEventDao(database: AppDatabase): ReceiptEventDao =
+        database.receiptEventDao()
+
+    @Provides
+    @Singleton
+    fun provideReceiptExpenseLinkDao(database: AppDatabase): ReceiptExpenseLinkDao =
+        database.receiptExpenseLinkDao()
 }

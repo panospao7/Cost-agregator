@@ -51,4 +51,23 @@ interface ScannedReceiptDao {
 
     @Query("SELECT * FROM scanned_receipts WHERE createdAt >= :since ORDER BY createdAt DESC LIMIT :limit")
     suspend fun getRecentReceipts(since: Long, limit: Int = Int.MAX_VALUE): List<ScannedReceipt>
+
+    // ── Duplicate detection queries (PR 8) ──────────────────────────────────
+
+    @Query("SELECT * FROM scanned_receipts WHERE imageHash = :imageHash LIMIT 1")
+    suspend fun getByImageHash(imageHash: String): ScannedReceipt?
+
+    @Query("SELECT * FROM scanned_receipts WHERE textFingerprint = :fingerprint LIMIT 1")
+    suspend fun getByTextFingerprint(fingerprint: String): ScannedReceipt?
+
+    @Query("SELECT * FROM scanned_receipts WHERE semanticFingerprint = :fingerprint LIMIT 1")
+    suspend fun getBySemanticFingerprint(fingerprint: String): ScannedReceipt?
+
+    @Query("SELECT * FROM scanned_receipts WHERE sourceFingerprint = :fingerprint LIMIT 1")
+    suspend fun getBySourceFingerprint(fingerprint: String): ScannedReceipt?
+
+    // ── Backup manifest queries (PR 8) ──────────────────────────────────────
+
+    @Query("SELECT * FROM scanned_receipts WHERE imagePath IS NOT NULL")
+    suspend fun getAllWithImagePath(): List<ScannedReceipt>
 }

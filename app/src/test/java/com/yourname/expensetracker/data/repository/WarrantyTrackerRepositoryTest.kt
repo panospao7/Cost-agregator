@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.data.repository.ReceiptRepository
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
@@ -28,7 +29,7 @@ class WarrantyTrackerRepositoryTest {
     private lateinit var repository: WarrantyTrackerRepository
     private val warrantyDao: WarrantyDao = mockk()
     private val returnWindowDao: ReturnWindowDao = mockk()
-    private val scannedReceiptDao: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao = mockk(relaxed = true)
+    private val receiptRepository: ReceiptRepository = mockk(relaxed = true)
     private val cloudExtractionService: CloudWarrantyExtractionService = mockk()
     private val aiSettingsRepository: AiSettingsRepository = mockk()
     private val aiPolicy: AiPolicy = mockk()
@@ -41,7 +42,7 @@ class WarrantyTrackerRepositoryTest {
         repository = WarrantyTrackerRepository(
             warrantyDao,
             returnWindowDao,
-            scannedReceiptDao,
+            receiptRepository,
             cloudExtractionService,
             aiSettingsRepository,
             aiPolicy,

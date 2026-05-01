@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 95
+const val APP_DATABASE_SCHEMA_VERSION = 96
 
 @Database(
     entities = [
@@ -62,7 +62,9 @@ const val APP_DATABASE_SCHEMA_VERSION = 95
         StressForecastSnapshot::class,
         EmailReceiptSource::class,
         SpendingChallengeEntity::class,
-        TransactionEvent::class
+        TransactionEvent::class,
+        ReceiptEvent::class,
+        ReceiptExpenseLink::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -117,6 +119,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun emailReceiptDao(): EmailReceiptDao
     abstract fun spendingChallengeDao(): SpendingChallengeDao
     abstract fun transactionEventDao(): TransactionEventDao
+    abstract fun receiptEventDao(): ReceiptEventDao
+    abstract fun receiptExpenseLinkDao(): ReceiptExpenseLinkDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -5656,6 +5660,111 @@ val MIGRATION_94_95 = object : androidx.room.migration.Migration(94, 95) {
     }
 }
 
+// Migration 95 -> 96: Receipt Lifecycle Foundation (Phase 4, PR 1).
+//
+// 1. Add new columns to scanned_receipts for receipt lifecycle tracking:
+//    sourceType, documentType, processingStatus, sourceFingerprint, imageHash,
+//    textFingerprint, semanticFingerprint, ocrConfidence, parseFailureReason, updatedAt.
+// 2. Create receipt_events table for recording receipt lifecycle events.
+// 3. Create receipt_expense_links table for linking receipts to expenses.
+// 4. Backfill sourceType/documentType/processingStatus based on heuristics.
+val MIGRATION_95_96 = object : androidx.room.migration.Migration(95, 96) {
+    override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+        database.beginTransaction()
+        try {
+            // 1. Add new columns to scanned_receipts
+            database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'")
+            database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN documentType TEXT NOT NULL DEFAULT 'UNKNOWN'")
+            database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN processingStatus TEXT NOT NULL DEFAULT 'CAPTURED'")
+            database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceFingerprint TEXT")
+            database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN imageHash TEXT")
+            database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN textFingerprint TEXT")
+            database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN semanticFingerprint TEXT")
+            database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN ocrConfidence REAL")
+            database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN parseFailureReason TEXT")
+            database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+
+            // Add index on processingStatus
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_scanned_receipts_processingStatus ON scanned_receipts (processingStatus)")
+
+            // 2. Create receipt_events table
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS receipt_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    receiptId INTEGER,
+                    sourceType TEXT NOT NULL,
+                    documentType TEXT NOT NULL,
+                    eventType TEXT NOT NULL,
+                    occurredAt INTEGER NOT NULL,
+                    oldStatus TEXT,
+                    newStatus TEXT,
+                    actor TEXT,
+                    message TEXT,
+                    metadata TEXT,
+                    errorDetails TEXT
+                )
+            """.trimIndent())
+
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_events_receiptId ON receipt_events (receiptId)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_events_sourceType ON receipt_events (sourceType)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_events_documentType ON receipt_events (documentType)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_events_occurredAt ON receipt_events (occurredAt)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_events_eventType ON receipt_events (eventType)")
+
+            // 3. Create receipt_expense_links table
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS receipt_expense_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    receiptId INTEGER NOT NULL,
+                    expenseId INTEGER NOT NULL,
+                    linkType TEXT NOT NULL,
+                    confidence REAL,
+                    source TEXT NOT NULL,
+                    createdAt INTEGER NOT NULL,
+                    createdBy TEXT,
+                    isPrimary INTEGER NOT NULL DEFAULT 1,
+                    metadata TEXT
+                )
+            """.trimIndent())
+
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_expense_links_receiptId ON receipt_expense_links (receiptId)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_expense_links_expenseId ON receipt_expense_links (expenseId)")
+            database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_receipt_expense_links_receiptId_expenseId ON receipt_expense_links (receiptId, expenseId)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_expense_links_linkType ON receipt_expense_links (linkType)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_receipt_expense_links_createdAt ON receipt_expense_links (createdAt)")
+
+            // 4. Backfill heuristics
+            // Backfill sourceType/documentType based on email receipt sources
+            database.execSQL("""
+                UPDATE scanned_receipts SET sourceType = 'EMAIL', documentType = 'EMAIL_RECEIPT'
+                WHERE id IN (SELECT receiptId FROM email_receipt_sources)
+            """.trimIndent())
+
+            // Backfill documentType for bank statements based on merchant name
+            database.execSQL("""
+                UPDATE scanned_receipts SET documentType = 'BANK_STATEMENT'
+                WHERE parsedMerchant LIKE '%Bank Statement%'
+            """.trimIndent())
+
+            // Backfill documentType and processingStatus for failed scans
+            database.execSQL("""
+                UPDATE scanned_receipts SET documentType = 'MANUAL_PLACEHOLDER', processingStatus = 'OCR_FAILED'
+                WHERE rawOcrText LIKE 'Scan Failed%' OR rawOcrText LIKE '[OCR Failed%'
+            """.trimIndent())
+
+            // Backfill processingStatus for already-parsed receipts
+            database.execSQL("""
+                UPDATE scanned_receipts SET processingStatus = 'PARSED'
+                WHERE parsedMerchant IS NOT NULL
+            """.trimIndent())
+
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+    }
+}
+
 /**
      * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -5789,7 +5898,8 @@ val MIGRATION_94_95 = object : androidx.room.migration.Migration(94, 95) {
 MIGRATION_91_92,
         MIGRATION_92_93,
         MIGRATION_93_94,
-        MIGRATION_94_95
+        MIGRATION_94_95,
+        MIGRATION_95_96
     )
     }
 }

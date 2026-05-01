@@ -10,7 +10,7 @@
 | **Analytics** | `analytics/InsightsEngine.kt` | `InsightsEngine.generateInsights()` |
 | **Budget** | `budget/BudgetCalculator.kt` | `CalculateBudgetStatusUseCase` |
 | **Categorization** | `categorization/CategorizationEngine.kt` | `CategorizeExpenseUseCase` |
-| **Receipt Processing** | `receipt/ReceiptOcrService.kt` | `ProcessReceiptUseCase` |
+| **Receipt Processing** | `receipt/ReceiptOcrService.kt` | `ReceiptLifecycleCoordinator.processReceiptInput()` |
 | **AI Features** | `ai/usecase/*` | Feature-specific use case |
 | **Forecasting** | `forecasting/FinancialStressForecastEngine.kt` | `CalculateFinancialForecastUseCase` |
 | **Groups/Sharing** | `groups/GroupTransactionCoordinator.kt` | `AddGroupExpenseUseCase` |
@@ -32,7 +32,12 @@
 | ...get spending insights? | `InsightsEngine.generateInsights()` |
 | ...calculate a budget period? | `BudgetCalculator.calculatePeriodRange()` |
 | ...categorize an expense? | `CategorizeExpenseUseCase` + `CategorizationEngine` |
-| ...process a receipt? | `ProcessReceiptUseCase` (end-to-end) |
+| ...process a receipt? | `ReceiptLifecycleCoordinator.processReceiptInput(uri)` — full lifecycle: validate → persist → OCR → dedupe → save → event log → side effects |
+| ...process a bank statement? | `ReceiptLifecycleCoordinator.processBankStatement(uri)` → `BankStatementLifecycleProcessor` |
+| ...process an email receipt? | `ReceiptLifecycleCoordinator.saveEmailReceipt(receipt)` — sets EMAIL source/doc types |
+| ...link a receipt to an expense? | `ReceiptLinkService.linkReceiptToExpense(receiptId, expenseId, linkType, source)` — writes to `receipt_expense_links` join table + audit event |
+| ...unlink a receipt from an expense? | `ReceiptLinkService.unlinkReceiptFromExpense(receiptId, expenseId)` — removes link + writes audit event |
+| ...delete a receipt? | `ReceiptLifecycleCoordinator.deleteReceipt(receiptId)` — writes delete event, removes links, deletes asset file, deletes row |
 | ...detect anomalies? | `InsightsEngine.findAnomalies()` (dual-path) |
 | ...find recurring expenses? | `RecurringExpenseEngine.getPatterns()` |
 | ...make AI recommendations? | Feature-specific input builder → `ExecuteFinancialQueryUseCase` |
@@ -157,6 +162,86 @@ Side effects (dispatched by `TransactionSideEffectDispatcher`):
 1. Budget check via `BudgetMonitor.checkBudgets()`
 2. Anomaly alert via `AnomalyAlertOrchestrator.checkAndAlert()`
 3. Merchant-category pattern learning via `MerchantCategoryRepository.learnPattern()`
+
+### `ReceiptLifecycleCoordinator` (`domain/receipt/lifecycle/`)
+
+**Single entry point for ALL receipt processing.** Injected via `@Singleton` into consumer classes.
+
+```kotlin
+class MyViewModel @Inject constructor(
+    private val receiptCoordinator: ReceiptLifecycleCoordinator
+) {
+    fun scanReceipt(uri: Uri) {
+        viewModelScope.launch {
+            receiptCoordinator.processReceiptInput(uri)
+                .onSuccess { receipt ->
+                    // receipt.scannedReceipt with lifecycle metadata
+                    // receipt.sourceType, documentType, processingStatus set
+                }
+                .onFailure { error ->
+                    // validation or processing error
+                }
+        }
+    }
+}
+```
+
+**Receipt lifecycle pipeline:** `validate → persist asset → OCR/parse → dedupe → save → event logging → side effects`
+
+Side effects (dispatched by `ReceiptSideEffectDispatcher`, gated by `ReceiptDocumentType`):
+- RETAIL_RECEIPT: warranty extraction, item categorization, transaction matching, price protection
+- EMAIL_RECEIPT: item categorization only
+- BANK_STATEMENT / MANUAL_PLACEHOLDER: no automatic effects
+
+### `ReceiptLinkService` (`domain/receipt/lifecycle/`)
+
+Centralized receipt-expense link management via `receipt_expense_links` join table:
+
+```kotlin
+// Link a receipt to an expense (e.g. after review approval)
+receiptLinkService.linkReceiptToExpense(
+    receiptId = receipt.id,
+    expenseId = expense.id,
+    linkType = "REVIEW_APPROVAL",
+    source = ExpenseSource.REVIEW_APPROVAL.name,
+    createdBy = "user",
+    confidence = 0.95f
+)
+
+// Query links
+val links = receiptLinkService.getLinksForExpense(expenseId)
+
+// Unlink
+receiptLinkService.unlinkReceiptFromExpense(receiptId, expenseId)
+```
+
+**Rules:**
+- BANK_STATEMENT receipts allow multiple links per receipt (many-to-many).
+- All other document types use `OnConflictStrategy.REPLACE` for single link per pair.
+- Every link/unlink writes a `RECEIPT_LINKED_TO_EXPENSE` / `RECEIPT_UNLINKED_FROM_EXPENSE` event to `receipt_events`.
+
+### `ReceiptSourceType`, `ReceiptDocumentType`, `ReceiptProcessingStatus` (`domain/receipt/`)
+
+```kotlin
+// Track where a receipt came from
+ReceiptSourceType.CAMERA        // Camera capture
+ReceiptSourceType.GALLERY       // Gallery pick
+ReceiptSourceType.EMAIL         // Email ingestion
+ReceiptSourceType.BANK_STATEMENT // Statement import
+
+// Classify what kind of document it is
+ReceiptDocumentType.RETAIL_RECEIPT     // Standard store receipt
+ReceiptDocumentType.EMAIL_RECEIPT      // Email receipt
+ReceiptDocumentType.BANK_STATEMENT     // Bank/credit card statement
+ReceiptDocumentType.MANUAL_PLACEHOLDER // Manual entry placeholder
+
+// Track processing progress
+ReceiptProcessingStatus.CAPTURED       // Initial state
+ReceiptProcessingStatus.OCR_COMPLETED  // OCR done, partial parse
+ReceiptProcessingStatus.PARSED         // Fully parsed
+ReceiptProcessingStatus.EXPENSE_CREATED // Linked to expense
+ReceiptProcessingStatus.DELETED        // Removed
+```
 
 ### `TimeProvider` (`domain/util/`)
 
@@ -300,7 +385,35 @@ expenseRepository.getTotalForPeriod(period.first, period.second)
 
 **When to use:** Enforce start < end, keep paired values together
 
-### Pattern 4: Coordinator Pattern (Transaction Lifecycle)
+### Pattern 4: Coordinator Pattern (Receipt Lifecycle)
+
+```kotlin
+// All receipt processing routes through a single coordinator
+class MyService @Inject constructor(
+    private val receiptCoordinator: ReceiptLifecycleCoordinator
+) {
+    suspend fun processImage(uri: Uri): ScannedReceipt? {
+        val result = receiptCoordinator.processReceiptInput(uri)
+        return result.getOrNull()
+    }
+
+    suspend fun linkReceipt(
+        receiptId: Long,
+        expenseId: Long,
+        source: String
+    ) {
+        receiptCoordinator.linkReceiptToExpense(
+            receiptId, expenseId,
+            linkType = "AUTO_MATCH",
+            source = source
+        )
+    }
+}
+```
+
+**When to use:** Any code that processes a receipt, links it to an expense, or deletes it must go through the coordinator. Direct `scannedReceiptDao.insert()` or `receiptExpenseLinkDao.insert()` should not be used outside the lifecycle infrastructure.
+
+### Pattern 5: Coordinator Pattern (Transaction Lifecycle)
 
 ```kotlin
 // All expense creation routes through a single coordinator
@@ -450,8 +563,11 @@ Large files (potential refactor candidates):
 - [ ] **If creating an expense:** use `TransactionLifecycleCoordinator.createExpense()`, **not** direct `expenseDao.insertAtomic()`
 - [ ] **If updating/deleting an expense:** use `TransactionLifecycleCoordinator.updateExpense()` / `deleteExpense()`, **not** direct `expenseDao.update()` / `delete()`
 - [ ] **Set `source` on every expense:** always pass the correct `ExpenseSource` enum value in the `CreateExpenseRequest`
+- [ ] **Set lifecycle fields on every receipt:** always pass `sourceType`, `documentType`, `processingStatus` when creating/updating a `ScannedReceipt`
+- [ ] **Use `ReceiptLifecycleCoordinator` for receipt processing:** never call `scannedReceiptDao` or `ReceiptRepository` directly for receipt creation
+- [ ] **Use `ReceiptLinkService` for receipt-expense links:** never call `receiptExpenseLinkDao` or `scannedReceiptDao.update(expenseId=...)` directly
 - [ ] **Inject `TimeProvider` for timestamps:** never call `System.currentTimeMillis()`
 
 ---
 
-**Last Updated:** April 4, 2026
+**Last Updated:** May 1, 2026

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.usecase.warranty
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.data.database.entity.WarrantyType
+import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.receipt.WarrantyExtractionData
 import com.yourname.expensetracker.domain.receipt.WarrantyTextExtractor
@@ -35,6 +36,7 @@ sealed class WarrantyCreationResult {
 @Singleton
 class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
     private val warrantyTrackerRepository: WarrantyTrackerRepository,
+    private val receiptRepository: ReceiptRepository,
     private val timeProvider: TimeProvider
 ) {
     companion object {
@@ -54,6 +56,22 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
      */
     suspend fun execute(receiptId: Long, receiptText: String): WarrantyCreationResult {
         try {
+            // Step 0: Document-type gating — skip warranty extraction for non-retail document types
+            val receipt = receiptRepository.getReceiptById(receiptId)
+            if (receipt != null) {
+                if (receipt.documentType == "BANK_STATEMENT" || receipt.documentType == "MANUAL_PLACEHOLDER" ||
+                    receipt.processingStatus == "OCR_FAILED") {
+                    Timber.tag(TAG).d(
+                        "Skipping warranty extraction for receipt $receiptId: " +
+                        "documentType=%s, processingStatus=%s",
+                        receipt.documentType, receipt.processingStatus
+                    )
+                    return WarrantyCreationResult.Failure(
+                        "Skipped: document type ${receipt.documentType} or status ${receipt.processingStatus} not eligible"
+                    )
+                }
+            }
+
             // Step 1: Check if warranty already exists for this receipt
             val existingWarranty = warrantyTrackerRepository.getWarrantyByReceiptId(receiptId)
             if (existingWarranty != null) {

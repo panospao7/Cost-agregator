@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CancellationException
@@ -34,7 +35,7 @@ class ReviewQueueRepository @Inject constructor(
     private val rawNotificationDao: RawNotificationDao,
     private val expenseDao: ExpenseDao,
     private val sourceStatsDao: SourceStatsDao,
-    private val scannedReceiptDao: ScannedReceiptDao,
+    private val receiptLinkService: ReceiptLinkService,
     private val userCorrectionDao: UserCorrectionDao,
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
@@ -254,7 +255,14 @@ class ReviewQueueRepository @Inject constructor(
                     review.rawNotificationId?.let { rawNotificationDao.markRelevance(it, true) }
                     sourceStatsDao.incrementAccepted(review.packageName)
                     sourceStatsDao.decrementPending(review.packageName)
-                    review.scannedReceiptId?.let { receiptId -> scannedReceiptDao.linkToExpense(receiptId, id) }
+                    review.scannedReceiptId?.let { receiptId ->
+                        receiptLinkService.linkReceiptToExpense(
+                            receiptId = receiptId,
+                            expenseId = id,
+                            linkType = "REVIEW_APPROVAL",
+                            source = ExpenseSource.REVIEW_APPROVAL.name
+                        )
+                    }
                     pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED)
 
                     val correction = UserCorrection(

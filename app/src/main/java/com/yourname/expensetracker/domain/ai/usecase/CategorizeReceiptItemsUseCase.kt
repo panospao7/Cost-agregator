@@ -17,6 +17,8 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationService
 import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
+import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
 import kotlinx.coroutines.flow.first
@@ -63,6 +65,14 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
         // 3. Get receipt
         val receipt = receiptRepository.getReceiptById(receiptId)
             ?: return CategorizationResult.Error
+
+        // 3b. Document-type gating: skip incompatible receipts
+        if (receipt.documentType == ReceiptDocumentType.BANK_STATEMENT.name ||
+            receipt.documentType == ReceiptDocumentType.MANUAL_PLACEHOLDER.name ||
+            receipt.processingStatus == ReceiptProcessingStatus.OCR_FAILED.name) {
+            Timber.d("Skipping categorization for receipt $receiptId: documentType=${receipt.documentType}, processingStatus=${receipt.processingStatus}")
+            return CategorizationResult.Error
+        }
 
         // 4. Check if there are items to categorize
         if (receipt.parsedItems.isNullOrBlank()) {
@@ -131,11 +141,18 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
                 return failCategorization(receiptId, baseEntity, reason)
             }
 
-            // 10. Store results
-            storeResults(receiptId, result)
+            // 10. Store results and check count
+            val savedCount = storeResults(receiptId, result)
 
-            // 11. Update receipt status to READY
-            receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.READY)
+            // 11. Update receipt status to READY ONLY IF at least one row was inserted
+            if (savedCount > 0) {
+                receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.READY)
+            } else {
+                Timber.w("Categorization completed for receipt $receiptId but no rows were saved — reverting to PENDING")
+                receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.PENDING)
+                updateArtifactFailed(baseEntity, "No categorization rows were inserted")
+                return CategorizationResult.Error
+            }
 
             // 12. Update artifact to READY
             updateArtifactReady(baseEntity, result)
@@ -182,11 +199,15 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
         )
     }
 
+    /**
+     * Stores categorization results and returns the number of rows inserted.
+     * @return The count of successfully inserted rows (0 if none).
+     */
     private suspend fun storeResults(
         receiptId: Long,
         result: ReceiptItemCategorizationResult
-    ) {
-        receiptItemCategorizationRepository.saveCategorizationResult(
+    ): Int {
+        return receiptItemCategorizationRepository.saveCategorizationResult(
             receiptId = receiptId,
             result = result,
             now = timeProvider.now()

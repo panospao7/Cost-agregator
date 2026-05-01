@@ -28,7 +28,7 @@ import javax.inject.Singleton
 class WarrantyTrackerRepository @Inject constructor(
     private val warrantyDao: WarrantyDao,
     private val returnWindowDao: ReturnWindowDao,
-    private val scannedReceiptDao: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao,
+    private val receiptRepository: ReceiptRepository,
     private val cloudExtractionService: CloudWarrantyExtractionService,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiPolicy: AiPolicy,
@@ -149,7 +149,12 @@ class WarrantyTrackerRepository @Inject constructor(
     }
 
     suspend fun upsertReturnWindowForReceipt(receiptId: Long, fallbackWarranty: Warranty? = null): Long? {
-        val receipt = scannedReceiptDao.getById(receiptId) ?: return null
+        val receipt = receiptRepository.getReceiptById(receiptId) ?: return null
+        // Skip return window creation for bank statements, manual placeholders, and failed OCR receipts
+        if (receipt.documentType == "BANK_STATEMENT" || receipt.documentType == "MANUAL_PLACEHOLDER" ||
+            receipt.processingStatus == "OCR_FAILED") {
+            return null
+        }
         val extractionResult = extractWarrantyResult(receipt)
         val extractedWarranty = extractionResult?.toWarrantyEntityOrNull(receipt)
         val resolvedWarranty = fallbackWarranty ?: extractedWarranty
@@ -339,6 +344,6 @@ class WarrantyTrackerRepository @Inject constructor(
             currency = "EUR",
             confidence = 1f
         )
-        return scannedReceiptDao.insert(receipt)
+        return receiptRepository.insertReceipt(receipt)
     }
 }

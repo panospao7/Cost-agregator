@@ -37,6 +37,25 @@
 | `core/time/PeriodRange.kt` | PeriodRange | Typed half-open period model `[startInclusive, endExclusive)` with kind (PeriodKind), zoneId, label, contains() | Model | PeriodKind | No |
 | `core/time/PeriodKind.kt` | PeriodKind | Semantic period enum: TODAY, THIS_WEEK, LAST_WEEK, LAST_7_DAYS, THIS_MONTH, LAST_MONTH, LAST_30_DAYS, THIS_QUARTER, LAST_QUARTER, THIS_YEAR, LAST_YEAR, CUSTOM | Enum | - | No |
 
+### Receipt Lifecycle Models (11 files)
+
+**Location:** `com.yourname.expensetracker.domain.receipt` and `.lifecycle`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `receipt/ReceiptSourceType.kt` | ReceiptSourceType | Enum: 9 receipt source types (CAMERA, GALLERY, FILE_IMPORT, EMAIL, BANK_STATEMENT, etc.) | Enum | - | No |
+| `receipt/ReceiptDocumentType.kt` | ReceiptDocumentType | Enum: 6 document types (RETAIL_RECEIPT, EMAIL_RECEIPT, BANK_STATEMENT, MANUAL_PLACEHOLDER, PDF_RECEIPT) | Enum | - | No |
+| `receipt/ReceiptProcessingStatus.kt` | ReceiptProcessingStatus | Enum: 14 processing states from CAPTURED to DELETED | Enum | - | No |
+| `receipt/EmailReceiptData.kt` | EmailReceiptData | Structured email receipt data with parsed fields (amount, merchant, currency, date, items) | Model | - | No |
+| `receipt/lifecycle/ReceiptLifecycleCoordinator.kt` | ReceiptLifecycleCoordinator | **Single entry point** for all receipt processing: validate → persist → OCR → dedupe → save → event log → side effects | Coordinator | ReceiptRepository, ReceiptLinkService, ReceiptAssetStore, ReceiptInputValidator, ScannedReceiptDao, ReceiptExpenseLinkDao, ReceiptEventDao, TimeProvider, BankStatementLifecycleProcessor, ReceiptSideEffectDispatcher, ReceiptDuplicateDetector | No |
+| `receipt/lifecycle/ReceiptLinkService.kt` | ReceiptLinkService | Centralized receipt-expense linking via many-to-many join table. Creates/removes links and writes audit events. | Service | ReceiptExpenseLinkDao, ScannedReceiptDao, ReceiptEventDao, TimeProvider | No |
+| `receipt/lifecycle/ReceiptAssetStore.kt` | ReceiptAssetStore | File persistence for receipt assets: copy to app-local storage, SHA-256 hash, camera temp URIs, backup manifests | Store | Context (filesDir) | No |
+| `receipt/lifecycle/ReceiptInputValidator.kt` | ReceiptInputValidator | URI/MIME/size validation before processing pipeline | Service | Context | No |
+| `receipt/lifecycle/ReceiptDuplicateDetector.kt` | ReceiptDuplicateDetector | 3-signal deduplication: EXACT_HASH (1.0), TEXT_FINGERPRINT (0.95), SEMANTIC (0.8), EXTERNAL_ID (1.0) | Service | ScannedReceiptDao, ReceiptExpenseLinkDao | No |
+| `receipt/lifecycle/ReceiptSideEffectDispatcher.kt` | ReceiptSideEffectDispatcher | Document-type-gated post-save side effects (warranty, categorization, matching, price protection) | Dispatcher | AutoCreateWarrantyFromReceiptUseCase, CategorizeReceiptItemsUseCase, ReceiptTransactionMatcher, PriceProtectionTracker | No |
+| `receipt/lifecycle/BankStatementLifecycleProcessor.kt` | BankStatementLifecycleProcessor | Statement-specific lifecycle: OCR → parse → PendingReview creation → lifecycle events | Processor | ReceiptRepository, ScannedReceiptDao, ReceiptEventDao, ReceiptLinkService, BankStatementParser, PendingReviewDao, MerchantNormalizer, HybridExpenseClassifier | No |
+| `receipt/lifecycle/BankStatementResult.kt` | BankStatementResult | Structured result: receiptId, transactionsFound, reviewsCreated, duplicatesSkipped | Model | - | No |
+
 ### Transaction Lifecycle Models (8 files)
 
 **Location:** `com.yourname.expensetracker.domain.transaction`
@@ -528,6 +547,8 @@
 | `dao/SubscriptionCandidateDao.kt` | SubscriptionCandidateDao | Subscription candidates DAO | DAO | - | No |
 | `dao/SubscriptionPriceHistoryDao.kt` | SubscriptionPriceHistoryDao | Subscription price history DAO | DAO | - | No |
 | `dao/SubscriptionUsageDao.kt` | SubscriptionUsageDao | Subscription usage DAO | DAO | - | No |
+| `dao/ReceiptEventDao.kt` | ReceiptEventDao | Receipt lifecycle events DAO (`receipt_events`) | DAO | - | No |
+| `dao/ReceiptExpenseLinkDao.kt` | ReceiptExpenseLinkDao | Receipt-expense link DAO (`receipt_expense_links`) | DAO | - | No |
 | `dao/TransactionEventDao.kt` | TransactionEventDao | Transaction lifecycle events DAO | DAO | - | No |
 | `dao/UserCorrectionDao.kt` | UserCorrectionDao | User corrections DAO | DAO | - | No |
 | `dao/WarrantyDao.kt` | WarrantyDao | Warranties DAO | DAO | - | No |
@@ -573,7 +594,9 @@
 | `entity/ReturnWindow.kt` | ReturnWindow | Return window entity | Entity | - | No |
 | `entity/SavingsGoal.kt` | SavingsGoal | Savings goal entity | Entity | - | No |
 | `entity/SavingsSweepPlan.kt` | SavingsSweepPlan | Savings sweep plan entity | Entity | - | No |
-| `entity/ScannedReceipt.kt` | ScannedReceipt | Scanned receipt entity | Entity | - | No |
+| `entity/ReceiptEvent.kt` | ReceiptEvent | Immutable receipt lifecycle event log (table: `receipt_events`); records every CAPTURED/OCR_FAILED/PARSED/EXPENSE_CREATED/DELETED transition with actor, status transitions, timestamps | Entity | - | No |
+| `entity/ReceiptExpenseLink.kt` | ReceiptExpenseLink | Many-to-many receipt↔expense join (table: `receipt_expense_links`); supports single and multi-link relationships with confidence, source, and metadata | Entity | - | No |
+| `entity/ScannedReceipt.kt` | ScannedReceipt | Scanned receipt entity — 10 new Phase 4 columns: sourceType, documentType, processingStatus, sourceFingerprint, imageHash, textFingerprint, semanticFingerprint, ocrConfidence, parseFailureReason, updatedAt | Entity | - | No |
 | `entity/SourceStats.kt` | SourceStats | Source statistics entity | Entity | - | No |
 | `entity/SpendingPersonalityProfileEntity.kt` | SpendingPersonalityProfileEntity | Spending profile entity | Entity | - | No |
 | `entity/TransactionEvent.kt` | TransactionEvent | Immutable lifecycle event log (table: `transaction_events`); records every CREATED/UPDATED/DELETED/etc. transition with actor, timestamps, and before/after snapshots | Entity | - | No |
@@ -850,6 +873,10 @@ Dashboard/UI
 `TransactionLifecycleCoordinator` instead of being scattered across multiple repositories and services.
 This ensures consistent validation, deduplication, event logging, and side-effect dispatch.
 
+**Key change (Phase 4):** All receipt processing now routes through `ReceiptLifecycleCoordinator` instead
+of being scattered across multiple screens and services. Receipt-expense linking is centralized in
+`ReceiptLinkService` with a many-to-many join table and audit trail in `receipt_events`.
+
 ### AI Pipeline
 
 ```
@@ -971,13 +998,13 @@ Engine (integration with other domain logic)
 
 | Metric | Count |
 |--------|-------|
-| **Domain Files** | 255 (includes 8 new transaction lifecycle files) |
-| **Data Files** | 208 (includes TransactionEvent entity + TransactionEventDao) |
+| **Domain Files** | 266 (includes 8 transaction lifecycle + 11 receipt lifecycle files) |
+| **Data Files** | 212 (includes ReceiptEvent + ReceiptExpenseLink entities/DAOs) |
 | **DI Modules** | 27 |
-| **Total Backend Files** | 490+ |
+| **Total Backend Files** | 500+ |
 | **Test Files** | 317+ |
-| **Database Entities** | 56 (includes TransactionEvent) |
-| **DAOs** | 55 (includes TransactionEventDao) |
+| **Database Entities** | 58 (includes TransactionEvent, ReceiptEvent, ReceiptExpenseLink) |
+| **DAOs** | 57 (includes TransactionEventDao, ReceiptEventDao, ReceiptExpenseLinkDao) |
 | **Repositories** | 56 |
 | **Use Cases** | ~30 |
 | **Engines** | ~50 |
@@ -997,8 +1024,10 @@ Engine (integration with other domain logic)
 8. **Decorator Pattern** - Hybrid AI services wrapping
 9. **Factory Pattern** - ParserRegistry, AppDatabase
 10. **Singleton Pattern** - Repositories, Engines via DI
-11. **Coordinator Pattern (NEW)** - `TransactionLifecycleCoordinator` is the single entry point for all expense CUD, enforcing consistent validation, deduplication, and audit logging
-12. **Event Sourcing Lite (NEW)** - `transaction_events` table records every lifecycle transition as an immutable append-only log
+11. **Coordinator Pattern (Phase 3)** - `TransactionLifecycleCoordinator` is the single entry point for all expense CUD, enforcing consistent validation, deduplication, and audit logging
+12. **Event Sourcing Lite (Phase 3)** - `transaction_events` table records every expense lifecycle transition as an immutable append-only log
+13. **Coordinator Pattern (Phase 4)** - `ReceiptLifecycleCoordinator` is the single entry point for all receipt processing, with document-type-gated side effects
+14. **Event Sourcing Lite (Phase 4)** - `receipt_events` table records every receipt lifecycle transition as an immutable append-only log with status tracking
 
 ---
 

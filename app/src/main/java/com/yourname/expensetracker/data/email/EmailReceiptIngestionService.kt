@@ -4,7 +4,6 @@ import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
-import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
@@ -15,8 +14,12 @@ import com.yourname.expensetracker.data.email.provider.ParsedEmailReceipt
 import com.yourname.expensetracker.data.email.provider.UberReceiptParser
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.ReceiptSource
+import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
@@ -57,7 +60,8 @@ class EmailReceiptIngestionService(
     private val processReceiptUseCase: ProcessReceiptUseCase,
     private val expenseDao: ExpenseDao,
     private val emailReceiptDao: EmailReceiptDao,
-    private val scannedReceiptDao: ScannedReceiptDao,
+    private val receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
+    private val receiptLinkService: ReceiptLinkService,
     private val merchantNormalizer: MerchantNormalizer,
     private val categorizationEngine: CategorizationEngine,
     private val timeProvider: TimeProvider,
@@ -70,7 +74,8 @@ class EmailReceiptIngestionService(
         processReceiptUseCase: ProcessReceiptUseCase,
         expenseDao: ExpenseDao,
         emailReceiptDao: EmailReceiptDao,
-        scannedReceiptDao: ScannedReceiptDao,
+        receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
+        receiptLinkService: ReceiptLinkService,
         merchantNormalizer: MerchantNormalizer,
         categorizationEngine: CategorizationEngine,
         timeProvider: TimeProvider,
@@ -81,7 +86,8 @@ class EmailReceiptIngestionService(
         processReceiptUseCase = processReceiptUseCase,
         expenseDao = expenseDao,
         emailReceiptDao = emailReceiptDao,
-        scannedReceiptDao = scannedReceiptDao,
+        receiptLifecycleCoordinator = receiptLifecycleCoordinator,
+        receiptLinkService = receiptLinkService,
         merchantNormalizer = merchantNormalizer,
         categorizationEngine = categorizationEngine,
         timeProvider = timeProvider,
@@ -94,7 +100,8 @@ class EmailReceiptIngestionService(
         processReceiptUseCase: ProcessReceiptUseCase,
         expenseDao: ExpenseDao,
         emailReceiptDao: EmailReceiptDao,
-        scannedReceiptDao: ScannedReceiptDao,
+        receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
+        receiptLinkService: ReceiptLinkService,
         merchantNormalizer: MerchantNormalizer,
         categorizationEngine: CategorizationEngine,
         timeProvider: TimeProvider,
@@ -104,7 +111,8 @@ class EmailReceiptIngestionService(
         processReceiptUseCase = processReceiptUseCase,
         expenseDao = expenseDao,
         emailReceiptDao = emailReceiptDao,
-        scannedReceiptDao = scannedReceiptDao,
+        receiptLifecycleCoordinator = receiptLifecycleCoordinator,
+        receiptLinkService = receiptLinkService,
         merchantNormalizer = merchantNormalizer,
         categorizationEngine = categorizationEngine,
         timeProvider = timeProvider,
@@ -222,10 +230,12 @@ class EmailReceiptIngestionService(
                     parsedTaxAmount = null, // Email receipts usually don't show tax separately
                     currency = parsedReceipt.currency,
                     confidence = parsedReceipt.confidence.toFloat(),
-                    matchStatus = MatchStatus.UNMATCHED
+                    matchStatus = MatchStatus.UNMATCHED,
+                    sourceType = ReceiptSourceType.EMAIL.name,
+                    documentType = ReceiptDocumentType.EMAIL_RECEIPT.name
                 )
 
-                val receiptId = scannedReceiptDao.insert(scannedReceipt)
+                val receiptId = receiptLifecycleCoordinator.saveEmailReceipt(scannedReceipt)
                 if (receiptId <= 0) {
                     return@transactionRunner EmailReceiptResult.ParseError("Failed to create receipt record")
                 }
@@ -352,7 +362,7 @@ class EmailReceiptIngestionService(
     private suspend fun findExistingScannedReceipt(fingerprint: String): ScannedReceipt? {
         // Get recent receipts and check fingerprint manually
         val since = timeProvider.now() - (30L * 24 * 60 * 60 * 1000) // Last 30 days
-        val recentReceipts = scannedReceiptDao.getRecentReceipts(since)
+        val recentReceipts = receiptLifecycleCoordinator.getRecentReceipts(since)
         
         return recentReceipts.find { receipt ->
             val merchant = receipt.parsedMerchant ?: return@find false
@@ -395,15 +405,13 @@ class EmailReceiptIngestionService(
             }
         }
 
-        val existingReceipt = scannedReceiptDao.getById(receiptId)
-            ?: throw EmailReceiptExpenseCreationException("Created receipt missing before linkage: $receiptId")
-
-        scannedReceiptDao.update(
-            existingReceipt.copy(
-                expenseId = expenseId,
-                matchStatus = MatchStatus.AUTO_MATCHED,
-                matchConfidence = processedReceipt.categoryConfidence
-            )
+        // Link receipt to the newly created expense via ReceiptLinkService
+        receiptLinkService.linkReceiptToExpense(
+            receiptId = receiptId,
+            expenseId = expenseId,
+            linkType = "EMAIL_RECEIPT",
+            source = ExpenseSource.EMAIL_RECEIPT.name,
+            confidence = processedReceipt.categoryConfidence
         )
 
         return listOf(expenseId)

@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.price
 
-import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
@@ -15,7 +15,7 @@ import javax.inject.Singleton
 
 @Singleton
 class PriceProtectionTracker @Inject constructor(
-    private val receiptDao: ScannedReceiptDao,
+    private val receiptRepository: ReceiptRepository,
     private val timeProvider: TimeProvider
 ) {
     
@@ -23,11 +23,16 @@ class PriceProtectionTracker @Inject constructor(
     suspend fun getPriceProtectedItems(): List<PriceProtectedItem> {
         val now = timeProvider.now()
         val since = TimePeriodUtils.getLastNCalendarDaysRange(now, 30).first
-        val recentReceipts = receiptDao.getRecentReceipts(since)
+        val recentReceipts = receiptRepository.getRecentReceipts(since)
         
-        return recentReceipts.flatMap { receipt ->
-            parsePriceProtectedItems(receipt) ?: emptyList()
-        }
+        return recentReceipts
+            .filter { receipt ->
+                // Only include RETAIL_RECEIPT and EMAIL_RECEIPT document types
+                receipt.documentType == "RETAIL_RECEIPT" || receipt.documentType == "EMAIL_RECEIPT"
+            }
+            .flatMap { receipt ->
+                parsePriceProtectedItems(receipt) ?: emptyList()
+            }
     }
     
     private fun parsePriceProtectedItems(receipt: ScannedReceipt): List<PriceProtectedItem>? {
@@ -355,13 +360,18 @@ class PriceProtectionTracker @Inject constructor(
     }
 
     suspend fun getDealsCouponsAndBenefits(): DealsAndBenefits {
-        val recentReceipts = receiptDao.getRecentReceipts(since = 0L, limit = 20)
+        val recentReceipts = receiptRepository.getRecentReceipts(since = 0L, limit = 20)
+
+        // Only include RETAIL_RECEIPT and EMAIL_RECEIPT document types
+        val filteredReceipts = recentReceipts.filter { receipt ->
+            receipt.documentType == "RETAIL_RECEIPT" || receipt.documentType == "EMAIL_RECEIPT"
+        }
 
         val deals = mutableListOf<DealAlternative>()
         val coupons = mutableListOf<CouponMatch>()
         val benefits = mutableListOf<CreditCardBenefit>()
 
-        recentReceipts.forEach { receipt ->
+        filteredReceipts.forEach { receipt ->
             deals += findBetterDeals(receipt)
             coupons += findCoupons(receipt)
             benefits += getCreditCardBenefits(receipt)
