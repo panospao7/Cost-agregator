@@ -12,7 +12,6 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.CategorizationStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
-import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
@@ -25,6 +24,10 @@ import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.debug.DebugIssueDetector
+import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.usecase.warranty.AutoCreateWarrantyFromReceiptUseCase
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult
 import com.yourname.expensetracker.di.IoDispatcher
@@ -42,7 +45,6 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
 
-import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.data.database.AppDatabase
 
 @Singleton
@@ -50,7 +52,6 @@ class ReceiptRepository @Inject constructor(
     private val database: AppDatabase,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val expenseDao: ExpenseDao,
-    private val merchantCategoryRepository: MerchantCategoryRepository,
     private val pendingReviewDao: PendingReviewDao,
     private val ocrService: ReceiptOcrService,
     private val receiptParser: ReceiptParser,
@@ -58,23 +59,33 @@ class ReceiptRepository @Inject constructor(
     private val categorizationEngine: CategorizationEngine,
     private val merchantNormalizer: NewMerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
-    private val budgetMonitor: BudgetMonitor,
-    private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
     private val crossSourceDeduplication: CrossSourceDeduplication,
     private val debugIssueDetector: DebugIssueDetector,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
-    private val warrantyUseCase: AutoCreateWarrantyFromReceiptUseCase
+    private val warrantyUseCase: AutoCreateWarrantyFromReceiptUseCase,
+    private val coordinator: TransactionLifecycleCoordinator
 ) {
     private companion object {
         // Use the canonical policy for all duplicate detection constants.
         private val STATEMENT_DEDUPE_WINDOW_MS = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
         private val AMOUNT_TOLERANCE = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
 
-        // Minimum positive sentinel for suggestedAmount when the parser fails to
-        // extract a total.  Must satisfy the v76 CHECK(suggestedAmount > 0) invariant.
-        // Matches the migration-time clamp value so behaviour is consistent across
-        // upgrade and fresh-install paths.
+        /**
+         * Minimum positive sentinel for [PendingReview.suggestedAmount] when the
+         * parser fails to extract a total.
+         *
+         * **UI-PLACEHOLDER ONLY — never becomes a real expense amount.**
+         *
+         * Must satisfy the v76 CHECK(suggestedAmount > 0) invariant.
+         * Matches the migration-time clamp value so behaviour is consistent across
+         * upgrade and fresh-install paths.
+         *
+         * The [approveReview] function in [ReviewQueueRepository] explicitly
+         * blocks approval when `suggestedAmount == FALLBACK_SUGGESTED_AMOUNT`
+         * without a user override.  The [TransactionLifecycleCoordinator] also
+         * rejects creation requests carrying this sentinel.
+         */
         private const val FALLBACK_SUGGESTED_AMOUNT = 0.01
     }
 
@@ -144,6 +155,13 @@ class ReceiptRepository @Inject constructor(
                     val insertedReceiptId = scannedReceiptDao.insert(receipt)
 
                     // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
+                    //
+                    //    "Unknown Merchant" is a UI-placeholder fallback when neither
+                    //    the normalizer nor the parser could extract a merchant name.
+                    //    It will be shown in the review queue and must be edited by
+                    //    the user before approval — approveReview() blocks approval
+                    //    without a user override.  This placeholder never becomes a
+                    //    real expense merchant value.
                     if (autoCreateReview) {
                         val suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant"
                         val suggestedAmount = parsed.total ?: FALLBACK_SUGGESTED_AMOUNT
@@ -213,6 +231,12 @@ class ReceiptRepository @Inject constructor(
                 )
                 val receiptId = scannedReceiptDao.insert(failedReceipt)
                 
+                // ── Parse-failure placeholder review (never becomes real expense) ──
+                // When the parser threw an exception (e.g. malformed OCR text) we
+                // still save the OCR text for manual recovery.  The PendingReview
+                // gets sentinel values ("Parsing Failed", FALLBACK_SUGGESTED_AMOUNT)
+                // that are UI placeholders only.  The user must edit these before
+                // approval; approveReview() blocks approval without overrides.
                 if (autoCreateReview) {
                     val review = PendingReview(
                         rawNotificationId = null,
@@ -274,6 +298,13 @@ class ReceiptRepository @Inject constructor(
 
     /**
      * Create an expense from a scanned receipt (after user review/edit)
+     *
+     * Uses [TransactionLifecycleCoordinator] for the full lifecycle:
+     * validate → normalize → dedupe → insert atomic → event logging
+     * → post-creation side effects (via TransactionSideEffectDispatcher).
+     * Source-specific side effect that remains here:
+     *  - Receipt-to-expense linking
+     *  - Hybrid classifier correction learning
      */
     suspend fun createExpenseFromReceipt(
         receiptId: Long,
@@ -298,101 +329,65 @@ class ReceiptRepository @Inject constructor(
             amount = amount
         ).categoryId.takeIf { it > 0 }
 
-        // 3. Atomic insert with dedupe key
-        val expense = Expense(
+        // 3. Create expense via TransactionLifecycleCoordinator (validate → normalize → dedupe → insert → event)
+        val request = CreateExpenseRequest(
+            merchant = normalizedMerchant,
             amount = amount,
             currency = currency,
-            merchant = normalizedMerchant,
-            merchantKey = MerchantKeyGenerator.generate(normalizedMerchant),
-            transactionType = TransactionType.PURCHASE,
             date = date,
-            rawNotificationId = null,
+            transactionType = TransactionType.PURCHASE,
+            source = ExpenseSource.RECEIPT_SCAN,
             categoryId = finalCategoryId,
-            createdAt = timeProvider.now(),
+            notes = notes ?: "Scanned from receipt",
             paymentMethod = paymentMethod,
             isManualEntry = true,
-            notes = notes ?: "Scanned from receipt",
-            // Use type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows never
-            // collide on the persisted unique dedupeKey index (ISSUE-8 fix).
-            dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                amount, normalizedMerchant, date, currency, TransactionType.PURCHASE
-            ),
             latitude = latitude,
             longitude = longitude,
             locationSource = locationSource
         )
 
-        val expenseId = database.withTransaction {
-            // Pre-insert canonical duplicate check: uses currency + transaction-type
-            // aware policy so that (a) PURCHASE vs DEPOSIT/TRANSFER are never conflated,
-            // and (b) legacy rows with the old 3-part dedupe key are still caught by the
-            // merchant/amount/date/currency/type window query (not just by key collision).
-            // insertAtomic() below is kept only as a final race-condition guard.
-            val isDuplicate = expenseDao.isDuplicateCurrencyAware(
-                amount = expense.amount,
-                merchant = expense.merchant,
-                date = expense.date,
-                currency = expense.currency,
-                transactionType = expense.transactionType.name,
-                merchantKey = expense.merchantKey,
-                dedupeKey = expense.dedupeKey
-            )
-            if (isDuplicate) {
-                return@withTransaction -1L
+        return when (val result = coordinator.createExpense(request)) {
+            is CreateExpenseResult.Created -> {
+                val expenseId = result.expenseId
+
+                // Link receipt to the newly created expense
+                scannedReceiptDao.linkToExpense(receiptId, expenseId)
+
+                // ── Source-specific post-commit side effects ─────────────────
+                if (finalCategoryId != null) {
+                    runPostCommitSafely(
+                        action = "classifier correction learning after receipt expense insert (expenseId=$expenseId, merchant=$normalizedMerchant)"
+                    ) {
+                        hybridClassifier.learnFromCorrection(
+                            merchantName = normalizedMerchant,
+                            correctCategoryId = finalCategoryId,
+                            amount = amount
+                        )
+                    }
+                }
+
+                com.yourname.expensetracker.domain.model.Result.Success(expenseId)
             }
-
-            // insertAtomic() is IGNORE-on-conflict — kept as a last-line race guard
-            // in case a concurrent transaction commits the same expense between the
-            // check above and this insert.
-            val id = expenseDao.insertAtomic(expense)
-            if (id > 0) {
-                scannedReceiptDao.linkToExpense(receiptId, id)
+            is CreateExpenseResult.DuplicateSkipped -> {
+                com.yourname.expensetracker.domain.model.Result.Duplicate
             }
-            id
-        }
-
-        if (expenseId <= 0) {
-            return com.yourname.expensetracker.domain.model.Result.Duplicate
-        }
-
-        // 4. Check budgets (best-effort, post-commit)
-        runPostCommitSafely(
-            action = "budget check after receipt expense insert (expenseId=$expenseId, receiptId=$receiptId)"
-        ) {
-            budgetMonitor.checkBudgets()
-        }
-
-        // 5. Check for anomalies and alert (best-effort, post-commit)
-        runPostCommitSafely(
-            action = "anomaly alert check after receipt expense insert (expenseId=$expenseId, receiptId=$receiptId)"
-        ) {
-            val enrichedExpense = expense.copy(id = expenseId)
-            val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
-                expense = enrichedExpense,
-                category = finalCategoryId?.let { database.categoryDao().getById(it) }
-            )
-            anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
-        }
-
-        // 6. Learn merchant → category mapping
-        if (finalCategoryId != null) {
-            runPostCommitSafely(
-                action = "classifier correction learning after receipt expense insert (expenseId=$expenseId, merchant=$normalizedMerchant)"
-            ) {
-                hybridClassifier.learnFromCorrection(
-                    merchantName = normalizedMerchant,
-                    correctCategoryId = finalCategoryId,
-                    amount = amount
+            is CreateExpenseResult.ValidationFailed -> {
+                com.yourname.expensetracker.domain.model.Result.Error(
+                    message = "Validation failed: ${result.errors.joinToString(", ")}"
                 )
             }
-            runPostCommitSafely(
-                action = "merchant-category pattern learning after receipt expense insert (expenseId=$expenseId, merchant=$normalizedMerchant, categoryId=$finalCategoryId)"
-            ) {
-                merchantCategoryRepository.learnPattern(normalizedMerchant, finalCategoryId)
+            is CreateExpenseResult.InsertConflict -> {
+                com.yourname.expensetracker.domain.model.Result.Error(
+                    message = "Insert conflict: ${result.dedupeKey}"
+                )
+            }
+            is CreateExpenseResult.Error -> {
+                com.yourname.expensetracker.domain.model.Result.Error(
+                    exception = result.exception,
+                    message = result.exception.message ?: "Unknown error"
+                )
             }
         }
-
-        return com.yourname.expensetracker.domain.model.Result.Success(expenseId)
     }
 
     private suspend fun runPostCommitSafely(

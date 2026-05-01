@@ -131,10 +131,10 @@ data/
 
 | Aspect | Details |
 |--------|---------|
-| **Version** | 69 |
-| **Total Entities** | 46 |
-| **Total DAOs** | 45 |
-| **Total Migrations** | 46 (MIGRATION_6_7 → MIGRATION_69_70+) |
+| **Version** | 95 |
+| **Total Entities** | 48 (TransactionEvent added; Expense.source column) |
+| **Total DAOs** | 47 (TransactionEventDao added) |
+| **Total Migrations** | 90 (MIGRATION_6_7 → MIGRATION_94_95) |
 | **Type Converters** | Custom: Enums, Lists, Dates |
 | **Export Schema** | ✓ Enabled (for migrations verification) |
 
@@ -143,15 +143,31 @@ data/
 - **38 entity timestamp defaults** migrated from `= System.currentTimeMillis()` to `= 0L` sentinel — entities no longer fetch wall-clock time at construction. All timestamps are now set explicitly by the caller.
 - **BudgetForecastDao** — `targetPeriodEnd >= :date` fixed to `targetPeriodEnd > :date` to match the half-open `[start, end)` contract.
 
+### Phase 3 Entity Changes (Transaction Lifecycle)
+
+- **Expense.source** — new nullable `TEXT` column tracking the origin of each expense (ExpenseSource enum name: MANUAL_ENTRY, NOTIFICATION_AUTO_ACCEPT, CSV_IMPORT, BANK_API_SYNC, etc.). Nullable for backward compatibility with legacy rows; backfilled by migration.
+- **TransactionEvent** — new entity for the `transaction_events` table. Immutable append-only log recording every CREATED/UPDATED/DELETED/etc. transition. Fields: `id`, `expenseId`, `eventType`, `source`, `actor`, `occurredAt`, `dedupeKey`, `duplicateExpenseId`, `beforeSnapshot`, `afterSnapshot`, `metadata`, `reason`. Indexed on `expenseId`, `source`, `occurredAt`, `eventType`.
+- **Single insertion point:** All expense creation now routes through `TransactionLifecycleCoordinator.createExpense()`. Direct `insertAtomic` calls are restricted to grandfathered files only (see `DAO_ACCESS_GUARDRAILS.md`).
+
+### Database Version History
+
+| Version | Feature / Purpose |
+|---------|-------------------|
+| 92 | Multi-currency historical snapshot fields (baseAmount, baseCurrency, exchangeRateUsed) |
+| 93-94 | (intermediate schema updates) |
+| **95** | **Transaction Lifecycle Foundation: `source` column on expenses + `transaction_events` table** |
+
 ---
 
 ## Entities Registry (46 Total)
 
-### Core Financial (7)
+### Core Financial (8)
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
-| **Expense** | `expenses` | Core transaction record with location, business, share fields, and multi-currency snapshot | `rawNotificationId` → raw_notifications, `categoryId` → categories | 12: rawNotificationId, transactionType+date, categoryId+date, merchant+date, dedupeKey (unique), latitude+longitude, merchantKey, isBusinessExpense |
+| **Expense** | `expenses` | Core transaction record with location, business, share fields, multi-currency snapshot, and source tracking | `rawNotificationId` → raw_notifications, `categoryId` → categories | 12: rawNotificationId, transactionType+date, categoryId+date, merchant+date, dedupeKey (unique), latitude+longitude, merchantKey, isBusinessExpense |
 | | | *New columns (Phase 7):* `baseAmount` (Double), `baseCurrency` (String), `exchangeRateUsed` (Double) — stable historical conversion snapshot | | |
+| | | *New columns (Phase 3):* `source` (String, nullable) — origin tracking (ExpenseSource enum name). Nullable for legacy rows; backfilled by migration 94→95. | | |
+| **TransactionEvent** | `transaction_events` | Immutable lifecycle audit log. Records every CREATED/UPDATED/DELETED transition with actor, timestamps, before/after snapshots, metadata. Append-only. | None | expenseId, source, occurredAt, eventType |
 | **Category** | `categories` | User-defined or system expense categories | None | isDefault |
 | **Budget** | `budgets` | Period-based spend limits with warnings | `categoryId` → categories | categoryId, isActive |
 | | | *New columns:* `currency` (String), `currencyAssumption` (String) — explicit budget currency with LEGACY_DEFAULT assumption | | |
@@ -247,11 +263,12 @@ data/
 
 ## DAOs Registry (45 Total)
 
-### Core CRUD DAOs (8)
+### Core CRUD DAOs (9)
 
 | DAO | Table | Key Methods | Custom Queries |
 |-----|-------|-------------|-----------------|
 | **ExpenseDao** | expenses | getById, insert, insertAll, delete, getPage, getAllFlow, getAllWithCategoryFlow | getExpensesDynamic (RawQuery), getExpensesWithCategoryFiltered, getExpensesWithCategoryInPeriod, getExpensesSince, getRecentExpensesForMerchant, getTotalSpentFlow, updateCategory, updateMerchant, updateTransactionType, checkDuplicate |
+| **TransactionEventDao** | transaction_events | insert, getEventsForExpense | None (append-only log) |
 | **CategoryDao** | categories | getAll, getById, insert, insertAll, update, delete, getDefaultCategories | None |
 | **BudgetDao** | budgets | getById, getAll, insert, update, delete, insert(List), updateAmount, updateNotifyAtWarning, updateNotifyAtCritical, resetNotifyDates | getActiveBudgetForCategory, getTotalBudgetedAmount, getBudgetUtilization |
 | **RecurringExpenseDao** | manual_recurring_expenses | getAll, getById, insert, update, delete, getActive, getUpcoming, getTotalRecurringExpense | getRecurringExpensesForMerchant |
@@ -561,6 +578,17 @@ suspend fun getExpensesDynamic(query: SupportSQLiteQuery): List<ExpenseWithCateg
 - DAOs return Flow for subscriptions
 - Repositories transform and aggregate
 
+### 9. **Coordinator Pattern (NEW — Phase 3)**
+- `TransactionLifecycleCoordinator` is the single entry point for ALL expense CUD operations
+- Pipeline: validate → normalize → dedupe → insert atomic → event log → side effects
+- All creation paths (manual, notification, CSV, bank, email, group, receipt, review) converge through this coordinator
+- Direct `insertAtomic` calls restricted to grandfathered files (see `DAO_ACCESS_GUARDRAILS.md`)
+
+### 10. **Event Sourcing Lite (NEW — Phase 3)**
+- `transaction_events` table records every lifecycle transition as an immutable append-only row
+- Events include actor, timestamps, before/after JSON snapshots for full audit trail
+- Used for debugging, history reconstruction, and compliance
+
 ---
 
 ## Database Migrations Summary (46 Total, v6→v69)
@@ -581,7 +609,8 @@ suspend fun getExpensesDynamic(query: SupportSQLiteQuery): List<ExpenseWithCateg
 | v40–42 | Subscriptions + Currency | 3 | Subscription tables (v40), Business/Personal (v41), Currency (v42) |
 | v43–46 | Groups + Bank + Splits | 4 | Shared groups (v43), Budget forecasting (v44), Investments (v45), Bank (v46) |
 | v47–50 | Schema Fixes | 4 | Enhanced splits, schema alignment, DEFAULT constraints normalization |
-| v51–69 | [TBD - check live file] | 19 | Latest migrations pending full review |
+| v51–93 | [TBD - check live file] | 43 | Intermediate schema updates |
+| v94–95 | Transaction Lifecycle Foundation (Phase 3) | 1 | Added `source` column to expenses, created `transaction_events` table |
 
 ---
 

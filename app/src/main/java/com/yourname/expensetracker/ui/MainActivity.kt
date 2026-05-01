@@ -33,8 +33,8 @@ import com.google.gson.Gson
 import com.yourname.expensetracker.domain.ai.service.AiEngagementRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.R
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget as BudgetEntity
+import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.database.entity.SplitShare
 import com.yourname.expensetracker.data.database.entity.SplitTemplate
 import com.yourname.expensetracker.ui.components.AppNavigationBar
@@ -99,7 +99,7 @@ class MainActivity : ComponentActivity() {
     lateinit var actionRegistry: ContextualActionRegistry
 
     @Inject
-    lateinit var expenseDao: ExpenseDao
+    lateinit var expenseRepository: ExpenseRepository
 
     @Inject
     lateinit var gson: Gson
@@ -127,7 +127,7 @@ class MainActivity : ComponentActivity() {
                         MainScreen(
                             mainViewModel = mainViewModel,
                             actionRegistry = actionRegistry,
-                            expenseDao = expenseDao,
+                            expenseRepository = expenseRepository,
                             gson = gson
                         )
                     }
@@ -168,7 +168,7 @@ class MainActivity : ComponentActivity() {
                 val expenseId = data.getQueryParameter("expenseId")?.toLongOrNull()
                 if (expenseId != null) {
                     lifecycleScope.launch {
-                        val expense = expenseDao.getById(expenseId)
+                        val expense = expenseRepository.getExpenseById(expenseId)
                         if (expense != null) {
                             val calendar = java.util.Calendar.getInstance().apply {
                                 timeInMillis = expense.date
@@ -225,14 +225,14 @@ private data class PersistedVisualSplit(
 )
 
 private suspend fun applyVisualSplitToExpense(
-    expenseDao: ExpenseDao,
+    expenseRepository: ExpenseRepository,
     gson: Gson,
     expenseId: Long,
     shares: List<SplitShare>,
     splitType: SplitTemplate.SplitType,
     templateId: Long?
 ): Boolean {
-    val expense = expenseDao.getById(expenseId) ?: return false
+    val expense = expenseRepository.getExpenseById(expenseId) ?: return false
     val sanitizedShares = shares
         .map { it.copy(participantName = it.participantName.trim()) }
         .sortedBy { it.participantIndex }
@@ -245,29 +245,26 @@ private suspend fun applyVisualSplitToExpense(
         .joinToString(", ") { it.participantName }
         .takeIf { it.isNotBlank() }
 
-    expenseDao.insertAll(
-        listOf(
-            expense.copy(
-                isNotMine = false,
-                ownerName = null,
-                isSharedExpense = sanitizedShares.size > 1,
-                sharedWithName = sharedWithName,
-                mySharePercentage = myShare.percentage
-                    ?.takeIf { it.isFinite() }
-                    ?.roundToInt()
-                    ?.coerceIn(0, 100),
-                myShareAmount = myShare.amount?.takeIf { it.isFinite() },
-                splitTemplateId = templateId,
-                splitVisualization = gson.toJson(
-                    PersistedVisualSplit(
-                        splitType = splitType,
-                        shares = sanitizedShares
-                    )
-                )
+    val updatedExpense = expense.copy(
+        isNotMine = false,
+        ownerName = null,
+        isSharedExpense = sanitizedShares.size > 1,
+        sharedWithName = sharedWithName,
+        mySharePercentage = myShare.percentage
+            ?.takeIf { it.isFinite() }
+            ?.roundToInt()
+            ?.coerceIn(0, 100),
+        myShareAmount = myShare.amount?.takeIf { it.isFinite() },
+        splitTemplateId = templateId,
+        splitVisualization = gson.toJson(
+            PersistedVisualSplit(
+                splitType = splitType,
+                shares = sanitizedShares
             )
         )
     )
 
+    expenseRepository.updateExpense(updatedExpense)
     return true
 }
 
@@ -276,7 +273,7 @@ private suspend fun applyVisualSplitToExpense(
 fun MainScreen(
     mainViewModel: MainViewModel,
     actionRegistry: ContextualActionRegistry,
-    expenseDao: ExpenseDao,
+    expenseRepository: ExpenseRepository,
     gson: Gson
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
@@ -711,9 +708,9 @@ fun MainScreen(
                                 val applied = if (targetExpenseId == null) {
                                     true
                                 } else {
-                                    runCatching {
+                                runCatching {
                                         applyVisualSplitToExpense(
-                                            expenseDao = expenseDao,
+                                            expenseRepository = expenseRepository,
                                             gson = gson,
                                             expenseId = targetExpenseId,
                                             shares = shares,

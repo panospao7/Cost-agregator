@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 94
+const val APP_DATABASE_SCHEMA_VERSION = 95
 
 @Database(
     entities = [
@@ -61,7 +61,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 94
         SpendingPersonalityProfileEntity::class,
         StressForecastSnapshot::class,
         EmailReceiptSource::class,
-        SpendingChallengeEntity::class
+        SpendingChallengeEntity::class,
+        TransactionEvent::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -115,6 +116,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun spendingPersonalityProfileDao(): SpendingPersonalityProfileDao
     abstract fun emailReceiptDao(): EmailReceiptDao
     abstract fun spendingChallengeDao(): SpendingChallengeDao
+    abstract fun transactionEventDao(): TransactionEventDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -5621,6 +5623,39 @@ val MIGRATION_93_94 = object : androidx.room.migration.Migration(93, 94) {
     }
 }
 
+// Migration 94 -> 95: Transaction Lifecycle Foundation (Phase 3, PR 1).
+//
+// 1. Add nullable source column to expenses for tracking the origin of each expense.
+//    Nullable for backward compatibility with legacy rows; backfilled by migration.
+// 2. Create transaction_events table for recording expense lifecycle events.
+val MIGRATION_94_95 = object : androidx.room.migration.Migration(94, 95) {
+    override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT")
+
+        database.execSQL("""
+            CREATE TABLE IF NOT EXISTS transaction_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                expenseId INTEGER,
+                eventType TEXT NOT NULL,
+                source TEXT NOT NULL,
+                actor TEXT,
+                occurredAt INTEGER NOT NULL,
+                dedupeKey TEXT,
+                duplicateExpenseId INTEGER,
+                beforeSnapshot TEXT,
+                afterSnapshot TEXT,
+                metadata TEXT,
+                reason TEXT
+            )
+        """.trimIndent())
+
+        database.execSQL("CREATE INDEX IF NOT EXISTS index_transaction_events_expenseId ON transaction_events (expenseId)")
+        database.execSQL("CREATE INDEX IF NOT EXISTS index_transaction_events_source ON transaction_events (source)")
+        database.execSQL("CREATE INDEX IF NOT EXISTS index_transaction_events_occurredAt ON transaction_events (occurredAt)")
+        database.execSQL("CREATE INDEX IF NOT EXISTS index_transaction_events_eventType ON transaction_events (eventType)")
+    }
+}
+
 /**
      * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -5753,7 +5788,8 @@ val MIGRATION_93_94 = object : androidx.room.migration.Migration(93, 94) {
             MIGRATION_90_91,
 MIGRATION_91_92,
         MIGRATION_92_93,
-        MIGRATION_93_94
+        MIGRATION_93_94,
+        MIGRATION_94_95
     )
     }
 }

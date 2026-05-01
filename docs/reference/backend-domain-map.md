@@ -27,6 +27,8 @@
 | `common/` | Shared helpers such as hashing and general-purpose utilities |
 | `core/money/` | **NEW — Type-safe money primitives**: `CurrencyCode`, `MoneyAmount`, `MoneyAggregate`, `MoneyBucket`, `ConvertedMoney`, `ConversionFailure`, `CurrencyAssumption`, `MoneyMappers`, `MoneyFormatUtils` |
 | `core/time/` | **NEW — Typed time period models**: `PeriodRange` (half-open `[start, end)` with kind/zone/label), `PeriodKind` (TODAY, THIS_WEEK, THIS_MONTH, LAST_7_DAYS, etc.) |
+| `transaction/` | **NEW — Transaction lifecycle models**: `ExpenseSource`, `LifecycleEventType`, `DeduplicationMode`, `CreateExpenseRequest`, `CreateExpenseResult`, `ExpenseUpdates` |
+| `transaction/lifecycle/` | **NEW — Lifecycle coordinator + dispatcher**: `TransactionLifecycleCoordinator` (single entry point for CUD), `TransactionSideEffectDispatcher` (post-creation side effects) |
 | `dto/` | Cross-layer transfer objects for AI, review, and category references |
 | `ai/` | AI capability routing, policy, and model-backed services |
 | `bank/` | Bank API integration and connection orchestration |
@@ -312,6 +314,26 @@ Domain Layer (This Document)
 |------|---------|-------------|
 | `PeriodRange.kt` | Typed half-open period model | `[startInclusiveMillis, endExclusiveMillis)` with `kind` (PeriodKind), `zoneId`, `label`, `contains()` — replaces raw `Pair<Long, Long>` |
 | `PeriodKind.kt` | Semantic period classification | Enum: `TODAY`, `THIS_WEEK`, `LAST_WEEK`, `LAST_7_DAYS`, `THIS_MONTH`, `LAST_MONTH`, `LAST_30_DAYS`, `THIS_QUARTER`, `LAST_QUARTER`, `THIS_YEAR`, `LAST_YEAR`, `CUSTOM`; distinguishes calendar vs rolling semantics |
+
+### Transaction Lifecycle Models (New — `transaction/`)
+**Directory:** `transaction/`
+
+| File | Purpose | Key Details |
+|------|---------|-------------|
+| `ExpenseSource.kt` | Enum of 14 expense origin sources | MANUAL_ENTRY, NOTIFICATION_AUTO_ACCEPT, REVIEW_APPROVAL, RECEIPT_SCAN, RECEIPT_BATCH_REVIEW, BANK_STATEMENT_REVIEW, CSV_IMPORT, EMAIL_RECEIPT, GROUP_EXPENSE, BANK_API_SYNC, RECURRING_GENERATED, DEBUG_TOOL, MIGRATION, UNKNOWN |
+| `LifecycleEventType.kt` | Enum of 14 lifecycle transition types | CREATED, UPDATED, DELETED, CREATE_ATTEMPTED, CREATE_VALIDATION_FAILED, CREATE_DUPLICATE_SKIPPED, CREATE_INSERT_CONFLICT, BULK_UPDATED, RESTORED_FROM_DEBUG_SNAPSHOT, SOURCE_LINKED, SIDE_EFFECT_FAILED |
+| `DeduplicationMode.kt` | Deduplication strategy enum | STANDARD (default), STRICT_EXTERNAL_ID, BULK_IMPORT, SKIP_FOR_DEBUG_RESTORE |
+| `CreateExpenseRequest.kt` | Source-neutral creation request | 40+ fields: required (merchant, amount, currency, date, transactionType, source), optionals (categoryId, notes, paymentMethod, location, business flags, split fields, source link fields), policy fields (deduplicationMode, skipDeduplication, idempotencyKey) |
+| `CreateExpenseResult.kt` | Sealed result type | Created(expenseId), DuplicateSkipped(existingExpenseId, reason), ValidationFailed(errors), InsertConflict(dedupeKey), Error(exception) |
+| `ExpenseUpdates.kt` | Patch-style update for existing expenses | All mutable fields as nullable, plus `actor` (required) and `reason` (optional) |
+
+### Transaction Lifecycle Coordinator & Dispatcher (New — `transaction/lifecycle/`)
+**Directory:** `transaction/lifecycle/`
+
+| File | Purpose | Key Details |
+|------|---------|-------------|
+| `TransactionLifecycleCoordinator.kt` | **Single entry point for ALL expense CUD** | Pipeline: validate → normalize → dedupe → insert atomic → event log → side effects. Injected by 10+ consumer classes. All migrated paths (Manual, Review, Notification, Receipt, CSV, Email, Group, Bank) route through this coordinator. |
+| `TransactionSideEffectDispatcher.kt` | Post-creation side effects | Best-effort dispatch: budget check via `BudgetMonitor`, anomaly alert via `AnomalyAlertOrchestrator`, merchant-category pattern learning via `MerchantCategoryRepository`. Failures are logged but not propagated. |
 
 ### Core Money Types (New — `core/money/`)
 **Directory:** `core/money/`

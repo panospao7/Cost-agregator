@@ -29,8 +29,8 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v92
-- 560+ Kotlin files
+- Database version: v95
+- 570+ Kotlin files (~120 modified in Phases 2-3)
 - Destination-driven navigation via `NavigationDestination`
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
@@ -126,6 +126,16 @@ domain/
 ├── core/
 │   ├── money/                   # Type-safe money primitives (CurrencyCode, MoneyAmount, etc.)
 │   └── time/                    # Typed time period models (PeriodRange, PeriodKind)
+├── transaction/                 # **NEW — Transaction lifecycle models**
+│   ├── ExpenseSource.kt         # Enum of 14 expense origin sources
+│   ├── LifecycleEventType.kt    # Enum of 14 lifecycle event types
+│   ├── DeduplicationMode.kt     # Enum of deduplication strategies
+│   ├── CreateExpenseRequest.kt  # Source-neutral creation request (40+ fields)
+│   ├── CreateExpenseResult.kt   # Sealed result (Created, DuplicateSkipped, etc.)
+│   ├── ExpenseUpdates.kt        # Patch-style update model
+│   └── lifecycle/               # **NEW — Lifecycle coordinator + dispatcher**
+│       ├── TransactionLifecycleCoordinator.kt    # Single entry point for ALL expense CUD
+│       └── TransactionSideEffectDispatcher.kt    # Post-creation side effects (budget, anomaly, learning)
 ├── subscription/                # Subscription detection / management
 ├── tax/                         # Tax configuration and estimation
 ├── export/                      # Export flows
@@ -142,7 +152,7 @@ data/
 ├── location/                    # Geocoding services
 ├── security/                    # Secure storage / crypto helpers
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v92)
+│   ├── AppDatabase.kt          # Room database (v95)
 │   ├── entity/                  # Room entities across finance, AI, groups, location, and settings
 │   ├── dao/                     # Room DAOs
 │   ├── model/                   # Database models
@@ -186,7 +196,13 @@ ReviewQueueRepository → Add to review queue (if needed)
        ↓
 ReviewScreen (UI) → User approves/rejects
        ↓
-ExpenseRepository → Save as final expense
+TransactionLifecycleCoordinator.createExpense()
+       │  [validate → normalize → dedupe → insert atomic → event log]
+       ↓
+TransactionSideEffectDispatcher.dispatchOnCreated()
+       │  [budget check → anomaly alert → pattern learning]
+       ↓
+Expense persisted + lifecycle event recorded
 ```
 
 ### Receipt → AI Categorization Flow
@@ -236,7 +252,7 @@ FinancialWeatherRepository
 | Startup delegate | `startup/AppStartupDelegate.kt` | Hilt entry-point bootstrap |
 | Startup coordinator | `startup/AppStartupCoordinator.kt` | Lifecycle observer + startup jobs |
 | Main Activity | `ui/MainActivity.kt` | Navigation host + deep links |
-| Database | `data/database/AppDatabase.kt` | Room DB v92 |
+| Database | `data/database/AppDatabase.kt` | Room DB v95 |
 
 ### Core Engines
 | Engine | File | Purpose |
@@ -409,11 +425,69 @@ See [`docs/development/TIME_SEMANTICS.md`](../development/TIME_SEMANTICS.md) for
 
 ---
 
+### Transaction Lifecycle Architecture (Phase 3 — May 2026)
+
+A 120+ file cross-cutting feature establishing a single, auditable entry point for all expense creation, update, and delete operations.
+
+#### New `domain/transaction/` Package
+
+| Type | File | Purpose |
+|------|------|---------|
+| `ExpenseSource` | `domain/transaction/ExpenseSource.kt` | Enum tracking the origin of every expense: MANUAL_ENTRY, NOTIFICATION_AUTO_ACCEPT, REVIEW_APPROVAL, RECEIPT_SCAN, CSV_IMPORT, EMAIL_RECEIPT, GROUP_EXPENSE, BANK_API_SYNC, etc. (14 values) |
+| `LifecycleEventType` | `domain/transaction/LifecycleEventType.kt` | Enum of lifecycle transition types: CREATED, UPDATED, DELETED, CREATE_DUPLICATE_SKIPPED, etc. (14 values) |
+| `DeduplicationMode` | `domain/transaction/DeduplicationMode.kt` | Enum: STANDARD, STRICT_EXTERNAL_ID, BULK_IMPORT, SKIP_FOR_DEBUG_RESTORE |
+| `CreateExpenseRequest` | `domain/transaction/CreateExpenseRequest.kt` | Source-neutral creation request with 40+ fields covering all expense properties, source-link fields, and deduplication policy controls |
+| `CreateExpenseResult` | `domain/transaction/CreateExpenseResult.kt` | Sealed result: Created(id), DuplicateSkipped(existingId, reason), ValidationFailed(errors), InsertConflict(dedupeKey), Error(exception) |
+| `ExpenseUpdates` | `domain/transaction/ExpenseUpdates.kt` | Patch-style update model for modifying existing expense fields |
+
+#### New `domain/transaction/lifecycle/` Package
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `TransactionLifecycleCoordinator` | `lifecycle/TransactionLifecycleCoordinator.kt` | **Single entry point** for ALL expense creation/update/delete. Pipeline: validate → normalize → dedupe → insert atomic → event logging → side effects. Injected by 10+ consumer classes. |
+| `TransactionSideEffectDispatcher` | `lifecycle/TransactionSideEffectDispatcher.kt` | Consolidates post-creation side effects: budget check, anomaly alert, merchant-category pattern learning. Best-effort / fire-and-forget. |
+
+#### Migration Paths (all now route through coordinator)
+
+| Path | PR | Status |
+|------|----|--------|
+| Manual Entry | PR 2 | Migrated |
+| Pending Review Approval | PR 3 | Migrated |
+| Notification Auto-Accept | PR 4 | Migrated |
+| Receipt Path | PR 5 | Migrated |
+| CSV Import | PR 6 | Migrated (dedup + lifecycle) |
+| MainActivity direct DAO | PR 6 | Removed |
+| Delete Lifecycle | PR 7 | Migrated |
+| Email Receipt | PR 7 | Migrated |
+| Group/Shared | PR 8 | Migrated |
+| Bank API | PR 9 | Migrated |
+
+#### New Guardrails
+
+- `docs/development/DAO_ACCESS_GUARDRAILS.md` — defines approved ExpenseDao access patterns
+- `scripts/guardrails/dao-access-check.kts` — CI-enforceable check for violations
+- `scripts/guardrails/dao-approved-files.txt` — approved file list for the check
+
+#### New DB Layer
+
+- `TransactionEvent` — Room entity for `transaction_events` table (immutable lifecycle audit log)
+- `TransactionEventDao` — DAO with `insert()` and `getEventsForExpense()`
+- `Expense.source` — new nullable column tracking expense origin (ExpenseSource as String)
+- Migration 94→95: adds `source` column + creates `transaction_events` table with indices
+
+---
+
 ## Database Schema
 
-### Version: v92 (post multi-currency migration)
+### Version: v95 (post lifecycle migration)
 
-The Room schema in v92 is limited to the table families actually declared in `AppDatabase.kt`:
+The Room schema in v95 includes all tables from v92 plus:
+
+**New table:** `transaction_events` — immutable audit log for expense lifecycle transitions.
+
+**New column on `expenses`:** `source` (TEXT, nullable) — tracks the origin of each expense (MANUAL_ENTRY, NOTIFICATION_AUTO_ACCEPT, CSV_IMPORT, BANK_API_SYNC, etc.).
+
+The full schema now covers:
 
 - Core finance and capture/review: raw notifications, blocked packages, expenses, categories, merchant categories, merchant canonical/alias normalization (`MerchantCanonical`, `MerchantAlias`), pending reviews, user corrections, source stats, budgets, scanned receipts, manual recurring expenses, planned expenses, savings goals
 - AI and assistant: AI artifacts, chat sessions/messages, recommendations, and receipt item categorization

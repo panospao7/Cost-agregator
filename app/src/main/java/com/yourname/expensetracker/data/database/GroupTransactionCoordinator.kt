@@ -19,10 +19,11 @@ import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.Result
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator as DomainCoordinator
 import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
-import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.logic.SplitCalculator
-import com.yourname.expensetracker.domain.util.TimeProvider
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -51,7 +52,7 @@ class GroupTransactionCoordinator @Inject constructor(
     private val memberDao: GroupMemberDao,
     private val groupExpenseDao: GroupExpenseDao,
     private val expenseDao: ExpenseDao,
-    private val timeProvider: TimeProvider,
+    private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : DomainCoordinator {
 
@@ -476,36 +477,45 @@ class GroupTransactionCoordinator @Inject constructor(
                     "Current user member not found or share could not be calculated"
                 )
 
-                // 3. Create system expense with type-aware dedupe key
-                // (mirrors ManualExpenseRepository's safe-insert semantics
-                // so that the shared unique index on dedupeKey prevents
-                // duplicate system expenses from group flows)
-                val systemExpense = Expense(
-                    amount = amount,
-                    currency = expenseCurrency,
-                    merchant = description,
-                    merchantKey = MerchantKeyGenerator.generate(description),
-                    transactionType = transactionType,
-                    date = date,
-                    isManualEntry = true,
-                    notes = notes ?: "Group expense via ${payer.name}",
-                    isSharedExpense = true,
-                    myShareAmount = currentUserShare,
-                    createdAt = timeProvider.now(),
-                    dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                        amount = amount,
+                // 3. Create system expense via TransactionLifecycleCoordinator
+                // (handles validation, deduplication, insertAtomic, and lifecycle event)
+                val createResult = transactionLifecycleCoordinator.createExpense(
+                    CreateExpenseRequest(
                         merchant = description,
-                        date = date,
+                        amount = amount,
                         currency = expenseCurrency,
-                        transactionType = transactionType
+                        date = date,
+                        transactionType = transactionType,
+                        source = ExpenseSource.GROUP_EXPENSE,
+                        notes = notes ?: "Group expense via ${payer.name}",
+                        isManualEntry = true,
+                        isSharedExpense = true,
+                        myShareAmount = currentUserShare
                     )
                 )
 
-                // insertAtomic is IGNORE-on-conflict — last-line race guard
-                // matching the convention used by ManualExpenseRepository
-                val systemExpenseId = expenseDao.insertAtomic(systemExpense)
-                if (systemExpenseId <= 0) {
-                    return@withTransaction GroupExpenseCreationResult.Error("Failed to create system expense")
+                val systemExpenseId = when (createResult) {
+                    is CreateExpenseResult.Created -> createResult.expenseId
+                    is CreateExpenseResult.DuplicateSkipped -> {
+                        return@withTransaction GroupExpenseCreationResult.Error(
+                            "Duplicate expense: ${createResult.reason}"
+                        )
+                    }
+                    is CreateExpenseResult.ValidationFailed -> {
+                        return@withTransaction GroupExpenseCreationResult.Error(
+                            createResult.errors.joinToString("; ")
+                        )
+                    }
+                    is CreateExpenseResult.InsertConflict -> {
+                        return@withTransaction GroupExpenseCreationResult.Error(
+                            "Insert conflict: dedupeKey=${createResult.dedupeKey}"
+                        )
+                    }
+                    is CreateExpenseResult.Error -> {
+                        return@withTransaction GroupExpenseCreationResult.Error(
+                            "Failed to create system expense: ${createResult.exception.message}"
+                        )
+                    }
                 }
 
                 if (groupExpenseDao.getGroupExpenseForExpense(systemExpenseId) != null) {

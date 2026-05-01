@@ -63,6 +63,14 @@ These files are **allowed** to call system clock APIs:
 | `FinancialStressForecastEngine.kt` | `System.currentTimeMillis()` for perf timing |
 | `AppConstants.kt` | Duration constants (not calendar periods) |
 
+### New Phase 3 consumers follow the same contract
+
+The `TransactionLifecycleCoordinator` and `TransactionSideEffectDispatcher` both inject
+`TimeProvider` and call `timeProvider.now()` at the point of use — never
+`System.currentTimeMillis()`. This ensures that the time-semantics rules
+(half-open periods, no silent `Instant.now()`) extend to the transaction
+lifecycle pipeline.
+
 ---
 
 ## How to Get "Now" in Your Code

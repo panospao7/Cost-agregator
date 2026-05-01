@@ -222,4 +222,9 @@ object DaoModule {
     @Singleton
     fun provideSpendingChallengeDao(database: AppDatabase): SpendingChallengeDao =
         database.spendingChallengeDao()
+
+    @Provides
+    @Singleton
+    fun provideTransactionEventDao(database: AppDatabase): TransactionEventDao =
+        database.transactionEventDao()
 }

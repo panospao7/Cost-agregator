@@ -10,6 +10,8 @@ import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +40,7 @@ class ReviewQueueRepositoryStressTest {
     private val parserRegistry = mockk<AppParserRegistry>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val confidenceRouter = mockk<ConfidenceRouter>(relaxed = true)
+    private val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
     private lateinit var repository: ReviewQueueRepository
 
     @Before
@@ -69,6 +72,7 @@ class ReviewQueueRepositoryStressTest {
         coEvery { budgetMonitor.checkBudgets() } returns Unit
         coEvery { classifier.retrainFromCorrections() } returns Unit
         coEvery { confidenceRouter.invalidateSourceStatsCache(any()) } returns Unit
+        coEvery { transactionLifecycleCoordinator.createExpense(any()) } returns CreateExpenseResult.Created(1L)
         every { timeProvider.now() } returns System.currentTimeMillis()
 
         repository = ReviewQueueRepository(
@@ -87,7 +91,8 @@ class ReviewQueueRepositoryStressTest {
             anomalyAlertOrchestrator = anomalyAlertOrchestrator,
             parserRegistry = parserRegistry,
             timeProvider = timeProvider,
-            confidenceRouter = confidenceRouter
+            confidenceRouter = confidenceRouter,
+            transactionLifecycleCoordinator = transactionLifecycleCoordinator
         )
     }
 

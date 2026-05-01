@@ -1,8 +1,8 @@
 # Complete Backend & Database Map - ExpenseTracker
 
-**Generated:** 2026-04-06  
-**Total Files Mapped:** 477 (244 domain + 206 data + 27 di)  
-**Test Coverage:** 317 test files in `app/src/test/java`
+**Generated:** 2026-05-01  
+**Total Files Mapped:** 490+ (255 domain + 208 data + 27 di)  
+**Test Coverage:** 317+ test files in `app/src/test/java`
 
 ---
 
@@ -36,6 +36,21 @@
 |------|-------|---------|------|--------------|-------|
 | `core/time/PeriodRange.kt` | PeriodRange | Typed half-open period model `[startInclusive, endExclusive)` with kind (PeriodKind), zoneId, label, contains() | Model | PeriodKind | No |
 | `core/time/PeriodKind.kt` | PeriodKind | Semantic period enum: TODAY, THIS_WEEK, LAST_WEEK, LAST_7_DAYS, THIS_MONTH, LAST_MONTH, LAST_30_DAYS, THIS_QUARTER, LAST_QUARTER, THIS_YEAR, LAST_YEAR, CUSTOM | Enum | - | No |
+
+### Transaction Lifecycle Models (8 files)
+
+**Location:** `com.yourname.expensetracker.domain.transaction`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `transaction/ExpenseSource.kt` | ExpenseSource | Enum: 14 expense origin sources (MANUAL_ENTRY, NOTIFICATION_AUTO_ACCEPT, CSV_IMPORT, BANK_API_SYNC, etc.) | Enum | - | No |
+| `transaction/LifecycleEventType.kt` | LifecycleEventType | Enum: 14 lifecycle event types (CREATED, UPDATED, DELETED, CREATE_DUPLICATE_SKIPPED, etc.) | Enum | - | No |
+| `transaction/DeduplicationMode.kt` | DeduplicationMode | Enum: deduplication strategy (STANDARD, STRICT_EXTERNAL_ID, BULK_IMPORT, SKIP_FOR_DEBUG_RESTORE) | Enum | - | No |
+| `transaction/CreateExpenseRequest.kt` | CreateExpenseRequest | Source-neutral creation request with 40+ fields including required fields, optionals, source links, and policy controls | Model | ExpenseSource, TransactionType, PaymentMethod, TransferDirection, DeduplicationMode | No |
+| `transaction/CreateExpenseResult.kt` | CreateExpenseResult | Sealed result: Created, DuplicateSkipped, ValidationFailed, InsertConflict, Error | Model | - | No |
+| `transaction/ExpenseUpdates.kt` | ExpenseUpdates | Patch-style update model for modifying existing expenses | Model | TransactionType, PaymentMethod, TransferDirection | No |
+| `transaction/lifecycle/TransactionLifecycleCoordinator.kt` | TransactionLifecycleCoordinator | **Single entry point** for ALL expense CUD: validate → normalize → dedupe → insert atomic → event log → side effects | Coordinator | ExpenseDao, TransactionEventDao, TimeProvider, TransactionSideEffectDispatcher | No |
+| `transaction/lifecycle/TransactionSideEffectDispatcher.kt` | TransactionSideEffectDispatcher | Post-creation side effects: budget check, anomaly alert, merchant-category learning | Dispatcher | ExpenseDao, CategoryDao, BudgetMonitor, AnomalyAlertOrchestrator, MerchantCategoryRepository | No |
 
 ### AI Subsystem (58 files)
 
@@ -464,7 +479,7 @@
 |------|-------|---------|------|--------------|-------|
 | `database/converter/Converters.kt` | Converters | Room type converters | Converter | - | No |
 
-#### DAOs (54 files)
+#### DAOs (55 files)
 
 **Location:** `com.yourname.expensetracker.data.database.dao`
 
@@ -513,10 +528,11 @@
 | `dao/SubscriptionCandidateDao.kt` | SubscriptionCandidateDao | Subscription candidates DAO | DAO | - | No |
 | `dao/SubscriptionPriceHistoryDao.kt` | SubscriptionPriceHistoryDao | Subscription price history DAO | DAO | - | No |
 | `dao/SubscriptionUsageDao.kt` | SubscriptionUsageDao | Subscription usage DAO | DAO | - | No |
+| `dao/TransactionEventDao.kt` | TransactionEventDao | Transaction lifecycle events DAO | DAO | - | No |
 | `dao/UserCorrectionDao.kt` | UserCorrectionDao | User corrections DAO | DAO | - | No |
 | `dao/WarrantyDao.kt` | WarrantyDao | Warranties DAO | DAO | - | No |
 
-#### Entities (55 files)
+#### Entities (56 files)
 
 **Location:** `com.yourname.expensetracker.data.database.entity`
 
@@ -560,6 +576,7 @@
 | `entity/ScannedReceipt.kt` | ScannedReceipt | Scanned receipt entity | Entity | - | No |
 | `entity/SourceStats.kt` | SourceStats | Source statistics entity | Entity | - | No |
 | `entity/SpendingPersonalityProfileEntity.kt` | SpendingPersonalityProfileEntity | Spending profile entity | Entity | - | No |
+| `entity/TransactionEvent.kt` | TransactionEvent | Immutable lifecycle event log (table: `transaction_events`); records every CREATED/UPDATED/DELETED/etc. transition with actor, timestamps, and before/after snapshots | Entity | - | No |
 | `entity/SplitItemAssignment.kt` | SplitItemAssignment | Split item assignment entity | Entity | - | No |
 | `entity/SplitTemplate.kt` | SplitTemplate | Split template entity | Entity | - | No |
 | `entity/StressForecastSnapshot.kt` | StressForecastSnapshot | Stress forecast entity | Entity | - | No |
@@ -812,9 +829,15 @@ ParserRegistry (SMS, Email, Manual)
     ↓
 GenericTransactionParser / SpecializedParsers
     ↓
-ExpenseEntity (stored in DB)
+TransactionLifecycleCoordinator.createExpense()
+    │  [validate → normalize → dedupe → insert atomic]
     ↓
-ExpenseRepository (CRUD layer)
+TransactionEvent (event log) + Expense (stored in DB)
+    ↓
+TransactionSideEffectDispatcher.dispatchOnCreated()
+    │  [budget check → anomaly alert → pattern learning]
+    ↓
+ExpenseRepository (read layer)
     ↓
 Use Cases (Domain layer)
     ↓
@@ -822,6 +845,10 @@ Engines (Analytics, Budget, Categorization, etc.)
     ↓
 Dashboard/UI
 ```
+
+**Key change (Phase 3):** All expense creation, update, and delete operations now route through
+`TransactionLifecycleCoordinator` instead of being scattered across multiple repositories and services.
+This ensures consistent validation, deduplication, event logging, and side-effect dispatch.
 
 ### AI Pipeline
 
@@ -847,7 +874,8 @@ Domain Engine (categorization, dedup, etc.)
 ### Database Entity Relationships
 
 **Core Transaction Entities:**
-- `Expense` ← Core transaction
+- `Expense` ← Core transaction (now includes `source` column for origin tracking)
+- `TransactionEvent` ← Immutable lifecycle audit log
 - `PendingReview` ← Needs user review
 - `Category` ← Transaction category
 - `UserCorrection` ← User adjustments
@@ -943,13 +971,13 @@ Engine (integration with other domain logic)
 
 | Metric | Count |
 |--------|-------|
-| **Domain Files** | 244 |
-| **Data Files** | 206 |
+| **Domain Files** | 255 (includes 8 new transaction lifecycle files) |
+| **Data Files** | 208 (includes TransactionEvent entity + TransactionEventDao) |
 | **DI Modules** | 27 |
-| **Total Backend Files** | 477 |
-| **Test Files** | 317 |
-| **Database Entities** | 55 |
-| **DAOs** | 54 |
+| **Total Backend Files** | 490+ |
+| **Test Files** | 317+ |
+| **Database Entities** | 56 (includes TransactionEvent) |
+| **DAOs** | 55 (includes TransactionEventDao) |
 | **Repositories** | 56 |
 | **Use Cases** | ~30 |
 | **Engines** | ~50 |
@@ -969,6 +997,8 @@ Engine (integration with other domain logic)
 8. **Decorator Pattern** - Hybrid AI services wrapping
 9. **Factory Pattern** - ParserRegistry, AppDatabase
 10. **Singleton Pattern** - Repositories, Engines via DI
+11. **Coordinator Pattern (NEW)** - `TransactionLifecycleCoordinator` is the single entry point for all expense CUD, enforcing consistent validation, deduplication, and audit logging
+12. **Event Sourcing Lite (NEW)** - `transaction_events` table records every lifecycle transition as an immutable append-only log
 
 ---
 

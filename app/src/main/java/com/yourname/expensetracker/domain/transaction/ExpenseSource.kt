@@ -1,0 +1,18 @@
+package com.yourname.expensetracker.domain.transaction
+
+enum class ExpenseSource {
+    MANUAL_ENTRY,
+    NOTIFICATION_AUTO_ACCEPT,
+    REVIEW_APPROVAL,
+    RECEIPT_SCAN,
+    RECEIPT_BATCH_REVIEW,
+    BANK_STATEMENT_REVIEW,
+    CSV_IMPORT,
+    EMAIL_RECEIPT,
+    GROUP_EXPENSE,
+    BANK_API_SYNC,
+    RECURRING_GENERATED,
+    DEBUG_TOOL,
+    MIGRATION,
+    UNKNOWN
+}

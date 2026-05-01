@@ -7,6 +7,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RawQuery
 import androidx.room.Transaction
+import androidx.room.Update
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
@@ -89,6 +90,13 @@ interface ExpenseDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(expenses: List<Expense>)
+
+    /**
+     * Update an existing expense row matched by primary key.
+     * All columns are replaced with the values in [expense].
+     */
+    @Update
+    suspend fun update(expense: Expense)
 
     @Query("SELECT changes()")
     suspend fun getChanges(): Int

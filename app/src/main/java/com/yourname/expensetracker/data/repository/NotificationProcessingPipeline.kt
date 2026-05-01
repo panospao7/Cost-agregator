@@ -10,17 +10,19 @@ import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.PendingReview
+import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.ApplicationScope
-import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
-import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
@@ -76,8 +78,6 @@ class NotificationProcessingPipeline @Inject constructor(
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val classifier: TransactionClassifier,
-    private val budgetMonitor: BudgetMonitor,
-    private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
     private val timeProvider: TimeProvider,
     private val directionDetector: TransferDirectionDetector,
     private val analytics: TransferDirectionAnalytics,
@@ -87,6 +87,7 @@ class NotificationProcessingPipeline @Inject constructor(
     private val dashboardFollowThroughEngine: DashboardFollowThroughEngine,
     private val recommendationRepository: RecommendationRepository,
     private val subscriptionDetector: NotificationSubscriptionDetector,
+    private val coordinator: TransactionLifecycleCoordinator,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
     sealed interface ProcessingResult {
@@ -172,6 +173,16 @@ class NotificationProcessingPipeline @Inject constructor(
                     )
                 )
 
+                // ── Oversized-amount fallback ──────────────────────────────────
+                // When a raw notification contains an amount exceeding the
+                // MAX_TRANSACTION_AMOUNT threshold and the parser cannot extract
+                // a structured transaction, we create a PendingReview with a
+                // merchant hint.
+                //
+                // The "Unknown" merchant name here is a UI placeholder — the user
+                // must provide a real merchant before approval.  approveReview()
+                // blocks approval without a user override.  The coordinator also
+                // rejects any creation request carrying this sentinel.
                 if (oversizedCandidate != null) {
                     val oversizedMerchant = oversizedCandidate.merchantHint ?: "Unknown"
                     val oversizedMerchantKey = MerchantKeyGenerator.generate(oversizedMerchant)
@@ -227,6 +238,16 @@ class NotificationProcessingPipeline @Inject constructor(
                         bigText = notification.bigText
                     )
 
+                    // ── Transaction-signal fallback ──────────────────────────────
+                    // When a notification contains a transaction keyword and
+                    // amount but the structured parser still failed (e.g. format
+                    // not recognised), we create a PendingReview with a merchant
+                    // hint.
+                    //
+                    // The "Unknown" merchant name is a UI placeholder — the user
+                    // must provide a real merchant before approval.  Both
+                    // approveReview() and the TransactionLifecycleCoordinator
+                    // block creation of real expenses from this sentinel.
                     if (transactionSignalCandidate != null) {
                         val signalMerchant = transactionSignalCandidate.merchantHint ?: "Unknown"
                         val signalMerchantKey = MerchantKeyGenerator.generate(signalMerchant)
@@ -374,6 +395,27 @@ class NotificationProcessingPipeline @Inject constructor(
         val merchantHint: String?
     )
 
+    /**
+     * Constants and utility methods for the notification processing pipeline.
+     *
+     * ## Fallback / Placeholder Values Policy
+     *
+     * When the pipeline cannot extract a structured transaction from a raw
+     * notification it may create a [PendingReview] with sentinel / placeholder
+     * values instead of a real [Expense]:
+     *
+     * - **Merchant:** `"Unknown"` — used when no merchant hint or parser
+     *   result is available.  This is a **UI placeholder only**; it never
+     *   becomes the merchant value of a real expense row.
+     * - **Amount:** `0.01` — defined in [ReviewQueueRepository] and
+     *   [ReceiptRepository] as `FALLBACK_SUGGESTED_AMOUNT`.  Used when no
+     *   amount could be parsed.  Blocked at approval time.
+     *
+     * Both guard gates (approveReview in ReviewQueueRepository and
+     * TransactionLifecycleCoordinator.createExpense) reject any attempt to
+     * promote these sentinel values into real expenses without explicit user
+     * overrides.
+     */
     internal companion object {
         private const val DEFAULT_RECOMMENDATION_USER_ID = "default_user"
         private const val RECOMMENDATION_JOB_TIMEOUT_MS = 3_000L
@@ -711,21 +753,61 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             locationSource = if (preDb.deviceGps != null) "DEVICE_GPS" else null
         )
 
-        val expenseId = expenseDao.insertAtomic(expense)
-        return if (expenseId > 0) {
-            dao.markRelevance(rawId, true)
-            sourceStatsDao.incrementTotalAndAccepted(notification.packageName, sourceStatsTimestamp)
-            ParsedDbOutcome.AutoAccepted(
-                expenseId = expenseId,
-                insertedExpense = expense
-            )
-        } else {
-            check(hasCanonicalExpenseDuplicate(preDb)) {
-                "Expense insert conflicted without a canonical duplicate for rawId=$rawId"
+        val request = CreateExpenseRequest(
+            merchant = preDb.correctedMerchant,
+            amount = preDb.parsed.amount,
+            currency = preDb.parsed.currency,
+            date = preDb.eventDate,
+            transactionType = preDb.transactionType,
+            source = ExpenseSource.NOTIFICATION_AUTO_ACCEPT,
+            categoryId = preDb.categoryId,
+            paymentMethod = PaymentMethod.CARD,
+            isManualEntry = false,
+            transferDirection = preDb.direction,
+            transferAccountName = preDb.accountName,
+            latitude = preDb.deviceGps?.first,
+            longitude = preDb.deviceGps?.second,
+            locationSource = if (preDb.deviceGps != null) "DEVICE_GPS" else null,
+            rawNotificationId = rawId,
+            skipDeduplication = true
+        )
+
+        return when (val result = coordinator.createExpense(request)) {
+            is CreateExpenseResult.Created -> {
+                val expenseId = result.expenseId
+                dao.markRelevance(rawId, true)
+                sourceStatsDao.incrementTotalAndAccepted(notification.packageName, sourceStatsTimestamp)
+                ParsedDbOutcome.AutoAccepted(
+                    expenseId = expenseId,
+                    insertedExpense = expense
+                )
             }
-            dao.markRelevance(rawId, false)
-            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
-            ParsedDbOutcome.Duplicate
+
+            is CreateExpenseResult.DuplicateSkipped -> {
+                dao.markRelevance(rawId, false)
+                sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+                ParsedDbOutcome.Duplicate
+            }
+
+            is CreateExpenseResult.InsertConflict -> {
+                check(hasCanonicalExpenseDuplicate(preDb)) {
+                    "Expense insert conflicted without a canonical duplicate for rawId=$rawId"
+                }
+                dao.markRelevance(rawId, false)
+                sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+                ParsedDbOutcome.Duplicate
+            }
+
+            is CreateExpenseResult.ValidationFailed -> {
+                Timber.w("Auto-accept validation failed: ${result.errors}")
+                dao.markRelevance(rawId, false)
+                sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+                ParsedDbOutcome.Duplicate
+            }
+
+            is CreateExpenseResult.Error -> {
+                throw result.exception
+            }
         }
     }
 
@@ -817,19 +899,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                     transferId = dbOutcome.expenseId
                 )
 
-                runPostCommitSafely("budget check after notification auto-accept (expenseId=${dbOutcome.expenseId})") {
-                    budgetMonitor.checkBudgets()
-                }
-
                 val enrichedExpense = dbOutcome.insertedExpense.copy(id = dbOutcome.expenseId)
-
-                runPostCommitSafely("anomaly alert check after notification auto-accept (expenseId=${dbOutcome.expenseId})") {
-                    val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
-                        expense = enrichedExpense,
-                        category = preDb.categoryId?.let { database.categoryDao().getById(it) }
-                    )
-                    anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
-                }
 
                 runPostCommitSafely("classifier training after notification auto-accept (${notification.packageName})") {
                     classifier.train(preDb.fullNotificationText, isTransaction = true)

@@ -68,6 +68,9 @@ data class Expense(
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     @ColumnInfo(defaultValue = "0") val createdAt: Long = 0L,
 
+    /** Source of this expense. Nullable for legacy rows; backfilled by migration. */
+    val source: String? = null,
+
     @ColumnInfo(defaultValue = "UNKNOWN") val paymentMethod: PaymentMethod = PaymentMethod.UNKNOWN,
     @ColumnInfo(defaultValue = "0") val isManualEntry: Boolean = false,
     val notes: String? = null,

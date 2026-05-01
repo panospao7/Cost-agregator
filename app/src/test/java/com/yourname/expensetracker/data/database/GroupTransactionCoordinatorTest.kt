@@ -18,6 +18,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.Result
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -66,6 +67,7 @@ class GroupTransactionCoordinatorTest {
     private lateinit var groupExpenseDao: GroupExpenseDao
     private lateinit var expenseDao: ExpenseDao
     private lateinit var coordinator: GroupTransactionCoordinator
+    private lateinit var transactionLifecycleCoordinator: TransactionLifecycleCoordinator
     private val timeProvider = mockk<com.yourname.expensetracker.domain.util.TimeProvider>(relaxed = true)
 
     @Before
@@ -79,7 +81,14 @@ class GroupTransactionCoordinatorTest {
         memberDao = database.groupMemberDao()
         groupExpenseDao = database.groupExpenseDao()
         expenseDao = database.expenseDao()
-        coordinator = GroupTransactionCoordinator(database, groupDao, memberDao, groupExpenseDao, expenseDao, timeProvider, Dispatchers.IO)
+        val transactionEventDao = database.transactionEventDao()
+        transactionLifecycleCoordinator = TransactionLifecycleCoordinator(
+            expenseDao, transactionEventDao, timeProvider
+        )
+        coordinator = GroupTransactionCoordinator(
+            database, groupDao, memberDao, groupExpenseDao, expenseDao,
+            transactionLifecycleCoordinator, Dispatchers.IO
+        )
     }
 
     @After
@@ -157,7 +166,8 @@ class GroupTransactionCoordinatorTest {
         coEvery { mockMemberDao.insertAll(any()) } throws SQLException("Disk full")
 
         val mockCoordinator = GroupTransactionCoordinator(
-            database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, expenseDao, timeProvider, Dispatchers.IO
+            database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, expenseDao,
+            transactionLifecycleCoordinator, Dispatchers.IO
         )
 
         // Act - Should throw exception

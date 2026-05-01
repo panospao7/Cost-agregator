@@ -1,17 +1,18 @@
 package com.yourname.expensetracker.domain.bank
 
 import com.yourname.expensetracker.data.database.entity.BankConnection
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.SyncFrequency
-import com.yourname.expensetracker.data.database.entity.SyncStatus
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.security.BankTokenCipher
+import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.text.SimpleDateFormat
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -52,7 +53,8 @@ data class SyncResult(
 
 @Singleton
 class BankApiIntegration @Inject constructor(
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val coordinator: TransactionLifecycleCoordinator
 ) {
     
     companion object {
@@ -167,13 +169,23 @@ class BankApiIntegration @Inject constructor(
             // Placeholder: Simulate fetching transactions
             val mockTransactions = generateMockTransactions(connection.bankId, since)
             
-            val imported = mutableListOf<Expense>()
+            var importedCount = 0
+            var skippedCount = 0
             val errors = mutableListOf<String>()
             
             for (transaction in mockTransactions) {
                 try {
-                    val expense = mapTransactionToExpense(transaction, connection)
-                    imported.add(expense)
+                    val request = mapTransactionToExpense(transaction, connection)
+                    when (val result = coordinator.createExpense(request)) {
+                        is CreateExpenseResult.Created -> importedCount++
+                        is CreateExpenseResult.DuplicateSkipped -> skippedCount++
+                        is CreateExpenseResult.ValidationFailed ->
+                            errors.add("Validation failed for transaction ${transaction.id}: ${result.errors.joinToString(", ")}")
+                        is CreateExpenseResult.InsertConflict ->
+                            errors.add("Insert conflict for transaction ${transaction.id}: dedupeKey=${result.dedupeKey}")
+                        is CreateExpenseResult.Error ->
+                            errors.add("Failed to import transaction ${transaction.id}: ${result.exception.message}")
+                    }
                 } catch (e: Exception) {
                     errors.add("Failed to import transaction ${transaction.id}: ${e.message}")
                     Timber.e(e, "Failed to import transaction")
@@ -182,8 +194,8 @@ class BankApiIntegration @Inject constructor(
             
             SyncResult(
                 success = errors.isEmpty(),
-                importedCount = imported.size,
-                skippedCount = 0,
+                importedCount = importedCount,
+                skippedCount = skippedCount,
                 errorCount = errors.size,
                 errors = errors
             )
@@ -239,20 +251,23 @@ class BankApiIntegration @Inject constructor(
     }
     
     /**
-     * Map bank transaction to expense entity.
+     * Map bank transaction to a [CreateExpenseRequest], which is then passed
+     * through [TransactionLifecycleCoordinator.createExpense] for full lifecycle
+     * handling (validate → normalize → dedupe → insert atomic → event).
      */
     private fun mapTransactionToExpense(
         transaction: BankTransaction,
         connection: BankConnection
-    ): Expense {
+    ): CreateExpenseRequest {
         val transactionType = transaction.movementType?.toTransactionType() ?: inferTransactionType(transaction)
 
-        return Expense(
+        return CreateExpenseRequest(
+            merchant = transaction.merchant,
             amount = transaction.amount,
             currency = transaction.currency,
-            merchant = transaction.merchant,
-            transactionType = transactionType,
             date = transaction.date,
+            transactionType = transactionType,
+            source = ExpenseSource.BANK_API_SYNC,
             categoryId = connection.defaultCategoryId,
             transferDirection = transaction.transferDirection.takeIf { transactionType == TransactionType.TRANSFER },
             notes = transaction.description + (transaction.reference?.let { " (Ref: $it)" } ?: "")

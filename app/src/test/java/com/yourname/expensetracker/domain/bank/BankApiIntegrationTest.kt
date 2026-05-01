@@ -3,7 +3,11 @@ package com.yourname.expensetracker.domain.bank
 import com.yourname.expensetracker.data.database.entity.BankConnection
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -22,7 +26,10 @@ class BankApiIntegrationTest {
 
     @Before
     fun setUp() {
-        integration = BankApiIntegration(FakeTimeProvider())
+        integration = BankApiIntegration(
+            timeProvider = FakeTimeProvider(),
+            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+        )
         mapMethod = BankApiIntegration::class.java.getDeclaredMethod(
             "mapTransactionToExpense",
             BankTransaction::class.java,
@@ -34,7 +41,7 @@ class BankApiIntegrationTest {
 
     @Test
     fun `mapTransactionToExpense keeps debit as purchase with negative amount`() {
-        val expense = mapTransaction(
+        val request = mapTransaction(
             BankTransaction(
                 id = "debit-1",
                 date = 1_000L,
@@ -46,14 +53,15 @@ class BankApiIntegrationTest {
             )
         )
 
-        assertEquals(TransactionType.PURCHASE, expense.transactionType)
-        assertEquals(-24.5, expense.amount, 0.0)
-        assertNull(expense.transferDirection)
+        assertEquals(TransactionType.PURCHASE, request.transactionType)
+        assertEquals(-24.5, request.amount, 0.0)
+        assertNull(request.transferDirection)
+        assertEquals(ExpenseSource.BANK_API_SYNC, request.source)
     }
 
     @Test
     fun `mapTransactionToExpense keeps credit as deposit with positive amount`() {
-        val expense = mapTransaction(
+        val request = mapTransaction(
             BankTransaction(
                 id = "credit-1",
                 date = 2_000L,
@@ -65,14 +73,15 @@ class BankApiIntegrationTest {
             )
         )
 
-        assertEquals(TransactionType.DEPOSIT, expense.transactionType)
-        assertEquals(1250.0, expense.amount, 0.0)
-        assertNull(expense.transferDirection)
+        assertEquals(TransactionType.DEPOSIT, request.transactionType)
+        assertEquals(1250.0, request.amount, 0.0)
+        assertNull(request.transferDirection)
+        assertEquals(ExpenseSource.BANK_API_SYNC, request.source)
     }
 
     @Test
     fun `mapTransactionToExpense keeps transfer meaning and direction`() {
-        val expense = mapTransaction(
+        val request = mapTransaction(
             BankTransaction(
                 id = "transfer-1",
                 date = 3_000L,
@@ -85,14 +94,15 @@ class BankApiIntegrationTest {
             )
         )
 
-        assertEquals(TransactionType.TRANSFER, expense.transactionType)
-        assertEquals(-80.0, expense.amount, 0.0)
-        assertEquals(TransferDirection.OUTGOING, expense.transferDirection)
+        assertEquals(TransactionType.TRANSFER, request.transactionType)
+        assertEquals(-80.0, request.amount, 0.0)
+        assertEquals(TransferDirection.OUTGOING, request.transferDirection)
+        assertEquals(ExpenseSource.BANK_API_SYNC, request.source)
     }
 
     @Test
     fun `mapTransactionToExpense keeps refund as deposit instead of purchase`() {
-        val expense = mapTransaction(
+        val request = mapTransaction(
             BankTransaction(
                 id = "refund-1",
                 date = 4_000L,
@@ -104,11 +114,12 @@ class BankApiIntegrationTest {
             )
         )
 
-        assertEquals(TransactionType.DEPOSIT, expense.transactionType)
-        assertEquals(19.99, expense.amount, 0.0)
-        assertNull(expense.transferDirection)
+        assertEquals(TransactionType.DEPOSIT, request.transactionType)
+        assertEquals(19.99, request.amount, 0.0)
+        assertNull(request.transferDirection)
+        assertEquals(ExpenseSource.BANK_API_SYNC, request.source)
     }
 
     private fun mapTransaction(transaction: BankTransaction) =
-        mapMethod.invoke(integration, transaction, connection) as com.yourname.expensetracker.data.database.entity.Expense
+        mapMethod.invoke(integration, transaction, connection) as CreateExpenseRequest
 }

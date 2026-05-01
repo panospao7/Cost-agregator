@@ -26,6 +26,7 @@ import com.yourname.expensetracker.data.database.dao.WeeklyTotal
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
@@ -63,7 +64,8 @@ class ExpenseRepository @Inject constructor(
     private val pendingReviewDao: PendingReviewDao,
     private val merchantCategoryRepository: MerchantCategoryRepository,
     private val merchantNormalizer: MerchantNormalizer,
-    private val transferDirectionAnalytics: TransferDirectionAnalytics
+    private val transferDirectionAnalytics: TransferDirectionAnalytics,
+    private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator
 ) {
     data class DebugExpenseSnapshot(
         val expenses: List<Expense>
@@ -329,7 +331,33 @@ class ExpenseRepository @Inject constructor(
     suspend fun getExpenseById(id: Long): Expense? =
         expenseDao.getById(id)
 
-    suspend fun deleteExpense(expense: Expense) = expenseDao.delete(expense)
+    suspend fun deleteExpense(expense: Expense) {
+        transactionLifecycleCoordinator.deleteExpense(expense)
+            .getOrThrow()
+    }
+
+    /**
+     * Delete an expense by ID through the transaction lifecycle coordinator.
+     * This ensures a TransactionEvent (DELETED) is written and the row is
+     * removed atomically.
+     *
+     * @param id The ID of the expense to delete.
+     * @throws IllegalArgumentException if no expense exists with the given ID.
+     */
+    suspend fun deleteExpense(id: Long) {
+        val expense = expenseDao.getById(id)
+            ?: throw IllegalArgumentException("Expense not found: $id")
+        deleteExpense(expense)
+    }
+
+    /**
+     * Update an existing expense through the transaction lifecycle coordinator.
+     * This ensures a TransactionEvent (UPDATED) is written and the row is
+     * persisted atomically.
+     */
+    suspend fun updateExpense(expense: Expense) {
+        transactionLifecycleCoordinator.updateExpense(expense)
+    }
 
     suspend fun updateExpenseCategory(expense: Expense, newCategoryId: Long) {
         categoryUpdateMutex.withLock {

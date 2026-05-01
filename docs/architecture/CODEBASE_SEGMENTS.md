@@ -168,15 +168,31 @@ Owns statistical analysis, anomaly detection, category insights, and merchant in
 
 ## SEGMENT 9: Core Expense Management
 
-Owns the base expense CRUD surface and shared core expense models.
+Owns the base expense CRUD surface, shared core expense models, and the **transaction lifecycle** (Phase 3).
 
 **Representative files**
 - `data/repository/ExpenseRepository.kt`
 - `data/repository/ManualExpenseRepository.kt`
 - `ui/screens/transactions/TransactionsScreen.kt`
 - `ui/screens/addexpense/AddExpenseSheet.kt`
-- `data/database/entity/Expense.kt`
+- `data/database/entity/Expense.kt` (now includes `source` column — ExpenseSource as String)
 - `data/database/dao/ExpenseDao.kt`
+- `data/database/entity/TransactionEvent.kt` — Immutable lifecycle event log (table: `transaction_events`)
+- `data/database/dao/TransactionEventDao.kt` — DAO for lifecycle events
+- `domain/transaction/ExpenseSource.kt` — Enum: MANUAL_ENTRY, NOTIFICATION_AUTO_ACCEPT, CSV_IMPORT, BANK_API_SYNC, etc.
+- `domain/transaction/LifecycleEventType.kt` — Enum: CREATED, UPDATED, DELETED, etc.
+- `domain/transaction/DeduplicationMode.kt` — Enum: STANDARD, STRICT_EXTERNAL_ID, BULK_IMPORT, etc.
+- `domain/transaction/CreateExpenseRequest.kt` — Source-neutral creation request (40+ fields)
+- `domain/transaction/CreateExpenseResult.kt` — Sealed result (Created, DuplicateSkipped, etc.)
+- `domain/transaction/ExpenseUpdates.kt` — Patch-style update model
+- `domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` — **Single entry point for ALL expense CUD**
+- `domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt` — Post-creation side effects
+- `docs/development/DAO_ACCESS_GUARDRAILS.md` — DAO access policy
+- `scripts/guardrails/dao-access-check.kts` — Guardrail enforcement
+
+**Boundary note:** All expense creation paths now route through `TransactionLifecycleCoordinator`. Direct `insertAtomic` calls are forbidden outside grandfathered files listed in `DAO_ACCESS_GUARDRAILS.md`.
+
+**Boundary note:** The `transaction_events` table is owned by this segment. It is an immutable append-only log; no updates or deletes should be performed on it.
 
 ## SEGMENT 10: Dashboard Totals & Widgets
 
@@ -449,7 +465,7 @@ Owns application-layer orchestration use cases.
 Owns reusable helpers shared across segments.
 
 **Representative files**
-- `domain/util/TimeProvider.kt` — Single source of "now" (interface, injected into 50+ classes)
+- `domain/util/TimeProvider.kt` — Single source of "now" (interface, injected into 50+ classes; also used by `TransactionLifecycleCoordinator` and `TransactionSideEffectDispatcher`)
 - `domain/util/SystemTimeProvider.kt` — Production clock implementation
 - `domain/util/AmountUtils.kt`
 - `domain/util/TimePeriodUtils.kt` — Canonical calendar boundary math; 7 new helpers in Phase 2 (parseMonthKeyToRange, getLastNCalendarDaysRange, getLastNCompleteDaysRange, getTrailingElapsedRange, getDayIndexForSparkline, toPeriodRange, daysBetween); `getLastNDaysRange` deprecated

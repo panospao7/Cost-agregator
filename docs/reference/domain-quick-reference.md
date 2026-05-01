@@ -16,6 +16,7 @@
 | **Groups/Sharing** | `groups/GroupTransactionCoordinator.kt` | `AddGroupExpenseUseCase` |
 | **Location** | `location/LocationInsightsEngine.kt` | Dashboard + Analytics |
 | **Savings** | `savings/SmartSavingsEngine.kt` | `LifestyleSavingsPromptUseCase` |
+| **Transaction Lifecycle** | `transaction/lifecycle/TransactionLifecycleCoordinator.kt` | `coordinator.createExpense(request)` |
 
 ### By Problem
 
@@ -23,7 +24,11 @@
 
 | Problem | Solution |
 |---------|----------|
-| ...detect duplicate transactions? | `DetectDuplicateExpenseUseCase` + `CrossSourceDeduplication` |
+| ...create an expense? | `TransactionLifecycleCoordinator.createExpense(request)` — handles validate → normalize → dedupe → insert → event log → side effects |
+| ...update an expense? | `TransactionLifecycleCoordinator.updateExpense(expense)` — writes UPDATED event + persists |
+| ...delete an expense? | `TransactionLifecycleCoordinator.deleteExpense(expenseId)` — writes DELETED event + deletes |
+| ...track expense origin? | `ExpenseSource` enum on each expense + `transaction_events` audit log |
+| ...detect duplicate transactions? | Built into `TransactionLifecycleCoordinator.createExpense()` + `DetectDuplicateExpenseUseCase` |
 | ...get spending insights? | `InsightsEngine.generateInsights()` |
 | ...calculate a budget period? | `BudgetCalculator.calculatePeriodRange()` |
 | ...categorize an expense? | `CategorizeExpenseUseCase` + `CategorizationEngine` |
@@ -68,6 +73,90 @@ Semantic period classification:
 | `THIS_YEAR`, `LAST_YEAR` | `CUSTOM` |
 
 **Rule:** Calendar labels **must** use calendar helpers (`getMonthRange`, `getWeekRange`). Rolling labels **must** use rolling helpers (`getLastNCalendarDaysRange`). Never mix them.
+
+### `ExpenseSource` (`domain/transaction/`)
+
+Enum tracking the origin of every expense:
+
+| Source | Meaning |
+|--------|---------|
+| `MANUAL_ENTRY` | User manually entered via Add Expense form |
+| `NOTIFICATION_AUTO_ACCEPT` | Auto-accepted from a notification |
+| `REVIEW_APPROVAL` | Approved through the review queue |
+| `RECEIPT_SCAN` | Created from a scanned receipt |
+| `RECEIPT_BATCH_REVIEW` | Batch-reviewed from receipt scans |
+| `BANK_STATEMENT_REVIEW` | Created from bank statement parsing |
+| `CSV_IMPORT` | Imported via CSV file |
+| `EMAIL_RECEIPT` | Ingestion from email receipt |
+| `GROUP_EXPENSE` | Shared/group expense |
+| `BANK_API_SYNC` | Synced from bank API connection |
+| `RECURRING_GENERATED` | Auto-generated recurring expense |
+| `DEBUG_TOOL` | Created via debug screen |
+| `MIGRATION` | Backfilled during database migration |
+| `UNKNOWN` | Origin not identified |
+
+### `CreateExpenseRequest` / `CreateExpenseResult` (`domain/transaction/`)
+
+Source-neutral creation request and sealed result for the `TransactionLifecycleCoordinator`:
+
+```kotlin
+// Build a request
+val request = CreateExpenseRequest(
+    merchant = "Starbucks",
+    amount = 5.50,
+    currency = "EUR",
+    date = timeProvider.now(),
+    transactionType = TransactionType.PURCHASE,
+    source = ExpenseSource.MANUAL_ENTRY,
+    categoryId = 42L,
+    notes = "Morning coffee"
+)
+
+// Send through the coordinator
+val result = coordinator.createExpense(request)
+when (result) {
+    is CreateExpenseResult.Created -> { /* expenseId = result.expenseId */ }
+    is CreateExpenseResult.DuplicateSkipped -> { /* existingExpenseId, reason */ }
+    is CreateExpenseResult.ValidationFailed -> { /* errors list */ }
+    is CreateExpenseResult.InsertConflict -> { /* dedupeKey */ }
+    is CreateExpenseResult.Error -> { /* exception */ }
+}
+```
+
+### `TransactionLifecycleCoordinator` (`domain/transaction/lifecycle/`)
+
+**Single entry point for ALL expense creation, update, and delete.** Injected via `@Singleton` into all consumer classes.
+
+```kotlin
+class MyViewModel @Inject constructor(
+    private val coordinator: TransactionLifecycleCoordinator
+) {
+    fun addExpense() {
+        viewModelScope.launch {
+            val request = CreateExpenseRequest(
+                merchant = name,
+                amount = amount,
+                currency = currency,
+                date = date,
+                transactionType = TransactionType.PURCHASE,
+                source = ExpenseSource.MANUAL_ENTRY
+            )
+            when (val result = coordinator.createExpense(request)) {
+                is CreateExpenseResult.Created -> { /* success */ }
+                is CreateExpenseResult.ValidationFailed -> { /* show errors */ }
+                else -> { /* handle other cases */ }
+            }
+        }
+    }
+}
+```
+
+**Lifecycle pipeline:** `validate → normalize → dedupe → insert atomic → event log → side effects`
+
+Side effects (dispatched by `TransactionSideEffectDispatcher`):
+1. Budget check via `BudgetMonitor.checkBudgets()`
+2. Anomaly alert via `AnomalyAlertOrchestrator.checkAndAlert()`
+3. Merchant-category pattern learning via `MerchantCategoryRepository.learnPattern()`
 
 ### `TimeProvider` (`domain/util/`)
 
@@ -211,7 +300,30 @@ expenseRepository.getTotalForPeriod(period.first, period.second)
 
 **When to use:** Enforce start < end, keep paired values together
 
-### Pattern 4: Normalization → Classification
+### Pattern 4: Coordinator Pattern (Transaction Lifecycle)
+
+```kotlin
+// All expense creation routes through a single coordinator
+class MyService @Inject constructor(
+    private val coordinator: TransactionLifecycleCoordinator
+) {
+    suspend fun createFromSource(...): CreateExpenseResult {
+        val request = CreateExpenseRequest(
+            merchant = ...,
+            amount = ...,
+            currency = ...,
+            date = timeProvider.now(),
+            transactionType = TransactionType.PURCHASE,
+            source = ExpenseSource.MY_SOURCE  // each source identifies itself
+        )
+        return coordinator.createExpense(request)
+    }
+}
+```
+
+**When to use:** Any code that creates, updates, or deletes an expense must go through the coordinator. Direct `expenseDao.insertAtomic()` is forbidden outside grandfathered files.
+
+### Pattern 5: Normalization → Classification
 
 ```kotlin
 // CategorizationEngine pipeline:
@@ -312,6 +424,7 @@ Large files (potential refactor candidates):
 3. **Calendar vs. Rolling:** Calendar labels ("This Month") must use calendar helpers (`getMonthRange`). Rolling labels ("Last 30 Days") must use rolling helpers (`getLastNCalendarDaysRange`). Confusing these was the #1 time bug.
 4. **No Direct `now()`:** Never call `System.currentTimeMillis()`, `Instant.now()`, or `LocalDate.now()` in business logic. Inject `TimeProvider` and call `timeProvider.now()`.
 5. **DST-Safe Day Math:** Do NOT use `(end - start) / 86_400_000` for day counts — use `TimePeriodUtils.daysBetween(start, end)`.
+6. **ALWAYS use the Coordinator for writes:** Never call `expenseDao.insertAtomic()`, `expenseDao.update()`, or `expenseDao.delete()` directly outside the grandfathered list in `DAO_ACCESS_GUARDRAILS.md`. Bypassing the coordinator skips validation, deduplication, event logging, and side effects.
 6. **Merchant Normalization:** Must use canonical key (`MerchantKeyGenerator.generate()`) for lookups.
 7. **Category IDs:** Can be null. Treat as "Uncategorized" / "GENERAL".
 8. **Timezone Handling:** All timestamps are UTC milliseconds. No timezone conversion in domain.
@@ -334,6 +447,10 @@ Large files (potential refactor candidates):
 - [ ] No hardcoded strings (use AppConstants or repository config)
 - [ ] Test with mock repositories
 - [ ] Document public methods with KDoc
+- [ ] **If creating an expense:** use `TransactionLifecycleCoordinator.createExpense()`, **not** direct `expenseDao.insertAtomic()`
+- [ ] **If updating/deleting an expense:** use `TransactionLifecycleCoordinator.updateExpense()` / `deleteExpense()`, **not** direct `expenseDao.update()` / `delete()`
+- [ ] **Set `source` on every expense:** always pass the correct `ExpenseSource` enum value in the `CreateExpenseRequest`
+- [ ] **Inject `TimeProvider` for timestamps:** never call `System.currentTimeMillis()`
 
 ---
 

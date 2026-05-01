@@ -11,7 +11,6 @@ import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.di.ApplicationScope
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GenerateTransactionInsightUseCase
-import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.engine.DashboardFollowThroughEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
@@ -19,6 +18,10 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineScope
@@ -32,24 +35,20 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
 
-import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
-
 @Singleton
 class ManualExpenseRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val database: AppDatabase,
     private val expenseDao: com.yourname.expensetracker.data.database.dao.ExpenseDao,
-    private val merchantCategoryRepository: MerchantCategoryRepository,
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val categorizationEngine: CategorizationEngine,
-    private val budgetMonitor: BudgetMonitor,
-    private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
     private val timeProvider: TimeProvider,
     private val aiSettingsRepository: AiSettingsRepository,
     private val generateTransactionInsightUseCase: GenerateTransactionInsightUseCase,
     private val dashboardFollowThroughEngine: DashboardFollowThroughEngine,
     private val recommendationRepository: RecommendationRepository,
+    private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
     /**
@@ -69,7 +68,14 @@ class ManualExpenseRepository @Inject constructor(
     }
 
     /**
-     * Add a manually entered expense
+     * Add a manually entered expense.
+     *
+     * Routes the actual INSERT through [TransactionLifecycleCoordinator] for
+     * consistent validation, deduplication, event logging, and post-creation
+     * side effects (budget monitoring, anomaly alerts, merchant-category pattern
+     * learning).  Source-specific side effects that remain here:
+     *  - Recurring rule creation
+     *  - AI recommendation generation
      */
     suspend fun addManualExpense(
         merchant: String,
@@ -94,6 +100,7 @@ class ManualExpenseRepository @Inject constructor(
         recurrenceFrequency: RecurrenceFrequency? = null,
         recurringNote: String? = null
     ): Result<Long> {
+        // ── Guard validation (kept for early return with localized messages) ──
         if (amount <= 0) {
             return Result.Error(message = context.getString(R.string.debug_error_amount_greater_than_zero))
         }
@@ -101,116 +108,124 @@ class ManualExpenseRepository @Inject constructor(
             return Result.Error(message = context.getString(R.string.debug_error_amount_exceeds_limit))
         }
 
+        // ── Pre-processing (business logic that stays here for now) ──────────
+        // 1. Normalize merchant name
+        val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
+        val normalizedMerchant = lookupResult.canonical.normalizedName
+
+        // 2. Auto-categorize if no category provided
+        val finalCategoryId = categoryId ?: hybridClassifier.classify(
+            merchantName = normalizedMerchant,
+            amount = amount
+        ).categoryId.takeIf { it > 0 }
+
+        // ── Build request for the coordinator ────────────────────────────────
+        val request = CreateExpenseRequest(
+            merchant = normalizedMerchant,
+            amount = amount,
+            currency = currency,
+            date = date,
+            transactionType = transactionType,
+            source = ExpenseSource.MANUAL_ENTRY,
+            categoryId = finalCategoryId,
+            notes = notes,
+            paymentMethod = paymentMethod,
+            isManualEntry = true,
+            transferDirection = transferDirection,
+            transferAccountName = transferAccountName,
+            isNotMine = isNotMine,
+            ownerName = ownerName,
+            isSharedExpense = isSharedExpense,
+            sharedWithName = sharedWithName,
+            mySharePercentage = mySharePercentage,
+            myShareAmount = myShareAmount,
+            latitude = latitude,
+            longitude = longitude,
+            locationSource = locationSource
+        )
+
+        // ── Delegate to coordinator ──────────────────────────────────────────
         var insertedExpenseForHook: Expense? = null
-        var insertedCategoryIdForAnomaly: Long? = null
 
         val result = database.withTransaction {
-            // 1. Normalize merchant name
-            val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
-            val normalizedMerchant = lookupResult.canonical.normalizedName
+            when (val coordinatorResult = transactionLifecycleCoordinator.createExpense(request)) {
+                is CreateExpenseResult.Created -> {
+                    val id = coordinatorResult.expenseId
 
-            // 2. Auto-categorize if no category provided
-            val finalCategoryId = categoryId ?: hybridClassifier.classify(
-                merchantName = normalizedMerchant,
-                amount = amount
-            ).categoryId.takeIf { it > 0 }
+                    // Build a synthetic Expense for downstream hooks (anomaly, recommendations)
+                    insertedExpenseForHook = Expense(
+                        id = id,
+                        amount = amount,
+                        currency = currency,
+                        merchant = normalizedMerchant,
+                        merchantKey = MerchantKeyGenerator.generate(normalizedMerchant),
+                        transactionType = transactionType,
+                        date = date,
+                        rawNotificationId = null,
+                        categoryId = finalCategoryId,
+                        createdAt = timeProvider.now(),
+                        paymentMethod = paymentMethod,
+                        isManualEntry = true,
+                        notes = notes,
+                        dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                            amount, normalizedMerchant, date, currency, transactionType
+                        ),
+                        transferDirection = transferDirection,
+                        transferAccountName = transferAccountName,
+                        isNotMine = isNotMine,
+                        ownerName = ownerName,
+                        isSharedExpense = isSharedExpense,
+                        sharedWithName = sharedWithName,
+                        mySharePercentage = mySharePercentage,
+                        myShareAmount = myShareAmount,
+                        latitude = latitude,
+                        longitude = longitude,
+                        locationSource = locationSource
+                    ).normalizeOwnership()
 
-            // 3. Atomic insert with dedupe key
-            val expense = Expense(
-                amount = amount,
-                currency = currency,
-                merchant = normalizedMerchant,
-                merchantKey = MerchantKeyGenerator.generate(normalizedMerchant),
-                transactionType = transactionType,
-                date = date,
-                rawNotificationId = null,
-                categoryId = finalCategoryId,
-                createdAt = timeProvider.now(),
-                paymentMethod = paymentMethod,
-                isManualEntry = true,
-                notes = notes,
-                // Use type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows never
-                // collide on the persisted unique dedupeKey index (ISSUE-8 fix).
-                dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                    amount, normalizedMerchant, date, currency, transactionType
-                ),
-                transferDirection = transferDirection,
-                transferAccountName = transferAccountName,
-                isNotMine = isNotMine,
-                ownerName = ownerName,
-                isSharedExpense = isSharedExpense,
-                sharedWithName = sharedWithName,
-                mySharePercentage = mySharePercentage,
-                myShareAmount = myShareAmount,
-                latitude = latitude,
-                longitude = longitude,
-                locationSource = locationSource
-            ).normalizeOwnership()
+                    // ── Source-specific side effects ──
 
-            // Pre-insert canonical duplicate check: uses currency + transaction-type
-            // aware policy so that (a) PURCHASE vs DEPOSIT/TRANSFER are never conflated,
-            // and (b) legacy rows with the old 3-part dedupe key are still caught by the
-            // merchant/amount/date/currency/type window query (not just by key collision).
-            // insertAtomic() below is kept only as a final race-condition guard.
-            val isDuplicate = expenseDao.isDuplicateCurrencyAware(
-                amount = expense.amount,
-                merchant = expense.merchant,
-                date = expense.date,
-                currency = expense.currency,
-                transactionType = expense.transactionType.name,
-                merchantKey = expense.merchantKey,
-                dedupeKey = expense.dedupeKey
-            )
-            if (isDuplicate) {
-                return@withTransaction Result.Duplicate
-            }
+                    // Recurring rule creation
+                    if (recurrenceFrequency != null) {
+                        val recurringExpense = RecurringExpenseRepository.createRecurringExpenseEntity(
+                            merchant = merchant,
+                            amount = amount,
+                            frequency = recurrenceFrequency,
+                            lastDate = date,
+                            currency = currency,
+                            note = recurringNote
+                        )
+                        val recurringId = database.recurringExpenseDao().insert(recurringExpense)
+                        if (recurringId <= 0) {
+                            throw IllegalStateException("Failed to create recurring expense rule")
+                        }
+                    }
 
-            // insertAtomic() is IGNORE-on-conflict — kept as a last-line race guard
-            // in case a concurrent transaction commits the same expense between the
-            // check above and this insert.
-            val id = expenseDao.insertAtomic(expense)
+                    Result.Success(id)
+                }
 
-            if (id <= 0) {
-                return@withTransaction Result.Duplicate
-            }
+                is CreateExpenseResult.DuplicateSkipped,
+                is CreateExpenseResult.InsertConflict -> {
+                    return@withTransaction Result.Duplicate
+                }
 
-            insertedExpenseForHook = expense.copy(id = id)
-            insertedCategoryIdForAnomaly = finalCategoryId
+                is CreateExpenseResult.ValidationFailed -> {
+                    return@withTransaction Result.Error(
+                        message = coordinatorResult.errors.joinToString("; ")
+                    )
+                }
 
-            if (recurrenceFrequency != null) {
-                val recurringExpense = RecurringExpenseRepository.createRecurringExpenseEntity(
-                    merchant = merchant,
-                    amount = amount,
-                    frequency = recurrenceFrequency,
-                    lastDate = date,
-                    currency = currency,
-                    note = recurringNote
-                )
-
-                val recurringId = database.recurringExpenseDao().insert(recurringExpense)
-                if (recurringId <= 0) {
-                    throw IllegalStateException("Failed to create recurring expense rule")
+                is CreateExpenseResult.Error -> {
+                    return@withTransaction Result.Error(
+                        message = coordinatorResult.exception.message
+                            ?: "Failed to create expense"
+                    )
                 }
             }
-
-            // 4. Check budgets
-            budgetMonitor.checkBudgets()
-
-            // 5. Learn the merchant→category mapping
-            finalCategoryId?.let { merchantCategoryRepository.learnPattern(normalizedMerchant, it) }
-
-            Result.Success(id)
         }
 
+        // ── Source-specific post-transaction side effects ─────────────────────
         if (result is Result.Success) {
-            insertedExpenseForHook?.let { insertedExpense ->
-                val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
-                    expense = insertedExpense,
-                    category = insertedCategoryIdForAnomaly?.let { database.categoryDao().getById(it) }
-                )
-                anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
-            }
-
             // Non-blocking recommendation generation (fire-and-forget)
             asyncScope.launch {
                 recommendationSemaphore.withPermit {

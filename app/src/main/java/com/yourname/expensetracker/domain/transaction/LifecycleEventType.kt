@@ -1,0 +1,15 @@
+package com.yourname.expensetracker.domain.transaction
+
+enum class LifecycleEventType {
+    CREATE_ATTEMPTED,
+    CREATED,
+    CREATE_VALIDATION_FAILED,
+    CREATE_DUPLICATE_SKIPPED,
+    CREATE_INSERT_CONFLICT,
+    UPDATED,
+    BULK_UPDATED,
+    DELETED,
+    RESTORED_FROM_DEBUG_SNAPSHOT,
+    SOURCE_LINKED,
+    SIDE_EFFECT_FAILED
+}

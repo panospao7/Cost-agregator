@@ -13,6 +13,8 @@ import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifie
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -40,6 +42,7 @@ class ReviewQueueRepositoryTest {
     private val parserRegistry = mockk<AppParserRegistry>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val confidenceRouter = mockk<ConfidenceRouter>(relaxed = true)
+    private val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
     private lateinit var repository: ReviewQueueRepository
 
     @Before
@@ -68,7 +71,8 @@ class ReviewQueueRepositoryTest {
             anomalyAlertOrchestrator = anomalyAlertOrchestrator,
             parserRegistry = parserRegistry,
             timeProvider = timeProvider,
-            confidenceRouter = confidenceRouter
+            confidenceRouter = confidenceRouter,
+            transactionLifecycleCoordinator = transactionLifecycleCoordinator
         )
     }
 

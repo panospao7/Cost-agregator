@@ -22,7 +22,10 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
 
-import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
+import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 
 @Singleton
 class ReviewQueueRepository @Inject constructor(
@@ -33,23 +36,34 @@ class ReviewQueueRepository @Inject constructor(
     private val sourceStatsDao: SourceStatsDao,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val userCorrectionDao: UserCorrectionDao,
-    private val merchantCategoryRepository: MerchantCategoryRepository,
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val classifier: TransactionClassifier,
     private val budgetMonitor: BudgetMonitor,
-    private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
     private val parserRegistry: AppParserRegistry,
     private val timeProvider: TimeProvider,
-    private val confidenceRouter: ConfidenceRouter
+    private val confidenceRouter: ConfidenceRouter,
+    private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator
 ) {
     private companion object {
         private const val ERROR_REVIEW_NOT_FOUND = "REVIEW_NOT_FOUND"
         private const val ERROR_AMOUNT_EXCEEDS_LIMIT = "AMOUNT_EXCEEDS_LIMIT"
         private const val ERROR_REVIEW_ALREADY_PROCESSED = "REVIEW_ALREADY_PROCESSED"
 
-        // Minimum positive sentinel for suggestedAmount when the parser cannot
-        // extract a total.  Must satisfy the v76 CHECK(suggestedAmount > 0) invariant.
+        /**
+         * Minimum positive sentinel for [PendingReview.suggestedAmount] when the
+         * parser cannot extract a total.
+         *
+         * **UI-PLACEHOLDER ONLY — never becomes a real expense amount.**
+         *
+         * Must satisfy the v76 CHECK(suggestedAmount > 0) invariant.
+         *
+         * The [approveReview] function explicitly blocks approval when
+         * `suggestedAmount == FALLBACK_SUGGESTED_AMOUNT` and the user has not
+         * provided a [finalAmount] override.  The
+         * [TransactionLifecycleCoordinator] also rejects creation requests
+         * carrying this sentinel value.
+         */
         private const val FALLBACK_SUGGESTED_AMOUNT = 0.01
     }
 
@@ -98,14 +112,28 @@ class ReviewQueueRepository @Inject constructor(
 
     val amount: Double = finalAmount ?: review.suggestedAmount
     val merchant: String = finalMerchant ?: review.suggestedMerchant
+
+    // ── Fake value blocking (PR 11 policy) ──────────────────────────────
+    // Block approval when the parser fell back to a synthetic amount (0.01)
+    // and the user has not yet provided a real override.
+    // These sentinel values are UI placeholders only — they must never become
+    // real expense rows.  The coordinator also rejects any creation request
+    // that carries these values.
+    if (review.suggestedAmount == FALLBACK_SUGGESTED_AMOUNT && finalAmount == null) {
+        return Result.Error(message = "Cannot approve review with synthetic fallback amount. Please edit the amount first.")
+    }
+    if (review.suggestedMerchant == "Unknown" && finalMerchant == null) {
+        return Result.Error(message = "Cannot approve review with unknown merchant. Please edit the merchant first.")
+    }
+
     // Normalize the merchant for key generation so that manually approved
     // reviews use the same canonical form as auto-accepted expenses.
     val normalizedMerchantForKeys: String = merchantNormalizer.normalize(merchant).canonical.normalizedName
     val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
 
-        if (amount > 1000000.0) {
-            return Result.Error(message = ERROR_AMOUNT_EXCEEDS_LIMIT)
-        }
+    if (amount > 1000000.0) {
+        return Result.Error(message = ERROR_AMOUNT_EXCEEDS_LIMIT)
+    }
 
         val type: TransactionType = finalType ?: try {
             TransactionType.valueOf(review.suggestedType)
@@ -166,6 +194,7 @@ class ReviewQueueRepository @Inject constructor(
 
         val txAlreadyProcessed = -2L
         val txDuplicate = -1L
+        var validationError: String? = null
 
         val txnResult = database.withTransaction {
             val rowsUpdated = pendingReviewDao.transitionStatus(
@@ -181,7 +210,8 @@ class ReviewQueueRepository @Inject constructor(
             // policy so that (a) PURCHASE vs DEPOSIT/TRANSFER are never conflated, and
             // (b) legacy rows with the old 3-part dedupe key are still caught by the
             // merchant/amount/date/currency/type window query (not just by key collision).
-            // insertAtomic() below is kept only as a final race-condition guard.
+            // The coordinator below is the primary creation path; this pre-check is an
+            // early exit that avoids unnecessary coordinator calls.
             val isDuplicate = hasCanonicalApprovalDuplicate(expense)
             if (isDuplicate) {
                 sourceStatsDao.incrementDuplicate(review.packageName)
@@ -190,47 +220,88 @@ class ReviewQueueRepository @Inject constructor(
                 return@withTransaction txDuplicate
             }
 
-            // insertAtomic() is IGNORE-on-conflict — kept as a last-line race guard
-            // in case a concurrent transaction commits the same expense between the
-            // check above and this insert.
-            val id = expenseDao.insertAtomic(expense)
-            if (id > 0) {
-                review.rawNotificationId?.let { rawNotificationDao.markRelevance(it, true) }
-                sourceStatsDao.incrementAccepted(review.packageName)
-                sourceStatsDao.decrementPending(review.packageName)
-                review.scannedReceiptId?.let { receiptId -> scannedReceiptDao.linkToExpense(receiptId, id) }
-                pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED)
+            // ── Delegate to TransactionLifecycleCoordinator ─────────────────────────
+            // The coordinator handles key generation, dedup check (with
+            // skipDeduplication=true because we already checked above),
+            // atomic insert, and lifecycle event logging.
+            val request = CreateExpenseRequest(
+                merchant = expense.merchant,
+                amount = expense.amount,
+                currency = expense.currency,
+                date = expense.date,
+                transactionType = expense.transactionType,
+                source = ExpenseSource.REVIEW_APPROVAL,
+                categoryId = expense.categoryId,
+                notes = expense.notes,
+                paymentMethod = expense.paymentMethod,
+                isManualEntry = expense.isManualEntry,
+                transferDirection = expense.transferDirection,
+                transferAccountName = expense.transferAccountName,
+                latitude = expense.latitude,
+                longitude = expense.longitude,
+                locationSource = expense.locationSource,
+                placeId = expense.placeId,
+                resolvedAddress = expense.resolvedAddress,
+                rawNotificationId = expense.rawNotificationId,
+                pendingReviewId = reviewId,
+                scannedReceiptId = review.scannedReceiptId,
+                skipDeduplication = true
+            )
 
-                val correction = UserCorrection(
-                    packageName = review.packageName,
-                    originalMerchant = review.suggestedMerchant,
-                    correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
-                        finalMerchant else null,
-                    originalAmount = review.suggestedAmount,
-                    correctedAmount = if (finalAmount != null && finalAmount != review.suggestedAmount)
-                        finalAmount else null,
-                    originalCategoryId = review.suggestedCategoryId,
-                    correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
-                        finalCategoryId else null,
-                    originalType = review.suggestedType,
-                    correctedType = if (finalType != null && finalType.name != review.suggestedType)
-                        finalType.name else null,
-                    wasRejected = false,
-                    wasApproved = true,
-                    notificationTitle = review.notificationTitle,
-                    notificationText = review.notificationText
-                )
-                userCorrectionDao.insert(correction)
-                id
-            } else {
-                check(hasCanonicalApprovalDuplicate(expense)) {
-                    "Expense insert conflicted without a canonical duplicate for reviewId=$reviewId"
+            when (val result = transactionLifecycleCoordinator.createExpense(request)) {
+                is CreateExpenseResult.Created -> {
+                    val id = result.expenseId
+                    review.rawNotificationId?.let { rawNotificationDao.markRelevance(it, true) }
+                    sourceStatsDao.incrementAccepted(review.packageName)
+                    sourceStatsDao.decrementPending(review.packageName)
+                    review.scannedReceiptId?.let { receiptId -> scannedReceiptDao.linkToExpense(receiptId, id) }
+                    pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED)
+
+                    val correction = UserCorrection(
+                        packageName = review.packageName,
+                        originalMerchant = review.suggestedMerchant,
+                        correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
+                            finalMerchant else null,
+                        originalAmount = review.suggestedAmount,
+                        correctedAmount = if (finalAmount != null && finalAmount != review.suggestedAmount)
+                            finalAmount else null,
+                        originalCategoryId = review.suggestedCategoryId,
+                        correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
+                            finalCategoryId else null,
+                        originalType = review.suggestedType,
+                        correctedType = if (finalType != null && finalType.name != review.suggestedType)
+                            finalType.name else null,
+                        wasRejected = false,
+                        wasApproved = true,
+                        notificationTitle = review.notificationTitle,
+                        notificationText = review.notificationText
+                    )
+                    userCorrectionDao.insert(correction)
+                    id
                 }
-                sourceStatsDao.incrementDuplicate(review.packageName)
-                sourceStatsDao.decrementPending(review.packageName)
-                pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE)
-                txDuplicate
+                is CreateExpenseResult.DuplicateSkipped -> {
+                    sourceStatsDao.incrementDuplicate(review.packageName)
+                    sourceStatsDao.decrementPending(review.packageName)
+                    pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE)
+                    txDuplicate
+                }
+                is CreateExpenseResult.InsertConflict -> {
+                    sourceStatsDao.incrementDuplicate(review.packageName)
+                    sourceStatsDao.decrementPending(review.packageName)
+                    pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE)
+                    txDuplicate
+                }
+                is CreateExpenseResult.ValidationFailed -> {
+                    validationError = result.errors.joinToString(", ")
+                    txAlreadyProcessed
+                }
+                is CreateExpenseResult.Error -> throw result.exception
             }
+        }
+
+        // If the coordinator returned validation errors, surface them.
+        if (validationError != null) {
+            return Result.Error(message = validationError!!)
         }
 
         if (txnResult == txAlreadyProcessed) {
@@ -256,37 +327,11 @@ class ReviewQueueRepository @Inject constructor(
             return Result.Duplicate
         }
 
-        // External operations outside DB transaction (best-effort)
-        runPostCommitSafely(
-            action = "budget check after review approval (reviewId=$reviewId, expenseId=$txnResult)"
-        ) {
-            budgetMonitor.checkBudgets()
-        }
-
-        // Check for anomalies and alert (best-effort)
-        runPostCommitSafely(
-            action = "anomaly alert check after review approval (reviewId=$reviewId, expenseId=$txnResult)"
-        ) {
-            val enrichedExpense = expense.copy(id = txnResult)
-            val expenseWithCategory = com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
-                expense = enrichedExpense,
-                category = categoryId?.let { database.categoryDao().getById(it) }
-            )
-            anomalyAlertOrchestrator.checkAndAlert(expenseWithCategory)
-        }
-
+        // ── Source-specific post-commit side effects ─────────────────────────
         runPostCommitSafely(
             action = "classifier retraining after review approval (reviewId=$reviewId)"
         ) {
             classifier.retrainFromCorrections()
-        }
-
-        if (categoryId != null) {
-            runPostCommitSafely(
-                action = "merchant-category pattern learning after review approval (reviewId=$reviewId, merchant=$merchant, categoryId=$categoryId)"
-            ) {
-                merchantCategoryRepository.learnPattern(merchant, categoryId)
-            }
         }
 
         if (finalMerchant != null && finalMerchant != review.suggestedMerchant) {
@@ -434,6 +479,13 @@ class ReviewQueueRepository @Inject constructor(
             )
         }
 
+        // ── Placeholder PendingReview (UI-only, never becomes a real expense) ──
+        // When the parser succeeded partially but no structured Expense could be
+        // built (e.g. merchant/amount missing), we create a review with sentinel
+        // values.  These are placeholders that must be edited by the user before
+        // approval — approveReview() blocks approval unless overrides are given.
+        // The coordinator also rejects any create request that carries these
+        // sentinel values.
         val pendingReview = if (isRelevant && parsed == null) {
             PendingReview(
                 rawNotificationId = id,
@@ -479,8 +531,22 @@ class ReviewQueueRepository @Inject constructor(
 
             when {
                 expense != null -> {
-                    val expenseId = expenseDao.insertAtomic(expense)
-                    if (expenseId > 0) {
+                    val request = CreateExpenseRequest(
+                        merchant = expense.merchant,
+                        amount = expense.amount,
+                        currency = expense.currency,
+                        date = expense.date,
+                        transactionType = expense.transactionType,
+                        source = ExpenseSource.NOTIFICATION_AUTO_ACCEPT,
+                        categoryId = expense.categoryId,
+                        rawNotificationId = expense.rawNotificationId,
+                        paymentMethod = expense.paymentMethod,
+                        notes = expense.notes,
+                        isManualEntry = false
+                    )
+                    val result = transactionLifecycleCoordinator.createExpense(request)
+                    if (result is CreateExpenseResult.Created) {
+                        val expenseId = result.expenseId
                         sourceStatsDao.incrementAccepted(notification.packageName)
                         userCorrectionDao.insert(correction)
                         MarkAsRelevantOutcome(

@@ -5,7 +5,6 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
-import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
@@ -16,12 +15,14 @@ import com.yourname.expensetracker.data.email.provider.ParsedEmailReceipt
 import com.yourname.expensetracker.data.email.provider.UberReceiptParser
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
-import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.ReceiptSource
+import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.usecase.receipt.ProcessReceiptUseCase
 import com.yourname.expensetracker.domain.usecase.receipt.ProcessedReceipt
-import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -60,6 +61,7 @@ class EmailReceiptIngestionService(
     private val merchantNormalizer: MerchantNormalizer,
     private val categorizationEngine: CategorizationEngine,
     private val timeProvider: TimeProvider,
+    private val coordinator: TransactionLifecycleCoordinator,
     private val transactionRunner: suspend (suspend () -> EmailReceiptResult) -> EmailReceiptResult
 ) {
     @Inject
@@ -72,6 +74,7 @@ class EmailReceiptIngestionService(
         merchantNormalizer: MerchantNormalizer,
         categorizationEngine: CategorizationEngine,
         timeProvider: TimeProvider,
+        coordinator: TransactionLifecycleCoordinator,
         database: AppDatabase
     ) : this(
         receiptParser = receiptParser,
@@ -82,6 +85,7 @@ class EmailReceiptIngestionService(
         merchantNormalizer = merchantNormalizer,
         categorizationEngine = categorizationEngine,
         timeProvider = timeProvider,
+        coordinator = coordinator,
         transactionRunner = { block -> database.withTransaction { block() } }
     )
 
@@ -93,7 +97,8 @@ class EmailReceiptIngestionService(
         scannedReceiptDao: ScannedReceiptDao,
         merchantNormalizer: MerchantNormalizer,
         categorizationEngine: CategorizationEngine,
-        timeProvider: TimeProvider
+        timeProvider: TimeProvider,
+        coordinator: TransactionLifecycleCoordinator
     ) : this(
         receiptParser = receiptParser,
         processReceiptUseCase = processReceiptUseCase,
@@ -103,6 +108,7 @@ class EmailReceiptIngestionService(
         merchantNormalizer = merchantNormalizer,
         categorizationEngine = categorizationEngine,
         timeProvider = timeProvider,
+        coordinator = coordinator,
         transactionRunner = { block -> block() }
     )
 
@@ -366,33 +372,27 @@ class EmailReceiptIngestionService(
         processedReceipt: ProcessedReceipt,
         receipt: ParsedEmailReceipt
     ): List<Long> {
-        val expense = Expense(
+        // Route through the transaction lifecycle coordinator so that
+        // a CREATED event is written and deduplication is handled consistently.
+        val request = CreateExpenseRequest(
+            merchant = processedReceipt.merchant,
             amount = processedReceipt.amount,
             currency = receipt.currency,
-            merchant = processedReceipt.merchant,
-            merchantKey = MerchantKeyGenerator.generate(processedReceipt.merchant),
-            transactionType = TransactionType.PURCHASE,
             date = processedReceipt.date ?: receipt.date,
+            transactionType = TransactionType.PURCHASE,
+            source = ExpenseSource.EMAIL_RECEIPT,
             categoryId = processedReceipt.categoryId,
-            createdAt = timeProvider.now(),
             notes = receipt.items
                 .takeIf { it.isNotEmpty() }
-                ?.joinToString(prefix = "Email receipt: ", separator = ", ") { it.description },
-            // Use type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows never
-            // collide on the persisted unique dedupeKey index (ISSUE-8 fix).
-            dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                processedReceipt.amount,
-                processedReceipt.merchant,
-                processedReceipt.date ?: receipt.date,
-                receipt.currency,
-                TransactionType.PURCHASE
-            )
+                ?.joinToString(prefix = "Email receipt: ", separator = ", ") { it.description }
         )
 
-        val expenseId = expenseDao.insertAtomic(expense)
-        if (expenseId <= 0) {
-            Timber.w("Failed to insert expense for email receipt: $receiptId")
-            throw EmailReceiptExpenseCreationException("Failed to insert expense for email receipt: $receiptId")
+        val expenseId = when (val result = coordinator.createExpense(request)) {
+            is CreateExpenseResult.Created -> result.expenseId
+            else -> {
+                Timber.w("Failed to create expense for email receipt: $receiptId, result=$result")
+                throw EmailReceiptExpenseCreationException("Failed to create expense for email receipt: $receiptId")
+            }
         }
 
         val existingReceipt = scannedReceiptDao.getById(receiptId)
