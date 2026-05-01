@@ -7,11 +7,19 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import com.yourname.expensetracker.data.database.APP_DATABASE_SCHEMA_VERSION
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.privacy.BackupEncryptionService
+import com.yourname.expensetracker.data.privacy.ExportAnonymizer
+import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.backup.DatabaseImportSummary
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -35,6 +43,11 @@ class DatabaseBackupRepositoryImplTest {
     private val database = mockk<AppDatabase>(relaxed = true)
     private val openHelper = mockk<SupportSQLiteOpenHelper>(relaxed = true)
     private val supportDb = mockk<SupportSQLiteDatabase>(relaxed = true)
+    private val privacyGate = mockk<PrivacyGate>(relaxed = true)
+    private val privacySettingsRepository = mockk<PrivacySettingsRepository>(relaxed = true)
+    private val backupEncryptionService = mockk<BackupEncryptionService>(relaxed = true)
+    private val exportAnonymizer = mockk<ExportAnonymizer>(relaxed = true)
+    private val secureKeyStorage = mockk<SecureKeyStorage>(relaxed = true)
 
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var repository: DatabaseBackupRepositoryImpl
@@ -53,6 +66,11 @@ class DatabaseBackupRepositoryImplTest {
         every { database.openHelper } returns openHelper
         every { openHelper.writableDatabase } returns supportDb
         every { supportDb.query("PRAGMA wal_checkpoint(FULL)") } answers { checkpointCursor(busyCode = 0) }
+
+        // Privacy gate defaults — allow everything by default
+        every { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
+        every { privacySettingsRepository.getSettings() } returns PrivacySettings()
+        every { privacySettingsRepository.observeSettings() } returns kotlinx.coroutines.flow.flowOf(PrivacySettings())
 
         repository = createRepository(
             stagedVerifier = { _, _, _, _, summary -> summary },
@@ -502,6 +520,11 @@ class DatabaseBackupRepositoryImplTest {
             context = context,
             database = database,
             ioDispatcher = testDispatcher,
+            privacyGate = privacyGate,
+            privacySettingsRepository = privacySettingsRepository,
+            backupEncryptionService = backupEncryptionService,
+            exportAnonymizer = exportAnonymizer,
+            secureKeyStorage = secureKeyStorage,
             stagedImportVerifier = stagedVerifier,
             liveImportVerifier = liveVerifier
         )

@@ -4,18 +4,26 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.os.Environment
+import com.yourname.expensetracker.data.privacy.BackupEncryptionService
+import com.yourname.expensetracker.data.privacy.ExportAnonymizer
 import com.yourname.expensetracker.data.database.APP_DATABASE_SCHEMA_VERSION
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportSummary
 import com.yourname.expensetracker.domain.backup.DatabaseStats
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
+import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.util.*
 import javax.inject.Inject
@@ -41,7 +49,12 @@ import javax.inject.Singleton
 class DatabaseBackupRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
     private val database: AppDatabase,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
+    private val privacyGate: PrivacyGate,
+    private val privacySettingsRepository: PrivacySettingsRepository,
+    private val backupEncryptionService: BackupEncryptionService,
+    private val exportAnonymizer: ExportAnonymizer,
+    private val secureKeyStorage: SecureKeyStorage
 ) : DatabaseBackupRepository {
 
     private var stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary =
@@ -54,9 +67,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         context: Context,
         database: AppDatabase,
         ioDispatcher: CoroutineDispatcher,
+        privacyGate: PrivacyGate,
+        privacySettingsRepository: PrivacySettingsRepository,
+        backupEncryptionService: BackupEncryptionService,
+        exportAnonymizer: ExportAnonymizer,
+        secureKeyStorage: SecureKeyStorage,
         stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary,
         liveImportVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary
-    ) : this(context, database, ioDispatcher) {
+    ) : this(context, database, ioDispatcher, privacyGate, privacySettingsRepository, backupEncryptionService, exportAnonymizer, secureKeyStorage) {
         this.stagedImportVerifier = stagedImportVerifier
         this.liveImportVerifier = liveImportVerifier
     }
@@ -69,6 +87,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         private const val BUDGETS_SCHEMA_GUARD_VERSION = 86
         private const val IMPORT_STAGING_PREFIX = "expense_tracker_db_import_stage_"
         private const val CURRENT_SUPPORTED_SCHEMA_VERSION = APP_DATABASE_SCHEMA_VERSION
+        private const val BACKUP_ENCRYPTION_KEY_NAME = "backup_encryption_password"
+        private const val BACKUP_ENCRYPTION_KEY_BYTES = 32 // 256 bits
 
         @JvmStatic
         suspend fun verifyStagedImportWithRoom(
@@ -247,31 +267,92 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             if (!dbFile.exists()) {
                 return@withContext Result.failure(Exception("Database file not found"))
             }
-            
+
+            // --- Privacy gate checks ---
+            // 1. Check whether encrypted backup is enabled via settings
+            val settings = privacySettingsRepository.getSettings()
+            val encryptionEnabled = settings.encryptedBackupEnabled
+
+            if (encryptionEnabled) {
+                // Gate: ENCRYPTED_BACKUP must be allowed
+                val encryptedDecision = privacyGate.check(
+                    PrivacyCapability.ENCRYPTED_BACKUP,
+                    mapOf("operation" to "export")
+                )
+                if (encryptedDecision is PrivacyDecision.Denied) {
+                    return@withContext Result.failure(
+                        Exception("Encrypted backup denied by privacy gate: ${encryptedDecision.reason}")
+                    )
+                }
+            } else {
+                // Gate: RAWBACKUP_EXPORT must be allowed
+                val rawDecision = privacyGate.check(
+                    PrivacyCapability.RAWBACKUP_EXPORT,
+                    mapOf("operation" to "export")
+                )
+                if (rawDecision is PrivacyDecision.Denied) {
+                    return@withContext Result.failure(
+                        Exception("Plaintext backup denied by privacy gate: ${rawDecision.reason}")
+                    )
+                }
+            }
+
             val checkpointResult = checkpointWal()
             if (checkpointResult.isFailure) {
                 return@withContext Result.failure(
                     checkpointResult.exceptionOrNull() ?: Exception("Failed to checkpoint WAL")
                 )
             }
-            
+
             // Create timestamped filename
             val timestamp = SimpleDateFormat(DATE_FORMAT, Locale.getDefault()).format(Date())
             val backupFileName = "${BACKUP_PREFIX}${timestamp}.db"
-            
+            val encryptedFileName = "${BACKUP_PREFIX}${timestamp}.enc"
+
             // Save to app-private storage by default
             val exportDir = File(context.filesDir, EXPORT_SUBDIR).apply { mkdirs() }
-            val backupFile = File(exportDir, backupFileName)
-            
-            // Copy database file (now self-contained after checkpoint)
-            dbFile.inputStream().use { input ->
-                backupFile.outputStream().use { output ->
-                    input.copyTo(output)
+
+            if (encryptionEnabled) {
+                // --- Encrypted export flow ---
+                // 1. Copy DB to a temp file
+                val tempCopy = File(exportDir, "temp_export_${timestamp}.db")
+                try {
+                    dbFile.inputStream().use { input ->
+                        tempCopy.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+
+                    // 2. Sanitize the temp copy (strip raw OCR / notification content)
+                    exportAnonymizer.sanitizeExport(tempCopy)
+
+                    // 3. Read sanitized bytes and encrypt
+                    val plainBytes = tempCopy.readBytes()
+                    val backupPassword = getOrCreateBackupPassword()
+                    val encryptedBytes = backupEncryptionService.encrypt(plainBytes, backupPassword)
+
+                    // 4. Write encrypted output
+                    val backupFile = File(exportDir, encryptedFileName)
+                    backupFile.writeBytes(encryptedBytes)
+
+                    Timber.d("Database encrypted and exported successfully to: ${backupFile.absolutePath}")
+                    Result.success(backupFile)
+                } finally {
+                    tempCopy.delete()
                 }
+            } else {
+                // --- Plaintext export flow (existing behaviour) ---
+                val backupFile = File(exportDir, backupFileName)
+
+                dbFile.inputStream().use { input ->
+                    backupFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                Timber.d("Database exported successfully to: ${backupFile.absolutePath}")
+                Result.success(backupFile)
             }
-            
-            Timber.d("Database exported successfully to: ${backupFile.absolutePath}")
-            Result.success(backupFile)
         } catch (e: Exception) {
             Timber.e(e, "Failed to export database")
             Result.failure(e)
@@ -1143,6 +1224,29 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         if (backups.size > 3) {
             backups.take(backups.size - 3).forEach { it.delete() }
         }
+    }
+
+    /**
+     * Returns the backup encryption password, generating and persisting a new
+     * random one if none exists yet.
+     *
+     * The password is a base64-encoded 256-bit random value stored in
+     * [SecureKeyStorage]. This ensures the password is consistent across
+     * export sessions without requiring user input.
+     */
+    private fun getOrCreateBackupPassword(): String {
+        val existing = secureKeyStorage.getKey(BACKUP_ENCRYPTION_KEY_NAME)
+        if (existing != null && existing.isNotBlank()) {
+            return existing
+        }
+
+        val random = SecureRandom()
+        val keyBytes = ByteArray(BACKUP_ENCRYPTION_KEY_BYTES)
+        random.nextBytes(keyBytes)
+        val newPassword = Base64.getEncoder().encodeToString(keyBytes)
+        secureKeyStorage.storeKey(BACKUP_ENCRYPTION_KEY_NAME, newPassword)
+        Timber.d("Generated and stored new backup encryption password")
+        return newPassword
     }
 
     private suspend fun checkpointWal(): Result<Unit> {

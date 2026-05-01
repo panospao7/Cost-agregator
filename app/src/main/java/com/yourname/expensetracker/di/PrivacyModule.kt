@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.di
 
 import com.yourname.expensetracker.data.privacy.PrivacySettingsRepositoryImpl
+import com.yourname.expensetracker.domain.privacy.BackupPrivacyGate
 import com.yourname.expensetracker.domain.privacy.CloudAiPrivacyGate
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.LocationPrivacyGate
@@ -34,9 +35,10 @@ abstract class PrivacyModule {
         fun providePrivacyGate(
             notificationGate: NotificationPrivacyGate,
             locationGate: LocationPrivacyGate,
-            cloudAiGate: CloudAiPrivacyGate
+            cloudAiGate: CloudAiPrivacyGate,
+            backupGate: BackupPrivacyGate
         ): PrivacyGate {
-            return CompositePrivacyGate(listOf(notificationGate, locationGate, cloudAiGate))
+            return CompositePrivacyGate(listOf(notificationGate, locationGate, cloudAiGate, backupGate))
         }
 
         @Provides

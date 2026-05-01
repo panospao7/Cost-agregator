@@ -580,6 +580,48 @@ A ~5-file domain expansion establishing an auditable lifecycle for recurring-exp
 - `PlannedExpense` — 2 new columns: `sourceOccurrenceKey` (TEXT, nullable) and `sourceRecurringRuleId` (INTEGER, nullable) for cross-linking planned expenses to recurring occurrences.
 - Migration 96→100: creates both new tables with indices, adds 2 columns to `planned_expenses`.
 
+### Phase 6 — Privacy & Capability Gates (May 2026)
+
+Phase 6 introduces a privacy capability gate system and backup encryption for
+the expense tracker database.
+
+#### Privacy Gate Architecture
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `PrivacyGate` (interface) | `domain/privacy/PrivacyGate.kt` | Contract for evaluating a capability against current privacy settings, returning Allowed or Denied |
+| `CompositePrivacyGate` | `domain/privacy/CompositePrivacyGate.kt` | Chains multiple gates; first Denied short-circuits |
+| `NotificationPrivacyGate` | `domain/privacy/NotificationPrivacyGate.kt` | Guards NOTIFICATION_CAPTURE and NOTIFICATION_PACKAGE_ALLOWLIST |
+| `LocationPrivacyGate` | `domain/privacy/LocationPrivacyGate.kt` | Guards EXTERNAL_GEOCODING, BACKGROUND_LOCATION_BACKFILL, DEVICE_GPS_LOCATION, OVERPASS_API |
+| `CloudAiPrivacyGate` | `domain/privacy/CloudAiPrivacyGate.kt` | Guards all CLOUD_AI_* capabilities plus RECEIPT_IMAGE_CLOUD_UPLOAD |
+| `BackupPrivacyGate` | `domain/privacy/BackupPrivacyGate.kt` | Guards RAWBACKUP_EXPORT and ENCRYPTED_BACKUP based on `encryptedBackupEnabled` setting |
+| `PrivacySettings` | `domain/privacy/PrivacySettings.kt` | Data class with ALL 10 privacy toggles + 2 retention day settings |
+| `PrivacySettingsRepository` | `domain/privacy/PrivacySettingsRepository.kt` | Interface for reading/writing privacy settings |
+| `PrivacySettingsRepositoryImpl` | `data/privacy/PrivacySettingsRepositoryImpl.kt` | DataStore-backed implementation |
+
+#### Backup Encryption
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `BackupEncryptionService` | `data/privacy/BackupEncryptionService.kt` | AES-256-GCM encrypt/decrypt with PBKDF2 key derivation |
+| `ExportAnonymizer` | `data/privacy/ExportAnonymizer.kt` | Strips rawOcrText and raw notification content from temp DB copy before export |
+| `DatabaseBackupRepositoryImpl` (updated) | `data/repository/DatabaseBackupRepositoryImpl.kt` | Now checks privacy gates, optionally encrypts exports, and sanitizes sensitive data |
+
+#### Privacy UI
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `PrivacySettingsViewModel` | `ui/screens/privacysettings/PrivacySettingsViewModel.kt` | Reads/writes all 10 privacy settings via repository |
+| `PrivacySettingsScreen` | `ui/screens/privacysettings/PrivacySettingsScreen.kt` | Compose screen with toggles for all privacy settings |
+
+#### DI Wiring
+
+`PrivacyModule.kt` now binds all four gates (Notification, Location, CloudAI, Backup)
+into the `CompositePrivacyGate`. The `BackupEncryptionService`, `ExportAnonymizer`,
+and `SecureKeyStorage` are injected into `DatabaseBackupRepositoryImpl`.
+
+**Phase 6 is complete.**
+
 ---
 
 ## Database Schema
