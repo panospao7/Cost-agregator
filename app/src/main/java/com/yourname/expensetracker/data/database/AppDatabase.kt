@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 101
+const val APP_DATABASE_SCHEMA_VERSION = 102
 
 @Database(
     entities = [
@@ -66,7 +66,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 101
         ReceiptEvent::class,
         ReceiptExpenseLink::class,
         RecurringOccurrence::class,
-        RecurringReminderDelivery::class
+        RecurringReminderDelivery::class,
+        RecurringLifecycleEvent::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -125,6 +126,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun receiptExpenseLinkDao(): ReceiptExpenseLinkDao
     abstract fun recurringOccurrenceDao(): RecurringOccurrenceDao
     abstract fun recurringReminderDeliveryDao(): RecurringReminderDeliveryDao
+    abstract fun recurringLifecycleEventDao(): RecurringLifecycleEventDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -5905,6 +5907,26 @@ val MIGRATION_100_101 = object : androidx.room.migration.Migration(100, 101) {
     }
 }
 
+// Migration 101 -> 102: Add recurring_lifecycle_events table
+val MIGRATION_101_102 = object : androidx.room.migration.Migration(101, 102) {
+    override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+        database.execSQL("""
+            CREATE TABLE IF NOT EXISTS recurring_lifecycle_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                occurrenceId INTEGER,
+                eventType TEXT NOT NULL,
+                occurredAt INTEGER NOT NULL,
+                oldStatus TEXT,
+                newStatus TEXT,
+                metadata TEXT
+            )
+        """.trimIndent())
+        database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_lifecycle_events_occurrenceId ON recurring_lifecycle_events (occurrenceId)")
+        database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_lifecycle_events_occurredAt ON recurring_lifecycle_events (occurredAt)")
+        database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_lifecycle_events_eventType ON recurring_lifecycle_events (eventType)")
+    }
+}
+
 /**
       * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -6041,7 +6063,8 @@ MIGRATION_91_92,
         MIGRATION_94_95,
         MIGRATION_95_96,
         MIGRATION_96_100,
-        MIGRATION_100_101
+        MIGRATION_100_101,
+        MIGRATION_101_102
     )
     }
 }

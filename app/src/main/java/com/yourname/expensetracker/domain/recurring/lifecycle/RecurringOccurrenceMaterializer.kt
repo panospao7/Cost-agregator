@@ -2,8 +2,10 @@ package com.yourname.expensetracker.domain.recurring.lifecycle
 
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+import com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
 import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
@@ -28,7 +30,8 @@ class RecurringOccurrenceMaterializer @Inject constructor(
     private val database: AppDatabase,
     private val occurrenceDao: RecurringOccurrenceDao,
     private val reminderDeliveryDao: RecurringReminderDeliveryDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val lifecycleEventDao: RecurringLifecycleEventDao
 ) {
     data class MaterializationResult(
         val created: Int = 0,
@@ -78,6 +81,17 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                 }
             } else {
                 created++
+                // Write lifecycle event for newly created occurrence
+                lifecycleEventDao.insert(
+                    RecurringLifecycleEvent(
+                        occurrenceId = insertResult,
+                        eventType = "OCCURRENCE_GENERATED",
+                        occurredAt = now,
+                        oldStatus = null,
+                        newStatus = r.status,
+                        metadata = """{"merchant":"${r.candidate.merchant}","amount":${r.candidate.expectedAmount},"dueDate":${r.candidate.dueDate}}"""
+                    )
+                )
             }
 
             // Create reminder deliveries for PLANNED occurrences
@@ -103,6 +117,18 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                             )
                         )
                         remindersCreated++
+
+                        // Write lifecycle event for scheduled reminder
+                        lifecycleEventDao.insert(
+                            RecurringLifecycleEvent(
+                                occurrenceId = occurrenceId,
+                                eventType = "REMINDER_SCHEDULED",
+                                occurredAt = now,
+                                oldStatus = null,
+                                newStatus = "SCHEDULED",
+                                metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
+                            )
+                        )
                     }
                 }
             }

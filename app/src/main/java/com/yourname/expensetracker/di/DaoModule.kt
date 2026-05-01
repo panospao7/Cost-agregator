@@ -248,4 +248,9 @@ object DaoModule {
     @Singleton
     fun provideRecurringReminderDeliveryDao(database: AppDatabase): RecurringReminderDeliveryDao =
         database.recurringReminderDeliveryDao()
+
+    @Provides
+    @Singleton
+    fun provideRecurringLifecycleEventDao(database: AppDatabase): RecurringLifecycleEventDao =
+        database.recurringLifecycleEventDao()
 }

@@ -14,6 +14,9 @@ interface RecurringReminderDeliveryDao {
     @Update
     suspend fun update(delivery: RecurringReminderDelivery)
 
+    @Query("SELECT * FROM recurring_reminder_deliveries WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): RecurringReminderDelivery?
+
     @Query("SELECT * FROM recurring_reminder_deliveries WHERE occurrenceId = :occurrenceId AND reminderWindow = :window LIMIT 1")
     suspend fun getByOccurrenceAndWindow(occurrenceId: Long, window: String): RecurringReminderDelivery?
 

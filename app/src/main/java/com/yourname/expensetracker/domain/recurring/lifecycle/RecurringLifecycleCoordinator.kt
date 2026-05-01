@@ -2,8 +2,10 @@ package com.yourname.expensetracker.domain.recurring.lifecycle
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+import com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
@@ -34,7 +36,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val timeProvider: TimeProvider,
     private val manualRecurringExpenseDao: ManualRecurringExpenseDao,
-    private val reminderDeliveryDao: RecurringReminderDeliveryDao
+    private val reminderDeliveryDao: RecurringReminderDeliveryDao,
+    private val lifecycleEventDao: RecurringLifecycleEventDao
 ) {
     companion object {
         /** Source type used for manual recurring rules. */
@@ -145,6 +148,19 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 updatedAt = now
             )
         )
+
+        // Write lifecycle event: OCCURRENCE_PAID
+        lifecycleEventDao.insert(
+            RecurringLifecycleEvent(
+                occurrenceId = match.id,
+                eventType = "OCCURRENCE_PAID",
+                occurredAt = now,
+                oldStatus = "PLANNED",
+                newStatus = "PAID",
+                metadata = """{"expenseId":$expenseId,"amount":${expense.amount},"currency":"${expense.currency}"}"""
+            )
+        )
+
         return true
     }
 
@@ -179,7 +195,30 @@ class RecurringLifecycleCoordinator @Inject constructor(
      */
     suspend fun updateOccurrenceStatus(occurrenceId: Long, newStatus: String) {
         val now = timeProvider.now()
+        // Load the current occurrence to get the old status
+        val occurrence = occurrenceDao.getById(occurrenceId)
+        val oldStatus = occurrence?.status
         occurrenceDao.updateStatus(listOf(occurrenceId), newStatus, now)
+
+        // Write lifecycle event for skip/cancel transitions
+        val eventType = when (newStatus) {
+            "SKIPPED" -> "OCCURRENCE_SKIPPED"
+            "CANCELLED" -> "OCCURRENCE_CANCELLED"
+            "MISSED" -> "OCCURRENCE_SKIPPED"
+            else -> null
+        }
+        if (eventType != null) {
+            lifecycleEventDao.insert(
+                RecurringLifecycleEvent(
+                    occurrenceId = occurrenceId,
+                    eventType = eventType,
+                    occurredAt = now,
+                    oldStatus = oldStatus,
+                    newStatus = newStatus,
+                    metadata = null
+                )
+            )
+        }
     }
 
     /**
@@ -193,5 +232,114 @@ class RecurringLifecycleCoordinator @Inject constructor(
      */
     suspend fun getDueReminders(): List<RecurringReminderDelivery> {
         return reminderDeliveryDao.getPendingDeliveries(timeProvider.now())
+    }
+
+    /**
+     * Marks a reminder delivery as SENT and records the timestamp.
+     * Called by [BillReminderWorker] after dispatching the notification.
+     */
+    /**
+     * Marks a reminder delivery as SENT and records the timestamp.
+     * Called by [BillReminderWorker] after dispatching the notification.
+     */
+    suspend fun markReminderSent(deliveryId: Long) {
+        val now = timeProvider.now()
+        val existing = reminderDeliveryDao.getById(deliveryId) ?: return
+        reminderDeliveryDao.update(
+            existing.copy(
+                status = "SENT",
+                lastSentAt = now
+            )
+        )
+    }
+
+    /**
+     * Planned-vs-Actual reconciliation report for a recurring rule.
+     *
+     * @param totalPlanned Sum of expected amounts for all generated occurrences.
+     * @param totalActual Sum of actual paid amounts for matched occurrences.
+     * @param drift Difference: totalActual - totalPlanned (positive = overspend).
+     * @param driftPercent Percentage drift relative to totalPlanned.
+     * @param matchedCount Number of occurrences that were paid.
+     * @param unmatchedCount Number of occurrences still PLANNED (no actual expense linked).
+     * @param overBudgetCount Number of PAID occurrences where paidAmount > expectedAmount.
+     */
+    data class ReconciliationReport(
+        val totalPlanned: Double,
+        val totalActual: Double,
+        val drift: Double,
+        val driftPercent: Double,
+        val matchedCount: Int,
+        val unmatchedCount: Int,
+        val overBudgetCount: Int
+    )
+
+    /**
+     * Compares planned vs actual spending for a recurring rule over the past N months.
+     *
+     * Logic:
+     * 1. Generate occurrences for the past N months via [generateOccurrences].
+     * 2. Load all occurrences in that range.
+     * 3. Compare PAID occurrences (expectedAmount vs paidAmount).
+     * 4. Count PLANNED occurrences that have no linked expense.
+     * 5. Return a [ReconciliationReport] with drift analysis.
+     *
+     * @param ruleId The ID of the recurring rule.
+     * @param monthsBack Number of months to look back (default 3).
+     */
+    suspend fun reconcilePlannedVsActual(ruleId: Long, monthsBack: Int = 3): ReconciliationReport {
+        val now = timeProvider.now()
+        val endDate = TimePeriodUtils.getStartOfDay(now)
+        val startDate = TimePeriodUtils.getStartOfMonth(
+            TimePeriodUtils.addMonths(now, -monthsBack)
+        )
+
+        // 1. Generate occurrences so the DB is up to date
+        generateOccurrences(ruleId, startDate, endDate)
+
+        // 2. Load all occurrences for this rule in the period
+        val occurrences = occurrenceDao.getByDateRange(startDate, endDate)
+            .filter { it.sourceType == SOURCE_TYPE_RECURRING_RULE && it.sourceId == ruleId }
+
+        var totalPlanned = 0.0
+        var totalActual = 0.0
+        var matchedCount = 0
+        var unmatchedCount = 0
+        var overBudgetCount = 0
+
+        for (occ in occurrences) {
+            totalPlanned += occ.expectedAmount
+            when (occ.status) {
+                "PAID" -> {
+                    val paid = occ.paidAmount ?: 0.0
+                    totalActual += paid
+                    matchedCount++
+                    if (paid > occ.expectedAmount) {
+                        overBudgetCount++
+                    }
+                }
+                "PLANNED" -> {
+                    unmatchedCount++
+                }
+                // Skip SKIPPED, CANCELLED, MISSED, IGNORED — they are not relevant
+            }
+        }
+
+        val drift = totalActual - totalPlanned
+        val driftPercent = if (totalPlanned > 0.0) {
+            (drift / totalPlanned) * 100.0
+        } else {
+            0.0
+        }
+
+        return ReconciliationReport(
+            totalPlanned = totalPlanned,
+            totalActual = totalActual,
+            drift = drift,
+            driftPercent = driftPercent,
+            matchedCount = matchedCount,
+            unmatchedCount = unmatchedCount,
+            overBudgetCount = overBudgetCount
+        )
     }
 }

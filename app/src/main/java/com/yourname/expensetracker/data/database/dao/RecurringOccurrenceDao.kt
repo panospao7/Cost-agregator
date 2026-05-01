@@ -14,6 +14,9 @@ interface RecurringOccurrenceDao {
     @Update
     suspend fun update(occurrence: RecurringOccurrence)
 
+    @Query("SELECT * FROM recurring_occurrences WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): RecurringOccurrence?
+
     @Query("SELECT * FROM recurring_occurrences WHERE occurrenceKey = :key LIMIT 1")
     suspend fun getByKey(key: String): RecurringOccurrence?
 

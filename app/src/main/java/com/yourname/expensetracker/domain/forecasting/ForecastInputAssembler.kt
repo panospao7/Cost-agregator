@@ -315,6 +315,27 @@ class ForecastInputAssembler @Inject constructor(
         }
         val normalized = analyticsCurrencyNormalizer.normalizeSnapshots(expenses, resolvedHomeCurrency)
         val normalizedExpenses = normalized.includedExpenses
+
+        // Generate concrete occurrences for active manual recurring rules
+        // This populates the recurring_occurrences table so PAID vs PLANNED
+        // occurrences can be used downstream for deduplication and forecasting.
+        val now = timeProvider.now()
+        val forecastStart = TimePeriodUtils.getStartOfMonth(now)
+        val forecastEnd = TimePeriodUtils.getEndOfMonth(now)
+        for (rule in manualRecurringEntities) {
+            if (!rule.isActive) continue
+            try {
+                recurringLifecycleCoordinator.generateOccurrences(
+                    ruleId = rule.id,
+                    startDate = forecastStart,
+                    endDate = forecastEnd
+                )
+            } catch (e: Exception) {
+                // Non-fatal: if one rule fails to generate, continue with the rest
+                // and let the rest of the forecast assembly proceed.
+            }
+        }
+
         return ForecastInput(
             pastSumDaily = buildPastSumDaily(normalizedExpenses),
             recurringPatterns = mergeRecurringPatterns(
