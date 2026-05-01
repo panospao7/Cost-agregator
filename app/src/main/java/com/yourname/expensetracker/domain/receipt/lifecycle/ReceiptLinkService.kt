@@ -77,23 +77,23 @@ class ReceiptLinkService @Inject constructor(
         val isBankStatement =
             receipt.documentType == ReceiptDocumentType.BANK_STATEMENT.name
 
-        // 2. For non-BANK_STATEMENT receipts: check if already linked
-        if (!isBankStatement && !allowRelink) {
-            val existingLinks = receiptExpenseLinkDao.getLinksForReceipt(receiptId)
-            if (existingLinks.isNotEmpty()) {
-                return Result.failure(
-                    IllegalStateException(
-                        "Receipt $receiptId is already linked to expense(s). " +
-                        "Set allowRelink=true to force a new link."
-                    )
-                )
-            }
-        }
-
         val now = timeProvider.now()
 
-        // 3. Insert + legacy update + event inside a single database transaction
+        // 2. Insert + legacy update + event inside a single database transaction
+        //    The existing-links check is inside the transaction to prevent race conditions.
         return database.withTransaction {
+            // For non-BANK_STATEMENT receipts: check if already linked (inside transaction)
+            if (!isBankStatement && !allowRelink) {
+                val existingLinks = receiptExpenseLinkDao.getLinksForReceipt(receiptId)
+                if (existingLinks.isNotEmpty()) {
+                    return@withTransaction Result.failure(
+                        IllegalStateException(
+                            "Receipt $receiptId is already linked to expense(s). " +
+                            "Set allowRelink=true to force a new link."
+                        )
+                    )
+                }
+            }
             val link = ReceiptExpenseLink(
                 receiptId = receiptId,
                 expenseId = expenseId,

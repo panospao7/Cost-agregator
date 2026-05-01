@@ -49,6 +49,7 @@ class ManualExpenseRepository @Inject constructor(
     private val dashboardFollowThroughEngine: DashboardFollowThroughEngine,
     private val recommendationRepository: RecommendationRepository,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
+    private val recurringExpenseRepository: RecurringExpenseRepository,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
     /**
@@ -195,7 +196,8 @@ class ManualExpenseRepository @Inject constructor(
                             currency = currency,
                             note = recurringNote
                         )
-                        val recurringId = database.manualRecurringExpenseDao().insert(recurringExpense)
+                        // TODO: Should route through RecurringLifecycleCoordinator for full lifecycle handling
+                        val recurringId = recurringExpenseRepository.insert(recurringExpense)
                         if (recurringId <= 0) {
                             throw IllegalStateException("Failed to create recurring expense rule")
                         }

@@ -26,6 +26,7 @@ import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.usecase.receipt.ProcessReceiptUseCase
 import com.yourname.expensetracker.domain.usecase.receipt.ProcessedReceipt
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -361,7 +362,7 @@ class EmailReceiptIngestionService(
      */
     private suspend fun findExistingScannedReceipt(fingerprint: String): ScannedReceipt? {
         // Get recent receipts and check fingerprint manually
-        val since = timeProvider.now() - (30L * 24 * 60 * 60 * 1000) // Last 30 days
+        val since = TimePeriodUtils.addDays(timeProvider.now(), -30) // Last 30 days
         val recentReceipts = receiptLifecycleCoordinator.getRecentReceipts(since)
         
         return recentReceipts.find { receipt ->

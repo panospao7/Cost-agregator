@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -194,7 +195,8 @@ class ReceiptDuplicateDetector @Inject constructor(
     ): String {
         val merchantPart = merchant?.lowercase()?.trim()?.take(100) ?: ""
         val amountPart = amount?.let { "%.2f".format(it) } ?: ""
-        val dateBucket = date?.let { it / DAY_MS }?.toString() ?: ""
+        // Use local calendar day key for consistent day boundaries
+        val dateBucket = date?.let { TimePeriodUtils.getStartOfDay(it) }?.toString() ?: ""
         val currencyPart = currency?.uppercase()?.trim() ?: ""
 
         val raw = "$merchantPart|$amountPart|$dateBucket|$currencyPart"
@@ -227,7 +229,6 @@ class ReceiptDuplicateDetector @Inject constructor(
     ): String = computeSemanticFingerprint(merchant, amount, date, currency)
 
     private companion object {
-        /** Milliseconds in one day, used for date bucketing. */
-        private const val DAY_MS = 86_400_000L
+        // Date bucketing now uses TimePeriodUtils.getStartOfDay — no raw millis constant needed.
     }
 }

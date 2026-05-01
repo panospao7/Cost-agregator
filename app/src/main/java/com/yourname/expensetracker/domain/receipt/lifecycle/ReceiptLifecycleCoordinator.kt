@@ -175,6 +175,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
             if (postOcrDup.isDuplicate && postOcrDup.matchType != "EXACT_HASH") {
                 // Update current receipt with fingerprints and mark as duplicate
+                val now = timeProvider.now()
                 val withFingerprints = receipt.copy(
                     imagePath = receipt.imagePath,
                     imageHash = fileHash ?: receipt.imageHash,
@@ -183,12 +184,30 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     processingStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
                     textFingerprint = textFingerprint,
                     semanticFingerprint = semanticFingerprint,
-                    updatedAt = timeProvider.now()
+                    updatedAt = now
                 )
                 scannedReceiptDao.update(withFingerprints)
-                // Return existing receipt as duplicate
+
+                // Write DUPLICATE_DETECTED event with existing receipt ID in metadata
                 val existing = scannedReceiptDao.getById(postOcrDup.existingReceiptId!!)
-                if (existing != null) return Result.success(existing)
+                if (existing != null) {
+                    receiptEventDao.insert(
+                        ReceiptEvent(
+                            receiptId = withFingerprints.id,
+                            sourceType = withFingerprints.sourceType,
+                            documentType = withFingerprints.documentType,
+                            eventType = "DUPLICATE_DETECTED",
+                            occurredAt = now,
+                            oldStatus = receipt.processingStatus,
+                            newStatus = ReceiptProcessingStatus.DUPLICATE_DETECTED.name,
+                            actor = "system:coordinator",
+                            message = "Duplicate receipt detected (match=${postOcrDup.matchType}, existingId=${existing.id})",
+                            metadata = "{\"existingReceiptId\":${existing.id},\"matchType\":\"${postOcrDup.matchType}\"}",
+                            errorDetails = null
+                        )
+                    )
+                    return Result.success(existing)
+                }
             }
 
             // 5. Update receipt with lifecycle metadata and fingerprints

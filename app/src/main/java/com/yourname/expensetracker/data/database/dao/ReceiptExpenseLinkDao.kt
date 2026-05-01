@@ -9,7 +9,7 @@ import com.yourname.expensetracker.data.database.entity.ReceiptExpenseLink
 @Dao
 interface ReceiptExpenseLinkDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(link: ReceiptExpenseLink): Long
 
     @Query("SELECT * FROM receipt_expense_links WHERE receiptId = :receiptId")

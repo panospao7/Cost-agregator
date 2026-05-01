@@ -135,7 +135,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
             when (dedupMode) {
                 DeduplicationMode.STRICT_EXTERNAL_ID -> {
                     val key = request.idempotencyKey ?: request.externalFingerprint
-                    expense = expense.copy(dedupeKey = if (key != null) "idem:$key" else expense.dedupeKey)
+                    if (key == null) {
+                        return CreateExpenseResult.ValidationFailed(
+                            listOf("STRICT_EXTERNAL_ID mode requires idempotencyKey or externalFingerprint")
+                        )
+                    }
+                    // Use source namespace for the dedup key
+                    expense = expense.copy(dedupeKey = "idem:${request.source.name}:$key")
                     // Don't run range check, rely on unique dedupeKey index
                 }
 
@@ -281,7 +287,35 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 currency = expense.currency,
                 transactionType = expense.transactionType
             )
-            expense.copy(dedupeKey = newDedupeKey)
+            val expenseWithNewKey = expense.copy(dedupeKey = newDedupeKey)
+
+            // Check for duplicate excluding the current expense
+            val isDuplicate = expenseDao.isDuplicateCurrencyAware(
+                amount = expenseWithNewKey.amount,
+                merchant = expenseWithNewKey.merchant,
+                date = expenseWithNewKey.date,
+                currency = expenseWithNewKey.currency,
+                transactionType = expenseWithNewKey.transactionType.name,
+                merchantKey = expenseWithNewKey.merchantKey,
+                dedupeKey = expenseWithNewKey.dedupeKey
+            )
+            if (isDuplicate) {
+                // Verify the duplicate is not the current expense being updated
+                val dupId = expenseDao.findDuplicateId(
+                    merchantKey = expenseWithNewKey.merchantKey,
+                    amount = expenseWithNewKey.amount,
+                    date = expenseWithNewKey.date,
+                    currency = expenseWithNewKey.currency,
+                    transactionType = expenseWithNewKey.transactionType
+                )
+                if (dupId != null && dupId != expense.id) {
+                    throw DuplicateUpdateException(
+                        "Update would create duplicate with expense $dupId"
+                    )
+                }
+            }
+
+            expenseWithNewKey
         } else {
             expense
         }
@@ -456,3 +490,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
         private val CURRENCY_ISO_PATTERN = Regex("^[A-Z]{3}$")
     }
 }
+
+/**
+ * Exception thrown when an update would create a duplicate expense.
+ */
+class DuplicateUpdateException(message: String) : IllegalStateException(message)

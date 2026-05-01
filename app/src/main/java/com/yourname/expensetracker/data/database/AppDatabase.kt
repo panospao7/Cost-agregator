@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 100
+const val APP_DATABASE_SCHEMA_VERSION = 101
 
 @Database(
     entities = [
@@ -5865,7 +5865,48 @@ val MIGRATION_96_100 = object : androidx.room.migration.Migration(96, 100) {
 }
 
 /**
-     * Creates an in-memory [RoomDatabase.Builder] pre-configured with
+ * Migration 100 -> 101: Add planned_expenses columns and deduplicate reminder deliveries.
+ *
+ * 1. Add new planned_expenses columns (status, linkedActualExpenseId, merchantKey, updatedAt)
+ *    with safe defaults.
+ * 2. Deduplicate recurring_reminder_deliveries (keep earliest per occurrenceId+reminderWindow).
+ * 3. Replace non-unique index with UNIQUE index on (occurrenceId, reminderWindow).
+ */
+val MIGRATION_100_101 = object : androidx.room.migration.Migration(100, 101) {
+    override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+        database.beginTransaction()
+        try {
+            // 1. Add new planned_expenses columns (with safe defaults)
+            database.execSQL("ALTER TABLE planned_expenses ADD COLUMN status TEXT NOT NULL DEFAULT 'PLANNED'")
+            database.execSQL("ALTER TABLE planned_expenses ADD COLUMN linkedActualExpenseId INTEGER")
+            database.execSQL("ALTER TABLE planned_expenses ADD COLUMN merchantKey TEXT")
+            database.execSQL("ALTER TABLE planned_expenses ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+
+            // 2. Deduplicate reminder deliveries (keep earliest)
+            database.execSQL("""
+                DELETE FROM recurring_reminder_deliveries
+                WHERE id NOT IN (
+                    SELECT MIN(id) FROM recurring_reminder_deliveries
+                    GROUP BY occurrenceId, reminderWindow
+                )
+            """.trimIndent())
+
+            // 3. Replace non-unique index with unique
+            database.execSQL("DROP INDEX IF EXISTS index_recurring_reminder_deliveries_occurrenceId_reminderWindow")
+            database.execSQL("""
+                CREATE UNIQUE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_occurrenceId_reminderWindow
+                ON recurring_reminder_deliveries (occurrenceId, reminderWindow)
+            """.trimIndent())
+
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+    }
+}
+
+/**
+      * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
          *
          * Every test that needs a fresh `AppDatabase` **must** go through this
@@ -5999,7 +6040,8 @@ MIGRATION_91_92,
         MIGRATION_93_94,
         MIGRATION_94_95,
         MIGRATION_95_96,
-        MIGRATION_96_100
+        MIGRATION_96_100,
+        MIGRATION_100_101
     )
     }
 }

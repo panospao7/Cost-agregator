@@ -1,8 +1,8 @@
 package com.yourname.expensetracker.domain.negotiation
 
-import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -13,7 +13,7 @@ import javax.inject.Singleton
 
 @Singleton
 class SmartBillNegotiationEngine @Inject constructor(
-    private val recurringExpenseDao: ManualRecurringExpenseDao,
+    private val recurringExpenseRepository: RecurringExpenseRepository,
     private val priceHistoryDao: SubscriptionPriceHistoryDao
 ) {
     
@@ -121,7 +121,7 @@ class SmartBillNegotiationEngine @Inject constructor(
     )
     
     suspend fun analyzeNegotiationOpportunities(): List<NegotiationOpportunity> {
-        val subscriptions = recurringExpenseDao.getAll()
+        val subscriptions = recurringExpenseRepository.getAll()
         val opportunities = mutableListOf<NegotiationOpportunity>()
         
         subscriptions.forEach { subscription ->

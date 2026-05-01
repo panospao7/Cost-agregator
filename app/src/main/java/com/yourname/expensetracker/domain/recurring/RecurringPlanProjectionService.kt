@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
 import com.yourname.expensetracker.data.database.entity.PlannedExpense
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
@@ -62,18 +63,21 @@ class RecurringPlanProjectionService @Inject constructor(
         for (occ in occurrences) {
             val existing = plannedExpenseDao.getBySourceOccurrenceKey(occ.occurrenceKey)
             if (existing == null) {
+                val merchantName = occ.merchant ?: "Recurring Expense"
                 plannedExpenseDao.insertPlannedExpense(
                     PlannedExpense(
-                        description = occ.merchant ?: "Recurring Expense",
+                        description = merchantName,
                         amount = occ.expectedAmount,
                         currency = occ.expectedCurrency,
                         date = occ.dueDate,
                         categoryId = occ.categoryId,
                         isRecurring = true,
                         priority = PlannedExpensePriority.MUST,
-                        createdAt = timeProvider.now(),
+                        createdAt = now,
                         sourceOccurrenceKey = occ.occurrenceKey,
-                        sourceRecurringRuleId = ruleId
+                        sourceRecurringRuleId = ruleId,
+                        merchantKey = MerchantKeyGenerator.generate(merchantName),
+                        updatedAt = now
                     )
                 )
                 created++
