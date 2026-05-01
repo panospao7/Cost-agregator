@@ -56,6 +56,18 @@
 | `receipt/lifecycle/BankStatementLifecycleProcessor.kt` | BankStatementLifecycleProcessor | Statement-specific lifecycle: OCR → parse → PendingReview creation → lifecycle events | Processor | ReceiptRepository, ScannedReceiptDao, ReceiptEventDao, ReceiptLinkService, BankStatementParser, PendingReviewDao, MerchantNormalizer, HybridExpenseClassifier | No |
 | `receipt/lifecycle/BankStatementResult.kt` | BankStatementResult | Structured result: receiptId, transactionsFound, reviewsCreated, duplicatesSkipped | Model | - | No |
 
+### Recurring Lifecycle Models (5 files)
+
+**Location:** `com.yourname.expensetracker.domain.recurring` and `.lifecycle`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `recurring/RecurringOccurrenceExpander.kt` | RecurringOccurrenceExpander | Pure utility to expand recurrence rules into concrete occurrence candidates within a half-open date range. Calendar-aware advancement (DST/leap-year safe). | Utility | TimePeriodUtils | No |
+| `recurring/OccurrenceConflictResolver.kt` | OccurrenceConflictResolver | Resolves occurrence candidates against actual expenses. Matching: same day, merchant (case-insensitive), amount ±10%, same currency. Each expense matched at most once. | Engine | MerchantKeyGenerator, TimePeriodUtils | No |
+| `recurring/RecurringPlanProjectionService.kt` | RecurringPlanProjectionService | Bridges recurring lifecycle to forecasting by materialising PlannedExpense rows from PLANNED occurrences. Deduplicates via sourceOccurrenceKey. | Service | RecurringLifecycleCoordinator, PlannedExpenseDao, TimeProvider | No |
+| `recurring/lifecycle/RecurringLifecycleCoordinator.kt` | RecurringLifecycleCoordinator | **Primary entry point** for generating/managing recurring occurrences. Pipelines expand→resolve→materialize. Also provides linkExpenseToOccurrence(), getOccurrences(), updateOccurrenceStatus(), getDueReminders(). | Coordinator | RecurringOccurrenceExpander, OccurrenceConflictResolver, RecurringOccurrenceMaterializer, RecurringOccurrenceDao, ExpenseDao, TimeProvider, ManualRecurringExpenseDao, RecurringReminderDeliveryDao | No |
+| `recurring/lifecycle/RecurringOccurrenceMaterializer.kt` | RecurringOccurrenceMaterializer | Persists resolved occurrences (INSERT IGNORE, UPDATE on status change) and creates RecurringReminderDelivery rows for PLANNED occurrences (DUE_DAY, N_DAYS_BEFORE, OVERDUE). | Materializer | RecurringOccurrenceDao, RecurringReminderDeliveryDao, TimeProvider | No |
+
 ### Transaction Lifecycle Models (8 files)
 
 **Location:** `com.yourname.expensetracker.domain.transaction`
@@ -549,6 +561,8 @@
 | `dao/SubscriptionUsageDao.kt` | SubscriptionUsageDao | Subscription usage DAO | DAO | - | No |
 | `dao/ReceiptEventDao.kt` | ReceiptEventDao | Receipt lifecycle events DAO (`receipt_events`) | DAO | - | No |
 | `dao/ReceiptExpenseLinkDao.kt` | ReceiptExpenseLinkDao | Receipt-expense link DAO (`receipt_expense_links`) | DAO | - | No |
+| `dao/RecurringOccurrenceDao.kt` | RecurringOccurrenceDao | Recurring occurrences DAO (`recurring_occurrences`) — insert (IGNORE), insertAll, update, getByKey, getBySource, getByDateRange, getByStatus, updateStatus | DAO | - | No |
+| `dao/RecurringReminderDeliveryDao.kt` | RecurringReminderDeliveryDao | Recurring reminder deliveries DAO (`recurring_reminder_deliveries`) — insert, insertAll, update, getByOccurrenceAndWindow, getPendingDeliveries | DAO | - | No |
 | `dao/TransactionEventDao.kt` | TransactionEventDao | Transaction lifecycle events DAO | DAO | - | No |
 | `dao/UserCorrectionDao.kt` | UserCorrectionDao | User corrections DAO | DAO | - | No |
 | `dao/WarrantyDao.kt` | WarrantyDao | Warranties DAO | DAO | - | No |
@@ -597,6 +611,8 @@
 | `entity/ReceiptEvent.kt` | ReceiptEvent | Immutable receipt lifecycle event log (table: `receipt_events`); records every CAPTURED/OCR_FAILED/PARSED/EXPENSE_CREATED/DELETED transition with actor, status transitions, timestamps | Entity | - | No |
 | `entity/ReceiptExpenseLink.kt` | ReceiptExpenseLink | Many-to-many receipt↔expense join (table: `receipt_expense_links`); supports single and multi-link relationships with confidence, source, and metadata | Entity | - | No |
 | `entity/ScannedReceipt.kt` | ScannedReceipt | Scanned receipt entity — 10 new Phase 4 columns: sourceType, documentType, processingStatus, sourceFingerprint, imageHash, textFingerprint, semanticFingerprint, ocrConfidence, parseFailureReason, updatedAt | Entity | - | No |
+| `entity/RecurringOccurrence.kt` | RecurringOccurrence | Recurring occurrence entity (table: `recurring_occurrences`) — stores expanded occurrence candidates with status tracking (PLANNED/PAID/SKIPPED/MISSED/CANCELLED). Unique constraint on occurrenceKey for idempotent insert. | Entity | - | No |
+| `entity/RecurringReminderDelivery.kt` | RecurringReminderDelivery | Reminder delivery entity (table: `recurring_reminder_deliveries`) — scheduled reminders per occurrence and window (DUE_DAY, N_DAYS_BEFORE, OVERDUE). Status: SCHEDULED/SENT/DISMISSED/SNOOZED/FAILED. | Entity | - | No |
 | `entity/SourceStats.kt` | SourceStats | Source statistics entity | Entity | - | No |
 | `entity/SpendingPersonalityProfileEntity.kt` | SpendingPersonalityProfileEntity | Spending profile entity | Entity | - | No |
 | `entity/TransactionEvent.kt` | TransactionEvent | Immutable lifecycle event log (table: `transaction_events`); records every CREATED/UPDATED/DELETED/etc. transition with actor, timestamps, and before/after snapshots | Entity | - | No |
@@ -998,13 +1014,13 @@ Engine (integration with other domain logic)
 
 | Metric | Count |
 |--------|-------|
-| **Domain Files** | 266 (includes 8 transaction lifecycle + 11 receipt lifecycle files) |
-| **Data Files** | 212 (includes ReceiptEvent + ReceiptExpenseLink entities/DAOs) |
+| **Domain Files** | 271 (includes 8 transaction lifecycle + 11 receipt lifecycle + 5 recurring lifecycle files) |
+| **Data Files** | 214 (includes ReceiptEvent, ReceiptExpenseLink, RecurringOccurrence, RecurringReminderDelivery entities/DAOs) |
 | **DI Modules** | 27 |
-| **Total Backend Files** | 500+ |
+| **Total Backend Files** | 505+ |
 | **Test Files** | 317+ |
-| **Database Entities** | 58 (includes TransactionEvent, ReceiptEvent, ReceiptExpenseLink) |
-| **DAOs** | 57 (includes TransactionEventDao, ReceiptEventDao, ReceiptExpenseLinkDao) |
+| **Database Entities** | 60 (includes TransactionEvent, ReceiptEvent, ReceiptExpenseLink, RecurringOccurrence, RecurringReminderDelivery) |
+| **DAOs** | 59 (includes TransactionEventDao, ReceiptEventDao, ReceiptExpenseLinkDao, RecurringOccurrenceDao, RecurringReminderDeliveryDao) |
 | **Repositories** | 56 |
 | **Use Cases** | ~30 |
 | **Engines** | ~50 |
@@ -1028,6 +1044,9 @@ Engine (integration with other domain logic)
 12. **Event Sourcing Lite (Phase 3)** - `transaction_events` table records every expense lifecycle transition as an immutable append-only log
 13. **Coordinator Pattern (Phase 4)** - `ReceiptLifecycleCoordinator` is the single entry point for all receipt processing, with document-type-gated side effects
 14. **Event Sourcing Lite (Phase 4)** - `receipt_events` table records every receipt lifecycle transition as an immutable append-only log with status tracking
+15. **Coordinator Pattern (Phase 5)** - `RecurringLifecycleCoordinator` is the primary entry point for generating and managing recurring occurrences, with auto-link hook into `TransactionLifecycleCoordinator`
+16. **Expand → Resolve → Materialize Triad (Phase 5)** - `RecurringOccurrenceExpander` + `OccurrenceConflictResolver` + `RecurringOccurrenceMaterializer` form a three-phase pipeline for occurrence lifecycle
+17. **Reminder Delivery Scheduling (Phase 5)** - `recurring_reminder_deliveries` table with `getPendingDeliveries(now)` query for WorkManager-based dispatch
 
 ---
 

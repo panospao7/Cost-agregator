@@ -29,8 +29,8 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v96
-- 590+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4)
+- Database version: v100
+- 590+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5)
 - Destination-driven navigation via `NavigationDestination`
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
@@ -123,7 +123,7 @@ domain/
 │   ├── ReceiptDocumentType.kt   # Enum: RETAIL_RECEIPT, EMAIL_RECEIPT, BANK_STATEMENT, etc.
 │   ├── ReceiptProcessingStatus.kt # Enum: CAPTURED → DELETED (14 values)
 │   ├── EmailReceiptData.kt      # Structured email receipt data
-│   └── lifecycle/               # **NEW — Receipt lifecycle coordinator + services**
+│   └── lifecycle/               # Receipt lifecycle coordinator + services
 │       ├── ReceiptLifecycleCoordinator.kt   # Single entry point for all receipt processing
 │       ├── ReceiptLinkService.kt            # Centralized receipt-expense linking (multi-link)
 │       ├── ReceiptAssetStore.kt             # File persistence, hash computation, backup manifest
@@ -138,16 +138,23 @@ domain/
 ├── core/
 │   ├── money/                   # Type-safe money primitives (CurrencyCode, MoneyAmount, etc.)
 │   └── time/                    # Typed time period models (PeriodRange, PeriodKind)
-├── transaction/                 # **NEW — Transaction lifecycle models**
+├── transaction/                 # Transaction lifecycle models
 │   ├── ExpenseSource.kt         # Enum of 14 expense origin sources
 │   ├── LifecycleEventType.kt    # Enum of 14 lifecycle event types
 │   ├── DeduplicationMode.kt     # Enum of deduplication strategies
 │   ├── CreateExpenseRequest.kt  # Source-neutral creation request (40+ fields)
 │   ├── CreateExpenseResult.kt   # Sealed result (Created, DuplicateSkipped, etc.)
 │   ├── ExpenseUpdates.kt        # Patch-style update model
-│   └── lifecycle/               # **NEW — Lifecycle coordinator + dispatcher**
+│   └── lifecycle/               # Lifecycle coordinator + dispatcher
 │       ├── TransactionLifecycleCoordinator.kt    # Single entry point for ALL expense CUD
 │       └── TransactionSideEffectDispatcher.kt    # Post-creation side effects (budget, anomaly, learning)
+├── recurring/                   # **NEW — Recurring occurrence lifecycle**
+│   ├── RecurringOccurrenceExpander.kt    # Expands recurrence rules into concrete occurrences
+│   ├── OccurrenceConflictResolver.kt     # Resolves candidates vs actual expenses
+│   ├── RecurringPlanProjectionService.kt # Materialises planned expenses from occurrences
+│   └── lifecycle/               # **NEW — Recurring lifecycle coordinator + materializer**
+│       ├── RecurringLifecycleCoordinator.kt      # Primary entry point for occurrence generation
+│       └── RecurringOccurrenceMaterializer.kt    # Persists occurrences + creates reminders
 ├── subscription/                # Subscription detection / management
 ├── tax/                         # Tax configuration and estimation
 ├── export/                      # Export flows
@@ -164,7 +171,7 @@ data/
 ├── location/                    # Geocoding services
 ├── security/                    # Secure storage / crypto helpers
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v96)
+│   ├── AppDatabase.kt          # Room database (v100)
 │   ├── entity/                  # Room entities across finance, AI, groups, location, and settings
 │   ├── dao/                     # Room DAOs
 │   ├── model/                   # Database models
@@ -264,7 +271,7 @@ FinancialWeatherRepository
 | Startup delegate | `startup/AppStartupDelegate.kt` | Hilt entry-point bootstrap |
 | Startup coordinator | `startup/AppStartupCoordinator.kt` | Lifecycle observer + startup jobs |
 | Main Activity | `ui/MainActivity.kt` | Navigation host + deep links |
-| Database | `data/database/AppDatabase.kt` | Room DB v96 |
+| Database | `data/database/AppDatabase.kt` | Room DB v100 |
 
 ### Core Engines
 | Engine | File | Purpose |
@@ -535,20 +542,57 @@ A ~20-file cross-cutting feature establishing a single, auditable entry point fo
 - `ReceiptExpenseLinkDao` — DAO with `insert()`, `getLinksForReceipt()`, `getLinksForExpense()`, `unlink()`, `deleteAllLinksForReceipt()`
 - `ScannedReceipt` — 10 new columns: `sourceType`, `documentType`, `processingStatus`, `sourceFingerprint`, `imageHash`, `textFingerprint`, `semanticFingerprint`, `ocrConfidence`, `parseFailureReason`, `updatedAt`
 - Migration 95→96: adds `receipt_events` and `receipt_expense_links` tables, adds 10 columns to `scanned_receipts`
+- Migration 95→96: removes `transaction_events_eventType_source_index` before re-creating it to fix schema drift
+
+---
+
+### Recurring / Planned / Reminder Lifecycle Foundation (Phase 5 — May 2026)
+
+A ~5-file domain expansion establishing an auditable lifecycle for recurring-expense occurrences, with conflict resolution and reminder scheduling.
+
+#### New `domain/recurring/` Package — Expansion & Resolution
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `RecurringOccurrenceExpander` | `domain/recurring/RecurringOccurrenceExpander.kt` | Pure utility that expands a recurrence rule into concrete occurrence candidates within a half-open date range. Supports WEEKLY/BIWEEKLY/MONTHLY/QUARTERLY/SEMI_ANNUALLY/ANNUALLY frequencies via calendar-aware arithmetic (DST/leap-year safe). |
+| `OccurrenceConflictResolver` | `domain/recurring/OccurrenceConflictResolver.kt` | Resolves occurrence candidates against actual expenses to determine PLANNED/PAID/SKIPPED status. Matching rules: same calendar day, merchant match (case-insensitive via MerchantKeyGenerator), amount ±10% tolerance, same currency. Each expense matched at most once. |
+| `RecurringPlanProjectionService` | `domain/recurring/RecurringPlanProjectionService.kt` | Bridges the recurring lifecycle system to forecasting/budgeting by materialising `PlannedExpense` rows from PLANNED occurrences. Prevents double-count risk by deduplicating via `sourceOccurrenceKey`. |
+
+#### New `domain/recurring/lifecycle/` Package — Coordination & Materialization
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `RecurringLifecycleCoordinator` | `lifecycle/RecurringLifecycleCoordinator.kt` | **Primary entry point** for generating and managing recurring occurrences. Orchestrates expand → resolve → materialize pipeline. Provides `generateOccurrences()`, `linkExpenseToOccurrence()` (best-effort post-creation linking), `getOccurrences()`, `updateOccurrenceStatus()`, and `getDueReminders()`. |
+| `RecurringOccurrenceMaterializer` | `lifecycle/RecurringOccurrenceMaterializer.kt` | Persists resolved occurrences and creates reminder deliveries. INSERT with IGNORE for new (occurrenceKey unique constraint), UPDATE for status changes. Creates `RecurringReminderDelivery` rows for PLANNED occurrences (DUE_DAY, N_DAYS_BEFORE, OVERDUE windows). |
+
+#### Cross-Cutting Integration
+
+- **TransactionLifecycleCoordinator auto-link hook (Phase 3 ↔ Phase 5):** After every `createExpense()`, a best-effort call to `recurringLifecycleCoordinator.linkExpenseToOccurrence()` attempts to match the new expense to a PLANNED occurrence on the same calendar day. Failures are silently caught (non-blocking).
+- **ForecastInputAssembler** updated to inject `RecurringLifecycleCoordinator` for future dedup integration (replacing ad-hoc recurrence expansion with coordinator-driven generation).
+- **Subscription math normalization** fixed across subscription detection and recurring engines.
+
+#### New DB Layer
+
+- `RecurringOccurrence` — Room entity for `recurring_occurrences` table (sourceType, sourceId, occurrenceKey unique, dueDate, status, linkedExpenseId, expectedAmount/Currency, paid fields, frequency, merchant, categoryId, timestamps). Indices on (sourceType+sourceId), dueDate, status, occurrenceKey (unique), linkedExpenseId.
+- `RecurringOccurrenceDao` — DAO with insert (IGNORE), insertAll, update, getByKey, getBySource, getByDateRange, getByStatus, updateStatus.
+- `RecurringReminderDelivery` — Room entity for `recurring_reminder_deliveries` table (occurrenceId, reminderWindow, scheduledAt, status, lastSentAt, dismissedAt, snoozedUntil, notificationId, createdAt). Indices on (occurrenceId+reminderWindow), status, scheduledAt.
+- `RecurringReminderDeliveryDao` — DAO with insert, insertAll, update, getByOccurrenceAndWindow, getPendingDeliveries.
+- `PlannedExpense` — 2 new columns: `sourceOccurrenceKey` (TEXT, nullable) and `sourceRecurringRuleId` (INTEGER, nullable) for cross-linking planned expenses to recurring occurrences.
+- Migration 96→100: creates both new tables with indices, adds 2 columns to `planned_expenses`.
 
 ---
 
 ## Database Schema
 
-### Version: v96 (post receipt lifecycle migration)
+### Version: v100 (post recurring lifecycle migration)
 
-The Room schema in v96 includes all tables from v95 plus:
+The Room schema in v100 includes all tables from v96 plus:
 
-**New table:** `receipt_events` — immutable audit log for receipt lifecycle transitions (capture, OCR, parsing, linking, deletion).
+**New table:** `recurring_occurrences` — stores expanded occurrence candidates for recurring rules with status tracking (PLANNED/PAID/SKIPPED/MISSED/CANCELLED). Unique constraint on `occurrenceKey` enables idempotent insert.
 
-**New table:** `receipt_expense_links` — many-to-many join table linking receipts to expenses (supports single and multi-link relationships).
+**New table:** `recurring_reminder_deliveries` — schedules and tracks reminder dispatch for recurring occurrences (SCHEDULED/SENT/DISMISSED/SNOOZED/FAILED states, configurable reminder windows like DUE_DAY, 3_DAYS_BEFORE, OVERDUE).
 
-**New columns on `scanned_receipts`:** `sourceType`, `documentType`, `processingStatus`, `sourceFingerprint`, `imageHash`, `textFingerprint`, `semanticFingerprint`, `ocrConfidence`, `parseFailureReason`, `updatedAt` — full lifecycle metadata and deduplication fingerprints.
+**New columns on `planned_expenses`:** `sourceOccurrenceKey` (TEXT, nullable) and `sourceRecurringRuleId` (INTEGER, nullable) — links planned expenses back to the recurring occurrence and rule that generated them, preventing double-count.
 
 The full schema now covers:
 

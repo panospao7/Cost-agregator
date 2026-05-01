@@ -48,6 +48,10 @@ class SmartSavingsEngine @Inject constructor(
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
     private val timeProvider: TimeProvider,
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
+    // TODO: Inject RecurringLifecycleCoordinator for recurring-aware safe-to-save
+    // calculations. The coordinator's generateOccurrences() should be used to
+    // project recurring commitments when determining discretionary spending
+    // capacity, replacing the current ad-hoc recurring pattern estimates.
 ) {
     companion object {
         private const val DAY_IN_MILLIS = 24 * 60 * 60 * 1000L

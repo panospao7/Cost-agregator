@@ -18,6 +18,17 @@ import javax.inject.Singleton
 
 /**
  * SynthesisEngine - Core financial forecasting and budgeting logic.
+ *
+ * ## Source of truth for recurrence expansion
+ *
+ * This engine consumes [RecurringPattern] and [PlannedExpense] lists from
+ * [ForecastInputAssembler]. The **recurring lifecycle coordinator**
+ * ([com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator])
+ * is the canonical source of truth for expanding recurrence rules into
+ * concrete occurrences. Any future migration that generates [PlannedExpense]
+ * rows from occurrences (e.g. [com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService])
+ * MUST ensure that the assembler deduplicates these against the recurring
+ * patterns it already produces, preventing double-counting.
  * 
  * ## Block Party Algorithm
  * 

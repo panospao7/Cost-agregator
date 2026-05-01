@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
@@ -34,7 +35,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val transactionEventDao: TransactionEventDao,
     private val timeProvider: TimeProvider,
-    private val sideEffectDispatcher: TransactionSideEffectDispatcher
+    private val sideEffectDispatcher: TransactionSideEffectDispatcher,
+    private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator
 ) {
     /**
      * Creates an expense with full lifecycle handling:
@@ -159,6 +161,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         // 7. Dispatch post-creation side effects (best-effort, post-commit)
         sideEffectDispatcher.dispatchOnCreated(insertedId, request.source)
+
+        // 8. Try to link this expense to a PLANNED recurring occurrence (best-effort)
+        try {
+            recurringLifecycleCoordinator.linkExpenseToOccurrence(insertedId)
+        } catch (_: Exception) {
+            // Non-critical — best effort; do not block the caller
+        }
 
         return CreateExpenseResult.Created(insertedId)
     }

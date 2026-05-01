@@ -74,6 +74,7 @@ object DaoModule {
     @Singleton
     fun provideSourceStatsDao(database: AppDatabase): SourceStatsDao = database.sourceStatsDao()
 
+    @Deprecated("Use ManualRecurringExpenseDao instead. Kept for backward compatibility during migration.")
     @Provides
     @Singleton
     fun provideRecurringExpenseDao(database: AppDatabase): RecurringExpenseDao = database.recurringExpenseDao()
@@ -237,4 +238,14 @@ object DaoModule {
     @Singleton
     fun provideReceiptExpenseLinkDao(database: AppDatabase): ReceiptExpenseLinkDao =
         database.receiptExpenseLinkDao()
+
+    @Provides
+    @Singleton
+    fun provideRecurringOccurrenceDao(database: AppDatabase): RecurringOccurrenceDao =
+        database.recurringOccurrenceDao()
+
+    @Provides
+    @Singleton
+    fun provideRecurringReminderDeliveryDao(database: AppDatabase): RecurringReminderDeliveryDao =
+        database.recurringReminderDeliveryDao()
 }

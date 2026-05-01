@@ -20,4 +20,7 @@ interface PlannedExpenseDao {
 
     @Query("DELETE FROM planned_expenses WHERE id = :id")
     suspend fun deletePlannedExpenseById(id: Long)
+
+    @Query("SELECT * FROM planned_expenses WHERE sourceOccurrenceKey = :key LIMIT 1")
+    suspend fun getBySourceOccurrenceKey(key: String): PlannedExpense?
 }

@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -35,12 +36,26 @@ import kotlin.math.roundToLong
  * - include detected recurring rows only when confidence >= [HIGH_CONFIDENCE_THRESHOLD]
  * - dedupe restored stale manual rows by stable rule signature, not merchant alone
  * - manual rows take precedence only for the same stable rule signature
+ *
+ * ## Double-count risk
+ *
+ * This assembler merges manual recurring patterns and planned expenses
+ * **independently**, which can lead to double-counting when a planned expense
+ * was derived from the same recurring rule (e.g. via [RecurringPlanProjectionService]).
+ *
+ * TODO: Use [RecurringLifecycleCoordinator.generateOccurrences] as the single
+ *       source of truth for recurrence expansion, then cross-deduplicate with
+ *       planned expenses by sourceOccurrenceKey. After migration, the
+ *       `mergeRecurringPatterns` step should either be removed or narrowed to
+ *       detected-only patterns.
  */
 @Singleton
 class ForecastInputAssembler @Inject constructor(
     private val timeProvider: TimeProvider,
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    /** @suppress Coordinator injected for future dedup integration. */
+    private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator
 ) {
 
     data class ForecastInput(

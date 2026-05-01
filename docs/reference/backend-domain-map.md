@@ -29,7 +29,9 @@
 | `core/time/` | **NEW — Typed time period models**: `PeriodRange` (half-open `[start, end)` with kind/zone/label), `PeriodKind` (TODAY, THIS_WEEK, THIS_MONTH, LAST_7_DAYS, etc.) |
 | `transaction/` | **NEW — Transaction lifecycle models**: `ExpenseSource`, `LifecycleEventType`, `DeduplicationMode`, `CreateExpenseRequest`, `CreateExpenseResult`, `ExpenseUpdates` |
 | `transaction/lifecycle/` | **NEW — Lifecycle coordinator + dispatcher**: `TransactionLifecycleCoordinator` (single entry point for CUD), `TransactionSideEffectDispatcher` (post-creation side effects) |
-| `receipt/lifecycle/` | **NEW — Receipt lifecycle coordinator + services**: `ReceiptLifecycleCoordinator` (single entry point for receipt processing), `ReceiptLinkService` (centralized receipt-expense linking), `ReceiptAssetStore` (file persistence), `ReceiptInputValidator` (URI/MIME validation), `ReceiptDuplicateDetector` (3-signal dedup), `ReceiptSideEffectDispatcher` (document-type-gated effects), `BankStatementLifecycleProcessor` (statement processing) |
+| `receipt/lifecycle/` | **Receipt lifecycle coordinator + services**: `ReceiptLifecycleCoordinator` (single entry point for receipt processing), `ReceiptLinkService` (centralized receipt-expense linking), `ReceiptAssetStore` (file persistence), `ReceiptInputValidator` (URI/MIME validation), `ReceiptDuplicateDetector` (3-signal dedup), `ReceiptSideEffectDispatcher` (document-type-gated effects), `BankStatementLifecycleProcessor` (statement processing) |
+| `recurring/` | **NEW — Recurring occurrence expansion & resolution**: `RecurringOccurrenceExpander` (expand recurrence rule → occurrence candidates), `OccurrenceConflictResolver` (resolve candidates vs actual expenses), `RecurringPlanProjectionService` (materialise PlannedExpense rows from occurrences) |
+| `recurring/lifecycle/` | **NEW — Recurring lifecycle coordinator + materializer**: `RecurringLifecycleCoordinator` (primary entry point for occurrence generation), `RecurringOccurrenceMaterializer` (persist occurrences + create reminder deliveries) |
 | `dto/` | Cross-layer transfer objects for AI, review, and category references |
 | `ai/` | AI capability routing, policy, and model-backed services |
 | `bank/` | Bank API integration and connection orchestration |
@@ -543,18 +545,19 @@ interface AiCapabilityRouter {
 | `GreeklishNormalizer.kt` | Greek text normalization |
 | `MerchantCanonicalizer.kt` | Merchant name standardization |
 
-### Receipt Services & Lifecycle
-**Directory:** `receipt/` and `receipt/lifecycle/`
+### Recurring Services & Lifecycle (NEW — Phase 5)
+**Directory:** `recurring/` and `recurring/lifecycle/`
 
 | Service / Coordinator | File | Purpose |
 |------------------------|------|---------|
-| `ReceiptLifecycleCoordinator` | `lifecycle/ReceiptLifecycleCoordinator.kt` | **Single entry point** for all receipt processing (Phase 4). Orchestrates validate → persist → OCR → dedupe → save → event log → side effects. |
-| `ReceiptLinkService` | `lifecycle/ReceiptLinkService.kt` | Centralized receipt-expense linking via `receipt_expense_links` join table. Creates/removes links and writes audit events. |
-| `ReceiptAssetStore` | `lifecycle/ReceiptAssetStore.kt` | File persistence for receipt assets. Copies images to app-local storage, computes SHA-256 hashes, creates camera temp URIs, generates backup manifests. |
-| `ReceiptInputValidator` | `lifecycle/ReceiptInputValidator.kt` | URI/MIME/size validation before processing. |
-| `ReceiptDuplicateDetector` | `lifecycle/ReceiptDuplicateDetector.kt` | 3-signal deduplication: exact hash, text fingerprint, semantic fingerprint. |
-| `ReceiptSideEffectDispatcher` | `lifecycle/ReceiptSideEffectDispatcher.kt` | Document-type-aware downstream effects (warranty, categorization, matching, price protection). |
-| `BankStatementLifecycleProcessor` | `lifecycle/BankStatementLifecycleProcessor.kt` | Statement-specific lifecycle: OCR → parse → PendingReview creation → lifecycle events. |
+| `RecurringOccurrenceExpander` | `RecurringOccurrenceExpander.kt` | Pure domain utility that expands a recurrence rule into concrete `OccurrenceCandidate`s within a half-open date range. Uses `TimePeriodUtils` calendar-aware advancement (DST/leap-year safe). Produces deduplication-safe `occurrenceKey`. |
+| `OccurrenceConflictResolver` | `OccurrenceConflictResolver.kt` | Resolves occurrence candidates against actual expenses to determine PLANNED/PAID/SKIPPED status. Matching: same calendar day, merchant match (case-insensitive via `MerchantKeyGenerator`), amount ±10% tolerance, same currency. Each expense matched at most once. |
+| `RecurringPlanProjectionService` | `RecurringPlanProjectionService.kt` | Bridges recurring lifecycle to forecasting by materialising `PlannedExpense` rows from PLANNED occurrences. Deduplicates via `sourceOccurrenceKey`. Called by forecast pipeline. |
+| `RecurringLifecycleCoordinator` | `lifecycle/RecurringLifecycleCoordinator.kt` | **Primary entry point** for generating and managing recurring occurrences. Orchestrates expand → resolve → materialize. Also provides `linkExpenseToOccurrence()` (called by `TransactionLifecycleCoordinator` post-creation), `getOccurrences()`, `updateOccurrenceStatus()`, `getDueReminders()`. |
+| `RecurringOccurrenceMaterializer` | `lifecycle/RecurringOccurrenceMaterializer.kt` | Persists resolved occurrences (INSERT with IGNORE, UPDATE on status change) and creates `RecurringReminderDelivery` rows for PLANNED occurrences (DUE_DAY, N_DAYS_BEFORE, OVERDUE windows). |
+
+### Receipt Services & Lifecycle
+**Directory:** `receipt/` and `receipt/lifecycle/`
 | `ReceiptOcrService.kt` | OCR engine invocation | |
 | `ReceiptParser.kt` | Receipt format parsing | |
 | `BankStatementParser.kt` | Bank statement extraction | |

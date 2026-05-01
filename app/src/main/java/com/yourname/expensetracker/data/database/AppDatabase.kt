@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 96
+const val APP_DATABASE_SCHEMA_VERSION = 100
 
 @Database(
     entities = [
@@ -64,7 +64,9 @@ const val APP_DATABASE_SCHEMA_VERSION = 96
         SpendingChallengeEntity::class,
         TransactionEvent::class,
         ReceiptEvent::class,
-        ReceiptExpenseLink::class
+        ReceiptExpenseLink::class,
+        RecurringOccurrence::class,
+        RecurringReminderDelivery::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -121,6 +123,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun transactionEventDao(): TransactionEventDao
     abstract fun receiptEventDao(): ReceiptEventDao
     abstract fun receiptExpenseLinkDao(): ReceiptExpenseLinkDao
+    abstract fun recurringOccurrenceDao(): RecurringOccurrenceDao
+    abstract fun recurringReminderDeliveryDao(): RecurringReminderDeliveryDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -5765,6 +5769,78 @@ val MIGRATION_95_96 = object : androidx.room.migration.Migration(95, 96) {
     }
 }
 
+// Migration 96 -> 100: Recurring Occurrences and Reminder Deliveries (Phase 5, PR B).
+//
+// 1. CREATE TABLE recurring_occurrences with all columns + indices.
+// 2. CREATE TABLE recurring_reminder_deliveries with all columns + indices.
+// 3. Add sourceOccurrenceKey TEXT column to planned_expenses table.
+// 4. Add sourceRecurringRuleId INTEGER column to planned_expenses table.
+val MIGRATION_96_100 = object : androidx.room.migration.Migration(96, 100) {
+    override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+        database.beginTransaction()
+        try {
+            // 1. Create recurring_occurrences table
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS recurring_occurrences (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    sourceType TEXT NOT NULL,
+                    sourceId INTEGER NOT NULL,
+                    occurrenceKey TEXT NOT NULL,
+                    dueDate INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    linkedExpenseId INTEGER,
+                    expectedAmount REAL NOT NULL,
+                    expectedCurrency TEXT NOT NULL,
+                    paidAt INTEGER,
+                    paidAmount REAL,
+                    paidCurrency TEXT,
+                    frequency TEXT NOT NULL,
+                    merchant TEXT,
+                    categoryId INTEGER,
+                    createdAt INTEGER NOT NULL DEFAULT 0,
+                    updatedAt INTEGER NOT NULL DEFAULT 0
+                )
+            """.trimIndent())
+
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_occurrences_sourceType_sourceId ON recurring_occurrences (sourceType, sourceId)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_occurrences_dueDate ON recurring_occurrences (dueDate)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_occurrences_status ON recurring_occurrences (status)")
+            database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_recurring_occurrences_occurrenceKey ON recurring_occurrences (occurrenceKey)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_occurrences_linkedExpenseId ON recurring_occurrences (linkedExpenseId)")
+
+            // 2. Create recurring_reminder_deliveries table
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS recurring_reminder_deliveries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    occurrenceId INTEGER NOT NULL,
+                    reminderWindow TEXT NOT NULL,
+                    scheduledAt INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    lastSentAt INTEGER,
+                    dismissedAt INTEGER,
+                    snoozedUntil INTEGER,
+                    notificationId INTEGER,
+                    createdAt INTEGER NOT NULL DEFAULT 0
+                )
+            """.trimIndent())
+
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_occurrenceId_reminderWindow ON recurring_reminder_deliveries (occurrenceId, reminderWindow)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_status ON recurring_reminder_deliveries (status)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_recurring_reminder_deliveries_scheduledAt ON recurring_reminder_deliveries (scheduledAt)")
+
+            // 3. Add sourceOccurrenceKey column to planned_expenses
+            database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceOccurrenceKey TEXT")
+
+            // 4. Add sourceRecurringRuleId column to planned_expenses
+            database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceRecurringRuleId INTEGER")
+
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+    }
+}
+
 /**
      * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -5899,7 +5975,8 @@ MIGRATION_91_92,
         MIGRATION_92_93,
         MIGRATION_93_94,
         MIGRATION_94_95,
-        MIGRATION_95_96
+        MIGRATION_95_96,
+        MIGRATION_96_100
     )
     }
 }

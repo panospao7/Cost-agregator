@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.SubscriptionUsage
 import com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -378,12 +379,20 @@ class SubscriptionManagerEngine @Inject constructor(
     
     /**
      * Get total monthly subscription cost.
+     *
+     * Normalises each subscription to its monthly equivalent using
+     * [RecurrenceCalculator.toMonthlyAmount] so that WEEKLY, BIWEEKLY, QUARTERLY,
+     * SEMI_ANNUALLY and ANNUALLY frequencies are correctly represented as a
+     * monthly cost rather than using the raw per-period amount.
      */
     suspend fun getTotalMonthlySubscriptionCost(): Double {
         val subscriptions = getAllSubscriptions()
         var total = 0.0
         for (analysis in subscriptions) {
-            total += analysis.currentPrice
+            total += RecurrenceCalculator.toMonthlyAmount(
+                analysis.subscription.amount,
+                analysis.subscription.frequency
+            )
         }
         return total
     }

@@ -162,14 +162,25 @@ Owns merchant-name normalization and category prediction for ordinary expenses.
 
 ## SEGMENT 7: Recurring Expenses
 
-Owns recurring pattern detection and future recurring item planning.
+Owns recurring pattern detection, future recurring item planning, and the **recurring occurrence lifecycle** (Phase 5).
 
 **Representative files**
 - `domain/logic/RecurringExpenseEngine.kt`
 - `domain/model/RecurringPattern.kt`
 - `domain/model/UpcomingItem.kt`
+- `domain/recurring/RecurringOccurrenceExpander.kt` — Expands recurrence rules into concrete occurrence candidates
+- `domain/recurring/OccurrenceConflictResolver.kt` — Resolves candidates against actual expenses (PLANNED/PAID/SKIPPED)
+- `domain/recurring/RecurringPlanProjectionService.kt` — Materialises PlannedExpense rows from occurrences
+- `domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt` — **Primary entry point** for occurrence generation and management
+- `domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt` — Persists occurrences and creates reminder deliveries
+- `data/database/entity/RecurringOccurrence.kt` — Occurrence entity (table: `recurring_occurrences`)
+- `data/database/dao/RecurringOccurrenceDao.kt` — DAO for recurring occurrences
+- `data/database/entity/RecurringReminderDelivery.kt` — Reminder delivery entity (table: `recurring_reminder_deliveries`)
+- `data/database/dao/RecurringReminderDeliveryDao.kt` — DAO for reminder deliveries
 - `data/repository/RecurringExpenseRepository.kt`
 - `data/repository/PlannedExpenseRepository.kt`
+
+**Boundary note:** The `recurring_occurrences` and `recurring_reminder_deliveries` tables are owned by this segment. The `TransactionLifecycleCoordinator` (Segment 9) auto-links new expenses to PLANNED occurrences via `RecurringLifecycleCoordinator.linkExpenseToOccurrence()` as a best-effort post-creation hook.
 
 ## SEGMENT 8: Analytics & Insights
 

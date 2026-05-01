@@ -33,7 +33,11 @@ data class PlannedExpense(
     @ColumnInfo(defaultValue = "0") val isRecurring: Boolean = false,
     val priority: PlannedExpensePriority = PlannedExpensePriority.LIKELY,
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
-    val createdAt: Long = 0L
+    val createdAt: Long = 0L,
+    /** Key linking this planned expense to a recurring occurrence (occurrenceKey). */
+    val sourceOccurrenceKey: String? = null,
+    /** ID of the recurring rule that generated this planned expense. */
+    val sourceRecurringRuleId: Long? = null
 )
 
 enum class PlannedExpensePriority {

@@ -5,9 +5,12 @@ import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import kotlinx.coroutines.flow.Flow
 
 /**
- * @deprecated Use ManualRecurringExpenseDao instead.
- * This DAO is kept for backward compatibility during migration.
- * All methods delegate to ManualRecurringExpenseDao functionality.
+ * Fully deprecated — do not use in new code.
+ *
+ * Use [ManualRecurringExpenseDao] for all recurring expense operations.
+ * This interface is retained only to avoid breaking existing callers during
+ * migration.  Every method in this DAO has an equivalent (or superseding)
+ * counterpart in [ManualRecurringExpenseDao].
  *
  * B4 contract change: [getAllActiveFlow] and [getAllActive] now return only
  * active rows (isActive = 1).  The old unfiltered [getAllIncludingInactive]

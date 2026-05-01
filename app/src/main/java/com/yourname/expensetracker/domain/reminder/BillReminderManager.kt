@@ -28,6 +28,23 @@ enum class ReminderUrgency {
     CRITICAL   // Due today or overdue
 }
 
+/**
+ * Manages bill reminders based on recurring expense rules.
+ *
+ * ## Integration with RecurringLifecycleCoordinator
+ *
+ * This class's [getNotificationsDue] method filters upcoming reminders by urgency.
+ * However, the preferred scheduling path going forward is:
+ * 1. Use [RecurringLifecycleCoordinator.getDueReminders] which queries the
+ *    `recurring_reminder_deliveries` table for SCHEDULED deliveries whose
+ *    `scheduledAt` has passed.
+ * 2. A [ReminderDispatchWorker] (WorkManager — to be created in a future PR)
+ *    should run periodic checks and call [RecurringLifecycleCoordinator.getDueReminders]
+ *    to dispatch notifications.
+ *
+ * Until that worker exists, [getNotificationsDue] remains active for backward
+ * compatibility with the legacy reminder path.
+ */
 @Singleton
 class BillReminderManager @Inject constructor(
     private val recurringExpenseRepository: RecurringExpenseRepository,

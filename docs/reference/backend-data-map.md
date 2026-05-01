@@ -131,10 +131,10 @@ data/
 
 | Aspect | Details |
 |--------|---------|
-| **Version** | 96 |
-| **Total Entities** | 50 (ReceiptEvent, ReceiptExpenseLink added; 10 new ScannedReceipt columns) |
-| **Total DAOs** | 49 (ReceiptEventDao, ReceiptExpenseLinkDao added) |
-| **Total Migrations** | 91 (MIGRATION_6_7 → MIGRATION_95_96) |
+| **Version** | 100 |
+| **Total Entities** | 52 (RecurringOccurrence, RecurringReminderDelivery added; 2 new PlannedExpense columns) |
+| **Total DAOs** | 51 (RecurringOccurrenceDao, RecurringReminderDeliveryDao added) |
+| **Total Migrations** | 92 (MIGRATION_6_7 → MIGRATION_96_100) |
 | **Type Converters** | Custom: Enums, Lists, Dates |
 | **Export Schema** | ✓ Enabled (for migrations verification) |
 
@@ -148,6 +148,15 @@ data/
 - **Expense.source** — new nullable `TEXT` column tracking the origin of each expense (ExpenseSource enum name: MANUAL_ENTRY, NOTIFICATION_AUTO_ACCEPT, CSV_IMPORT, BANK_API_SYNC, etc.). Nullable for backward compatibility with legacy rows; backfilled by migration.
 - **TransactionEvent** — new entity for the `transaction_events` table. Immutable append-only log recording every CREATED/UPDATED/DELETED/etc. transition. Fields: `id`, `expenseId`, `eventType`, `source`, `actor`, `occurredAt`, `dedupeKey`, `duplicateExpenseId`, `beforeSnapshot`, `afterSnapshot`, `metadata`, `reason`. Indexed on `expenseId`, `source`, `occurredAt`, `eventType`.
 - **Single insertion point:** All expense creation now routes through `TransactionLifecycleCoordinator.createExpense()`. Direct `insertAtomic` calls are restricted to grandfathered files only (see `DAO_ACCESS_GUARDRAILS.md`).
+
+### Phase 5 Entity Changes (Recurring/Planned/Reminder Lifecycle)
+
+- **RecurringOccurrence** — new entity for the `recurring_occurrences` table. Stores expanded occurrence candidates from recurring rules. Fields: `id`, `sourceType`, `sourceId`, `occurrenceKey` (unique), `dueDate`, `status` (PLANNED/PAID/SKIPPED/MISSED/CANCELLED/IGNORED), `linkedExpenseId`, `expectedAmount`, `expectedCurrency`, `paidAt`, `paidAmount`, `paidCurrency`, `frequency`, `merchant`, `categoryId`, `createdAt`, `updatedAt`. Indices on `(sourceType, sourceId)`, `dueDate`, `status`, `occurrenceKey` (unique), `linkedExpenseId`.
+- **RecurringReminderDelivery** — new entity for the `recurring_reminder_deliveries` table. Schedules and tracks reminder dispatch. Fields: `id`, `occurrenceId`, `reminderWindow` (DUE_DAY, N_DAYS_BEFORE, OVERDUE), `scheduledAt`, `status` (SCHEDULED/SENT/DISMISSED/SNOOZED/FAILED), `lastSentAt`, `dismissedAt`, `snoozedUntil`, `notificationId`, `createdAt`. Indices on `(occurrenceId, reminderWindow)`, `status`, `scheduledAt`.
+- **PlannedExpense** — 2 new columns:
+  - `sourceOccurrenceKey` (TEXT, nullable) — occurrenceKey of the recurring occurrence that generated this planned expense
+  - `sourceRecurringRuleId` (INTEGER, nullable) — ID of the recurring rule that generated this planned expense
+- **Single insertion point:** All recurring occurrence generation routes through `RecurringLifecycleCoordinator.generateOccurrences()`. Reminder delivery scheduling is handled by `RecurringOccurrenceMaterializer.materialize()`.
 
 ### Phase 4 Entity Changes (Receipt Lifecycle)
 
@@ -174,6 +183,7 @@ data/
 | 93-94 | (intermediate schema updates) |
 | **95** | **Transaction Lifecycle Foundation: `source` column on expenses + `transaction_events` table** |
 | **96** | **Receipt Lifecycle Foundation: `receipt_events` + `receipt_expense_links` tables + 10 new columns on `scanned_receipts` (sourceType, documentType, processingStatus, fingerprints, hashes, ocrConfidence, parseFailureReason, updatedAt)** |
+| **100** | **Recurring/Planned/Reminder Lifecycle Foundation: `recurring_occurrences` + `recurring_reminder_deliveries` tables + `sourceOccurrenceKey` + `sourceRecurringRuleId` on `planned_expenses`** |
 
 ---
 
@@ -272,6 +282,13 @@ data/
 | | | *New column:* `validDate` (Long) — enables historical rate lookups. Unique constraint expanded to include validDate. | | |
 | **SourceStats** | `source_stats` | Notification source statistics (v14) | None | None |
 
+### Recurring Lifecycle (2)
+
+| Entity | Table | Purpose | Foreign Keys | Indices |
+|--------|-------|---------|--------------|---------|
+| **RecurringOccurrence** | `recurring_occurrences` | Expanded occurrence candidates from recurring rules. Status: PLANNED/PAID/SKIPPED/MISSED/CANCELLED/IGNORED. Dedup via occurrenceKey unique constraint. | `linkedExpenseId` → expenses (no FK constraint) | sourceType+sourceId, dueDate, status, occurrenceKey (unique), linkedExpenseId |
+| **RecurringReminderDelivery** | `recurring_reminder_deliveries` | Scheduled reminder dispatch for recurring occurrences. Status: SCHEDULED/SENT/DISMISSED/SNOOZED/FAILED. Windows: DUE_DAY, N_DAYS_BEFORE, OVERDUE. | `occurrenceId` → recurring_occurrences (no FK constraint) | occurrenceId+reminderWindow, status, scheduledAt |
+
 ### Misc. Business (3)
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
@@ -362,6 +379,13 @@ data/
 | **BankConnectionDao** | bank_connections | insert, getAll, getById, update, delete, getActive, updateLastSync, recordError | None |
 | **ExchangeRateDao** | exchange_rates | insert, getRate, updateRate, getAllRates, getStaleRates, deleteOldRates | getRatesBySourceCurrency |
 | **InvestmentDao** | investments | insert, getAll, getById, update, delete, getActive, updateCurrentPrice | getInvestmentsByType, getPortfolioValue |
+
+### Recurring Lifecycle (2)
+
+| DAO | Table | Key Methods |
+|-----|-------|-------------|
+| **RecurringOccurrenceDao** | recurring_occurrences | insert (IGNORE), insertAll, update, getByKey, getBySource, getByDateRange, getByStatus, updateStatus |
+| **RecurringReminderDeliveryDao** | recurring_reminder_deliveries | insert, insertAll, update, getByOccurrenceAndWindow, getPendingDeliveries |
 
 ### Misc (2)
 
@@ -623,6 +647,21 @@ suspend fun getExpensesDynamic(query: SupportSQLiteQuery): List<ExpenseWithCateg
 - Events include actor, status transitions, document type metadata, and error details
 - Used for audit, debugging, and reconstructing receipt processing history
 
+### 13. **Coordinator Pattern (Phase 5) — Recurring Lifecycle**
+- `RecurringLifecycleCoordinator` is the primary entry point for generating and managing recurring occurrences
+- Pipeline: expand → resolve → materialize, producing the expander-resolver-materializer triad
+- Post-creation auto-link hook in `TransactionLifecycleCoordinator` bridges Phase 3 and Phase 5
+
+### 14. **Expand → Resolve → Materialize Triad (Phase 5)**
+- **Expander** (`RecurringOccurrenceExpander`): Pure domain logic, no DI needed. Converts recurrence rules to candidate occurrences.
+- **Resolver** (`OccurrenceConflictResolver`): Pure domain logic, no DI needed. Matches candidates against actual expenses.
+- **Materializer** (`RecurringOccurrenceMaterializer`): Persists results. INSERT-with-IGNORE for dedup, UPDATE for status transitions, creates reminder deliveries.
+
+### 15. **Reminder Delivery Scheduling (Phase 5)**
+- `recurring_reminder_deliveries` table holds scheduled reminders per occurrence and window
+- Supported windows: DUE_DAY, N_DAYS_BEFORE (e.g., 3_DAYS_BEFORE, 7_DAYS_BEFORE), OVERDUE
+- Designed for a `ReminderDispatchWorker` (WorkManager) that queries `getPendingDeliveries(now)`
+
 ---
 
 ## Database Migrations Summary (47 Total, v6→v96)
@@ -646,6 +685,7 @@ suspend fun getExpensesDynamic(query: SupportSQLiteQuery): List<ExpenseWithCateg
 | v51–93 | [TBD - check live file] | 43 | Intermediate schema updates |
 | v94–95 | Transaction Lifecycle Foundation (Phase 3) | 1 | Added `source` column to expenses, created `transaction_events` table |
 | v95→96 | Receipt Lifecycle Foundation (Phase 4) | 1 | Created `receipt_events` + `receipt_expense_links` tables; added 10 columns to `scanned_receipts` (sourceType, documentType, processingStatus, fingerprints, hashes, ocrConfidence, parseFailureReason, updatedAt) |
+| v96→100 | Recurring Lifecycle Foundation (Phase 5) | 1 | Created `recurring_occurrences` + `recurring_reminder_deliveries` tables; added `sourceOccurrenceKey` + `sourceRecurringRuleId` columns to `planned_expenses` |
 
 ---
 
@@ -850,4 +890,4 @@ Totals omitted intentionally; current inventory is in flux.
 
 ---
 
-**Last Updated**: May 2026 | **Schema Version**: 96 | **Total Entities**: 50 | **Total DAOs**: 49 | **Total Repositories**: 36+
+**Last Updated**: May 2026 | **Schema Version**: 100 | **Total Entities**: 52 | **Total DAOs**: 51 | **Total Repositories**: 36+
