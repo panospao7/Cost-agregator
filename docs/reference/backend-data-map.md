@@ -19,8 +19,14 @@ The Data Layer follows a **Repository Pattern** layered over Room ORM and Androi
 
 ```
 data/
+├── privacy/               # **NEW — Privacy data layer (Phase 6)**
+│   ├── PrivacySettingsRepositoryImpl.kt  # DataStore-backed settings
+│   ├── BackupEncryptionService.kt        # AES-256-GCM encrypt/decrypt
+│   ├── ExportAnonymizer.kt               # Strips raw text from exports
+│   └── DataRetentionWorker.kt            # WorkManager purging worker
+│
 ├── database/               # Room ORM + migrations, entities, query models
-│   ├── AppDatabase.kt      # RoomDatabase (69 version, 46 entity references)
+│   ├── AppDatabase.kt      # RoomDatabase (v104, 56 entity references)
 │   ├── converter/          # Type converters
 │   │   └── Converters.kt   # @TypeConverter for complex types
 │   ├── dao/                # Current DAO set
@@ -33,6 +39,8 @@ data/
 │   │   ├── AiArtifactDao.kt
 │   │   ├── AiChatSessionDao.kt
 │   │   ├── AiChatMessageDao.kt
+│   │   ├── RecurringLifecycleEventDao.kt  # Phase 5b
+│   │   ├── PrivacyAuditDao.kt             # Phase 6
 │   │   ├── [40+ more DAOs...]
 │   │   └── [See DAO Registry below]
 │   ├── entity/             # Current Room entities
@@ -43,6 +51,8 @@ data/
 │   │   ├── AiArtifactEntity.kt # AI briefings, explanations (phase 1)
 │   │   ├── MerchantCanonical.kt # Normalized merchant master
 │   │   ├── MerchantAlias.kt     # Raw merchant name → canonical FK
+│   │   ├── RecurringLifecycleEvent.kt  # Phase 5b — audit log for recurring occurrences
+│   │   ├── PrivacyAuditEvent.kt        # Phase 6 — privacy gate audit log
 │   │   ├── [40+ more entities...]
 │   │   └── [See Entity Registry below]
 │   └── model/              # Room query result POJOs
@@ -131,10 +141,10 @@ data/
 
 | Aspect | Details |
 |--------|---------|
-| **Version** | 100 |
-| **Total Entities** | 52 (RecurringOccurrence, RecurringReminderDelivery added; 2 new PlannedExpense columns) |
-| **Total DAOs** | 51 (RecurringOccurrenceDao, RecurringReminderDeliveryDao added) |
-| **Total Migrations** | 92 (MIGRATION_6_7 → MIGRATION_96_100) |
+| **Version** | 104 |
+| **Total Entities** | 56 (RecurringLifecycleEvent, PrivacyAuditEvent added; 4 new columns on planned_expenses + raw_notifications + scanned_receipts) |
+| **Total DAOs** | 54 (RecurringLifecycleEventDao, PrivacyAuditDao added) |
+| **Total Migrations** | 95 (MIGRATION_6_7 → MIGRATION_103_104) |
 | **Type Converters** | Custom: Enums, Lists, Dates |
 | **Export Schema** | ✓ Enabled (for migrations verification) |
 
@@ -157,6 +167,24 @@ data/
   - `sourceOccurrenceKey` (TEXT, nullable) — occurrenceKey of the recurring occurrence that generated this planned expense
   - `sourceRecurringRuleId` (INTEGER, nullable) — ID of the recurring rule that generated this planned expense
 - **Single insertion point:** All recurring occurrence generation routes through `RecurringLifecycleCoordinator.generateOccurrences()`. Reminder delivery scheduling is handled by `RecurringOccurrenceMaterializer.materialize()`.
+
+### Phase 5b Entity Changes (Occurrence Audit + Hardening)
+
+- **PlannedExpense** — 4 new columns (migration 100→101):
+  - `status` (TEXT, default 'PLANNED') — lifecycle status of each planned expense
+  - `linkedActualExpenseId` (INTEGER, nullable) — points to the actual expense if one was created
+  - `merchantKey` (TEXT, nullable) — canonical merchant key for matching
+  - `updatedAt` (INTEGER, default 0) — last-update timestamp
+- **RecurringReminderDelivery** — unique index hardened on `(occurrenceId, reminderWindow)`; duplicate rows deleted keeping the earliest.
+- **RecurringLifecycleEvent** — new entity for the `recurring_lifecycle_events` table. Immutable append-only log recording every significant lifecycle transition for a recurring occurrence. Event types: OCCURRENCE_GENERATED, OCCURRENCE_PAID, OCCURRENCE_SKIPPED, OCCURRENCE_CANCELLED, REMINDER_SCHEDULED, REMINDER_SENT, REMINDER_DISMISSED, PLANNED_GENERATED, DRIFT_DETECTED. Fields: `id`, `occurrenceId` (nullable), `eventType`, `occurredAt`, `oldStatus`, `newStatus`, `metadata` (JSON). Indices on `occurrenceId`, `occurredAt`, `eventType`.
+
+### Phase 6 Entity Changes (Privacy & Audit)
+
+- **PrivacyAuditEvent** — new entity for the `privacy_audit_events` table. Append-only log of every privacy gate check. Fields: `id`, `capability`, `decision` (ALLOWED/DENIED), `reason`, `context` (JSON), `timestampMs`, `caller`. Indices on `timestampMs`, `capability`, `caller`.
+- **RawNotification** — 1 new column (migration 103→104):
+  - `rawContentPurgedAt` (INTEGER, nullable) — timestamp when raw notification content was purged for data retention compliance.
+- **ScannedReceipt** — 1 new column (migration 103→104):
+  - `rawOcrTextPurgedAt` (INTEGER, nullable) — timestamp when raw OCR text was purged for data retention compliance.
 
 ### Phase 4 Entity Changes (Receipt Lifecycle)
 
@@ -184,6 +212,10 @@ data/
 | **95** | **Transaction Lifecycle Foundation: `source` column on expenses + `transaction_events` table** |
 | **96** | **Receipt Lifecycle Foundation: `receipt_events` + `receipt_expense_links` tables + 10 new columns on `scanned_receipts` (sourceType, documentType, processingStatus, fingerprints, hashes, ocrConfidence, parseFailureReason, updatedAt)** |
 | **100** | **Recurring/Planned/Reminder Lifecycle Foundation: `recurring_occurrences` + `recurring_reminder_deliveries` tables + `sourceOccurrenceKey` + `sourceRecurringRuleId` on `planned_expenses`** |
+| **101** | **PlannedExpense hardening: 4 new columns (status, linkedActualExpenseId, merchantKey, updatedAt); reminder delivery unique index** |
+| **102** | **Recurring lifecycle audit: `recurring_lifecycle_events` table** |
+| **103** | **Privacy gate audit: `privacy_audit_events` table** |
+| **104** | **Data retention: `rawContentPurgedAt` on raw_notifications + `rawOcrTextPurgedAt` on scanned_receipts** |
 
 ---
 
@@ -282,12 +314,19 @@ data/
 | | | *New column:* `validDate` (Long) — enables historical rate lookups. Unique constraint expanded to include validDate. | | |
 | **SourceStats** | `source_stats` | Notification source statistics (v14) | None | None |
 
-### Recurring Lifecycle (2)
+### Recurring Lifecycle (3)
 
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
 | **RecurringOccurrence** | `recurring_occurrences` | Expanded occurrence candidates from recurring rules. Status: PLANNED/PAID/SKIPPED/MISSED/CANCELLED/IGNORED. Dedup via occurrenceKey unique constraint. | `linkedExpenseId` → expenses (no FK constraint) | sourceType+sourceId, dueDate, status, occurrenceKey (unique), linkedExpenseId |
-| **RecurringReminderDelivery** | `recurring_reminder_deliveries` | Scheduled reminder dispatch for recurring occurrences. Status: SCHEDULED/SENT/DISMISSED/SNOOZED/FAILED. Windows: DUE_DAY, N_DAYS_BEFORE, OVERDUE. | `occurrenceId` → recurring_occurrences (no FK constraint) | occurrenceId+reminderWindow, status, scheduledAt |
+| **RecurringReminderDelivery** | `recurring_reminder_deliveries` | Scheduled reminder dispatch for recurring occurrences. Status: SCHEDULED/SENT/DISMISSED/SNOOZED/FAILED. Windows: DUE_DAY, N_DAYS_BEFORE, OVERDUE. | `occurrenceId` → recurring_occurrences (no FK constraint) | occurrenceId+reminderWindow (unique), status, scheduledAt |
+| **RecurringLifecycleEvent** | `recurring_lifecycle_events` | Immutable event log for recurring occurrence lifecycle transitions. Event types: OCCURRENCE_GENERATED, OCCURRENCE_PAID, OCCURRENCE_SKIPPED, OCCURRENCE_CANCELLED, REMINDER_SCHEDULED, REMINDER_SENT, REMINDER_DISMISSED, PLANNED_GENERATED, DRIFT_DETECTED. | None | occurrenceId, occurredAt, eventType |
+
+### Privacy & Audit (1)
+
+| Entity | Table | Purpose | Foreign Keys | Indices |
+|--------|-------|---------|--------------|---------|
+| **PrivacyAuditEvent** | `privacy_audit_events` | Append-only log of every privacy gate decision. Fields: id, capability, decision (ALLOWED/DENIED), reason, context (JSON), timestampMs, caller. | None | timestampMs, capability, caller |
 
 ### Misc. Business (3)
 | Entity | Table | Purpose | Foreign Keys | Indices |
@@ -380,12 +419,19 @@ data/
 | **ExchangeRateDao** | exchange_rates | insert, getRate, updateRate, getAllRates, getStaleRates, deleteOldRates | getRatesBySourceCurrency |
 | **InvestmentDao** | investments | insert, getAll, getById, update, delete, getActive, updateCurrentPrice | getInvestmentsByType, getPortfolioValue |
 
-### Recurring Lifecycle (2)
+### Recurring Lifecycle (3)
 
 | DAO | Table | Key Methods |
 |-----|-------|-------------|
 | **RecurringOccurrenceDao** | recurring_occurrences | insert (IGNORE), insertAll, update, getByKey, getBySource, getByDateRange, getByStatus, updateStatus |
 | **RecurringReminderDeliveryDao** | recurring_reminder_deliveries | insert, insertAll, update, getByOccurrenceAndWindow, getPendingDeliveries |
+| **RecurringLifecycleEventDao** | recurring_lifecycle_events | insert, getEventsForOccurrence |
+
+### Privacy & Audit (1)
+
+| DAO | Table | Key Methods |
+|-----|-------|-------------|
+| **PrivacyAuditDao** | privacy_audit_events | insert, getRecent(limit) |
 
 ### Misc (2)
 
@@ -686,6 +732,10 @@ suspend fun getExpensesDynamic(query: SupportSQLiteQuery): List<ExpenseWithCateg
 | v94–95 | Transaction Lifecycle Foundation (Phase 3) | 1 | Added `source` column to expenses, created `transaction_events` table |
 | v95→96 | Receipt Lifecycle Foundation (Phase 4) | 1 | Created `receipt_events` + `receipt_expense_links` tables; added 10 columns to `scanned_receipts` (sourceType, documentType, processingStatus, fingerprints, hashes, ocrConfidence, parseFailureReason, updatedAt) |
 | v96→100 | Recurring Lifecycle Foundation (Phase 5) | 1 | Created `recurring_occurrences` + `recurring_reminder_deliveries` tables; added `sourceOccurrenceKey` + `sourceRecurringRuleId` columns to `planned_expenses` |
+| v100→101 | PlannedExpense hardening (Phase 5b) | 1 | Added 4 columns (status, linkedActualExpenseId, merchantKey, updatedAt); hardened reminder delivery unique index; deduped stale rows |
+| v101→102 | Recurring lifecycle audit (Phase 5b) | 1 | Created `recurring_lifecycle_events` table with indices on occurrenceId, occurredAt, eventType |
+| v102→103 | Privacy audit (Phase 6) | 1 | Created `privacy_audit_events` table with indices on timestampMs, capability, caller |
+| v103→104 | Data retention (Phase 6) | 1 | Added `rawContentPurgedAt` to raw_notifications, `rawOcrTextPurgedAt` to scanned_receipts |
 
 ---
 
@@ -890,4 +940,4 @@ Totals omitted intentionally; current inventory is in flux.
 
 ---
 
-**Last Updated**: May 2026 | **Schema Version**: 100 | **Total Entities**: 52 | **Total DAOs**: 51 | **Total Repositories**: 36+
+**Last Updated**: May 2026 | **Schema Version**: 104 | **Total Entities**: 56 | **Total DAOs**: 54 | **Total Repositories**: 36+

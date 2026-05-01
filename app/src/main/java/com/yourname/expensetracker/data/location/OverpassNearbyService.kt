@@ -5,9 +5,12 @@ import com.yourname.expensetracker.data.location.internal.executeCancellable
 import com.yourname.expensetracker.di.LocationHttpClient
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.GeocodingError
-import com.yourname.expensetracker.domain.location.NearbyPoiResult
 import com.yourname.expensetracker.domain.location.NearbyPoi
+import com.yourname.expensetracker.domain.location.NearbyPoiResult
 import com.yourname.expensetracker.domain.location.NearbyPoiService
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import okhttp3.MediaType.Companion.toMediaType
@@ -30,7 +33,8 @@ import kotlin.math.*
  */
 @Singleton
 class OverpassNearbyService @Inject constructor(
-    @LocationHttpClient private val client: OkHttpClient
+    @LocationHttpClient private val client: OkHttpClient,
+    private val privacyGate: PrivacyGate
 ) : NearbyPoiService {
 
     override suspend fun findNearby(
@@ -39,6 +43,15 @@ class OverpassNearbyService @Inject constructor(
         merchantName: String,
         radiusMetres: Int
     ): NearbyPoiResult {
+        // Check privacy gate before making Overpass API calls
+        when (privacyGate.check(PrivacyCapability.OVERPASS_API)) {
+            is PrivacyDecision.Denied -> {
+                Log.w(TAG, "OVERPASS_API denied by privacy gate — skipping Overpass query")
+                return NearbyPoiResult.Failure(GeocodingError.Disabled)
+            }
+            is PrivacyDecision.Allowed -> { /* proceed */ }
+        }
+
         val query = buildOverpassQuery(lat, lon, radiusMetres)
         val body = query.toRequestBody("text/plain".toMediaType())
         val request = Request.Builder()

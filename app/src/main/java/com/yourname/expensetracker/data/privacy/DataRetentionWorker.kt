@@ -39,8 +39,8 @@ class DataRetentionWorker @AssistedInject constructor(
             val settings = privacySettingsRepository.getSettings()
             val now = timeProvider.now()
 
-            val notificationCutoff = now - settings.rawNotificationRetentionDays * DAY_MS
-            val ocrCutoff = now - settings.rawOcrRetentionDays * DAY_MS
+            val notificationCutoff = now - TimeUnit.DAYS.toMillis(settings.rawNotificationRetentionDays.toLong())
+            val ocrCutoff = now - TimeUnit.DAYS.toMillis(settings.rawOcrRetentionDays.toLong())
 
             val notificationDao = appDatabase.rawNotificationDao()
             val receiptDao = appDatabase.scannedReceiptDao()
@@ -146,8 +146,6 @@ class DataRetentionWorker @AssistedInject constructor(
     companion object {
         const val TAG = "DataRetentionWorker"
         const val WORK_NAME = "data_retention"
-
-        private const val DAY_MS = 24L * 60L * 60L * 1000L
 
         /**
          * Enqueue a daily data-retention job.

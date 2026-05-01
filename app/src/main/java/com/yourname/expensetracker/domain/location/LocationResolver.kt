@@ -5,6 +5,9 @@ import com.yourname.expensetracker.data.location.internal.anonymizeForLog
 import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -35,7 +38,8 @@ class LocationResolver @Inject constructor(
     private val merchantCleaner: MerchantCleaner,
     private val canonicalizer: MerchantCanonicalizer,
     private val greeklishNormalizer: GreeklishNormalizer,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val privacyGate: PrivacyGate
 ) {
     /**
      * Resolve the location for an expense identified by [rawMerchantName].
@@ -241,7 +245,8 @@ class LocationResolver @Inject constructor(
 
         // ── Step 7: Overpass nearby POIs (requires device location) ───────────
         val overpassLocation = deviceLocation
-        if (overpassLocation != null) {
+        val overpassAllowed = privacyGate.check(PrivacyCapability.OVERPASS_API)
+        if (overpassLocation != null && overpassAllowed is PrivacyDecision.Allowed) {
             val nearbyResult = nearbyPoiService.findNearby(
                 lat = overpassLocation.first,
                 lon = overpassLocation.second,
@@ -295,6 +300,14 @@ class LocationResolver @Inject constructor(
         cityHint: String? = null,
         bounded: Boolean = false
     ): GeocodeAttempt {
+        // Check privacy gate before making external geocoding API calls
+        when (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)) {
+            is PrivacyDecision.Denied -> {
+                Log.d(TAG, "EXTERNAL_GEOCODING denied by privacy gate — skipping geocoding")
+                return GeocodeAttempt.NoMatch
+            }
+            is PrivacyDecision.Allowed -> { /* proceed */ }
+        }
         return when (val result = geocodingService.search(name, biasLat, biasLon, cityHint, bounded)) {
             is GeocodingLookupResult.Success -> result.result
                 ?.takeUnless { isNullIsland(it.latitude, it.longitude) }

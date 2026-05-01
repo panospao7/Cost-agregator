@@ -29,14 +29,14 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v100
-- 590+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5)
+- Database version: v104
+- 620+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5, ~16 new in Phase 5b, ~20 new in Phase 6)
 - Destination-driven navigation via `NavigationDestination`
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
 - Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver`
-- WorkManager startup jobs include `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, and `WarrantyExpirationWorker`
-- AI, location, shared-expense, and split flows are first-class subsystems
+- WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `DataRetentionWorker`
+- AI, location, shared-expense, split, privacy, and backup-encryption flows are first-class subsystems
 
 ---
 
@@ -132,6 +132,19 @@ domain/
 │       ├── ReceiptSideEffectDispatcher.kt   # Document-type-gated downstream effects
 │       └── BankStatementLifecycleProcessor.kt # Statement-specific processing
 ├── split/                       # Split-template and expense splitting logic
+├── privacy/                     # **NEW — Privacy capability gates, audit logger, sanitizer**
+│   ├── PrivacyCapability.kt    # Enum of 21 gated capabilities
+│   ├── PrivacyGate.kt          # Interface for capability evaluation
+│   ├── PrivacyDecision.kt      # Sealed: Allowed / Denied(reason)
+│   ├── PrivacySettings.kt      # Data class with 10 privacy toggles + 2 retention settings
+│   ├── PrivacySettingsRepository.kt  # Interface for reading/writing settings
+│   ├── PrivacyAuditLogger.kt   # Logs every gate check decision
+│   ├── NotificationPrivacyGate.kt    # Guards notification capture/allowlist
+│   ├── CloudAiPrivacyGate.kt         # Guards all CLOUD_AI_* capabilities
+│   ├── LocationPrivacyGate.kt        # Guards geocoding, GPS, backfill, Overpass
+│   ├── BackupPrivacyGate.kt          # Guards raw/encrypted backup
+│   ├── CompositePrivacyGate.kt       # Chains all gates; first Denied short-circuits
+│   └── RedactionSanitizer.kt         # PII redaction before cloud calls
 ├── service/                     # Domain service interfaces
 ├── usecase/                     # Use cases / orchestration
 ├── model/                       # Shared domain models
@@ -170,10 +183,19 @@ data/
 ├── ai/provider/                 # Cloud + on-device AI providers
 ├── location/                    # Geocoding services
 ├── security/                    # Secure storage / crypto helpers
+├── privacy/                     # **NEW — Privacy data layer**
+│   ├── PrivacySettingsRepositoryImpl.kt  # DataStore-backed settings
+│   ├── BackupEncryptionService.kt        # AES-256-GCM encrypt/decrypt
+│   ├── ExportAnonymizer.kt               # Strips raw text from exports
+│   └── DataRetentionWorker.kt            # WorkManager purging worker
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v100)
-│   ├── entity/                  # Room entities across finance, AI, groups, location, and settings
+│   ├── AppDatabase.kt          # Room database (v104)
+│   ├── entity/                  # Room entities across finance, AI, groups, location, settings, and privacy
+│   │   ├── RecurringLifecycleEvent.kt   # Phase 5b — audit log for recurring occurrences
+│   │   └── PrivacyAuditEvent.kt         # Phase 6 — privacy gate audit log
 │   ├── dao/                     # Room DAOs
+│   │   ├── RecurringLifecycleEventDao.kt
+│   │   └── PrivacyAuditDao.kt
 │   ├── model/                   # Database models
 │   └── converter/               # Type converters
 ├── service/
@@ -192,7 +214,9 @@ MainApplication
                ├─ DailyBriefingWorker
                ├─ LocationBackfillWorker
                ├─ MerchantKeyBackfillWorker
-               └─ WarrantyExpirationWorker
+               ├─ WarrantyExpirationWorker
+               ├─ BillReminderWorker          (Phase 5b — periodic, every 4h)
+               └─ DataRetentionWorker         (Phase 6 — periodic, every 24h)
 ```
 
 ---
@@ -550,6 +574,18 @@ A ~20-file cross-cutting feature establishing a single, auditable entry point fo
 
 A ~5-file domain expansion establishing an auditable lifecycle for recurring-expense occurrences, with conflict resolution and reminder scheduling.
 
+#### Phase 5b Additions
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `RecurringLifecycleEvent` (entity) | `data/database/entity/RecurringLifecycleEvent.kt` | Immutable event log recording every lifecycle transition for a recurring occurrence (OCCURRENCE_GENERATED, OCCURRENCE_PAID, OCCURRENCE_SKIPPED, etc.). Indices on occurrenceId, occurredAt, eventType. |
+| `RecurringLifecycleEventDao` | `data/database/dao/RecurringLifecycleEventDao.kt` | DAO with `insert()` and `getEventsForOccurrence()`. |
+| `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | `@HiltWorker` — periodic WorkManager worker (every 4h) that queries `RecurringLifecycleCoordinator.getDueReminders()` and dispatches Android notifications for due/overdue bills. |
+| `ForecastInputAssembler` | `domain/forecasting/ForecastInputAssembler.kt` | Central forecast-input assembler that merges manual recurring patterns and planned expenses. Now injects `RecurringLifecycleCoordinator` for future occurrence-based dedup integration (TODO: use `generateOccurrences()` as single source of truth). |
+| `ReconciliationReport` | `domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt` | `data class` + `reconcilePlannedVsActual()` method. Compares planned vs actual spending for a recurring rule over the past N months. Tracks drift, driftPercent, matched/unmatched/over-budget counts. |
+
+**New DB layer (migration 101→102):** `recurring_lifecycle_events` table.
+
 #### New `domain/recurring/` Package — Expansion & Resolution
 
 | Component | File | Purpose |
@@ -582,30 +618,43 @@ A ~5-file domain expansion establishing an auditable lifecycle for recurring-exp
 
 ### Phase 6 — Privacy & Capability Gates (May 2026)
 
-Phase 6 introduces a privacy capability gate system and backup encryption for
-the expense tracker database.
+Phase 6 introduces a privacy capability gate system, audit logging, data retention,
+backup encryption, and an export anonymizer for the expense tracker database.
 
-#### Privacy Gate Architecture
+#### Domain — Privacy Gate Architecture (12 files)
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `PrivacyGate` (interface) | `domain/privacy/PrivacyGate.kt` | Contract for evaluating a capability against current privacy settings, returning Allowed or Denied |
-| `CompositePrivacyGate` | `domain/privacy/CompositePrivacyGate.kt` | Chains multiple gates; first Denied short-circuits |
+| `PrivacyCapability` | `domain/privacy/PrivacyCapability.kt` | Enum of 21 gated capabilities (NOTIFICATION_CAPTURE, CLOUD_AI_RECEIPT_ASSIST, EXTERNAL_GEOCODING, RAWBACKUP_EXPORT, ENCRYPTED_BACKUP, etc.) |
+| `PrivacyGate` (interface) | `domain/privacy/PrivacyGate.kt` | Contract: `check(capability, context) → PrivacyDecision`. Fail-closed, audit-logged, deterministic per capability+settings. |
+| `PrivacyDecision` | `domain/privacy/PrivacyDecision.kt` | Sealed interface: `Allowed` or `Denied(reason)` |
+| `PrivacySettings` | `domain/privacy/PrivacySettings.kt` | Data class with 10 privacy toggles (notificationCapture, cloudAi, redactBeforeCloud, receiptImageCloud, externalGeocoding, backgroundLocationBackfill, deviceGpsLocation, encryptedBackup, debugDataPersistence) + 2 retention day settings |
+| `PrivacySettingsRepository` | `domain/privacy/PrivacySettingsRepository.kt` | Interface for reading/writing settings |
+| `PrivacyAuditLogger` | `domain/privacy/PrivacyAuditLogger.kt` | Logs every gate check decision (capability, decision, reason, context, caller) to the privacy_audit_events table |
 | `NotificationPrivacyGate` | `domain/privacy/NotificationPrivacyGate.kt` | Guards NOTIFICATION_CAPTURE and NOTIFICATION_PACKAGE_ALLOWLIST |
 | `LocationPrivacyGate` | `domain/privacy/LocationPrivacyGate.kt` | Guards EXTERNAL_GEOCODING, BACKGROUND_LOCATION_BACKFILL, DEVICE_GPS_LOCATION, OVERPASS_API |
 | `CloudAiPrivacyGate` | `domain/privacy/CloudAiPrivacyGate.kt` | Guards all CLOUD_AI_* capabilities plus RECEIPT_IMAGE_CLOUD_UPLOAD |
 | `BackupPrivacyGate` | `domain/privacy/BackupPrivacyGate.kt` | Guards RAWBACKUP_EXPORT and ENCRYPTED_BACKUP based on `encryptedBackupEnabled` setting |
-| `PrivacySettings` | `domain/privacy/PrivacySettings.kt` | Data class with ALL 10 privacy toggles + 2 retention day settings |
-| `PrivacySettingsRepository` | `domain/privacy/PrivacySettingsRepository.kt` | Interface for reading/writing privacy settings |
-| `PrivacySettingsRepositoryImpl` | `data/privacy/PrivacySettingsRepositoryImpl.kt` | DataStore-backed implementation |
+| `CompositePrivacyGate` | `domain/privacy/CompositePrivacyGate.kt` | Chains all gates; returns first `Denied` or `Allowed` if all pass |
+| `RedactionSanitizer` | `domain/privacy/RedactionSanitizer.kt` | PII redaction helper for notification text and OCR content before cloud calls |
 
-#### Backup Encryption
+#### Data Layer — Privacy (4 files)
 
 | Component | File | Purpose |
 |-----------|------|---------|
+| `PrivacySettingsRepositoryImpl` | `data/privacy/PrivacySettingsRepositoryImpl.kt` | DataStore-backed implementation of settings repository |
 | `BackupEncryptionService` | `data/privacy/BackupEncryptionService.kt` | AES-256-GCM encrypt/decrypt with PBKDF2 key derivation |
 | `ExportAnonymizer` | `data/privacy/ExportAnonymizer.kt` | Strips rawOcrText and raw notification content from temp DB copy before export |
-| `DatabaseBackupRepositoryImpl` (updated) | `data/repository/DatabaseBackupRepositoryImpl.kt` | Now checks privacy gates, optionally encrypts exports, and sanitizes sensitive data |
+| `DataRetentionWorker` | `data/privacy/DataRetentionWorker.kt` | Periodic WorkManager worker (every 24h) that purges expired raw notifications and OCR text based on retention settings |
+
+#### Privacy DB Layer
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `PrivacyAuditEvent` (entity) | `data/database/entity/PrivacyAuditEvent.kt` | Room entity for `privacy_audit_events` table. Fields: id, capability, decision, reason, context (JSON), timestampMs, caller. Indices on timestampMs, capability, caller. |
+| `PrivacyAuditDao` | `data/database/dao/PrivacyAuditDao.kt` | DAO with `insert()` and `getRecent(limit)`. |
+
+**Migrations:** 102→103 creates `privacy_audit_events` table; 103→104 adds `rawContentPurgedAt` to `raw_notifications` and `rawOcrTextPurgedAt` to `scanned_receipts` for data retention purging.
 
 #### Privacy UI
 
@@ -616,9 +665,10 @@ the expense tracker database.
 
 #### DI Wiring
 
-`PrivacyModule.kt` now binds all four gates (Notification, Location, CloudAI, Backup)
-into the `CompositePrivacyGate`. The `BackupEncryptionService`, `ExportAnonymizer`,
-and `SecureKeyStorage` are injected into `DatabaseBackupRepositoryImpl`.
+`PrivacyModule.kt` in `di/` binds all four gates (Notification, Location, CloudAI, Backup)
+into `CompositePrivacyGate`. It also provides `BackupEncryptionService`, `ExportAnonymizer`,
+`DataRetentionWorker`, and `PrivacyAuditLogger`. `DatabaseBackupRepositoryImpl` is updated
+to check privacy gates and optionally encrypt/sanitize exports.
 
 **Phase 6 is complete.**
 
@@ -626,15 +676,21 @@ and `SecureKeyStorage` are injected into `DatabaseBackupRepositoryImpl`.
 
 ## Database Schema
 
-### Version: v100 (post recurring lifecycle migration)
+### Version: v104 (post privacy + recurring lifecycle event migrations)
 
-The Room schema in v100 includes all tables from v96 plus:
+The Room schema in v104 includes all tables from v100 plus:
 
-**New table:** `recurring_occurrences` — stores expanded occurrence candidates for recurring rules with status tracking (PLANNED/PAID/SKIPPED/MISSED/CANCELLED). Unique constraint on `occurrenceKey` enables idempotent insert.
+**Phase 5b additions (migration 100→101→102):**
 
-**New table:** `recurring_reminder_deliveries` — schedules and tracks reminder dispatch for recurring occurrences (SCHEDULED/SENT/DISMISSED/SNOOZED/FAILED states, configurable reminder windows like DUE_DAY, 3_DAYS_BEFORE, OVERDUE).
+- **New columns on `planned_expenses`:** `status` (TEXT, default PLANNED), `linkedActualExpenseId` (INTEGER), `merchantKey` (TEXT), `updatedAt` (INTEGER, default 0).
+- **`recurring_reminder_deliveries`:** unique index hardened on `(occurrenceId, reminderWindow)` — deduplicates stale rows.
+- **New table:** `recurring_lifecycle_events` — immutable event log for recurring occurrence lifecycle transitions. Event types: OCCURRENCE_GENERATED, OCCURRENCE_PAID, OCCURRENCE_SKIPPED, OCCURRENCE_CANCELLED, REMINDER_SCHEDULED, REMINDER_SENT, REMINDER_DISMISSED, PLANNED_GENERATED, DRIFT_DETECTED.
 
-**New columns on `planned_expenses`:** `sourceOccurrenceKey` (TEXT, nullable) and `sourceRecurringRuleId` (INTEGER, nullable) — links planned expenses back to the recurring occurrence and rule that generated them, preventing double-count.
+**Phase 6 additions (migration 102→103→104):**
+
+- **New table:** `privacy_audit_events` — append-only log of every privacy gate decision (capability, decision ALLOWED/DENIED, reason, context JSON, timestampMs, caller).
+- **New columns on `raw_notifications`:** `rawContentPurgedAt` (INTEGER, nullable) — timestamp when raw notification content was purged for data retention.
+- **New columns on `scanned_receipts`:** `rawOcrTextPurgedAt` (INTEGER, nullable) — timestamp when raw OCR text was purged for data retention.
 
 The full schema now covers:
 
@@ -644,6 +700,7 @@ The full schema now covers:
 - Groups and split: expense groups, group members, group expenses, split templates, and split item assignments
 - Planning, alerts, and tracking: anomaly alerts, budget forecasts, budget adjustment recommendations/events, stress forecast snapshots, health score history, savings sweep plans, spending personality profiles, spending challenges
 - Financial products and support tables: warranties, return windows, subscription price history/usage/candidates, mileage tracking, exchange rates, bank connections, investments/investment values, and email receipt sources
+- **Audit & privacy (Phase 5b/6):** recurring_lifecycle_events, privacy_audit_events
 
 Use the database file and migration chain as the source of truth for the exact table list.
 

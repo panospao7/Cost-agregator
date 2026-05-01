@@ -65,8 +65,36 @@
 | `recurring/RecurringOccurrenceExpander.kt` | RecurringOccurrenceExpander | Pure utility to expand recurrence rules into concrete occurrence candidates within a half-open date range. Calendar-aware advancement (DST/leap-year safe). | Utility | TimePeriodUtils | No |
 | `recurring/OccurrenceConflictResolver.kt` | OccurrenceConflictResolver | Resolves occurrence candidates against actual expenses. Matching: same day, merchant (case-insensitive), amount ±10%, same currency. Each expense matched at most once. | Engine | MerchantKeyGenerator, TimePeriodUtils | No |
 | `recurring/RecurringPlanProjectionService.kt` | RecurringPlanProjectionService | Bridges recurring lifecycle to forecasting by materialising PlannedExpense rows from PLANNED occurrences. Deduplicates via sourceOccurrenceKey. | Service | RecurringLifecycleCoordinator, PlannedExpenseDao, TimeProvider | No |
-| `recurring/lifecycle/RecurringLifecycleCoordinator.kt` | RecurringLifecycleCoordinator | **Primary entry point** for generating/managing recurring occurrences. Pipelines expand→resolve→materialize. Also provides linkExpenseToOccurrence(), getOccurrences(), updateOccurrenceStatus(), getDueReminders(). | Coordinator | RecurringOccurrenceExpander, OccurrenceConflictResolver, RecurringOccurrenceMaterializer, RecurringOccurrenceDao, ExpenseDao, TimeProvider, ManualRecurringExpenseDao, RecurringReminderDeliveryDao | No |
+| `recurring/lifecycle/RecurringLifecycleCoordinator.kt` | RecurringLifecycleCoordinator | **Primary entry point** for generating/managing recurring occurrences. Pipelines expand→resolve→materialize. Also provides linkExpenseToOccurrence(), getOccurrences(), updateOccurrenceStatus(), getDueReminders(), **reconcilePlannedVsActual()** returning **ReconciliationReport** (drift analysis). | Coordinator | RecurringOccurrenceExpander, OccurrenceConflictResolver, RecurringOccurrenceMaterializer, RecurringOccurrenceDao, ExpenseDao, TimeProvider, ManualRecurringExpenseDao, RecurringReminderDeliveryDao | No |
 | `recurring/lifecycle/RecurringOccurrenceMaterializer.kt` | RecurringOccurrenceMaterializer | Persists resolved occurrences (INSERT IGNORE, UPDATE on status change) and creates RecurringReminderDelivery rows for PLANNED occurrences (DUE_DAY, N_DAYS_BEFORE, OVERDUE). | Materializer | RecurringOccurrenceDao, RecurringReminderDeliveryDao, TimeProvider | No |
+
+### Phase 5b Additions — Recurring Lifecycle Event + Forecast + Reminder Worker
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `data/database/entity/RecurringLifecycleEvent.kt` | RecurringLifecycleEvent | Room entity for `recurring_lifecycle_events`. Immutable audit log for recurring occurrence lifecycle transitions (OCCURRENCE_GENERATED, OCCURRENCE_PAID, etc.). Fields: id, occurrenceId, eventType, occurredAt, oldStatus, newStatus, metadata. | Entity | — | No |
+| `data/database/dao/RecurringLifecycleEventDao.kt` | RecurringLifecycleEventDao | DAO: insert, getEventsForOccurrence. | DAO | — | No |
+| `domain/forecasting/ForecastInputAssembler.kt` | ForecastInputAssembler | Central forecast-input assembler merging manual recurring patterns + planned expenses. Injects RecurringLifecycleCoordinator for future occurrence-based dedup. | Service | RecurrenceCalculator, RecurringLifecycleCoordinator, AnalyticsCurrencyNormalizer, CurrencySettingsRepository, MerchantKeyGenerator, TimeProvider | Yes |
+| `service/reminder/BillReminderWorker.kt` | BillReminderWorker | @HiltWorker — Periodic WorkManager worker (every 4h). Queries getDueReminders() and dispatches Android notifications. | Worker | RecurringLifecycleCoordinator, Context | No |
+
+### Privacy Domain Models (12 files — Phase 6)
+
+**Location:** `com.yourname.expensetracker.domain.privacy`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `privacy/PrivacyCapability.kt` | PrivacyCapability | Enum of 21 gated capabilities (NOTIFICATION_CAPTURE, CLOUD_AI_RECEIPT_ASSIST, EXTERNAL_GEOCODING, RAWBACKUP_EXPORT, ENCRYPTED_BACKUP, RAW_NOTIFICATION_RETENTION, etc.) | Enum | — | No |
+| `privacy/PrivacyGate.kt` | PrivacyGate | Interface: `check(capability, context) → PrivacyDecision`. Fail-closed, audit-logged, deterministic. | Service | PrivacySettings, PrivacyAuditLogger | No |
+| `privacy/PrivacyDecision.kt` | PrivacyDecision | Sealed interface: `Allowed` or `Denied(reason)` | Model | — | No |
+| `privacy/PrivacySettings.kt` | PrivacySettings | Data class: 10 boolean toggles (notificationCapture, cloudAi, redactBeforeCloud, receiptImageCloud, externalGeocoding, backgroundLocationBackfill, deviceGpsLocation, encryptedBackup, debugDataPersistence) + 2 retention day settings | Model | — | No |
+| `privacy/PrivacySettingsRepository.kt` | PrivacySettingsRepository | Interface for reading/writing PrivacySettings | Repository | PrivacySettings | No |
+| `privacy/PrivacyAuditLogger.kt` | PrivacyAuditLogger | Logs every gate check decision (capability, decision, reason, context, caller) to privacy_audit_events table | Service | PrivacyAuditDao | No |
+| `privacy/NotificationPrivacyGate.kt` | NotificationPrivacyGate | Guards NOTIFICATION_CAPTURE and NOTIFICATION_PACKAGE_ALLOWLIST | Service | PrivacyGate, PrivacySettings | No |
+| `privacy/LocationPrivacyGate.kt` | LocationPrivacyGate | Guards EXTERNAL_GEOCODING, BACKGROUND_LOCATION_BACKFILL, DEVICE_GPS_LOCATION, OVERPASS_API | Service | PrivacyGate, PrivacySettings | No |
+| `privacy/CloudAiPrivacyGate.kt` | CloudAiPrivacyGate | Guards all CLOUD_AI_* capabilities + RECEIPT_IMAGE_CLOUD_UPLOAD | Service | PrivacyGate, PrivacySettings | No |
+| `privacy/BackupPrivacyGate.kt` | BackupPrivacyGate | Guards RAWBACKUP_EXPORT and ENCRYPTED_BACKUP based on encryptedBackupEnabled | Service | PrivacyGate, PrivacySettings | No |
+| `privacy/CompositePrivacyGate.kt` | CompositePrivacyGate | Chains all gates; returns first Denied or Allowed if all pass | Service | List<PrivacyGate> | No |
+| `privacy/RedactionSanitizer.kt` | RedactionSanitizer | PII redaction helper for notification text and OCR content before cloud calls | Utility | — | No |
 
 ### Transaction Lifecycle Models (8 files)
 
@@ -563,6 +591,8 @@
 | `dao/ReceiptExpenseLinkDao.kt` | ReceiptExpenseLinkDao | Receipt-expense link DAO (`receipt_expense_links`) | DAO | - | No |
 | `dao/RecurringOccurrenceDao.kt` | RecurringOccurrenceDao | Recurring occurrences DAO (`recurring_occurrences`) — insert (IGNORE), insertAll, update, getByKey, getBySource, getByDateRange, getByStatus, updateStatus | DAO | - | No |
 | `dao/RecurringReminderDeliveryDao.kt` | RecurringReminderDeliveryDao | Recurring reminder deliveries DAO (`recurring_reminder_deliveries`) — insert, insertAll, update, getByOccurrenceAndWindow, getPendingDeliveries | DAO | - | No |
+| `dao/RecurringLifecycleEventDao.kt` | RecurringLifecycleEventDao | Recurring lifecycle events DAO (`recurring_lifecycle_events`) — insert, getEventsForOccurrence | DAO | - | No |
+| `dao/PrivacyAuditDao.kt` | PrivacyAuditDao | Privacy audit events DAO (`privacy_audit_events`) — insert, getRecent(limit) | DAO | - | No |
 | `dao/TransactionEventDao.kt` | TransactionEventDao | Transaction lifecycle events DAO | DAO | - | No |
 | `dao/UserCorrectionDao.kt` | UserCorrectionDao | User corrections DAO | DAO | - | No |
 | `dao/WarrantyDao.kt` | WarrantyDao | Warranties DAO | DAO | - | No |
@@ -613,6 +643,8 @@
 | `entity/ScannedReceipt.kt` | ScannedReceipt | Scanned receipt entity — 10 new Phase 4 columns: sourceType, documentType, processingStatus, sourceFingerprint, imageHash, textFingerprint, semanticFingerprint, ocrConfidence, parseFailureReason, updatedAt | Entity | - | No |
 | `entity/RecurringOccurrence.kt` | RecurringOccurrence | Recurring occurrence entity (table: `recurring_occurrences`) — stores expanded occurrence candidates with status tracking (PLANNED/PAID/SKIPPED/MISSED/CANCELLED). Unique constraint on occurrenceKey for idempotent insert. | Entity | - | No |
 | `entity/RecurringReminderDelivery.kt` | RecurringReminderDelivery | Reminder delivery entity (table: `recurring_reminder_deliveries`) — scheduled reminders per occurrence and window (DUE_DAY, N_DAYS_BEFORE, OVERDUE). Status: SCHEDULED/SENT/DISMISSED/SNOOZED/FAILED. | Entity | - | No |
+| `entity/RecurringLifecycleEvent.kt` | RecurringLifecycleEvent | Recurring lifecycle event entity (table: `recurring_lifecycle_events`) — immutable audit log for recurring occurrence transitions. Event types: OCCURRENCE_GENERATED, OCCURRENCE_PAID, OCCURRENCE_SKIPPED, etc. | Entity | - | No |
+| `entity/PrivacyAuditEvent.kt` | PrivacyAuditEvent | Privacy audit event entity (table: `privacy_audit_events`) — append-only log of every privacy gate check. Fields: capability, decision, reason, context, timestampMs, caller. | Entity | - | No |
 | `entity/SourceStats.kt` | SourceStats | Source statistics entity | Entity | - | No |
 | `entity/SpendingPersonalityProfileEntity.kt` | SpendingPersonalityProfileEntity | Spending profile entity | Entity | - | No |
 | `entity/TransactionEvent.kt` | TransactionEvent | Immutable lifecycle event log (table: `transaction_events`); records every CREATED/UPDATED/DELETED/etc. transition with actor, timestamps, and before/after snapshots | Entity | - | No |
@@ -846,6 +878,7 @@
 | `NetworkModule.kt` | NetworkModule | Network client | Module | Retrofit, OkHttp | No |
 | `NetworkQualifiers.kt` | NetworkQualifiers | Network qualifiers | Qualifier | - | No |
 | `OcrImprovementsModule.kt` | OcrImprovementsModule | OCR binding | Module | OCR preprocessors | No |
+| `PrivacyModule.kt` | PrivacyModule | **NEW — Privacy gate binding** | Module | All 4 gate implementations + CompositePrivacyGate + BackupEncryptionService + ExportAnonymizer + DataRetentionWorker + PrivacyAuditLogger | No |
 | `ReceiptParsingModule.kt` | ReceiptParsingModule | Receipt parsing | Module | All receipt parsers | No |
 | `SavingsModule.kt` | SavingsModule | Savings binding | Module | Savings engines | No |
 | `SavingsRepositoryBindingsModule.kt` | SavingsRepositoryBindingsModule | Savings repos | Module | Savings repositories | No |
@@ -1014,13 +1047,13 @@ Engine (integration with other domain logic)
 
 | Metric | Count |
 |--------|-------|
-| **Domain Files** | 271 (includes 8 transaction lifecycle + 11 receipt lifecycle + 5 recurring lifecycle files) |
-| **Data Files** | 214 (includes ReceiptEvent, ReceiptExpenseLink, RecurringOccurrence, RecurringReminderDelivery entities/DAOs) |
-| **DI Modules** | 27 |
-| **Total Backend Files** | 505+ |
+| **Domain Files** | 283 (+12 privacy gate files) |
+| **Data Files** | 222 (+4 privacy data files + 2 new entities/DAOs) |
+| **DI Modules** | 28 (+1 PrivacyModule) |
+| **Total Backend Files** | 533+ |
 | **Test Files** | 317+ |
-| **Database Entities** | 60 (includes TransactionEvent, ReceiptEvent, ReceiptExpenseLink, RecurringOccurrence, RecurringReminderDelivery) |
-| **DAOs** | 59 (includes TransactionEventDao, ReceiptEventDao, ReceiptExpenseLinkDao, RecurringOccurrenceDao, RecurringReminderDeliveryDao) |
+| **Database Entities** | 62 (+ RecurringLifecycleEvent, PrivacyAuditEvent) |
+| **DAOs** | 61 (+ RecurringLifecycleEventDao, PrivacyAuditDao) |
 | **Repositories** | 56 |
 | **Use Cases** | ~30 |
 | **Engines** | ~50 |
@@ -1047,6 +1080,9 @@ Engine (integration with other domain logic)
 15. **Coordinator Pattern (Phase 5)** - `RecurringLifecycleCoordinator` is the primary entry point for generating and managing recurring occurrences, with auto-link hook into `TransactionLifecycleCoordinator`
 16. **Expand → Resolve → Materialize Triad (Phase 5)** - `RecurringOccurrenceExpander` + `OccurrenceConflictResolver` + `RecurringOccurrenceMaterializer` form a three-phase pipeline for occurrence lifecycle
 17. **Reminder Delivery Scheduling (Phase 5)** - `recurring_reminder_deliveries` table with `getPendingDeliveries(now)` query for WorkManager-based dispatch
+18. **Privacy Gate Pattern (Phase 6)** - `PrivacyGate` interface with 4 specialized implementations composed via `CompositePrivacyGate`. Every gate check is audit-logged. Capabilities are evaluated against `PrivacySettings` with fail-closed semantics.
+19. **Data Retention Purging (Phase 6)** - `DataRetentionWorker` periodically purges raw notification content and OCR text based on configurable retention days, tracked via `rawContentPurgedAt` / `rawOcrTextPurgedAt` sentinel columns.
+20. **Backup Encryption Pipeline (Phase 6)** - `BackupEncryptionService` (AES-256-GCM + PBKDF2) + `ExportAnonymizer` (PII stripping) gated by `BackupPrivacyGate`.
 
 ---
 

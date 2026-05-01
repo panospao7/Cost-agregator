@@ -1,7 +1,7 @@
 # Backend Domain Layer Map
 
-**Refreshed:** May 1, 2026  
-**Scope:** Current domain inventory across business, AI, dashboard, and shared UI text models
+**Refreshed:** May 2, 2026  
+**Scope:** Current domain inventory across business, AI, dashboard, privacy, and shared UI text models
 
 ---
 
@@ -31,7 +31,8 @@
 | `transaction/lifecycle/` | **NEW — Lifecycle coordinator + dispatcher**: `TransactionLifecycleCoordinator` (single entry point for CUD), `TransactionSideEffectDispatcher` (post-creation side effects) |
 | `receipt/lifecycle/` | **Receipt lifecycle coordinator + services**: `ReceiptLifecycleCoordinator` (single entry point for receipt processing), `ReceiptLinkService` (centralized receipt-expense linking), `ReceiptAssetStore` (file persistence), `ReceiptInputValidator` (URI/MIME validation), `ReceiptDuplicateDetector` (3-signal dedup), `ReceiptSideEffectDispatcher` (document-type-gated effects), `BankStatementLifecycleProcessor` (statement processing) |
 | `recurring/` | **NEW — Recurring occurrence expansion & resolution**: `RecurringOccurrenceExpander` (expand recurrence rule → occurrence candidates), `OccurrenceConflictResolver` (resolve candidates vs actual expenses), `RecurringPlanProjectionService` (materialise PlannedExpense rows from occurrences) |
-| `recurring/lifecycle/` | **NEW — Recurring lifecycle coordinator + materializer**: `RecurringLifecycleCoordinator` (primary entry point for occurrence generation), `RecurringOccurrenceMaterializer` (persist occurrences + create reminder deliveries) |
+| `recurring/lifecycle/` | **NEW — Recurring lifecycle coordinator + materializer**: `RecurringLifecycleCoordinator` (primary entry point for occurrence generation + `reconcilePlannedVsActual()`), `RecurringOccurrenceMaterializer` (persist occurrences + create reminder deliveries) |
+| `privacy/` | **NEW — Privacy capability gates, audit logging, and PII redaction (Phase 6)**: `PrivacyCapability` (21-value enum), `PrivacyGate` (interface), `PrivacyDecision` (sealed result), `PrivacySettings` (10 toggles + 2 retention settings), `PrivacySettingsRepository`, `PrivacyAuditLogger`, `NotificationPrivacyGate`, `LocationPrivacyGate`, `CloudAiPrivacyGate`, `BackupPrivacyGate`, `CompositePrivacyGate`, `RedactionSanitizer` |
 | `dto/` | Cross-layer transfer objects for AI, review, and category references |
 | `ai/` | AI capability routing, policy, and model-backed services |
 | `bank/` | Bank API integration and connection orchestration |
@@ -221,6 +222,12 @@ Domain Layer (This Document)
 | File | Purpose | Input | Output |
 |------|---------|-------|--------|
 | `CalculateFinancialForecastUseCase.kt` | Generate financial forecast | Historical data, period | FinancialForecast |
+
+### Forecast Assembler (Phase 5b — domain/forecasting/)
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `ForecastInputAssembler` | `forecasting/ForecastInputAssembler.kt` | Central forecast-input assembler. Merges manual recurring patterns + planned expenses into a single forecast input. Injects `RecurringLifecycleCoordinator` for future occurrence-based dedup. Used by weather/dashboard forecast paths. |
 
 ---
 
@@ -545,7 +552,7 @@ interface AiCapabilityRouter {
 | `GreeklishNormalizer.kt` | Greek text normalization |
 | `MerchantCanonicalizer.kt` | Merchant name standardization |
 
-### Recurring Services & Lifecycle (NEW — Phase 5)
+### Recurring Services & Lifecycle (NEW — Phase 5 / Phase 5b)
 **Directory:** `recurring/` and `recurring/lifecycle/`
 
 | Service / Coordinator | File | Purpose |
@@ -553,7 +560,7 @@ interface AiCapabilityRouter {
 | `RecurringOccurrenceExpander` | `RecurringOccurrenceExpander.kt` | Pure domain utility that expands a recurrence rule into concrete `OccurrenceCandidate`s within a half-open date range. Uses `TimePeriodUtils` calendar-aware advancement (DST/leap-year safe). Produces deduplication-safe `occurrenceKey`. |
 | `OccurrenceConflictResolver` | `OccurrenceConflictResolver.kt` | Resolves occurrence candidates against actual expenses to determine PLANNED/PAID/SKIPPED status. Matching: same calendar day, merchant match (case-insensitive via `MerchantKeyGenerator`), amount ±10% tolerance, same currency. Each expense matched at most once. |
 | `RecurringPlanProjectionService` | `RecurringPlanProjectionService.kt` | Bridges recurring lifecycle to forecasting by materialising `PlannedExpense` rows from PLANNED occurrences. Deduplicates via `sourceOccurrenceKey`. Called by forecast pipeline. |
-| `RecurringLifecycleCoordinator` | `lifecycle/RecurringLifecycleCoordinator.kt` | **Primary entry point** for generating and managing recurring occurrences. Orchestrates expand → resolve → materialize. Also provides `linkExpenseToOccurrence()` (called by `TransactionLifecycleCoordinator` post-creation), `getOccurrences()`, `updateOccurrenceStatus()`, `getDueReminders()`. |
+| `RecurringLifecycleCoordinator` | `lifecycle/RecurringLifecycleCoordinator.kt` | **Primary entry point** for generating and managing recurring occurrences. Orchestrates expand → resolve → materialize. Also provides `linkExpenseToOccurrence()` (called by `TransactionLifecycleCoordinator` post-creation), `getOccurrences()`, `updateOccurrenceStatus()`, `getDueReminders()`, and **`reconcilePlannedVsActual()`** (Phase 5b — drift analysis returning `ReconciliationReport`). |
 | `RecurringOccurrenceMaterializer` | `lifecycle/RecurringOccurrenceMaterializer.kt` | Persists resolved occurrences (INSERT with IGNORE, UPDATE on status change) and creates `RecurringReminderDelivery` rows for PLANNED occurrences (DUE_DAY, N_DAYS_BEFORE, OVERDUE windows). |
 
 ### Receipt Services & Lifecycle
@@ -576,6 +583,21 @@ interface AiCapabilityRouter {
 | `LocatedExpense.kt` | Transaction with location | Expense + Location |
 | `NearbyPoi.kt` | Point of interest | POI data |
 | `LocationModels.kt` | Location data types | Various |
+
+### Privacy Services (NEW — Phase 6)
+**Directory:** `privacy/`
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `PrivacyGate` (interface) | `PrivacyGate.kt` | Contract: `check(capability, context) → PrivacyDecision`. Fail-closed, audit-logged, deterministic. |
+| `CompositePrivacyGate` | `CompositePrivacyGate.kt` | Chains Notification, Location, CloudAI, Backup gates; returns first Denied. |
+| `NotificationPrivacyGate` | `NotificationPrivacyGate.kt` | Guards NOTIFICATION_CAPTURE and NOTIFICATION_PACKAGE_ALLOWLIST. |
+| `LocationPrivacyGate` | `LocationPrivacyGate.kt` | Guards EXTERNAL_GEOCODING, BACKGROUND_LOCATION_BACKFILL, DEVICE_GPS_LOCATION, OVERPASS_API. |
+| `CloudAiPrivacyGate` | `CloudAiPrivacyGate.kt` | Guards all CLOUD_AI_* capabilities + RECEIPT_IMAGE_CLOUD_UPLOAD. |
+| `BackupPrivacyGate` | `BackupPrivacyGate.kt` | Guards RAWBACKUP_EXPORT and ENCRYPTED_BACKUP. |
+| `PrivacySettingsRepository` | `PrivacySettingsRepository.kt` | Interface for reading/writing 10 privacy toggles + 2 retention settings. |
+| `PrivacyAuditLogger` | `PrivacyAuditLogger.kt` | Records every gate check to `privacy_audit_events` table. |
+| `RedactionSanitizer` | `RedactionSanitizer.kt` | PII redaction for notification text and OCR content before cloud AI calls. |
 
 ### Budget Services
 **Directory:** `budget/`
@@ -641,6 +663,7 @@ interface AiCapabilityRouter {
 | `SavingsGamificationEngine.kt` | Savings challenges |
 | `SmartSavingsEngine.kt` | Savings optimization |
 | `BillReminderManager.kt` | Bill notification scheduling |
+| `BillReminderWorker` (data) | `service/reminder/BillReminderWorker.kt` — Periodic WorkManager worker (every 4h) dispatching Android notifications for due/overdue bill reminders via `RecurringLifecycleCoordinator.getDueReminders()` |
 | `AreaSpendingEngine.kt` | Geographic analytics |
 | `LifestyleInflationDetector.kt` | Spending growth detection |
 | `InvestmentTracker.kt` | Investment portfolio |
