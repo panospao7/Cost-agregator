@@ -189,15 +189,24 @@ class TotalsAggregationEngine @Inject constructor(
             val grandTotal = categoryResults.sumOf { it.total }
 
             categoryResults.mapNotNull { result ->
-                if (result.id == null) return@mapNotNull null
-
-                val category = CategoryInfo(
-                    id = result.id,
-                    name = result.name ?: "Unknown",
-                    icon = result.icon ?: "?",
-                    color = result.color ?: "#808080",
-                    isIncome = false
-                )
+                val category = if (result.id == null) {
+                    // Include null-category expenses as "Uncategorized" pseudo-category
+                    CategoryInfo(
+                        id = 0L,
+                        name = "Uncategorized",
+                        icon = "?",
+                        color = "#808080",
+                        isIncome = false
+                    )
+                } else {
+                    CategoryInfo(
+                        id = result.id,
+                        name = result.name ?: "Unknown",
+                        icon = result.icon ?: "?",
+                        color = result.color ?: "#808080",
+                        isIncome = false
+                    )
+                }
 
                 val percentage = if (grandTotal > 0) {
                     result.total / grandTotal * 100

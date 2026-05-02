@@ -23,8 +23,16 @@ data class CashFlowCalendarState(
  val viewMode: CalendarViewMode = CalendarViewMode.MONTH,
  val startingBalance: Double = 0.0,
  val upcomingBillsCount: Int = 0,
- /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
- val homeCurrency: String = "EUR"
+	/**
+	 * Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init.
+	 *
+	 * ## Acceptable hardcoded "EUR"
+	 * This is a Compose state initial value that gets immediately replaced by the
+	 * repository flow in `collectHomeCurrency()`. The literal "EUR" here is never
+	 * visible to the user — it is a type-safe default before the async load completes.
+	 * See [CURR-6] in MASTER-ISSUE-REGISTRY for the broader multi-currency strategy.
+	 */
+	val homeCurrency: String = "EUR"
 ) {
  val moneyStartingBalance: MoneyAmount get() = MoneyAmount(startingBalance, CurrencyCode(homeCurrency))
 }

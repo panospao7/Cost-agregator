@@ -164,9 +164,11 @@ class WarrantyTrackerViewModel @Inject constructor(
     fun rejectAutoDetectedWarranty(warranty: Warranty) {
         viewModelScope.launch {
             // I5: Also delete the associated return window to keep data consistent
-            val returnWindow = warrantyRepository.getReturnWindowByReceiptId(warranty.receiptId)
-            if (returnWindow != null) {
-                warrantyRepository.deleteReturnWindow(returnWindow)
+            if (warranty.receiptId != null) {
+                val returnWindow = warrantyRepository.getReturnWindowByReceiptId(warranty.receiptId)
+                if (returnWindow != null) {
+                    warrantyRepository.deleteReturnWindow(returnWindow)
+                }
             }
             warrantyRepository.deleteWarranty(warranty)
             loadStats()

@@ -566,7 +566,7 @@ class WarrantyTextExtractor {
         maxScore += 0.05
         if (warrantyType != null) score += 0.05
         
-        // Normalize to percentage
-        return if (maxScore > 0) (score / maxScore) * 100.0 else 0.0
+        // Normalize to 0..1 (was 0..100 before batch R3 fix)
+        return if (maxScore > 0) (score / maxScore) else 0.0
     }
 }

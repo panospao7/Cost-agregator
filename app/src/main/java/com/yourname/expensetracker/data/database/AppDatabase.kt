@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 108
+const val APP_DATABASE_SCHEMA_VERSION = 109
 
 @Database(
     entities = [
@@ -6534,50 +6534,168 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
         }
 
         // ═════════════════════════════════════════════════════════════════════
-        // E4: MIGRATION_108_109 — Budget categoryId FK: SET_NULL → RESTRICT
+        // MIGRATION_108_109 — Batches R+S
         // ═════════════════════════════════════════════════════════════════════
         //
-        // The current Budget entity declares:
-        //   FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE SET_NULL
+        // R1:  Warranty/ReturnWindow receiptId FK CASCADE→SET_NULL, receiptId→nullable
+        // R5:  ReturnWindow.refundCurrency column
+        // S1:  group_expenses paidById same-group trigger
+        // S4:  group_members currentUserGroupKey CHECK constraint activation
         //
-        // This silently converts category budgets into overall budgets when a
-        // Category is deleted, which is data-loss-prone (see Budget.kt BUD-7).
-        //
-        // Desired FK:
-        //   FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE RESTRICT
-        //
-        // Because SQLite cannot alter FK constraints without a table rebuild,
-        // this migration is intentionally NOT registered in ALL_MIGRATIONS yet
-        // (the schema version remains 108).  To activate it:
-        //   1. Bump APP_DATABASE_SCHEMA_VERSION to 109.
-        //   2. Register MIGRATION_108_109 in ALL_MIGRATIONS.
-        //   3. Verify that no existing category-deletion code depends on
-        //      the SET_NULL silent-conversion behaviour.
-        //
-        // Migration plan (table rebuild):
-        //   1. PRAGMA foreign_keys=OFF
-        //   2. CREATE TABLE budgets_new (all existing columns + RESTRICT FK)
-        //   3. INSERT INTO budgets_new SELECT * FROM budgets
-        //   4. DROP TABLE budgets
-        //   5. ALTER TABLE budgets_new RENAME TO budgets
-        //   6. Recreate all budgets indexes
-        //   7. PRAGMA foreign_keys=ON
-        //   8. PRAGMA foreign_key_check — verify no violations
-        //
-        // NOTE: On a fresh install Room creates the table from the entity
-        // annotation, so changing the entity's FK to RESTRICT is sufficient
-        // for new installations. The migration only affects upgrades from v108.
+        // Strategy:
+        //   1. Rebuild warranties    (receiptId nullable, FK SET_NULL)
+        //   2. Rebuild return_windows (receiptId nullable, FK SET_NULL, +refundCurrency)
+        //   3. Rebuild group_members  (re-apply CHECK constraint for upgrade safety)
+        //   4. CREATE TRIGGER enforce_paid_by_same_group
         val MIGRATION_108_109 = object : androidx.room.migration.Migration(108, 109) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
-                // This migration is planned but not yet active (see KDoc above).
-                // When activated, it must:
-                //   1. Rebuild the budgets table with a RESTRICT FK on categoryId.
-                //   2. Run PRAGMA foreign_key_check to catch orphaned rows.
-                throw IllegalStateException(
-                    "MIGRATION_108_109 is not active. " +
-                    "Bump APP_DATABASE_SCHEMA_VERSION to 109 and verify " +
-                    "no category-deletion code depends on SET_NULL behaviour."
-                )
+                val fkWasEnabled = database.query("PRAGMA foreign_keys").use {
+                    it.moveToFirst(); it.getInt(0) == 1
+                }
+                if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                try {
+                    database.beginTransaction()
+                    try {
+                        // ── R1+R5: Rebuild warranties ──────────────────────────
+                        // receiptId: nullable, FK changed from CASCADE to SET_NULL
+                        database.execSQL("""
+                            CREATE TABLE warranties_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                receiptId INTEGER,
+                                expenseId INTEGER,
+                                productName TEXT NOT NULL,
+                                merchantName TEXT NOT NULL,
+                                purchaseDate INTEGER NOT NULL,
+                                warrantyDurationMonths INTEGER NOT NULL,
+                                warrantyEndDate INTEGER NOT NULL,
+                                warrantyType TEXT NOT NULL DEFAULT 'MANUFACTURER',
+                                supportPhone TEXT,
+                                supportEmail TEXT,
+                                warrantyDocumentUrl TEXT,
+                                notes TEXT,
+                                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                                claimedAt INTEGER,
+                                createdAt INTEGER NOT NULL,
+                                updatedAt INTEGER NOT NULL,
+                                autoDetected INTEGER NOT NULL DEFAULT 0,
+                                extractionConfidence REAL NOT NULL DEFAULT 0.0,
+                                extractionSource TEXT NOT NULL DEFAULT 'manual',
+                                needsReview INTEGER NOT NULL DEFAULT 0,
+                                FOREIGN KEY (receiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL,
+                                FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                            )
+                        """.trimIndent())
+                        database.execSQL("INSERT INTO warranties_new SELECT * FROM warranties")
+                        database.execSQL("DROP TABLE warranties")
+                        database.execSQL("ALTER TABLE warranties_new RENAME TO warranties")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_warranties_receiptId ON warranties (receiptId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_expenseId ON warranties (expenseId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_warrantyEndDate ON warranties (warrantyEndDate)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_status ON warranties (status)")
+
+                        // ── R1+R5: Rebuild return_windows ──────────────────────
+                        // receiptId: nullable, FK changed from CASCADE to SET_NULL
+                        // +refundCurrency column
+                        database.execSQL("""
+                            CREATE TABLE return_windows_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                receiptId INTEGER,
+                                expenseId INTEGER,
+                                productName TEXT NOT NULL,
+                                merchantName TEXT NOT NULL,
+                                purchaseDate INTEGER NOT NULL,
+                                returnDays INTEGER NOT NULL,
+                                returnDeadline INTEGER NOT NULL,
+                                returnPolicyUrl TEXT,
+                                returnConditions TEXT,
+                                status TEXT NOT NULL DEFAULT 'RETURNABLE',
+                                returnedAt INTEGER,
+                                refundAmount REAL,
+                                refundCurrency TEXT DEFAULT NULL,
+                                createdAt INTEGER NOT NULL,
+                                updatedAt INTEGER NOT NULL,
+                                FOREIGN KEY (receiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL,
+                                FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE SET NULL
+                            )
+                        """.trimIndent())
+                        database.execSQL("""
+                            INSERT INTO return_windows_new (
+                                id, receiptId, expenseId, productName, merchantName,
+                                purchaseDate, returnDays, returnDeadline, returnPolicyUrl,
+                                returnConditions, status, returnedAt, refundAmount,
+                                createdAt, updatedAt
+                            )
+                            SELECT
+                                id, receiptId, expenseId, productName, merchantName,
+                                purchaseDate, returnDays, returnDeadline, returnPolicyUrl,
+                                returnConditions, status, returnedAt, refundAmount,
+                                createdAt, updatedAt
+                            FROM return_windows
+                        """.trimIndent())
+                        database.execSQL("DROP TABLE return_windows")
+                        database.execSQL("ALTER TABLE return_windows_new RENAME TO return_windows")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_return_windows_receiptId ON return_windows (receiptId)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_return_windows_expenseId ON return_windows (expenseId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_return_windows_returnDeadline ON return_windows (returnDeadline)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_return_windows_status ON return_windows (status)")
+
+                        // ── S4: Rebuild group_members to activate CHECK constraint ─
+                        // Re-apply the CHECK constraint from MIGRATION_106_107 so that
+                        // upgrade paths that skipped it get it now.
+                        database.execSQL("""
+                            CREATE TABLE group_members_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                groupId INTEGER NOT NULL,
+                                name TEXT NOT NULL,
+                                email TEXT,
+                                isCurrentUser INTEGER NOT NULL DEFAULT 0,
+                                joinedAt INTEGER NOT NULL,
+                                currentUserGroupKey INTEGER,
+                                CHECK(
+                                    (isCurrentUser = 0 AND currentUserGroupKey IS NULL)
+                                    OR
+                                    (isCurrentUser = 1 AND currentUserGroupKey = groupId)
+                                ),
+                                FOREIGN KEY (groupId) REFERENCES expense_groups(id) ON DELETE CASCADE
+                            )
+                        """.trimIndent())
+                        database.execSQL("INSERT INTO group_members_new SELECT * FROM group_members")
+                        database.execSQL("DROP TABLE group_members")
+                        database.execSQL("ALTER TABLE group_members_new RENAME TO group_members")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members (groupId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId_isCurrentUser ON group_members (groupId, isCurrentUser)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_name ON group_members (groupId, name)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_currentUserGroupKey ON group_members (currentUserGroupKey)")
+
+                        // ── S1: Create paidById same-group trigger ──────────────
+                        database.execSQL("""
+                            CREATE TRIGGER IF NOT EXISTS enforce_paid_by_same_group
+                            BEFORE INSERT ON group_expenses
+                            BEGIN
+                                SELECT CASE WHEN (
+                                    SELECT groupId FROM group_members WHERE id = NEW.paidById
+                                ) != NEW.groupId
+                                THEN RAISE(ABORT, 'paidById must belong to same group') END;
+                            END
+                        """.trimIndent())
+
+                        // ── Verify FK integrity ─────────────────────────────────
+                        database.query("PRAGMA foreign_key_check").use { violations ->
+                            if (violations.moveToFirst()) {
+                                throw IllegalStateException(
+                                    "Migration 108→109 produced FK violations"
+                                )
+                            }
+                        }
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
+                } finally {
+                    if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
+                }
             }
         }
 
@@ -6724,7 +6842,8 @@ MIGRATION_91_92,
         MIGRATION_104_105,
         MIGRATION_105_106,
         MIGRATION_106_107,
-        MIGRATION_107_108
+        MIGRATION_107_108,
+        MIGRATION_108_109
     )
     }
 }

@@ -305,7 +305,9 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
         )
 
         warrantyTrackerRepository.updateWarranty(updatedWarranty)
-        persistReturnWindow(existingWarranty.receiptId, updatedWarranty)
+        if (existingWarranty.receiptId != null) {
+            persistReturnWindow(existingWarranty.receiptId, updatedWarranty)
+        }
         Timber.tag(TAG).i(
             "Promoted review draft ${existingWarranty.id} for receipt ${existingWarranty.receiptId} " +
                 "(confidence=${data.confidence}%)"

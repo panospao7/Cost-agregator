@@ -34,7 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.SimpleDateFormat
+import java.text.SimpleDateFormat  // Migration: prefer DateTimeFormatter (thread-safe)
 import java.util.Date
 import java.util.Locale
 
@@ -230,6 +230,7 @@ fun ExportOptionsScreen(
                                     "json" -> "json"
                                     else -> "csv"
                                 }
+                                // Migration: use DateTimeFormatter for thread-safety
                                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
                                 saveLauncher.launch("expenses_$timestamp.$ext")
                             },
@@ -363,6 +364,7 @@ private fun DateRangeCard(
     onStartDateClick: () -> Unit,
     onEndDateClick: () -> Unit
 ) {
+    // Migration: use DateTimeFormatter.ofPattern("MMM dd, yyyy") for thread-safety
     val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
     
     Card(

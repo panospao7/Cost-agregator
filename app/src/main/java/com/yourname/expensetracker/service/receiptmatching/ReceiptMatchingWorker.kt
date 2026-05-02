@@ -49,8 +49,8 @@ class ReceiptMatchingWorker @AssistedInject constructor(
         return try {
             Timber.d("Running automated receipt matching...")
             
-            // Find unmatched receipts
-            val unmatchedReceipts = receiptRepository.getUnmatchedReceipts()
+            // Find receipts eligible for matching (UNMATCHED and SUGGESTED)
+            val unmatchedReceipts = receiptRepository.getProcessableReceipts()
             
             var autoMatched = 0
             var suggested = 0
@@ -64,7 +64,7 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                     continue
                 }
 
-                val matchResult = matcher.findBestMatch(receipt)
+                val matchResult = matcher.findBestMatch(receipt, LOOKBACK_DAYS)
                 
                 when (matchResult) {
                     is MatchResult.AutoMatch -> {
@@ -127,6 +127,14 @@ class ReceiptMatchingWorker @AssistedInject constructor(
 
     companion object {
         private const val WORK_NAME = "receipt_matching"
+
+        /**
+         * Lookback window (days) for candidate expense search during receipt matching.
+         *
+         * Receipts are matched against expenses within ±[LOOKBACK_DAYS] from the
+         * receipt date. Configurable here and potentially via [WorkerSpec] in the future.
+         */
+        private const val LOOKBACK_DAYS = 7
 
         fun schedule(context: Context) {
             val constraints = Constraints.Builder()

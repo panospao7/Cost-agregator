@@ -4,6 +4,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.util.TimeProvider
 import java.io.ByteArrayOutputStream
 import java.text.DecimalFormat
@@ -21,32 +22,42 @@ import javax.inject.Inject
  * No EUR assumptions — totals, breakdowns, and large-transaction sections all
  * correctly use per-currency grouping and display the actual currency code.
  *
- * ## M5: PDF reports mix deposits/transfers with expenses
- * The [export] method processes ALL [Expense] items without filtering by
- * [com.yourname.expensetracker.data.database.entity.TransactionType].
- * Deposits, transfers, and other non-expense transaction types are included
- * alongside purchases in the totals, category breakdowns, and large-transaction
- * reviews. A future fix should filter to only [TransactionType.PURCHASE] (or
- * apply a configurable type filter) so that the report reflects actual spending
- * rather than all account activity.
+ * ## M5 (fixed): PDF reports now filter to expense-only by default
+ * The [export] method accepts an optional [transactionTypeFilter] parameter.
+ * It defaults to [TransactionType.PURCHASE], so the report reflects actual
+ * spending by default rather than all account activity. Pass `null` to
+ * include all transaction types (legacy behavior).
  */
 class AccountantReportPdfExporter @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
 
+    /**
+     * @param transactionTypeFilter If non-null, only expenses whose [Expense.transactionType]
+     *   matches this value are included in the report. Defaults to [TransactionType.PURCHASE]
+     *   for expense-only reports. Pass `null` to include all types.
+     */
     fun export(
         expenses: List<Expense>,
         categories: Map<Long, String>,
         startDate: Long,
-        endDate: Long
+        endDate: Long,
+        transactionTypeFilter: TransactionType? = TransactionType.PURCHASE
     ): ByteArray {
         val document = PdfDocument()
         val formatters = ExportFormatters(Locale.getDefault(), ZoneId.systemDefault())
 
+        // Apply transaction type filter (defaults to PURCHASE for expense-only reports)
+        val filteredExpenses = if (transactionTypeFilter != null) {
+            expenses.filter { it.transactionType == transactionTypeFilter }
+        } else {
+            expenses
+        }
+
         return try {
             val writer = PdfReportWriter(document)
             val period = "${formatters.formatMonth(startDate)} - ${formatters.formatMonth(endDate)}"
-            val expensesByCurrency = expenses.groupBy { it.reportCurrencyCode() }
+            val expensesByCurrency = filteredExpenses.groupBy { it.reportCurrencyCode() }
                 .toSortedMap()
 
             writer.writeTitle("Accountant Report")
@@ -55,7 +66,7 @@ class AccountantReportPdfExporter @Inject constructor(
             writer.blankLine()
 
             writer.writeHeading("Summary")
-            writer.writeBody("Transaction Count: ${expenses.size}")
+            writer.writeBody("Transaction Count: ${filteredExpenses.size}")
             expensesByCurrency.forEach { (currency, currencyExpenses) ->
                 // SAFE: per-currency buckets
                 writer.writeBody(

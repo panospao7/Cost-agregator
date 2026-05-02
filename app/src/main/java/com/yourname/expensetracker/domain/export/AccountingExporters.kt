@@ -14,8 +14,19 @@ import java.util.Locale
  * receives a fully-materialized [List] of expenses. There is no paging or
  * streaming — for very large data sets this can cause OOM. Additionally, the
  * export is not transactional: if the process is interrupted mid-export, the
- * output will be a truncated file with no rollback mechanism. A future fix
- * should implement cursor-based paging and write-ahead buffering.
+ * output will be a truncated file with no rollback mechanism.
+ *
+ * ### Recommended fix
+ * For atomicity, either:
+ *   (a) Use a SQL `RETURNING` clause (e.g. `DELETE FROM export_queue WHERE ...
+ *       RETURNING *`) to atomically claim and read rows in a single round-trip,
+ *       ensuring each row is exported exactly once.
+ *   (b) Write to a temporary table / staging file, then atomically rename or
+ *       commit the temp file to the final path only after the full export
+ *       succeeds (write-ahead buffering).
+ * For paging, implement cursor-based (keyset) pagination on the expense table's
+ * primary key or a monotonically increasing timestamp, rather than
+ * offset-based paging which degrades on large datasets.
  */
 
 class QuickBooksIIFExporter {

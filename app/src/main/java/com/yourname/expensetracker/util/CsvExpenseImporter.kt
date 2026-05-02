@@ -31,6 +31,19 @@ class CsvExpenseImporter @Inject constructor(
     private val coordinator: TransactionLifecycleCoordinator
 ) {
 
+    /**
+     * Date parser for CSV import.
+     *
+     * ## Migration path
+     * `SimpleDateFormat` is not thread-safe. When this utility is called from
+     * concurrent flows, replace with `DateTimeFormatter.ofPattern("yyyy-MM-dd")`
+     * which is immutable and thread-safe. Example:
+     * ```
+     * private val dateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+     * // Usage: LocalDate.parse(dateStr, dateFormat)
+     * ```
+     * See [RSP-A2] in MASTER-ISSUE-REGISTRY.
+     */
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
         isLenient = false
     }

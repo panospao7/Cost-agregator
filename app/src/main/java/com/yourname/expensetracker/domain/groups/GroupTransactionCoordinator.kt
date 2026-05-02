@@ -194,6 +194,16 @@ interface GroupTransactionCoordinator {
      * @return True if successful, false otherwise
      */
     suspend fun deleteGroup(groupId: Long): Boolean
+
+    /**
+     * Archive a group by setting isActive = false instead of hard-deleting.
+     * Preserves all expense history for audit purposes.
+     * This is an alias for [deleteGroup] with explicit naming.
+     *
+     * @param groupId Group ID to archive
+     * @return True if successful, false otherwise
+     */
+    suspend fun archiveGroup(groupId: Long): Boolean
     
     /**
      * Permanently delete a group and all associated data.

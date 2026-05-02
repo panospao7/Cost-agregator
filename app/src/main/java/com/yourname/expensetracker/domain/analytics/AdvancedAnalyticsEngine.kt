@@ -869,6 +869,19 @@ class AdvancedAnalyticsEngine @Inject constructor(
         }
     }
     
+    /**
+     * Calculates the longest streak of consecutive months the merchant was visited.
+     *
+     * ## Limitation: bounded by oldest available purchase data
+     * The streak is computed purely from the [historicalExpenses] list passed in.
+     * If the caller only provides expenses from, say, the last 6 months, the
+     * streak cannot extend further back even if the merchant was visited for
+     * 12 consecutive months prior. The result is therefore relative to the
+     * analysis window, not the user's entire history with the merchant.
+     *
+     * Callers wanting an absolute (unbounded) streak should fetch expense data
+     * from the user's earliest recorded purchase.
+     */
     private fun calculateStreakCount(historicalExpenses: List<ExpenseSnapshot>): Int {
         if (historicalExpenses.isEmpty()) return 0
         

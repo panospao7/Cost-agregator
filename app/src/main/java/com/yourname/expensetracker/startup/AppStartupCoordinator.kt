@@ -146,6 +146,19 @@ class AppStartupCoordinator @Inject constructor(
         }
     }
 
+    /**
+     * Enables debug-only tooling: Timber logging and StrictMode.
+     *
+     * ## PII audit note
+     * [Timber] (via [Timber.DebugTree]) may log personally identifiable
+     * information (PII) including merchant names, transaction amounts,
+     * and free-form notes entered by the user. In debug builds this is
+     * intentional for development diagnostics. **Release builds must not
+     * plant DebugTree.** If a production logging tree is added, ensure it
+     * redacts or anonymizes PII before writing to logcat or persistent
+     * storage. See also [com.yourname.expensetracker.data.privacy.ExportAnonymizer]
+     * for the redaction utility.
+     */
     private fun configureDebugTools() {
         if (!BuildConfig.DEBUG) return
 

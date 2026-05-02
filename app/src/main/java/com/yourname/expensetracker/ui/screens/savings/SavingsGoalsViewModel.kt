@@ -33,8 +33,15 @@ data class SavingsGoalsState(
  val isLoading: Boolean = false,
  val selectedGoal: SavingsGoal? = null,
  val totalSaved: Double = 0.0,
- /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
- val homeCurrency: String = "EUR"
+	/**
+	 * Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init.
+	 *
+	 * ## Acceptable hardcoded "EUR"
+	 * This initial value is immediately replaced by the repository flow in the
+	 * ViewModel's `init` block. It only serves as a non-null default before the
+	 * async home-currency load completes. See [CURR-6] in MASTER-ISSUE-REGISTRY.
+	 */
+	val homeCurrency: String = "EUR"
 ) {
  val moneyTotalSaved: MoneyAmount get() = MoneyAmount(totalSaved, CurrencyCode(homeCurrency))
 }

@@ -131,6 +131,10 @@ class AnalyticsRepository @Inject constructor(
     /**
      * getCategoryBreakdown - Returns a list of categories sorted by spending amount.
      * Uses MultiCurrencyRepository for currency-converted category totals.
+     *
+     * Uncategorized expenses (where categoryId is null) are included as an
+     * "Uncategorized" pseudo-category so that the sum of all breakdown entries
+     * equals the parent total for the period.
      */
     fun getCategoryBreakdown(start: Long, end: Long): Flow<List<AnalyticsCategoryBreakdown>> {
         return flow {
@@ -145,14 +149,31 @@ class AnalyticsRepository @Inject constructor(
             emit(
                 categoryAggregates
                 .mapNotNull { (categoryId, aggregate) ->
-                    val cat = categoryId?.let { categoryMap[it] } ?: return@mapNotNull null
-                    AnalyticsCategoryBreakdown(
-                        category = AnalyticsCategoryRef(
+                    val cat = if (categoryId != null) {
+                        categoryMap[categoryId]
+                    } else {
+                        // Include null-category (uncategorized) expenses
+                        null
+                    }
+                    if (categoryId != null && cat == null) return@mapNotNull null
+                    val ref = if (cat != null) {
+                        AnalyticsCategoryRef(
                             id = cat.id,
                             name = cat.name,
                             icon = cat.icon,
                             color = cat.color
-                        ),
+                        )
+                    } else {
+                        // Pseudo-category for uncategorized expenses
+                        AnalyticsCategoryRef(
+                            id = 0L,
+                            name = "Uncategorized",
+                            icon = "?",
+                            color = "#808080"
+                        )
+                    }
+                    AnalyticsCategoryBreakdown(
+                        category = ref,
                         total = aggregate.displayAmount,
                         count = aggregate.totalTransactionCount,
                         percentage = if (totalSpent > 0) (aggregate.displayAmount / totalSpent * 100).toFloat() else 0f,

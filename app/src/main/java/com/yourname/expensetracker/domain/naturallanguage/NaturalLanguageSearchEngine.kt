@@ -349,6 +349,19 @@ class NaturalLanguageSearchEngine @Inject constructor(
         return keywords.any { this.contains(it, ignoreCase = true) }
     }
     
+    /**
+     * Builds a [SearchFilter] from the extracted entities.
+     *
+     * ## Currency-awareness gap (M1)
+     * The [minAmount], [maxAmount], and [exactAmount] fields store raw [Double]
+     * values without any currency association. When this filter is later applied
+     * in [executeSearch], amounts from expenses in different currencies are
+     * compared by nominal value only. A future fix should normalize the filter
+     * amounts by converting them to each expense's currency (or vice versa)
+     * using [com.yourname.expensetracker.domain.currency.CurrencyConverter].
+     * The converted amounts should be compared at the point of filter application
+     * in [executeSearch], not stored in the filter itself.
+     */
     private fun buildSearchFilter(
         amounts: List<ExtractedAmount>?,
         dateRange: DateRange?,

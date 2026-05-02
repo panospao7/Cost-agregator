@@ -54,6 +54,7 @@ class PriceProtectionTracker @Inject constructor(
         // This would typically use AI to extract item details from the receipt
         
         val purchaseDate = receipt.parsedDate ?: receipt.createdAt
+        val receiptCurrency = receipt.currency
         return receipt.parsedItems?.let { itemsJson ->
             parseExtractedItems(itemsJson)?.mapNotNull { item ->
                 if (isPriceProtectable(item)) {
@@ -62,11 +63,13 @@ class PriceProtectionTracker @Inject constructor(
                         itemName = item.name,
                         merchant = receipt.parsedMerchant ?: "Unknown",
                         purchasePrice = item.price,
+                        purchaseCurrency = receiptCurrency,
                         purchaseDate = purchaseDate,
                         category = item.category,
                         priceProtectionEligible = isEligibleForPriceProtection(receipt),
                         returnWindowDays = getReturnWindow(receipt.parsedMerchant),
                         currentBestPrice = null, // Would be fetched from price APIs
+                        currentBestPriceCurrency = null,
                         priceHistory = emptyList() // Would be tracked over time
                     )
                 } else null
@@ -421,11 +424,13 @@ class PriceProtectionTracker @Inject constructor(
         val itemName: String,
         val merchant: String,
         val purchasePrice: Double,
+        val purchaseCurrency: String = "EUR",
         val purchaseDate: Long,
         val category: String?,
         val priceProtectionEligible: Boolean,
         val returnWindowDays: Int,
         val currentBestPrice: Double?,
+        val currentBestPriceCurrency: String? = null,
         val priceHistory: List<PricePoint>
     )
     
@@ -438,6 +443,7 @@ class PriceProtectionTracker @Inject constructor(
     data class PriceDropAlert(
         val item: PriceProtectedItem,
         val currentPrice: Double,
+        val currentPriceCurrency: String = item.purchaseCurrency,
         val priceDrop: Double,
         val priceDropPercent: Double,
         val claimUrl: String?,

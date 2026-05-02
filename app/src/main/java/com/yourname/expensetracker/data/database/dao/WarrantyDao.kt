@@ -26,7 +26,7 @@ interface WarrantyDao {
     suspend fun getRecentlyExpiredWarranties(currentTime: Long): List<Warranty>
 
     @Query("SELECT * FROM warranties WHERE receiptId = :receiptId")
-    suspend fun getWarrantyByReceiptId(receiptId: Long): Warranty?
+    suspend fun getWarrantyByReceiptId(receiptId: Long?): Warranty?
 
     @Query("SELECT * FROM warranties WHERE expenseId = :expenseId")
     suspend fun getWarrantyByExpenseId(expenseId: Long): Warranty?

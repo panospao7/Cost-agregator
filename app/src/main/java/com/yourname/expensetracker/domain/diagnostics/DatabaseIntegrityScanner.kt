@@ -328,10 +328,11 @@ class DatabaseIntegrityScanner @Inject constructor(
         val violations = mutableListOf<IntegrityViolation>()
         val db = database.openHelper.writableDatabase
         // Check warranties whose receiptId points to a non-existent receipt
+        // Null receiptId is allowed (SET_NULL FK), so exclude those rows.
         db.query("""
             SELECT COUNT(*) AS cnt FROM warranties w
             LEFT JOIN scanned_receipts sr ON sr.id = w.receiptId
-            WHERE sr.id IS NULL
+            WHERE w.receiptId IS NOT NULL AND sr.id IS NULL
         """.trimIndent()).use { c ->
             if (c.moveToFirst() && c.getInt(0) > 0) {
                 violations.add(

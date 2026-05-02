@@ -7,10 +7,9 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * WRN-5: The `receiptId` FK uses CASCADE — deleting a receipt deletes the return window.
- * A future migration should change this to SET_NULL and make receiptId nullable,
- * preserving return window records when the source receipt is removed.
- * See also Warranty — same pattern.
+ * WRN-5-FIXED: The `receiptId` FK now uses SET_NULL (was CASCADE before migration 108→109).
+ * Deleting a receipt preserves return window records. receiptId is nullable to allow
+ * orphaned return windows to exist without a source receipt.
  */
 @Entity(
     tableName = "return_windows",
@@ -19,7 +18,7 @@ import androidx.room.PrimaryKey
             entity = ScannedReceipt::class,
             parentColumns = ["id"],
             childColumns = ["receiptId"],
-            onDelete = ForeignKey.CASCADE
+            onDelete = ForeignKey.SET_NULL
         ),
         ForeignKey(
             entity = Expense::class,
@@ -38,7 +37,7 @@ import androidx.room.PrimaryKey
 data class ReturnWindow(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val receiptId: Long,
+    val receiptId: Long?,
     val expenseId: Long? = null,
     val productName: String,
     val merchantName: String,
@@ -51,11 +50,13 @@ data class ReturnWindow(
     val returnedAt: Long? = null,
     /**
      * The amount refunded, if the item was returned.
-     * TODO: A `currency` field should be added to fully qualify this amount.
-     *       Currently the currency is implicit (from the purchase context) but
-     *       should be stored explicitly for multi-currency support.
      */
     val refundAmount: Double? = null,
+    /**
+     * Currency of the refund amount. Stored explicitly for multi-currency support.
+     * When null, the currency should be inferred from the purchase context.
+     */
+    val refundCurrency: String? = null,
     val createdAt: Long,
     val updatedAt: Long
 )

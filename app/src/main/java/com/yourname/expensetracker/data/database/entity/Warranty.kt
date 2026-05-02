@@ -7,10 +7,9 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * WRN-5: The `receiptId` FK uses CASCADE — deleting a receipt deletes the warranty.
- * A future migration should change this to SET_NULL and make receiptId nullable,
- * preserving warranty records when the source receipt is removed.
- * See also ReturnWindow — same pattern.
+ * WRN-5-FIXED: The `receiptId` FK now uses SET_NULL (was CASCADE before migration 108→109).
+ * Deleting a receipt preserves warranty records. receiptId is nullable to allow orphaned
+ * warranties to exist without a source receipt.
  */
 @Entity(
     tableName = "warranties",
@@ -19,7 +18,7 @@ import androidx.room.PrimaryKey
             entity = ScannedReceipt::class,
             parentColumns = ["id"],
             childColumns = ["receiptId"],
-            onDelete = ForeignKey.CASCADE
+            onDelete = ForeignKey.SET_NULL
         ),
         ForeignKey(
             entity = Expense::class,
@@ -38,7 +37,7 @@ import androidx.room.PrimaryKey
 data class Warranty(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val receiptId: Long,
+    val receiptId: Long?,
     val expenseId: Long? = null,
     val productName: String,
     val merchantName: String,

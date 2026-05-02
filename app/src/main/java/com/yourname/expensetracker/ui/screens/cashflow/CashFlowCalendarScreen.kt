@@ -25,7 +25,7 @@ import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
 import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
-import java.text.SimpleDateFormat
+import java.text.SimpleDateFormat  // Migration: prefer DateTimeFormatter (thread-safe)
 import java.util.*
 import kotlin.math.abs
 
@@ -36,7 +36,9 @@ fun CashFlowCalendarScreen(
     viewModel: CashFlowCalendarViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
+    // Migration: replace with DateTimeFormatter.ofPattern("MMMM yyyy") for thread-safety
     val dateFormat = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()) }
+    // Migration: replace with DateTimeFormatter.ofPattern("EEE, MMM d, yyyy") for thread-safety
     val selectedDateFormat = remember { SimpleDateFormat("EEE, MMM d, yyyy", Locale.getDefault()) }
     val dailyCashFlowByDate = remember(state.dailyCashFlows) {
         state.dailyCashFlows.associateBy { normalizeDateKey(it.date) }

@@ -26,7 +26,7 @@ interface ReturnWindowDao {
     suspend fun getRecentlyExpiredReturnWindows(currentTime: Long): List<ReturnWindow>
 
     @Query("SELECT * FROM return_windows WHERE receiptId = :receiptId")
-    suspend fun getReturnWindowByReceiptId(receiptId: Long): ReturnWindow?
+    suspend fun getReturnWindowByReceiptId(receiptId: Long?): ReturnWindow?
 
     @Query("SELECT * FROM return_windows WHERE expenseId = :expenseId")
     suspend fun getReturnWindowByExpenseId(expenseId: Long): ReturnWindow?

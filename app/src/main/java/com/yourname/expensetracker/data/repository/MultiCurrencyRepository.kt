@@ -526,6 +526,7 @@ class MultiCurrencyRepository @Inject constructor(
      */
     suspend fun shouldUpdateRates(): Boolean {
         val lastUpdate = currencyConverter.getLastUpdateTime() ?: return true
+        // DAY_IN_MILLIS for rate staleness check — acceptable TTL usage (not calendar math)
         val twentyFourHours = TimePeriodUtils.DAY_IN_MILLIS
         return (timeProvider.now() - lastUpdate) > twentyFourHours
     }

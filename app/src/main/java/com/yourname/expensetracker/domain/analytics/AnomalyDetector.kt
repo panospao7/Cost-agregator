@@ -2,7 +2,8 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
-import java.util.Calendar
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
@@ -27,9 +28,22 @@ import kotlin.math.abs
  *
  * This class operates purely on the in-memory expense list — no DB calls.
  * It complements [InsightsEngine]'s merchant-level DB-backed detection.
+ *
+ * ## Known limitation
+ * Recurring/scheduled expenses (rent, subscriptions, insurance premiums) that
+ * appear month after month with similar amounts are **intentionally not
+ * suppressed** by the current statistical methods. Because these transactions
+ * form a tight cluster in the amount distribution, they typically do not exceed
+ * the IQR or MAD thresholds and are rarely flagged. However, if a recurring
+ * expense changes significantly (e.g. a rent increase), it **may** trigger an
+ * alert — which is arguably the desired behavior. A future enhancement could
+ * add explicit recurring-expense suppression by cross-referencing
+ * [com.yourname.expensetracker.domain.logic.RecurringExpenseEngine] patterns.
  */
 @Singleton
-class AnomalyDetector @Inject constructor() {
+class AnomalyDetector @Inject constructor(
+    private val timeProvider: TimeProvider
+) {
 
     private fun ExpenseSnapshot.toAnalyticsSummary(): AnalyticsTransactionSummary {
         return AnalyticsTransactionSummary(
@@ -69,8 +83,7 @@ class AnomalyDetector @Inject constructor() {
     }
 
     private fun timeSlot(timestampMs: Long): TimeSlot {
-        val hour = Calendar.getInstance().apply { timeInMillis = timestampMs }
-            .get(Calendar.HOUR_OF_DAY)
+        val hour = TimePeriodUtils.getHourOfDay(timestampMs)
         return when (hour) {
             in 6..11  -> TimeSlot.MORNING
             in 12..17 -> TimeSlot.AFTERNOON
@@ -80,16 +93,15 @@ class AnomalyDetector @Inject constructor() {
     }
 
     private fun dayName(timestampMs: Long): String {
-        val dow = Calendar.getInstance().apply { timeInMillis = timestampMs }
-            .get(Calendar.DAY_OF_WEEK)
+        val dow = TimePeriodUtils.getDayOfWeek(timestampMs)
         return when (dow) {
-            Calendar.MONDAY    -> "Monday"
-            Calendar.TUESDAY   -> "Tuesday"
-            Calendar.WEDNESDAY -> "Wednesday"
-            Calendar.THURSDAY  -> "Thursday"
-            Calendar.FRIDAY    -> "Friday"
-            Calendar.SATURDAY  -> "Saturday"
-            else               -> "Sunday"
+            java.util.Calendar.MONDAY    -> "Monday"
+            java.util.Calendar.TUESDAY   -> "Tuesday"
+            java.util.Calendar.WEDNESDAY -> "Wednesday"
+            java.util.Calendar.THURSDAY  -> "Thursday"
+            java.util.Calendar.FRIDAY    -> "Friday"
+            java.util.Calendar.SATURDAY  -> "Saturday"
+            else                         -> "Sunday"
         }
     }
 

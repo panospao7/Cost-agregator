@@ -6,9 +6,9 @@
 
 ---
 
-## Status Update (Post-Roadmap Hardening)
+## Status Update (Post-Roadmap Hardening — Final)
 
-All 12 hardening batches (A–L) have been completed across the codebase.
+All 24 hardening batches (A–X) have been completed across the codebase.
 
 | Batch | Focus Area | Issues Targeted | Status |
 |-------|-----------|-----------------|--------|
@@ -24,12 +24,26 @@ All 12 hardening batches (A–L) have been completed across the codebase.
 | J | Search & Query | ~12 | Resolved |
 | K | Forecast & Weather | ~10 | Resolved |
 | L | Migration Policy & Final Audit | ~8 | Resolved |
-| **Total** | **12 batches** | **~178 issues resolved** | **All closed** |
+| M | Analytics Engine Polish | ~6 | Resolved |
+| N | Export & Backup Hardening | ~8 | Resolved |
+| O | Budget & Category Edge Cases | ~7 | Resolved |
+| P | Location & Map Refinements | ~6 | Resolved |
+| Q | AI Integration Guardrails | ~8 | Resolved |
+| R | Recurring & Subscription Details | ~7 | Resolved |
+| S | Receipt Lifecycle Edge Cases | ~6 | Resolved |
+| T | Currency Conversion Consistency | ~5 | Resolved |
+| U | Notification Pipeline Remaining | ~5 | Resolved |
+| V | Worker Idempotency & Scheduling | ~6 | Resolved |
+| W | Cross-Cutting KDoc & Audit Notes | ~8 | Resolved |
+| X | Final Polish — SDF/Millis/EUR KDoc | ~6 | Resolved |
+| **Total** | **24 batches** | **~250 issues resolved** | **All closed** |
 
 The original registry below documents the pre-hardening baseline of 356 unresolved issues.
-After all 12 batches, the remaining items are either tracked as future enhancements or
+After all 24 batches, the remaining ~106 items are either tracked as future enhancements or
 have been superseded by architecture changes (e.g. lifecycle coordinators, currency
-normalizer middleware, materialized-key constraints).
+normalizer middleware, materialized-key constraints). Cross-cutting KDoc annotations
+across batches M–X document the migration path and acceptable patterns for future
+maintainers.
 
 ---
 

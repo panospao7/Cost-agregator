@@ -7,6 +7,26 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Computes per-category spending insights (totals, changes from previous month).
+ *
+ * ## Known limitation: stale/deleted category IDs
+ * When an expense references a [categoryId] that no longer exists in the
+ * [categoryMap] (because the user deleted the category after the transaction
+ * was recorded), this engine silently falls back to [FALLBACK_CATEGORY] (a
+ * hard-coded "Uncategorized" ref). This means:
+ *
+ * - Category names in past insights snapshots may be stale (the fallback shows
+ *   "Uncategorized" instead of the original name).
+ * - Aggregations across time are broken: two identical categoryIds that are
+ *   both missing from the map will be merged under the same fallback, even if
+ *   they referred to different deleted categories.
+ *
+ * A future fix should either:
+ *   (a) Persist a snapshot of the category name at query time, or
+ *   (b) Soft-delete categories so the ID-to-name mapping remains available
+ *       for historical rollups.
+ */
 @Singleton
 class CategoryInsightEngine @Inject constructor() {
 

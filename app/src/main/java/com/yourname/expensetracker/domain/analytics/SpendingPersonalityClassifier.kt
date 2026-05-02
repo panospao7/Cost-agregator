@@ -182,7 +182,7 @@ class SpendingPersonalityClassifier @Inject constructor(
         
         val impulsePurchases = purchases.count { purchase ->
             incomeDates.any { incomeDate ->
-                val diffDays = abs(purchase.date - incomeDate) / TimePeriodUtils.DAY_IN_MILLIS
+                val diffDays = abs(TimePeriodUtils.daysBetween(incomeDate, purchase.date))
                 diffDays <= IMPULSE_WINDOW_DAYS
             }
         }

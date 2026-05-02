@@ -188,6 +188,17 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         }.sortedByDescending { it.amount }.take(5)
     }
     
+    /**
+     * Computes monthly spending/income trend for the dashboard.
+     *
+     * Every calendar month intersecting [startDate, endDate) is included in the
+     * result, even months with zero spending or income — they are emitted as
+     * [MonthlyDataPoint] with spending=0 and income=0 rather than being skipped.
+     *
+     * This ensures the trend chart never has "gaps" that could be misinterpreted
+     * as missing data. Consumers that need to distinguish "no data" from
+     * "genuinely zero spending" should check the [MonthlyDataPoint] values.
+     */
     private suspend fun getMonthlyTrend(startDate: Long, endDate: Long, displayCurrency: String): List<MonthlyDataPoint> {
         val result = mutableListOf<MonthlyDataPoint>()
         if (endDate <= startDate) return result

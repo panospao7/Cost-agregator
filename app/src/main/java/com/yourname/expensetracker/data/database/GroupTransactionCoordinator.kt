@@ -192,10 +192,11 @@ class GroupTransactionCoordinator @Inject constructor(
                     return@withTransaction GroupExpenseCreationResult.Error("Payer is not a member of this group")
                 }
 
-                // J1: Validate custom split payload for non-EQUAL split types
+                // J1 + S3: Validate custom split payload for non-EQUAL split types
                 validateCustomSplitPayloadFormat(
                     splitType = splitType,
-                    customSplitsJson = customSplitsJson
+                    customSplitsJson = customSplitsJson,
+                    memberCount = members.size
                 )?.let { validationError ->
                     return@withTransaction validationError
                 }
@@ -279,7 +280,8 @@ class GroupTransactionCoordinator @Inject constructor(
 
                 validateCustomSplitPayloadFormat(
                     splitType = splitType,
-                    customSplitsJson = customSplitsJson
+                    customSplitsJson = customSplitsJson,
+                    memberCount = members.size
                 )?.let { validationError ->
                     return@withTransaction validationError
                 }
@@ -364,6 +366,19 @@ class GroupTransactionCoordinator @Inject constructor(
      * This is a soft delete - sets isActive = false.
      */
     override suspend fun deleteGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
+        try {
+            groupDao.archiveGroup(groupId)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Archive a group by setting isActive = false instead of hard-deleting.
+     * Preserves all expense history for audit purposes.
+     */
+    override suspend fun archiveGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
         try {
             groupDao.archiveGroup(groupId)
             true
@@ -458,7 +473,8 @@ class GroupTransactionCoordinator @Inject constructor(
 
                 validateCustomSplitPayloadFormat(
                     splitType = splitType,
-                    customSplitsJson = customSplitsJson
+                    customSplitsJson = customSplitsJson,
+                    memberCount = members.size
                 )?.let { validationError ->
                     return@withTransaction validationError
                 }
@@ -701,7 +717,8 @@ class GroupTransactionCoordinator @Inject constructor(
 
     private fun validateCustomSplitPayloadFormat(
         splitType: SplitType,
-        customSplitsJson: String?
+        customSplitsJson: String?,
+        memberCount: Int? = null
     ): GroupExpenseCreationResult.Error? {
         if (splitType == SplitType.EQUAL) {
             return null
@@ -709,6 +726,20 @@ class GroupTransactionCoordinator @Inject constructor(
 
         if (!CustomSplitJsonCodec.isCanonicalJsonPayload(customSplitsJson)) {
             return GroupExpenseCreationResult.Error("Custom split payload must be valid JSON")
+        }
+
+        // S3: For CUSTOM split types (CUSTOM_AMOUNT, CUSTOM_PERCENT),
+        // validate the number of entries matches the number of members.
+        if (memberCount != null &&
+            (splitType == SplitType.CUSTOM_AMOUNT || splitType == SplitType.CUSTOM_PERCENT)
+        ) {
+            val parsedSplits = CustomSplitJsonCodec.parseCanonicalJsonOrNull(customSplitsJson)
+            if (parsedSplits == null || parsedSplits.size != memberCount) {
+                return GroupExpenseCreationResult.Error(
+                    "CUSTOM split must have exactly $memberCount entries (one per member), " +
+                        "but got ${parsedSplits?.size ?: 0}"
+                )
+            }
         }
 
         return null

@@ -806,7 +806,15 @@ class ReceiptRepository @Inject constructor(
     }
 
     /**
-     * Concatenates all raw OCR text from the database for debugging/parsing refinement
+     * Raw OCR text retention is handled by [DataRetentionWorker], which purges
+     * [ScannedReceipt.rawOcrText] after the configured retention period
+     * (see [ScannedReceipt.rawOcrTextPurgedAt]).
+     *
+     * The purge clears the text content and sets [ScannedReceipt.rawOcrTextPurgedAt]
+     * to the purge timestamp. Downstream consumers must check this field before
+     * attempting OCR re-processing.
+     *
+     * Concatenates all raw OCR text from the database for debugging/parsing refinement.
      */
     suspend fun exportParserDebugData(): String {
         val totalCount = scannedReceiptDao.getCount()
@@ -871,6 +879,14 @@ class ReceiptRepository @Inject constructor(
     // Receipt Matching Methods
     suspend fun getUnmatchedReceipts(): List<com.yourname.expensetracker.data.database.entity.ScannedReceipt> {
         return scannedReceiptDao.getUnmatchedReceipts()
+    }
+
+    /**
+     * Returns receipts eligible for automated matching: UNMATCHED and SUGGESTED.
+     * Excludes AUTO_MATCHED, MANUALLY_MATCHED, and REJECTED.
+     */
+    suspend fun getProcessableReceipts(): List<com.yourname.expensetracker.data.database.entity.ScannedReceipt> {
+        return scannedReceiptDao.getProcessableReceipts()
     }
 
     suspend fun linkReceiptToExpense(
@@ -950,6 +966,7 @@ class ReceiptRepository @Inject constructor(
         limit: Int = 20
     ): List<com.yourname.expensetracker.data.database.entity.Expense> {
         val anchorDate = receipt.parsedDate ?: receipt.createdAt
+        // DAY_IN_MILLIS constant for lookback window — acceptable TTL usage (not calendar math)
         val dayMs = 86_400_000L
         val startDate = anchorDate - lookbackDays * dayMs
         val endDate = anchorDate + lookbackDays * dayMs

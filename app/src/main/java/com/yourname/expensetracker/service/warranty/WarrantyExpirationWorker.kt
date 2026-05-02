@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.service.warranty
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.core.app.NotificationManagerCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
@@ -70,15 +71,34 @@ class WarrantyExpirationWorker @AssistedInject constructor(
             Timber.d("Checking for expiring warranties...")
             val reconciliationResult = warrantyRepository.reconcileExpiredItems()
 
+            // ── Persistent reminder state via SharedPreferences ───────────────
+            // Tracks last-notified timestamps per (warrantyId:window) key.
+            // If already notified within the current window, skip to avoid
+            // re-sending the same notification across device reboots.
+            val prefs: SharedPreferences = applicationContext.getSharedPreferences(
+                PREFS_NAME, Context.MODE_PRIVATE
+            )
+            val now = System.currentTimeMillis()
+            // DAY_IN_MILLIS constant for notification cooldown — acceptable TTL usage (not calendar math)
+            val oneDayMs = 86_400_000L
+
             // Track already-notified (warrantyId:window) keys within this run
-            // to prevent duplicate notifications.
+            // to prevent duplicate notifications in the same invocation.
             val notifiedThisRun = mutableSetOf<String>()
+
+            // Helper: check persistent state before sending
+            fun shouldSend(key: String, lastNotifiedAt: Long?): Boolean {
+                if (key in notifiedThisRun) return false
+                if (lastNotifiedAt != null && (now - lastNotifiedAt) < oneDayMs) return false
+                return true
+            }
 
             // Check warranties expiring in 7 days
             val expiringIn7Days = warrantyRepository.getWarrantiesExpiringSoon(7)
             expiringIn7Days.forEach { warranty ->
                 val key = "${warranty.id}:7"
-                if (key !in notifiedThisRun) {
+                val lastNotified = prefs.getLong(key, -1L).takeIf { it >= 0L }
+                if (shouldSend(key, lastNotified)) {
                     notificationService.sendBudgetAlert(
                         notificationId = NotificationIdGenerator.forWarranty(warranty.id, 7),
                         title = applicationContext.getString(R.string.warranty_expiring_soon_title),
@@ -89,6 +109,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                         )
                     )
                     notifiedThisRun += key
+                    prefs.edit().putLong(key, now).apply()
                 }
             }
 
@@ -100,7 +121,8 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                 .filter { it.id !in sevenDayIds }
             expiringIn30Days.forEach { warranty ->
                 val key = "${warranty.id}:30"
-                if (key !in notifiedThisRun) {
+                val lastNotified = prefs.getLong(key, -1L).takeIf { it >= 0L }
+                if (shouldSend(key, lastNotified)) {
                     notificationService.sendBudgetAlert(
                         notificationId = NotificationIdGenerator.forWarranty(warranty.id, 30),
                         title = applicationContext.getString(R.string.warranty_expiration_reminder_title),
@@ -110,6 +132,16 @@ class WarrantyExpirationWorker @AssistedInject constructor(
                         )
                     )
                     notifiedThisRun += key
+                    prefs.edit().putLong(key, now).apply()
+                }
+            }
+
+            // ── Clean up stale entries older than 90 days ────────────────
+            val cutoff = now - 90L * oneDayMs
+            prefs.all.keys.forEach { k ->
+                val v = prefs.getLong(k, -1L)
+                if (v >= 0L && v < cutoff) {
+                    prefs.edit().remove(k).apply()
                 }
             }
 
@@ -129,6 +161,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
 
     companion object {
         private const val WORK_NAME = "warranty_expiration_check"
+        private const val PREFS_NAME = "warranty_expiration_worker_prefs"
 
         fun schedule(context: Context) {
             val constraints = Constraints.Builder()

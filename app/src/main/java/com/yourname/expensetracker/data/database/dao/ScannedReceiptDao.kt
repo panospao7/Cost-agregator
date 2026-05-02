@@ -49,6 +49,16 @@ interface ScannedReceiptDao {
     @Query("SELECT * FROM scanned_receipts WHERE matchStatus = 'SUGGESTED' ORDER BY createdAt DESC")
     suspend fun getReceiptsWithSuggestions(): List<ScannedReceipt>
 
+    /**
+     * Returns receipts eligible for automated matching: UNMATCHED (not yet processed)
+     * and SUGGESTED (re-evaluate for potential upgrade to AUTO_MATCHED).
+     *
+     * Excludes AUTO_MATCHED, MANUALLY_MATCHED, and REJECTED receipts which
+     * have already been resolved.
+     */
+    @Query("SELECT * FROM scanned_receipts WHERE matchStatus IN ('UNMATCHED', 'SUGGESTED') ORDER BY createdAt DESC")
+    suspend fun getProcessableReceipts(): List<ScannedReceipt>
+
     @Query("SELECT * FROM scanned_receipts WHERE createdAt >= :since ORDER BY createdAt DESC LIMIT :limit")
     suspend fun getRecentReceipts(since: Long, limit: Int = Int.MAX_VALUE): List<ScannedReceipt>
 

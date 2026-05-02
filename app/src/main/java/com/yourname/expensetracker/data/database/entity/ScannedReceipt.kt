@@ -97,4 +97,25 @@ data class ScannedReceipt(
 
     @get:Ignore
     val parsedTaxMoneyAmount: MoneyAmount? get() = parsedTaxAmount?.let { MoneyAmount(it, CurrencyCode(currency)) }
+
+    /**
+     * Returns the number of line items in [parsedItems], or 0 if null/empty.
+     *
+     * Parses the JSON array stored in [parsedItems] to count entries.
+     *
+     * ## Future migration
+     * Once line items are migrated to a relational `receipt_line_items` table
+     * (see N1 note on [parsedItems]), this property should delegate to a
+     * `COUNT(*)` query on that table instead.
+     */
+    @get:Ignore
+    val lineItemCount: Int get() {
+        if (parsedItems.isNullOrBlank()) return 0
+        return try {
+            val arr = org.json.JSONArray(parsedItems)
+            arr.length()
+        } catch (_: Exception) {
+            0
+        }
+    }
 }
