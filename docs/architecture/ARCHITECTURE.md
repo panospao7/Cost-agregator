@@ -30,13 +30,13 @@
 
 ## Current Project Metrics
 - Database version: v106
-- 620+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5, ~16 new in Phase 5b, ~20 new in Phase 6, ~8 modified in Phase 7, ~12 new in Phase 8)
+- 620+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5, ~16 new in Phase 5b, ~20 new in Phase 6, ~8 modified in Phase 7, ~12 new in Phase 8, ~4 new in Phase 9)
 - Destination-driven navigation via `NavigationDestination`
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
-- Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver`
-- WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `ReceiptMatchingWorker`, `DataRetentionWorker`
-- AI, location, shared-expense, split, privacy, and backup-encryption flows are first-class subsystems
+- Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver`; restore journal checked before any work is scheduled
+- WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `ReceiptMatchingWorker`, `DataRetentionWorker` (all 7 paused during restore via `RestoreMaintenanceMode`)
+- AI, location, shared-expense, split, privacy, backup-encryption, and `.costbackup` bundle backup/restore flows are first-class subsystems
 
 ---
 
@@ -180,6 +180,11 @@ domain/
 ```
 data/
 ├── repository/                   # Data access (single source of truth)
+├── backup/                       # **NEW — Phase 9: .costbackup bundle format + restore engine**
+│   ├── CostbackupBundle.kt      # AES-256-GCM encrypted ZIP: header + manifest + DB + receipt images + checksums
+│   ├── RestoreMaintenanceMode.kt # 8-state mode manager; pauses 7 workers + notification capture during restore
+│   ├── RestoreJournal.kt        # Crash-safe 8-state restore journal (PREPARING → COMPLETE/FAILED)
+│   └── BackupVerifier.kt        # Full 56-entity 3-tier verification (EXACT / VALIDITY / OPTIONAL)
 ├── ai/provider/                 # Cloud + on-device AI providers
 ├── location/                    # Geocoding services
 ├── security/                    # Secure storage / crypto helpers
@@ -209,6 +214,10 @@ data/
 MainApplication
   └─ AppStartupDelegate
        └─ AppStartupCoordinator
+            ├─ checkRestoreJournal()    ← Phase 9: crash recovery before any work
+            │    └─ RestoreJournal.checkAndRecover() → RecoveryResult
+            │         (NoAction / CompleteClean / CleanedNonDestructive /
+            │          RecoveredFromSwap / CriticalRecoveryRequired)
             ├─ AppBackgroundLifecycleObserver
             └─ WorkManager jobs
                ├─ DailyBriefingWorker         (Phase 8 — every 24h, privacy-gated)
@@ -218,6 +227,8 @@ MainApplication
                ├─ BillReminderWorker          (Phase 8 — every 6h, disabled by default)
                ├─ ReceiptMatchingWorker       (Phase 8 — every 2h, automated matching)
                └─ DataRetentionWorker         (Phase 6 — every 24h)
+                                    ↑ All 7 workers cancelled by
+                                      RestoreMaintenanceMode during restore
 ```
 
 ---
@@ -728,9 +739,74 @@ Phase 8 introduces a persistent job-run tracking table, a worker-specification m
 
 ---
 
+### Phase 9 — Backup & Restore Engine (May 2026)
+
+Phase 9 introduces a complete backup/restore subsystem with an encrypted bundle format,
+crash-safe journaling, worker pausing, and full 56-entity verification.
+
+#### New `data/backup/` Package
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `CostbackupBundle` | `data/backup/CostbackupBundle.kt` | **`.costbackup` bundle format.** Outer layer: `COSTBACKUP1` magic (10B) + format version (2B) + salt (16B) + IV (12B) + AES-256-GCM ciphertext. Inner layer: standard ZIP containing `manifest.json`, `database.sqlite`, `files/receipts/`, `checksums.json`. Data classes: `BackupManifest`, `BackupIncludes`, `BackupOptionsManifest`, `ChecksumsManifest`. Exceptions: `WrongBackupPasswordException`, `UnsupportedBackupVersionException`, `InvalidBackupFormatException`, `ChecksumMismatchException`. Exposes `create()` and `extract()` as `Result<T>`. |
+| `RestoreMaintenanceMode` | `data/backup/RestoreMaintenanceMode.kt` | **8-state maintenance mode manager.** Modes: `NORMAL`, `BACKUP_EXPORTING`, `RESTORE_PREPARING`, `RESTORE_STAGING`, `RESTORE_SWAPPING`, `RESTORE_VERIFYING`, `RESTORE_ROLLING_BACK`, `RESTORE_COMPLETE_RESTART_REQUIRED`. On `enter()`: cancels all 7 WorkManager workers by tag via `WorkerSpec.DEFAULTS`. State persisted in `SharedPreferences` (survives process death). `isWritesAllowed()` returns `false` for all modes except `NORMAL` and `BACKUP_EXPORTING`. `exit(forceRestartRequired)` optionally transitions to `RESTORE_COMPLETE_RESTART_REQUIRED` to keep writes blocked until app restart. |
+| `RestoreJournal` | `data/backup/RestoreJournal.kt` | **Crash-safe 8-state restore journal.** State machine: `PREPARING → STAGED → SAFETY_BACKUP_CREATED → SWAPPING → VERIFYING → COMPLETE` (with `ROLLING_BACK` and `FAILED` as recovery paths). Writes `restore_journal.json` before each critical step. `checkAndRecover()` returns `RecoveryResult` sealed class: `NoAction`, `CompleteClean`, `CleanedNonDestructive`, `RecoveredFromSwap`, `CriticalRecoveryRequired`. Non-destructive states (`PREPARING`, `STAGED`, `FAILED`) clean staging files automatically. Destructive states (`SWAPPING`, `VERIFYING`, `ROLLING_BACK`) signal the caller to attempt safety-backup recovery. |
+| `BackupVerifier` | `data/backup/BackupVerifier.kt` | **Full 56-entity verification in 3 tiers.** `TIER_1_EXACT` (30 tables — user/business data: row count **must** match exactly). `TIER_2_VALIDITY` (16 tables — derived/event-log: must pass integrity + FK checks). `TIER_3_OPTIONAL` (10 tables — cache/external: may be absent). Methods: `verify()` returns `VerificationSummary` with per-table results; `verifyQuick()` throws on first failure for pre-swap gating. Runs `PRAGMA integrity_check` and `PRAGMA foreign_key_check` on the restored database. |
+
+#### Integration Points
+
+| Component | What Changed |
+|-----------|--------------|
+| `DatabaseBackupRepositoryImpl` | **Rewritten** to use `CostbackupBundle.create()`/`extract()`, `BackupVerifier.verify()`/`verifyQuick()`, `RestoreJournal` for each step, and `RestoreMaintenanceMode.enter()`/`exit()` to pause workers during restore. Export path now produces `.costbackup` bundles; import path runs the full journaled restore pipeline. |
+| `AppStartupCoordinator` | **`initialize()` now calls `checkRestoreJournal()` first** — before `registerLifecycleObserver()` and `scheduleStartupWork()`. Injects `RestoreJournal` and `RestoreMaintenanceMode`. On startup, reads the journal and handles crash recovery (cleans non-destructive states, logs critical failures, resets maintenance mode to `NORMAL`). |
+| `NotificationCaptureService` | **Injects `RestoreMaintenanceMode`** — checks `isWritesAllowed()` before processing any incoming notification. During restore, all notification ingestion is silently blocked. |
+
+#### Restore Pipeline Flow
+
+```
+1. RestoreMaintenanceMode.enter(RESTORE_PREPARING)
+   → cancels all 7 WorkManager workers
+   → NotificationCaptureService blocks writes
+
+2. RestoreJournal.beginJournal(source, staged, live)
+   → writes restore_journal.json (state=PREPARING)
+
+3. CostbackupBundle.extract(bundleFile, tempDir, password)
+   → decrypts AES-256-GCM → extracts ZIP → validates manifest + checksums
+
+4. RestoreJournal.transitionTo(STAGED)
+
+5. BackupVerifier.verifyQuick(stagedDbFile, manifestTableCounts)
+   → PRAGMA integrity_check + foreign_key_check + Tier 1 exact counts
+
+6. Safety backup of live DB created
+
+7. RestoreJournal.transitionTo(SAFETY_BACKUP_CREATED)
+
+8. Swap staged → live (file rename)
+
+9. RestoreJournal.transitionTo(SWAPPING)
+
+10. Reopen live DB; BackupVerifier.verify(liveDbFile, manifestTableCounts)
+    → full 56-entity 3-tier verification
+
+11. RestoreJournal.transitionTo(VERIFYING)
+
+12. On success: RestoreJournal.commitJournal() → delete journal file
+    On failure: RestoreMaintenanceMode.enter(RESTORE_ROLLING_BACK)
+                → restore safety backup → RestoreJournal.failJournal()
+
+13. RestoreMaintenanceMode.exit(forceRestartRequired=true)
+    → blocks writes until app restart
+```
+
+**DB impact:** No migration. Database stays at **v106** (Phase 9 adds no entities or columns — the bundle packages the existing schema).
+
+---
+
 ## Database Schema
 
-### Version: v106 (post DB invariants + background workers)
+### Version: v106 (post DB invariants + background workers; Phase 9 adds no migrations)
 
 The Room schema in v106 includes all tables from v100 plus:
 

@@ -101,6 +101,9 @@ class NotificationCaptureService : NotificationListenerService() {
     @Inject
     lateinit var privacyGate: PrivacyGate
 
+    @Inject
+    lateinit var restoreMaintenanceMode: com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
     private val workTracker = NotificationServiceWorkTracker()
@@ -273,6 +276,12 @@ class NotificationCaptureService : NotificationListenerService() {
         sbn ?: return
 
         val packageName = sbn.packageName
+
+        // Check maintenance mode — if restore is in progress, drop all notifications
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            Timber.d("Maintenance mode active — dropping notification from %s", packageName)
+            return
+        }
         
         // Extract notification data — preserve nullability until fallback resolution
         val extras = sbn.notification.extras

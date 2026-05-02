@@ -27,6 +27,14 @@ interface DatabaseBackupRepository {
     suspend fun importDatabase(sourceFile: File): Result<DatabaseImportSummary>
     
     /**
+     * Restore a .costbackup bundle (encrypted ZIP with manifest + assets).
+     * @param bundleFile The .costbackup file to restore
+     * @param password The user-provided encryption password
+     * @return Result containing the import result (may be SuccessNeedsRestart)
+     */
+    suspend fun restoreCostBackup(bundleFile: File, password: String): Result<DatabaseImportResult>
+    
+    /**
      * Get the current database statistics (transaction count, etc.)
      */
     suspend fun getDatabaseStats(): DatabaseStats
@@ -55,5 +63,24 @@ data class DatabaseImportSummary(
     val categoryCount: Int,
     val merchantCount: Int,
     val pendingReviewCount: Int,
-    val budgetCount: Int
-)
+    val budgetCount: Int,
+    val receiptCount: Int = 0,
+    val warrantyCount: Int = 0,
+    val groupCount: Int = 0,
+    val subscriptionCount: Int = 0,
+    val savingsGoalCount: Int = 0,
+    val allTableCounts: Map<String, Int> = emptyMap()
+) {
+    fun hasMeaningfulData(): Boolean {
+        return transactionCount > 0 ||
+            categoryCount > 0 ||
+            merchantCount > 0 ||
+            pendingReviewCount > 0 ||
+            budgetCount > 0 ||
+            receiptCount > 0 ||
+            warrantyCount > 0 ||
+            groupCount > 0 ||
+            subscriptionCount > 0 ||
+            savingsGoalCount > 0
+    }
+}

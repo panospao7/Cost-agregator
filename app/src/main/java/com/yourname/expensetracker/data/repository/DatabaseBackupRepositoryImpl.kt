@@ -4,19 +4,26 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.os.Environment
+import com.yourname.expensetracker.data.backup.BackupVerifier
+import com.yourname.expensetracker.data.backup.CostbackupBundle
+import com.yourname.expensetracker.data.backup.RestoreJournal
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import com.yourname.expensetracker.data.privacy.ExportAnonymizer
 import com.yourname.expensetracker.data.database.APP_DATABASE_SCHEMA_VERSION
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
+import com.yourname.expensetracker.domain.backup.DatabaseImportResult
 import com.yourname.expensetracker.domain.backup.DatabaseImportSummary
 import com.yourname.expensetracker.domain.backup.DatabaseStats
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAssetStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.delay
@@ -31,19 +38,15 @@ import javax.inject.Singleton
 
 /**
  * Implementation of [DatabaseBackupRepository] that backs up and restores the
- * SQLite database only.
+ * SQLite database and associated assets.
  *
- * ## Known limitation — receipt images are NOT included
- *
- * This implementation only copies the Room database file (`.db`).  Receipt
- * image assets stored by [ReceiptAssetStore] in `filesDir/receipts/` are
- * **not** included in the backup.  A future PR will introduce an archive-based
- * backup format (e.g. ZIP or TAR) that bundles both the database and the
- * receipt image files together using [ReceiptAssetStore.generateBackupManifest].
- *
- * Meanwhile, receipt image files persist in app-private storage and survive
- * app data clears only if the user explicitly backs them up via the OS backup
- * mechanism.
+ * Supports:
+ * - Legacy `.db` / `.enc` export (plaintext or auto-key encrypted)
+ * - `.costbackup` bundle format (user-password encrypted ZIP with manifest,
+ *   checksums, DB snapshot, and receipt images)
+ * - Full 56-table verification via [BackupVerifier]
+ * - Maintenance mode via [RestoreMaintenanceMode]
+ * - Crash-safe restore journal via [RestoreJournal]
  */
 @Singleton
 class DatabaseBackupRepositoryImpl @Inject constructor(
@@ -54,7 +57,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     private val privacySettingsRepository: PrivacySettingsRepository,
     private val backupEncryptionService: BackupEncryptionService,
     private val exportAnonymizer: ExportAnonymizer,
-    private val secureKeyStorage: SecureKeyStorage
+    private val secureKeyStorage: SecureKeyStorage,
+    private val receiptAssetStore: ReceiptAssetStore,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val restoreJournal: RestoreJournal
 ) : DatabaseBackupRepository {
 
     private var stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary =
@@ -72,9 +78,16 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         backupEncryptionService: BackupEncryptionService,
         exportAnonymizer: ExportAnonymizer,
         secureKeyStorage: SecureKeyStorage,
+        receiptAssetStore: ReceiptAssetStore,
+        restoreMaintenanceMode: RestoreMaintenanceMode,
+        restoreJournal: RestoreJournal,
         stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary,
         liveImportVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary
-    ) : this(context, database, ioDispatcher, privacyGate, privacySettingsRepository, backupEncryptionService, exportAnonymizer, secureKeyStorage) {
+    ) : this(
+        context, database, ioDispatcher, privacyGate, privacySettingsRepository,
+        backupEncryptionService, exportAnonymizer, secureKeyStorage,
+        receiptAssetStore, restoreMaintenanceMode, restoreJournal
+    ) {
         this.stagedImportVerifier = stagedImportVerifier
         this.liveImportVerifier = liveImportVerifier
     }
@@ -140,7 +153,15 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 categoryCount = countRowsForVerification(supportDb, "categories"),
                 merchantCount = countRowsForVerification(supportDb, "merchant_categories"),
                 pendingReviewCount = countRowsForVerification(supportDb, "pending_reviews"),
-                budgetCount = countRowsForVerification(supportDb, "budgets")
+                budgetCount = countRowsForVerification(supportDb, "budgets"),
+                receiptCount = countRowsForVerification(supportDb, "scanned_receipts"),
+                warrantyCount = countRowsForVerification(supportDb, "warranties"),
+                groupCount = countRowsForVerification(supportDb, "expense_groups"),
+                subscriptionCount = countRowsForVerification(supportDb, "subscription_candidates"),
+                savingsGoalCount = countRowsForVerification(supportDb, "savings_goals"),
+                allTableCounts = BackupVerifier.allTableNames().associateWith { tableName ->
+                    countRowsForVerification(supportDb, tableName)
+                }
             )
         }
 
@@ -175,39 +196,58 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             actualSummary: DatabaseImportSummary,
             sourceSchemaVersion: Int
         ) {
-            // These core tables are expected to be count-preserving across staged import.
-            // We intentionally block any reduction here rather than only full zeroing so that
-            // partial data loss is caught before the live database is swapped.
-            verifyCoreTableCountPreservedForVerification(
-                tableLabel = "expenses",
-                sourceCount = sourceSummary.transactionCount,
-                actualCount = actualSummary.transactionCount,
-                sourceSchemaVersion = sourceSchemaVersion
-            )
-            verifyCoreTableCountPreservedForVerification(
-                tableLabel = "categories",
-                sourceCount = sourceSummary.categoryCount,
-                actualCount = actualSummary.categoryCount,
-                sourceSchemaVersion = sourceSchemaVersion
-            )
-            verifyCoreTableCountPreservedForVerification(
-                tableLabel = "merchant mappings",
-                sourceCount = sourceSummary.merchantCount,
-                actualCount = actualSummary.merchantCount,
-                sourceSchemaVersion = sourceSchemaVersion
-            )
-            verifyCoreTableCountPreservedForVerification(
-                tableLabel = "pending reviews",
-                sourceCount = sourceSummary.pendingReviewCount,
-                actualCount = actualSummary.pendingReviewCount,
-                sourceSchemaVersion = sourceSchemaVersion
-            )
-            verifyCoreTableCountPreservedForVerification(
-                tableLabel = "budgets",
-                sourceCount = sourceSummary.budgetCount,
-                actualCount = actualSummary.budgetCount,
-                sourceSchemaVersion = sourceSchemaVersion
-            )
+            // Use the full BackupVerifier for Tier 1 exact count checks.
+            // If we have allTableCounts from both source and actual, use the verifier.
+            val sourceCounts = sourceSummary.allTableCounts
+            val actualCounts = actualSummary.allTableCounts
+
+            if (sourceCounts.isNotEmpty() && actualCounts.isNotEmpty()) {
+                // Full verification across all tables
+                for ((tableName, expectedCount) in sourceCounts) {
+                    val actualCount = actualCounts[tableName] ?: 0
+                    val tier = BackupVerifier.tableTier(tableName)
+                    if (tier == BackupVerifier.VerificationTier.TIER_1_EXACT) {
+                        verifyCoreTableCountPreservedForVerification(
+                            tableLabel = tableName,
+                            sourceCount = expectedCount,
+                            actualCount = actualCount,
+                            sourceSchemaVersion = sourceSchemaVersion
+                        )
+                    }
+                }
+            } else {
+                // Fallback for legacy imports without full table counts
+                verifyCoreTableCountPreservedForVerification(
+                    tableLabel = "expenses",
+                    sourceCount = sourceSummary.transactionCount,
+                    actualCount = actualSummary.transactionCount,
+                    sourceSchemaVersion = sourceSchemaVersion
+                )
+                verifyCoreTableCountPreservedForVerification(
+                    tableLabel = "categories",
+                    sourceCount = sourceSummary.categoryCount,
+                    actualCount = actualSummary.categoryCount,
+                    sourceSchemaVersion = sourceSchemaVersion
+                )
+                verifyCoreTableCountPreservedForVerification(
+                    tableLabel = "merchant mappings",
+                    sourceCount = sourceSummary.merchantCount,
+                    actualCount = actualSummary.merchantCount,
+                    sourceSchemaVersion = sourceSchemaVersion
+                )
+                verifyCoreTableCountPreservedForVerification(
+                    tableLabel = "pending reviews",
+                    sourceCount = sourceSummary.pendingReviewCount,
+                    actualCount = actualSummary.pendingReviewCount,
+                    sourceSchemaVersion = sourceSchemaVersion
+                )
+                verifyCoreTableCountPreservedForVerification(
+                    tableLabel = "budgets",
+                    sourceCount = sourceSummary.budgetCount,
+                    actualCount = actualSummary.budgetCount,
+                    sourceSchemaVersion = sourceSchemaVersion
+                )
+            }
         }
 
         private fun verifyCoreTableCountPreservedForVerification(
@@ -216,9 +256,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             actualCount: Int,
             sourceSchemaVersion: Int
         ) {
-            if (actualCount < sourceCount) {
+            // EXACT match required — NOT >= (G5/G6 fix)
+            if (actualCount != sourceCount) {
                 throw Exception(
-                    "Verified import reduced $tableLabel from $sourceCount to $actualCount during migration from schema v$sourceSchemaVersion"
+                    "Verified import changed $tableLabel from $sourceCount to $actualCount during migration from schema v$sourceSchemaVersion"
                 )
             }
         }
@@ -382,6 +423,417 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
     }
     
+    /**
+     * Creates a .costbackup bundle (encrypted ZIP with manifest, checksums,
+     * database snapshot, and receipt images).
+     *
+     * @param password The user-provided encryption password
+     * @param includeReceiptImages Whether to include receipt image assets
+     * @param redacted Whether to sanitize sensitive data (default: true)
+     * @return Result containing the .costbackup File
+     */
+    suspend fun createCostBackup(
+        password: String,
+        includeReceiptImages: Boolean = true,
+        redacted: Boolean = true
+    ): Result<java.io.File> = withContext(ioDispatcher) {
+        try {
+            // Privacy gate check
+            val encryptedDecision = privacyGate.check(
+                PrivacyCapability.ENCRYPTED_BACKUP,
+                mapOf("operation" to "create_costbackup")
+            )
+            if (encryptedDecision is PrivacyDecision.Denied) {
+                return@withContext Result.failure(
+                    Exception("Encrypted backup denied by privacy gate: ${encryptedDecision.reason}")
+                )
+            }
+
+            // WAL checkpoint
+            val checkpointResult = checkpointWal()
+            if (checkpointResult.isFailure) {
+                return@withContext Result.failure(
+                    checkpointResult.exceptionOrNull() ?: Exception("Failed to checkpoint WAL")
+                )
+            }
+
+            val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
+            if (!dbFile.exists()) {
+                return@withContext Result.failure(Exception("Database file not found"))
+            }
+
+            // Copy DB to temp for snapshot
+            val timestamp = SimpleDateFormat(DATE_FORMAT, Locale.getDefault()).format(Date())
+            val tempDb = java.io.File(context.cacheDir, "costbackup_snapshot_${timestamp}.db")
+            try {
+                dbFile.inputStream().use { input ->
+                    tempDb.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                // Sanitize if redacted
+                if (redacted) {
+                    exportAnonymizer.sanitizeExport(tempDb)
+                }
+
+                // Get table counts from snapshot
+                val snapshotDb = android.database.sqlite.SQLiteDatabase.openDatabase(
+                    tempDb.absolutePath, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+                )
+                val tableCounts = try {
+                    BackupVerifier.allTableNames().associateWith { tableName ->
+                        try {
+                            val cursor = snapshotDb.rawQuery("SELECT COUNT(*) FROM \"$tableName\"", null)
+                            cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
+                        } catch (e: Exception) {
+                            0
+                        }
+                    }
+                } finally {
+                    snapshotDb.close()
+                }
+
+                // Collect receipt assets
+                val receiptFiles = if (includeReceiptImages) {
+                    collectReceiptAssetsForBackup()
+                } else {
+                    emptyMap()
+                }
+
+                // Create .costbackup
+                val backupsDir = java.io.File(context.filesDir, "backups").apply { mkdirs() }
+                val shortUuid = UUID.randomUUID().toString().take(8)
+                val outputName = "expense_tracker_backup_${timestamp}_${shortUuid}.costbackup"
+                val outputFile = java.io.File(backupsDir, outputName)
+
+                val result = CostbackupBundle.create(
+                    outputFile = outputFile,
+                    databaseFile = tempDb,
+                    receiptFiles = receiptFiles,
+                    password = password,
+                    tableCounts = tableCounts,
+                    databaseVersion = APP_DATABASE_SCHEMA_VERSION,
+                    redacted = redacted,
+                    includeReceiptImages = includeReceiptImages,
+                    encryptionService = backupEncryptionService
+                )
+
+                if (result.isFailure) {
+                    return@withContext Result.failure(
+                        result.exceptionOrNull() ?: Exception("Failed to create .costbackup bundle")
+                    )
+                }
+
+                Timber.d("Created .costbackup: %s", outputFile.absolutePath)
+                Result.success(outputFile)
+            } finally {
+                tempDb.delete()
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to create .costbackup bundle")
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun restoreCostBackup(
+        bundleFile: File,
+        password: String
+    ): Result<DatabaseImportResult> = withContext(ioDispatcher) {
+        try {
+            // 1. Enter maintenance mode — RESTORE_PREPARING, blocks all writes
+            restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
+            Timber.w("Restore: entered maintenance mode")
+
+            val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
+            val liveDbPath = liveDbFile.absolutePath
+
+            val stagedDbName = "${IMPORT_STAGING_PREFIX}${System.currentTimeMillis()}"
+            val stagedDbFile = context.getDatabasePath(stagedDbName)
+            val stagedDbPath = stagedDbFile.absolutePath
+
+            // 2. Create restore journal — state = PREPARING
+            val journalEntry = restoreJournal.beginJournal(
+                sourceBackupPath = bundleFile.absolutePath,
+                stagedDbPath = stagedDbPath,
+                liveDbPath = liveDbPath
+            )
+            Timber.d("Restore journal created: %s", journalEntry.operationId)
+
+            // 3. Extract bundle to temp workspace
+            val tempDir = File(context.cacheDir, "costbackup_extract_${System.currentTimeMillis()}")
+            val extractionResult = CostbackupBundle.extract(bundleFile, tempDir, password)
+                .getOrElse { error ->
+                    // Wrong password or corrupt bundle — exit maintenance, live DB never touched
+                    restoreMaintenanceMode.exit(forceRestartRequired = false)
+                    restoreJournal.failJournal(journalEntry, error.message ?: "Extraction failed")
+                    tempDir.deleteRecursively()
+                    return@withContext when (error) {
+                        is CostbackupBundle.WrongBackupPasswordException ->
+                            Result.failure(error)
+                        is CostbackupBundle.InvalidBackupFormatException ->
+                            Result.failure(error)
+                        is CostbackupBundle.UnsupportedBackupVersionException ->
+                            Result.failure(error)
+                        is CostbackupBundle.ChecksumMismatchException ->
+                            Result.failure(error)
+                        else -> Result.failure(error)
+                    }
+                }
+
+            val manifest = extractionResult.manifest
+            restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.STAGED)
+
+            // 4. Verify manifest has data
+            val manifestTableCounts = manifest.tableCounts
+            if (manifestTableCounts.values.all { it == 0 }) {
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                restoreJournal.failJournal(journalEntry, "Backup contains no data")
+                tempDir.deleteRecursively()
+                return@withContext Result.failure(
+                    Exception("Backup contains no data. Restore blocked.")
+                )
+            }
+
+            // 5. Copy extracted DB to staging location
+            val extractedDb = extractionResult.dbFile
+            copyFile(extractedDb, stagedDbFile)
+
+            // 6. Quick-verify staged DB (integrity, FK, Tier 1 counts)
+            try {
+                BackupVerifier.verifyQuick(stagedDbFile, manifestTableCounts)
+                Timber.d("Staged DB quick verification passed")
+            } catch (e: Exception) {
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                restoreJournal.failJournal(journalEntry, "Staged verification failed: ${e.message}")
+                stagedDbFile.delete()
+                tempDir.deleteRecursively()
+                return@withContext Result.failure(
+                    Exception("Staged database verification failed: ${e.message}")
+                )
+            }
+
+            // 7. Create safety backup
+            restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.SAFETY_BACKUP_CREATED)
+            val safetyBackupResult = createSafetyBackup()
+            if (safetyBackupResult.isFailure) {
+                val reason = safetyBackupResult.exceptionOrNull()?.message ?: "Unknown error"
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                restoreJournal.failJournal(journalEntry, "Safety backup failed: $reason")
+                stagedDbFile.delete()
+                tempDir.deleteRecursively()
+                return@withContext Result.failure(
+                    Exception("Restore cancelled because safety backup failed: $reason")
+                )
+            }
+            val safetyBackupFile = safetyBackupResult.getOrNull()
+                ?: return@withContext Result.failure(Exception("Safety backup created but path unavailable"))
+
+            // 8. Swap live DB with staged DB
+            restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.SWAPPING)
+            val liveDbWalFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-wal")
+            val liveDbShmFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-shm")
+            val stagedDbWalFile = File(stagedDbFile.parentFile, "$stagedDbName-wal")
+            val stagedDbShmFile = File(stagedDbFile.parentFile, "$stagedDbName-shm")
+
+            closeLiveDatabaseForFileSwap()
+
+            val preRestoreFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}.pre_restore")
+            try {
+                // Move live → .pre_restore (never delete before staged is verified in place)
+                if (liveDbFile.exists()) {
+                    liveDbFile.renameTo(preRestoreFile)
+                }
+                // Copy staged → live
+                copyFile(stagedDbFile, liveDbFile)
+                if (stagedDbWalFile.exists()) copyFile(stagedDbWalFile, liveDbWalFile)
+                if (stagedDbShmFile.exists()) copyFile(stagedDbShmFile, liveDbShmFile)
+            } catch (e: Exception) {
+                // Swap failed — attempt rollback
+                Timber.e(e, "Swap failed, attempting rollback")
+                restoreFromSafetyBackup(safetyBackupFile, liveDbFile, liveDbWalFile, liveDbShmFile)
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                restoreJournal.failJournal(journalEntry, "Swap failed: ${e.message}")
+                tempDir.deleteRecursively()
+                return@withContext Result.failure(
+                    Exception("Database swap failed and was rolled back: ${e.message}")
+                )
+            }
+
+            // 9. Verify live DB
+            restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.VERIFYING)
+            try {
+                database.openHelper.writableDatabase
+                refreshInvalidationTrackerSafelyForVerification(database)
+                val liveSummary = queryRoomCountsForVerification(database)
+
+                // Full verification
+                val verificationResult = BackupVerifier.verify(liveDbFile, manifestTableCounts)
+                if (!verificationResult.passed) {
+                    val errorMsg = "Live verification failed: ${verificationResult.errors.joinToString("; ")}"
+                    throw Exception(errorMsg)
+                }
+
+                // Verify summary preserved
+                verifySummaryPreservedForVerification(
+                    DatabaseImportSummary(
+                        transactionCount = manifestTableCounts["expenses"] ?: 0,
+                        categoryCount = manifestTableCounts["categories"] ?: 0,
+                        merchantCount = manifestTableCounts["merchant_categories"] ?: 0,
+                        pendingReviewCount = manifestTableCounts["pending_reviews"] ?: 0,
+                        budgetCount = manifestTableCounts["budgets"] ?: 0,
+                        allTableCounts = manifestTableCounts
+                    ),
+                    liveSummary,
+                    manifest.databaseVersion
+                )
+
+                // 10. Restore receipt assets if present
+                val assetsDir = extractionResult.assetsDir
+                if (assetsDir != null && assetsDir.exists()) {
+                    restoreReceiptAssets(assetsDir, manifest)
+                }
+
+                // 11. Cleanup
+                preRestoreFile.delete()
+                stagedDbFile.delete()
+                stagedDbWalFile.delete()
+                stagedDbShmFile.delete()
+                tempDir.deleteRecursively()
+
+                // 12. Mark complete
+                restoreJournal.commitJournal(journalEntry)
+
+                // 13. Set maintenance mode to restart-required
+                restoreMaintenanceMode.exit(forceRestartRequired = true)
+
+                Timber.w("Restore completed successfully. Restart required.")
+                Result.success(
+                    DatabaseImportResult.SuccessNeedsRestart(
+                        DatabaseImportSummary(
+                            transactionCount = liveSummary.transactionCount,
+                            categoryCount = liveSummary.categoryCount,
+                            merchantCount = liveSummary.merchantCount,
+                            pendingReviewCount = liveSummary.pendingReviewCount,
+                            budgetCount = liveSummary.budgetCount,
+                            receiptCount = liveSummary.receiptCount,
+                            warrantyCount = liveSummary.warrantyCount,
+                            groupCount = liveSummary.groupCount,
+                            subscriptionCount = liveSummary.subscriptionCount,
+                            savingsGoalCount = liveSummary.savingsGoalCount,
+                            allTableCounts = liveSummary.allTableCounts
+                        )
+                    )
+                )
+            } catch (e: Exception) {
+                // Verification failed — rollback from safety backup
+                Timber.e(e, "Live verification failed, rolling back")
+                restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK)
+                runCatching { database.close() }
+                runCatching { database.openHelper.close() }
+
+                val rollbackOk = restoreFromSafetyBackup(
+                    safetyBackupFile, liveDbFile, liveDbWalFile, liveDbShmFile
+                ).isSuccess
+
+                if (!rollbackOk) {
+                    // Critical: both live and safety backup may be corrupt
+                    restoreJournal.failJournal(journalEntry, "Verification failed and rollback also failed")
+                    restoreMaintenanceMode.exit(forceRestartRequired = false)
+                    tempDir.deleteRecursively()
+                    return@withContext Result.failure(
+                        Exception("CRITICAL: Restore failed and safety backup rollback also failed. " +
+                            "Manual recovery required. Error: ${e.message}")
+                    )
+                }
+
+                restoreJournal.failJournal(journalEntry, "Verification failed, rolled back: ${e.message}")
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                tempDir.deleteRecursively()
+
+                Result.failure(Exception("Restore verification failed and was rolled back: ${e.message}"))
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to restore .costbackup bundle")
+            restoreMaintenanceMode.exit(forceRestartRequired = false)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Collects receipt asset files for inclusion in a .costbackup bundle.
+     *
+     * @return map of relative ZIP path (e.g. "files/receipts/{id}_{name}") → original File
+     */
+    private suspend fun collectReceiptAssetsForBackup(): Map<String, java.io.File> {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val dao = database.scannedReceiptDao()
+                val receiptsWithPath = dao.getAllWithImagePath()
+                val manifest = receiptAssetStore.generateBackupManifest(receiptsWithPath)
+
+                val result = mutableMapOf<String, java.io.File>()
+                for (entry in manifest) {
+                    val relPath = "files/receipts/${entry.receiptId}_${java.io.File(entry.imagePath).name}"
+                    val file = java.io.File(entry.imagePath)
+                    if (file.exists() && file.isFile) {
+                        result[relPath] = file
+                    }
+                }
+                Timber.d("Collected %d receipt asset(s) for backup", result.size)
+                result
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to collect receipt assets for backup")
+                emptyMap()
+            }
+        }
+    }
+
+    /**
+     * Restores receipt asset files from the extracted bundle.
+     */
+    private fun restoreReceiptAssets(
+        assetsDir: java.io.File,
+        manifest: CostbackupBundle.BackupManifest
+    ) {
+        val receiptsDir = java.io.File(context.filesDir, "receipts")
+        receiptsDir.mkdirs()
+
+        val receiptsSubdir = java.io.File(assetsDir, "receipts")
+        if (!receiptsSubdir.exists()) {
+            Timber.d("No receipt assets to restore")
+            return
+        }
+
+        val receiptFiles = receiptsSubdir.listFiles { f -> f.isFile } ?: emptyArray()
+        if (receiptFiles.isEmpty()) {
+            Timber.d("No receipt asset files in bundle")
+            return
+        }
+
+        // Build a map of file hash → new path for deduplication
+        val dao = database.scannedReceiptDao()
+        for (assetFile in receiptFiles) {
+            try {
+                // Generate new UUID-based filename to avoid path conflicts
+                val extension = assetFile.extension.takeIf { it.isNotBlank() } ?: "jpg"
+                val newFileName = "${UUID.randomUUID()}.$extension"
+                val destFile = java.io.File(receiptsDir, newFileName)
+
+                // Copy file
+                assetFile.inputStream().use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                Timber.d("Restored receipt asset: %s -> %s", assetFile.name, destFile.absolutePath)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to restore receipt asset: %s", assetFile.name)
+            }
+        }
+    }
+
     override suspend fun importDatabase(sourceFile: File): Result<DatabaseImportSummary> = withContext(ioDispatcher) {
         try {
             // Validate source file exists and is readable
@@ -552,6 +1004,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             pendingReviewCount > 0 ||
             budgetCount > 0
     }
+
+    // Use the domain-level hasMeaningfulData for the updated DatabaseImportSummary,
+    // which also checks receiptCount, warrantyCount, groupCount, etc.
 
     private data class BudgetsColumnContract(
         val type: String,

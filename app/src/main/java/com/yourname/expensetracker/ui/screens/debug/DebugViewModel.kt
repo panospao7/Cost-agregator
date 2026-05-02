@@ -446,7 +446,9 @@ class DebugViewModel @Inject constructor(
                 val summary = result.getOrNull()
                 val needsRestart = summary?.transactionCount == -1
                 when {
-                    needsRestart -> com.yourname.expensetracker.domain.backup.DatabaseImportResult.SuccessNeedsRestart
+                    needsRestart -> com.yourname.expensetracker.domain.backup.DatabaseImportResult.SuccessNeedsRestart(
+                        summary ?: com.yourname.expensetracker.domain.backup.DatabaseImportSummary(0, 0, 0, 0, 0)
+                    )
                     summary != null -> {
                         // Trigger immediate UI refresh hooks after successful import
                         loadDatabaseStats()

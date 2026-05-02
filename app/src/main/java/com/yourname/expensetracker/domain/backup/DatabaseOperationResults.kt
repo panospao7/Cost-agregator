@@ -12,6 +12,6 @@ sealed class DatabaseExportResult {
 sealed class DatabaseImportResult {
     object Loading : DatabaseImportResult()
     data class Success(val summary: DatabaseImportSummary) : DatabaseImportResult()
-    object SuccessNeedsRestart : DatabaseImportResult()
+    data class SuccessNeedsRestart(val summary: DatabaseImportSummary) : DatabaseImportResult()
     data class Error(val message: String) : DatabaseImportResult()
 }
