@@ -4,6 +4,8 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.DomainTransactionType
@@ -572,7 +574,13 @@ data class StressHorizon(
     val expectedIncome: Double,
     val discretionaryBuffer: Double,
     val displayCurrency: String = ""
-)
+) {
+    val moneyProjectedBalance: MoneyAmount get() = MoneyAmount(projectedBalance, CurrencyCode(displayCurrency))
+    val moneyMinProjectedBalance: MoneyAmount get() = MoneyAmount(minProjectedBalance, CurrencyCode(displayCurrency))
+    val moneyRecurringObligations: MoneyAmount get() = MoneyAmount(recurringObligations, CurrencyCode(displayCurrency))
+    val moneyExpectedIncome: MoneyAmount get() = MoneyAmount(expectedIncome, CurrencyCode(displayCurrency))
+    val moneyDiscretionaryBuffer: MoneyAmount get() = MoneyAmount(discretionaryBuffer, CurrencyCode(displayCurrency))
+}
 
 /**
  * Risk level classification for financial stress.
@@ -596,4 +604,10 @@ private data class MonteCarloHorizonResult(
     val percentile90: Double,
     val simulatedTotals: List<Double>,
     val displayCurrency: String = ""
-)
+) {
+    val moneyPercentile10: MoneyAmount get() = MoneyAmount(percentile10, CurrencyCode(displayCurrency))
+    val moneyPercentile25: MoneyAmount get() = MoneyAmount(percentile25, CurrencyCode(displayCurrency))
+    val moneyPercentile50: MoneyAmount get() = MoneyAmount(percentile50, CurrencyCode(displayCurrency))
+    val moneyPercentile75: MoneyAmount get() = MoneyAmount(percentile75, CurrencyCode(displayCurrency))
+    val moneyPercentile90: MoneyAmount get() = MoneyAmount(percentile90, CurrencyCode(displayCurrency))
+}

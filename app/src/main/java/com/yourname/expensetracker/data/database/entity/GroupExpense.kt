@@ -3,8 +3,11 @@ package com.yourname.expensetracker.data.database.entity
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
 /**
  * Links an expense to a group with split information.
@@ -57,7 +60,10 @@ data class GroupExpense(
     @ColumnInfo(defaultValue = "0.0") val reimbursedAmount: Double = 0.0,  // Amount already reimbursed to payer
     val settledAt: Long? = null,  // When the expense was fully settled (null = pending)
     val myShareAmount: Double? = null  // Pre-calculated share for current user (for quick lookup)
-)
+) {
+    @get:Ignore
+    val totalMoneyAmount: MoneyAmount get() = MoneyAmount(totalAmount, CurrencyCode(currency))
+}
 
 enum class SplitType {
     EQUAL,          // Split equally among all members

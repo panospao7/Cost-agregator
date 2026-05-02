@@ -10,6 +10,8 @@ import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPrompt
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsRecommendation
 import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
 import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -32,7 +34,9 @@ data class SavingsGoalsState(
  val selectedGoal: SavingsGoal? = null,
  val totalSaved: Double = 0.0,
  val homeCurrency: String = "EUR"
-)
+) {
+ val moneyTotalSaved: MoneyAmount get() = MoneyAmount(totalSaved, CurrencyCode(homeCurrency))
+}
 
 data class SmartRecommendation(
     val goal: SavingsGoal,

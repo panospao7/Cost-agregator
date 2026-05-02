@@ -2,8 +2,11 @@ package com.yourname.expensetracker.data.database.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 
 @Entity(
@@ -32,4 +35,7 @@ data class ManualRecurringExpense(
     val usageTargetPerMonth: Int? = null, // Expected usage count per month
     val cancellationUrl: String? = null, // URL for easy cancellation
     @ColumnInfo(defaultValue = "1") val isActive: Boolean = true // Whether user is still subscribed
-)
+) {
+    @get:Ignore
+    val moneyAmount: MoneyAmount get() = MoneyAmount(amount, CurrencyCode(currency))
+}

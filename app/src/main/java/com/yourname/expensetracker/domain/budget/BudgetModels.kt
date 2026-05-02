@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.budget
 
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
 data class BudgetStatus(
     val budget: Budget,
@@ -18,7 +20,11 @@ data class BudgetStatus(
     val currencyAssumption: String = budget.currencyAssumption,
     val isPartial: Boolean = false,
     val conversionWarning: String? = null
-)
+) {
+    val moneySpentAmount: MoneyAmount get() = MoneyAmount(spentAmount, CurrencyCode(currency))
+    val moneyRemainingAmount: MoneyAmount get() = MoneyAmount(remainingAmount, CurrencyCode(currency))
+    val moneyEffectiveLimit: MoneyAmount get() = MoneyAmount(effectiveLimit, CurrencyCode(currency))
+}
 
 data class AdjustedSpendBreakdown(
     val personalSpend: Double,

@@ -2,8 +2,11 @@ package com.yourname.expensetracker.data.database.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
 /**
  * Entity representing a subscription candidate detected from notification transaction parsing.
@@ -65,4 +68,10 @@ data class SubscriptionCandidate(
     
     /** When the candidate was last updated. Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     val updatedAt: Long = 0L
-)
+) {
+    @get:Ignore
+    val averageMoneyAmount: MoneyAmount get() = MoneyAmount(averageAmount, CurrencyCode(currency))
+
+    @get:Ignore
+    val estimatedAnnualMoneyAmount: MoneyAmount get() = MoneyAmount(estimatedAnnualCost, CurrencyCode(currency))
+}

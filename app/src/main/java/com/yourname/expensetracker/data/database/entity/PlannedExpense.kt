@@ -3,8 +3,11 @@ package com.yourname.expensetracker.data.database.entity
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
 @Entity(
     tableName = "planned_expenses",
@@ -49,7 +52,10 @@ data class PlannedExpense(
     val updatedAt: Long = 0L,
     /** Materialized invariant key: set to sourceOccurrenceKey when status='PLANNED', else NULL. */
     val openSourceOccurrenceKey: String? = null
-)
+) {
+    @get:Ignore
+    val moneyAmount: MoneyAmount get() = MoneyAmount(amount, CurrencyCode(currency))
+}
 
 enum class PlannedExpensePriority {
     MUST,

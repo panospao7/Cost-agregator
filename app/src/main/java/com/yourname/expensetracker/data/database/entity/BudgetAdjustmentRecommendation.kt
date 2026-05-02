@@ -3,8 +3,11 @@ package com.yourname.expensetracker.data.database.entity
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
 /**
  * Budget Trend enum for Room type converter.
@@ -61,7 +64,16 @@ data class BudgetAdjustmentRecommendation(
     val expiresAt: Long? = null,             // Expiration time for recommendation
     val appliedAt: Long? = null,             // When user applied the recommendation
     val dismissedAt: Long? = null           // When user dismissed the recommendation
-)
+) {
+    @get:Ignore
+    val currentBudgetMoneyAmount: MoneyAmount get() = MoneyAmount(currentBudget, CurrencyCode(currency))
+
+    @get:Ignore
+    val recommendedBudgetMoneyAmount: MoneyAmount get() = MoneyAmount(recommendedBudget, CurrencyCode(currency))
+
+    @get:Ignore
+    val deltaMoneyAmount: MoneyAmount get() = MoneyAmount(delta, CurrencyCode(currency))
+}
 
 enum class RecommendationStatus {
     PENDING,     // Waiting for user action

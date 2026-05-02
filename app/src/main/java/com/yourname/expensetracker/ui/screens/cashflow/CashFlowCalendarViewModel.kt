@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -22,7 +24,9 @@ data class CashFlowCalendarState(
  val startingBalance: Double = 0.0,
  val upcomingBillsCount: Int = 0,
  val homeCurrency: String = "EUR"
-)
+) {
+ val moneyStartingBalance: MoneyAmount get() = MoneyAmount(startingBalance, CurrencyCode(homeCurrency))
+}
 
 enum class CalendarViewMode {
     MONTH, WEEK, DAY

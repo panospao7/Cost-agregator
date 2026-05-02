@@ -1,8 +1,11 @@
 package com.yourname.expensetracker.data.database.entity
 
 import androidx.room.Entity
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
 @Entity(
     tableName = "recurring_occurrences",
@@ -34,4 +37,13 @@ data class RecurringOccurrence(
     val createdAt: Long = 0L,
     /** Must be set to timeProvider.now() on update. 0L = unset (sentinel). */
     val updatedAt: Long = 0L
-)
+) {
+    @get:Ignore
+    val expectedMoneyAmount: MoneyAmount get() = MoneyAmount(expectedAmount, CurrencyCode(expectedCurrency))
+
+    @get:Ignore
+    val paidMoneyAmount: MoneyAmount? get() =
+        if (paidAmount != null && paidCurrency != null)
+            MoneyAmount(paidAmount, CurrencyCode(paidCurrency))
+        else null
+}

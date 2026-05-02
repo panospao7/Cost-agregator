@@ -3,8 +3,11 @@ package com.yourname.expensetracker.data.database.entity
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
 enum class CategorizationStatus {
     PENDING,      // Not yet analyzed
@@ -73,4 +76,10 @@ data class ScannedReceipt(
 
     // Raw data retention: epoch ms when raw OCR text was purged, null = not yet purged
     val rawOcrTextPurgedAt: Long? = null
-)
+) {
+    @get:Ignore
+    val parsedTotalMoneyAmount: MoneyAmount? get() = parsedTotal?.let { MoneyAmount(it, CurrencyCode(currency)) }
+
+    @get:Ignore
+    val parsedTaxMoneyAmount: MoneyAmount? get() = parsedTaxAmount?.let { MoneyAmount(it, CurrencyCode(currency)) }
+}

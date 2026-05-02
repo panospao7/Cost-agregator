@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.core.time.PeriodRange
 
@@ -72,7 +74,9 @@ data class EnhancedCategoryAnalytics(
     
     // Spending velocity (positive = accelerating)
     val velocity: Double
-)
+) {
+    val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
+}
 
 enum class CategoryTrendDirection {
     UP_FAST,    // >20% increase
@@ -117,7 +121,9 @@ data class EnhancedMerchantAnalytics(
     
     // Recent transactions preview
     val recentTransactions: List<AnalyticsTransactionSummary>
-)
+) {
+    val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
+}
 
 enum class MerchantVisitFrequency {
     DAILY, WEEKLY, BIWEEKLY, MONTHLY, QUARTERLY, RARE
@@ -160,7 +166,9 @@ data class DayOfWeekStats(
     val averagePerDay: Double,
     val percentageOfWeek: Float,
     val displayCurrency: String
-)
+) {
+    val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(displayCurrency))
+}
 
 data class WeekendWeekdayComparison(
     val weekdayTotal: Double,
@@ -171,7 +179,10 @@ data class WeekendWeekdayComparison(
     val weekendAveragePerTransaction: Double,
     val weekendToWeekdayRatio: Float,
     val displayCurrency: String
-)
+) {
+    val moneyWeekdayTotal: MoneyAmount get() = MoneyAmount(weekdayTotal, CurrencyCode(displayCurrency))
+    val moneyWeekendTotal: MoneyAmount get() = MoneyAmount(weekendTotal, CurrencyCode(displayCurrency))
+}
 
 enum class TimeSlot {
     EARLY_MORNING,   // 6-9
@@ -229,7 +240,11 @@ data class StatisticalInsights(
     val maxDailySpend: Double,
     val daysWithSpending: Int,
     val daysWithoutSpending: Int
-)
+) {
+    val moneyMeanTransaction: MoneyAmount get() = MoneyAmount(meanTransaction, CurrencyCode(displayCurrency))
+    val moneyMedianTransaction: MoneyAmount get() = MoneyAmount(medianTransaction, CurrencyCode(displayCurrency))
+    val moneyAverageDailySpend: MoneyAmount get() = MoneyAmount(averageDailySpend, CurrencyCode(displayCurrency))
+}
 
 data class HistogramBin(
     val rangeStart: Double,
@@ -238,7 +253,9 @@ data class HistogramBin(
     val total: Double,
     val percentage: Float,
     val displayCurrency: String
-)
+) {
+    val moneyTotal: MoneyAmount get() = MoneyAmount(total, CurrencyCode(displayCurrency))
+}
 
 data class TransactionPercentiles(
     val p10: Double,
@@ -249,7 +266,9 @@ data class TransactionPercentiles(
     val p95: Double,
     val p99: Double,
     val displayCurrency: String
-)
+) {
+    val moneyP50: MoneyAmount get() = MoneyAmount(p50, CurrencyCode(displayCurrency))
+}
 
 data class AnalyticsCategoryRef(
     val id: Long,
@@ -266,4 +285,7 @@ data class AnalyticsTransactionSummary(
     val merchant: String,
     val date: Long,
     val categoryId: Long?
-)
+) {
+    val moneyAmount: MoneyAmount get() = MoneyAmount(amount, CurrencyCode(currency))
+    val moneyEffectiveAmount: MoneyAmount get() = MoneyAmount(effectiveAmount, CurrencyCode(currency))
+}

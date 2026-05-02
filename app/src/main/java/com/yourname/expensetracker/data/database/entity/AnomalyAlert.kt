@@ -3,8 +3,11 @@ package com.yourname.expensetracker.data.database.entity
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
 /**
  * Stores anomaly alerts for anomalous transactions detected in near real-time.
@@ -65,4 +68,13 @@ data class AnomalyAlert(
 
     @ColumnInfo(name = "userFeedback")
     val userFeedback: String? = null // "looks_normal", "was_anomaly"
-)
+) {
+    @get:Ignore
+    val moneyAmount: MoneyAmount get() = MoneyAmount(amount, CurrencyCode(currency))
+
+    @get:Ignore
+    val baseMoneyAmount: MoneyAmount? get() =
+        if (baseAmount != null && baseCurrency != null)
+            MoneyAmount(baseAmount, CurrencyCode(baseCurrency))
+        else null
+}

@@ -9,6 +9,8 @@ import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupsRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
 import com.yourname.expensetracker.domain.logic.CustomSplitMode
@@ -51,7 +53,9 @@ data class GroupWithDetails(
     val totalSpent: Double,
     val memberBalances: Map<Long, Double>, // memberId -> balance (positive = owed, negative = owes)
     val currency: String = group.defaultCurrency,
-)
+) {
+    val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(currency))
+}
 
 data class GroupExpenseWithDetails(
     val expense: GroupExpense,

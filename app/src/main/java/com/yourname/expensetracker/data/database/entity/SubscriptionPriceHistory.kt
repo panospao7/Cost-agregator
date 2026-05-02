@@ -3,8 +3,11 @@ package com.yourname.expensetracker.data.database.entity
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
 /**
  * Tracks price history for subscription/recurring expenses.
@@ -31,4 +34,7 @@ data class SubscriptionPriceHistory(
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     val recordedAt: Long = 0L,
     val changeReason: String? = null // e.g., "Annual increase", "Plan upgrade", "Promotional rate ended"
-)
+) {
+    @get:Ignore
+    val moneyAmount: MoneyAmount get() = MoneyAmount(amount, CurrencyCode(currency))
+}

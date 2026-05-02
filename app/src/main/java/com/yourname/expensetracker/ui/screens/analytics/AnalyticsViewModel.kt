@@ -9,6 +9,8 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.analytics.*
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
@@ -42,7 +44,10 @@ data class BudgetVsActualItem(
     val actualSpent: Double,
     val percentUsed: Float, // 0.0 - 1.0+
     val displayCurrency: String = "EUR"
-)
+) {
+    val moneyBudgetAmount: MoneyAmount get() = MoneyAmount(budgetAmount, CurrencyCode(displayCurrency))
+    val moneyActualSpent: MoneyAmount get() = MoneyAmount(actualSpent, CurrencyCode(displayCurrency))
+}
 
 data class AnalyticsState(
     val selectedPeriod: TimePeriod = TimePeriod.MONTH,
@@ -79,7 +84,9 @@ data class AnalyticsState(
     val conversionWarnings: List<AnalyticsConversionWarning> = emptyList(),
     val latestRateTimestamp: Long? = null,
     val referenceNowMillis: Long = 0L
-)
+) {
+    val moneyCurrentTotal: MoneyAmount get() = MoneyAmount(currentTotal, CurrencyCode(homeCurrency))
+}
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel

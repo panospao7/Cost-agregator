@@ -4,6 +4,8 @@ import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
@@ -178,7 +180,9 @@ data class CategorySpending(
     val total: Double,
     val percentage: Float,
     val currency: String = "EUR"
-)
+) {
+    val moneyTotal: MoneyAmount get() = MoneyAmount(total, CurrencyCode(currency))
+}
 
 data class SpendingTrendSeries(
     val label: String,

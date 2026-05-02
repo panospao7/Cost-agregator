@@ -3,8 +3,11 @@ package com.yourname.expensetracker.data.database.entity
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
 /**
  * Savings Sweep Plan Entity.
@@ -75,7 +78,19 @@ data class SavingsSweepPlan(
     /** When this plan was computed */
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     val computedAt: Long = 0L
-)
+) {
+    @get:Ignore
+    val totalUnderspendMoneyAmount: MoneyAmount get() = MoneyAmount(totalUnderspend, CurrencyCode(currency))
+
+    @get:Ignore
+    val riskBufferMoneyAmount: MoneyAmount get() = MoneyAmount(riskBuffer, CurrencyCode(currency))
+
+    @get:Ignore
+    val safeSweepAmountMoneyAmount: MoneyAmount get() = MoneyAmount(safeSweepAmount, CurrencyCode(currency))
+
+    @get:Ignore
+    val allocatedAmountMoneyAmount: MoneyAmount get() = MoneyAmount(allocatedAmount, CurrencyCode(currency))
+}
 
 /**
  * Status of a savings sweep plan.
