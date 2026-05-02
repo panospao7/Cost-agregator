@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.data.privacy
 
+import java.io.File
+import java.io.FileInputStream
+import java.io.OutputStream
 import java.security.SecureRandom
 import java.security.spec.KeySpec
 import javax.crypto.Cipher
@@ -61,6 +64,22 @@ class BackupEncryptionService @Inject constructor() {
 
         // Concatenate: salt (16) + IV (12) + ciphertext+tag
         return salt + iv + ciphertext
+    }
+
+    /**
+     * Encrypts the contents of [plaintextFile] using AES-256-GCM and writes
+     * the salt + IV + ciphertext to [outputStream].
+     *
+     * The plaintext is read from the temp ZIP file on disk rather than from an
+     * in-memory [ByteArray], avoiding a duplicate heap allocation of the entire
+     * archive while building the ZIP.
+     *
+     * The caller is responsible for closing [outputStream].
+     */
+    fun encrypt(plaintextFile: File, outputStream: OutputStream, password: String) {
+        val plaintext = plaintextFile.readBytes()
+        val encrypted = encrypt(plaintext, password)
+        outputStream.write(encrypted)
     }
 
     /**

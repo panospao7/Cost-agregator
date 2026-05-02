@@ -101,6 +101,16 @@
             android:enabled="true"
             android:exported="false" />
 
+        <!-- Reminder notification action receivers -->
+        <receiver
+            android:name=".service.reminder.SnoozeReminderReceiver"
+            android:enabled="true"
+            android:exported="false" />
+        <receiver
+            android:name=".service.reminder.DismissReminderReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
         <!-- NEW: FileProvider for camera photos -->
         <provider
             android:name="androidx.core.content.FileProvider"

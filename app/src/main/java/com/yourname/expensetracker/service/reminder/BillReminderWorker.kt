@@ -2,12 +2,15 @@ package com.yourname.expensetracker.service.reminder
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
+import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.workers.WorkerSpec
@@ -59,7 +62,7 @@ class BillReminderWorker @AssistedInject constructor(
 
                 val title = "Bill due"
                 val body = buildNotificationBody(reminder)
-                sendNotification(reminder.occurrenceId, title, body)
+                sendNotification(reminder, title, body)
 
                 // Update delivery status to SENT
                 coordinator.markReminderSent(reminder.id)
@@ -87,9 +90,37 @@ class BillReminderWorker @AssistedInject constructor(
     /**
      * Sends an Android notification using [NotificationManagerCompat].
      * Creates the notification channel on first invocation if needed.
+     * Adds Snooze (24h) and Dismiss action buttons via [SnoozeReminderReceiver]
+     * and [DismissReminderReceiver] broadcast receivers.
      */
-    private fun sendNotification(occurrenceId: Long, title: String, body: String) {
+    private fun sendNotification(
+        delivery: com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery,
+        title: String,
+        body: String
+    ) {
         ensureChannelExists()
+
+        // Snooze action — marks delivery SNOOZED for 24h
+        val snoozeIntent = Intent(applicationContext, SnoozeReminderReceiver::class.java).apply {
+            putExtra("deliveryId", delivery.id)
+        }
+        val snoozePendingIntent = PendingIntent.getBroadcast(
+            applicationContext,
+            delivery.id.toInt(),
+            snoozeIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Dismiss action — marks delivery DISMISSED
+        val dismissIntent = Intent(applicationContext, DismissReminderReceiver::class.java).apply {
+            putExtra("deliveryId", delivery.id)
+        }
+        val dismissPendingIntent = PendingIntent.getBroadcast(
+            applicationContext,
+            (delivery.id + 10000).toInt(),
+            dismissIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -97,9 +128,11 @@ class BillReminderWorker @AssistedInject constructor(
             .setContentText(body)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
+            .addAction(R.drawable.ic_snooze, "Snooze", snoozePendingIntent)
+            .addAction(R.drawable.ic_dismiss, "Dismiss", dismissPendingIntent)
             .build()
 
-        val notificationId = (occurrenceId % Int.MAX_VALUE).toInt()
+        val notificationId = (delivery.occurrenceId % Int.MAX_VALUE).toInt()
         try {
             NotificationManagerCompat.from(applicationContext).notify(notificationId, notification)
         } catch (e: SecurityException) {

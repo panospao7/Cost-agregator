@@ -3,7 +3,7 @@ package com.yourname.expensetracker.data.backup
 import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import org.json.JSONObject
 import timber.log.Timber
-import java.io.ByteArrayOutputStream
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -223,21 +223,29 @@ object CostbackupBundle {
         includeReceiptImages: Boolean = true,
         encryptionService: BackupEncryptionService = BackupEncryptionService()
     ): Result<File> = runCatching {
-        // 1. Build ZIP in memory
-        val zipBytes = buildZip(databaseFile, receiptFiles, tableCounts, databaseVersion, redacted, includeReceiptImages)
+        // 1. Create a temp file alongside the output for streaming ZIP construction
+        val parentDir = outputFile.parentFile ?: File(".")
+        parentDir.mkdirs()
+        val tempZip = File(parentDir, "backup_${UUID.randomUUID()}.tmp")
 
-        // 2. Encrypt with user password (BackupEncryptionService embeds salt + IV)
-        val encrypted = encryptionService.encrypt(zipBytes, password)
+        try {
+            // 2. Build ZIP streaming to temp file (avoids OOM from ByteArrayOutputStream)
+            buildZip(tempZip, databaseFile, receiptFiles, tableCounts, databaseVersion, redacted, includeReceiptImages)
 
-        // 3. Write header (magic + version) + ciphertext to output file
-        outputFile.parentFile?.mkdirs()
-        FileOutputStream(outputFile).use { fos ->
-            writeHeader(fos)
-            fos.write(encrypted)
+            // 3. Encrypt from temp file + write header + ciphertext to output file
+            FileOutputStream(outputFile).use { fos ->
+                writeHeader(fos)
+                encryptionService.encrypt(tempZip, fos, password)
+            }
+
+            Timber.d("Created .costbackup bundle: %s (%d bytes)", outputFile.absolutePath, outputFile.length())
+            outputFile
+        } finally {
+            // 4. Always clean up the temp ZIP file
+            if (tempZip.exists() && !tempZip.delete()) {
+                Timber.w("Failed to delete temp ZIP file: %s", tempZip.absolutePath)
+            }
         }
-
-        Timber.d("Created .costbackup bundle: %s (%d bytes)", outputFile.absolutePath, outputFile.length())
-        outputFile
     }
 
     // ── Extract ───────────────────────────────────────────────────
@@ -369,15 +377,15 @@ object CostbackupBundle {
     // ── Internal helpers ──────────────────────────────────────────
 
     private fun buildZip(
+        tempZip: File,
         databaseFile: File,
         receiptFiles: Map<String, File>,
         tableCounts: Map<String, Int>,
         databaseVersion: Int,
         redacted: Boolean,
         includeReceiptImages: Boolean
-    ): ByteArray {
-        val baos = ByteArrayOutputStream()
-        ZipOutputStream(baos).use { zos ->
+    ) {
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(tempZip))).use { zos ->
 
             // -- manifest.json --
             val manifest = BackupManifest(
@@ -396,9 +404,9 @@ object CostbackupBundle {
             zos.write(manifest.toJson().toString(2).toByteArray(Charsets.UTF_8))
             zos.closeEntry()
 
-            // -- database.sqlite --
+            // -- database.sqlite (stream from file) --
             zos.putNextEntry(ZipEntry("database.sqlite"))
-            databaseFile.inputStream().use { it.copyTo(zos) }
+            FileInputStream(databaseFile).use { it.copyTo(zos) }
             zos.closeEntry()
 
             // -- files/receipts/ --
@@ -409,7 +417,7 @@ object CostbackupBundle {
                         continue
                     }
                     zos.putNextEntry(ZipEntry(relPath))
-                    file.inputStream().use { it.copyTo(zos) }
+                    FileInputStream(file).use { it.copyTo(zos) }
                     zos.closeEntry()
                 }
             }
@@ -430,7 +438,6 @@ object CostbackupBundle {
             zos.write(checksumsManifest.toJson().toString(2).toByteArray(Charsets.UTF_8))
             zos.closeEntry()
         }
-        return baos.toByteArray()
     }
 
     /**
