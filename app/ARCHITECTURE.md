@@ -17,7 +17,7 @@ Its navigation, schema, and module descriptions may be stale.
 
 - Navigation is destination-driven through `NavigationDestination`.
 - Bottom chrome uses 6 shell destinations; Assistant is an overlay/entry surface, not a tab.
-- The Room schema is currently version 92.
+- The Room schema is currently version 110.
 - DI is split across many feature modules under `di/`.
 
 ## Recommended action

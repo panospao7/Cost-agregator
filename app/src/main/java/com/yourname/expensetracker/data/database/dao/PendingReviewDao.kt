@@ -10,7 +10,18 @@ import kotlinx.coroutines.flow.Flow
 interface PendingReviewDao {
 
     /**
-     * Insert a pending review.
+     * Low-level insert of a [PendingReview] row.
+     *
+     * This is a raw DAO operation and does **not** participate in the
+     * [TransactionLifecycleCoordinator] pipeline — lifecycle events, currency
+     * normalization, duplicate detection, and side-effect dispatch are all
+     * bypassed.
+     *
+     * **Preferred paths:**
+     * - For lifecycle-managed creation → use [ReviewQueueRepository] or
+     *   [TransactionLifecycleCoordinator.createExpense].
+     * - For upsert-by-notification → use [upsertByRawNotificationId].
+     *
      * Uses IGNORE conflict strategy — if a duplicate exists, the insert is silently
      * skipped rather than silently overwriting existing data (which REPLACE would do).
      */

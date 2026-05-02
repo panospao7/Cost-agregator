@@ -50,7 +50,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import java.text.SimpleDateFormat
+import java.text.SimpleDateFormat  // Migration: prefer java.time.format.DateTimeFormatter (thread-safe)
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject

@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
 import java.util.regex.Pattern
-import java.text.SimpleDateFormat
+import java.text.SimpleDateFormat  // Migration: prefer java.time.format.DateTimeFormatter (thread-safe)
 import javax.inject.Inject
 import javax.inject.Singleton
 

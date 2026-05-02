@@ -29,7 +29,7 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v106
+- Database version: v110
 - 620+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5, ~16 new in Phase 5b, ~20 new in Phase 6, ~8 modified in Phase 7, ~12 new in Phase 8, ~4 new in Phase 9, ~6 new/modified in Phase 10)
 - Destination-driven navigation via `NavigationDestination`
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
@@ -194,7 +194,7 @@ data/
 │   ├── ExportAnonymizer.kt               # Strips raw text from exports
 │   └── DataRetentionWorker.kt            # WorkManager purging worker
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v106)
+│   ├── AppDatabase.kt          # Room database (v110)
 │   ├── entity/                  # Room entities across finance, AI, groups, location, settings, and privacy
 │   │   ├── RecurringLifecycleEvent.kt   # Phase 5b — audit log for recurring occurrences
 │   │   └── PrivacyAuditEvent.kt         # Phase 6 — privacy gate audit log
@@ -307,7 +307,7 @@ FinancialWeatherRepository
 | Startup delegate | `startup/AppStartupDelegate.kt` | Hilt entry-point bootstrap |
 | Startup coordinator | `startup/AppStartupCoordinator.kt` | Lifecycle observer + startup jobs |
 | Main Activity | `ui/MainActivity.kt` | Navigation host + deep links |
-| Database | `data/database/AppDatabase.kt` | Room DB v100 |
+| Database | `data/database/AppDatabase.kt` | Room DB v110 |
 
 ### Core Engines
 | Engine | File | Purpose |

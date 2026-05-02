@@ -22,6 +22,14 @@ import kotlinx.coroutines.flow.Flow
  */
 @Dao
 interface BudgetDao {
+    /**
+     * Low-level insert that does NOT set materialized invariant keys
+     * ([Budget.activeOverallKey], [Budget.activeCategoryKey]).
+     *
+     * Prefer [insertAndActivateOverall] or [insertAndActivateCategory] to
+     * ensure the single-active-budget invariant is maintained.
+     */
+    @Deprecated("Use insertAndActivateOverall / insertAndActivateCategory helpers instead")
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(budget: Budget): Long
 
