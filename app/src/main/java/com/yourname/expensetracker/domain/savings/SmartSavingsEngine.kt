@@ -23,7 +23,9 @@ data class SavingsRecommendation(
     val safeAmount: Double,
     val confidence: Double,
     val impact: String,
-    val source: RecommendationSource
+    val source: RecommendationSource,
+    /** @suppress Currency code this recommendation is denominated in (e.g. "EUR", "USD"). */
+    val currency: String = ""
 )
 
 data class GoalSavingsRecommendation(

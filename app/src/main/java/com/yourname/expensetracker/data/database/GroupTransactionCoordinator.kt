@@ -164,6 +164,7 @@ class GroupTransactionCoordinator @Inject constructor(
     /**
      * Add an expense to a group.
      * This creates the group expense record without linking to a system expense.
+     * SHARED-2: Wrapped in database.withTransaction for ACID compliance.
      */
     override suspend fun addExpenseToGroup(
         groupId: Long,
@@ -175,57 +176,59 @@ class GroupTransactionCoordinator @Inject constructor(
         date: Long
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
-            // Verify group exists and is active
-            val group = groupDao.getById(groupId)
-            if (group == null || !group.isActive) {
-                return@withContext GroupExpenseCreationResult.Error("Group not found or inactive")
-            }
-            
-            // Verify payer is a member of the group
-            val members = memberDao.getAllForGroup(groupId)
-            if (members.none { it.id == paidById }) {
-                return@withContext GroupExpenseCreationResult.Error("Payer is not a member of this group")
-            }
+            database.withTransaction {
+                // Verify group exists and is active
+                val group = groupDao.getById(groupId)
+                if (group == null || !group.isActive) {
+                    return@withTransaction GroupExpenseCreationResult.Error("Group not found or inactive")
+                }
+                
+                // Verify payer is a member of the group
+                val members = memberDao.getAllForGroup(groupId)
+                if (members.none { it.id == paidById }) {
+                    return@withTransaction GroupExpenseCreationResult.Error("Payer is not a member of this group")
+                }
 
-            validateExpenseParticipants(
-                groupId = groupId,
-                linkedExpenseId = null,
-                description = description,
-                amount = amount,
-                paidById = paidById,
-                currency = currency ?: group.defaultCurrency,
-                splitType = splitType,
-                customSplitsJson = null,
-                date = date,
-                members = members
-            )?.let { validationError ->
-                return@withContext validationError
-            }
+                validateExpenseParticipants(
+                    groupId = groupId,
+                    linkedExpenseId = null,
+                    description = description,
+                    amount = amount,
+                    paidById = paidById,
+                    currency = currency ?: group.defaultCurrency,
+                    splitType = splitType,
+                    customSplitsJson = null,
+                    date = date,
+                    members = members
+                )?.let { validationError ->
+                    return@withTransaction validationError
+                }
 
-            val expenseCurrency = currency ?: group.defaultCurrency
-            
-            // Create the group expense (without system link - expenseId is null for standalone)
-            val expense = GroupExpense(
-                groupId = groupId,
-                expenseId = null, // No linked expense - standalone group expense
-                description = description,
-                totalAmount = amount,
-                paidById = paidById,
-                date = date,
-                currency = expenseCurrency,
-                splitType = splitType
-            )
-            
-            val expenseId = groupExpenseDao.insert(expense)
-            
-            if (expenseId <= 0) {
-                return@withContext GroupExpenseCreationResult.Error("Failed to create expense")
+                val expenseCurrency = currency ?: group.defaultCurrency
+                
+                // Create the group expense (without system link - expenseId is null for standalone)
+                val expense = GroupExpense(
+                    groupId = groupId,
+                    expenseId = null, // No linked expense - standalone group expense
+                    description = description,
+                    totalAmount = amount,
+                    paidById = paidById,
+                    date = date,
+                    currency = expenseCurrency,
+                    splitType = splitType
+                )
+                
+                val expenseId = groupExpenseDao.insert(expense)
+                
+                if (expenseId <= 0) {
+                    return@withTransaction GroupExpenseCreationResult.Error("Failed to create expense")
+                }
+                
+                GroupExpenseCreationResult.Success(
+                    groupExpenseId = expenseId,
+                    expenseId = 0 // No linked expense
+                )
             }
-            
-            GroupExpenseCreationResult.Success(
-                groupExpenseId = expenseId,
-                expenseId = 0 // No linked expense
-            )
         } catch (e: Exception) {
             GroupExpenseCreationResult.Error("Failed to add expense: ${e.message}")
         }

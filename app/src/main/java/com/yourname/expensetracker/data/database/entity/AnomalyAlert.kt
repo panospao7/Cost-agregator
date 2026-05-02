@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.core.money.MoneyAmount
 @Entity(
     tableName = "anomaly_alerts",
     foreignKeys = [
+        // DB-8: CASCADE on expenseId — deleting an expense removes its anomaly alerts.
         ForeignKey(
             entity = Expense::class,
             parentColumns = ["id"],

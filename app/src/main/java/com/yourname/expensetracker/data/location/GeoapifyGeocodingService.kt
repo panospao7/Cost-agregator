@@ -12,6 +12,9 @@ import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -33,7 +36,8 @@ import javax.inject.Singleton
 @Singleton
 class GeoapifyGeocodingService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
-    @LocationHttpClient private val client: OkHttpClient
+    @LocationHttpClient private val client: OkHttpClient,
+    private val privacyGate: PrivacyGate
 ) : GeocodingService {
 
     private val apiKey get() = secureKeyStorage.getGeoapifyKey() ?: ""
@@ -44,9 +48,16 @@ class GeoapifyGeocodingService @Inject constructor(
         biasLon: Double?,
         cityHint: String?,
         bounded: Boolean
-    ): GeocodingLookupResult = when (val result = searchMultiple(merchantName, biasLat, biasLon, limit = 1)) {
-        is GeocodingBatchResult.Success -> GeocodingLookupResult.Success(result.results.firstOrNull())
-        is GeocodingBatchResult.Failure -> GeocodingLookupResult.Failure(result.error)
+    ): GeocodingLookupResult {
+        val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Log.w(TAG, "Geoapify geocoding blocked by privacy gate: ${gateCheck.reason}")
+            return GeocodingLookupResult.Failure(GeocodingError.Disabled)
+        }
+        return when (val result = searchMultiple(merchantName, biasLat, biasLon, limit = 1)) {
+            is GeocodingBatchResult.Success -> GeocodingLookupResult.Success(result.results.firstOrNull())
+            is GeocodingBatchResult.Failure -> GeocodingLookupResult.Failure(result.error)
+        }
     }
 
     override suspend fun searchMultiple(
@@ -56,6 +67,11 @@ class GeoapifyGeocodingService @Inject constructor(
         limit: Int,
         useGoogle: Boolean
     ): GeocodingBatchResult {
+        val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Log.w(TAG, "Geoapify geocoding blocked by privacy gate: ${gateCheck.reason}")
+            return GeocodingBatchResult.Failure(GeocodingError.Disabled)
+        }
         if (apiKey.isBlank()) {
             Log.d(TAG, "Geoapify: API key missing, skipping")
             return GeocodingBatchResult.Failure(GeocodingError.ServiceDown)

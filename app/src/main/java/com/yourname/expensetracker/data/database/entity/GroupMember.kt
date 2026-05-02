@@ -16,6 +16,8 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "group_members",
     foreignKeys = [
+        // DB-8: CASCADE on groupId — deleting an ExpenseGroup removes all its members.
+        // If member history needs to be preserved, consider SET_NULL + soft-delete.
         ForeignKey(
             entity = ExpenseGroup::class,
             parentColumns = ["id"],

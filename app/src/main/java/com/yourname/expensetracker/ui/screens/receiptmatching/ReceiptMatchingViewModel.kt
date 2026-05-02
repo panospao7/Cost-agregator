@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -32,7 +33,8 @@ data class MatchSuggestion(
 @HiltViewModel
 class ReceiptMatchingViewModel @Inject constructor(
     private val receiptRepository: ReceiptRepository,
-    private val matcher: ReceiptTransactionMatcher
+    private val matcher: ReceiptTransactionMatcher,
+    private val receiptLinkService: ReceiptLinkService
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ReceiptMatchingState())
@@ -84,10 +86,12 @@ class ReceiptMatchingViewModel @Inject constructor(
             for (receipt in unmatched) {
                 when (val result = matcher.findBestMatch(receipt)) {
                     is MatchResult.AutoMatch -> {
-                        receiptRepository.linkReceiptToExpense(
-                            receipt.id,
-                            result.transaction.id,
-                            result.score
+                        receiptLinkService.linkReceiptToExpense(
+                            receiptId = receipt.id,
+                            expenseId = result.transaction.id,
+                            linkType = "AUTO_MATCH",
+                            source = "ReceiptMatchingViewModel",
+                            confidence = result.score.toFloat()
                         )
                         autoMatched++
                     }
@@ -149,7 +153,13 @@ class ReceiptMatchingViewModel @Inject constructor(
 
     fun manualMatch(receiptId: Long, expenseId: Long) {
         viewModelScope.launch {
-            receiptRepository.linkReceiptToExpense(receiptId, expenseId, confidence = 1.0)
+            receiptLinkService.linkReceiptToExpense(
+                receiptId = receiptId,
+                expenseId = expenseId,
+                linkType = "MANUAL_MATCH",
+                source = "ReceiptMatchingViewModel",
+                confidence = 1.0f
+            )
             closeManualMatch()
             loadReceipts()
         }
@@ -167,10 +177,12 @@ class ReceiptMatchingViewModel @Inject constructor(
             receiptRepository.clearMatchForReceipt(receipt.id)
             when (val result = matcher.findBestMatch(receipt)) {
                 is MatchResult.AutoMatch -> {
-                    receiptRepository.linkReceiptToExpense(
-                        receipt.id,
-                        result.transaction.id,
-                        result.score
+                    receiptLinkService.linkReceiptToExpense(
+                        receiptId = receipt.id,
+                        expenseId = result.transaction.id,
+                        linkType = "AUTO_MATCH",
+                        source = "ReceiptMatchingViewModel",
+                        confidence = result.score.toFloat()
                     )
                 }
                 is MatchResult.Suggested -> {

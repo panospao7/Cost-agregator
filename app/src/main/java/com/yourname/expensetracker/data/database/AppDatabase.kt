@@ -135,6 +135,30 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
 
+        /**
+         * ## E6: INSERT INTO ... SELECT * fragility
+         *
+         * Several migrations below use `INSERT INTO ... SELECT *` (without
+         * explicit column lists) when rebuilding tables.  This is fragile
+         * because:
+         *   - If a future migration reorders columns in the NEW table, the
+         *     SELECT * silently maps wrong values.
+         *   - If columns are added/removed, SELECT * will either fail (wrong
+         *     count) or produce silent data corruption.
+         *
+         * Affected locations (11 occurrences as of v108):
+         *   - MIGRATION_49_50  (expenses_new, scanned_receipts_new)
+         *   - MIGRATION_68_69  (expenses_new)
+         *   - FRESH_INSTALL_CALLBACK (savings_goals_new, mileage_tracking_new,
+         *     pending_reviews_new, group_members_new, planned_expenses_new)
+         *   - MIGRATION_106_107 (budgets_new, group_members_new,
+         *     planned_expenses_new)
+         *   - MIGRATION_107_108 (planned_expenses_new)
+         *
+         * **Recommendation**: All future table rebuilds MUST use explicit
+         * column lists in both CREATE TABLE and INSERT statements so that
+         * the migration is resilient to column reordering.
+         */
         val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL(
@@ -4858,26 +4882,40 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
-          * Callback that creates supplementary partial unique indexes on **fresh install**
-          * (for tables where Room cannot express them) and applies CHECK constraints
-          * that Room annotations cannot express.
+         * Callback that creates supplementary partial unique indexes and CHECK
+         * constraints on **fresh install** for tables where Room annotations
+         * cannot express them.
          *
-         * Room's `@Index` annotation does not support `WHERE` clauses, so these
-         * constraints must be applied via raw SQL after Room creates the schema.
-         * Similarly, Room has no `@Check` annotation, so CHECK constraints are
-         * added by rebuilding tables in this callback.
+         * Room's `@Index` annotation does not support `WHERE` clauses, and there
+         * is no `@Check` annotation, so these must be applied via raw SQL after
+         * Room creates the schema.  Tables are rebuilt (CREATE-new, INSERT,
+         * DROP-old, RENAME) to apply CHECK constraints.
          *
-          * On upgrade paths the same indexes/constraints are created by the respective
-          * migrations where still part of the Room/runtime contract
-          * ([MIGRATION_70_71] for group_expenses/group_members data healing,
-          * [MIGRATION_74_75] for subscription-candidate and budget-forecast
-          * constraints, [MIGRATION_75_76] for financial CHECK constraints and expense FK).
-          * raw_notifications dedup indexes created here are runtime-only fresh-install
-          * constraints, not part of Room's exported schema contract.
-          *
-          * Invariants enforced:
-          *  - At most one raw_notification per (packageName, timestamp) combo per NULL pattern.
-          *  - savings_goals: targetAmount > 0, currentAmount >= 0.
+         * On upgrade paths the same indexes/constraints are created by the
+         * respective migrations ([MIGRATION_70_71], [MIGRATION_74_75],
+         * [MIGRATION_75_76], [MIGRATION_104_105], [MIGRATION_106_107]).
+         *
+         * ## E5: Index name parity with entity declarations
+         * The materialized-key unique indexes in Phase 7 (MIGRATION_104_105)
+         * originally used the `idx_` prefix.  MIGRATION_106_107 corrected these
+         * to `index_` to match Room's auto-naming convention.  However, the
+         * FRESH_INSTALL_CALLBACK below still uses the old `idx_` prefix for:
+         *   - `idx_budgets_activeOverallKey`         (entity: index_budgets_activeOverallKey)
+         *   - `idx_budgets_activeCategoryKey`        (entity: index_budgets_activeCategoryKey)
+         *   - `idx_group_members_currentUserGroupKey`(entity: index_group_members_currentUserGroupKey)
+         *   - `idx_planned_expenses_openSourceOccurrenceKey` (entity: index_planned_expenses_openSourceOccurrenceKey)
+         *
+         * These `CREATE UNIQUE INDEX IF NOT EXISTS` statements are idempotent
+         * and functionally correct (the prefix difference does not affect
+         * correctness).  A future cleanup should rename them to `index_` for
+         * consistency.  On fresh installs both the `idx_` and the Room-generated
+         * `index_` forms would coexist, which is harmless since they reference
+         * different columns.  On upgrades from v104 the migration chain
+         * produces the `index_` forms correctly.
+         *
+         * ## Invariants enforced
+         *  - At most one raw_notification per (packageName, timestamp) combo per NULL pattern.
+         *  - savings_goals: targetAmount > 0, currentAmount >= 0.
          *  - mileage_tracking: distanceKm > 0, deductionRatePerKm >= 0, fuelCost >= 0,
          *    odometer ordering.
          *  - pending_reviews: suggestedAmount > 0, suggestedType ∈ known enum set.
@@ -6492,6 +6530,54 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 } finally {
                     if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
                 }
+            }
+        }
+
+        // ═════════════════════════════════════════════════════════════════════
+        // E4: MIGRATION_108_109 — Budget categoryId FK: SET_NULL → RESTRICT
+        // ═════════════════════════════════════════════════════════════════════
+        //
+        // The current Budget entity declares:
+        //   FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE SET_NULL
+        //
+        // This silently converts category budgets into overall budgets when a
+        // Category is deleted, which is data-loss-prone (see Budget.kt BUD-7).
+        //
+        // Desired FK:
+        //   FOREIGN KEY(categoryId) REFERENCES categories(id) ON DELETE RESTRICT
+        //
+        // Because SQLite cannot alter FK constraints without a table rebuild,
+        // this migration is intentionally NOT registered in ALL_MIGRATIONS yet
+        // (the schema version remains 108).  To activate it:
+        //   1. Bump APP_DATABASE_SCHEMA_VERSION to 109.
+        //   2. Register MIGRATION_108_109 in ALL_MIGRATIONS.
+        //   3. Verify that no existing category-deletion code depends on
+        //      the SET_NULL silent-conversion behaviour.
+        //
+        // Migration plan (table rebuild):
+        //   1. PRAGMA foreign_keys=OFF
+        //   2. CREATE TABLE budgets_new (all existing columns + RESTRICT FK)
+        //   3. INSERT INTO budgets_new SELECT * FROM budgets
+        //   4. DROP TABLE budgets
+        //   5. ALTER TABLE budgets_new RENAME TO budgets
+        //   6. Recreate all budgets indexes
+        //   7. PRAGMA foreign_keys=ON
+        //   8. PRAGMA foreign_key_check — verify no violations
+        //
+        // NOTE: On a fresh install Room creates the table from the entity
+        // annotation, so changing the entity's FK to RESTRICT is sufficient
+        // for new installations. The migration only affects upgrades from v108.
+        val MIGRATION_108_109 = object : androidx.room.migration.Migration(108, 109) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // This migration is planned but not yet active (see KDoc above).
+                // When activated, it must:
+                //   1. Rebuild the budgets table with a RESTRICT FK on categoryId.
+                //   2. Run PRAGMA foreign_key_check to catch orphaned rows.
+                throw IllegalStateException(
+                    "MIGRATION_108_109 is not active. " +
+                    "Bump APP_DATABASE_SCHEMA_VERSION to 109 and verify " +
+                    "no category-deletion code depends on SET_NULL behaviour."
+                )
             }
         }
 

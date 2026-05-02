@@ -6,6 +6,12 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+/**
+ * WRN-5: The `receiptId` FK uses CASCADE — deleting a receipt deletes the return window.
+ * A future migration should change this to SET_NULL and make receiptId nullable,
+ * preserving return window records when the source receipt is removed.
+ * See also Warranty — same pattern.
+ */
 @Entity(
     tableName = "return_windows",
     foreignKeys = [

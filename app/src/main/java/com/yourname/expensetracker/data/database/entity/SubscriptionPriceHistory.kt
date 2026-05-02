@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.core.money.MoneyAmount
 @Entity(
     tableName = "subscription_price_history",
     foreignKeys = [
+        // DB-8: CASCADE on subscriptionId — deleting a subscription erases price history.
         ForeignKey(
             entity = ManualRecurringExpense::class,
             parentColumns = ["id"],

@@ -8,6 +8,10 @@ import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationI
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -26,16 +30,17 @@ import kotlinx.coroutines.withContext
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 class CloudQueryInterpretationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient
+    @CloudAiHttpClient private val client: OkHttpClient,
+    private val privacyGate: PrivacyGate
 ) : QueryInterpretationService {
 
     private var apiKeyOverride: String? = null
 
     // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient())
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList()))
 
     // Secondary constructor for testing
-    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage, OkHttpClient()) {
+    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList())) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -50,6 +55,13 @@ class CloudQueryInterpretationService @Inject constructor(
         if (apiKey.isBlank()) {
             Timber.d("CloudQueryInterpretationService: Gemini API key missing, skipping.")
             return unsupported()
+        }
+
+        // PRIVACY GATE: Check cloud AI privacy gate before proceeding
+        val gateDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
+        if (gateDecision is PrivacyDecision.Denied) {
+            Timber.d("CloudQueryInterpretationService: privacy gate denied: ${gateDecision.reason}")
+            return unsupported("Cloud AI disabled by privacy gate")
         }
 
         val requestBody = buildRequestBody(input)

@@ -7,7 +7,9 @@ data class FinancialForecast(
     val generatedAt: Instant,
     val confidence: Double, // 0.0 - 1.0
     val components: ForecastComponents,
-    val actionableInsights: List<UiText>
+    val actionableInsights: List<UiText>,
+    /** @suppress Currency code this forecast is denominated in (e.g. "EUR", "USD"). */
+    val displayCurrency: String = ""
 ) {
     init {
         require(confidence.isFinite() && confidence in 0.0..1.0) { "confidence must be between 0 and 1" }
@@ -73,7 +75,9 @@ data class ForecastComponents(
     val totalLikely: Double,           // Medium confidence (patterns, manual)
     val predictedDiscretionary: Double, // Habit-based predicted spending
     val discretionaryBudget: Double,   // "Safe-to-Spend"
-    val riskLevel: RiskLevel
+    val riskLevel: RiskLevel,
+    /** @suppress Currency code these components are denominated in (e.g. "EUR", "USD"). */
+    val displayCurrency: String = ""
 ) {
     init {
         require(goalReserves.isFinite() && goalReserves >= 0.0) { "goalReserves must be a non-negative finite number" }

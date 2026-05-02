@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 @Entity(
     tableName = "ai_chat_messages",
     foreignKeys = [
+        // DB-8: CASCADE on sessionId — deleting a chat session removes all its messages.
         ForeignKey(
             entity = AiChatSessionEntity::class,
             parentColumns = ["id"],

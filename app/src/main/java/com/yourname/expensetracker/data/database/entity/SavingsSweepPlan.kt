@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.core.money.MoneyAmount
 @Entity(
     tableName = "savings_sweep_plan",
     foreignKeys = [
+        // DB-8: CASCADE on goalId — deleting a savings goal removes its sweep plan entries.
         ForeignKey(
             entity = SavingsGoal::class,
             parentColumns = ["id"],

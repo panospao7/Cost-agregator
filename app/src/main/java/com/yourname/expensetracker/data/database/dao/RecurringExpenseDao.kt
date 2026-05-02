@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.Flow
  * methods are provided for callers that explicitly need inactive rows.
  */
 @Deprecated(
-    message = "Use ManualRecurringExpenseDao instead",
+    message = "Use ManualRecurringExpenseDao instead — all methods have an equivalent in ManualRecurringExpenseDao",
     replaceWith = ReplaceWith("ManualRecurringExpenseDao"),
     level = DeprecationLevel.WARNING
 )

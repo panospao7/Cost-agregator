@@ -63,6 +63,19 @@ import javax.inject.Singleton
  *  - Classify merchants and transfer directions
  *  - Write the result (expense / pending review / rejected) inside a DB transaction
  *  - Trigger subscription detection after successful transaction processing
+ *
+ * ## AID-9: AI auto-apply audit requirement
+ * When [RoutingDecision.AUTO_ACCEPT] is chosen by the confidence router, the
+ * pipeline creates an [Expense] directly without user review via
+ * [handleAutoAcceptInTransaction]. This is an AI-driven decision and MUST be
+ * auditable. Any future changes to the auto-accept path MUST:
+ * 1. Log the routing decision, confidence score, and source notification
+ * 2. Provide a mechanism to review and revert auto-accepted expenses
+ * 3. Notify the user when an expense is auto-created from AI classification
+ *
+ * Consider adding an audit table (e.g., `ai_audit_log`) to record every
+ * auto-accept decision along with the raw notification payload and the
+ * created expense ID.
  */
 
 @Singleton
@@ -703,6 +716,11 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         )
     }
 
+    /**
+     * AID-9: Auto-accept creates an Expense directly from AI routing WITHOUT user review.
+     * This path MUST be auditable — see class-level KDoc for audit requirements.
+     * Currently no audit trail is persisted beyond the raw_notification row.
+     */
     private suspend fun handleAutoAcceptInTransaction(
         notification: RawNotification,
         rawId: Long,

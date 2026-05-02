@@ -24,6 +24,16 @@ import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Repository for warranty and return-window tracking backed by [receiptRepository].
+ *
+ * Database access to receipt data goes through [ReceiptRepository] — NOT through
+ * [com.yourname.expensetracker.data.database.dao.ScannedReceiptDao] directly.
+ * This ensures all receipt lifecycle invariants are respected.
+ *
+ * Warranty and return-window DAOs ([WarrantyDao], [ReturnWindowDao]) are accessed
+ * directly because they have no lifecycle abstraction layer above them.
+ */
 @Singleton
 class WarrantyTrackerRepository @Inject constructor(
     private val warrantyDao: WarrantyDao,

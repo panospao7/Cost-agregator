@@ -141,9 +141,27 @@ class SynthesisEngine @Inject constructor(
         val startOfToday = TimePeriodUtils.getStartOfDay(now)
 
         // 1. Calculate Committed (Highly likely/Automated/Must happen)
+        // FCST-1: For patterns that occur multiple times per month (WEEKLY, BIWEEKLY),
+        // multiply by the expected number of remaining occurrences so the forecast
+        // accurately reflects all upcoming payments, not just the first one.
         val committedUpcomingBills = recurringPatterns.filter { 
             it.confidence >= 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate < endOfMonthExclusive 
-        }.sumOf { it.averageAmount }
+        }.sumOf { pattern ->
+            val occurrences = when (pattern.frequency) {
+                RecurrenceFrequency.WEEKLY -> {
+                    val msRemaining = endOfMonthExclusive - pattern.nextExpectedDate
+                    val weeksRemaining = (msRemaining.toDouble() / (TimeUnit.DAYS.toMillis(7))).toInt() + 1
+                    weeksRemaining.coerceIn(1, 5)
+                }
+                RecurrenceFrequency.BIWEEKLY -> {
+                    val msRemaining = endOfMonthExclusive - pattern.nextExpectedDate
+                    val periodsRemaining = (msRemaining.toDouble() / (TimeUnit.DAYS.toMillis(14))).toInt() + 1
+                    periodsRemaining.coerceIn(1, 3)
+                }
+                else -> 1
+            }
+            pattern.averageAmount * occurrences
+        }
         
         val committedPlanned = plannedExpenses.filter {
             it.priority == PlannedExpensePriority.MUST && it.date >= startOfToday && it.date < endOfMonthExclusive
@@ -153,9 +171,25 @@ class SynthesisEngine @Inject constructor(
 
         // 2. Calculate Likely (Probable behavior)
         // Fix: Confidence Interval Gap (0.89-0.90 was missing)
+        // FCST-1: Apply same multi-occurrence multiplier as for committed bills
         val likelyUpcomingBills = recurringPatterns.filter { 
             it.confidence >= 0.70f && it.confidence < 0.90f && it.nextExpectedDate >= startOfToday && it.nextExpectedDate < endOfMonthExclusive
-        }.sumOf { it.averageAmount }
+        }.sumOf { pattern ->
+            val occurrences = when (pattern.frequency) {
+                RecurrenceFrequency.WEEKLY -> {
+                    val msRemaining = endOfMonthExclusive - pattern.nextExpectedDate
+                    val weeksRemaining = (msRemaining.toDouble() / (TimeUnit.DAYS.toMillis(7))).toInt() + 1
+                    weeksRemaining.coerceIn(1, 5)
+                }
+                RecurrenceFrequency.BIWEEKLY -> {
+                    val msRemaining = endOfMonthExclusive - pattern.nextExpectedDate
+                    val periodsRemaining = (msRemaining.toDouble() / (TimeUnit.DAYS.toMillis(14))).toInt() + 1
+                    periodsRemaining.coerceIn(1, 3)
+                }
+                else -> 1
+            }
+            pattern.averageAmount * occurrences
+        }
         
         val likelyPlanned = plannedExpenses.filter {
             it.priority == PlannedExpensePriority.LIKELY && it.date >= startOfToday && it.date < endOfMonthExclusive

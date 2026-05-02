@@ -10,6 +10,9 @@ import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONException
@@ -27,7 +30,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class PhotonGeocodingService @Inject constructor(
-    @LocationHttpClient private val client: OkHttpClient
+    @LocationHttpClient private val client: OkHttpClient,
+    private val privacyGate: PrivacyGate
 ) : GeocodingService {
 
     override suspend fun search(
@@ -36,9 +40,16 @@ class PhotonGeocodingService @Inject constructor(
         biasLon: Double?,
         cityHint: String?,
         bounded: Boolean
-    ): GeocodingLookupResult = when (val result = searchMultiple(merchantName, biasLat, biasLon, limit = 1)) {
-        is GeocodingBatchResult.Success -> GeocodingLookupResult.Success(result.results.firstOrNull())
-        is GeocodingBatchResult.Failure -> GeocodingLookupResult.Failure(result.error)
+    ): GeocodingLookupResult {
+        val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Log.w(TAG, "Photon geocoding blocked by privacy gate: ${gateCheck.reason}")
+            return GeocodingLookupResult.Failure(GeocodingError.Disabled)
+        }
+        return when (val result = searchMultiple(merchantName, biasLat, biasLon, limit = 1)) {
+            is GeocodingBatchResult.Success -> GeocodingLookupResult.Success(result.results.firstOrNull())
+            is GeocodingBatchResult.Failure -> GeocodingLookupResult.Failure(result.error)
+        }
     }
 
     override suspend fun searchMultiple(
@@ -48,6 +59,11 @@ class PhotonGeocodingService @Inject constructor(
         limit: Int,
         useGoogle: Boolean
     ): GeocodingBatchResult {
+        val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Log.w(TAG, "Photon geocoding blocked by privacy gate: ${gateCheck.reason}")
+            return GeocodingBatchResult.Failure(GeocodingError.Disabled)
+        }
         val url = buildUrl(query, biasLat, biasLon, limit)
         Log.d(TAG, "==> Photon request ${buildSafeLogRoute(query, biasLat, biasLon, limit)}")
 

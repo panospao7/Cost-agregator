@@ -8,6 +8,10 @@ import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionInput
 import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -32,11 +36,12 @@ import javax.inject.Singleton
 @Singleton
 class CloudWarrantyExtractionService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient
+    @CloudAiHttpClient private val client: OkHttpClient,
+    private val privacyGate: PrivacyGate
 ) {
     private var apiKeyOverride: String? = null
 
-    internal constructor(apiKeyOverride: String, secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient()) {
+    internal constructor(apiKeyOverride: String, secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList())) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -53,6 +58,13 @@ class CloudWarrantyExtractionService @Inject constructor(
     ): WarrantyExtractionResult? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) {
             Timber.d("CloudWarrantyExtractionService: Gemini API key missing, skipping.")
+            return@withContext null
+        }
+
+        // PRIVACY GATE: Check cloud AI privacy gate before proceeding
+        val gateDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION)
+        if (gateDecision is PrivacyDecision.Denied) {
+            Timber.d("CloudWarrantyExtractionService: privacy gate denied: ${gateDecision.reason}")
             return@withContext null
         }
 

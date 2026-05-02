@@ -9,6 +9,7 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "merchant_aliases",
     foreignKeys = [
+        // DB-8: CASCADE on canonicalId — deleting a canonical merchant removes all its aliases.
         ForeignKey(
             entity = MerchantCanonical::class,
             parentColumns = ["id"],

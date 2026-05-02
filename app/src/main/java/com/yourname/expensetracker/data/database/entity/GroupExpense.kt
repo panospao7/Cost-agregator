@@ -11,16 +11,45 @@ import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
 /**
  * Links an expense to a group with split information.
+ *
+ * ## E1: expenseId unique enforcement
+ * The `expenseId` index (line 63) is declared as `unique = true`, which matches
+ * the Phase 7 invariant requirement. Only one group_expense row may reference
+ * a given expense at any time. This is enforced at the DB level.
+ *
+ * ## SHR-7: paidById cross-group rule
+ * The `paidById` FK references GroupMember with RESTRICT, which prevents deleting
+ * a member who has paid expenses. However, there is NO DB-level trigger to enforce
+ * that `paidById` belongs to the same group as `groupId`. A future migration should
+ * add a CHECK constraint or trigger:
+ * ```
+ * CREATE TRIGGER group_expense_paid_by_same_group
+ * BEFORE INSERT ON group_expenses
+ * FOR EACH ROW
+ * BEGIN
+ *     SELECT RAISE(ABORT, 'paidById must be a member of the same group')
+ *     WHERE NOT EXISTS (
+ *         SELECT 1 FROM group_members
+ *         WHERE id = NEW.paidById AND groupId = NEW.groupId
+ *     );
+ * END;
+ * ```
+ * Until then, this invariant is enforced by the application layer only.
  */
 @Entity(
     tableName = "group_expenses",
     foreignKeys = [
+        // DB-8: CASCADE on groupId — deleting an ExpenseGroup removes all its
+        // group_expenses. This can silently erase financial history. If preservation
+        // is needed, consider SET_NULL + soft-delete patterns.
         ForeignKey(
             entity = ExpenseGroup::class,
             parentColumns = ["id"],
             childColumns = ["groupId"],
             onDelete = ForeignKey.CASCADE
         ),
+        // DB-8: CASCADE on expenseId — deleting an Expense removes its group link.
+        // The expense row itself is preserved, but the group association is lost.
         ForeignKey(
             entity = Expense::class,
             parentColumns = ["id"],

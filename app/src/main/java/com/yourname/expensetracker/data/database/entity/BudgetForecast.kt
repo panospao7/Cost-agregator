@@ -8,10 +8,26 @@ import androidx.room.PrimaryKey
 
 /**
  * Stores AI-generated budget forecasts for tracking and accuracy measurement.
+ *
+ * ## E2: Missing unique constraint on (budgetId, targetPeriodStart)
+ * There is no DB-level unique constraint preventing duplicate forecasts for the
+ * same budget and period. The same `(budgetId, targetPeriodStart)` pair can
+ * appear multiple times, which could lead to:
+ *   - Ambiguous "latest forecast" lookups (callers rely on MAX(forecastDate))
+ *   - Duplicate accuracy calculations when actuals arrive
+ *
+ * A future migration should add:
+ * ```
+ * CREATE UNIQUE INDEX IF NOT EXISTS idx_budget_forecasts_budget_period
+ *     ON budget_forecasts (budgetId, targetPeriodStart);
+ * ```
+ * Until then, deduplication is handled in the repository layer
+ * (BudgetForecastRepository checks existence before inserting).
  */
 @Entity(
     tableName = "budget_forecasts",
     foreignKeys = [
+        // DB-8: CASCADE on budgetId — deleting a budget removes its forecast history.
         ForeignKey(
             entity = Budget::class,
             parentColumns = ["id"],

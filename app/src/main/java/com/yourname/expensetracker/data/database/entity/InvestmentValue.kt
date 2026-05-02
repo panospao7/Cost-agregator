@@ -11,6 +11,7 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "investment_values",
     foreignKeys = [
+        // DB-8: CASCADE on investmentId — deleting an investment removes its value history.
         ForeignKey(
             entity = Investment::class,
             parentColumns = ["id"],

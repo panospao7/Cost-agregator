@@ -13,6 +13,7 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "email_receipt_sources",
     foreignKeys = [
+        // DB-8: CASCADE on receiptId — deleting a receipt removes its email source records.
         ForeignKey(
             entity = ScannedReceipt::class,
             parentColumns = ["id"],

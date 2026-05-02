@@ -21,6 +21,7 @@ import com.yourname.expensetracker.data.ai.provider.SmartReceiptAssistService  /
 import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationService
 import com.yourname.expensetracker.data.ai.provider.HybridReviewExplanationService
 import com.yourname.expensetracker.data.ai.provider.NoOpCategorizationAssistService
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.data.ai.provider.NoOpDedupeJudgeService
 import com.yourname.expensetracker.data.ai.provider.NoOpReceiptAssistService
 import com.yourname.expensetracker.data.ai.worker.AiWorkSchedulerImpl
@@ -206,16 +207,18 @@ abstract class AiModule {
         @Singleton
         fun provideCloudReceiptItemCategorizationService(
             secureKeyStorage: SecureKeyStorage,
-            @CloudAiHttpClient cloudAiClient: OkHttpClient
+            @CloudAiHttpClient cloudAiClient: OkHttpClient,
+            privacyGate: PrivacyGate
         ): CloudReceiptItemCategorizationService =
-            CloudReceiptItemCategorizationService(secureKeyStorage, cloudAiClient)
+            CloudReceiptItemCategorizationService(secureKeyStorage, cloudAiClient, privacyGate)
 
         @Provides
         @Singleton
         fun provideCloudWarrantyExtractionService(
             secureKeyStorage: SecureKeyStorage,
-            @CloudAiHttpClient cloudAiClient: OkHttpClient
+            @CloudAiHttpClient cloudAiClient: OkHttpClient,
+            privacyGate: PrivacyGate
         ): com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService = 
-            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService(secureKeyStorage, cloudAiClient)
+            com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService(secureKeyStorage, cloudAiClient, privacyGate)
     }
 }

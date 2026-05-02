@@ -12,6 +12,10 @@ import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInpu
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
 import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -35,11 +39,12 @@ import javax.inject.Singleton
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 class CloudReceiptItemCategorizationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
-    @CloudAiHttpClient private val client: OkHttpClient
+    @CloudAiHttpClient private val client: OkHttpClient,
+    private val privacyGate: PrivacyGate
 ) : ReceiptItemCategorizationService {
 
     // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient())
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList()))
     
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     
@@ -49,6 +54,13 @@ class CloudReceiptItemCategorizationService @Inject constructor(
     override suspend fun categorizeItems(input: ReceiptItemCategorizationInput): ReceiptItemCategorizationResult? {
         if (apiKey.isBlank()) {
             Timber.d("CloudReceiptItemCategorizationService: Gemini API key missing, skipping.")
+            return null
+        }
+
+        // PRIVACY GATE: Check cloud AI privacy gate before proceeding
+        val gateDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION)
+        if (gateDecision is PrivacyDecision.Denied) {
+            Timber.d("CloudReceiptItemCategorizationService: privacy gate denied: ${gateDecision.reason}")
             return null
         }
 

@@ -73,7 +73,13 @@ class CurrencyConverter @Inject constructor(
     }
 
     /**
-     * Convert an amount from one currency to another.
+     * Convert an amount from one currency to another at the **current** exchange rate.
+     *
+     * ## Historical rates
+     * This method does **not** accept a date parameter. All lookups use the
+     * latest available rate stored for the currency pair. This is a known
+     * limitation — see [ExchangeRate] unique-index KDoc for details.
+     *
      * Returns null if no exchange rate is available.
      */
     suspend fun convert(

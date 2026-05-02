@@ -9,7 +9,12 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface PendingReviewDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Insert a pending review.
+     * Uses IGNORE conflict strategy — if a duplicate exists, the insert is silently
+     * skipped rather than silently overwriting existing data (which REPLACE would do).
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(review: PendingReview): Long
 
     @Update
@@ -85,6 +90,16 @@ interface PendingReviewDao {
     @Query("DELETE FROM pending_reviews")
     suspend fun deleteAll()
 
+    /**
+     * @deprecated Use ReviewQueueRepository.approveReview() which goes through
+     * TransactionLifecycleCoordinator. Calling this directly marks all pending
+     * reviews as APPROVED without creating expense entries — the expense data
+     * is silently lost.
+     */
+    @Deprecated(
+        "Use ReviewQueueRepository.approveReview() which goes through TransactionLifecycleCoordinator",
+        level = DeprecationLevel.ERROR
+    )
     @Query("UPDATE pending_reviews SET status = 'APPROVED' WHERE status = 'PENDING'")
     suspend fun approveAllPending()
 

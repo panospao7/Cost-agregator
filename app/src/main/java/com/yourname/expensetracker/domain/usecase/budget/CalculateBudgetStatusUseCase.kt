@@ -24,16 +24,20 @@ class CalculateBudgetStatusUseCase @Inject constructor(
         return budgetRepository.getBudgetStatuses().map { statuses ->
             val total = statuses.size
             val exceeded = statuses.count { it.healthStatus == BudgetHealthStatus.EXCEEDED }
+            val critical = statuses.count { it.healthStatus == BudgetHealthStatus.CRITICAL }
             val warning = statuses.count { it.healthStatus == BudgetHealthStatus.WARNING }
-            val healthy = total - exceeded - warning
+            // BUD-5: CRITICAL budgets must not be counted as healthy
+            val healthy = total - exceeded - critical - warning
             
             BudgetHealth(
                 totalBudgets = total,
                 healthyCount = healthy,
                 warningCount = warning,
+                criticalCount = critical,
                 exceededCount = exceeded,
                 overallStatus = when {
                     exceeded > 0 -> BudgetHealthStatus.EXCEEDED
+                    critical > 0 -> BudgetHealthStatus.CRITICAL
                     warning > 0 -> BudgetHealthStatus.WARNING
                     else -> BudgetHealthStatus.ON_TRACK
                 }
@@ -46,6 +50,7 @@ data class BudgetHealth(
     val totalBudgets: Int,
     val healthyCount: Int,
     val warningCount: Int,
+    val criticalCount: Int = 0,
     val exceededCount: Int,
     val overallStatus: BudgetHealthStatus
 )

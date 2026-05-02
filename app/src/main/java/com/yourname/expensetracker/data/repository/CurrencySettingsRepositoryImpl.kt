@@ -40,6 +40,15 @@ class CurrencySettingsRepositoryImpl @Inject constructor(
             prefs[HOME_CURRENCY_KEY] ?: DEFAULT_CURRENCY
         }
     
+    /**
+     * CURR-6: Changing the home currency updates the preference but does NOT
+     * re-normalize existing expense amounts, budgets, or aggregated analytics.
+     * Callers MUST trigger a full re-normalization pass after invoking this to
+     * avoid stale/mismatched amounts in reports and dashboard widgets.
+     *
+     * Re-normalization should iterate all expenses, budgets, and forecast data
+     * and convert them to the new home currency using the latest exchange rates.
+     */
     override suspend fun setHomeCurrency(currencyCode: String) {
         context.currencyDataStore.edit { prefs ->
             prefs[HOME_CURRENCY_KEY] = currencyCode

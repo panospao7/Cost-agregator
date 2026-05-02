@@ -82,6 +82,13 @@ data class AnalyticsState(
     val isLoading: Boolean = true,
     val homeCurrency: String = "EUR",
     val conversionWarnings: List<AnalyticsConversionWarning> = emptyList(),
+    /**
+     * Plain-text quality warnings derived from [conversionWarnings].
+     * Populated automatically when the state is built. Consumers (UI, forecast,
+     * health) use this for simple "show warning banner" logic without parsing
+     * the richer [AnalyticsConversionWarning] type.
+     */
+    val qualityWarnings: List<String> = emptyList(),
     val latestRateTimestamp: Long? = null,
     val referenceNowMillis: Long = 0L
 ) {
@@ -219,7 +226,7 @@ class AnalyticsViewModel @Inject constructor(
             val homeCurrency = inputs.homeCurrency
             val rateTimestamp = inputs.rateTimestamp
 
-            emit(AnalyticsState(isLoading = true, selectedPeriod = period, homeCurrency = homeCurrency, latestRateTimestamp = rateTimestamp, referenceNowMillis = timeProvider.now()))
+            emit(AnalyticsState(isLoading = true, selectedPeriod = period, homeCurrency = homeCurrency, latestRateTimestamp = rateTimestamp, referenceNowMillis = timeProvider.now(), qualityWarnings = emptyList()))
 
             if (
                 freshness.dataVersion != lastExpenseDataVersion ||
@@ -652,6 +659,7 @@ class AnalyticsViewModel @Inject constructor(
   isLoading = false,
   homeCurrency = homeCurrency,
   conversionWarnings = mergeWarnings(conversionWarnings + advResult.warnings),
+  qualityWarnings = mergeWarnings(conversionWarnings + advResult.warnings).map { it.message },
   latestRateTimestamp = latestRateTimestamp,
   referenceNowMillis = timeProvider.now()
   )

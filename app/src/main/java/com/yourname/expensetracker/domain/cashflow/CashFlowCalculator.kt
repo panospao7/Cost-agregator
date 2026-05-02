@@ -24,7 +24,9 @@ data class DailyCashFlow(
     val expenses: List<Expense>,
     val predictedRecurring: List<RecurringPattern>,
     val endingBalance: Double,
-    val riskLevel: CashFlowRiskLevel
+    val riskLevel: CashFlowRiskLevel,
+    /** @suppress Currency code this cash flow is denominated in (e.g. "EUR", "USD"). */
+    val currency: String = ""
 )
 
 enum class CashFlowRiskLevel {

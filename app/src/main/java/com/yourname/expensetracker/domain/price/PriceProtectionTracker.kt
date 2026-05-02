@@ -13,6 +13,14 @@ import java.time.temporal.ChronoUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Tracks items eligible for price protection, deal hunting, coupon matching,
+ * and credit card benefits.
+ *
+ * Database access to receipt data goes through [ReceiptRepository] — NOT through
+ * [com.yourname.expensetracker.data.database.dao.ScannedReceiptDao] directly.
+ * This ensures all receipt lifecycle invariants are respected.
+ */
 @Singleton
 class PriceProtectionTracker @Inject constructor(
     private val receiptRepository: ReceiptRepository,

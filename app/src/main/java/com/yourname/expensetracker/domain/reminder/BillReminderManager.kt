@@ -98,7 +98,20 @@ class BillReminderManager @Inject constructor(
     
     /**
      * Get reminders that need notification now.
+     *
+     * ## Coordinator path (preferred)
+     *
+     * Use [com.yourname.expensetracker.domain.recurring.RecurringLifecycleCoordinator.getDueReminders]
+     * which queries the `recurring_reminder_deliveries` table for SCHEDULED deliveries whose
+     * `scheduledAt` has passed, and dispatch via a [BillReminderWorker] (WorkManager).
      */
+    @Deprecated(
+        message = "Use RecurringLifecycleCoordinator.getDueReminders() and BillReminderWorker",
+        replaceWith = ReplaceWith(
+            "RecurringLifecycleCoordinator.getDueReminders()",
+            "com.yourname.expensetracker.domain.recurring.RecurringLifecycleCoordinator"
+        )
+    )
     suspend fun getNotificationsDue(): List<BillReminder> = withContext(Dispatchers.IO) {
         val reminders = getUpcomingReminders(7)
         

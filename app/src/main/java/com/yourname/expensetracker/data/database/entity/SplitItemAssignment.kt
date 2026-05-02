@@ -9,6 +9,7 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "split_item_assignments",
     foreignKeys = [
+        // DB-8: CASCADE on expenseId — deleting an expense removes all split assignments.
         ForeignKey(
             entity = Expense::class,
             parentColumns = ["id"],

@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.PrivacyAuditEvent
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.util.concurrent.TimeUnit
@@ -35,6 +36,14 @@ class DataRetentionWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         Log.d(TAG, "Data retention worker started")
+
+        // E8: Respect WorkerSpec.DEFAULTS enabled flag
+        val spec = WorkerSpec.DEFAULTS[WORK_NAME]
+        if (spec != null && !spec.enabled) {
+            Log.d(TAG, "Worker disabled via WorkerSpec.DEFAULTS, skipping")
+            return Result.success()
+        }
+
         return try {
             val settings = privacySettingsRepository.getSettings()
             val now = timeProvider.now()

@@ -96,8 +96,24 @@ class BudgetAutopilotEngine @Inject constructor(
             // 5. Determine safety factor based on risk/volatility
             val safetyFactor = calculateSafetyFactor(volatility)
             
-            // 6. Compute recommended budget
+            // 6. Compute recommended budget (in monthly terms from historical data)
             var recommendedBudget = trendAdjustedSpend * safetyFactor
+
+            // BUD-19: Normalize by budget period so that recommended amounts
+            // match the user's actual budget period denomination.
+            // - MONTHLY: keep as-is (historical data is monthly)
+            // - WEEKLY:  divide by ~4.33 weeks/month
+            // - DAILY:   divide by ~30.44 days/month
+            // - YEARLY:  multiply by 12
+            val periodNormalizer = when (budget.period) {
+                com.yourname.expensetracker.data.database.entity.BudgetPeriod.WEEKLY -> 1.0 / com.yourname.expensetracker.domain.logic.RecurrenceCalculator.monthlyMultiplier(
+                    com.yourname.expensetracker.domain.model.RecurrenceFrequency.WEEKLY
+                )
+                com.yourname.expensetracker.data.database.entity.BudgetPeriod.DAILY -> 1.0 / 30.44
+                com.yourname.expensetracker.data.database.entity.BudgetPeriod.YEARLY -> 12.0
+                com.yourname.expensetracker.data.database.entity.BudgetPeriod.MONTHLY -> 1.0
+            }
+            recommendedBudget *= periodNormalizer
             
             // 7. Apply delta caps (±15% per cycle)
             val maxDelta = budget.amount * DELTA_CAP_PERCENTAGE

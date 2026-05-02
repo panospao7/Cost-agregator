@@ -9,6 +9,7 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "merchant_categories",
     foreignKeys = [
+        // DB-8: CASCADE on categoryId — deleting a category removes its merchant-category mappings.
         ForeignKey(
             entity = Category::class,
             parentColumns = ["id"],

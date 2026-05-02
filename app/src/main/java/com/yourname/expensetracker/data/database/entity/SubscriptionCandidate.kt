@@ -11,6 +11,24 @@ import com.yourname.expensetracker.domain.core.money.MoneyAmount
 /**
  * Entity representing a subscription candidate detected from notification transaction parsing.
  * Stores detection confidence and metadata to allow user confirmation/activation.
+ *
+ * ## E3: Missing unique constraints
+ * There is no DB-level unique constraint on this table. Key gaps:
+ *   - `(canonicalMerchant, userAction)` is not unique, allowing duplicate candidates
+ *     for the same merchant (e.g. one "pending" + one "accepted").
+ *   - `convertedSubscriptionId` is not unique, so two candidates could claim the same
+ *     converted subscription.
+ *
+ * A future migration should consider:
+ * ```
+ * CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_candidates_merchant_action
+ *     ON subscription_candidates (canonicalMerchant, userAction)
+ *     WHERE userAction = 'pending';
+ * CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_candidates_converted_id
+ *     ON subscription_candidates (convertedSubscriptionId)
+ *     WHERE convertedSubscriptionId IS NOT NULL;
+ * ```
+ * Until then, deduplication is handled in the repository layer.
  */
 @Entity(
     tableName = "subscription_candidates",
