@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat
 import timber.log.Timber
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.repository.NotificationRepository
+import com.yourname.expensetracker.domain.notification.RawNotificationFingerprint
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -374,7 +375,14 @@ class NotificationCaptureService : NotificationListenerService() {
             subText = subText,
             extrasJson = extrasJson,
             timestamp = sbn.postTime,
-            capturedAt = timeProvider.now()
+            capturedAt = timeProvider.now(),
+            dedupeFingerprint = RawNotificationFingerprint.compute(
+                packageName = packageName,
+                title = title,
+                text = text,
+                bigText = effectiveBigText,
+                timestamp = sbn.postTime
+            )
         )
 
         try {

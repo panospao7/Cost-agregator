@@ -6117,6 +6117,16 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 database.execSQL("DROP INDEX IF EXISTS index_group_expenses_expenseId")
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_group_expenses_expenseId ON group_expenses (expenseId)")
 
+                // Raw notifications: nullify duplicate fingerprints before creating unique index
+                database.execSQL("""
+                    UPDATE raw_notifications SET dedupeFingerprint = NULL
+                    WHERE id NOT IN (
+                        SELECT MIN(id) FROM raw_notifications
+                        WHERE dedupeFingerprint IS NOT NULL
+                        GROUP BY dedupeFingerprint
+                    )
+                """.trimIndent())
+
                 // Raw notifications: create unique fingerprint index
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_notifications_dedupeFingerprint ON raw_notifications (dedupeFingerprint)")
 

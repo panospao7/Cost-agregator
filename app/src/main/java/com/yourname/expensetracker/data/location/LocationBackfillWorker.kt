@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.location.LocationResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +47,13 @@ class LocationBackfillWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         Log.d(TAG, "Backfill worker started")
+
+        // WorkerSpec gate: check if this worker is enabled
+        val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return@withContext Result.success()
+        if (!spec.enabled) {
+            Log.w(TAG, "Worker $WORK_NAME disabled by spec, skipping")
+            return@withContext Result.success()
+        }
 
         // Privacy gate check: background location backfill must be enabled
         val gateCheck = privacyGate.check(PrivacyCapability.BACKGROUND_LOCATION_BACKFILL)

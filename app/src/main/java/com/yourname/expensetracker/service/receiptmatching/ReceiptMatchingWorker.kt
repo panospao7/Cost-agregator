@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,13 @@ class ReceiptMatchingWorker @AssistedInject constructor(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        // WorkerSpec gate: check if this worker is enabled
+        val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return Result.success()
+        if (!spec.enabled) {
+            Timber.w("Worker $WORK_NAME disabled by spec, skipping")
+            return Result.success()
+        }
+
         return try {
             Timber.d("Running automated receipt matching...")
             

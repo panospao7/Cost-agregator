@@ -9,6 +9,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.util.concurrent.TimeUnit
@@ -29,6 +30,13 @@ class BillReminderWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         Log.d(TAG, "BillReminderWorker started — checking for due reminders")
+
+        // WorkerSpec gate: check if this worker is enabled
+        val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return Result.success()
+        if (!spec.enabled) {
+            Log.w(TAG, "Worker $WORK_NAME disabled by spec, skipping")
+            return Result.success()
+        }
 
         return try {
             val dueReminders = coordinator.getDueReminders()

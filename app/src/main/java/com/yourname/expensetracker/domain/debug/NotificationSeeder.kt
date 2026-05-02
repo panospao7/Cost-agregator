@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.debug
 
 import com.yourname.expensetracker.data.database.entity.RawNotification
+import com.yourname.expensetracker.domain.notification.RawNotificationFingerprint
 import javax.inject.Inject
 import kotlin.random.Random
 
@@ -85,7 +86,14 @@ class NotificationSeeder @Inject constructor() {
             title = "Deposit Received",
             text = text,
             timestamp = date,
-            capturedAt = System.currentTimeMillis()
+            capturedAt = System.currentTimeMillis(),
+            dedupeFingerprint = RawNotificationFingerprint.compute(
+                packageName = packageName,
+                title = "Deposit Received",
+                text = text,
+                bigText = null,
+                timestamp = date
+            )
         )
     }
 
@@ -107,7 +115,14 @@ class NotificationSeeder @Inject constructor() {
             title = "Transaction Alert",
             text = text,
             timestamp = date,
-            capturedAt = System.currentTimeMillis()
+            capturedAt = System.currentTimeMillis(),
+            dedupeFingerprint = RawNotificationFingerprint.compute(
+                packageName = "com.simulation.$source".lowercase(),
+                title = "Transaction Alert",
+                text = text,
+                bigText = null,
+                timestamp = date
+            )
         )
     }
 
@@ -131,33 +146,56 @@ class NotificationSeeder @Inject constructor() {
             title = "Recurring Payment",
             text = "Spent €%.2f at %s".format(amount, merchant),
             timestamp = date,
-            capturedAt = System.currentTimeMillis()
+            capturedAt = System.currentTimeMillis(),
+            dedupeFingerprint = RawNotificationFingerprint.compute(
+                packageName = "com.simulation.revolut",
+                title = "Recurring Payment",
+                text = "Spent €%.2f at %s".format(amount, merchant),
+                bigText = null,
+                timestamp = date
+            )
         )
     }
 
     private fun generateSpam(now: Long, rangeMs: Long): RawNotification {
         val text = spamTemplates.random()
         val date = now - Random.nextLong(rangeMs)
+        val spamTitle = unknownSources.random()
         return RawNotification(
             packageName = "com.android.mms",
             appName = "Messages",
-            title = unknownSources.random(),
+            title = spamTitle,
             text = text,
             timestamp = date,
-            capturedAt = System.currentTimeMillis()
+            capturedAt = System.currentTimeMillis(),
+            dedupeFingerprint = RawNotificationFingerprint.compute(
+                packageName = "com.android.mms",
+                title = spamTitle,
+                text = text,
+                bigText = null,
+                timestamp = date
+            )
         )
     }
 
     private fun generateUnknown(now: Long, rangeMs: Long): RawNotification {
         val amount = Random.nextDouble(10.0, 50.0)
         val date = now - Random.nextLong(rangeMs)
+        val unknownText = "Payment of €%.2f from unknown merchant".format(amount)
         return RawNotification(
             packageName = "com.unknown.app",
             appName = "Unknown App",
             title = "Payment",
-            text = "Payment of €%.2f from unknown merchant".format(amount),
+            text = unknownText,
             timestamp = date,
-            capturedAt = System.currentTimeMillis()
+            capturedAt = System.currentTimeMillis(),
+            dedupeFingerprint = RawNotificationFingerprint.compute(
+                packageName = "com.unknown.app",
+                title = "Payment",
+                text = unknownText,
+                bigText = null,
+                timestamp = date
+            )
         )
     }
 }

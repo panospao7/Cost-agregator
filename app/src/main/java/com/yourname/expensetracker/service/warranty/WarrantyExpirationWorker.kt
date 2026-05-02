@@ -8,6 +8,7 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
@@ -37,6 +38,13 @@ class WarrantyExpirationWorker @AssistedInject constructor(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        // ── WorkerSpec gate: check if this worker is enabled ──────────────
+        val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return Result.success()
+        if (!spec.enabled) {
+            Timber.w("Worker $WORK_NAME disabled by spec, skipping")
+            return Result.success()
+        }
+
         // ── Settings gate: notification permission check ──────────────────
         if (!NotificationManagerCompat.from(applicationContext).areNotificationsEnabled()) {
             Timber.w("Warranty notifications disabled by permission — skipping run")

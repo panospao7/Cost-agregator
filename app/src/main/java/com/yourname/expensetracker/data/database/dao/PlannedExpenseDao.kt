@@ -12,7 +12,15 @@ interface PlannedExpenseDao {
     @Query("SELECT * FROM planned_expenses WHERE date >= :startMs AND date < :endMs")
     fun getPlannedExpensesForPeriod(startMs: Long, endMs: Long): Flow<List<PlannedExpense>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Inserts a planned expense.
+     *
+     * Uses [OnConflictStrategy.IGNORE] to prevent accidental overwrite of
+     * existing rows. If a row with the same primary key already exists the
+     * insert is silently skipped — callers should check the return value
+     * (0 = skipped) and decide whether an explicit update is needed.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPlannedExpense(expense: PlannedExpense): Long
 
     @Delete
