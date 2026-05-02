@@ -991,6 +991,18 @@ These remove the biggest duplicate-side-effect, privacy, and reliability risks.
 
 ---
 
+## Later fix applied: Worker scheduling uses WorkerSpec.DEFAULTS
+
+All periodic workers have been migrated to use `WorkerSpec.DEFAULTS` for their scheduling parameters (repeat interval, constraints, backoff policy). This decouples scheduling from hardcoded values and ensures that future spec changes apply consistently through the `WorkerSpecRegistry` versioning mechanism:
+
+- `LocationBackfillWorker.schedule()` now reads interval/constraints from `WorkerSpec.DEFAULTS.locationBackfill`.
+- `WarrantyExpirationWorker.schedule()` now reads from `WorkerSpec.DEFAULTS.warrantyExpiration`.
+- `AiWorkSchedulerImpl.scheduleDailyBriefing()` now reads from `WorkerSpec.DEFAULTS.dailyBriefing`.
+
+Workers that are scheduled with `KEEP` policy remain unchanged until their spec version changes; once the version bumps, the new `DEFAULTS` values take effect via `CANCEL_AND_REENQUEUE`. This prevents silent config drift while allowing controlled updates.
+
+---
+
 # Sources reviewed
 
 - `MainApplication.kt`  

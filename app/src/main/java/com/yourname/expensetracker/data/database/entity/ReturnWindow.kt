@@ -28,7 +28,10 @@ import androidx.room.PrimaryKey
         )
     ],
     indices = [
-        Index(value = ["receiptId"]),
+        // WRN-2: Unique index on receiptId ensures at most one return window
+        // per receipt. SQLite UNIQUE allows multiple NULL rows, so orphaned
+        // windows (receiptId set to NULL on receipt deletion) are preserved.
+        Index(value = ["receiptId"], unique = true),
         Index(value = ["expenseId"], unique = true),
         Index(value = ["returnDeadline"]),
         Index(value = ["status"])

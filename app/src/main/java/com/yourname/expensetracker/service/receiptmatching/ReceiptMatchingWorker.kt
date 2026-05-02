@@ -136,24 +136,40 @@ class ReceiptMatchingWorker @AssistedInject constructor(
          */
         private const val LOOKBACK_DAYS = 7
 
+        /**
+         * Enqueue a periodic receipt-matching job.
+         * Reads interval and constraints from [WorkerSpec.DEFAULTS] for the canonical config.
+         */
         fun schedule(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
-                .build()
+            val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return
+            if (!spec.enabled) {
+                Timber.w("Worker $WORK_NAME disabled by spec, skipping schedule")
+                return
+            }
+            val intervalHours = spec.repeatIntervalHours ?: run {
+                Timber.w("Worker $WORK_NAME has no repeat interval, skipping periodic schedule")
+                return
+            }
 
-            // Run every 2 hours when app is open
-            val request = PeriodicWorkRequestBuilder<ReceiptMatchingWorker>(2, TimeUnit.HOURS)
-                .setConstraints(constraints)
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.MINUTES)
+            val request = PeriodicWorkRequestBuilder<ReceiptMatchingWorker>(
+                repeatInterval = intervalHours,
+                repeatIntervalTimeUnit = TimeUnit.HOURS
+            )
+                .setConstraints(spec.constraints)
+                .setBackoffCriteria(
+                    spec.backoffPolicy,
+                    spec.backoffDelaySeconds,
+                    TimeUnit.SECONDS
+                )
                 .build()
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
+                spec.existingWorkPolicy,
                 request
             )
             
-            Timber.d("Scheduled receipt matching worker")
+            Timber.d("Scheduled receipt matching worker (interval=${intervalHours}h)")
         }
 
         fun cancel(context: Context) {

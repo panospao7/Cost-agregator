@@ -181,23 +181,28 @@ class BudgetMonitor @Inject constructor(
 
         val percent = status.percentUsed
 
+        // BUD-3: Only update notification timestamp if the notification was
+        // actually delivered (e.g. user has notifications disabled).
         when {
             percent >= 1.0f -> {
                 if (shouldNotify(budget.lastExceededNotifiedAt, now, periodStart, budget.period)) {
-                    sendNotification(budget.id.toInt(), budget, spent, "Budget Exceeded!", categoryName)
-                    budgetRepository.updateExceededNotification(budget.id, now)
+                    if (sendNotification(budget.id.toInt(), budget, spent, "Budget Exceeded!", categoryName)) {
+                        budgetRepository.updateExceededNotification(budget.id, now)
+                    }
                 }
             }
             percent >= budget.notifyAtCritical && percent < 1.0f -> {
                 if (shouldNotify(budget.lastCriticalNotifiedAt, now, periodStart, budget.period)) {
-                    sendNotification(budget.id.toInt(), budget, spent, "Critical Budget Warning", categoryName)
-                    budgetRepository.updateCriticalNotification(budget.id, now)
+                    if (sendNotification(budget.id.toInt(), budget, spent, "Critical Budget Warning", categoryName)) {
+                        budgetRepository.updateCriticalNotification(budget.id, now)
+                    }
                 }
             }
             percent >= budget.notifyAtWarning && percent < budget.notifyAtCritical -> {
                 if (shouldNotify(budget.lastWarningNotifiedAt, now, periodStart, budget.period)) {
-                    sendNotification(budget.id.toInt(), budget, spent, "Budget Warning", categoryName)
-                    budgetRepository.updateWarningNotification(budget.id, now)
+                    if (sendNotification(budget.id.toInt(), budget, spent, "Budget Warning", categoryName)) {
+                        budgetRepository.updateWarningNotification(budget.id, now)
+                    }
                 }
             }
         }
@@ -212,13 +217,16 @@ class BudgetMonitor @Inject constructor(
         return now - lastNotified > cooldown
     }
 
+    /**
+     * @return true if the notification was delivered, false otherwise.
+     */
     private fun sendNotification(
         notificationId: Int,
         budget: Budget,
         spent: Double,
         title: String,
         categoryName: String
-    ) {
+    ): Boolean {
         val percent = (spent / budget.amount * 100).toInt()
         val currencySymbol = com.yourname.expensetracker.domain.currency.SupportedCurrency
             .fromCode(budget.currency)?.symbol ?: budget.currency
@@ -231,6 +239,7 @@ class BudgetMonitor @Inject constructor(
             categoryName
         )
 
-        notificationService.sendBudgetAlert(notificationId, title, content)
+        return notificationService.sendBudgetAlert(notificationId, title, content) ==
+            com.yourname.expensetracker.domain.service.NotificationService.DeliveryResult.DELIVERED
     }
 }

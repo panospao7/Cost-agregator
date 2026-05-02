@@ -128,7 +128,11 @@ data class DashboardBriefingInput(
     val topCategories: List<String>,
     val budgetWarnings: List<DashboardBudgetWarningInput>,
     val upcomingItems: List<DashboardUpcomingItemInput>,
-    val transactionInsight: TransactionInsightPromptInput? = null
+    val transactionInsight: TransactionInsightPromptInput? = null,
+    /** Optional minimum amount filter for AI-driven transaction filtering. */
+    val minAmount: Double? = null,
+    /** Optional maximum amount filter for AI-driven transaction filtering. */
+    val maxAmount: Double? = null
 )
 
 enum class TransactionInsightAmountBucket {

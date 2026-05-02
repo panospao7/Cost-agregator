@@ -160,7 +160,33 @@ class BudgetAutopilotEngine @Inject constructor(
             
         }
 
-        val summaryRecommendations = categoryRecommendations.filter { recommendation ->
+        // BUD-5: Enforce hierarchy — category budget totals must not exceed the
+        // overall budget. If they do, proportionally scale down each category
+        // recommendation so the sum fits within the overall budget.
+        val adjustedRecommendations = if (hasOverallBudget) {
+            val overallRec = categoryRecommendations.find { it.categoryId == null }
+            val categoryRecs = categoryRecommendations.filter { it.categoryId != null }
+            if (overallRec != null && categoryRecs.isNotEmpty()) {
+                val categorySum = categoryRecs.sumOf { it.recommendedBudget }
+                if (categorySum > overallRec.recommendedBudget && categorySum > 0.0) {
+                    val scaleFactor = overallRec.recommendedBudget / categorySum
+                    categoryRecommendations.map { rec ->
+                        if (rec.categoryId != null) {
+                            val scaledBudget = rec.recommendedBudget * scaleFactor
+                            rec.copy(recommendedBudget = scaledBudget, delta = scaledBudget - rec.currentBudget,
+                                deltaPercentage = if (rec.currentBudget > 0) ((scaledBudget - rec.currentBudget) / rec.currentBudget * 100) else 0.0,
+                                reason = rec.reason + " (scaled to fit overall budget)")
+                        } else rec
+                    }
+                } else categoryRecommendations
+            } else categoryRecommendations
+        } else {
+            categoryRecommendations
+        }
+
+        val categoryRecommendationsFinal = adjustedRecommendations
+
+        val summaryRecommendations = categoryRecommendationsFinal.filter { recommendation ->
             if (hasOverallBudget) {
                 recommendation.categoryId == null
             } else {
@@ -176,7 +202,7 @@ class BudgetAutopilotEngine @Inject constructor(
         } else 0.0
         
         return BudgetAutopilotRecommendations(
-            categoryRecommendations = categoryRecommendations,
+            categoryRecommendations = categoryRecommendationsFinal,
             totalCurrentBudget = totalCurrentBudget,
             totalRecommendedBudget = totalRecommendedBudget,
             overallDelta = totalRecommendedBudget - totalCurrentBudget,

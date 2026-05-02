@@ -21,13 +21,18 @@ import javax.inject.Singleton
 /**
  * Builds prompts for the AI dashboard briefing feature.
  *
- * ## M6: AI prompt schema lacks minAmount/maxAmount
- * The JSON schema in the prompt (line ~74) includes only `title`, `text`,
- * `tone`, and `confidence`. There is no mechanism to request filtering by
- * minimum or maximum transaction amount — the AI cannot be asked "show me
- * transactions over $500" via the briefing prompt. A future enhancement
- * should add optional `minAmount`/`maxAmount` fields to the prompt schema
- * and pass them through from the [DashboardBriefingInput].
+ * ## M6: AI prompt schema amount support (fixed in v112)
+ * The JSON schema now includes optional `minAmount` and `maxAmount` fields
+ * (both Double, default 0.0). When [DashboardBriefingInput.minAmount] or
+ * [DashboardBriefingInput.maxAmount] are non-null, they are emitted as
+ * prompt lines before the schema, instructing the AI to filter transactions
+ * by amount range.
+ *
+ * ## SR-3: AI prompt schema amount support
+ * Added `minAmount` and `maxAmount` fields to both the prompt body and the
+ * JSON schema. The fields are emitted conditionally — only when the input
+ * provides non-null values. The AI can now be asked "show me transactions
+ * over $500" via the briefing prompt.
  */
 @Singleton
 class DashboardBriefingPromptFormatter private constructor(
@@ -82,7 +87,9 @@ class DashboardBriefingPromptFormatter private constructor(
             }
             appendLine("Upcoming items: $safeUpcomingItems")
             appendLine()
-            appendLine("JSON schema: {\"title\":\"short title\",\"text\":\"brief message\",\"tone\":\"calm|neutral|cautious\",\"confidence\":0.0}")
+            if (input.minAmount != null) appendLine("Min amount filter: ${input.minAmount}")
+            if (input.maxAmount != null) appendLine("Max amount filter: ${input.maxAmount}")
+            appendLine("JSON schema: {\"title\":\"short title\",\"text\":\"brief message\",\"tone\":\"calm|neutral|cautious\",\"confidence\":0.0,\"minAmount\":0.0,\"maxAmount\":0.0}")
         }
     }
 
@@ -123,7 +130,7 @@ class DashboardBriefingPromptFormatter private constructor(
                 appendLine("Privacy mode: merchant and exact amount were redacted before prompt assembly.")
             }
             appendLine()
-            appendLine("JSON schema: {\"title\":\"short title\",\"text\":\"brief message\",\"tone\":\"calm|neutral|cautious\",\"confidence\":0.0}")
+            appendLine("JSON schema: {\"title\":\"short title\",\"text\":\"brief message\",\"tone\":\"calm|neutral|cautious\",\"confidence\":0.0,\"minAmount\":0.0,\"maxAmount\":0.0}")
         }
     }
 

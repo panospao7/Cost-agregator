@@ -180,6 +180,18 @@ class ReceiptOcrService @Inject constructor(
                 }
             }
 
+            // RCP-7: Compute overall OCR confidence (average of block confidences)
+            // and log a warning when it falls below 0.5 threshold.
+            val overallConfidence = if (blocks.isNotEmpty()) {
+                blocks.mapNotNull { it.confidence }.average().toFloat()
+            } else 0f
+            if (overallConfidence < 0.5f && blocks.isNotEmpty()) {
+                Timber.w(
+                    "Low OCR confidence: overall=%.2f, blocks=%d, uri=%s",
+                    overallConfidence, blocks.size, imageUri
+                )
+            }
+
             return OcrResult(
                 fullText = blocks.joinToString("\n\n") { it.text },
                 blocks = blocks,

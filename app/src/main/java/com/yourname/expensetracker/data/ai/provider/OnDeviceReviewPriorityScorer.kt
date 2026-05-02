@@ -148,7 +148,7 @@ class OnDeviceReviewPriorityScorer @Inject constructor(
         var duplicateCount = 0
         for (existing in existingReviews) {
             if (existing.review.id != input.reviewId &&
-                abs(existing.review.suggestedAmount - input.suggestedAmount) < 0.01 &&
+                abs((existing.review.suggestedAmount ?: 0.0) - (input.suggestedAmount ?: 0.0)) < 0.01 &&
                 existing.review.suggestedMerchant.equals(input.suggestedMerchant, ignoreCase = true) &&
                 abs(existing.review.createdAt - input.createdAt) < 24 * 60 * 60 * 1000 // 24 hours
             ) {
@@ -247,7 +247,7 @@ class OnDeviceReviewPriorityScorer @Inject constructor(
         confidence = confidence,
         suggestedMerchant = suggestedMerchant,
         suggestedCategoryId = suggestedCategoryId,
-        suggestedAmount = suggestedAmount,
+        suggestedAmount = suggestedAmount ?: 0.0,
         createdAt = createdAt
     )
 }

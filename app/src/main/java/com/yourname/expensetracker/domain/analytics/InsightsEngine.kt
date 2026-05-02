@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.model.PeriodRange
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.text.DomainTextKeys
@@ -32,15 +33,80 @@ class InsightsEngine @Inject constructor(
     private val dayOfWeekAnalyzer: DayOfWeekAnalyzer
 ) {
 
+    /**
+     * Generate insights for an explicit [PeriodRange] instead of the current month.
+     *
+     * ## AI-1: Explicit period support
+     * This overload allows callers to specify an arbitrary time range, enabling
+     * historical or custom-period insight generation. The range is decomposed
+     * into a "current" period and an automatically computed "previous" period
+     * of equal duration for month-over-month comparison.
+     */
+    suspend fun generateInsights(
+        periodRange: PeriodRange,
+        categories: List<AnalyticsCategoryRef>,
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String = "EUR",
+        conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
+    ): InsightsSnapshot {
+        val currentMonth = MonthPeriod(
+            year = TimePeriodUtils.getYear(periodRange.start),
+            month = TimePeriodUtils.getMonth(periodRange.start),
+            startMs = periodRange.start,
+            endMs = periodRange.end
+        )
+        val durationMs = periodRange.duration
+        val previousMonth = MonthPeriod(
+            year = TimePeriodUtils.getYear(periodRange.start - durationMs),
+            month = TimePeriodUtils.getMonth(periodRange.start - durationMs),
+            startMs = periodRange.start - durationMs,
+            endMs = periodRange.start
+        )
+        return generateInsightsForPeriods(
+            currentMonth = currentMonth,
+            previousMonth = previousMonth,
+            categories = categories,
+            allExpenses = allExpenses,
+            displayCurrency = displayCurrency,
+            conversionWarnings = conversionWarnings
+        )
+    }
+
+    /**
+     * Original overload: generates insights for the current month (from [TimeProvider.now]).
+     */
     suspend fun generateInsights(
         categories: List<AnalyticsCategoryRef>,
         allExpenses: List<ExpenseSnapshot>,
         displayCurrency: String = "EUR",
         conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
-    ): InsightsSnapshot = coroutineScope {
+    ): InsightsSnapshot {
         val now = timeProvider.now()
         val currentMonth = getMonthPeriod(now)
         val previousMonth = getPreviousMonthPeriod(currentMonth)
+        return generateInsightsForPeriods(
+            currentMonth = currentMonth,
+            previousMonth = previousMonth,
+            categories = categories,
+            allExpenses = allExpenses,
+            displayCurrency = displayCurrency,
+            conversionWarnings = conversionWarnings
+        )
+    }
+
+    /**
+     * Internal implementation shared by both [generateInsights] overloads.
+     */
+    private suspend fun generateInsightsForPeriods(
+        currentMonth: MonthPeriod,
+        previousMonth: MonthPeriod,
+        categories: List<AnalyticsCategoryRef>,
+        allExpenses: List<ExpenseSnapshot>,
+        displayCurrency: String,
+        conversionWarnings: List<AnalyticsConversionWarning>
+    ): InsightsSnapshot = coroutineScope {
+        // Compute a reference "now" for relative-period calculations (day-of-week analysis etc.)
+        val now = timeProvider.now()
 
         val categoryMap = categories.associateBy { it.id }
 
@@ -433,8 +499,21 @@ class InsightsEngine @Inject constructor(
         }
 
         // ── Path 2: statistical in-memory detection (IQR / MAD / contextual) ──
+        // AI-2: Compute recurring merchant keys to suppress recurring expenses
+        // from statistical anomaly detection.
+        val recurringKeys: Set<String> = try {
+            recurringExpenseEngine.getPatternsFromSnapshots(allExpenses)
+                .mapNotNull { pattern ->
+                    pattern.merchantName.takeIf { it.isNotBlank() }
+                        ?.let { com.yourname.expensetracker.domain.util.MerchantKeyGenerator.generate(it) }
+                        ?.takeIf { it.isNotBlank() }
+                }
+                .toSet()
+        } catch (e: Exception) {
+            emptySet()
+        }
         val statisticalAnomalies: List<AnomalyTransaction> =
-            anomalyDetector.detect(currentMonth, analyticsCategoryMap, allExpenses, displayCurrency)
+            anomalyDetector.detect(currentMonth, analyticsCategoryMap, allExpenses, displayCurrency, recurringKeys)
 
         // ── Merge: deduplicate by expense.id; statistical results fill gaps ────
         val merged = mutableMapOf<Long, AnomalyTransaction>()

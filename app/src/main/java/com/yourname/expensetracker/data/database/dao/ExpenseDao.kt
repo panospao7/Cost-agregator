@@ -1526,16 +1526,16 @@ AND LENGTH(:merchantKey) >= 8
     @Query("SELECT * FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY date DESC LIMIT :limit")
     suspend fun getLocatedExpensesBatch(limit: Int): List<Expense>
 
-    /** All expenses that still lack coordinates. */
-    @Query("SELECT * FROM expenses WHERE latitude IS NULL ORDER BY date DESC LIMIT :limit")
+    /** All expenses that still lack coordinates (partial or missing). */
+    @Query("SELECT * FROM expenses WHERE latitude IS NULL OR longitude IS NULL ORDER BY date DESC LIMIT :limit")
     suspend fun getUnlocatedExpenses(limit: Int): List<Expense>
 
     /** Count of located expenses — used for stats display. */
     @Query("SELECT COUNT(*) FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
     suspend fun countLocated(): Int
 
-    /** Count of unlocated expenses — used by backfill worker and stats display. */
-    @Query("SELECT COUNT(*) FROM expenses WHERE latitude IS NULL")
+    /** Count of unlocated expenses (partial or missing coordinates). */
+    @Query("SELECT COUNT(*) FROM expenses WHERE latitude IS NULL OR longitude IS NULL")
     suspend fun countUnlocated(): Int
 
     /**
@@ -1543,7 +1543,7 @@ AND LENGTH(:merchantKey) >= 8
      * Bug #23 fix: excludes permanently-unresolvable expenses so the worker
      * does not retry them indefinitely.
      */
-    @Query("SELECT * FROM expenses WHERE latitude IS NULL AND backfillAttempts < :maxAttempts ORDER BY date DESC LIMIT :limit")
+    @Query("SELECT * FROM expenses WHERE (latitude IS NULL OR longitude IS NULL) AND backfillAttempts < :maxAttempts ORDER BY date DESC LIMIT :limit")
     suspend fun getUnlocatedExpensesForBackfill(limit: Int, maxAttempts: Int = 3): List<Expense>
 
     /** Increment the backfill attempt counter for an expense that could not be resolved. */
@@ -1620,8 +1620,8 @@ AND LENGTH(:merchantKey) >= 8
     """)
     suspend fun clearLocation(expenseId: Long)
 
-    /** Reactive flow of unlocated expenses — used by Map tab unlocated panel. */
-    @Query("SELECT * FROM expenses WHERE latitude IS NULL ORDER BY date DESC LIMIT :limit")
+    /** Reactive flow of unlocated expenses (partial or missing coordinates). */
+    @Query("SELECT * FROM expenses WHERE latitude IS NULL OR longitude IS NULL ORDER BY date DESC LIMIT :limit")
     fun getUnlocatedExpensesFlow(limit: Int = 100): Flow<List<Expense>>
 
     /**
@@ -1633,6 +1633,7 @@ AND LENGTH(:merchantKey) >= 8
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as cnt
         FROM expenses
         WHERE latitude IS NOT NULL
+          AND longitude IS NOT NULL
           AND ${SPENDING_TYPE_SQL}
           AND isNotMine = 0
           AND merchantKey IS NOT NULL

@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.location.AreaSpending
 import com.yourname.expensetracker.domain.location.AreaSpendingEngine
 import com.yourname.expensetracker.domain.location.LocatedExpense
@@ -934,6 +935,10 @@ class AnalyticsViewModel @Inject constructor(
         )
     }
 
+    /**
+     * Detects suspect transactions using [DuplicateDetectionPolicy] for the
+     * canonical duplicate window and amount tolerance (AI-3).
+     */
     private fun detectSuspectTransactions(
         currentExpenses: List<ExpenseSnapshot>,
         displayCurrency: String
@@ -941,7 +946,11 @@ class AnalyticsViewModel @Inject constructor(
         if (currentExpenses.isEmpty()) return emptyList()
 
         val suspects = mutableListOf<SuspectTransaction>()
-        val windowMs = TimePeriodUtils.DAY_IN_MILLIS // 24-hour duplicate window
+        // AI-3: Use canonical window from DuplicateDetectionPolicy (5 min) for
+        // near-duplicate detection, plus a 24-hour broader window for same-day
+        // duplicate charges (the policy window is too narrow for manual review).
+        val canonicalWindowMs = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS // 5 min
+        val broadWindowMs = TimePeriodUtils.DAY_IN_MILLIS // 24h for same-day duplicates
 
         // Average transaction amount for outlier detection
         val avgAmount = currentExpenses.map { it.effectiveAmount }.average()
@@ -951,16 +960,18 @@ class AnalyticsViewModel @Inject constructor(
 
         val sorted = currentExpenses.sortedBy { it.date }
 
-        // 1. Near-duplicate detection: same amount + merchant within 24h
+        // 1. Near-duplicate detection: use DuplicateDetectionPolicy methods
         for (i in sorted.indices) {
             val a = sorted[i]
             for (j in i + 1 until sorted.size) {
                 val b = sorted[j]
-                if (b.date - a.date > windowMs) break
-                if (Math.abs(a.effectiveAmount - b.effectiveAmount) < 0.01 &&
+                // Check broad 24-hour window first; then apply canonical policy check
+                if (!DuplicateDetectionPolicy.isWithinWindow(a.date, b.date, broadWindowMs)) break
+                if (DuplicateDetectionPolicy.areAmountsEqual(a.effectiveAmount, b.effectiveAmount) &&
                     a.merchant.trim().equals(b.merchant.trim(), ignoreCase = true) &&
                     !flagged.contains(b.id)) {
                     flagged.add(b.id)
+                    val isCanonical = DuplicateDetectionPolicy.isWithinWindow(a.date, b.date, canonicalWindowMs)
                     suspects.add(
                         SuspectTransaction(
                             expenseId = b.id,
@@ -969,7 +980,8 @@ class AnalyticsViewModel @Inject constructor(
                             currency = displayCurrency,
                             merchant = b.merchant,
                             reason = SuspectReason.NEAR_DUPLICATE,
-                            reasonLabel = "Possible double charge",
+                            reasonLabel = if (isCanonical) "Possible double charge (blocking)"
+                                else "Possible double charge (24h window)",
                             duplicateOfId = a.id
                         )
                     )

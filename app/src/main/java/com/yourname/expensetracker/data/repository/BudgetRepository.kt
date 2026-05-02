@@ -139,6 +139,13 @@ class BudgetRepository @Inject constructor(
         var effectiveLimit = baseLimit
 
         // LOG-002: Implement Compounding Rollover - BUG-2 FIX
+        //
+        // BUD-2: This loop calls getAggregateSpent() once per completed period,
+        // resulting in N+1 queries for N past periods. For budgets with many
+        // rollover periods (e.g. a daily budget with years of history) this is
+        // a performance gap. A future optimization should batch-fetch all period
+        // spendings with a single multi-period range query, or compute rollover
+        // incrementally and persist the accumulated surplus.
         if (budget.rollover) {
             val budgetFirstStart = budget.startDate
             val periods = mutableListOf<PeriodRange>()
@@ -374,11 +381,15 @@ class BudgetRepository @Inject constructor(
         val daysInCurrentMonth = TimePeriodUtils.getDaysInMonth(now).coerceAtLeast(1)
         val monthsDivisor = daysDiff.toDouble() / daysInCurrentMonth.toDouble()
 
-        val categorySpentById: Map<Long, Double> = expenseDao.getCategorySpentTotalsInPeriod(
-            categoryIds = categoriesWithoutBudget.map { it.id },
-            startMs = effectiveStart,
-            endMs = endExclusive
-        ).associateToCategoryTotalMap()
+        // BUD-4: Use MultiCurrencyRepository instead of deprecated raw-sum DAO call.
+        // getHomeCurrencyPurchaseCategoryTotals returns Map<Long?, MoneyAggregate>;
+        // we filter to only the categories without budgets and extract .displayAmount.
+        val categorySpentById: Map<Long, Double> = multiCurrencyRepository
+            .getHomeCurrencyPurchaseCategoryTotals(effectiveStart, endExclusive)
+            .entries
+            .filter { it.key != null }
+            .associate { it.key!! to it.value.displayAmount }
+            .filterKeys { it in categoriesWithoutBudget.map { cat -> cat.id } }
 
         val basedOnMonths = Math.round(monthsDivisor).toInt().coerceAtLeast(1)
 

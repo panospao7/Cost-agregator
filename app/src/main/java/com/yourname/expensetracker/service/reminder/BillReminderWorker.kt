@@ -158,7 +158,6 @@ class BillReminderWorker @AssistedInject constructor(
     companion object {
         const val TAG = "BillReminderWorker"
         const val WORK_NAME = "bill_reminder_periodic"
-        private const val PERIOD_INTERVAL_HOURS = 6L
 
         private const val CHANNEL_ID = "bill_reminders"
         private const val CHANNEL_NAME = "Bill Reminders"
@@ -166,28 +165,42 @@ class BillReminderWorker @AssistedInject constructor(
 
         /**
          * Schedules the periodic bill-reminder worker.
-         *
-         * Runs every [PERIOD_INTERVAL_HOURS] hours, with a 15-minute flex interval.
+         * Reads interval, flex, and constraints from [WorkerSpec.DEFAULTS] for the canonical config.
          * Uses [ExistingPeriodicWorkPolicy.KEEP] so only one schedule is active.
          */
         fun schedule(context: Context) {
-            val request = PeriodicWorkRequestBuilder<BillReminderWorker>(
-                PERIOD_INTERVAL_HOURS, TimeUnit.HOURS,
-                15, TimeUnit.MINUTES
-            )
-                .setConstraints(
-                    Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
-                        .build()
+            val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return
+            if (!spec.enabled) {
+                Log.w(TAG, "Worker $WORK_NAME disabled by spec, skipping schedule")
+                return
+            }
+            val intervalHours = spec.repeatIntervalHours ?: run {
+                Log.w(TAG, "Worker $WORK_NAME has no repeat interval, skipping periodic schedule")
+                return
+            }
+            val flexMinutes = spec.flexMinutes
+
+            val builder = if (flexMinutes != null) {
+                PeriodicWorkRequestBuilder<BillReminderWorker>(
+                    intervalHours, TimeUnit.HOURS,
+                    flexMinutes, TimeUnit.MINUTES
                 )
+            } else {
+                PeriodicWorkRequestBuilder<BillReminderWorker>(
+                    intervalHours, TimeUnit.HOURS
+                )
+            }
+
+            val request = builder
+                .setConstraints(spec.constraints)
                 .build()
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
+                spec.existingWorkPolicy,
                 request
             )
-            Log.d(TAG, "BillReminderWorker scheduled every $PERIOD_INTERVAL_HOURS hours")
+            Log.d(TAG, "BillReminderWorker scheduled (interval=${intervalHours}h, flex=${flexMinutes}min)")
         }
     }
 }

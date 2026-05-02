@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
@@ -49,11 +50,9 @@ class SmartSavingsEngine @Inject constructor(
     private val budgetCalculator: BudgetCalculator,
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
     private val timeProvider: TimeProvider,
-    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
-    // TODO: Inject RecurringLifecycleCoordinator for recurring-aware safe-to-save
-    // calculations. The coordinator's generateOccurrences() should be used to
-    // project recurring commitments when determining discretionary spending
-    // capacity, replacing the current ad-hoc recurring pattern estimates.
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    /** AI-4: CashFlowCalculator provides the canonical list of upcoming recurring obligations. */
+    private val cashFlowCalculator: CashFlowCalculator
 ) {
     companion object {
         private const val DAY_IN_MILLIS = 24 * 60 * 60 * 1000L
@@ -346,7 +345,11 @@ class SmartSavingsEngine @Inject constructor(
             0.0
         }
 
-        val knownUpcoming = 0.0
+        // AI-4: Calculate known upcoming obligations from CashFlowCalculator using
+        // occurrence-driven recurring rules + planned expenses (deduplicated).
+        val daysRemainingInMonth = TimePeriodUtils.daysBetween(now, TimePeriodUtils.getEndOfMonth(now))
+        val upcomingPatterns = cashFlowCalculator.getUpcomingBills(daysAhead = daysRemainingInMonth.coerceAtLeast(1))
+        val knownUpcoming = upcomingPatterns.sumOf { it.averageAmount }
         val monthlyResult = monteCarloSimulator.simulate(
             spentToDate = monthSpentToDate,
             knownUpcoming = knownUpcoming,

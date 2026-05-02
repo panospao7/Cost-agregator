@@ -534,7 +534,7 @@ fun ReviewScreen(
                 ) {
                     com.yourname.expensetracker.ui.screens.debug.CategorizationDebugScreen(
                         initialMerchant = review.suggestedMerchant,
-                        initialAmount = review.suggestedAmount,
+                        initialAmount = review.suggestedAmount ?: 0.0,
                         initialTimestamp = review.createdAt,
                         onNavigateBack = { debugReview = null }
                     )
@@ -850,7 +850,7 @@ fun ReviewCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         AmountText(
-                            amount = review.suggestedAmount,
+                            amount = review.suggestedAmount ?: 0.0,
                             style = MaterialTheme.typography.headlineSmall,
                             color = SemanticColors.TextPrimary
                         )
@@ -1486,7 +1486,7 @@ fun EditReviewDialog(
     geocodingService: com.yourname.expensetracker.domain.location.GeocodingService
 ) {
     var amount by remember {
-        mutableStateOf(String.format("%.2f", initialReceiptPrefill?.amount ?: review.suggestedAmount))
+        mutableStateOf(String.format("%.2f", initialReceiptPrefill?.amount ?: review.suggestedAmount ?: 0.0))
     }
     var merchant by remember { mutableStateOf(initialReceiptPrefill?.merchant ?: review.suggestedMerchant) }
     var selectedDateMs by remember { mutableStateOf(initialReceiptPrefill?.date ?: review.suggestedDate ?: review.createdAt) }
@@ -1777,7 +1777,7 @@ fun EditReviewDialog(
                     onClick = {
                         haptic(HapticType.Success)
                         val parsedAmount = AmountUtils.parseAmount(amount)
-                        val editedAmount = if (parsedAmount != null && kotlin.math.abs(parsedAmount - review.suggestedAmount) > 0.001) parsedAmount else null
+                        val editedAmount = if (parsedAmount != null && kotlin.math.abs(parsedAmount - (review.suggestedAmount ?: 0.0)) > 0.001) parsedAmount else null
                         val editedMerchant = merchant.takeIf { it != review.suggestedMerchant }
                         val editedCategory = selectedCategoryId.takeIf { it != review.suggestedCategoryId }
                         val originalType = parseTransactionTypeOrNull(review.suggestedType)

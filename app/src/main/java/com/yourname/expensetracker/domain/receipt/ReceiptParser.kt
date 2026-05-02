@@ -24,13 +24,12 @@ import timber.log.Timber
  * receipt total tax field, there is a risk that the tax value is counted
  * twice: once in the sum of line items and once in the explicit tax field.
  *
- * Currently the parser does NOT subtract the tax value from the line-item
- * sum when computing the subtotal ([finalSubtotal] = total - tax). If the
- * total already excludes tax (common in some receipt formats), this
- * calculation will incorrectly inflate the subtotal. A future fix should
- * detect whether the receipt total is tax-inclusive or tax-exclusive
- * (e.g. by checking for a "TOTAL INCLUDING VAT" vs "SUBTOTAL" indicator)
- * and adjust the subtotal calculation accordingly.
+ * ## RCP-4 fix
+ * The parser now sets [ParsedReceipt.taxInclusive] when it detects that the
+ * sum of line items is within 5% of the receipt total AND a separate tax
+ * value was also extracted. Downstream consumers should check this flag to
+ * decide whether the total already includes the tax amount, avoiding
+ * double-counting when computing subtotal = total - tax.
  */
 @Singleton
 class ReceiptParser @Inject constructor(
@@ -64,7 +63,16 @@ class ReceiptParser @Inject constructor(
         val date: Long?,
         val currency: String,
         val lineItems: List<LineItem>,
-        val confidence: Float
+        val confidence: Float,
+        /**
+         * RCP-4: Set to `true` when we detect that tax is already included
+         * in both line item totals and the receipt total. Downstream consumers
+         * should check this flag to avoid double-counting tax (e.g. when
+         * computing subtotal = total - tax, if the total is tax-inclusive
+         * and the line items already sum to the total including tax, the
+         * subtraction would be incorrect for tax-exclusive calculations).
+         */
+        val taxInclusive: Boolean = false
     )
 
     data class LineItem(
@@ -168,11 +176,21 @@ class ReceiptParser @Inject constructor(
         // 8. Cross-validate
         val finalTotal = total ?: lineItems.sumOf { it.totalPrice }.takeIf { it > 0 }
 
-        // 9. Calculate subtotal
+        // 9. Detect tax-inclusive: if tax was found separately AND line items
+        //    sum is close to the total (within 5%), the tax is already embedded
+        //    in both the line items and the receipt total. Mark as inclusive so
+        //    downstream consumers avoid double-counting.
+        val taxInclusive = if (finalTotal != null && tax != null && lineItems.isNotEmpty()) {
+            val itemsSum = lineItems.sumOf { it.totalPrice }
+            val diff = kotlin.math.abs(finalTotal - itemsSum)
+            diff < finalTotal * 0.05
+        } else false
+
+        // 10. Calculate subtotal
         val finalSubtotal = subtotal
             ?: if (finalTotal != null && tax != null) finalTotal - tax else null
 
-        // 10. Confidence - set to 0 if critical fields are missing
+        // 11. Confidence - set to 0 if critical fields are missing
         val hasCriticalData = merchant != null || finalTotal != null || date != null
         val confidence = if (!hasCriticalData) {
             0f
@@ -189,7 +207,8 @@ class ReceiptParser @Inject constructor(
             // Fallback chain: detected currency → explicit homeCurrency → "EUR" last resort
             currency = detectCurrency(cleanedText) ?: homeCurrency,
             lineItems = lineItems,
-            confidence = confidence
+            confidence = confidence,
+            taxInclusive = taxInclusive
         )
     }
 

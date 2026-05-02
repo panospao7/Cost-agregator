@@ -420,9 +420,8 @@ class NotificationProcessingPipeline @Inject constructor(
      * - **Merchant:** `"Unknown"` — used when no merchant hint or parser
      *   result is available.  This is a **UI placeholder only**; it never
      *   becomes the merchant value of a real expense row.
-     * - **Amount:** `0.01` — defined in [ReviewQueueRepository] and
-     *   [ReceiptRepository] as `FALLBACK_SUGGESTED_AMOUNT`.  Used when no
-     *   amount could be parsed.  Blocked at approval time.
+     * - **Amount:** `null` — `suggestedAmount` is null when no amount could be
+     *   parsed.  Blocked at approval time.
      *
      * Both guard gates (approveReview in ReviewQueueRepository and
      * TransactionLifecycleCoordinator.createExpense) reject any attempt to
@@ -572,7 +571,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             return existing.any { review ->
                 review.status == com.yourname.expensetracker.data.database.entity.PendingReviewStatus.PENDING &&
                     review.suggestedCurrency.equals(currency, ignoreCase = true) &&
-                    abs(review.suggestedAmount - amount) < DuplicateDetectionPolicy.AMOUNT_TOLERANCE
+                    abs((review.suggestedAmount ?: 0.0) - amount) < DuplicateDetectionPolicy.AMOUNT_TOLERANCE
             }
         }
 

@@ -96,20 +96,14 @@ class ReviewQueueRepository @Inject constructor(
         val review = pendingReviewDao.getById(reviewId)
             ?: return Result.Error(message = ERROR_REVIEW_NOT_FOUND)
 
-    val amount: Double = finalAmount ?: review.suggestedAmount
-    val merchant: String = finalMerchant ?: review.suggestedMerchant
-
-    // ── Fake value blocking (PR 11 policy) ──────────────────────────────
-    // Block approval when the parser fell back to a synthetic amount (0.01)
+    // ── Synthetic placeholder blocking ──────────────────────────────────
+    // Block approval when the parser could not extract an amount (suggestedAmount is null)
     // and the user has not yet provided a real override.
-    // These sentinel values are UI placeholders only — they must never become
-    // real expense rows.  The coordinator also rejects any creation request
-    // that carries these values.
-    // TODO: Use review.extractionState == ExtractionState.SYNTHETIC_PLACEHOLDER
-    //       instead of hardcoded amount comparison after v110 migration is live.
-    if (review.suggestedAmount == PendingReview.FALLBACK_SUGGESTED_AMOUNT && finalAmount == null) {
+    if (review.suggestedAmount == null && finalAmount == null) {
         return Result.Error(message = "Cannot approve review with synthetic fallback amount. Please edit the amount first.")
     }
+    val amount: Double = finalAmount ?: review.suggestedAmount!!
+    val merchant: String = finalMerchant ?: review.suggestedMerchant
     if (review.suggestedMerchant == "Unknown" && finalMerchant == null) {
         return Result.Error(message = "Cannot approve review with unknown merchant. Please edit the merchant first.")
     }
@@ -257,8 +251,8 @@ class ReviewQueueRepository @Inject constructor(
                         originalMerchant = review.suggestedMerchant,
                         correctedMerchant = if (finalMerchant != null && finalMerchant != review.suggestedMerchant)
                             finalMerchant else null,
-                        originalAmount = review.suggestedAmount,
-                        correctedAmount = if (finalAmount != null && finalAmount != review.suggestedAmount)
+                        originalAmount = review.suggestedAmount ?: 0.0,
+                        correctedAmount = if (finalAmount != null && finalAmount != (review.suggestedAmount ?: 0.0))
                             finalAmount else null,
                         originalCategoryId = review.suggestedCategoryId,
                         correctedCategoryId = if (finalCategoryId != null && finalCategoryId != review.suggestedCategoryId)
@@ -366,7 +360,7 @@ class ReviewQueueRepository @Inject constructor(
                 packageName = review.packageName,
                 originalMerchant = review.suggestedMerchant,
                 correctedMerchant = null,
-                originalAmount = review.suggestedAmount,
+                originalAmount = review.suggestedAmount ?: 0.0,
                 correctedAmount = null,
                 originalCategoryId = review.suggestedCategoryId,
                 correctedCategoryId = null,
@@ -491,7 +485,7 @@ class ReviewQueueRepository @Inject constructor(
         val pendingReview = if (isRelevant && parsed == null) {
             PendingReview(
                 rawNotificationId = id,
-                suggestedAmount = PendingReview.FALLBACK_SUGGESTED_AMOUNT,
+                suggestedAmount = null,
                 suggestedCurrency = "EUR",
                 suggestedMerchant = "Unknown",
                 suggestedMerchantKey = MerchantKeyGenerator.generate("Unknown"),

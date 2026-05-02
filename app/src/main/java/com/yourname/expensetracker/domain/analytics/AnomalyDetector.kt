@@ -29,16 +29,14 @@ import kotlin.math.abs
  * This class operates purely on the in-memory expense list — no DB calls.
  * It complements [InsightsEngine]'s merchant-level DB-backed detection.
  *
- * ## Known limitation
- * Recurring/scheduled expenses (rent, subscriptions, insurance premiums) that
- * appear month after month with similar amounts are **intentionally not
- * suppressed** by the current statistical methods. Because these transactions
- * form a tight cluster in the amount distribution, they typically do not exceed
- * the IQR or MAD thresholds and are rarely flagged. However, if a recurring
- * expense changes significantly (e.g. a rent increase), it **may** trigger an
- * alert — which is arguably the desired behavior. A future enhancement could
- * add explicit recurring-expense suppression by cross-referencing
- * [com.yourname.expensetracker.domain.logic.RecurringExpenseEngine] patterns.
+ * ## AI-2: Recurring-expense suppression (RESOLVED)
+ * Recurring/scheduled expenses (rent, subscriptions, insurance premiums) are
+ * now suppressed via the [suppressRecurringMerchantKeys] parameter on [detect].
+ * The caller passes a set of merchant keys derived from recurring rules
+ * ([com.yourname.expensetracker.domain.logic.RecurringExpenseEngine.getPatterns]),
+ * and expenses whose merchant key matches are excluded from statistical outlier
+ * detection. This prevents routine bills from triggering anomaly alerts while
+ * still catching unusual spikes in recurring amounts.
  */
 @Singleton
 class AnomalyDetector @Inject constructor(
@@ -114,20 +112,32 @@ class AnomalyDetector @Inject constructor(
      * Results are sorted by [AnomalyTransaction.deviationMultiple] descending
      * (most extreme first).
      *
-     * Signature is identical to the original — drop-in replacement.
+     * ## AI-2: Recurring-expense suppression
+     * When [suppressRecurringMerchantKeys] is non-empty, any expense whose
+     * [ExpenseSnapshot.merchantKey] matches a key in this set is excluded from
+     * anomaly detection. This prevents routine recurring bills (rent, subscriptions,
+     * insurance) from triggering statistical outlier alerts. The caller is
+     * responsible for computing the set of merchant keys from recurring rules
+     * (e.g. via [com.yourname.expensetracker.domain.logic.RecurringExpenseEngine.getPatterns]).
+     *
+     * @param suppressRecurringMerchantKeys Set of merchant keys to suppress. Default empty = no suppression.
      */
     fun detect(
         monthPeriod: MonthPeriod,
         categoryMap: Map<Long, AnalyticsCategoryRef>,
         allExpenses: List<ExpenseSnapshot>,
-        displayCurrency: String = "EUR"
+        displayCurrency: String = "EUR",
+        suppressRecurringMerchantKeys: Set<String> = emptySet()
     ): List<AnomalyTransaction> {
 
         val monthExpenses = allExpenses.filter { expense ->
             expense.date >= monthPeriod.startMs &&
             expense.date < monthPeriod.endMs &&
             expense.transactionType == DomainTransactionType.PURCHASE &&
-            !expense.isNotMine
+            !expense.isNotMine &&
+            // AI-2: Skip expenses whose merchant key matches a recurring rule
+            (suppressRecurringMerchantKeys.isEmpty() || expense.merchantKey == null ||
+                expense.merchantKey !in suppressRecurringMerchantKeys)
         }
 
         if (monthExpenses.size < MIN_SAMPLES_GLOBAL) return emptyList()

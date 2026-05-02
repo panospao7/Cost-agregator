@@ -18,6 +18,9 @@ interface BudgetForecastDao {
     @Update
     suspend fun update(forecast: BudgetForecast)
     
+    @Query("SELECT * FROM budget_forecasts WHERE id = :id")
+    suspend fun getById(id: Long): BudgetForecast?
+
     @Query("SELECT * FROM budget_forecasts WHERE budgetId = :budgetId ORDER BY forecastDate DESC")
     fun getForecastsForBudget(budgetId: Long): Flow<List<BudgetForecast>>
     

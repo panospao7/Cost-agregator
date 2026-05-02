@@ -98,24 +98,35 @@ class ForecastInputAssembler @Inject constructor(
         )
     }
 
+    /**
+     * Maps entity [PlannedExpense] rows to domain [PlannedExpense] objects.
+     *
+     * ## FCST-1: Exclude FULFILLED planned expenses
+     * Planned expenses with status == "FULFILLED" have already been linked to an
+     * actual expense and must be excluded from forecast input to prevent
+     * double-counting. Since the domain model does not carry a status field,
+     * the filter is applied here at the mapping boundary.
+     */
     fun mapPlannedExpenses(
         plannedEntities: List<com.yourname.expensetracker.data.database.entity.PlannedExpense>
-    ): List<PlannedExpense> = plannedEntities.map { entity ->
-        PlannedExpense(
-            id = entity.id,
-            description = entity.description,
-            amount = entity.amount,
-            date = entity.date,
-            categoryId = entity.categoryId,
-            isRecurring = entity.isRecurring,
-            priority = when (entity.priority) {
-                EntityPlannedExpensePriority.MUST -> DomainPlannedExpensePriority.MUST
-                EntityPlannedExpensePriority.LIKELY -> DomainPlannedExpensePriority.LIKELY
-                EntityPlannedExpensePriority.OPTIONAL -> DomainPlannedExpensePriority.OPTIONAL
-            },
-            sourceOccurrenceKey = entity.sourceOccurrenceKey
-        )
-    }
+    ): List<PlannedExpense> = plannedEntities
+        .filter { entity -> entity.status != "FULFILLED" }
+        .map { entity ->
+            PlannedExpense(
+                id = entity.id,
+                description = entity.description,
+                amount = entity.amount,
+                date = entity.date,
+                categoryId = entity.categoryId,
+                isRecurring = entity.isRecurring,
+                priority = when (entity.priority) {
+                    EntityPlannedExpensePriority.MUST -> DomainPlannedExpensePriority.MUST
+                    EntityPlannedExpensePriority.LIKELY -> DomainPlannedExpensePriority.LIKELY
+                    EntityPlannedExpensePriority.OPTIONAL -> DomainPlannedExpensePriority.OPTIONAL
+                },
+                sourceOccurrenceKey = entity.sourceOccurrenceKey
+            )
+        }
 
     fun mapBudgetSnapshots(budgetStatuses: List<BudgetStatus>): List<BudgetStatusSnapshot> =
         budgetStatuses.map { status ->

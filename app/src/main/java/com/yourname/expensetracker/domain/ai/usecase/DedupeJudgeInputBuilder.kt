@@ -45,7 +45,7 @@ class DedupeJudgeInputBuilder @Inject constructor(
         // Use the dedicated policy-aware candidate retrieval instead of
         // the generic getExpensesBetween reporting query.
         val expenses = expenseRepository.getDuplicateCandidatesInWindow(
-            amount = review.suggestedAmount,
+            amount = review.suggestedAmount ?: 0.0,
             date = reviewDate,
             currency = review.suggestedCurrency,
             transactionType = reviewType,
@@ -54,7 +54,7 @@ class DedupeJudgeInputBuilder @Inject constructor(
             .filter { expense ->
                 expense.merchantKey == merchantKey
             }
-            .sortedBy { expense -> abs(expense.date - reviewDate) + (abs(expense.amount - review.suggestedAmount) * 1000).toLong() }
+            .sortedBy { expense -> abs(expense.date - reviewDate) + (abs(expense.amount - (review.suggestedAmount ?: 0.0)) * 1000).toLong() }
             .take(AppConfig.Ai.MAX_DEDUPE_CANDIDATES_FOR_AI)
 
         val pendingReviewCandidates = reviewQueueRepository.getPendingReviewsByMerchant(review.suggestedMerchant)
@@ -62,7 +62,7 @@ class DedupeJudgeInputBuilder @Inject constructor(
                 candidate.id != review.id &&
                     candidate.suggestedDate != null &&
                     abs(candidate.suggestedDate - reviewDate) <= DEDUPE_WINDOW_MS &&
-                    DuplicateDetectionPolicy.areAmountsEqual(candidate.suggestedAmount, review.suggestedAmount) &&
+                    DuplicateDetectionPolicy.areAmountsEqual(candidate.suggestedAmount ?: 0.0, review.suggestedAmount ?: 0.0) &&
                     DuplicateDetectionPolicy.normalizeCurrency(candidate.suggestedCurrency) == normalizedCurrency &&
                     DuplicateDetectionPolicy.areTypesCompatible(
                         reviewType,
@@ -71,7 +71,7 @@ class DedupeJudgeInputBuilder @Inject constructor(
             }
             .sortedBy { candidate ->
                 abs((candidate.suggestedDate ?: reviewDate) - reviewDate) +
-                    (abs(candidate.suggestedAmount - review.suggestedAmount) * 1000).toLong()
+                    (abs((candidate.suggestedAmount ?: 0.0) - (review.suggestedAmount ?: 0.0)) * 1000).toLong()
             }
 
         if (expenses.isEmpty() && pendingReviewCandidates.isEmpty()) {
@@ -84,7 +84,7 @@ class DedupeJudgeInputBuilder @Inject constructor(
             targetType = AiTargetType.PENDING_REVIEW,
             targetId = review.id,
             merchant = sanitizeLabel(review.suggestedMerchant, shouldRedact, "merchant"),
-            amount = review.suggestedAmount,
+            amount = review.suggestedAmount ?: 0.0,
             currency = review.suggestedCurrency,
             date = reviewDate,
             transactionType = review.suggestedType,
@@ -122,7 +122,7 @@ class DedupeJudgeInputBuilder @Inject constructor(
                         targetType = AiTargetType.PENDING_REVIEW,
                         targetId = candidate.id,
                         merchant = sanitizeLabel(candidate.suggestedMerchant, shouldRedact, "merchant"),
-                        amount = candidate.suggestedAmount,
+                        amount = candidate.suggestedAmount ?: 0.0,
                         currency = candidate.suggestedCurrency,
                         date = candidate.suggestedDate ?: reviewDate,
                         transactionType = candidate.suggestedType,

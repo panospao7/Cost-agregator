@@ -18,6 +18,16 @@ import kotlin.math.sqrt
  * - **Stage 2 (Stochastic)**: Sampled discretionary spending for remaining days using a log-normal
  *   distribution fitted to historical weekly totals
  *
+ * ## FCST-2: Double-count prevention
+ * The deterministic known-upcoming component is passed in as [knownUpcoming] from the caller
+ * (typically [SynthesisEngine]), which already deduplicates PlannedExpense occurrences against
+ * materialized RecurringOccurrence rows. The stochastic discretionary component is sampled from
+ * **historical weekly spending totals that include all past spending** — this is intentional,
+ * because past spending includes the same recurring bills that are also in the deterministic
+ * component. The two components operate on disjoint time domains: deterministic covers future
+ * committed obligations, while stochastic models future discretionary variability. There is no
+ * double-count within the same time period.
+ *
  * ## Algorithm
  * 1. Compute historical weekly spending distribution (via [HistoricalSpendingDistribution])
  * 2. For each of 1000 iterations:

@@ -112,8 +112,9 @@ class ReceiptLinkService @Inject constructor(
             receiptExpenseLinkDao.insert(link)
 
             // 4. For non-BANK_STATEMENT receipts: update legacy ScannedReceipt.expenseId
+            // RCP-8: Ensure updatedAt is set on every ScannedReceipt update.
             if (!isBankStatement) {
-                scannedReceiptDao.update(receipt.copy(expenseId = expenseId))
+                scannedReceiptDao.update(receipt.copy(expenseId = expenseId, updatedAt = now))
             }
 
             // I1: Propagate expenseId to warranty and return window for this receipt
@@ -172,6 +173,7 @@ class ReceiptLinkService @Inject constructor(
         return try {
             // Load receipt for metadata (may be null if already deleted)
             val receipt = scannedReceiptDao.getById(receiptId)
+            val now = timeProvider.now()
 
             val isBankStatement =
                 receipt?.documentType == ReceiptDocumentType.BANK_STATEMENT.name
@@ -182,17 +184,18 @@ class ReceiptLinkService @Inject constructor(
                 receiptExpenseLinkDao.unlink(receiptId, expenseId)
 
                 // 2. Determine correct ScannedReceipt.expenseId after unlinking
+                // RCP-8: Ensure updatedAt is set on every ScannedReceipt update.
                 if (!isBankStatement && receipt != null) {
                     val remainingLinks = receiptExpenseLinkDao.getLinksForReceipt(receiptId)
                     val primaryLinks = remainingLinks.filter { it.isPrimary }
 
                     if (primaryLinks.isEmpty()) {
                         // No remaining primary links — clear legacy field
-                        scannedReceiptDao.update(receipt.copy(expenseId = null))
+                        scannedReceiptDao.update(receipt.copy(expenseId = null, updatedAt = now))
                     } else {
                         // Another primary link exists — point to its expenseId
                         scannedReceiptDao.update(
-                            receipt.copy(expenseId = primaryLinks.first().expenseId)
+                            receipt.copy(expenseId = primaryLinks.first().expenseId, updatedAt = now)
                         )
                     }
                 }
@@ -206,7 +209,7 @@ class ReceiptLinkService @Inject constructor(
                         sourceType = sourceType,
                         documentType = documentType,
                         eventType = "RECEIPT_UNLINKED_FROM_EXPENSE",
-                        occurredAt = timeProvider.now(),
+                        occurredAt = now,
                         oldStatus = null,
                         newStatus = null,
                         actor = "system",

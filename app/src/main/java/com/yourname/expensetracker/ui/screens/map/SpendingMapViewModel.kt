@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.location.HeatmapPoint
 import com.yourname.expensetracker.domain.location.LocationInsightsEngine
 import com.yourname.expensetracker.domain.location.PlaceInsight
 import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -107,8 +108,9 @@ class SpendingMapViewModel @Inject constructor(
     private val heatmapEngine: SpendingHeatmapEngine,
  private val insightsEngine: LocationInsightsEngine,
  val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
- private val currencySettingsRepository: CurrencySettingsRepository,
- private val timeProvider: TimeProvider
+  private val currencySettingsRepository: CurrencySettingsRepository,
+  private val currencyConverter: CurrencyConverter,
+  private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SpendingMapState(referenceNowMillis = timeProvider.now()))
@@ -359,14 +361,26 @@ class SpendingMapViewModel @Inject constructor(
         // B11 fix: use safe-call instead of force-unwrap (!!). The Flow query
         // filters for non-null coordinates, but if a location is cleared between
         // emission and this mapping, force-unwrap would NPE-crash the app.
+        // LOC-3: Normalize marker amounts to home currency so map markers
+        // display amounts in the user's preferred currency regardless of the
+        // original expense currency.
         val markers = filteredExpenses.mapNotNull { e ->
             val lat = e.latitude ?: return@mapNotNull null
             val lon = e.longitude ?: return@mapNotNull null
+            val homeAmount = if (e.currency != currentState.homeCurrency) {
+                currencyConverter.convert(
+                    amount = e.amount,
+                    fromCurrency = e.currency,
+                    toCurrency = currentState.homeCurrency
+                )?.convertedAmount ?: e.amount // fallback to raw amount
+            } else {
+                e.amount
+            }
             MapExpenseMarker(
                 expenseId = e.id,
                 latitude = lat,
                 longitude = lon,
-                amount = e.amount,
+                amount = homeAmount,
                 merchant = e.merchant,
                 date = e.date,
                 locationSource = e.locationSource,

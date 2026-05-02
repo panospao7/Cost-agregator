@@ -10,7 +10,7 @@ interface NotificationService {
         notificationId: Int,
         title: String,
         message: String
-    )
+    ): DeliveryResult
 
     fun sendAiBriefingReady(
         notificationId: Int,

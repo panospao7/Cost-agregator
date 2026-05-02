@@ -27,7 +27,8 @@ object SavingsModule {
         budgetCalculator: com.yourname.expensetracker.domain.budget.BudgetCalculator,
         monteCarloSimulator: com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator,
         timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
-        analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
+        analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+        cashFlowCalculator: com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
     ): SmartSavingsEngine = SmartSavingsEngine(
         expenseRepository,
         categoryRepository,
@@ -35,7 +36,8 @@ object SavingsModule {
         budgetCalculator,
         monteCarloSimulator,
         timeProvider,
-        analyticsCurrencyNormalizer
+        analyticsCurrencyNormalizer,
+        cashFlowCalculator
     )
     
     @Provides

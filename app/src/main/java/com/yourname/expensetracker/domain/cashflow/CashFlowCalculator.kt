@@ -47,6 +47,18 @@ class CashFlowCalculator @Inject constructor(
     companion object {
         private const val TAG = "CashFlowCalculator"
     }
+
+    /**
+     * Calculates daily cash flow for a given date range.
+     *
+     * ## FCST-3: Occurrence-driven prediction
+     * This method uses [RecurringLifecycleCoordinator.generateOccurrences] (called inside
+     * [getUpcomingBills]) to materialise PLANNED occurrences from manual recurring rules,
+     * then queries [RecurringOccurrenceDao] for the canonical list of upcoming obligations.
+     * Detected-only patterns (without a manual rule) are handled via ad-hoc date matching
+     * on [RecurringPattern.nextExpectedDate]. This two-path approach ensures that all
+     * recurring obligations are captured without double-counting.
+     */
     suspend fun calculateDailyCashFlow(
         startDate: Date,
         endDate: Date,

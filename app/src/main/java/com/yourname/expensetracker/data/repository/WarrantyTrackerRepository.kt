@@ -243,6 +243,10 @@ class WarrantyTrackerRepository @Inject constructor(
         val purchaseDate = receipt.parsedDate ?: receipt.createdAt
         val warrantyEndDate = purchaseDate.toCalendarMonthEndDate(durationMonths)
 
+        // WRN-3: Only auto-accept warranty if confidence > 0.3.
+        // Below that threshold the warranty is flagged for human review.
+        val lowConfidence = confidence <= 0.3f
+
         return Warranty(
             receiptId = receipt.id,
             expenseId = receipt.expenseId,
@@ -254,7 +258,9 @@ class WarrantyTrackerRepository @Inject constructor(
             warrantyType = parseWarrantyType(warrantyType),
             supportPhone = supportPhone,
             supportEmail = supportEmail,
-            notes = returnConditions
+            notes = returnConditions,
+            extractionConfidence = confidence.toDouble(),
+            needsReview = lowConfidence
         )
     }
 

@@ -187,21 +187,13 @@ class AppStartupCoordinator @Inject constructor(
     /**
      * Schedules all periodic background workers at app startup.
      *
-     * ## E7: WorkerSpec.DEFAULTS not wired
+     * ## WKR-1: WorkerSpec.DEFAULTS is the runtime source of truth (RESOLVED)
      *
-     * Each worker's `schedule()` companion method currently uses its own
-     * hardcoded constraints and repeat intervals.  These values happen to
-     * match the [com.yourname.expensetracker.domain.workers.WorkerSpec.DEFAULTS]
-     * map, but **WorkerSpec.DEFAULTS is not the runtime source of truth**.
-     *
-     * Consequence: changing a spec in `WorkerSpec.DEFAULTS` will NOT
-     * propagate to the actual scheduling without also updating each
-     * worker's `schedule()` method.  This is a maintenance trap.
-     *
-     * Recommended fix: refactor each worker to read from
-     * `WorkerSpec.DEFAULTS[workerName]` for its constraints, interval,
-     * backoff policy, and enabled flag.  A shared scheduling utility
-     * function would eliminate this duplication entirely.
+     * Each worker's `schedule()` companion method now reads its interval,
+     * constraints, backoff policy, and enabled flag from
+     * [com.yourname.expensetracker.domain.workers.WorkerSpec.DEFAULTS].
+     * Changing a spec in `WorkerSpec.DEFAULTS` propagates to the actual
+     * scheduling without updating individual worker code.
      */
     private fun scheduleStartupWork(application: Application) {
         LocationBackfillWorker.schedule(application)

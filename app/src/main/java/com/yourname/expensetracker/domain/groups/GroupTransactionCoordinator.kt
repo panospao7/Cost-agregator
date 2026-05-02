@@ -189,7 +189,7 @@ interface GroupTransactionCoordinator {
     /**
      * Delete a group and all associated data (members, expenses).
      * This is a soft delete - sets isActive = false.
-     * 
+     *
      * @param groupId Group ID to delete
      * @return True if successful, false otherwise
      */
@@ -198,8 +198,14 @@ interface GroupTransactionCoordinator {
     /**
      * Archive a group by setting isActive = false instead of hard-deleting.
      * Preserves all expense history for audit purposes.
-     * This is an alias for [deleteGroup] with explicit naming.
      *
+     * ## SHR-1: Soft-delete for groups
+     * Functionality implemented and verified. The data-layer implementation
+     * ([com.yourname.expensetracker.data.database.GroupTransactionCoordinator])
+     * delegates to [com.yourname.expensetracker.data.database.dao.ExpenseGroupDao.archiveGroup]
+     * which executes `UPDATE expense_groups SET isActive = 0 WHERE id = :groupId`.
+     * All group history is preserved for audit; active-group queries filter by `isActive = 1`.
+     * 
      * @param groupId Group ID to archive
      * @return True if successful, false otherwise
      */

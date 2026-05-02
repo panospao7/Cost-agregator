@@ -114,7 +114,7 @@ class CrossSourceDeduplication @Inject constructor(
             if (!DuplicateDetectionPolicy.isWithinWindow(date, reviewDate)) continue
 
             // Check amount matches within shared tolerance
-            if (!DuplicateDetectionPolicy.areAmountsEqual(amount, review.suggestedAmount)) continue
+            if (!DuplicateDetectionPolicy.areAmountsEqual(amount, review.suggestedAmount ?: 0.0)) continue
 
             // Currency-aware guard: different currencies cannot be the same charge
             val reviewCurrency = DuplicateDetectionPolicy.normalizeCurrency(review.suggestedCurrency)
@@ -135,7 +135,7 @@ class CrossSourceDeduplication @Inject constructor(
                 DuplicateDetectionPolicy.ScoredCandidate(
                     candidate = review,
                     timeDeltaMs = kotlin.math.abs(date - reviewDate),
-                    amountDelta = kotlin.math.abs(amount - review.suggestedAmount),
+                    amountDelta = kotlin.math.abs(amount - (review.suggestedAmount ?: 0.0)),
                     merchantConfidence = merchantConf
                 )
             )

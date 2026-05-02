@@ -113,6 +113,7 @@ class LocationBackfillWorker @AssistedInject constructor(
                 )
             } catch (e: Exception) {
                 Log.w(TAG, "Resolver threw for expenseId=${expense.id} merchantToken=$merchantToken", e)
+                expenseRepository.incrementBackfillAttempts(expense.id)
                 shouldRetry = true
                 failed++
                 continue
@@ -173,30 +174,37 @@ class LocationBackfillWorker @AssistedInject constructor(
         /**
          * Enqueue a periodic backfill job.
          * Safe to call multiple times — uses [ExistingPeriodicWorkPolicy.KEEP].
+         * Reads interval and constraints from [WorkerSpec.DEFAULTS] for the canonical config.
          */
         fun schedule(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.UNMETERED)  // Wi-Fi only
-                .build()
+            val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return
+            if (!spec.enabled) {
+                Log.w(TAG, "Worker $WORK_NAME disabled by spec, skipping schedule")
+                return
+            }
+            val intervalHours = spec.repeatIntervalHours ?: run {
+                Log.w(TAG, "Worker $WORK_NAME has no repeat interval, skipping periodic schedule")
+                return
+            }
 
             val request = PeriodicWorkRequestBuilder<LocationBackfillWorker>(
-                repeatInterval = 6,
+                repeatInterval = intervalHours,
                 repeatIntervalTimeUnit = TimeUnit.HOURS
             )
-                .setConstraints(constraints)
+                .setConstraints(spec.constraints)
                 .setBackoffCriteria(
-                    BackoffPolicy.EXPONENTIAL,
-                    WorkRequest.MIN_BACKOFF_MILLIS,
-                    TimeUnit.MILLISECONDS
+                    spec.backoffPolicy,
+                    spec.backoffDelaySeconds,
+                    TimeUnit.SECONDS
                 )
                 .build()
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
+                spec.existingWorkPolicy,
                 request
             )
-            Log.d(TAG, "Backfill worker scheduled")
+            Log.d(TAG, "Backfill worker scheduled (interval=${intervalHours}h)")
         }
     }
 }

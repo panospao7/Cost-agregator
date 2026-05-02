@@ -92,28 +92,46 @@ class AccountingExportRepository @Inject constructor(
             }
 
             val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+            // SR-2: Atomic export via temp file + rename
+            // Write to a temporary file first, then atomically rename to the
+            // final path. This prevents partial/corrupted export files when
+            // the process is interrupted mid-write.
             val exportFile = File(exportDir, fileName)
+            val tempFile = File(exportDir, "${fileName}.tmp_${timeProvider.now()}")
 
-            when (format) {
-                ExportFormat.QUICKBOOKS_IIF -> FileWriter(exportFile).use { writer ->
-                    writer.write(quickBooksExporter.export(exportTransactions, categories))
-                }
-                ExportFormat.XERO_CSV -> FileWriter(exportFile).use { writer ->
-                    writer.write(xeroExporter.export(exportTransactions, categories))
-                }
-                ExportFormat.FRESHBOOKS_CSV -> FileWriter(exportFile).use { writer ->
-                    writer.write(freshBooksExporter.export(exportTransactions, categories))
-                }
-                ExportFormat.ACCOUNTANT_REPORT_PDF -> exportFile.outputStream().use { output ->
-                    output.write(
-                        accountantReportPdfExporter.export(
-                            expenses = expenses,
-                            categories = categories,
-                            startDate = startDate,
-                            endDate = endDate
+            try {
+                when (format) {
+                    ExportFormat.QUICKBOOKS_IIF -> FileWriter(tempFile).use { writer ->
+                        writer.write(quickBooksExporter.export(exportTransactions, categories))
+                    }
+                    ExportFormat.XERO_CSV -> FileWriter(tempFile).use { writer ->
+                        writer.write(xeroExporter.export(exportTransactions, categories))
+                    }
+                    ExportFormat.FRESHBOOKS_CSV -> FileWriter(tempFile).use { writer ->
+                        writer.write(freshBooksExporter.export(exportTransactions, categories))
+                    }
+                    ExportFormat.ACCOUNTANT_REPORT_PDF -> tempFile.outputStream().use { output ->
+                        output.write(
+                            accountantReportPdfExporter.export(
+                                expenses = expenses,
+                                categories = categories,
+                                startDate = startDate,
+                                endDate = endDate
+                            )
                         )
-                    )
+                    }
                 }
+
+                // Atomic rename — on most filesystems this is an atomic metadata
+                // operation when source and target are on the same volume.
+                if (!tempFile.renameTo(exportFile)) {
+                    // Rename failed (e.g. cross-volume); fall back to move/copy
+                    tempFile.copyTo(exportFile, overwrite = true)
+                    tempFile.delete()
+                }
+            } catch (e: Exception) {
+                tempFile.delete() // Clean up temp file on failure
+                throw e
             }
 
             val uri = FileProvider.getUriForFile(

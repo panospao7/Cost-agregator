@@ -1,11 +1,15 @@
 package com.yourname.expensetracker.domain.naturallanguage
 
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.first
+import timber.log.Timber
 
 /**
  * Natural language search engine for expense queries.
@@ -13,12 +17,15 @@ import javax.inject.Singleton
  * ## Known Limitations
  *
  * ### M1: Amount filters not currency-aware
- * Amount comparisons in [executeSearch] and [buildSearchFilter] compare raw
- * doubles without any currency conversion. If the user has expenses in multiple
- * currencies, an amount filter like "over $50" will match expenses of any currency
- * by nominal value only. A proper fix would require currency-aware amount comparison
- * that converts filter amounts to each expense's currency (or vice versa) using
- * the [com.yourname.expensetracker.domain.currency.CurrencyConverter].
+ * ~~Amount comparisons in [executeSearch] and [buildSearchFilter] compare raw
+ * doubles without any currency conversion.~~
+ *
+ * ## SR-1 FIXED in v112
+ * Amount comparisons now normalize expense amounts to the user's home currency
+ * using [CurrencyConverter] before comparing with the filter value. If currency
+ * conversion fails (missing exchange rate), the raw amount is used as fallback
+ * with a logged warning. This ensures queries like "over $50" match expenses
+ * in JPY, GBP, etc. after proper conversion.
  *
  * ### M2: Legacy parser bugs
  * - **Merchant extraction**: The [extractMerchants] method uses a basic regex
@@ -44,7 +51,9 @@ import javax.inject.Singleton
 class NaturalLanguageSearchEngine @Inject constructor(
     private val expenseQueryRepository: NaturalLanguageExpenseQueryRepository,
     private val speechInputGateway: SpeechInputGateway,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val currencyConverter: CurrencyConverter,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     
     private val amountPattern = Regex("""
@@ -196,11 +205,12 @@ class NaturalLanguageSearchEngine @Inject constructor(
     /**
      * Executes the search described by the interpretation.
      *
-     * ## Currency-awareness gap (M1)
-     * Amount comparisons in this method compare raw [Double] values without
-     * currency conversion. An expense with amount=50.0 in JPY will match a
-     * filter "over 50" just as readily as one with amount=50.0 in EUR.
-     * This is incorrect for multi-currency users. See class KDoc for details.
+     * ## SR-1: Currency-aware amount filtering
+     * Amount comparisons normalize expense amounts to the user's home currency
+     * via [CurrencyConverter] before comparing with the filter value. Expenses
+     * in foreign currencies are converted using the latest available exchange
+     * rate. If conversion fails (missing rate), the raw amount is used as
+     * fallback and the comparison may be inaccurate — this is logged.
      *
      * ## Multi-filter drilldown (M3)
      * The initial data pull from [expenseQueryRepository] is only date-bounded;
@@ -211,6 +221,7 @@ class NaturalLanguageSearchEngine @Inject constructor(
      */
     suspend fun executeSearch(interpretation: QueryInterpretation): List<NaturalLanguageExpense> {
         val (startMs, endMs) = resolveDateRangeMillis(interpretation.dateRange)
+        val homeCurrency = currencySettingsRepository.homeCurrency().first()
 
         return when (interpretation.queryType) {
             QueryType.TOTAL_AMOUNT -> {
@@ -226,14 +237,31 @@ class NaturalLanguageSearchEngine @Inject constructor(
                     }
                     .filter { expense ->
                         interpretation.extractedAmounts?.let { amounts ->
+                            // Normalize expense amount to home currency for fair comparison
+                            val normalizedAmount = if (expense.currency != homeCurrency) {
+                                currencyConverter.convert(
+                                    amount = expense.amount,
+                                    fromCurrency = expense.currency,
+                                    toCurrency = homeCurrency
+                                )?.convertedAmount ?: expense.amount.also {
+                                    // Log fallback when conversion fails
+                                    Timber.w(
+                                        "Currency conversion failed for %s from %s to %s — using raw amount %.2f",
+                                        expense.merchant, expense.currency, homeCurrency, expense.amount
+                                    )
+                                }
+                            } else {
+                                expense.amount
+                            }
+
                             amounts.any { amount ->
                                 when (amount.comparison) {
-                                    AmountComparison.EXACTLY -> expense.amount == amount.value
-                                    AmountComparison.OVER -> expense.amount > amount.value
-                                    AmountComparison.UNDER -> expense.amount < amount.value
+                                    AmountComparison.EXACTLY -> normalizedAmount == amount.value
+                                    AmountComparison.OVER -> normalizedAmount > amount.value
+                                    AmountComparison.UNDER -> normalizedAmount < amount.value
                                     AmountComparison.BETWEEN -> {
                                         val other = amounts.find { it != amount }
-                                        other?.let { expense.amount in amount.value..it.value } ?: true
+                                        other?.let { normalizedAmount in amount.value..it.value } ?: true
                                     }
                                 }
                             }
@@ -352,15 +380,12 @@ class NaturalLanguageSearchEngine @Inject constructor(
     /**
      * Builds a [SearchFilter] from the extracted entities.
      *
-     * ## Currency-awareness gap (M1)
-     * The [minAmount], [maxAmount], and [exactAmount] fields store raw [Double]
-     * values without any currency association. When this filter is later applied
-     * in [executeSearch], amounts from expenses in different currencies are
-     * compared by nominal value only. A future fix should normalize the filter
-     * amounts by converting them to each expense's currency (or vice versa)
-     * using [com.yourname.expensetracker.domain.currency.CurrencyConverter].
-     * The converted amounts should be compared at the point of filter application
-     * in [executeSearch], not stored in the filter itself.
+     * ## SR-1: Currency-aware filtering (fixed in v112)
+     * Amount normalization now happens at filter-application time in
+     * [executeSearch], not here in the filter builder. The [minAmount],
+     * [maxAmount], and [exactAmount] fields store raw filter values as
+     * extracted from the query; the actual comparison converts each
+     * expense's amount to the user's home currency using [CurrencyConverter].
      */
     private fun buildSearchFilter(
         amounts: List<ExtractedAmount>?,

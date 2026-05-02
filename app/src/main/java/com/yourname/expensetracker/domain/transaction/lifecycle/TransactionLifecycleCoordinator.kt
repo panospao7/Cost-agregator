@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
@@ -20,6 +21,7 @@ import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import org.json.JSONObject
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -43,6 +45,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val transactionEventDao: TransactionEventDao,
     private val timeProvider: TimeProvider,
+    private val currencyConverter: CurrencyConverter,
     private val sideEffectDispatcher: TransactionSideEffectDispatcher,
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
     private val restoreMaintenanceMode: RestoreMaintenanceMode
@@ -134,6 +137,30 @@ class TransactionLifecycleCoordinator @Inject constructor(
             }
         ).normalizeOwnership()
 
+        // ── Currency conversion snapshot ──────────────────────────────────
+        // If the expense currency differs from the home currency (EUR),
+        // populate baseAmount/baseCurrency/exchangeRateUsed so that reports
+        // can reconstruct the original home-currency value without re-converting.
+        val homeCurrency = CurrencyConverter.DEFAULT_BASE_CURRENCY
+        if (expense.currency != homeCurrency) {
+            val conversion = runCatching {
+                currencyConverter.convert(expense.amount, expense.currency, homeCurrency)
+            }.getOrNull()
+            if (conversion != null) {
+                expense = expense.copy(
+                    baseAmount = conversion.convertedAmount,
+                    baseCurrency = homeCurrency,
+                    exchangeRateUsed = conversion.rateUsed
+                )
+            } else {
+                Timber.w(
+                    "Cannot convert %s %.2f to %s for expense creation; " +
+                    "baseAmount/baseCurrency/exchangeRateUsed left at defaults",
+                    expense.currency, expense.amount, homeCurrency
+                )
+            }
+        }
+
         // 4. Deduplication — behaviour depends on mode
         val dedupMode = request.deduplicationMode
         val skipDedup = request.skipDeduplication
@@ -171,6 +198,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                             currency = expense.currency,
                             transactionType = expense.transactionType
                         )
+                        // Write duplicate resolution event
+                        writeDuplicateEvent(expense, request, now, duplicateId, "Bulk import duplicate")
                         return CreateExpenseResult.DuplicateSkipped(
                             existingExpenseId = duplicateId ?: -1L,
                             reason = "Bulk import duplicate: amount=${expense.amount}, merchant=${expense.merchant}, date=${expense.date}"
@@ -201,6 +230,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
                             currency = expense.currency,
                             transactionType = expense.transactionType
                         )
+                        // Write duplicate resolution event with metadata
+                        writeDuplicateEvent(expense, request, now, duplicateId, "Standard duplicate")
                         return CreateExpenseResult.DuplicateSkipped(
                             existingExpenseId = duplicateId ?: -1L,
                             reason = "Duplicate expense detected: amount=${expense.amount}, merchant=${expense.merchant}, date=${expense.date}"
@@ -512,6 +543,53 @@ class TransactionLifecycleCoordinator @Inject constructor(
             put("date", e.date)
             put("type", e.transactionType)
         }.toString()
+    }
+
+    /**
+     * Writes a [TransactionEvent] with eventType = [LifecycleEventType.CREATE_DUPLICATE_SKIPPED]
+     * to the audit log when a duplicate expense is detected and skipped during creation.
+     *
+     * The event includes structured metadata (JSON) with the existing expense ID, the
+     * duplicate reason, and the deduplication key so that the full duplicate-resolution
+     * history can be reconstructed for auditing or debugging.
+     */
+    private suspend fun writeDuplicateEvent(
+        expense: Expense,
+        request: CreateExpenseRequest,
+        occurredAt: Long,
+        duplicateExpenseId: Long?,
+        reason: String
+    ) {
+        val metadata = JSONObject().apply {
+            put("reason", reason)
+            put("existingExpenseId", duplicateExpenseId ?: -1L)
+            put("attemptedAmount", expense.amount)
+            put("attemptedMerchant", expense.merchant)
+            put("attemptedDate", expense.date)
+            put("attemptedCurrency", expense.currency)
+            put("attemptedMerchantKey", expense.merchantKey)
+        }.toString()
+
+        try {
+            transactionEventDao.insert(
+                TransactionEvent(
+                    expenseId = duplicateExpenseId,  // Reference the existing expense
+                    eventType = LifecycleEventType.CREATE_DUPLICATE_SKIPPED.name,
+                    source = request.source.name,
+                    actor = null,
+                    occurredAt = occurredAt,
+                    dedupeKey = expense.dedupeKey,
+                    duplicateExpenseId = duplicateExpenseId,
+                    beforeSnapshot = null,
+                    afterSnapshot = null,
+                    metadata = metadata,
+                    reason = reason
+                )
+            )
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            Timber.w(error, "Failed to write duplicate-skip event for expense")
+        }
     }
 
     companion object {

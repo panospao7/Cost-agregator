@@ -42,7 +42,7 @@ class ReviewExplanationInputBuilder @Inject constructor(
             } else {
                 review.suggestedMerchant
             },
-            amount                = review.suggestedAmount,
+            amount                = review.suggestedAmount ?: 0.0,
             currency              = review.suggestedCurrency,
             suggestedType         = review.suggestedType,
             suggestedCategoryId   = review.suggestedCategoryId,

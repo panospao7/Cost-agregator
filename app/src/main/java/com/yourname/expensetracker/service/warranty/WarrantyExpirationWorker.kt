@@ -163,23 +163,46 @@ class WarrantyExpirationWorker @AssistedInject constructor(
         private const val WORK_NAME = "warranty_expiration_check"
         private const val PREFS_NAME = "warranty_expiration_worker_prefs"
 
+        /**
+         * Schedules the warranty expiration worker.
+         * Reads interval and constraints from [WorkerSpec.DEFAULTS] for the canonical config.
+         *
+         * ## Persistent sent-state (WKR-3)
+         * Uses SharedPreferences ([PREFS_NAME]) to track last-notified timestamps per
+         * (warrantyId:window) key, preventing re-sending the same notification across
+         * device reboots or worker reschedules. Stale entries older than 90 days are
+         * cleaned up at the end of each run.
+         */
         fun schedule(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
-                .build()
+            val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return
+            if (!spec.enabled) {
+                Timber.w("Worker $WORK_NAME disabled by spec, skipping schedule")
+                return
+            }
+            val intervalHours = spec.repeatIntervalHours ?: run {
+                Timber.w("Worker $WORK_NAME has no repeat interval, skipping periodic schedule")
+                return
+            }
 
-            val request = PeriodicWorkRequestBuilder<WarrantyExpirationWorker>(1, TimeUnit.DAYS)
-                .setConstraints(constraints)
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.MINUTES)
+            val request = PeriodicWorkRequestBuilder<WarrantyExpirationWorker>(
+                repeatInterval = intervalHours,
+                repeatIntervalTimeUnit = TimeUnit.HOURS
+            )
+                .setConstraints(spec.constraints)
+                .setBackoffCriteria(
+                    spec.backoffPolicy,
+                    spec.backoffDelaySeconds,
+                    TimeUnit.SECONDS
+                )
                 .build()
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
+                spec.existingWorkPolicy,
                 request
             )
 
-            Timber.d("Scheduled warranty expiration worker")
+            Timber.d("Scheduled warranty expiration worker (interval=${intervalHours}h)")
         }
 
         fun cancel(context: Context) {

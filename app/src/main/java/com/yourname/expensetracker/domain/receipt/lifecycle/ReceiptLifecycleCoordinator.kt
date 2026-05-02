@@ -4,9 +4,11 @@ import android.net.Uri
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
@@ -65,6 +67,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val scannedReceiptDao: ScannedReceiptDao,
     private val receiptExpenseLinkDao: ReceiptExpenseLinkDao,
     private val receiptEventDao: ReceiptEventDao,
+    private val emailReceiptDao: EmailReceiptDao,
     private val timeProvider: TimeProvider,
     private val bankStatementLifecycleProcessor: BankStatementLifecycleProcessor,
     private val sideEffectDispatcher: ReceiptSideEffectDispatcher,
@@ -76,6 +79,24 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     companion object {
         /** Last-resort fallback currency when no home currency can be resolved. */
         private const val FALLBACK_CURRENCY = "EUR"
+
+        /**
+         * Resolves an email sender address to a known provider name for
+         * [EmailReceiptSource.provider]. Returns "unknown" if no provider
+         * can be identified.
+         */
+        private fun resolveEmailProvider(from: String): String {
+            val domain = from.substringAfterLast("@").substringBefore(">").lowercase().trim()
+            return when {
+                domain.contains("amazon") -> "amazon"
+                domain.contains("uber") -> "uber"
+                domain.contains("apple") -> "apple"
+                domain.contains("paypal") -> "paypal"
+                domain.contains("stripe") -> "stripe"
+                domain.contains("doordash") || domain.contains("ubereats") -> "food_delivery"
+                else -> "unknown"
+            }
+        }
     }
 
     /**
@@ -128,6 +149,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     null
                 }
             }
+
+            // TODO RCP-5: Add image perceptual hash check for pre-OCR duplicate
+            // detection.  The file hash above only catches byte-identical images.
+            // A perceptual hash (e.g. pHash or dHash) would catch near-duplicate
+            // images (resized, re-compressed, minor crops) without running OCR.
+            // This check should be done BEFORE the OCR call in ReceiptRepository,
+            // using a lightweight Bitmap decode + hash computation.
 
             // 3b. Check for duplicate receipt via file hash
             if (fileHash != null) {
@@ -379,7 +407,21 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         val savedId = scannedReceiptDao.insert(receipt)
         val saved = receipt.copy(id = savedId)
 
-        // 4. Write event
+        // 4. Create EmailReceiptSource record for provider tracking
+        // RCP-6: Track the email source alongside the receipt for full lifecycle.
+        val emailSource = EmailReceiptSource(
+            receiptId = savedId,
+            emailSender = emailData.from,
+            emailSubject = emailData.subject,
+            emailMessageId = emailData.messageId,
+            parsedAt = now,
+            provider = resolveEmailProvider(emailData.from),
+            confidence = 1.0,
+            fingerprint = ""
+        )
+        emailReceiptDao.insertOrIgnore(emailSource)
+
+        // 5. Write event
         receiptEventDao.insert(ReceiptEvent(
             receiptId = savedId,
             sourceType = ReceiptSourceType.EMAIL.name,
@@ -394,7 +436,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             errorDetails = null
         ))
 
-        // 5. Dispatch side effects
+        // 6. Dispatch side effects
         sideEffectDispatcher.dispatchAfterSave(saved)
 
         return Result.success(saved)

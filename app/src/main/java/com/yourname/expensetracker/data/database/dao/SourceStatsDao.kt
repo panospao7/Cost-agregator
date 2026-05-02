@@ -4,6 +4,29 @@ import androidx.room.*
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import kotlinx.coroutines.flow.Flow
 
+/**
+ * DAO for source-level statistics (notifications, accept/reject/duplicate counts).
+ *
+ * ## Future migration
+ *
+ * These statistics are currently maintained inline by [ReviewQueueRepository] via
+ * direct DAO increment/decrement calls.  This approach is fragile because:
+ *   - It requires every code path to remember to update stats (missing updates
+ *     lead to silent drift).
+ *   - It cannot reconstruct historical state (the table only reflects current
+ *     cumulative totals).
+ *
+ * ### Event-derived replacement
+ * A future refactoring should derive source statistics exclusively from the
+ * [com.yourname.expensetracker.data.database.entity.TransactionEvent] audit log.
+ * Every event type (CREATED, CREATE_DUPLICATE_SKIPPED, REJECTED, etc.) already
+ * carries the source and a timestamp, making it possible to **replay the event
+ * stream** to compute any aggregate at any point in time — without needing to
+ * keep inline counters in sync.
+ *
+ * Until that migration happens, this DAO and its call sites remain the
+ * canonical path for source-level stats.
+ */
 @Dao
 interface SourceStatsDao {
 

@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 110
+const val APP_DATABASE_SCHEMA_VERSION = 112
 
 @Database(
     entities = [
@@ -4913,6 +4913,19 @@ abstract class AppDatabase : RoomDatabase() {
          * different columns.  On upgrades from v104 the migration chain
          * produces the `index_` forms correctly.
          *
+         * ## MIG-1: Fresh-install callback parity
+         * Index name parity between FRESH_INSTALL_CALLBACK and entity
+         * declarations was documented in Batch E (see E5 above). The four
+         * `idx_`-prefixed indexes in the callback are intentionally kept
+         * as-is because:
+         *  - They are backed by `CREATE UNIQUE INDEX IF NOT EXISTS`, which is
+         *    idempotent — both `idx_` and `index_` forms can coexist harmlessly.
+         *  - Fresh-install paths are tested by
+         *    [FreshInstallIndexParityTest] and [FreshInstallBatch8ParityTest],
+         *    which verify the callback fires and produces correct schemas.
+         *  - Room's auto-migration from v104 produces the `index_` forms
+         *    correctly, so upgrade paths are not affected.
+         *
          * ## Invariants enforced
          *  - At most one raw_notification per (packageName, timestamp) combo per NULL pattern.
          *  - savings_goals: targetAmount > 0, currentAmount >= 0.
@@ -6770,9 +6783,195 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        // ═════════════════════════════════════════════════════════════════════
+        // MIGRATION_110_111 — CURR-2 + TRN-2
+        // ═════════════════════════════════════════════════════════════════════
+        //
+        // CURR-2: Change the unique index on exchange_rates from (fromCurrency, toCurrency)
+        //   to (fromCurrency, toCurrency, validDate) so that multiple rates can
+        //   coexist for the same currency pair at different dates, enabling
+        //   historically-accurate currency conversion in reports.
+        //
+        // TRN-2: Rebuild pending_reviews table to make suggestedAmount nullable (replace
+        //   the synthetic 0.01 sentinel with explicit null).
+        val MIGRATION_110_111 = object : androidx.room.migration.Migration(110, 111) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // ── CURR-2: Exchange rates historical index ─────────────────────────
+                // 1. Nullify any duplicate (fromCurrency, toCurrency, validDate) combinations
+                //    before creating the new unique index.  With the previous unique on
+                //    (fromCurrency, toCurrency) this is a safety measure for edge cases.
+                database.execSQL("""
+                    DELETE FROM exchange_rates WHERE id NOT IN (
+                        SELECT MIN(id) FROM exchange_rates
+                        GROUP BY fromCurrency, toCurrency, COALESCE(validDate, 0)
+                    )
+                """.trimIndent())
+
+                // 2. Ensure validDate is never NULL (default 0 for legacy rows)
+                database.execSQL("UPDATE exchange_rates SET validDate = 0 WHERE validDate IS NULL")
+
+                // 3. Drop old unique index (may have different name depending on
+                //    whether the DB was created by migration or fresh install)
+                database.execSQL("DROP INDEX IF EXISTS index_exchange_rates_from_to")
+                database.execSQL("DROP INDEX IF EXISTS index_exchange_rates_fromCurrency_toCurrency")
+
+                // 4. Drop old non-unique composite index (will be replaced by unique)
+                database.execSQL("DROP INDEX IF EXISTS index_exchange_rates_fromCurrency_toCurrency_validDate")
+
+                // 5. Create new unique index on (fromCurrency, toCurrency, validDate)
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS
+                    index_exchange_rates_fromCurrency_toCurrency_validDate
+                    ON exchange_rates (fromCurrency, toCurrency, validDate)
+                """.trimIndent())
+
+                // ── TRN-2: Make suggestedAmount nullable in pending_reviews ────────
+                // SQLite cannot ALTER COLUMN, so we rebuild the table with a nullable
+                // suggestedAmount column (REAL without NOT NULL).
+                val fkWasEnabled = database.query("PRAGMA foreign_keys").use {
+                    it.moveToFirst(); it.getInt(0) == 1
+                }
+                if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                try {
+                    database.beginTransaction()
+                    try {
+                        // Create new table with nullable suggestedAmount
+                        database.execSQL("""
+                            CREATE TABLE IF NOT EXISTS pending_reviews_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                rawNotificationId INTEGER,
+                                scannedReceiptId INTEGER,
+                                suggestedAmount REAL,
+                                suggestedCurrency TEXT NOT NULL,
+                                suggestedMerchant TEXT NOT NULL,
+                                suggestedMerchantKey TEXT,
+                                suggestedType TEXT NOT NULL,
+                                suggestedCategoryId INTEGER,
+                                suggestedDate INTEGER,
+                                confidence REAL NOT NULL,
+                                matchType TEXT,
+                                explanation TEXT,
+                                packageName TEXT NOT NULL,
+                                notificationTitle TEXT,
+                                notificationText TEXT,
+                                createdAt INTEGER NOT NULL,
+                                status TEXT NOT NULL DEFAULT 'PENDING',
+                                suggestedDirection TEXT,
+                                suggestedAccountName TEXT,
+                                suggestedLatitude REAL,
+                                suggestedLongitude REAL,
+                                extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION',
+                                FOREIGN KEY (rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
+                                FOREIGN KEY (scannedReceiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL
+                            )
+                        """.trimIndent())
+
+                        // Copy all existing data; suggestedAmount remains as-is for real rows,
+                        // synthetic placeholder rows (which had 0.01) will be set to NULL.
+                        // The 0.01→NULL conversion for synthetic placeholders is handled in
+                        // application code (ReviewQueueRepository now creates reviews with
+                        // suggestedAmount = null for SYNTHETIC_PLACEHOLDER extractionState).
+                        database.execSQL("""
+                            INSERT INTO pending_reviews_new
+                            SELECT
+                                id, rawNotificationId, scannedReceiptId,
+                                CASE WHEN extractionState = 'SYNTHETIC_PLACEHOLDER' THEN NULL ELSE suggestedAmount END,
+                                suggestedCurrency, suggestedMerchant, suggestedMerchantKey,
+                                suggestedType, suggestedCategoryId, suggestedDate,
+                                confidence, matchType, explanation,
+                                packageName, notificationTitle, notificationText,
+                                createdAt, status,
+                                suggestedDirection, suggestedAccountName,
+                                suggestedLatitude, suggestedLongitude,
+                                extractionState
+                            FROM pending_reviews
+                        """.trimIndent())
+
+                        // Swap tables
+                        database.execSQL("DROP TABLE pending_reviews")
+                        database.execSQL("ALTER TABLE pending_reviews_new RENAME TO pending_reviews")
+
+                        // Recreate indices
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_scannedReceiptId ON pending_reviews (scannedReceiptId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status ON pending_reviews (status)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_createdAt ON pending_reviews (status, createdAt)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_suggestedMerchantKey ON pending_reviews (suggestedMerchantKey)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_suggestedMerchantKey_suggestedDate ON pending_reviews (status, suggestedMerchantKey, suggestedDate)")
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
+                } finally {
+                    if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
+                }
+            }
+        }
+
+        // ═════════════════════════════════════════════════════════════════════
+        // MIGRATION_111_112 — BUD-1: budgets categoryId FK RESTRICT
+        // ═════════════════════════════════════════════════════════════════════
+        //
+        // BUD-1: Change budgets.categoryId FK from SET_NULL to RESTRICT so that
+        //   deleting a Category with active budgets fails fast instead of silently
+        //   converting category budgets into overall budgets.
+        val MIGRATION_111_112 = object : androidx.room.migration.Migration(111, 112) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                val fkWasEnabled = database.query("PRAGMA foreign_keys").use {
+                    it.moveToFirst(); it.getInt(0) == 1
+                }
+                if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                try {
+                    database.beginTransaction()
+                    try {
+                        // Rebuild budgets with RESTRICT on categoryId FK
+                        database.execSQL("""
+                            CREATE TABLE budgets_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                categoryId INTEGER,
+                                amount REAL NOT NULL,
+                                period TEXT NOT NULL,
+                                periodMode TEXT NOT NULL DEFAULT 'ROLLING',
+                                startDate INTEGER NOT NULL,
+                                isActive INTEGER NOT NULL DEFAULT 1,
+                                notifyAtWarning REAL NOT NULL DEFAULT 0.75,
+                                notifyAtCritical REAL NOT NULL DEFAULT 0.9,
+                                rollover INTEGER NOT NULL DEFAULT 0,
+                                currency TEXT NOT NULL DEFAULT 'EUR',
+                                currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT',
+                                createdAt INTEGER NOT NULL DEFAULT 0,
+                                lastWarningNotifiedAt INTEGER,
+                                lastCriticalNotifiedAt INTEGER,
+                                lastExceededNotifiedAt INTEGER,
+                                activeOverallKey INTEGER,
+                                activeCategoryKey INTEGER,
+                                FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE RESTRICT
+                            )
+                        """.trimIndent())
+                        database.execSQL("INSERT INTO budgets_new SELECT * FROM budgets")
+                        database.execSQL("DROP TABLE budgets")
+                        database.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_activeOverallKey ON budgets (activeOverallKey)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_activeCategoryKey ON budgets (activeCategoryKey)")
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
+                } finally {
+                    if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
+                }
+            }
+        }
+
         /**
-      * Creates an in-memory [RoomDatabase.Builder] pre-configured with
-          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
+       * Creates an in-memory [RoomDatabase.Builder] pre-configured with
+           * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
          *
          * Every test that needs a fresh `AppDatabase` **must** go through this
          * factory so that supplementary indexes (Batch 3 through Batch 8) are
@@ -6915,7 +7114,9 @@ MIGRATION_91_92,
         MIGRATION_106_107,
         MIGRATION_107_108,
         MIGRATION_108_109,
-        MIGRATION_109_110
+        MIGRATION_109_110,
+        MIGRATION_110_111,
+        MIGRATION_111_112
     )
     }
 }

@@ -7,6 +7,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.workers.WorkerSpec
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -15,13 +16,9 @@ import javax.inject.Singleton
 /**
  * WorkManager-based implementation of [AiWorkScheduler].
  *
- * ## Constraints gap
- * Currently schedules [DailyBriefingWorker] with no custom constraints
- * (no network, battery, or charging requirements). The intended constraints
- * are defined in [WorkerSpec.DEFAULTS] under the key `"ai_daily_briefing"`
- * (`NetworkType.UNMETERED` + `requiresBatteryNotLow` + `requiresCharging`).
- * These constraints should be applied to the [PeriodicWorkRequestBuilder]
- * to prevent the briefing worker from running on metered networks or when
+ * Reads interval and constraints from [WorkerSpec.DEFAULTS] under the key `"ai_daily_briefing"`
+ * which defines `NetworkType.UNMETERED` + `requiresBatteryNotLow` + `requiresCharging`.
+ * These constraints prevent the briefing worker from running on metered networks or when
  * the device is low on battery.
  *
  * @see WorkerSpec.DEFAULTS for the full target configuration.
@@ -32,17 +29,26 @@ class AiWorkSchedulerImpl @Inject constructor(
 ) : AiWorkScheduler {
 
     override fun scheduleDailyBriefing() {
-        val request = PeriodicWorkRequestBuilder<DailyBriefingWorker>(
-            repeatInterval = 24,
+        val spec = WorkerSpec.DEFAULTS["ai_daily_briefing"]
+        val intervalHours = spec?.repeatIntervalHours ?: 24L
+        val constraints = spec?.constraints
+
+        val builder = PeriodicWorkRequestBuilder<DailyBriefingWorker>(
+            repeatInterval = intervalHours,
             repeatIntervalTimeUnit = TimeUnit.HOURS
-        ).build()
+        )
+        if (constraints != null) {
+            builder.setConstraints(constraints)
+        }
+
+        val request = builder.build()
 
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             AppConfig.Ai.WORK_NAME_DAILY_BRIEFING,
             ExistingPeriodicWorkPolicy.KEEP,
             request
         )
-        Log.d(TAG, "Daily briefing worker scheduled")
+        Log.d(TAG, "Daily briefing worker scheduled (interval=${intervalHours}h)")
     }
 
     override fun cancelDailyBriefing() {

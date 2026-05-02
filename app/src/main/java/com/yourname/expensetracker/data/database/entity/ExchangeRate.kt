@@ -9,26 +9,20 @@ import androidx.room.PrimaryKey
  * Stores exchange rates for currency conversion.
  * Rates are stored relative to a base currency (EUR by default).
  *
- * ## Known limitation — unique index prevents historical rates
+ * Historical rates are supported via the unique index on
+ * `(fromCurrency, toCurrency, validDate)`, which allows multiple rates
+ * to coexist for the same currency pair on different dates.  This means
+ * a report for a past date can use the rate that was valid on that date,
+ * rather than always using the latest rate.
  *
- * The unique index on `(fromCurrency, toCurrency)` means only one rate can
- * exist per currency pair at any time. When rates are refreshed, old rates
- * are **overwritten**. This means historical reports always use the *latest*
- * rate rather than the rate at the time of the transaction.
- *
- * The `validDate` and `lastUpdated` columns exist on the row but are NOT
- * part of the unique index, so they cannot differentiate historical entries.
- *
- * ### Future fix
- * To support historical accuracy the unique index would need to be changed
- * to `(fromCurrency, toCurrency, validDate)` so that multiple rates can
- * coexist for different dates.
+ * The `validDate` column represents the date (epoch milliseconds) for which
+ * this rate is valid.  When rates are refreshed via API, a new row is
+ * inserted with the current date rather than overwriting the previous row.
  */
 @Entity(
     tableName = "exchange_rates",
     indices = [
-        Index(value = ["fromCurrency", "toCurrency"], unique = true),
-        Index(value = ["fromCurrency", "toCurrency", "validDate"]),
+        Index(value = ["fromCurrency", "toCurrency", "validDate"], unique = true),
         Index(value = ["lastUpdated"]),
         Index(value = ["toCurrency"])
     ]

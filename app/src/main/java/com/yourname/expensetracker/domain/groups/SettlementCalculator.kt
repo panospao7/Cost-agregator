@@ -28,10 +28,20 @@ data class Settlement(
  *
  * Uses an exact DFS/backtracking solver (with pruning) on integer cents,
  * minimizing number of transfers with deterministic ordering.
+ *
+ * ## SHR-3: Configurable timeout
+ * The DFS solver timeout (both iteration limit and time budget) is now
+ * configurable via [dfsTimeBudgetNs] and [dfsIterationLimit]. Defaults
+ * match the pre-v112 hardcoded values (500ms, 100k iterations). Callers
+ * can inject custom values through the constructor or via a Hilt module.
  */
 @Singleton
 class SettlementCalculator @Inject constructor(
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    /** Time budget for the DFS solver in nanoseconds (default 500ms). */
+    private val dfsTimeBudgetNs: Long = 500_000_000L,
+    /** Maximum iterations before falling back to greedy solver. */
+    private val dfsIterationLimit: Int = 100_000
 ) {
 
     /**
@@ -170,13 +180,13 @@ class SettlementCalculator @Inject constructor(
 
         fun exceedsSolverBudget(): Boolean {
             iterations++
-            if (iterations > DFS_ITERATION_LIMIT) {
+            if (iterations > dfsIterationLimit) {
                 return true
             }
 
             if (iterations % TIME_CHECK_INTERVAL == 0) {
                 val elapsedNs = System.nanoTime() - startedAtNs
-                if (elapsedNs > DFS_TIME_BUDGET_NS) {
+                if (elapsedNs > dfsTimeBudgetNs) {
                     return true
                 }
             }
@@ -402,8 +412,7 @@ class SettlementCalculator @Inject constructor(
     }
 
     private companion object {
-        private const val DFS_ITERATION_LIMIT = 100_000
-        private const val DFS_TIME_BUDGET_NS = 500_000_000L
+        /** How often (in iterations) to check elapsed wall-clock time. */
         private const val TIME_CHECK_INTERVAL = 256
     }
 }

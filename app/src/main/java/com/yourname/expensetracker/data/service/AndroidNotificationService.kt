@@ -66,9 +66,9 @@ class AndroidNotificationService @Inject constructor(
         notificationId: Int,
         title: String,
         message: String
-    ) {
+    ): NotificationService.DeliveryResult {
         if (!notificationManager.areNotificationsEnabled()) {
-            return
+            return NotificationService.DeliveryResult.NOT_DELIVERED
         }
 
         val notification = NotificationCompat.Builder(context, BUDGET_CHANNEL_ID)
@@ -82,6 +82,7 @@ class AndroidNotificationService @Inject constructor(
             .build()
 
         notificationManager.notify(notificationId, notification)
+        return NotificationService.DeliveryResult.DELIVERED
     }
 
     override fun sendAiBriefingReady(

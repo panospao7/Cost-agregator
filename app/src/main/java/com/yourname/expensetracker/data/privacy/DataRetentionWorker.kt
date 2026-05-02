@@ -19,6 +19,13 @@ import java.util.concurrent.TimeUnit
  * WorkManager worker that purges raw data (notification content, OCR text)
  * after the retention period configured in [PrivacySettings].
  *
+ * ## RCP-10: Raw OCR purge respects retention
+ * The [purgeRawOcrText] method nulls out [ScannedReceipt.rawOcrText] and sets
+ * [ScannedReceipt.rawOcrTextPurgedAt] for receipts whose `createdAt` is older
+ * than the configured retention period AND that have not already been purged.
+ * This ensures that raw OCR data is not retained indefinitely and respects
+ * the user's privacy retention preferences.
+ *
  * Runs daily via [PeriodicWorkRequest] and is safe to call multiple times:
  * - Only rows whose `rawContentPurgedAt` / `rawOcrTextPurgedAt` IS NULL are candidates.
  * - After purging, the column is set to the current timestamp so the row is not
@@ -159,25 +166,32 @@ class DataRetentionWorker @AssistedInject constructor(
         /**
          * Enqueue a daily data-retention job.
          * Safe to call multiple times — uses [ExistingPeriodicWorkPolicy.KEEP].
+         * Reads interval and constraints from [WorkerSpec.DEFAULTS] for the canonical config.
          */
         fun schedule(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
-                .build()
+            val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return
+            if (!spec.enabled) {
+                Log.d(TAG, "Worker $WORK_NAME disabled by spec, skipping schedule")
+                return
+            }
+            val intervalHours = spec.repeatIntervalHours ?: run {
+                Log.w(TAG, "Worker $WORK_NAME has no repeat interval, skipping periodic schedule")
+                return
+            }
 
             val request = PeriodicWorkRequestBuilder<DataRetentionWorker>(
-                repeatInterval = 1,
-                repeatIntervalTimeUnit = TimeUnit.DAYS
+                repeatInterval = intervalHours,
+                repeatIntervalTimeUnit = TimeUnit.HOURS
             )
-                .setConstraints(constraints)
+                .setConstraints(spec.constraints)
                 .build()
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
+                spec.existingWorkPolicy,
                 request
             )
-            Log.d(TAG, "Data retention worker scheduled")
+            Log.d(TAG, "Data retention worker scheduled (interval=${intervalHours}h)")
         }
     }
 }

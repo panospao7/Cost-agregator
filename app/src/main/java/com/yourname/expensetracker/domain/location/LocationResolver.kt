@@ -27,6 +27,16 @@ import javax.inject.Singleton
  *  6. Unresolved
  *
  * Rate limiting is enforced in the geocoding service layer.
+ *
+ * ## LOC-1: Overpass auto-accept
+ * The Overpass API call at Step 7 is gated behind [PrivacyGate] checking
+ * [PrivacyCapability.OVERPASS_API]. If the privacy setting denies Overpass,
+ * [LocationResolutionResult.Unresolved] is returned without making any HTTP
+ * request. The same gate is independently checked inside
+ * [OverpassNearbyService.findNearby] for defense in depth.
+ *
+ * Verified: both [LocationResolver] (Step 7) and [OverpassNearbyService]
+ * (entry point) perform the privacy check before any Overpass API call.
  */
 @Singleton
 class LocationResolver @Inject constructor(

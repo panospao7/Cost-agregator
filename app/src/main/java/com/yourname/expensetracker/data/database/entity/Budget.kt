@@ -29,13 +29,11 @@ enum class BudgetPeriod {
  *  - Active overall (categoryId=NULL) → activeOverallKey = 1 AND activeCategoryKey IS NULL
  *  - Active by category             → activeOverallKey IS NULL AND activeCategoryKey = categoryId
  *
- * ## BUD-7: Category deletion risk
- * The `categoryId` FK uses `SET_NULL` — deleting a Category sets `categoryId = NULL`
- * on its budgets, silently converting category budgets into overall budgets.
- * This is data-loss-prone. A future migration should change this to `RESTRICT`
- * (and add a migration 108→109 to rebuild the FK), but that requires a heavyweight
- * schema migration. For now, callers MUST soft-delete categories or check for
- * orphaned budgets after deletion.
+ * ## BUD-1: Category deletion protection
+ * The `categoryId` FK uses `RESTRICT` — deleting a Category that still has
+ * budgets referencing it will fail with a foreign-key violation.
+ * This prevents silent conversion of category budgets into overall budgets.
+ * Callers MUST delete or reassign budgets before deleting a category.
  */
 @Entity(
     tableName = "budgets",
@@ -44,7 +42,7 @@ enum class BudgetPeriod {
             entity = Category::class,
             parentColumns = ["id"],
             childColumns = ["categoryId"],
-            onDelete = ForeignKey.SET_NULL
+            onDelete = ForeignKey.RESTRICT
         )
     ],
     indices = [

@@ -100,6 +100,18 @@ internal class NotificationServiceWorkTracker {
  *   delegate to paths above which perform the gate check.
  *
  * No ungated capture path exists.
+ *
+ * ## SET-1: Finance-app notifications
+ * Verified that every notification-capture entry point checks the privacy gate:
+ * - [onNotificationPosted] checks `PrivacyCapability.NOTIFICATION_CAPTURE`
+ *   inside the launch coroutine (lines 337-343).
+ * - [processNotificationBypassDedupe] (called by [refreshActiveNotifications])
+ *   checks the same gate (lines 457-464).
+ * - [onStartCommand] / [onListenerConnected] do NOT directly capture; they
+ *   delegate to the gated paths above.
+ *
+ * When the privacy gate denies capture, the notification is silently dropped
+ * (no persistence, no processing).
  */
 @AndroidEntryPoint
 class NotificationCaptureService : NotificationListenerService() {

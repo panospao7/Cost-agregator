@@ -158,7 +158,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         merchantKey = merchantKey,
                         merchantName = normalizedMerchant
                     ).firstOrNull { review ->
-                        val amountDiff = kotlin.math.abs(review.suggestedAmount - tx.amount)
+                        val amountDiff = kotlin.math.abs((review.suggestedAmount ?: 0.0) - tx.amount)
                         amountDiff < 0.01 && review.suggestedCurrency == tx.currency
                     }
 

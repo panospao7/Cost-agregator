@@ -715,6 +715,19 @@ class GroupTransactionCoordinator @Inject constructor(
         }
     }
 
+    /**
+     * ## SHR-2: CUSTOM split serialization
+     * Validates that [customSplitsJson] is syntactically valid JSON before storage.
+     * Delegates to [CustomSplitJsonCodec.isCanonicalJsonPayload] which:
+     *  1. Verifies the payload wraps in `{` / `}`
+     *  2. Parses via Gson into `Map<String, Double>`
+     *  3. Validates all member IDs parse to Long and all values are finite
+     *
+     * For CUSTOM_AMOUNT / CUSTOM_PERCENT splits, additionally checks that the
+     * number of entries matches the group member count.
+     *
+     * Equal-split types bypass JSON validation entirely.
+     */
     private fun validateCustomSplitPayloadFormat(
         splitType: SplitType,
         customSplitsJson: String?,

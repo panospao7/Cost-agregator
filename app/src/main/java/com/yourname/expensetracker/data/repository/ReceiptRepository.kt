@@ -74,21 +74,13 @@ class ReceiptRepository @Inject constructor(
         private val AMOUNT_TOLERANCE = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
 
         /**
-         * Minimum positive sentinel for [PendingReview.suggestedAmount] when the
-         * parser fails to extract a total.
-         *
          * **UI-PLACEHOLDER ONLY — never becomes a real expense amount.**
          *
-         * Must satisfy the v76 CHECK(suggestedAmount > 0) invariant.
-         * Matches the migration-time clamp value so behaviour is consistent across
-         * upgrade and fresh-install paths.
-         *
          * The [approveReview] function in [ReviewQueueRepository] explicitly
-         * blocks approval when `suggestedAmount == FALLBACK_SUGGESTED_AMOUNT`
-         * without a user override.  The [TransactionLifecycleCoordinator] also
-         * rejects creation requests carrying this sentinel.
+         * blocks approval when `suggestedAmount == null` without a user override.
+         * The [TransactionLifecycleCoordinator] also rejects creation requests
+         * with null amounts.
          */
-        private const val FALLBACK_SUGGESTED_AMOUNT = 0.01
     }
 
     private enum class StatementInsertOutcome {
@@ -121,8 +113,9 @@ class ReceiptRepository @Inject constructor(
                 // Fallback: Try to save the image using manual record logic
                 return@withContext saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
                     val failedReceipt = receipt.copy(
-                        rawOcrText = "Scan Failed: ${e.message}", 
-                        confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK
+                        rawOcrText = "Scan Failed: ${e.message}",
+                        confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK,
+                        updatedAt = timeProvider.now()
                     )
                     scannedReceiptDao.update(failedReceipt)
                     Pair(failedReceipt, parsed)
@@ -166,7 +159,7 @@ class ReceiptRepository @Inject constructor(
                     //    real expense merchant value.
                     if (autoCreateReview) {
                         val suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant"
-                        val suggestedAmount = parsed.total ?: FALLBACK_SUGGESTED_AMOUNT
+                        val suggestedAmount = parsed.total // null when parser didn't extract a total
                         val review = PendingReview(
                             rawNotificationId = null,
                             scannedReceiptId = insertedReceiptId,
@@ -181,7 +174,7 @@ class ReceiptRepository @Inject constructor(
                             notificationTitle = "Scanned Receipt",
                             notificationText = ocrResult.fullText.take(200), // Preview snippet
                             suggestedCategoryId = normalizedMerchant?.let {
-                                hybridClassifier.classify(it, suggestedAmount).categoryId.takeIf { id -> id > 0 }
+                                hybridClassifier.classify(it, suggestedAmount ?: 0.0).categoryId.takeIf { id -> id > 0 }
                             }
                         )
                         pendingReviewDao.insert(review)
@@ -236,14 +229,14 @@ class ReceiptRepository @Inject constructor(
                 // ── Parse-failure placeholder review (never becomes real expense) ──
                 // When the parser threw an exception (e.g. malformed OCR text) we
                 // still save the OCR text for manual recovery.  The PendingReview
-                // gets sentinel values ("Parsing Failed", FALLBACK_SUGGESTED_AMOUNT)
+                // gets sentinel values ("Parsing Failed", null suggestedAmount)
                 // that are UI placeholders only.  The user must edit these before
                 // approval; approveReview() blocks approval without overrides.
                 if (autoCreateReview) {
                     val review = PendingReview(
                         rawNotificationId = null,
                         scannedReceiptId = receiptId,
-                        suggestedAmount = FALLBACK_SUGGESTED_AMOUNT,
+                        suggestedAmount = null,
                         suggestedCurrency = "EUR",
                         suggestedMerchant = "Parsing Failed",
                         suggestedMerchantKey = MerchantKeyGenerator.generate("Parsing Failed"),
@@ -372,6 +365,14 @@ class ReceiptRepository @Inject constructor(
                     expenseId = expenseId,
                     linkType = "DIRECT_SAVE",
                     source = ExpenseSource.RECEIPT_SCAN.name
+                )
+
+                // RCP-2: Update receipt item categorizations with the expense ID
+                // so that each line item points to the created expense.
+                database.receiptItemCategorizationDao().linkToExpense(
+                    receiptId = receiptId,
+                    expenseId = expenseId,
+                    timestamp = timeProvider.now()
                 )
 
                 // ── Source-specific post-commit side effects ─────────────────
@@ -898,7 +899,8 @@ class ReceiptRepository @Inject constructor(
         val updated = receipt.copy(
             expenseId = expenseId,
             matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.AUTO_MATCHED,
-            matchConfidence = confidence.toFloat()
+            matchConfidence = confidence.toFloat(),
+            updatedAt = timeProvider.now()
         )
         scannedReceiptDao.update(updated)
         timber.log.Timber.d("Linked receipt $receiptId to expense $expenseId with confidence $confidence")
@@ -913,7 +915,8 @@ class ReceiptRepository @Inject constructor(
         val updated = receipt.copy(
             suggestedExpenseId = suggestedExpenseId,
             matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.SUGGESTED,
-            matchConfidence = confidence.toFloat()
+            matchConfidence = confidence.toFloat(),
+            updatedAt = timeProvider.now()
         )
         scannedReceiptDao.update(updated)
         timber.log.Timber.d("Saved match suggestion for receipt $receiptId: expense $suggestedExpenseId with confidence $confidence")
@@ -925,7 +928,8 @@ class ReceiptRepository @Inject constructor(
         
         val updated = receipt.copy(
             expenseId = suggestedId,
-            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.MANUALLY_MATCHED
+            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.MANUALLY_MATCHED,
+            updatedAt = timeProvider.now()
         )
         scannedReceiptDao.update(updated)
         timber.log.Timber.d("Manually approved match for receipt $receiptId to expense $suggestedId")
@@ -935,7 +939,8 @@ class ReceiptRepository @Inject constructor(
         val receipt = scannedReceiptDao.getById(receiptId) ?: return
         val updated = receipt.copy(
             matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.REJECTED,
-            suggestedExpenseId = null
+            suggestedExpenseId = null,
+            updatedAt = timeProvider.now()
         )
         scannedReceiptDao.update(updated)
         timber.log.Timber.d("Rejected all match suggestions for receipt $receiptId")
@@ -955,7 +960,8 @@ class ReceiptRepository @Inject constructor(
             expenseId = null,
             matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.UNMATCHED,
             suggestedExpenseId = null,
-            matchConfidence = null
+            matchConfidence = null,
+            updatedAt = timeProvider.now()
         )
         scannedReceiptDao.update(updated)
     }

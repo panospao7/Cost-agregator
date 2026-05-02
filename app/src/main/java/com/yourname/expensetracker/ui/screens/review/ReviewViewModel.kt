@@ -871,7 +871,7 @@ class ReviewViewModel @Inject constructor(
         _quickApprovePreview.value = ReviewQuickApprovePreview(
             reviewId = reviewId,
             merchant = item.review.suggestedMerchant,
-            amount = item.review.suggestedAmount,
+            amount = item.review.suggestedAmount ?: 0.0,
             categoryId = categorySuggestion.categoryId,
             categoryName = categorySuggestion.categoryName,
             diagnostics = listOfNotNull(state.categoryDiagnostics, state.dedupeDiagnostics)
