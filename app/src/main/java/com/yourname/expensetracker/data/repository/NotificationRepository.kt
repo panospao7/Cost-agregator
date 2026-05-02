@@ -124,6 +124,22 @@ class NotificationRepository @Inject constructor(
     // === Bulk operations ===
 
     /**
+     * Deletes all raw notifications, pending reviews, and user corrections,
+     * and resets source-stat pending counts.
+     *
+     * Unlike [deleteAll] this does **not** touch the expenses table, making it
+     * safe for notification-specific cleanup without losing imported expense records.
+     */
+    suspend fun deleteAllNotifications() {
+        database.withTransaction {
+            dao.deleteAll()
+            pendingReviewDao.deleteAll()
+            userCorrectionDao.deleteAll()
+            sourceStatsDao.resetAllPendingCounts()
+        }
+    }
+
+    /**
      * Deletes ALL raw notifications, expenses, pending reviews, user corrections
      * and resets source-stat pending counts.
      *
@@ -132,9 +148,12 @@ class NotificationRepository @Inject constructor(
      * or testing. Callers in production flows must use targeted cleanup methods
      * (e.g. [delete], [NotificationProcessingPipeline]) to avoid accidental
      * data loss of imported expense records.
+     *
+     * @deprecated Use [deleteAllNotifications] for notification-only cleanup.
+     * Scheduled for removal in next major version.
      */
     @Deprecated(
-        "Dangerous: use targeted cleanup instead — this deletes ALL expenses",
+        "Dangerous: use targeted cleanup instead — this deletes ALL expenses. Use deleteAllNotifications() for notification-only cleanup.",
         level = DeprecationLevel.ERROR
     )
     suspend fun deleteAll() {

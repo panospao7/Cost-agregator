@@ -287,7 +287,7 @@ class ReviewViewModelStressTest {
 
     @Test
     fun `stress - approve all reviews`() = runTest {
-        coEvery { reviewQueueRepository.approveAllReview() } returns Unit
+        coEvery { reviewQueueRepository.approveAllReview() } returns emptyList()
 
         viewModel.approveAll()
 

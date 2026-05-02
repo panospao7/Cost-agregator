@@ -50,22 +50,6 @@ class ReviewQueueRepository @Inject constructor(
         private const val ERROR_REVIEW_NOT_FOUND = "REVIEW_NOT_FOUND"
         private const val ERROR_AMOUNT_EXCEEDS_LIMIT = "AMOUNT_EXCEEDS_LIMIT"
         private const val ERROR_REVIEW_ALREADY_PROCESSED = "REVIEW_ALREADY_PROCESSED"
-
-        /**
-         * Minimum positive sentinel for [PendingReview.suggestedAmount] when the
-         * parser cannot extract a total.
-         *
-         * **UI-PLACEHOLDER ONLY — never becomes a real expense amount.**
-         *
-         * Must satisfy the v76 CHECK(suggestedAmount > 0) invariant.
-         *
-         * The [approveReview] function explicitly blocks approval when
-         * `suggestedAmount == FALLBACK_SUGGESTED_AMOUNT` and the user has not
-         * provided a [finalAmount] override.  The
-         * [TransactionLifecycleCoordinator] also rejects creation requests
-         * carrying this sentinel value.
-         */
-        private const val FALLBACK_SUGGESTED_AMOUNT = 0.01
     }
 
 
@@ -99,6 +83,7 @@ class ReviewQueueRepository @Inject constructor(
     suspend fun approveReview(
         reviewId: Long,
         finalAmount: Double? = null,
+        finalCurrency: String? = null,
         finalMerchant: String? = null,
         finalCategoryId: Long? = null,
         finalDate: Long? = null,
@@ -120,7 +105,9 @@ class ReviewQueueRepository @Inject constructor(
     // These sentinel values are UI placeholders only — they must never become
     // real expense rows.  The coordinator also rejects any creation request
     // that carries these values.
-    if (review.suggestedAmount == FALLBACK_SUGGESTED_AMOUNT && finalAmount == null) {
+    // TODO: Use review.extractionState == ExtractionState.SYNTHETIC_PLACEHOLDER
+    //       instead of hardcoded amount comparison after v110 migration is live.
+    if (review.suggestedAmount == PendingReview.FALLBACK_SUGGESTED_AMOUNT && finalAmount == null) {
         return Result.Error(message = "Cannot approve review with synthetic fallback amount. Please edit the amount first.")
     }
     if (review.suggestedMerchant == "Unknown" && finalMerchant == null) {
@@ -161,7 +148,7 @@ class ReviewQueueRepository @Inject constructor(
 
         val expense = Expense(
             amount = amount,
-            currency = review.suggestedCurrency,
+            currency = finalCurrency ?: review.suggestedCurrency,
             merchant = merchant,
             merchantKey = MerchantKeyGenerator.generate(normalizedMerchantForKeys),
             transactionType = type,
@@ -409,14 +396,21 @@ class ReviewQueueRepository @Inject constructor(
         }
     }
 
-    suspend fun approveAllReview() {
+    /**
+     * Approves all pending reviews and returns per-review results.
+     *
+     * @return List of (reviewId, Result) pairs indicating success or failure for each review.
+     */
+    suspend fun approveAllReview(): List<Pair<Long, Result<Long>>> {
         val pendingReviews = pendingReviewDao.getPendingUncapped()
-        for (review in pendingReviews) {
-            try {
+        return pendingReviews.map { review ->
+            val result = try {
                 approveReview(review.review.id)
             } catch (e: Exception) {
                 Timber.e(e, "Failed to approve review ${review.review.id}")
+                Result.Error(exception = e)
             }
+            review.review.id to result
         }
     }
 
@@ -497,7 +491,7 @@ class ReviewQueueRepository @Inject constructor(
         val pendingReview = if (isRelevant && parsed == null) {
             PendingReview(
                 rawNotificationId = id,
-                suggestedAmount = FALLBACK_SUGGESTED_AMOUNT,
+                suggestedAmount = PendingReview.FALLBACK_SUGGESTED_AMOUNT,
                 suggestedCurrency = "EUR",
                 suggestedMerchant = "Unknown",
                 suggestedMerchantKey = MerchantKeyGenerator.generate("Unknown"),
@@ -507,7 +501,8 @@ class ReviewQueueRepository @Inject constructor(
                 packageName = notification.packageName,
                 notificationTitle = notification.title,
                 notificationText = notification.text ?: notification.bigText,
-                suggestedDate = notification.timestamp
+                suggestedDate = notification.timestamp,
+                extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
             )
         } else {
             null

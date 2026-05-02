@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 109
+const val APP_DATABASE_SCHEMA_VERSION = 110
 
 @Database(
     entities = [
@@ -6699,6 +6699,77 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        // ═════════════════════════════════════════════════════════════════════
+        // MIGRATION_109_110 — Y1 + Y8
+        // ═════════════════════════════════════════════════════════════════════
+        //
+        // Y1: Make rawNotificationId unique on expenses
+        //   - Nullify duplicate rawNotificationIds (keep latest expense per non-null id)
+        //   - Drop old non-unique index, create unique index
+        //
+        // Y8: Backfill remaining NULL dedupeFingerprint in raw_notifications
+        //   - MIGRATION_104_105 backfilled and then nullified duplicates.
+        //   - This step backfills any rows still NULL using the same deterministic formula.
+        val MIGRATION_109_110 = object : androidx.room.migration.Migration(109, 110) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                val fkWasEnabled = database.query("PRAGMA foreign_keys").use {
+                    it.moveToFirst(); it.getInt(0) == 1
+                }
+                if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                try {
+                    database.beginTransaction()
+                    try {
+                        // ── Y8: Backfill remaining NULL dedupeFingerprint ──────────
+                        // Uses the same deterministic concatenation as MIGRATION_104_105
+                        // (not SHA-256, which the Kotlin code uses for new rows).
+                        database.execSQL("""
+                            UPDATE raw_notifications SET dedupeFingerprint =
+                              packageName || '|' || CAST(timestamp AS TEXT) || '|' ||
+                              COALESCE(title, '') || '|' || COALESCE(text, '') || '|' ||
+                              COALESCE(bigText, '')
+                            WHERE dedupeFingerprint IS NULL
+                        """.trimIndent())
+
+                        // Nullify any newly-created duplicate fingerprints
+                        database.execSQL("""
+                            UPDATE raw_notifications SET dedupeFingerprint = NULL
+                            WHERE id NOT IN (
+                                SELECT MIN(id) FROM raw_notifications
+                                WHERE dedupeFingerprint IS NOT NULL
+                                GROUP BY dedupeFingerprint
+                            )
+                        """.trimIndent())
+
+                        // ── Y1: Make rawNotificationId unique on expenses ─────────
+                        // Nullify duplicate rawNotificationIds (keep latest expense)
+                        database.execSQL("""
+                            UPDATE expenses SET rawNotificationId = NULL
+                            WHERE rawNotificationId IS NOT NULL
+                              AND id NOT IN (
+                                  SELECT MAX(id) FROM expenses
+                                  WHERE rawNotificationId IS NOT NULL
+                                  GROUP BY rawNotificationId
+                              )
+                        """.trimIndent())
+
+                        // Drop old non-unique index and create unique index
+                        database.execSQL("DROP INDEX IF EXISTS index_expenses_rawNotificationId")
+                        database.execSQL("""
+                            CREATE UNIQUE INDEX IF NOT EXISTS index_expenses_rawNotificationId
+                            ON expenses (rawNotificationId)
+                        """.trimIndent())
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
+                } finally {
+                    if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
+                }
+            }
+        }
+
         /**
       * Creates an in-memory [RoomDatabase.Builder] pre-configured with
           * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -6843,7 +6914,8 @@ MIGRATION_91_92,
         MIGRATION_105_106,
         MIGRATION_106_107,
         MIGRATION_107_108,
-        MIGRATION_108_109
+        MIGRATION_108_109,
+        MIGRATION_109_110
     )
     }
 }

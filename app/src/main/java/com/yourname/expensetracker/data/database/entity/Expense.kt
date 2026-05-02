@@ -33,7 +33,7 @@ import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
         )
     ],
     indices = [
-        Index(value = ["rawNotificationId"]),
+        Index(value = ["rawNotificationId"], unique = true),
         Index(value = ["date"]),
         Index(value = ["transactionType", "date"]),
         Index(value = ["transactionType", "categoryId", "date"]),
@@ -63,6 +63,13 @@ data class Expense(
     
     val date: Long,
     
+    /**
+     * FK to [RawNotification]. ON DELETE SET NULL means that when the source
+     * notification is deleted, this reference is automatically cleared, losing
+     * the specific audit trail of which notification produced this expense.
+     * The [source] column preserves the fact that it came from a notification
+     * but not the specific notification ID.
+     */
     val rawNotificationId: Long? = null,
     
     

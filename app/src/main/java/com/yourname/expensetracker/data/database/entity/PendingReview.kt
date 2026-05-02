@@ -18,6 +18,18 @@ enum class PendingReviewStatus {
     DUPLICATE
 }
 
+/**
+ * Describes how the review's suggested values were obtained.
+ * Used by the approval guard to distinguish real extractions from
+ * synthetic placeholders (e.g. [PendingReview.FALLBACK_SUGGESTED_AMOUNT]).
+ */
+enum class ExtractionState {
+    /** Values were successfully extracted from the source (notification/receipt). */
+    REAL_EXTRACTION,
+    /** Parser could not extract values; synthetic placeholders were used instead. */
+    SYNTHETIC_PLACEHOLDER
+}
+
 @Entity(
     tableName = "pending_reviews",
     foreignKeys = [
@@ -68,8 +80,24 @@ data class PendingReview(
     val suggestedAccountName: String? = null,  // Account name from/to
     // Location enrichment (v28) — captured at review-time if device location available
     val suggestedLatitude: Double? = null,
-    val suggestedLongitude: Double? = null
+    val suggestedLongitude: Double? = null,
+    // Extraction state (v110) — marks whether suggested values are real or synthetic
+    @ColumnInfo(defaultValue = "REAL_EXTRACTION")
+    val extractionState: ExtractionState = ExtractionState.REAL_EXTRACTION
 ) {
     @get:Ignore
     val suggestedMoneyAmount: MoneyAmount get() = MoneyAmount(suggestedAmount, CurrencyCode(suggestedCurrency))
+
+    companion object {
+        /**
+         * Minimum positive sentinel used when the parser cannot extract a total.
+         *
+         * **UI-PLACEHOLDER ONLY — never becomes a real expense amount.**
+         * Must satisfy the v76 CHECK(suggestedAmount > 0) invariant.
+         *
+         * Reviews with [extractionState] = [ExtractionState.SYNTHETIC_PLACEHOLDER]
+         * carry this sentinel value and must be edited by the user before approval.
+         */
+        const val FALLBACK_SUGGESTED_AMOUNT = 0.01
+    }
 }

@@ -481,6 +481,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
             errors.add("Cannot be both not-mine and shared")
         }
 
+        // Location pair validation: both or neither must be set
+        if (request.latitude != null && request.longitude == null) {
+            errors.add("Latitude requires longitude")
+        }
+        if (request.longitude != null && request.latitude == null) {
+            errors.add("Longitude requires latitude")
+        }
+
         return errors
     }
 
