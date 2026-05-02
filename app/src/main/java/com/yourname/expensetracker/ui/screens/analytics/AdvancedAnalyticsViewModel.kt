@@ -37,7 +37,7 @@ class AdvancedAnalyticsViewModel @Inject constructor(
     private val refreshNonce = kotlinx.coroutines.flow.MutableStateFlow(0)
 
     val uiState: StateFlow<AnalyticsUiState> = combine(
-        currencySettingsRepository.homeCurrency().catch { emit("EUR") },
+        currencySettingsRepository.homeCurrency().catch { emit("EUR") }, // Safe fallback if repo fails
         currencySettingsRepository.lastRateUpdate().catch { emit(0L) },
         refreshNonce
     ) { homeCurrency, latestRateTimestamp, _ ->

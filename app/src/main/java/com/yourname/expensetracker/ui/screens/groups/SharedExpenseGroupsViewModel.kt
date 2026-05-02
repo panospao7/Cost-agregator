@@ -43,6 +43,7 @@ data class GroupsUiState(
     val creatingGroup: Boolean = false,
     val addingMember: Boolean = false,
     val addingExpense: Boolean = false,
+    /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
     val homeCurrency: String = "EUR"
 )
 
@@ -274,7 +275,20 @@ class SharedExpenseGroupsViewModel @Inject constructor(
     }
     
     /**
-     * Delete (archive) a group.
+     * Soft-delete (archive) a group by setting isActive = false.
+     *
+     * J5: This is a SOFT delete — the group and its members/expenses remain in
+     * the database but are hidden from active views. Contrast with a hard delete
+     * (permanentlyDeleteGroup in the coordinator) which removes rows entirely.
+     *
+     * Semantic difference:
+     * - Soft delete (this method): group can be restored later. Linked system
+     *   expenses are preserved and retain their group association metadata.
+     * - Hard delete (coordinator.permanentlyDeleteGroup): irreversible. Linked
+     *   system expenses become semantically orphaned (group association lost).
+     *
+     * Callers that need a permanent removal should use the coordinator directly:
+     *   transactionCoordinator.permanentlyDeleteGroup(groupId)
      */
     fun deleteGroup(groupId: Long) {
         viewModelScope.launch {

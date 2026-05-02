@@ -60,8 +60,8 @@ class AnalyticsRepository @Inject constructor(
      * AnalyticsCurrencyNormalizer for daily-history granularity.
      */
     fun getSpendingSummary(start: Long, end: Long): Flow<SpendingSummary> {
-        val periodLength = end - start
-        val previousStart = start - periodLength
+        val daysInPeriod = TimePeriodUtils.daysBetween(start, end).coerceAtLeast(1)
+        val previousStart = TimePeriodUtils.addDays(start, -daysInPeriod)
         val previousEnd = start
 
         return flow {

@@ -1720,6 +1720,22 @@ AND LENGTH(:merchantKey) >= 8
 
     // === Monthly/Weekly Totals Dashboard Queries ===
 
+    /**
+     * Weekly spending totals for a date range, grouped by ISO Monday-start week.
+     *
+     * **MIN(date) / MAX(date) are raw data boundaries**, not calendar-aligned period
+     * boundaries. The SQLite `date(..., 'weekday 1')` formula computes a Monday date
+     * key for grouping, but MIN/MAX within each group reflect the actual transaction
+     * timestamps, which may differ from the canonical Monday midnight boundaries.
+     *
+     * The repository layer ([ExpenseRepository]) and the [TotalsAggregationEngine]
+     * normalise these raw values to canonical Monday boundaries
+     * ([TimePeriodUtils.getStartOfWeek]) — the DAO deliberately keeps the raw
+     * values so the normalisation logic lives in one place.
+     *
+     * @see WeeklyTotal.startDate, WeeklyTotal.endDate — raw approximations,
+     *      repository normalises these.
+     */
     @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("""
         SELECT date(date/1000, 'unixepoch', 'localtime', '-6 days', 'weekday 1') as weekKey,

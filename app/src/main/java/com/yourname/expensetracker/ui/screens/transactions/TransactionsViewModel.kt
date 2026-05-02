@@ -121,6 +121,7 @@ class TransactionsViewModel @Inject constructor(
  // Refresh trigger for pull-to-refresh
  private val _refreshTrigger = MutableStateFlow(0)
 
+ /** Placeholder initial value "EUR"; immediately replaced by [CurrencySettingsRepository.homeCurrency]. */
  private val _homeCurrency = currencySettingsRepository.homeCurrency()
  .stateIn(viewModelScope, SharingStarted.Lazily, "EUR")
  val homeCurrency: StateFlow<String> = _homeCurrency

@@ -91,6 +91,7 @@ class WarrantyTrackerRepository @Inject constructor(
         warrantyDao.updateWarrantyStatus(
             warrantyId = warrantyId,
             status = WarrantyStatus.CLAIMED,
+            claimedAt = timeProvider.now(),
             updatedAt = timeProvider.now()
         )
 
@@ -139,6 +140,9 @@ class WarrantyTrackerRepository @Inject constructor(
             returnWindow.copy(updatedAt = timeProvider.now())
         )
     
+    suspend fun deleteReturnWindow(returnWindow: ReturnWindow) =
+        returnWindowDao.deleteReturnWindow(returnWindow)
+
     suspend fun markAsReturned(
         returnWindowId: Long, 
         refundAmount: Double? = null

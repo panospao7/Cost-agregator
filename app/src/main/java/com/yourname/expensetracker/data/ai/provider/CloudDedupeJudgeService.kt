@@ -285,7 +285,7 @@ $candidates
             verdict = verdict,
             matchedTargetType = matchedTargetType,
             matchedTargetId = matchedTargetId,
-            confidence = suggestion.optFiniteDoubleStrictOrNull("confidence")?.toFloat(),
+            confidence = suggestion.optFiniteDoubleStrictOrNull("confidence")?.toFloat()?.coerceIn(0f, 1f),
             rationale = suggestion.optString("rationale").trim().ifBlank { null }
         )
     }

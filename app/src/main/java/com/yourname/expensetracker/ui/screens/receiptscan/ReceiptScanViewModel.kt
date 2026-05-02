@@ -248,6 +248,7 @@ class ReceiptScanViewModel @Inject constructor(
                         parserUsed = "Manual (OCR Failed)"
                     )
 
+                    // TODO: Use actual home currency from settings instead of hardcoded "EUR"
                     val emptyParsed = ReceiptParser.ParsedReceipt(
                         merchantName = null, total = null, subtotal = null, tax = null,
                         date = now, currency = "EUR", lineItems = emptyList(), confidence = 0f
@@ -1002,7 +1003,7 @@ class ReceiptScanViewModel @Inject constructor(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
-                    "EUR"
+                    "EUR" // Safe fallback when home currency fails to load
                 }
                 val resolvedCurrency = _state.value.parsedReceipt?.currency
                     ?.takeIf { it.isNotBlank() }

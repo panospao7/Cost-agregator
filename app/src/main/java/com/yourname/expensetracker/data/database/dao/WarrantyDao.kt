@@ -46,10 +46,18 @@ interface WarrantyDao {
     @Query("DELETE FROM warranties WHERE id = :warrantyId")
     suspend fun deleteWarrantyById(warrantyId: Long)
 
-    @Query("UPDATE warranties SET status = :status, updatedAt = :updatedAt WHERE id = :warrantyId")
+    @Query("UPDATE warranties SET expenseId = :expenseId, updatedAt = :updatedAt WHERE receiptId = :receiptId")
+    suspend fun updateExpenseIdByReceiptId(
+        receiptId: Long,
+        expenseId: Long?,
+        updatedAt: Long
+    )
+
+    @Query("UPDATE warranties SET status = :status, claimedAt = :claimedAt, updatedAt = :updatedAt WHERE id = :warrantyId")
     suspend fun updateWarrantyStatus(
         warrantyId: Long,
         status: WarrantyStatus,
+        claimedAt: Long? = null,
         updatedAt: Long
     )
 

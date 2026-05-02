@@ -86,6 +86,21 @@ internal class NotificationServiceWorkTracker {
     }
 }
 
+/**
+ * Foreground service that listens for system notifications and captures
+ * financial-transaction-related alerts for processing.
+ *
+ * ## Privacy gate coverage
+ * Every code path that persists notification data checks the
+ * [PrivacyCapability.NOTIFICATION_CAPTURE] gate before processing:
+ * - [onNotificationPosted] checks the gate inside the launch coroutine.
+ * - [processNotificationBypassDedupe] (called by [refreshActiveNotifications])
+ *   checks the gate inside its launch coroutine.
+ * - [onStartCommand] / [onListenerConnected] do NOT directly capture; they
+ *   delegate to paths above which perform the gate check.
+ *
+ * No ungated capture path exists.
+ */
 @AndroidEntryPoint
 class NotificationCaptureService : NotificationListenerService() {
 

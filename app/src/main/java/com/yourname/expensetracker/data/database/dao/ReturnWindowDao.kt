@@ -43,6 +43,13 @@ interface ReturnWindowDao {
     @Query("DELETE FROM return_windows WHERE id = :returnWindowId")
     suspend fun deleteReturnWindowById(returnWindowId: Long)
 
+    @Query("UPDATE return_windows SET expenseId = :expenseId, updatedAt = :updatedAt WHERE receiptId = :receiptId")
+    suspend fun updateExpenseIdByReceiptId(
+        receiptId: Long,
+        expenseId: Long?,
+        updatedAt: Long
+    )
+
     @Query("UPDATE return_windows SET status = :status, returnedAt = :returnedAt, refundAmount = :refundAmount, updatedAt = :updatedAt WHERE id = :returnWindowId")
     suspend fun markAsReturned(
         returnWindowId: Long,

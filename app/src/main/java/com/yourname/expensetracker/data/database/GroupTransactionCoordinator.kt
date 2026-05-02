@@ -165,6 +165,8 @@ class GroupTransactionCoordinator @Inject constructor(
      * Add an expense to a group.
      * This creates the group expense record without linking to a system expense.
      * SHARED-2: Wrapped in database.withTransaction for ACID compliance.
+     *
+     * J1: Validates that non-EQUAL split types include a non-null valid [customSplitsJson].
      */
     override suspend fun addExpenseToGroup(
         groupId: Long,
@@ -173,6 +175,7 @@ class GroupTransactionCoordinator @Inject constructor(
         paidById: Long,
         currency: String?,
         splitType: SplitType,
+        customSplitsJson: String?,
         date: Long
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
@@ -189,6 +192,14 @@ class GroupTransactionCoordinator @Inject constructor(
                     return@withTransaction GroupExpenseCreationResult.Error("Payer is not a member of this group")
                 }
 
+                // J1: Validate custom split payload for non-EQUAL split types
+                validateCustomSplitPayloadFormat(
+                    splitType = splitType,
+                    customSplitsJson = customSplitsJson
+                )?.let { validationError ->
+                    return@withTransaction validationError
+                }
+
                 validateExpenseParticipants(
                     groupId = groupId,
                     linkedExpenseId = null,
@@ -197,7 +208,7 @@ class GroupTransactionCoordinator @Inject constructor(
                     paidById = paidById,
                     currency = currency ?: group.defaultCurrency,
                     splitType = splitType,
-                    customSplitsJson = null,
+                    customSplitsJson = customSplitsJson,
                     date = date,
                     members = members
                 )?.let { validationError ->
@@ -215,7 +226,8 @@ class GroupTransactionCoordinator @Inject constructor(
                     paidById = paidById,
                     date = date,
                     currency = expenseCurrency,
-                    splitType = splitType
+                    splitType = splitType,
+                    customSplitsJson = customSplitsJson
                 )
                 
                 val expenseId = groupExpenseDao.insert(expense)
@@ -363,6 +375,11 @@ class GroupTransactionCoordinator @Inject constructor(
     /**
      * Permanently delete a group and all associated data.
      * WARNING: This cannot be undone.
+     *
+     * J2: Hard-deleting a group leaves any system expenses linked to group
+     * expenses semantically orphaned (the group link is gone but the expense
+     * still exists). Prefer [deleteGroup] (soft archive) unless you are certain
+     * the linked expenses should become standalone.
      */
     override suspend fun permanentlyDeleteGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
         try {
@@ -579,7 +596,13 @@ class GroupTransactionCoordinator @Inject constructor(
     
     /**
      * Atomic group deletion with cleanup.
-     * Removes all associated members and expenses.
+     * Removes all associated members and group expenses.
+     *
+     * J2: This performs a HARD delete — linked system expenses are NOT removed.
+     * After this operation, those expenses lose their group association metadata
+     * (isSharedExpense, myShareAmount, etc.) and become semantically orphaned.
+     * Prefer [deleteGroup] (soft archive via isActive = false) whenever possible
+     * to preserve referential integrity.
      */
     suspend fun deleteGroupAtomic(groupId: Long) {
         database.withTransaction {

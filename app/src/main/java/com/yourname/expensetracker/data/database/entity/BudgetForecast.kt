@@ -9,20 +9,15 @@ import androidx.room.PrimaryKey
 /**
  * Stores AI-generated budget forecasts for tracking and accuracy measurement.
  *
- * ## E2: Missing unique constraint on (budgetId, targetPeriodStart)
- * There is no DB-level unique constraint preventing duplicate forecasts for the
- * same budget and period. The same `(budgetId, targetPeriodStart)` pair can
- * appear multiple times, which could lead to:
- *   - Ambiguous "latest forecast" lookups (callers rely on MAX(forecastDate))
- *   - Duplicate accuracy calculations when actuals arrive
+ * ## G1: Unique constraint enforced via Room @Index
+ * A unique composite index on `(budgetId, targetPeriodStart)` prevents duplicate
+ * forecasts for the same budget and period at the DB level. This ensures:
+ *   - Unambiguous "latest forecast" lookups (callers rely on MAX(forecastDate))
+ *   - No duplicate accuracy calculations when actuals arrive
  *
- * A future migration should add:
- * ```
- * CREATE UNIQUE INDEX IF NOT EXISTS idx_budget_forecasts_budget_period
- *     ON budget_forecasts (budgetId, targetPeriodStart);
- * ```
- * Until then, deduplication is handled in the repository layer
- * (BudgetForecastRepository checks existence before inserting).
+ * Deduplication in the repository layer
+ * (BudgetForecastRepository checks existence before inserting)
+ * remains as an additional safety net.
  */
 @Entity(
     tableName = "budget_forecasts",
@@ -38,7 +33,8 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["budgetId"]),
         Index(value = ["forecastDate"]),
-        Index(value = ["isActive"])
+        Index(value = ["isActive"]),
+        Index(value = ["budgetId", "targetPeriodStart"], unique = true)
     ]
 )
 data class BudgetForecast(

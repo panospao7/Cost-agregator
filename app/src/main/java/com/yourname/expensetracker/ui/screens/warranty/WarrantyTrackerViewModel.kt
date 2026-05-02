@@ -151,6 +151,7 @@ class WarrantyTrackerViewModel @Inject constructor(
     fun confirmWarranty(warranty: Warranty) {
         viewModelScope.launch {
             val updated = warranty.copy(
+                status = WarrantyStatus.ACTIVE,
                 needsReview = false,
                 updatedAt = timeProvider.now()
             )
@@ -162,6 +163,11 @@ class WarrantyTrackerViewModel @Inject constructor(
     // F1: Reject/delete an auto-detected warranty that was incorrect
     fun rejectAutoDetectedWarranty(warranty: Warranty) {
         viewModelScope.launch {
+            // I5: Also delete the associated return window to keep data consistent
+            val returnWindow = warrantyRepository.getReturnWindowByReceiptId(warranty.receiptId)
+            if (returnWindow != null) {
+                warrantyRepository.deleteReturnWindow(returnWindow)
+            }
             warrantyRepository.deleteWarranty(warranty)
             loadStats()
         }

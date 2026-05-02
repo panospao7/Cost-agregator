@@ -122,6 +122,21 @@ class NotificationRepository @Inject constructor(
     }
 
     // === Bulk operations ===
+
+    /**
+     * Deletes ALL raw notifications, expenses, pending reviews, user corrections
+     * and resets source-stat pending counts.
+     *
+     * WARNING: This method also wipes the **expenses** table, which is almost
+     * never the intended operation outside of full data resets during development
+     * or testing. Callers in production flows must use targeted cleanup methods
+     * (e.g. [delete], [NotificationProcessingPipeline]) to avoid accidental
+     * data loss of imported expense records.
+     */
+    @Deprecated(
+        "Dangerous: use targeted cleanup instead — this deletes ALL expenses",
+        level = DeprecationLevel.ERROR
+    )
     suspend fun deleteAll() {
         database.withTransaction {
             dao.deleteAll()

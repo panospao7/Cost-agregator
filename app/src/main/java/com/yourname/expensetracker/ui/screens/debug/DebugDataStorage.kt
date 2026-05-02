@@ -88,6 +88,7 @@ class DebugDataStorage @Inject constructor(
                 val txObj = transactionsArray.getJSONObject(i)
                 transactions.add(com.yourname.expensetracker.domain.parser.ParsedTransaction(
                     amount = txObj.optDouble("amount", 0.0),
+                    // Fallback "EUR" used when stored data has no currency field; ideally should use home currency
                     currency = txObj.optString("currency", "EUR"),
                     merchant = txObj.optString("merchant", ""),
                     type = ParsedTransactionType.valueOf(

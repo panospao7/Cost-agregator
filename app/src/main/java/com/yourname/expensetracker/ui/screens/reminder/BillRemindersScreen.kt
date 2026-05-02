@@ -23,6 +23,17 @@ import com.yourname.expensetracker.R
 import java.text.SimpleDateFormat
 import java.util.Locale
 
+/**
+ * Bill reminders screen — displays upcoming bill reminders from [BillReminderManager].
+ *
+ * ⚠️ LEGACY PATH: This screen currently uses the older [BillReminderManager] which
+ *    queries due reminders directly. It should be migrated to use
+ *    [RecurringLifecycleCoordinator.getDueReminders] for consistent lifecycle-aware
+ *    reminder generation across the app.
+ *
+ * TODO: Migrate from BillReminderManager to RecurringLifecycleCoordinator as the
+ *       reminder source-of-truth. See [BillReminderManager] KDoc for migration notes.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BillRemindersScreen(

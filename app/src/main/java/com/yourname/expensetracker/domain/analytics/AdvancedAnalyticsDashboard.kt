@@ -101,7 +101,8 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         val displayCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault("EUR")
         val expensesRaw = expenseRepository.getExpenseSnapshotsBetween(startDate, endDate)
         val comparisonExpenses = if (endDate > startDate) {
-            val comparisonStart = startDate - (endDate - startDate)
+            val daysInPeriod = TimePeriodUtils.daysBetween(startDate, endDate).coerceAtLeast(1)
+            val comparisonStart = TimePeriodUtils.addDays(startDate, -daysInPeriod)
             expenseRepository.getExpenseSnapshotsBetween(comparisonStart, startDate)
         } else {
             emptyList()

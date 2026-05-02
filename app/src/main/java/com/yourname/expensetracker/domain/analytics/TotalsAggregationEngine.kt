@@ -56,8 +56,8 @@ class TotalsAggregationEngine @Inject constructor(
                     totalAmount = total,
                     transactionCount = monthly?.txCount ?: 0,
                     periodType = PeriodType.MONTH,
-                    startDateMs = monthly?.startDate ?: monthStart,
-                    endDateMs = monthly?.endDate ?: monthEnd,
+                    startDateMs = monthStart,
+                    endDateMs = monthEnd,
                     status = getPeriodStatus(total, average)
                 )
             }
@@ -325,8 +325,8 @@ class TotalsAggregationEngine @Inject constructor(
                 totalAmount = total,
                 transactionCount = daily?.txCount ?: 0,
                 periodType = PeriodType.DAY,
-                startDateMs = daily?.startDate ?: dayStart,
-                endDateMs = daily?.endDate ?: dayEnd,
+                startDateMs = dayStart,
+                endDateMs = dayEnd,
                 status = getPeriodStatus(total, average)
             )
         }

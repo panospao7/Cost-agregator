@@ -34,6 +34,13 @@ import java.text.SimpleDateFormat
 import java.util.*
 import kotlinx.coroutines.launch
 
+/**
+ * Debug screen for testing the categorization pipeline.
+ *
+ * Note: The "Amount" label uses a generic label without currency symbol.
+ * TODO: If currency-specific display is needed, inject homeCurrency from
+ *       CurrencySettingsRepository and use it in the label.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CategorizationDebugScreen(
@@ -128,7 +135,7 @@ fun CategorizationDebugScreen(
                         OutlinedTextField(
                             value = rawAmount,
                             onValueChange = { rawAmount = it },
-                            label = { Text("Amount (€)") },
+                            label = { Text("Amount") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(1f)
                         )

@@ -12,30 +12,33 @@ import com.yourname.expensetracker.domain.core.money.MoneyAmount
  * Entity representing a subscription candidate detected from notification transaction parsing.
  * Stores detection confidence and metadata to allow user confirmation/activation.
  *
- * ## E3: Missing unique constraints
- * There is no DB-level unique constraint on this table. Key gaps:
- *   - `(canonicalMerchant, userAction)` is not unique, allowing duplicate candidates
- *     for the same merchant (e.g. one "pending" + one "accepted").
- *   - `convertedSubscriptionId` is not unique, so two candidates could claim the same
- *     converted subscription.
+ * ## G2: Unique constraints enforced via Room @Index
+ * A unique composite index on `(canonicalMerchant, userAction)` prevents duplicate
+ * candidates for the same merchant and action (e.g. two "pending" records for the
+ * same merchant).
  *
- * A future migration should consider:
+ * ### Known limitation — partial index not expressible in Room
+ * The ideal index would be a **partial unique index** that only enforces uniqueness
+ * when `userAction = 'pending'`:
  * ```
  * CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_candidates_merchant_action
  *     ON subscription_candidates (canonicalMerchant, userAction)
  *     WHERE userAction = 'pending';
- * CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_candidates_converted_id
- *     ON subscription_candidates (convertedSubscriptionId)
- *     WHERE convertedSubscriptionId IS NOT NULL;
  * ```
- * Until then, deduplication is handled in the repository layer.
+ * Room's [Index] annotation does not support the `WHERE` clause. The current
+ * composite unique index is a slightly wider constraint — it also prevents having
+ * two "accepted" or two "rejected" entries for the same merchant, which is
+ * acceptable in practice. A future migration can add the partial index via raw SQL.
+ *
+ * `convertedSubscriptionId` uniqueness is handled at the repository layer.
  */
 @Entity(
     tableName = "subscription_candidates",
     indices = [
         Index(value = ["canonicalMerchant"], unique = false),
         Index(value = ["isConverted"]),
-        Index(value = ["confidence"])
+        Index(value = ["confidence"]),
+        Index(value = ["canonicalMerchant", "userAction"], unique = true)
     ]
 )
 data class SubscriptionCandidate(

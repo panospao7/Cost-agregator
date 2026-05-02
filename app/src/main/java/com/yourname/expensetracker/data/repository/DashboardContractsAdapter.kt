@@ -127,8 +127,8 @@ class DashboardContractsAdapter @Inject constructor(
 
     override fun observeCategoryBreakdown(start: Long, end: Long): Flow<List<DashboardCategoryBreakdown>> =
         analyticsRepository.getCategoryBreakdown(start, end).map { breakdown ->
-            val periodLength = (end - start).coerceAtLeast(1L)
-            val previousStart = start - periodLength
+            val daysInPeriod = TimePeriodUtils.daysBetween(start, end).coerceAtLeast(1)
+            val previousStart = TimePeriodUtils.addDays(start, -daysInPeriod)
             val previousEnd = start
             val previousByCategoryId = analyticsRepository
                 .getCategoryBreakdown(previousStart, previousEnd)

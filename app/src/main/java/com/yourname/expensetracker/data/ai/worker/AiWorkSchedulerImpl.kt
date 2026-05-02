@@ -12,6 +12,20 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * WorkManager-based implementation of [AiWorkScheduler].
+ *
+ * ## Constraints gap
+ * Currently schedules [DailyBriefingWorker] with no custom constraints
+ * (no network, battery, or charging requirements). The intended constraints
+ * are defined in [WorkerSpec.DEFAULTS] under the key `"ai_daily_briefing"`
+ * (`NetworkType.UNMETERED` + `requiresBatteryNotLow` + `requiresCharging`).
+ * These constraints should be applied to the [PeriodicWorkRequestBuilder]
+ * to prevent the briefing worker from running on metered networks or when
+ * the device is low on battery.
+ *
+ * @see WorkerSpec.DEFAULTS for the full target configuration.
+ */
 @Singleton
 class AiWorkSchedulerImpl @Inject constructor(
     @ApplicationContext private val context: Context

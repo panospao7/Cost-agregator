@@ -4,7 +4,9 @@ import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ReceiptExpenseLink
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
@@ -33,6 +35,8 @@ class ReceiptLinkService @Inject constructor(
     private val receiptExpenseLinkDao: ReceiptExpenseLinkDao,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val receiptEventDao: ReceiptEventDao,
+    private val warrantyDao: WarrantyDao,
+    private val returnWindowDao: ReturnWindowDao,
     private val timeProvider: TimeProvider
 ) {
 
@@ -112,6 +116,18 @@ class ReceiptLinkService @Inject constructor(
                 scannedReceiptDao.update(receipt.copy(expenseId = expenseId))
             }
 
+            // I1: Propagate expenseId to warranty and return window for this receipt
+            warrantyDao.updateExpenseIdByReceiptId(
+                receiptId = receiptId,
+                expenseId = expenseId,
+                updatedAt = now
+            )
+            returnWindowDao.updateExpenseIdByReceiptId(
+                receiptId = receiptId,
+                expenseId = expenseId,
+                updatedAt = now
+            )
+
             // 5. Write lifecycle event
             receiptEventDao.insert(
                 ReceiptEvent(
@@ -123,7 +139,7 @@ class ReceiptLinkService @Inject constructor(
                     oldStatus = null,
                     newStatus = null,
                     actor = createdBy ?: "system",
-                    message = "Receipt linked to expense $expenseId (type=$linkType, source=$source)",
+                    message = "Receipt linked to expense $expenseId (type=$linkType, source=$source). Warranty/return expenseId propagated.",
                     metadata = null,
                     errorDetails = null
                 )

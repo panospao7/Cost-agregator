@@ -143,6 +143,7 @@ class HomeViewModel @Inject constructor(
     private val isEditMode = MutableStateFlow(false)
     private val dashboardReloadTrigger = MutableStateFlow(0)
     private val _categoryTrends = MutableStateFlow<Map<Long, com.yourname.expensetracker.ui.components.CategoryTrendInfo>>(emptyMap())
+    /** Placeholder initial value "EUR"; immediately replaced by [CurrencySettingsRepository.homeCurrency]. */
     val homeCurrency: StateFlow<String> = currencySettingsRepository.homeCurrency()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "EUR")
 

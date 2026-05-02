@@ -69,6 +69,7 @@ import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import android.provider.Settings
 
+/** Returns the currency symbol, defaulting to "€" (EUR) when [currencyCode] is null. */
 private fun getCurrencySymbol(currencyCode: String?): String {
     return CurrencyFormatter.getCurrencySymbol(currencyCode ?: "EUR")
 }
@@ -447,6 +448,7 @@ private fun ReviewStep(
                     HorizontalDivider()
                     preview.fieldSummaries.forEach { field ->
                         val renderedValue = when (field.label) {
+                            // Falls back to "EUR" when parsed currency is unavailable
                             "Amount" -> CurrencyFormatter.format(preview.amount, parsed?.currency ?: "EUR")
                             "Date" -> DateFormatterUtils.formatTimestampJavaTime(preview.date, "dd/MM/yyyy")
                             else -> field.value

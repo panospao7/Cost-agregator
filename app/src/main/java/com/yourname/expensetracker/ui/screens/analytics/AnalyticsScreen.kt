@@ -646,6 +646,10 @@ fun SpendingPatternsCard(analysis: SpendingPatternAnalysis) {
 
 // ── Hour-of-Day Chart (new, Task D) ───────────────────────────────────
 @Composable
+/**
+ * @param currency ISO-4217 currency code. Default "EUR" is a placeholder;
+ *                 callers should pass the actual home currency from settings.
+ */
 fun HourOfDayChartBento(hourOfDayPattern: List<Pair<Int, Double>>, currency: String = "EUR") {
     BentoCard {
         Column {
@@ -708,6 +712,10 @@ fun HourOfDayChartBento(hourOfDayPattern: List<Pair<Int, Double>>, currency: Str
 }
 
 // ── Shared helper composables ─────────────────────────────────────────
+/**
+ * @param currency ISO-4217 currency code. Default "EUR" is a placeholder;
+ *                 callers should pass the actual home currency from settings.
+ */
 @Composable
 fun StatMicro(label: String, value: Any, currency: String = "EUR") {
     Column {
@@ -1592,6 +1600,10 @@ fun SuspectTransactionCard(item: SuspectTransaction, homeCurrency: String = item
 }
 
 // ── Location: Area Spending Item (B1) ─────────────────────────────────
+/**
+ * @param homeCurrency ISO-4217 currency code. Default "EUR" is a placeholder;
+ *                     callers should pass the actual home currency.
+ */
 @Composable
 fun AreaSpendingItem(area: AreaSpending, homeCurrency: String = "EUR") {
     Card(
@@ -1631,6 +1643,10 @@ fun AreaSpendingItem(area: AreaSpending, homeCurrency: String = "EUR") {
 }
 
 // ── Location: Travel vs Home Card (B2) ────────────────────────────────
+/**
+ * @param homeCurrency ISO-4217 currency code. Default "EUR" is a placeholder;
+ *                     callers should pass the actual home currency.
+ */
 @Composable
 fun TravelInsightCard(travel: TravelInsight, homeCurrency: String = "EUR") {
     val totalSpend = travel.homeSpend + travel.localSpend + travel.travelSpend

@@ -33,6 +33,7 @@ data class SavingsGoalsState(
  val isLoading: Boolean = false,
  val selectedGoal: SavingsGoal? = null,
  val totalSaved: Double = 0.0,
+ /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
  val homeCurrency: String = "EUR"
 ) {
  val moneyTotalSaved: MoneyAmount get() = MoneyAmount(totalSaved, CurrencyCode(homeCurrency))

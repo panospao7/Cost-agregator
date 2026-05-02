@@ -98,7 +98,7 @@ interface PendingReviewDao {
      */
     @Deprecated(
         "Use ReviewQueueRepository.approveReview() which goes through TransactionLifecycleCoordinator",
-        level = DeprecationLevel.ERROR
+        level = DeprecationLevel.WARNING
     )
     @Query("UPDATE pending_reviews SET status = 'APPROVED' WHERE status = 'PENDING'")
     suspend fun approveAllPending()

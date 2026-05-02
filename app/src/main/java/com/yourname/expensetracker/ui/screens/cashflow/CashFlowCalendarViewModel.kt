@@ -23,6 +23,7 @@ data class CashFlowCalendarState(
  val viewMode: CalendarViewMode = CalendarViewMode.MONTH,
  val startingBalance: Double = 0.0,
  val upcomingBillsCount: Int = 0,
+ /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
  val homeCurrency: String = "EUR"
 ) {
  val moneyStartingBalance: MoneyAmount get() = MoneyAmount(startingBalance, CurrencyCode(homeCurrency))

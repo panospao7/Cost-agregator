@@ -98,6 +98,10 @@ interface GroupTransactionCoordinator {
      * Add an expense to a group.
      * This creates the group expense record without linking to a system expense.
      * For linked expenses, use [addExpenseWithLink].
+     *
+     * J1: When [splitType] is CUSTOM_AMOUNT, CUSTOM_PERCENT, or UNEQUAL,
+     * [customSplitsJson] must be non-null and contain valid JSON payload.
+     * Pass `null` (or omit) for EQUAL split — it is ignored.
      * 
      * @param groupId Group ID
      * @param description Expense description
@@ -105,6 +109,7 @@ interface GroupTransactionCoordinator {
      * @param paidById ID of member who paid
      * @param currency Currency code for this group expense. If null, implementation derives group default.
      * @param splitType How to split the expense
+     * @param customSplitsJson Serialized custom split configuration. Required for non-EQUAL split types.
      * @param date Expense date in milliseconds
      * @return GroupExpenseCreationResult with IDs or error
      */
@@ -115,6 +120,7 @@ interface GroupTransactionCoordinator {
         paidById: Long,
         currency: String? = null,
         splitType: SplitType = SplitType.EQUAL,
+        customSplitsJson: String? = null,
         date: Long = 0L // sentinel — callers MUST supply an explicit boundary timestamp
     ): GroupExpenseCreationResult
     

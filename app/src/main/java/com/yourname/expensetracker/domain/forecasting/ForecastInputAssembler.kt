@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.roundToLong
+import timber.log.Timber
 
 /**
  * Single source of truth for forecast-input assembly used by weather/dashboard forecast paths.
@@ -312,6 +313,7 @@ class ForecastInputAssembler @Inject constructor(
         val resolvedHomeCurrency = try {
             homeCurrency ?: currencySettingsRepository.homeCurrency().first()
         } catch (e: Exception) {
+            Timber.w(e, "ForecastInputAssembler: failed to resolve home currency, falling back to EUR")
             "EUR"
         }
         val normalized = analyticsCurrencyNormalizer.normalizeSnapshots(expenses, resolvedHomeCurrency)

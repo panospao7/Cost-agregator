@@ -43,10 +43,17 @@ class PriceProtectionTracker @Inject constructor(
             }
     }
     
+    /**
+     * Parses receipt items and maps them to price-protectable items.
+     * Uses [ScannedReceipt.parsedDate] as the authoritative purchase date
+     * (from OCR extraction), falling back to [ScannedReceipt.createdAt]
+     * (scan timestamp) when parsed date is unavailable.
+     */
     private fun parsePriceProtectedItems(receipt: ScannedReceipt): List<PriceProtectedItem>? {
         // Parse receipt items that might be eligible for price protection
         // This would typically use AI to extract item details from the receipt
         
+        val purchaseDate = receipt.parsedDate ?: receipt.createdAt
         return receipt.parsedItems?.let { itemsJson ->
             parseExtractedItems(itemsJson)?.mapNotNull { item ->
                 if (isPriceProtectable(item)) {
@@ -55,7 +62,7 @@ class PriceProtectionTracker @Inject constructor(
                         itemName = item.name,
                         merchant = receipt.parsedMerchant ?: "Unknown",
                         purchasePrice = item.price,
-                        purchaseDate = receipt.createdAt,
+                        purchaseDate = purchaseDate,
                         category = item.category,
                         priceProtectionEligible = isEligibleForPriceProtection(receipt),
                         returnWindowDays = getReturnWindow(receipt.parsedMerchant),
@@ -82,8 +89,10 @@ class PriceProtectionTracker @Inject constructor(
     
     private fun isEligibleForPriceProtection(receipt: ScannedReceipt): Boolean {
         // Check if within price protection window (usually 14-30 days)
+        // Use parsedDate (OCR-extracted purchase date) when available, fall back to scan timestamp
+        val purchaseDate = receipt.parsedDate ?: receipt.createdAt
         val daysSincePurchase = ChronoUnit.DAYS.between(
-            Instant.ofEpochMilli(receipt.createdAt),
+            Instant.ofEpochMilli(purchaseDate),
             Instant.ofEpochMilli(timeProvider.now())
         )
         

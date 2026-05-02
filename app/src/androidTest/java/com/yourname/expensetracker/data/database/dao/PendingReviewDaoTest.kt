@@ -141,6 +141,7 @@ class PendingReviewDaoTest {
     }
 
     @Test
+    @Suppress("DEPRECATION")
     fun approveAllPendingApprovesAllPending() = runBlocking {
         val rawId1 = insertRawNotification()
         val rawId2 = insertRawNotification()

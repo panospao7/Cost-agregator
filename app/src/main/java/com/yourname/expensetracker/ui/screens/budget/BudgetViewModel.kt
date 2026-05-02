@@ -27,6 +27,7 @@ data class BudgetUiState(
     val autopilotError: String? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
+    /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
     val homeCurrency: String = "EUR",
     val referenceNowMillis: Long = 0L
 )
@@ -64,6 +65,7 @@ class BudgetViewModel @Inject constructor(
                 }
             }
 
+    /** Placeholder initial value "EUR"; immediately replaced by [CurrencySettingsRepository.homeCurrency]. */
     private val _homeCurrency = currencySettingsRepository.homeCurrency()
         .stateIn(viewModelScope, SharingStarted.Lazily, "EUR")
 

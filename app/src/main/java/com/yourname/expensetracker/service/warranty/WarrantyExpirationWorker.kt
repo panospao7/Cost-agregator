@@ -26,6 +26,13 @@ import java.util.concurrent.TimeUnit
  * ID-based exclusion (not object equality) to correctly separate 7-day and
  * 30-day windows.
  *
+ * ## Next step: persistent reminder state
+ * The in-memory dedup only prevents duplicates within a single run.
+ * A per-warranty last-sent timestamp in persistent storage (e.g. room or
+ * DataStore) would prevent re-sending the same reminder across device
+ * reboots or worker reschedules. The [notifiedThisRun] set should be
+ * replaced or supplemented with persistent tracking.
+ *
  * ## Settings gate
  * At the start of [doWork], checks that notifications are enabled. If denied,
  * the worker exits early with [Result.success] (skipped, not retried).

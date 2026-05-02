@@ -57,6 +57,7 @@ class SpendingChallengesViewModel @Inject constructor(
  private val _createChallengeEvents = MutableSharedFlow<CreateChallengeEvent>(extraBufferCapacity = 1)
  val createChallengeEvents: SharedFlow<CreateChallengeEvent> = _createChallengeEvents.asSharedFlow()
 
+ /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
  private val _homeCurrency = MutableStateFlow("EUR")
  val homeCurrency: StateFlow<String> = _homeCurrency.asStateFlow()
     

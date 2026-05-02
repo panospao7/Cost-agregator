@@ -83,7 +83,8 @@ data class SpendingMapState(
  val dateRangeEndMs: Long? = null,
  val availableCategories: List<MapCategoryFilterOption> = emptyList(),
   val highlightedMerchantQuery: String? = null,
-  val homeCurrency: String = "EUR",
+   /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
+   val homeCurrency: String = "EUR",
   val referenceNowMillis: Long = 0L
 )
 

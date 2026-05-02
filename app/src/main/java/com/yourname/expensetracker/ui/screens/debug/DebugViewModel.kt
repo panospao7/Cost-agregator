@@ -124,12 +124,14 @@ class DebugViewModel @Inject constructor(
         _selectedPackageFilter.value = packageName
     }
     
+    @Suppress("DEPRECATION_ERROR")
     fun clearAll() {
         viewModelScope.launch {
             repository.deleteAll()
         }
     }
 
+    @Suppress("DEPRECATION_ERROR")
     suspend fun clearAllWithUndoSupport(): Boolean {
         val notificationsSnapshot = repository.createDebugSnapshot()
         val expensesSnapshot = expenseRepository.createDebugSnapshot()

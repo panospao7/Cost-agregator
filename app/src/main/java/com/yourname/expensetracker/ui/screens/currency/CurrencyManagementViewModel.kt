@@ -20,6 +20,7 @@ import javax.inject.Inject
  * UI state for currency management screen.
  */
 data class CurrencyManagementUiState(
+    /** Placeholder default; immediately overridden by [CurrencySettingsRepository.homeCurrency] during init. */
     val homeCurrency: String = "EUR",
     val supportedCurrencies: List<CurrencyInfo> = emptyList(),
     val exchangeRates: List<ExchangeRateInfo> = emptyList(),

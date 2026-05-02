@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 108,
-    "identityHash": "0a9a2bbea0039b569a0a3e71da55f03d",
+    "identityHash": "aa9c58613f2601e03c63792ee6ff2256",
     "entities": [
       {
         "tableName": "raw_notifications",
@@ -4195,6 +4195,16 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_budget_forecasts_isActive` ON `${TABLE_NAME}` (`isActive`)"
+          },
+          {
+            "name": "index_budget_forecasts_budgetId_targetPeriodStart",
+            "unique": true,
+            "columnNames": [
+              "budgetId",
+              "targetPeriodStart"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_budget_forecasts_budgetId_targetPeriodStart` ON `${TABLE_NAME}` (`budgetId`, `targetPeriodStart`)"
           }
         ],
         "foreignKeys": [
@@ -5451,6 +5461,16 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_subscription_candidates_confidence` ON `${TABLE_NAME}` (`confidence`)"
+          },
+          {
+            "name": "index_subscription_candidates_canonicalMerchant_userAction",
+            "unique": true,
+            "columnNames": [
+              "canonicalMerchant",
+              "userAction"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_subscription_candidates_canonicalMerchant_userAction` ON `${TABLE_NAME}` (`canonicalMerchant`, `userAction`)"
           }
         ]
       },
@@ -7230,7 +7250,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '0a9a2bbea0039b569a0a3e71da55f03d')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'aa9c58613f2601e03c63792ee6ff2256')"
     ]
   }
 }

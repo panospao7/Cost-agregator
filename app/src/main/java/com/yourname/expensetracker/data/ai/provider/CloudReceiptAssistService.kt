@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
 import com.yourname.expensetracker.domain.ai.model.SuggestedValue
 import com.yourname.expensetracker.domain.ai.model.AiServiceError
+import com.yourname.expensetracker.domain.ai.validation.AiOutputValidators
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReceiptAssistService
@@ -380,11 +381,20 @@ class CloudReceiptAssistService @Inject constructor(
         val jsonText = CloudJsonParser.extractFirstJsonObject(text) ?: return null
         val suggestion = JSONObject(jsonText)
 
+        // ── AI output validation ──────────────────────────────────────────
+        // Reject hallucinated or malformed values using shared validators.
+        val validatedTotal = suggestion.optJSONObject("total")?.toSuggestedDoubleOrNull()
+            ?.takeIf { AiOutputValidators.isPositiveAmount(it.value) }
+        val validatedTaxAmount = suggestion.optJSONObject("taxAmount")?.toSuggestedDoubleOrNull()
+            ?.let { if (it != null && !AiOutputValidators.isPositiveAmount(it.value)) null else it }
+        val validatedDate = suggestion.optJSONObject("date")?.toSuggestedLongOrNull()
+            ?.takeIf { AiOutputValidators.isPlausibleEpochMillis(it.value) }
+
         return ReceiptAssistSuggestion(
             merchant = suggestion.optJSONObject("merchant")?.toSuggestedStringOrNull(),
-            total = suggestion.optJSONObject("total")?.toSuggestedDoubleOrNull(),
-            date = suggestion.optJSONObject("date")?.toSuggestedLongOrNull(),
-            taxAmount = suggestion.optJSONObject("taxAmount")?.toSuggestedDoubleOrNull(),
+            total = validatedTotal,
+            date = validatedDate,
+            taxAmount = validatedTaxAmount,
             notes = suggestion.optJSONArray("notes").toStringList()
         )
     }
@@ -394,7 +404,7 @@ class CloudReceiptAssistService @Inject constructor(
         if (value.isBlank()) return null
         return SuggestedValue(
             value = value,
-            confidence = optFiniteDoubleStrictOrNull("confidence")?.toFloat(),
+            confidence = optFiniteDoubleStrictOrNull("confidence")?.toFloat()?.coerceIn(0f, 1f),
             rationale = optString("rationale").trim().ifBlank { null }
         )
     }
@@ -405,7 +415,7 @@ class CloudReceiptAssistService @Inject constructor(
             ?: throw JSONException("Missing numeric value")
         return SuggestedValue(
             value = value,
-            confidence = optFiniteDoubleStrictOrNull("confidence")?.toFloat(),
+            confidence = optFiniteDoubleStrictOrNull("confidence")?.toFloat()?.coerceIn(0f, 1f),
             rationale = optString("rationale").trim().ifBlank { null }
         )
     }
@@ -416,7 +426,7 @@ class CloudReceiptAssistService @Inject constructor(
             ?: throw JSONException("Missing integer value")
         return SuggestedValue(
             value = value,
-            confidence = optFiniteDoubleStrictOrNull("confidence")?.toFloat(),
+            confidence = optFiniteDoubleStrictOrNull("confidence")?.toFloat()?.coerceIn(0f, 1f),
             rationale = optString("rationale").trim().ifBlank { null }
         )
     }

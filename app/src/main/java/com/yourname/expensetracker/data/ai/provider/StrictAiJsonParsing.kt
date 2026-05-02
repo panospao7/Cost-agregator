@@ -3,6 +3,17 @@ package com.yourname.expensetracker.data.ai.provider
 import org.json.JSONArray
 import org.json.JSONObject
 
+/**
+ * Strict utilities for parsing AI-produced JSON responses.
+ *
+ * All numeric accessors in this object enforce finiteness and
+ * range constraints to reject hallucinated or malformed values
+ * before they propagate into the domain layer.
+ *
+ * @see boundedConfidenceOrNull for confidence bounded to [0,1]
+ * @see positiveIdOrNull for strictly positive ID values
+ * @see finiteFloatOrNull for finite float without range check
+ */
 internal object StrictAiJsonParsing {
 
     inline fun <reified T : Enum<T>> enumOrNull(raw: String?, ignoreCase: Boolean = false): T? {

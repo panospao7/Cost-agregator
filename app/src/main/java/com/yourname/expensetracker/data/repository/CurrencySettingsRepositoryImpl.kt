@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
+import timber.log.Timber
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -53,6 +54,11 @@ class CurrencySettingsRepositoryImpl @Inject constructor(
         context.currencyDataStore.edit { prefs ->
             prefs[HOME_CURRENCY_KEY] = currencyCode
         }
+        Timber.w(
+            "Home currency changed to [%s]. Historical amounts are NOT re-normalized; " +
+                    "callers must trigger a full re-normalization pass to avoid stale/mismatched amounts.",
+            currencyCode
+        )
     }
     
     override fun lastRateUpdate(): Flow<Long> =

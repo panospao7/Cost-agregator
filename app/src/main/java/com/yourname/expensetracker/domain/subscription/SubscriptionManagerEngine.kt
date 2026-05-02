@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
@@ -296,7 +297,7 @@ class SubscriptionManagerEngine @Inject constructor(
                 subscription = subscription,
                 type = RecommendationType.PRICE_INCREASE,
                 title = UiText.fromKey("domain_subscription_price_increased", increase.changePercent),
-                description = "Your subscription price went from €${String.format("%.2f", increase.oldAmount)} to €${String.format("%.2f", increase.newAmount)}. ${increase.reason ?: ""}",
+                description = "Your subscription price went from ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", increase.oldAmount)} to ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", increase.newAmount)}. ${increase.reason ?: ""}",
                 potentialSavings = 0.0,
                 confidence = 0.9,
                 action = RecommendedAction.NEGOTIATE_PRICE
@@ -323,7 +324,7 @@ class SubscriptionManagerEngine @Inject constructor(
                 subscription = subscription,
                 type = RecommendationType.UNUSED,
                 title = UiText.fromKey("domain_subscription_no_usage"),
-                description = "You haven't recorded any usage for this subscription in the past month. Consider canceling to save €${String.format("%.2f", subscription.amount)} per month.",
+                description = "You haven't recorded any usage for this subscription in the past month. Consider canceling to save ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", subscription.amount)} per month.",
                 potentialSavings = subscription.amount,
                 confidence = 0.95,
                 action = RecommendedAction.CONSIDER_CANCELLATION
@@ -336,7 +337,7 @@ class SubscriptionManagerEngine @Inject constructor(
                 subscription = subscription,
                 type = RecommendationType.CANCELLATION_OPPORTUNITY,
                 title = UiText.fromKey("domain_subscription_high_cost"),
-                description = "Each use costs you €${String.format("%.2f", usageStats.costPerUse)}. This might not be worth it.",
+                description = "Each use costs you ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", usageStats.costPerUse)}. This might not be worth it.",
                 potentialSavings = subscription.amount * 0.5,
                 confidence = 0.75,
                 action = RecommendedAction.REVIEW_USAGE

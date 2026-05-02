@@ -41,6 +41,17 @@ data class GroupMember(
     @ColumnInfo(defaultValue = "0") val isCurrentUser: Boolean = false, // Is this the app user?
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     val joinedAt: Long = 0L,
-    /** Materialized invariant key: set to groupId when isCurrentUser=true, else NULL. */
+    /**
+     * Materialized invariant key: set to groupId when isCurrentUser=true, else NULL.
+     *
+     * J3: The CHECK constraint enforces `currentUserGroupKey = groupId` when
+     * `isCurrentUser = 1`. For rows where `isCurrentUser = 0` this column is
+     * always NULL. Because SQLite allows multiple NULLs in a UNIQUE index, the
+     * unique index on `currentUserGroupKey` correctly permits zero or one
+     * current-user rows per group while ignoring all non-current-user rows.
+     * This is the intended behavior — the constraint is NOT a no-op; it
+     * correctly enforces "at most one current user" via the UNIQUE index + NULL
+     * exemption.
+     */
     val currentUserGroupKey: Long? = null
 )

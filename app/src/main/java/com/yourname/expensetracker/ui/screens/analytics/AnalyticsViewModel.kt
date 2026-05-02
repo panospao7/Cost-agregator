@@ -43,6 +43,7 @@ data class BudgetVsActualItem(
     val budgetAmount: Double,
     val actualSpent: Double,
     val percentUsed: Float, // 0.0 - 1.0+
+    /** Placeholder default; should be populated with actual home currency from [CurrencySettingsRepository]. */
     val displayCurrency: String = "EUR"
 ) {
     val moneyBudgetAmount: MoneyAmount get() = MoneyAmount(budgetAmount, CurrencyCode(displayCurrency))
@@ -80,6 +81,7 @@ data class AnalyticsState(
     // F13: Spending Personality Profile
     val personalityProfile: SpendingPersonalityProfile? = null,
     val isLoading: Boolean = true,
+    /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
     val homeCurrency: String = "EUR",
     val conversionWarnings: List<AnalyticsConversionWarning> = emptyList(),
     /**

@@ -3,7 +3,9 @@ package com.yourname.expensetracker.domain.negotiation
 import com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import java.time.Instant
@@ -181,20 +183,45 @@ class SmartBillNegotiationEngine @Inject constructor(
         return keywords.any { this.contains(it) }
     }
     
+    /**
+     * Normalizes a billing amount to its monthly equivalent based on frequency.
+     *
+     * I7: Savings calculations must be on a common monthly basis so that
+     * weekly, quarterly, annual, etc. subscriptions are compared fairly against
+     * market rates which are always quoted per month.
+     */
+    private fun monthlyEquivalent(amount: Double, frequency: RecurrenceFrequency): Double {
+        if (amount <= 0.0) return 0.0
+        val months = frequency.calendarMonths
+        if (months != null) {
+            return amount / months
+        }
+        // Fixed-interval frequencies (weekly, biweekly)
+        val days = frequency.fixedIntervalDays
+        if (days != null) {
+            return amount * (365.0 / 12.0) / days // avg days per month = 365/12 ≈ 30.42
+        }
+        // IRREGULAR: cannot determine — return raw amount as best-effort
+        return amount
+    }
+
     private fun createNegotiationOpportunity(
         subscription: ManualRecurringExpense,
         marketRate: MarketRate,
         currentPrice: Double,
         priceHistory: List<com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory>
     ): NegotiationOpportunity {
-        val potentialSavings = currentPrice - marketRate.competitivePrice
-        val savingsPercent = if (currentPrice > 0) (potentialSavings / currentPrice * 100) else 0.0
+        // I7: Normalize current price to monthly equivalent before comparing
+        // against market rates (which are denominated per month).
+        val monthlyEquivalentPrice = monthlyEquivalent(currentPrice, subscription.frequency)
+        val potentialMonthlySavings = monthlyEquivalentPrice - marketRate.competitivePrice
+        val savingsPercent = if (monthlyEquivalentPrice > 0) (potentialMonthlySavings / monthlyEquivalentPrice * 100) else 0.0
         
         val priceIncreases = analyzePriceIncreases(priceHistory)
         val customerValue = calculateCustomerValue(subscription, priceHistory.size)
         
         val negotiationPower = calculateNegotiationPower(
-            currentPrice = currentPrice,
+            currentPrice = monthlyEquivalentPrice,
             marketRate = marketRate,
             customerValue = customerValue,
             priceIncreases = priceIncreases,
@@ -211,8 +238,8 @@ class SmartBillNegotiationEngine @Inject constructor(
             marketAveragePrice = marketRate.averagePrice,
             competitivePrice = marketRate.competitivePrice,
             bestAvailablePrice = marketRate.bestPrice,
-            potentialMonthlySavings = potentialSavings.coerceAtLeast(0.0),
-            potentialYearlySavings = potentialSavings.coerceAtLeast(0.0) * 12,
+            potentialMonthlySavings = potentialMonthlySavings.coerceAtLeast(0.0),
+            potentialYearlySavings = potentialMonthlySavings.coerceAtLeast(0.0) * 12,
             savingsPercent = savingsPercent,
             negotiationPower = negotiationPower,
             priceIncreaseCount = priceIncreases.size,
@@ -227,7 +254,7 @@ class SmartBillNegotiationEngine @Inject constructor(
             successProbability = calculateSuccessProbability(negotiationPower, marketRate),
             recommendedAction = determineRecommendedAction(
                 negotiationPower,
-                potentialSavings,
+                potentialMonthlySavings,
                 marketRate
             )
         )
@@ -321,10 +348,10 @@ class SmartBillNegotiationEngine @Inject constructor(
         val opening = when (negotiationPower) {
             NegotiationPower.STRONG -> 
                 "I've been a loyal customer for a while now, but I've noticed my bill has increased significantly. " +
-                "I see that ${marketRate.competitors.firstOrNull() ?: "competitors"} are offering similar services for €${String.format("%.2f", competitivePrice)}/month."
+                "I see that ${marketRate.competitors.firstOrNull() ?: "competitors"} are offering similar services for ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", competitivePrice)}/month."
             
             NegotiationPower.MODERATE ->
-                "I'm reviewing my monthly expenses and noticed I'm paying €${String.format("%.2f", currentPrice)}. " +
+                "I'm reviewing my monthly expenses and noticed I'm paying ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", currentPrice)}. " +
                 "I'd like to discuss options to reduce my monthly cost."
             
             else ->
@@ -333,13 +360,13 @@ class SmartBillNegotiationEngine @Inject constructor(
         
         val talkingPoints = listOfNotNull(
             "I've been a customer for ${if (negotiationPower == NegotiationPower.STRONG) "several years" else "some time"}",
-            "My current rate is €${String.format("%.2f", currentPrice)} which is above the market average of €${String.format("%.2f", marketRate.averagePrice)}",
+            "My current rate is ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", currentPrice)} which is above the market average of ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", marketRate.averagePrice)}",
             if (marketRate.competitors.isNotEmpty()) "${marketRate.competitors.take(2).joinToString(" and ")} are offering lower rates" else null,
             "I'm considering my options but would prefer to stay with $provider if we can find a better rate",
             "What retention offers do you have available?"
         )
         
-        val close = "If we can get closer to €${String.format("%.2f", competitivePrice)}/month, I'm ready to commit today. Otherwise, I may need to explore other options."
+        val close = "If we can get closer to ${CurrencyFormatter.getCurrencySymbol(subscription.currency)}${String.format("%.2f", competitivePrice)}/month, I'm ready to commit today. Otherwise, I may need to explore other options."
         
         return NegotiationScript(
             opening = opening,

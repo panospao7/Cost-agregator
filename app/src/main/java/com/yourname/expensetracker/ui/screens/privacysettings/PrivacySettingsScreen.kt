@@ -32,6 +32,16 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yourname.expensetracker.ui.theme.SemanticColors
 
+/**
+ * Privacy settings screen.
+ *
+ * Note: Changing certain settings may require an app restart to take full effect:
+ * - "Capture notifications" — requires restart of NotificationListenerService
+ * - "Background location backfill" — requires restart of background location workers
+ *
+ * TODO: Add per-setting "restart required" badges or snackbar hints once the
+ *       underlying services support dynamic reconfiguration.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PrivacySettingsScreen(

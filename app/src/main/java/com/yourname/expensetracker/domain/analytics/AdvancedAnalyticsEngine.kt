@@ -258,8 +258,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
             expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) 
         }
         
-        // Get historical data for price trends (6 months back)
-        val historicalStart = period.startMs - (180L * TimePeriodUtils.DAY_IN_MILLIS)
+        // Get historical data for price trends (6 calendar months back)
+        val historicalStart = TimePeriodUtils.addMonths(period.startMs, -6)
         val historicalExpensesDeferred = async(ioDispatcher) { 
             expenseRepository.getExpenseSnapshotsBetween(historicalStart, period.endMs)
         }

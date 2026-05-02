@@ -49,6 +49,12 @@ data class ReturnWindow(
     val returnConditions: String? = null,
     @ColumnInfo(defaultValue = "RETURNABLE") val status: ReturnStatus = ReturnStatus.RETURNABLE,
     val returnedAt: Long? = null,
+    /**
+     * The amount refunded, if the item was returned.
+     * TODO: A `currency` field should be added to fully qualify this amount.
+     *       Currently the currency is implicit (from the purchase context) but
+     *       should be stored explicitly for multi-currency support.
+     */
     val refundAmount: Double? = null,
     val createdAt: Long,
     val updatedAt: Long

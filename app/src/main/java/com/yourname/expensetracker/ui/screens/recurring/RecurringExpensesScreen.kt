@@ -64,6 +64,7 @@ class RecurringExpensesViewModel @Inject constructor(
     private val timeProvider: TimeProvider
 ) : ViewModel() {
 
+    /** Placeholder initial value "EUR"; immediately replaced by [CurrencySettingsRepository.homeCurrency]. */
     private val _homeCurrency = currencySettingsRepository.homeCurrency()
         .stateIn(viewModelScope, SharingStarted.Lazily, "EUR")
     val homeCurrency: StateFlow<String> = _homeCurrency
@@ -321,6 +322,10 @@ fun RecurringExpensesScreen(
 }
 
 @Composable
+/**
+ * @param homeCurrency ISO-4217 currency code. Default "EUR" is a placeholder;
+ *                     callers should pass the actual home currency from settings.
+ */
 fun PlannedExpenseItem(
     expense: com.yourname.expensetracker.domain.model.PlannedExpense,
     homeCurrency: String = "EUR",

@@ -54,6 +54,7 @@ data class AddExpenseState(
  val sharedWithName: String = "",
  val mySharePercentage: String = "",
  val myShareAmount: String = "",
+ /** Placeholder default; overridden by [CurrencySettingsRepository.homeCurrency] during init. */
  val homeCurrency: String = "EUR"
 )
 
