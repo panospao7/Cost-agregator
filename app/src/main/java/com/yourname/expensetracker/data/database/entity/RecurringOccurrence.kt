@@ -6,6 +6,8 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.model.RecurringPattern
 
 @Entity(
     tableName = "recurring_occurrences",
@@ -46,4 +48,35 @@ data class RecurringOccurrence(
         if (paidAmount != null && paidCurrency != null)
             MoneyAmount(paidAmount, CurrencyCode(paidCurrency))
         else null
+}
+
+/**
+ * Converts a [RecurringOccurrence] entity to a domain [RecurringPattern].
+ *
+ * The conversion uses occurrence data:
+ * - [merchant] as merchant name (defaults to "Unknown" if null)
+ * - [expectedAmount] as the average amount
+ * - [dueDate] as the next expected date
+ * - Confidence is set to 1.0 (manual rules are authoritative)
+ */
+fun RecurringOccurrence.toRecurringPattern(): RecurringPattern {
+    val merchantName = merchant ?: "Unknown"
+    val freq = try {
+        RecurrenceFrequency.valueOf(frequency)
+    } catch (_: IllegalArgumentException) {
+        RecurrenceFrequency.IRREGULAR
+    }
+    return RecurringPattern(
+        merchantName = merchantName,
+        averageAmount = expectedAmount,
+        currency = expectedCurrency,
+        frequency = freq,
+        nextExpectedDate = dueDate,
+        confidence = 1.0f,
+        periodVarianceDays = 0,
+        amountVariancePercent = 0.0,
+        previousDates = emptyList(),
+        categoryId = categoryId,
+        id = sourceId
+    )
 }

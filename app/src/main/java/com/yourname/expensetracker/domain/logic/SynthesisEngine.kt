@@ -1,6 +1,10 @@
 package com.yourname.expensetracker.domain.logic
 
+import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
+import com.yourname.expensetracker.data.database.entity.toRecurringPattern
 import com.yourname.expensetracker.domain.analytics.PaceStatus
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.analytics.SpendingPace
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
@@ -9,6 +13,7 @@ import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.runBlocking
 import timber.log.Timber
 import java.time.Instant
 import java.util.*
@@ -57,7 +62,9 @@ import javax.inject.Singleton
  */
 @Singleton
 class SynthesisEngine @Inject constructor(
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    /** @suppress Optional — when present, occurrences replace ad-hoc recurrence expansion in block-party calendar. */
+    private val recurringOccurrenceDao: RecurringOccurrenceDao? = null
 ) {
     companion object {
         private const val TAG = "SynthesisEngine"
@@ -354,19 +361,25 @@ class SynthesisEngine @Inject constructor(
         }
 
         val dateCal = Calendar.getInstance().apply { timeInMillis = now }
-        val anchorCal = Calendar.getInstance().apply { timeInMillis = now }
 
-        // Pre-calculate which days have recurring expenses (optimization)
-        val recurringByDay = mutableMapOf<Int, List<RecurringPattern>>()
-        for (day in 1..daysInMonth) {
-            dateCal.set(Calendar.DAY_OF_MONTH, day)
-            dateCal.set(Calendar.HOUR_OF_DAY, 12)
-            val recurringOnDay = components.recurringExpenses.filter { 
-                isRecurringExpected(it, dateCal, anchorCal) 
-            }
-            if (recurringOnDay.isNotEmpty()) {
-                recurringByDay[day] = recurringOnDay
-            }
+        // Pre-calculate which days have recurring expenses.
+        // When the occurrence DAO is available, use the canonical occurrence source
+        // (PAID + PLANNED) instead of ad-hoc date matching.
+        val recurringByDay = if (recurringOccurrenceDao != null) {
+            buildRecurringByDayFromOccurrences(
+                components.recurringExpenses,
+                startOfMonth,
+                endOfMonthExclusive,
+                daysInMonth,
+                recurringOccurrenceDao
+            )
+        } else {
+            buildRecurringByDayLegacy(
+                components.recurringExpenses,
+                now,
+                daysInMonth,
+                dateCal
+            )
         }
 
         return (1..daysInMonth).map { day ->
@@ -492,6 +505,92 @@ class SynthesisEngine @Inject constructor(
             }
             else -> false 
         }
+    }
+
+    /**
+     * Builds the [recurringByDay] map from materialised [RecurringOccurrence] rows.
+     * This is the canonical source for manual recurring rules.
+     *
+     * Detected-only patterns (id == null) are handled via the legacy ad-hoc
+     * matcher so they still appear in the block-party calendar.
+     */
+    private fun buildRecurringByDayFromOccurrences(
+        recurringPatterns: List<RecurringPattern>,
+        monthStart: Long,
+        monthEnd: Long,
+        daysInMonth: Int,
+        occurrenceDao: RecurringOccurrenceDao
+    ): Map<Int, List<RecurringPattern>> {
+        val result = mutableMapOf<Int, MutableList<RecurringPattern>>()
+
+        // ── Occurrence path for manual rules ────────────────────────────────
+        val manualIds = recurringPatterns
+            .filter { it.id != null }
+            .mapNotNull { it.id }
+            .toSet()
+
+        if (manualIds.isNotEmpty()) {
+            // runBlocking is acceptable here because this is called from a
+            // non-suspend context (calculateBlockPartyData) and the DAO query
+            // is purely read-only / fast.
+            val occurrences = runBlocking {
+                occurrenceDao.getByDateRange(monthStart, monthEnd)
+            }.filter {
+                    it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
+                        it.sourceId in manualIds &&
+                        (it.status == "PLANNED" || it.status == "PAID")
+                }
+            val dayCal = Calendar.getInstance()
+            for (occ in occurrences) {
+                val day = dayCal.apply { timeInMillis = occ.dueDate }.get(Calendar.DAY_OF_MONTH)
+                if (day in 1..daysInMonth) {
+                    result.getOrPut(day) { mutableListOf() }.add(occ.toRecurringPattern())
+                }
+            }
+        }
+
+        // ── Legacy path for detected-only patterns ──────────────────────────
+        val detectedPatterns = recurringPatterns.filter { it.id == null }
+        if (detectedPatterns.isNotEmpty()) {
+            val dateCal = Calendar.getInstance()
+            val anchorCal = Calendar.getInstance()
+            for (day in 1..daysInMonth) {
+                dateCal.set(Calendar.DAY_OF_MONTH, day)
+                dateCal.set(Calendar.HOUR_OF_DAY, 12)
+                val onDay = detectedPatterns.filter { isRecurringExpected(it, dateCal, anchorCal) }
+                if (onDay.isNotEmpty()) {
+                    result.getOrPut(day) { mutableListOf() }.addAll(onDay)
+                }
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Legacy fallback: builds [recurringByDay] using ad-hoc
+     * [isRecurringExpected] matching for ALL patterns. Used when the occurrence
+     * DAO is not available (e.g. in unit tests).
+     */
+    private fun buildRecurringByDayLegacy(
+        recurringPatterns: List<RecurringPattern>,
+        now: Long,
+        daysInMonth: Int,
+        dateCal: Calendar
+    ): Map<Int, List<RecurringPattern>> {
+        val result = mutableMapOf<Int, List<RecurringPattern>>()
+        val anchorCal = Calendar.getInstance().apply { timeInMillis = now }
+        for (day in 1..daysInMonth) {
+            dateCal.set(Calendar.DAY_OF_MONTH, day)
+            dateCal.set(Calendar.HOUR_OF_DAY, 12)
+            val recurringOnDay = recurringPatterns.filter {
+                isRecurringExpected(it, dateCal, anchorCal)
+            }
+            if (recurringOnDay.isNotEmpty()) {
+                result[day] = recurringOnDay
+            }
+        }
+        return result
     }
 
     private fun determineRiskLevel(

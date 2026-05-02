@@ -1,11 +1,15 @@
 package com.yourname.expensetracker.domain.cashflow
 
+import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.data.database.entity.toRecurringPattern
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import java.util.*
@@ -33,7 +37,9 @@ enum class CashFlowRiskLevel {
 class CashFlowCalculator @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val recurringPatternsProvider: MergedRecurringPatternsProvider,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
+    private val recurringOccurrenceDao: RecurringOccurrenceDao
 ) {
     suspend fun calculateDailyCashFlow(
         startDate: Date,
@@ -165,21 +171,45 @@ class CashFlowCalculator @Inject constructor(
     }
     
     suspend fun getUpcomingBills(daysAhead: Int): List<RecurringPattern> {
-        val patterns = recurringPatternsProvider.getConfirmedPatterns()
-
         val now = timeProvider.now()
         val startOfToday = TimePeriodUtils.getStartOfDay(now)
-        val futureDayStart = TimePeriodUtils.addDays(TimePeriodUtils.getStartOfDay(now), daysAhead)
-        val future = TimePeriodUtils.getEndOfDay(futureDayStart)
-        
-        val upcomingList = mutableListOf<RecurringPattern>()
-        for (pattern in patterns) {
-            if (pattern.nextExpectedDate >= startOfToday && pattern.nextExpectedDate <= future) {
-                upcomingList.add(pattern)
+        // Exclusive end — covers all days up to and including `daysAhead` from today
+        val endDate = TimePeriodUtils.addDays(startOfToday, daysAhead + 1)
+
+        val patterns = recurringPatternsProvider.getConfirmedPatterns()
+        val ruleIds = patterns
+            .filter { it.id != null }
+            .mapNotNull { it.id }
+            .distinct()
+
+        // ── Part 1: Manual rules — canonical occurrence path ────────────────
+        val manualUpcoming = if (ruleIds.isNotEmpty()) {
+            // Generate (materialise) occurrences for each rule
+            for (ruleId in ruleIds) {
+                try {
+                    recurringLifecycleCoordinator.generateOccurrences(ruleId, startOfToday, endDate)
+                } catch (_: Exception) {
+                    // skip failed rule
+                }
             }
+            // Query PLANNED occurrences = upcoming obligations
+            recurringOccurrenceDao.getByDateRange(startOfToday, endDate)
+                .filter {
+                    it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
+                        it.sourceId in ruleIds &&
+                        it.status == "PLANNED"
+                }
+                .map { it.toRecurringPattern() }
+        } else {
+            emptyList()
         }
-        
-        return upcomingList
+
+        // ── Part 2: Detected-only patterns — simplified ad-hoc fallback ──────
+        val detectedUpcoming = patterns
+            .filter { it.id == null }
+            .filter { it.nextExpectedDate >= startOfToday && it.nextExpectedDate < endDate }
+
+        return manualUpcoming + detectedUpcoming
     }
 
     // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType

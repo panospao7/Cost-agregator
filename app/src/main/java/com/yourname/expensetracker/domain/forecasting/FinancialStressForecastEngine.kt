@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.forecasting
 
+import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
@@ -11,6 +13,7 @@ import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -19,7 +22,6 @@ import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
-import java.util.Calendar
 import java.util.Random
 
 /**
@@ -45,7 +47,9 @@ class FinancialStressForecastEngine @Inject constructor(
     private val timeProvider: TimeProvider,
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val multiCurrencyRepository: MultiCurrencyRepository
+    private val multiCurrencyRepository: MultiCurrencyRepository,
+    private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
+    private val recurringOccurrenceDao: RecurringOccurrenceDao
 ) {
     companion object {
         private const val TAG = "FinancialStressForecast"
@@ -221,31 +225,68 @@ class FinancialStressForecastEngine @Inject constructor(
     }
 
     /**
-     * Calculate recurring outflows for a time period.
-     * TODO: Convert pattern.averageAmount to display currency if pattern.currency differs from display currency.
+     * Calculate recurring outflows for a time period using canonical
+     * [RecurringOccurrence] infrastructure.
+     *
+     * For each manual recurring rule (patterns with non-null id):
+     * 1. Generate occurrences via [RecurringLifecycleCoordinator] (idempotent writes).
+     * 2. Query all materialized occurrences in the date range.
+     * 3. Sum expected amounts for PAID and PLANNED occurrences.
+     *
+     * Detected-only patterns (id == null) have no corresponding manual rule and
+     * are handled by a simplified ad-hoc expansion for backward compatibility.
      */
-    private fun calculateRecurringOutflows(
+    private suspend fun calculateRecurringOutflows(
         patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
         startDate: Long,
         endDate: Long
     ): Double {
+        val manualPatterns = patterns.filter { it.id != null && it.confidence >= 0.50f }
+        val detectedPatterns = patterns.filter { it.id == null && it.confidence >= 0.50f }
+
         var totalOutflows = 0.0
-        val calendar = Calendar.getInstance()
-        
+
+        // ── Part 1: Manual patterns — canonical occurrence path ──────────────
+        if (manualPatterns.isNotEmpty()) {
+            val ruleIds = manualPatterns.mapNotNull { it.id }.distinct()
+            // Generate (materialise) occurrences for each rule
+            for (ruleId in ruleIds) {
+                try {
+                    recurringLifecycleCoordinator.generateOccurrences(ruleId, startDate, endDate)
+                } catch (_: Exception) {
+                    // skip failed rule
+                }
+            }
+            // Query all materialised occurrences in range for these rules
+            val allOccurrences = recurringOccurrenceDao.getByDateRange(startDate, endDate)
+                .filter { it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE && it.sourceId in ruleIds }
+            totalOutflows += allOccurrences.sumOf { it.expectedAmount }
+        }
+
+        // ── Part 2: Detected-only patterns — simplified ad-hoc fallback ──────
+        if (detectedPatterns.isNotEmpty()) {
+            totalOutflows += expandDetectedPatterns(detectedPatterns, startDate, endDate)
+        }
+
+        return totalOutflows
+    }
+
+    /**
+     * Expanded ad-hoc recurrence calculation for detected-only patterns that
+     * do not have a corresponding manual rule and therefore cannot use the
+     * [RecurringLifecycleCoordinator].
+     */
+    private fun expandDetectedPatterns(
+        patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
+        startDate: Long,
+        endDate: Long
+    ): Double {
+        var total = 0.0
         for (pattern in patterns) {
-            // Only include high-confidence patterns
-            if (pattern.confidence < 0.50f) continue
-            
             var nextDate = pattern.nextExpectedDate
-            
-            // Skip if next expected date is beyond our horizon
             if (nextDate > endDate) continue
-            
-            // Count occurrences within the horizon
             while (nextDate in startDate..endDate) {
-                totalOutflows += pattern.averageAmount
-                
-                // Calculate next occurrence
+                total += pattern.averageAmount
                 nextDate = when (pattern.frequency) {
                     RecurrenceFrequency.WEEKLY -> nextDate + (7 * TimePeriodUtils.DAY_IN_MILLIS)
                     RecurrenceFrequency.BIWEEKLY -> nextDate + (14 * TimePeriodUtils.DAY_IN_MILLIS)
@@ -253,12 +294,11 @@ class FinancialStressForecastEngine @Inject constructor(
                     RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(nextDate, 3)
                     RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(nextDate, 6)
                     RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(nextDate, 1)
-                    else -> break // Unknown frequency, stop counting
+                    else -> break
                 }
             }
         }
-        
-        return totalOutflows
+        return total
     }
 
     /**
