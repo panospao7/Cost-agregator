@@ -30,7 +30,7 @@
 
 ## Current Project Metrics
 - Database version: v106
-- 620+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5, ~16 new in Phase 5b, ~20 new in Phase 6, ~8 modified in Phase 7, ~12 new in Phase 8, ~4 new in Phase 9)
+- 620+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5, ~16 new in Phase 5b, ~20 new in Phase 6, ~8 modified in Phase 7, ~12 new in Phase 8, ~4 new in Phase 9, ~6 new/modified in Phase 10)
 - Destination-driven navigation via `NavigationDestination`
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
@@ -804,9 +804,95 @@ crash-safe journaling, worker pausing, and full 56-entity verification.
 
 ---
 
+### Phase 10 — Analytics / Forecast / AI Cleanup (May 2026)
+
+Phase 10 is the **final architecture cross-cutting phase**, resolving correctness issues,
+hardening currency normalization, and establishing a shared data-quality contract across
+all analytics, forecasting, health, and savings pipelines.
+
+#### Double-Counting Fix — Occurrence-Based Dedup
+
+| Component | File | Change |
+|-----------|------|--------|
+| `ForecastInputAssembler` | `domain/forecasting/ForecastInputAssembler.kt` | Injects `RecurringOccurrenceDao` and cross-deduplicates planned expenses that share a `sourceOccurrenceKey` with PLANNED/PAID occurrences from the recurring lifecycle coordinator. Resolves the long-standing double-count risk documented in the class KDoc. |
+| `MonthlySavingsSweepUseCase` | `domain/usecase/savings/MonthlySavingsSweepUseCase.kt` | Injects `RecurringOccurrenceDao` for occurrence-aware underspend calculation during month-end sweep recommendations. Prevents forecasted occurrences from inflating budget-remainder totals. |
+
+Both engines now reconcile planned-vs-materialized occurrences before summing forecast inputs,
+eliminating the primary source of double-counted projections.
+
+#### `PeriodKind.toPeriodRange()` Extension
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `PeriodKind.toPeriodRange()` | `domain/core/time/PeriodKind.kt` | Extension function converting any `PeriodKind` (including `CUSTOM`) into a concrete `PeriodRange` anchored at `now`. Delegates to `TimePeriodUtils` for calendar-aware boundary computation (DST/leap-year safe). Throws `IllegalArgumentException` for `CUSTOM` without explicit bounds. |
+
+```kotlin
+// One-liner replaces ad-hoc when-blocks throughout the codebase
+val monthRange = PeriodKind.THIS_MONTH.toPeriodRange(now = timeProvider.now())
+```
+
+Provides a single, auditable conversion path from semantic period kind to concrete half-open
+range, eliminating the spread of manual boundary computation across 10+ consumers.
+
+#### Currency Normalization Wiring — `BudgetForecastingEngine`
+
+| Component | File | Change |
+|-----------|------|--------|
+| `BudgetForecastingEngine` | `domain/budget/BudgetForecastingEngine.kt` | Now injects `AnalyticsCurrencyNormalizer` and `CurrencySettingsRepository`. All monetary operations (spent-to-date, trend computation, risk assessment) go through the normalizer instead of raw SQL sums. Replaces `ExpenseDao` aggregate queries with normalized `MoneyAggregate`-based computation. |
+
+This completes the multi-currency architecture coverage: every financial pipeline that
+aggregates expense amounts now routes through `AnalyticsCurrencyNormalizer`.
+
+#### `MoneyAmount` / `MoneyAggregate` — Approved Type Designation
+
+| Type | File | Purpose |
+|------|------|---------|
+| `MoneyAmount` | `domain/core/money/MoneyAmount.kt` | KDoc now opens with `★ APPROVED TYPE ★` — the single approved domain type for all monetary values. Replaces raw `Double` and `Pair<Double, String>` in domain models, analytics outputs, and UI state. |
+| `MoneyAggregate` | `domain/core/money/MoneyAggregate.kt` | KDoc now opens with `★ APPROVED TYPE ★` — the single approved result type for all financial aggregation. Replaces raw `Double` totals that silently mixed currencies. |
+
+Both types carry explicit migration guidance in their KDoc. New code must use these types;
+legacy `Double` + `displayCurrency` pairs should be converted opportunistically.
+
+#### Hardcoded Currency Defaults — Documented Constants
+
+| Engine | Constants | KDoc Annotation |
+|--------|-----------|-----------------|
+| `SmartSavingsEngine` | `DEFAULT_CAP_WEEK=75.0`, `DEFAULT_CAP_MONTH=200.0`, `DEFAULT_CAP_QUARTER=500.0`, `DEFAULT_FALLBACK_MONTHLY_DISCRETIONARY=500.0`, `homeCurrency="EUR"` default parameter | Documented as "home-currency units (e.g., EUR, USD)" with TODO to make configurable via `CurrencySettingsRepository` |
+| `FinancialHealthCalculator` | `DEFAULT_DAILY_TARGET=50.0`, `DEFAULT_WEEKLY_TARGET=350.0`, `DEFAULT_MONTHLY_TARGET=1500.0`, `homeCurrency` resolved via `CurrencySettingsRepository` (falls back to `"EUR"`) | Documented as "home-currency units" with note to derive intelligently from income or historical averages |
+
+These constants are **explicitly scoped as home-currency defaults**, not silent EUR assumptions.
+Every hardcoded monetary value now carries KDoc explaining its denomination and future
+migration path.
+
+#### `DataQualityReport` — Shared Quality Contract
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `DataQualityReport` | `domain/analytics/DataQualityReport.kt` | Unified data class aggregating quality metrics from analytics, forecasting, currency conversion, and AI pipelines. Properties: `totalExpenses`, `expensesWithCurrency`, `expensesWithMerchant`, `expensesWithCategory`, `conversionConfidence` (0.0–1.0), `warnings`. Factory method `fromNormalization()` consumes `AnalyticsNormalizationResult`. Computed properties: `isReliable`, `qualityLabel`. |
+
+All engines that use `AnalyticsCurrencyNormalizer` should pipe its output through
+`DataQualityReport.fromNormalization()` to produce a consistent quality signal for UI
+consumption. The `isReliable` flag (`totalExpenses > 0 && conversionConfidence >= 0.5`)
+provides a single boolean gate for displaying analytics results.
+
+#### Summary
+
+Phase 10 closes the remaining correctness and documentation gaps across the analytics,
+forecasting, and AI surface:
+1. **Double-counting eliminated** in two forecast-adjacent pipelines via occurrence-based dedup
+2. **Period-kind-to-range** unified in a single extension function
+3. **Currency normalization** completed in the budget forecasting engine
+4. **Approved types** formally designated with `★ APPROVED TYPE ★` KDoc markers
+5. **Hardcoded defaults** surfaced and documented with migration paths
+6. **Data quality** standardized via a shared report contract
+
+**DB impact:** No migration. Database stays at **v106** (Phase 10 adds no entities or columns).
+
+---
+
 ## Database Schema
 
-### Version: v106 (post DB invariants + background workers; Phase 9 adds no migrations)
+### Version: v106 (post DB invariants + background workers; Phases 9–10 add no migrations)
 
 The Room schema in v106 includes all tables from v100 plus:
 
@@ -930,7 +1016,7 @@ Use the database file and migration chain as the source of truth for the exact t
 - Batch I: Settings & Edge Cases (covered separately in release notes; not counted in this 47-fix summary)
 
 - Coverage note: the 47 fixes above cover batches A-H only; related edge-case items are documented in the full release notes.
-### Phase 10: Performance (11 fixes)
+### Performance Batch (formerly "Phase 10")
 - WarrantyDao N+1 query → JOIN
 - Geocoding double throttling
 - Analytics recomputation
@@ -941,7 +1027,7 @@ Use the database file and migration chain as the source of truth for the exact t
 - Chart recomposition optimized
 - Recent transactions capped
 
-### Phase 11: Accessibility (16 fixes)
+### Accessibility Batch (formerly "Phase 11")
 - Chart semantics (3 charts)
 - Touch targets (3 components)
 - BudgetBlockPartyCard semantics
@@ -955,7 +1041,7 @@ Use the database file and migration chain as the source of truth for the exact t
 - Badge text improved
 - Legend labels expanded
 
-### Phase 12: New Components to Document
+### New Components Batch (formerly "Phase 12")
 - Domain Models: `DomainBlockStatus`, `DomainDayBudgetStatus`, `DomainTransactionFilter`, `DomainExpenseSummary`, `AiServiceError`, `AiServiceResult`, `GeocodingError`, `GeocodingLookupResult`, `GeocodingBatchResult`, `NearbyPoiResult`, `ProcessingResult` (NotificationProcessingPipeline)
 - UI Mappers: `DashboardWidgetUiMapper`, `TransactionFilterUiMapper`
 - Repositories: `GroupsRepository`, `GroupsRepositoryImpl`

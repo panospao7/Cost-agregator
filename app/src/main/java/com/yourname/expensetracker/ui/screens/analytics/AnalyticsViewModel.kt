@@ -651,6 +651,7 @@ class AnalyticsViewModel @Inject constructor(
     }
 
 
+    @Suppress("DEPRECATION")
     private fun timePeriodToAnalyticsPeriod(period: TimePeriod): AnalyticsPeriod? = when (period) {
         TimePeriod.WEEK -> AnalyticsPeriod.WEEK
         // MONTH/QUARTER/YEAR use rolling windows from getPeriodRange(), so use CUSTOM.
@@ -659,6 +660,17 @@ class AnalyticsViewModel @Inject constructor(
         TimePeriod.YEAR,
         TimePeriod.TODAY,
         TimePeriod.ALL -> null
+    }
+
+    /** Maps [TimePeriod] to [PeriodKind] for the migration to domain.core.time. */
+    @Suppress("DEPRECATION")
+    private fun TimePeriod.toPeriodKind(): com.yourname.expensetracker.domain.core.time.PeriodKind = when (this) {
+        TimePeriod.TODAY -> com.yourname.expensetracker.domain.core.time.PeriodKind.TODAY
+        TimePeriod.WEEK -> com.yourname.expensetracker.domain.core.time.PeriodKind.THIS_WEEK
+        TimePeriod.MONTH -> com.yourname.expensetracker.domain.core.time.PeriodKind.THIS_MONTH
+        TimePeriod.QUARTER -> com.yourname.expensetracker.domain.core.time.PeriodKind.THIS_QUARTER
+        TimePeriod.YEAR -> com.yourname.expensetracker.domain.core.time.PeriodKind.THIS_YEAR
+        TimePeriod.ALL -> com.yourname.expensetracker.domain.core.time.PeriodKind.CUSTOM
     }
 
     private fun computeBudgetsHash(budgets: List<Budget>): Int {

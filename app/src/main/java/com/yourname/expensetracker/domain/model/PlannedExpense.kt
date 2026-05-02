@@ -7,7 +7,9 @@ data class PlannedExpense(
     val date: Long,
     val categoryId: Long?,
     val isRecurring: Boolean,
-    val priority: PlannedExpensePriority
+    val priority: PlannedExpensePriority,
+    /** Key linking this planned expense to a recurring occurrence (occurrenceKey). */
+    val sourceOccurrenceKey: String? = null
 ) {
     init {
         require(description.isNotBlank()) { "description cannot be blank" }

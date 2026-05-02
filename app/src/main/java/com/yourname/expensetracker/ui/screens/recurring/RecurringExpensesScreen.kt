@@ -137,7 +137,8 @@ class RecurringExpensesViewModel @Inject constructor(
                         com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST -> com.yourname.expensetracker.domain.model.PlannedExpensePriority.MUST
                         com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.LIKELY -> com.yourname.expensetracker.domain.model.PlannedExpensePriority.LIKELY
                         com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.OPTIONAL -> com.yourname.expensetracker.domain.model.PlannedExpensePriority.OPTIONAL
-                    }
+                    },
+                    sourceOccurrenceKey = entity.sourceOccurrenceKey
                 )
             }
         }

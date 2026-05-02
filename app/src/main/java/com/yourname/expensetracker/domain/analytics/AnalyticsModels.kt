@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.model.UiText
 
 /**
@@ -243,8 +244,30 @@ data class RecurringCandidate(
     val displayCurrency: String
 )
 
+/**
+ * Time period selection for analytics views.
+ *
+ * @deprecated Use [PeriodKind] from domain.core.time instead.
+ *   Mapping: TODAY→PeriodKind.TODAY, WEEK→PeriodKind.THIS_WEEK,
+ *   MONTH→PeriodKind.THIS_MONTH, QUARTER→PeriodKind.THIS_QUARTER,
+ *   YEAR→PeriodKind.THIS_YEAR, ALL→PeriodKind.CUSTOM (with explicit range).
+ */
+@Deprecated(
+    message = "Use PeriodKind from domain.core.time instead",
+    replaceWith = ReplaceWith("PeriodKind", "com.yourname.expensetracker.domain.core.time.PeriodKind")
+)
 enum class TimePeriod {
     TODAY, WEEK, MONTH, QUARTER, YEAR, ALL
+}
+
+/** Maps this legacy [TimePeriod] to [PeriodKind] for the migration. */
+fun TimePeriod.toPeriodKind(): PeriodKind = when (this) {
+    TimePeriod.TODAY -> PeriodKind.TODAY
+    TimePeriod.WEEK -> PeriodKind.THIS_WEEK
+    TimePeriod.MONTH -> PeriodKind.THIS_MONTH
+    TimePeriod.QUARTER -> PeriodKind.THIS_QUARTER
+    TimePeriod.YEAR -> PeriodKind.THIS_YEAR
+    TimePeriod.ALL -> PeriodKind.CUSTOM
 }
 
 // === Feature 3: Year-over-Year Comparison Models ===

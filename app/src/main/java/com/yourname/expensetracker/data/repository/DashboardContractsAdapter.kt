@@ -103,7 +103,8 @@ class DashboardContractsAdapter @Inject constructor(
                         com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST -> PlannedExpensePriority.MUST
                         com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.LIKELY -> PlannedExpensePriority.LIKELY
                         com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.OPTIONAL -> PlannedExpensePriority.OPTIONAL
-                    }
+                    },
+                    sourceOccurrenceKey = entity.sourceOccurrenceKey
                 )
             }
         }

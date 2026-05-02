@@ -56,10 +56,28 @@ class SmartSavingsEngine @Inject constructor(
     companion object {
         private const val DAY_IN_MILLIS = 24 * 60 * 60 * 1000L
 
-        // Default weekly/monthly/quarterly safe-save caps in home currency (configurable)
+        /**
+         * Default weekly safe-save cap, denominated in the user's home currency.
+         *
+         * These caps represent conservative upper bounds on how much the engine
+         * will recommend saving in a single week/month/quarter. They prevent
+         * overly aggressive savings recommendations. Values are in home-currency
+         * units (e.g., EUR, USD) and should be tuned per-market. Future iterations
+         * may expose these as user-editable settings via [CurrencySettingsRepository].
+         */
         private const val DEFAULT_CAP_WEEK = 75.0
+
+        /** @see DEFAULT_CAP_WEEK */
         private const val DEFAULT_CAP_MONTH = 200.0
+
+        /** @see DEFAULT_CAP_WEEK */
         private const val DEFAULT_CAP_QUARTER = 500.0
+
+        /**
+         * Fallback monthly discretionary spending used when historical data is
+         * insufficient to compute a user-specific baseline. Denominated in home
+         * currency.
+         */
         private const val DEFAULT_FALLBACK_MONTHLY_DISCRETIONARY = 500.0
     }
 

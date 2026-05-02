@@ -1,14 +1,19 @@
 package com.yourname.expensetracker.domain.core.money
 
 /**
- * An amount of money in a specific currency.
+ * ★ APPROVED TYPE ★ An amount of money in a specific currency.
  *
- * This is the fundamental currency-safe building block. Unlike raw `Double` amounts, *
- * a [MoneyAmount] always knows its currency, preventing accidental mixed-currency
- * arithmetic.
+ * This is the **single approved domain type** for all monetary values in the app.
+ * Use [MoneyAmount] instead of raw `Double` or `Pair<Double, String>` in all
+ * new domain models, analytics outputs, and UI state.
  *
- * Use this instead of `Pair<Double, String>` or bare `Double` in domain models
- * and aggregation results.
+ * Unlike raw `Double` amounts, a [MoneyAmount] always knows its currency,
+ * preventing accidental mixed-currency arithmetic.
+ *
+ * Migration status:
+ * - **Do**: Use in new code, ViewModels, domain models
+ * - **Should**: Convert existing `Double` + `displayCurrency: String` pairs over time
+ * - **Avoid**: Creating new bare `Double` monetary fields
  *
  * For conversion results that include rate/timestamp metadata, see [ConvertedMoney].
  * For aggregated totals across multiple currencies, see [MoneyAggregate].

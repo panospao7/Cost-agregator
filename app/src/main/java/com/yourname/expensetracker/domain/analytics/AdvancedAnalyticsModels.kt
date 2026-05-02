@@ -1,17 +1,33 @@
 package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
+import com.yourname.expensetracker.domain.core.time.PeriodKind
+import com.yourname.expensetracker.domain.core.time.PeriodRange
 
 /**
  * Period definition for analytics queries.
+ *
+ * @deprecated Use [PeriodKind] instead. Migrate callers to PeriodKind.THIS_WEEK,
+ *   PeriodKind.THIS_MONTH, PeriodKind.THIS_QUARTER, PeriodKind.THIS_YEAR,
+ *   or PeriodKind.CUSTOM.
  */
+@Deprecated(
+    message = "Use PeriodKind from domain.core.time instead",
+    replaceWith = ReplaceWith("PeriodKind", "com.yourname.expensetracker.domain.core.time.PeriodKind")
+)
 enum class AnalyticsPeriod {
     WEEK, MONTH, QUARTER, YEAR, CUSTOM
 }
 
 /**
  * Represents a time range for analytics calculations.
+ *
+ * @deprecated Use [PeriodRange] from domain.core.time instead.
  */
+@Deprecated(
+    message = "Use PeriodRange from domain.core.time instead",
+    replaceWith = ReplaceWith("PeriodRange", "com.yourname.expensetracker.domain.core.time.PeriodRange")
+)
 data class AnalyticsPeriodRange(
     val period: AnalyticsPeriod,
     val startMs: Long,

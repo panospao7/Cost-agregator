@@ -33,7 +33,7 @@ class FinancialHealthCalculator @Inject constructor(
         private const val TODAY_WEIGHT = 0.20
         private const val WEEK_WEIGHT = 0.30
         private const val MONTH_WEIGHT = 0.50
-        
+
         // Max bonus points per period
         private const val MAX_BONUS_POINTS = 15
 
@@ -41,9 +41,21 @@ class FinancialHealthCalculator @Inject constructor(
         // Normalize raw period score to 0-100 so HealthStatus bands remain reachable/meaningful.
         private const val MAX_RAW_PERIOD_SCORE = 70.0
 
-        // Default budget control targets in home currency
+        /**
+         * Default daily budget target, denominated in the user's home currency.
+         *
+         * These targets represent baseline spending expectations for a healthy
+         * financial profile. They are used when no explicit budget exists for a
+         * given period. Values are in home-currency units (e.g., EUR, USD).
+         *
+         * Future iterations may:
+         * - Make these configurable via a [com.yourname.expensetracker.domain.currency.CurrencySettingsRepository]
+         * - Derive them intelligently from income or historical averages
+         */
         private const val DEFAULT_DAILY_TARGET = 50.0
+        /** @see DEFAULT_DAILY_TARGET */
         private const val DEFAULT_WEEKLY_TARGET = 350.0
+        /** @see DEFAULT_DAILY_TARGET */
         private const val DEFAULT_MONTHLY_TARGET = 1500.0
     }
 

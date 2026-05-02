@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.usecase.savings
 
+import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
@@ -12,6 +13,7 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
@@ -46,7 +48,8 @@ class MonthlySavingsSweepUseCase @Inject constructor(
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
     private val timeProvider: TimeProvider,
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val recurringOccurrenceDao: RecurringOccurrenceDao
 ) {
     companion object {
         /** Minimum safe sweep amount to show recommendation (in home currency) */
@@ -229,10 +232,23 @@ class MonthlySavingsSweepUseCase @Inject constructor(
             .filter { it.nextDate in now until monthEndExclusive }
             .sumOf { it.amount }
 
+        // ── Occurrence-aware dedup for planned expenses ──────────────────────
+        // Query materialized occurrences in the month window to build a set of
+        // occurrenceKeys. Planned expenses whose sourceOccurrenceKey matches any
+        // materialized occurrence are excluded to prevent double-counting.
+        val materializedKeys: Set<String> = try {
+            recurringOccurrenceDao.getByDateRange(now, monthEndExclusive)
+                .map { it.occurrenceKey }
+                .toSet()
+        } catch (e: Exception) {
+            emptySet()
+        }
+
         val plannedUpcoming = plannedExpenseRepository.getAllPlannedExpenses().first()
             .filter {
                 it.date in now until monthEndExclusive &&
-                    it.priority == com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST
+                    it.priority == com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST &&
+                    (it.sourceOccurrenceKey == null || it.sourceOccurrenceKey !in materializedKeys)
             }
             .sumOf { it.amount }
 

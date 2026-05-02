@@ -1,10 +1,11 @@
 package com.yourname.expensetracker.domain.core.money
 
 /**
- * Aggregated money total across multiple currencies, converted to a single display currency.
+ * ★ APPROVED TYPE ★ Aggregated money total across multiple currencies,
+ * converted to a single display currency.
  *
- * This is the primary result type for all financial aggregation in the app.
- * It replaces raw `Double` totals that silently mixed currencies.
+ * This is the **single approved result type** for all financial aggregation
+ * in the app. It replaces raw `Double` totals that silently mixed currencies.
  *
  * Key design decisions:
  * - [displayAmount] and [displayCurrency] are the converted total in a single currency
@@ -13,9 +14,11 @@ package com.yourname.expensetracker.domain.core.money
  * - [isPartial] is true when some currencies were excluded due to conversion failures
  *
  * UI consumers should:
- * 1. Display [displayAmount] with [displayCurrency]
+ * 1. Display [displayAmount] with [displayCurrency] (use [formatDisplay] for convenience)
  * 2. If [isPartial], show a warning like "Total excludes N transactions due to missing rates"
  * 3. Optionally show [sourceBuckets] for per-currency detail
+ *
+ * @see MoneyAmount The single-currency counterpart for non-aggregated values.
  */
 data class MoneyAggregate(
     val displayAmount: Double,
