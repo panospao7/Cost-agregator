@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.model.DomainTransactionType
@@ -49,6 +50,7 @@ class MonthlySavingsSweepUseCase @Inject constructor(
     private val timeProvider: TimeProvider,
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
     private val currencySettingsRepository: CurrencySettingsRepository,
+    private val currencyConverter: CurrencyConverter,
     private val recurringOccurrenceDao: RecurringOccurrenceDao
 ) {
     companion object {
@@ -228,9 +230,22 @@ class MonthlySavingsSweepUseCase @Inject constructor(
     }
 
     private suspend fun calculateKnownUpcomingObligations(now: Long, monthEndExclusive: Long): Double {
-        val recurringUpcoming = recurringExpenseRepository.getAllFlow().first()
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+
+        // ── Recurring expenses (normalised to home currency) ──────────────────
+        val recurringPairs = recurringExpenseRepository.getAllFlow().first()
             .filter { it.nextDate in now until monthEndExclusive }
-            .sumOf { it.amount }
+            .map { it.amount to it.currency }
+
+        val recurringAggregate = currencyConverter.convertMultiple(recurringPairs, homeCurrency)
+        val recurringUpcoming = recurringAggregate.total
+        if (recurringAggregate.hasFailures) {
+            Timber.w(
+                "MonthlySavingsSweepUseCase: ${recurringAggregate.failedConversions.size} recurring " +
+                "conversion failure(s) excluded from known-upcoming total"
+            )
+        }
 
         // ── Occurrence-aware dedup for planned expenses ──────────────────────
         // Query materialized occurrences in the month window to build a set of
@@ -244,13 +259,22 @@ class MonthlySavingsSweepUseCase @Inject constructor(
             emptySet()
         }
 
-        val plannedUpcoming = plannedExpenseRepository.getAllPlannedExpenses().first()
+        val plannedPairs = plannedExpenseRepository.getAllPlannedExpenses().first()
             .filter {
                 it.date in now until monthEndExclusive &&
                     it.priority == com.yourname.expensetracker.data.database.entity.PlannedExpensePriority.MUST &&
                     (it.sourceOccurrenceKey == null || it.sourceOccurrenceKey !in materializedKeys)
             }
-            .sumOf { it.amount }
+            .map { it.amount to it.currency }
+
+        val plannedAggregate = currencyConverter.convertMultiple(plannedPairs, homeCurrency)
+        val plannedUpcoming = plannedAggregate.total
+        if (plannedAggregate.hasFailures) {
+            Timber.w(
+                "MonthlySavingsSweepUseCase: ${plannedAggregate.failedConversions.size} planned " +
+                "conversion failure(s) excluded from known-upcoming total"
+            )
+        }
 
         return recurringUpcoming + plannedUpcoming
     }

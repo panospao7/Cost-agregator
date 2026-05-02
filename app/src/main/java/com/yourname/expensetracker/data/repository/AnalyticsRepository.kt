@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryBreakdown
 import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryRef
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.DataQualityReport
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.Flow
@@ -161,6 +162,38 @@ class AnalyticsRepository @Inject constructor(
                 .sortedByDescending { it.total }
             )
         }
+    }
+
+    // ── Data quality reporting ────────────────────────────────────────────────
+
+    /**
+     * Returns a [DataQualityReport] for the given time range, computing
+     * conversion confidence and metadata completeness from the normalizer.
+     *
+     * Consumers (UI, forecast engines, health score) can use this to assess
+     * how reliable analytics outputs are for the period.
+     */
+    suspend fun getDataQualityReport(start: Long, end: Long): DataQualityReport {
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        val expenses = expenseDao.getExpensesByTypeBetween(
+            start, end, ExpenseDao.SPENDING_TYPE
+        )
+        val normalization = analyticsCurrencyNormalizer.normalizeExpenses(
+            expenses, homeCurrency
+        )
+        val totalWithCurrency = expenses.count { e ->
+            e.currency.length == 3 && e.currency.all { it.isLetter() }
+        }
+        val totalWithMerchant = expenses.count { it.merchant.isNotBlank() }
+        val totalWithCategory = expenses.count { it.categoryId != null }
+
+        return DataQualityReport.fromNormalization(
+            normalization = normalization,
+            totalWithCurrency = totalWithCurrency,
+            totalWithMerchant = totalWithMerchant,
+            totalWithCategory = totalWithCategory
+        )
     }
 
     // ── Location-aware analytics (v28) ────────────────────────────────────────

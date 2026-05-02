@@ -104,18 +104,12 @@ fun PeriodKind.toPeriodRange(
         }
         PeriodKind.THIS_WEEK -> TimePeriodUtils.getWeekRange(now, 0)
         PeriodKind.LAST_WEEK -> TimePeriodUtils.getWeekRange(now, -1)
-        PeriodKind.LAST_7_DAYS -> {
-            val start = now - (7 * TimePeriodUtils.DAY_IN_MILLIS)
-            start to now
-        }
+        PeriodKind.LAST_7_DAYS -> TimePeriodUtils.getLastNCalendarDaysRange(now, 7)
         PeriodKind.THIS_MONTH -> TimePeriodUtils.getMonthRange(now)
         PeriodKind.LAST_MONTH -> TimePeriodUtils.getMonthRange(
             TimePeriodUtils.addMonths(now, -1)
         )
-        PeriodKind.LAST_30_DAYS -> {
-            val start = now - (30 * TimePeriodUtils.DAY_IN_MILLIS)
-            start to now
-        }
+        PeriodKind.LAST_30_DAYS -> TimePeriodUtils.getLastNCalendarDaysRange(now, 30)
         PeriodKind.THIS_QUARTER -> TimePeriodUtils.getQuarterRange(now)
         PeriodKind.LAST_QUARTER -> {
             val lastQuarterStart = TimePeriodUtils.getStartOfQuarter(

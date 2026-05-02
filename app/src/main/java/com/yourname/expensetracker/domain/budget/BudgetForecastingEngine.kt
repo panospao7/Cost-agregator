@@ -132,11 +132,13 @@ class BudgetForecastingEngine @Inject constructor(
     /**
      * Get historical spending data for pattern analysis.
      *
-     * Uses aggregate SQL (A.9) instead of fetching raw expense rows, so there
-     * is no row-count cap and no risk of silent truncation.  The DAO
-     * [getMonthlySpendingTotalsByCategoryBetween] and
-     * [getMonthlySpendingTotalsBetween] return pre-grouped monthly totals
-     * computed with the effective-amount formula, preserving A.1 semantics.
+     * Fetches raw expense snapshots and normalises them to the home currency
+     * via [AnalyticsCurrencyNormalizer] before grouping into monthly buckets.
+     * This replaces the earlier raw-SQL aggregate approach (A.9) that summed
+     * amounts across mixed currencies without conversion — see
+     * [ExpenseDao.getMonthlySpendingTotalsByCategoryBetween] /
+     * [ExpenseDao.getMonthlySpendingTotalsBetween] which are now deprecated
+     * for exactly that reason.
      *
      * Gap months between first/last observed month keys are synthesized as
      * explicit zero-spend buckets so averages and trends are not skewed
@@ -145,21 +147,46 @@ class BudgetForecastingEngine @Inject constructor(
     private suspend fun getHistoricalSpendingData(budget: Budget): HistoricalData {
         val now = timeProvider.now()
         val threeMonthsAgo = TimePeriodUtils.addMonths(now, -3)
-        
-        // Fetch pre-aggregated monthly totals via SQL — no row-count limit.
-        val monthlyTotals: List<MonthlySpendingTotal> = if (budget.categoryId != null) {
-            expenseDao.getMonthlySpendingTotalsByCategoryBetween(
-                categoryId = budget.categoryId,
-                startDate = threeMonthsAgo,
-                endDate = now
-            )
-        } else {
-            expenseDao.getMonthlySpendingTotalsBetween(
-                startDate = threeMonthsAgo,
-                endDate = now
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+
+        // ── Fetch raw snapshots and normalise to home currency ──────────────
+        val rawExpenses = expenseRepository.getExpenseSnapshotsBetween(threeMonthsAgo, now)
+        val normalized = analyticsCurrencyNormalizer.normalizeSnapshots(rawExpenses, homeCurrency)
+        val relevantExpenses = normalized.includedExpenses
+
+        // Log conversion warnings if any occurred
+        if (normalized.hasWarnings) {
+            Timber.w(
+                "BudgetForecastingEngine historical: ${normalized.warnings.size} conversion warning(s), " +
+                "${normalized.excludedCount} transactions excluded"
             )
         }
-        
+
+        // Filter by category and spending type, then group into monthly buckets
+        val filtered = if (budget.categoryId != null) {
+            relevantExpenses.filter { it.categoryId == budget.categoryId }
+        } else {
+            relevantExpenses
+        }
+
+        val spendingExpenses = filtered.filter {
+            (it.transactionType == DomainTransactionType.PURCHASE ||
+             it.transactionType == DomainTransactionType.WITHDRAWAL) &&
+            !it.isNotMine
+        }
+
+        val monthlyTotals: List<MonthlySpendingTotal> = spendingExpenses
+            .groupBy { TimePeriodUtils.formatMonthKey(it.date) }
+            .map { (monthKey, expenses) ->
+                MonthlySpendingTotal(
+                    monthKey = monthKey,
+                    total = expenses.sumOf { it.effectiveAmount },
+                    txCount = expenses.size
+                )
+            }
+            .sortedBy { it.monthKey }
+
         val normalizedSeries = BudgetHistorySeriesBuilder.build(
             monthlyTotals = monthlyTotals,
             windowStartInclusive = threeMonthsAgo,
