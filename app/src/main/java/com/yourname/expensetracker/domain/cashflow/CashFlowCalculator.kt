@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import timber.log.Timber
 import java.util.*
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -41,6 +42,9 @@ class CashFlowCalculator @Inject constructor(
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
     private val recurringOccurrenceDao: RecurringOccurrenceDao
 ) {
+    companion object {
+        private const val TAG = "CashFlowCalculator"
+    }
     suspend fun calculateDailyCashFlow(
         startDate: Date,
         endDate: Date,
@@ -188,8 +192,8 @@ class CashFlowCalculator @Inject constructor(
             for (ruleId in ruleIds) {
                 try {
                     recurringLifecycleCoordinator.generateOccurrences(ruleId, startOfToday, endDate)
-                } catch (_: Exception) {
-                    // skip failed rule
+                } catch (e: Exception) {
+                    Timber.w(e, "$TAG: generateOccurrences failed for ruleId=%d, skipping rule", ruleId)
                 }
             }
             // Query PLANNED occurrences = upcoming obligations

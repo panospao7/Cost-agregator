@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 107
+const val APP_DATABASE_SCHEMA_VERSION = 108
 
 @Database(
     entities = [
@@ -5127,9 +5127,9 @@ abstract class AppDatabase : RoomDatabase() {
                         CHECK(
                             (status != 'PLANNED' AND openSourceOccurrenceKey IS NULL)
                             OR
-                            (status = 'PLANNED' AND openSourceOccurrenceKey IS NOT NULL)
-                            OR
                             (status = 'PLANNED' AND sourceOccurrenceKey IS NULL AND openSourceOccurrenceKey IS NULL)
+                            OR
+                            (status = 'PLANNED' AND sourceOccurrenceKey IS NOT NULL AND openSourceOccurrenceKey = sourceOccurrenceKey)
                         ),
                         FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
                     )
@@ -6411,9 +6411,93 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        // Migration 107 -> 108: Fix planned_expenses CHECK constraint.
+        //
+        // The CHECK constraint from MIGRATION_106_107 allowed a PLANNED row with
+        // sourceOccurrenceKey = 'A' to have openSourceOccurrenceKey = 'B' (any non-null).
+        // Fix: require openSourceOccurrenceKey to equal sourceOccurrenceKey when both are non-null.
+        //
+        // New invariant:
+        //   - non-PLANNED status           → openSourceOccurrenceKey IS NULL
+        //   - PLANNED + sourceKey IS NULL  → openSourceOccurrenceKey IS NULL
+        //   - PLANNED + sourceKey NOT NULL → openSourceOccurrenceKey = sourceOccurrenceKey
+        val MIGRATION_107_108 = object : androidx.room.migration.Migration(107, 108) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                val fkWasEnabled = database.query("PRAGMA foreign_keys").use {
+                    it.moveToFirst(); it.getInt(0) == 1
+                }
+                if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                try {
+                    database.beginTransaction()
+                    try {
+                        // Step 1: Heal bad rows before rebuilding the table
+                        // For PLANNED rows: set openSourceOccurrenceKey = sourceOccurrenceKey
+                        // For non-PLANNED rows: set openSourceOccurrenceKey = NULL
+                        database.execSQL("""
+                            UPDATE planned_expenses
+                            SET openSourceOccurrenceKey = sourceOccurrenceKey
+                            WHERE status = 'PLANNED'
+                        """.trimIndent())
+                        database.execSQL("""
+                            UPDATE planned_expenses
+                            SET openSourceOccurrenceKey = NULL
+                            WHERE status != 'PLANNED'
+                        """.trimIndent())
+
+                        // Step 2: Rebuild table with stricter CHECK constraint
+                        database.execSQL("""
+                            CREATE TABLE planned_expenses_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                description TEXT NOT NULL,
+                                amount REAL NOT NULL,
+                                currency TEXT NOT NULL DEFAULT 'EUR',
+                                currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT',
+                                date INTEGER NOT NULL,
+                                categoryId INTEGER,
+                                isRecurring INTEGER NOT NULL DEFAULT 0,
+                                priority TEXT NOT NULL,
+                                createdAt INTEGER NOT NULL,
+                                sourceOccurrenceKey TEXT,
+                                sourceRecurringRuleId INTEGER,
+                                status TEXT NOT NULL DEFAULT 'PLANNED',
+                                linkedActualExpenseId INTEGER,
+                                merchantKey TEXT,
+                                updatedAt INTEGER NOT NULL,
+                                openSourceOccurrenceKey TEXT,
+                                CHECK(
+                                    (status != 'PLANNED' AND openSourceOccurrenceKey IS NULL)
+                                    OR
+                                    (status = 'PLANNED' AND sourceOccurrenceKey IS NULL AND openSourceOccurrenceKey IS NULL)
+                                    OR
+                                    (status = 'PLANNED' AND sourceOccurrenceKey IS NOT NULL AND openSourceOccurrenceKey = sourceOccurrenceKey)
+                                ),
+                                FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                            )
+                        """.trimIndent())
+
+                        database.execSQL("INSERT INTO planned_expenses_new SELECT * FROM planned_expenses")
+                        database.execSQL("DROP TABLE planned_expenses")
+                        database.execSQL("ALTER TABLE planned_expenses_new RENAME TO planned_expenses")
+
+                        // Recreate Room-declared planned_expenses indexes
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_date ON planned_expenses (date)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_categoryId ON planned_expenses (categoryId)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_planned_expenses_openSourceOccurrenceKey ON planned_expenses (openSourceOccurrenceKey)")
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
+                } finally {
+                    if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
+                }
+            }
+        }
+
         /**
       * Creates an in-memory [RoomDatabase.Builder] pre-configured with
-         * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
+          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
          *
          * Every test that needs a fresh `AppDatabase` **must** go through this
          * factory so that supplementary indexes (Batch 3 through Batch 8) are
@@ -6553,7 +6637,8 @@ MIGRATION_91_92,
         MIGRATION_103_104,
         MIGRATION_104_105,
         MIGRATION_105_106,
-        MIGRATION_106_107
+        MIGRATION_106_107,
+        MIGRATION_107_108
     )
     }
 }

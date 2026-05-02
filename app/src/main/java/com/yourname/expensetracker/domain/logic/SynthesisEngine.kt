@@ -524,10 +524,11 @@ class SynthesisEngine @Inject constructor(
         val result = mutableMapOf<Int, MutableList<RecurringPattern>>()
 
         // ── Occurrence path for manual rules ────────────────────────────────
-        val manualIds = recurringPatterns
-            .filter { it.id != null }
-            .mapNotNull { it.id }
-            .toSet()
+        val manualPatterns = recurringPatterns.filter { it.id != null }
+        val manualIds = manualPatterns.mapNotNull { it.id }.toSet()
+
+        // Track which rule IDs had at least one occurrence row
+        val ruleIdsWithOccurrences = mutableSetOf<Long>()
 
         if (manualIds.isNotEmpty()) {
             // runBlocking is acceptable here because this is called from a
@@ -542,9 +543,30 @@ class SynthesisEngine @Inject constructor(
                 }
             val dayCal = Calendar.getInstance()
             for (occ in occurrences) {
+                ruleIdsWithOccurrences.add(occ.sourceId)
                 val day = dayCal.apply { timeInMillis = occ.dueDate }.get(Calendar.DAY_OF_MONTH)
                 if (day in 1..daysInMonth) {
                     result.getOrPut(day) { mutableListOf() }.add(occ.toRecurringPattern())
+                }
+            }
+        }
+
+        // P0-6: Manual rules with ZERO occurrence rows → fall back to legacy matching
+        val missingRuleIds = manualIds - ruleIdsWithOccurrences
+        if (missingRuleIds.isNotEmpty()) {
+            val missingPatterns = manualPatterns.filter { it.id in missingRuleIds }
+            if (missingPatterns.isNotEmpty()) {
+                Timber.w("$TAG: %d manual rule(s) have zero occurrence rows, falling back to legacy matching",
+                    missingRuleIds.size)
+                val dateCal = Calendar.getInstance()
+                val anchorCal = Calendar.getInstance()
+                for (day in 1..daysInMonth) {
+                    dateCal.set(Calendar.DAY_OF_MONTH, day)
+                    dateCal.set(Calendar.HOUR_OF_DAY, 12)
+                    val onDay = missingPatterns.filter { isRecurringExpected(it, dateCal, anchorCal) }
+                    if (onDay.isNotEmpty()) {
+                        result.getOrPut(day) { mutableListOf() }.addAll(onDay)
+                    }
                 }
             }
         }

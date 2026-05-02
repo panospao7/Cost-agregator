@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -49,7 +50,9 @@ class BudgetForecastingEngine @Inject constructor(
     /** @suppress Repository injected for expense snapshot queries (required by normalizer). */
     private val expenseRepository: ExpenseRepository,
     /** @suppress Settings injected to resolve home currency code. */
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    /** @suppress Converter injected to normalise budget.amount to home currency. */
+    private val currencyConverter: CurrencyConverter
 ) {
     private val budgetCalculator = BudgetCalculator(timeProvider)
 
@@ -72,7 +75,17 @@ class BudgetForecastingEngine @Inject constructor(
         val now = timeProvider.now()
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
             .getOrDefault("EUR")
-        
+
+        // P0-5: Normalize budget.amount to home currency if budget.currency differs
+        val normalizedBudgetAmount = runCatching {
+            val converted = currencyConverter.convert(budget.amount, budget.currency, homeCurrency)
+            converted?.convertedAmount ?: budget.amount
+        }.getOrElse {
+            Timber.w("BudgetForecastingEngine: Failed to convert budget.amount=%.2f %s to %s, using raw amount",
+                budget.amount, budget.currency, homeCurrency)
+            budget.amount
+        }
+
         // Calculate active budget period window and elapsed segment for spent-to-date.
         val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
         val elapsedEnd = now.coerceAtMost(periodEnd)
@@ -96,19 +109,20 @@ class BudgetForecastingEngine @Inject constructor(
             budget = budget,
             predictedSpending = predictedSpending,
             confidence = confidence,
-            spentToDate = spentToDate
+            spentToDate = spentToDate,
+            normalizedBudgetAmount = normalizedBudgetAmount
         )
         
         // Calculate overspend probability
         val overspendProbability = calculateOverspendProbability(
-            budgetAmount = budget.amount,
+            budgetAmount = normalizedBudgetAmount,
             predictedSpending = predictedSpending,
             spentToDate = spentToDate,
             confidence = confidence
         )
         
         // Calculate predicted remaining
-        val predictedRemaining = budget.amount - spentToDate - predictedSpending
+        val predictedRemaining = normalizedBudgetAmount - spentToDate - predictedSpending
         
         val forecast = BudgetForecast(
             budgetId = budget.id,
@@ -284,11 +298,12 @@ class BudgetForecastingEngine @Inject constructor(
         budget: Budget,
         predictedSpending: Double,
         confidence: Double,
-        spentToDate: Double
+        spentToDate: Double,
+        normalizedBudgetAmount: Double
     ): ForecastRiskLevel {
-        if (spentToDate >= budget.amount) return ForecastRiskLevel.CRITICAL
+        if (spentToDate >= normalizedBudgetAmount) return ForecastRiskLevel.CRITICAL
 
-        val remaining = budget.amount - spentToDate
+        val remaining = normalizedBudgetAmount - spentToDate
         
         // Calculate percentage of remaining budget that will be used
         val usageRatio = if (remaining > 0) predictedSpending / remaining else 1.0

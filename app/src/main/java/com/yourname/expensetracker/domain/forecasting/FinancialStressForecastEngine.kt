@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.DomainTransactionType
@@ -49,7 +50,8 @@ class FinancialStressForecastEngine @Inject constructor(
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val multiCurrencyRepository: MultiCurrencyRepository,
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
-    private val recurringOccurrenceDao: RecurringOccurrenceDao
+    private val recurringOccurrenceDao: RecurringOccurrenceDao,
+    private val currencyConverter: CurrencyConverter
 ) {
     companion object {
         private const val TAG = "FinancialStressForecast"
@@ -184,7 +186,7 @@ class FinancialStressForecastEngine @Inject constructor(
         val horizonEnd = now + (daysAhead * TimePeriodUtils.DAY_IN_MILLIS)
         
         // 1. Calculate recurring obligations within this horizon
-        val recurringOutflows = calculateRecurringOutflows(patterns, horizonStart, horizonEnd)
+        val recurringOutflows = calculateRecurringOutflows(patterns, horizonStart, horizonEnd, displayCurrency)
         
         // 2. Estimate expected income using pre-normalized deposits
         val expectedIncome = estimateIncome(daysAhead, normalizedDeposits)
@@ -236,10 +238,21 @@ class FinancialStressForecastEngine @Inject constructor(
      * Detected-only patterns (id == null) have no corresponding manual rule and
      * are handled by a simplified ad-hoc expansion for backward compatibility.
      */
+    /**
+     * Allowed statuses for recurring occurrences that represent active obligations.
+     */
+    private val ACTIVE_OCCURRENCE_STATUSES = setOf("PLANNED", "PAID")
+
+    /**
+     * Statuses that represent skipped/cancelled/ignored occurrences (excluded from totals).
+     */
+    private val EXCLUDED_OCCURRENCE_STATUSES = setOf("SKIPPED", "CANCELLED", "IGNORED")
+
     private suspend fun calculateRecurringOutflows(
         patterns: List<com.yourname.expensetracker.domain.model.RecurringPattern>,
         startDate: Long,
-        endDate: Long
+        endDate: Long,
+        displayCurrency: String
     ): Double {
         val manualPatterns = patterns.filter { it.id != null && it.confidence >= 0.50f }
         val detectedPatterns = patterns.filter { it.id == null && it.confidence >= 0.50f }
@@ -250,17 +263,62 @@ class FinancialStressForecastEngine @Inject constructor(
         if (manualPatterns.isNotEmpty()) {
             val ruleIds = manualPatterns.mapNotNull { it.id }.distinct()
             // Generate (materialise) occurrences for each rule
+            val failedRuleIds = mutableListOf<Long>()
             for (ruleId in ruleIds) {
                 try {
                     recurringLifecycleCoordinator.generateOccurrences(ruleId, startDate, endDate)
-                } catch (_: Exception) {
-                    // skip failed rule
+                } catch (e: Exception) {
+                    Timber.w(e, "$TAG: generateOccurrences failed for ruleId=%d", ruleId)
+                    failedRuleIds.add(ruleId)
                 }
             }
             // Query all materialised occurrences in range for these rules
             val allOccurrences = recurringOccurrenceDao.getByDateRange(startDate, endDate)
                 .filter { it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE && it.sourceId in ruleIds }
-            totalOutflows += allOccurrences.sumOf { it.expectedAmount }
+
+            for (occ in allOccurrences) {
+                // P0-1: Filter by status — only count PLANNED and PAID
+                if (occ.status in EXCLUDED_OCCURRENCE_STATUSES) continue
+                if (occ.status == "MISSED") {
+                    Timber.w("$TAG: Occurrence id=%d ruleId=%d is MISSED", occ.id, occ.sourceId)
+                    // Do not count MISSED occurrences
+                    continue
+                }
+                if (occ.status !in ACTIVE_OCCURRENCE_STATUSES) {
+                    Timber.w("$TAG: Occurrence id=%d has unknown status=%s, skipping", occ.id, occ.status)
+                    continue
+                }
+
+                // P0-2: Convert amount to displayCurrency before summing
+                val amount = when (occ.status) {
+                    "PAID" -> occ.paidAmount ?: occ.expectedAmount
+                    else -> occ.expectedAmount
+                }
+                val currency = when (occ.status) {
+                    "PAID" -> occ.paidCurrency ?: occ.expectedCurrency
+                    else -> occ.expectedCurrency
+                }
+
+                val converted = runCatching {
+                    currencyConverter.convert(amount, currency, displayCurrency)
+                }.getOrNull()
+
+                if (converted != null) {
+                    totalOutflows += converted.convertedAmount
+                } else {
+                    Timber.w("$TAG: Failed to convert occurrence id=%d amount=%.2f %s to %s, excluding",
+                        occ.id, amount, currency, displayCurrency)
+                }
+            }
+
+            // P0-3 fallback: for rules that failed generateOccurrences, fall back to ad-hoc expansion
+            if (failedRuleIds.isNotEmpty()) {
+                val failedPatterns = manualPatterns.filter { it.id in failedRuleIds }
+                if (failedPatterns.isNotEmpty()) {
+                    Timber.w("$TAG: Falling back to ad-hoc expansion for %d failed rule(s)", failedRuleIds.size)
+                    totalOutflows += expandDetectedPatterns(failedPatterns, startDate, endDate)
+                }
+            }
         }
 
         // ── Part 2: Detected-only patterns — simplified ad-hoc fallback ──────
