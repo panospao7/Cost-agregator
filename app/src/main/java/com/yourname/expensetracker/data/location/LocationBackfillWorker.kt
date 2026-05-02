@@ -80,6 +80,7 @@ class LocationBackfillWorker @AssistedInject constructor(
         Log.d(TAG, "Processing ${unlocated.size} unlocated expenses")
         var resolved = 0
         var failed = 0
+        var skipped = 0
         var shouldRetry = false
 
         for (expense in unlocated) {
@@ -103,7 +104,9 @@ class LocationBackfillWorker @AssistedInject constructor(
 
             when (result) {
                 is LocationResolutionResult.Resolved -> {
-                    expenseRepository.updateExpenseLocation(
+                    // Use conditional update to avoid overwriting user-set locations
+                    // (race condition: user may have set location between fetch and write).
+                    val affected = expenseRepository.conditionallySetLocation(
                         expenseId = expense.id,
                         latitude = result.latitude,
                         longitude = result.longitude,
@@ -111,7 +114,12 @@ class LocationBackfillWorker @AssistedInject constructor(
                         placeId = result.osmId,
                         address = result.displayAddress
                     )
-                    resolved++
+                    if (affected > 0) {
+                        resolved++
+                    } else {
+                        Log.d(TAG, "Expense ${expense.id} was already located — skipped (user-set location preserved)")
+                        skipped++
+                    }
                 }
                 is LocationResolutionResult.Retryable -> {
                     Log.w(
@@ -135,7 +143,7 @@ class LocationBackfillWorker @AssistedInject constructor(
             }
         }
 
-        Log.d(TAG, "Backfill run complete: resolved=$resolved failed=$failed shouldRetry=$shouldRetry")
+        Log.d(TAG, "Backfill run complete: resolved=$resolved skipped=$skipped failed=$failed shouldRetry=$shouldRetry")
         if (shouldRetry) Result.retry() else Result.success()
     }
 

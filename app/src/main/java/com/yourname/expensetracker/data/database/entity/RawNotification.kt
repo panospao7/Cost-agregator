@@ -13,7 +13,9 @@ import androidx.room.PrimaryKey
         // Room's schema contract only declares the non-unique covering index
         // below. SQLite treats NULL != NULL, so any stronger dedup guarantees
         // must be handled outside the Room-exported schema contract.
-        Index(value = ["packageName", "timestamp", "title", "text", "bigText"])
+        Index(value = ["packageName", "timestamp", "title", "text", "bigText"]),
+        // Materialized dedupe fingerprint for deterministic dedup (unique when non-null).
+        Index(value = ["dedupeFingerprint"], unique = true)
     ]
 )
 data class RawNotification(
@@ -43,5 +45,9 @@ data class RawNotification(
     val parseResult: String? = null,    // JSON of parsed data or error message
 
     // Raw data retention: epoch ms when raw content was purged, null = not yet purged
-    val rawContentPurgedAt: Long? = null
+    val rawContentPurgedAt: Long? = null,
+
+    /** Deterministic dedupe fingerprint (SHA-256 of packageName|title|text|bigText|timestamp).
+     *  NULL for legacy rows; must be computed for new rows. */
+    val dedupeFingerprint: String? = null
 )

@@ -1576,6 +1576,36 @@ AND LENGTH(:merchantKey) >= 8
         resolvedAddress: String? = null
     )
 
+    /**
+     * Conditionally set location for an expense — only updates if latitude
+     * and longitude are still NULL. Used by [LocationBackfillWorker] to
+     * avoid overwriting locations that the user set manually between the
+     * fetch and the write (race condition guard).
+     *
+     * @return the number of rows affected (0 means the expense was already
+     *         located, likely by the user).
+     */
+    @Query("""
+        UPDATE expenses
+        SET latitude = :latitude,
+            longitude = :longitude,
+            locationSource = :source,
+            placeId = :placeId,
+            resolvedAddress = :resolvedAddress,
+            backfillAttempts = 0
+        WHERE id = :expenseId
+          AND latitude IS NULL
+          AND longitude IS NULL
+    """)
+    suspend fun conditionallySetLocation(
+        expenseId: Long,
+        latitude: Double,
+        longitude: Double,
+        source: String,
+        placeId: String?,
+        resolvedAddress: String? = null
+    ): Int
+
     /** Clear all location fields for an expense (e.g. user removes a pin). 
      *  Also resets backfillAttempts so the backfill worker can retry this expense. */
     @Query("""

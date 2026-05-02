@@ -7,6 +7,9 @@ import androidx.work.WorkerParameters
 import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
@@ -25,6 +28,10 @@ import java.util.Locale
 /**
  * Periodic WorkManager worker that proactively generates a daily AI dashboard briefing.
  *
+ * ## Settings gate
+ * At runtime, checks [PrivacyCapability.CLOUD_AI_DAILY_BRIEFING] via [PrivacyGate].
+ * If the gate denies, the worker exits early with [Result.success] (skipped, not retried).
+ *
  * Design:
  *  - Runs once every 24 hours ([AiWorkSchedulerImpl.scheduleDailyBriefing]).
  *  - Fetches a single [ProcessedDashboardData] snapshot and delegates to
@@ -32,8 +39,6 @@ import java.util.Locale
  *    cache freshness, generation, and artifact persistence.
  *  - Bounds the end-to-end pipeline with [BRIEFING_PIPELINE_TIMEOUT_MS] so a
  *    stalled data/generation/delivery path cannot hang forever.
- *  - Returns [Result.retry] for transient failures/timeouts so WorkManager can
- *    back off and retry instead of silently treating the day as delivered.
  */
 @HiltWorker
 class DailyBriefingWorker @AssistedInject constructor(
@@ -43,11 +48,20 @@ class DailyBriefingWorker @AssistedInject constructor(
     private val dashboardDataProvider: DashboardDataProvider,
     private val analyticsRepository: DashboardAnalyticsRepository,
     private val deliverProactiveBriefingNotificationUseCase: DeliverProactiveBriefingNotificationUseCase,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val privacyGate: PrivacyGate
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
         Timber.d("DailyBriefingWorker: starting.")
+
+        // ── Runtime settings gate ────────────────────────────────────────
+        val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Timber.w("DailyBriefingWorker: blocked by privacy gate: ${gateCheck.reason}")
+            return Result.success()
+        }
+
         return try {
             val startedAt = timeProvider.now()
             val dateKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(startedAt))

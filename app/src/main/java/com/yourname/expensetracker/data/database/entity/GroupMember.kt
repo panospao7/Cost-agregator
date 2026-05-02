@@ -22,7 +22,8 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["groupId"]),
         Index(value = ["groupId", "isCurrentUser"]),
-        Index(value = ["groupId", "name"], unique = true)
+        Index(value = ["groupId", "name"], unique = true),
+        Index(value = ["currentUserGroupKey"], unique = true)
     ]
 )
 data class GroupMember(
@@ -33,5 +34,7 @@ data class GroupMember(
     val email: String? = null,     // Optional contact
     @ColumnInfo(defaultValue = "0") val isCurrentUser: Boolean = false, // Is this the app user?
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
-    val joinedAt: Long = 0L
+    val joinedAt: Long = 0L,
+    /** Materialized invariant key: set to groupId when isCurrentUser=true, else NULL. */
+    val currentUserGroupKey: Long? = null
 )

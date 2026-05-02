@@ -748,6 +748,30 @@ class ExpenseRepository @Inject constructor(
         address: String? = null
     ) = expenseDao.updateLocation(expenseId, latitude, longitude, source, placeId, address)
 
+    /**
+     * Conditionally set location — only updates if latitude and longitude are
+     * still NULL. Returns 1 if the update was applied, 0 if the expense was
+     * already located (likely by the user between fetch and write).
+     *
+     * Use this from [LocationBackfillWorker] to prevent overwriting user-set
+     * locations (race condition guard).
+     */
+    suspend fun conditionallySetLocation(
+        expenseId: Long,
+        latitude: Double,
+        longitude: Double,
+        source: String,
+        placeId: String?,
+        address: String? = null
+    ): Int = expenseDao.conditionallySetLocation(
+        expenseId = expenseId,
+        latitude = latitude,
+        longitude = longitude,
+        source = source,
+        placeId = placeId,
+        resolvedAddress = address
+    )
+
     suspend fun clearExpenseLocation(expenseId: Long) = expenseDao.clearLocation(expenseId)
 
     /** Reactive flow of unlocated expenses — used by Map tab unlocated panel. */

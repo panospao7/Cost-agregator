@@ -33,7 +33,9 @@ enum class BudgetPeriod {
     ],
     indices = [
         Index(value = ["categoryId"]),
-        Index(value = ["isActive"])
+        Index(value = ["isActive"]),
+        Index(value = ["activeOverallKey"], unique = true),
+        Index(value = ["activeCategoryKey"], unique = true)
     ]
 )
 data class Budget(
@@ -53,5 +55,9 @@ data class Budget(
     val createdAt: Long = 0L,
     val lastWarningNotifiedAt: Long? = null,
     val lastCriticalNotifiedAt: Long? = null,
-    val lastExceededNotifiedAt: Long? = null
+    val lastExceededNotifiedAt: Long? = null,
+    /** Materialized invariant key: set to 1 when isActive=true AND categoryId IS NULL, else NULL. */
+    val activeOverallKey: Long? = null,
+    /** Materialized invariant key: set to categoryId when isActive=true AND categoryId IS NOT NULL, else NULL. */
+    val activeCategoryKey: Long? = null
 )

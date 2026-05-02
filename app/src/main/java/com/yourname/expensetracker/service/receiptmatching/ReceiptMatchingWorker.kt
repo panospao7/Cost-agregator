@@ -1,10 +1,11 @@
-package com.yourname.expensetracker.data.repository
+package com.yourname.expensetracker.service.receiptmatching
 
 import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.MatchStatus
+import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus

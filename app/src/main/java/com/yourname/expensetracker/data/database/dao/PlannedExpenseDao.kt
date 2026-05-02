@@ -29,4 +29,16 @@ interface PlannedExpenseDao {
 
     @Query("UPDATE planned_expenses SET linkedActualExpenseId = :expenseId, status = 'FULFILLED', updatedAt = :updatedAt WHERE id = :id")
     suspend fun linkToActualExpense(id: Long, expenseId: Long, updatedAt: Long)
+
+    /**
+     * Refreshes the [openSourceOccurrenceKey] for the planned expense with [id].
+     * Sets it to [sourceOccurrenceKey] when status is 'PLANNED', NULL otherwise.
+     */
+    @Query("""
+        UPDATE planned_expenses
+        SET openSourceOccurrenceKey =
+            CASE WHEN status = 'PLANNED' THEN sourceOccurrenceKey ELSE NULL END
+        WHERE id = :id
+    """)
+    suspend fun refreshOpenOccurrenceKey(id: Long)
 }

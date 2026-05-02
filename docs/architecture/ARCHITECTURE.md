@@ -29,13 +29,13 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v104
-- 620+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5, ~16 new in Phase 5b, ~20 new in Phase 6)
+- Database version: v106
+- 620+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5, ~16 new in Phase 5b, ~20 new in Phase 6, ~8 modified in Phase 7, ~12 new in Phase 8)
 - Destination-driven navigation via `NavigationDestination`
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
 - Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver`
-- WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `DataRetentionWorker`
+- WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `ReceiptMatchingWorker`, `DataRetentionWorker`
 - AI, location, shared-expense, split, privacy, and backup-encryption flows are first-class subsystems
 
 ---
@@ -189,7 +189,7 @@ data/
 │   ├── ExportAnonymizer.kt               # Strips raw text from exports
 │   └── DataRetentionWorker.kt            # WorkManager purging worker
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v104)
+│   ├── AppDatabase.kt          # Room database (v106)
 │   ├── entity/                  # Room entities across finance, AI, groups, location, settings, and privacy
 │   │   ├── RecurringLifecycleEvent.kt   # Phase 5b — audit log for recurring occurrences
 │   │   └── PrivacyAuditEvent.kt         # Phase 6 — privacy gate audit log
@@ -211,12 +211,13 @@ MainApplication
        └─ AppStartupCoordinator
             ├─ AppBackgroundLifecycleObserver
             └─ WorkManager jobs
-               ├─ DailyBriefingWorker
-               ├─ LocationBackfillWorker
-               ├─ MerchantKeyBackfillWorker
-               ├─ WarrantyExpirationWorker
-               ├─ BillReminderWorker          (Phase 5b — periodic, every 4h)
-               └─ DataRetentionWorker         (Phase 6 — periodic, every 24h)
+               ├─ DailyBriefingWorker         (Phase 8 — every 24h, privacy-gated)
+               ├─ LocationBackfillWorker      (Phase 8 — every 12h, overwrite guard)
+               ├─ MerchantKeyBackfillWorker   (Phase 8 — one-shot, legacy backfill)
+               ├─ WarrantyExpirationWorker    (Phase 8 — every 24h, idempotent)
+               ├─ BillReminderWorker          (Phase 8 — every 6h, disabled by default)
+               ├─ ReceiptMatchingWorker       (Phase 8 — every 2h, automated matching)
+               └─ DataRetentionWorker         (Phase 6 — every 24h)
 ```
 
 ---
@@ -674,11 +675,64 @@ to check privacy gates and optionally encrypt/sanitize exports.
 
 ---
 
+### Phase 7 — DB Invariants (May 2026)
+
+Phase 7 materializes invariant key columns on 5 entities to enforce business-domain uniqueness constraints at the database level, with a heal+backfill+unique-index migration pattern.
+
+#### Modified Entities
+
+| Entity | Invariant Column | Unique Index | Semantics |
+|--------|-----------------|--------------|-----------|
+| `Budget` | `activeOverallKey` (LONG) | `idx_budgets_activeOverallKey` | Set to `1` when `isActive=true AND categoryId IS NULL`; at most one row |
+| `Budget` | `activeCategoryKey` (LONG) | `idx_budgets_activeCategoryKey` | Set to `categoryId` when `isActive=true AND categoryId IS NOT NULL`; at most one per category |
+| `GroupMember` | `currentUserGroupKey` (LONG) | `idx_group_members_currentUserGroupKey` | Set to `groupId` when `isCurrentUser=true`; at most one current user per group |
+| `GroupExpense` | _(existing `expenseId`)_ | `idx_group_expenses_expenseId` (made UNIQUE) | Each expense linked at most once to a group |
+| `RawNotification` | `dedupeFingerprint` (TEXT) | `idx_raw_notifications_dedupeFingerprint` | Deterministic SHA-256 fingerprint; unique on non-null values |
+| `PlannedExpense` | `openSourceOccurrenceKey` (TEXT) | `idx_planned_expenses_openSourceOccurrenceKey` | Set to `sourceOccurrenceKey` when `status='PLANNED'`; at most one open planned occurrence |
+
+#### Integrity Scanner
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `DatabaseIntegrityScanner` | `domain/diagnostics/DatabaseIntegrityScanner.kt` | Scans DB for 11 invariant violations: duplicate active budgets (overall + category), multiple current users per group, duplicate group-expense links, duplicate planned-occurrence keys, raw-notification fingerprint dupes, null dedupe keys, partial lat/lon rows, invalid currency values, orphaned warranties and receipt links. Exposes `runFullScan()` and `runCriticalScans()`. |
+
+**Migration:** 104→105 — 5-step: heal duplicates → add columns → backfill keys → drop stale indexes → create unique indexes. All wrapped in a single transaction with FK guard.
+
+---
+
+### Phase 8 — Background Workers (May 2026)
+
+Phase 8 introduces a persistent job-run tracking table, a worker-specification model, and fixes/scheduling for 7 background workers.
+
+#### New Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `BackgroundJobRun` (entity) | `data/database/entity/BackgroundJobRun.kt` | Persistent record of each worker execution: workerName, startedAt/finishedAt, status (SCHEDULED/RUNNING/SUCCESS/FAILED/RETRY), rowsScanned/Updated, notificationsSent, retryReason, errorMessage |
+| `BackgroundJobRunDao` | `data/database/dao/BackgroundJobRunDao.kt` | DAO with `insert()`, `update()`, `getRecent(workerName)`, `getStaleRunningRuns()` |
+| `WorkerSpec` | `domain/workers/WorkerSpec.kt` | Data class modeling worker name, version, enabled flag, constraints, repeat interval, backoff policy. Ships `DEFAULTS` map with specs for all 7 workers. |
+
+#### Workers Summary
+
+| Worker | Location | Schedule | Key Change in Phase 8 |
+|--------|----------|----------|-----------------------|
+| `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | Every 6h, flex 15min | **Disabled by default** (user opt-in); fixed to query `RecurringLifecycleCoordinator` via `WorkerSpec` |
+| `ReceiptMatchingWorker` | `service/receiptmatching/ReceiptMatchingWorker.kt` | Every 2h | Scheduled via `AppStartupCoordinator`; automated receipt↔expense matching |
+| `WarrantyExpirationWorker` | `service/warranty/WarrantyExpirationWorker.kt` | Every 24h | **Idempotency fix:** in-memory `notifiedKeys` set prevents duplicate notifications across 7-day and 30-day windows |
+| `LocationBackfillWorker` | `data/location/LocationBackfillWorker.kt` | Every 12h, UNMETERED | **Overwrite guard:** skips expenses that already have lat/lon; privacy-gated via `PrivacyCapability.BACKGROUND_LOCATION_BACKFILL` |
+| `DailyBriefingWorker` | `data/ai/worker/DailyBriefingWorker.kt` | Every 24h | **Privacy gate:** checks `CLOUD_AI_DAILY_BRIEFING` at runtime; exits early if denied |
+| `MerchantKeyBackfillWorker` | `data/location/MerchantKeyBackfillWorker.kt` | One-shot | One-time backfill of `merchantKey` for legacy expense rows |
+| `DataRetentionWorker` | `data/privacy/DataRetentionWorker.kt` | Every 24h | Pre-existing (Phase 6); moved to `WorkerSpec` governance |
+
+**Migration:** 105→106 creates `background_job_runs` table with indices on `(workerName, startedAt)` and `(status)`. All workers now scheduled through `AppStartupCoordinator.scheduleStartupWork()` with specs defined in `WorkerSpec.DEFAULTS`.
+
+---
+
 ## Database Schema
 
-### Version: v104 (post privacy + recurring lifecycle event migrations)
+### Version: v106 (post DB invariants + background workers)
 
-The Room schema in v104 includes all tables from v100 plus:
+The Room schema in v106 includes all tables from v100 plus:
 
 **Phase 5b additions (migration 100→101→102):**
 
@@ -691,6 +745,18 @@ The Room schema in v104 includes all tables from v100 plus:
 - **New table:** `privacy_audit_events` — append-only log of every privacy gate decision (capability, decision ALLOWED/DENIED, reason, context JSON, timestampMs, caller).
 - **New columns on `raw_notifications`:** `rawContentPurgedAt` (INTEGER, nullable) — timestamp when raw notification content was purged for data retention.
 - **New columns on `scanned_receipts`:** `rawOcrTextPurgedAt` (INTEGER, nullable) — timestamp when raw OCR text was purged for data retention.
+
+**Phase 7 additions (migration 104→105):**
+
+- **New columns on `budgets`:** `activeOverallKey` (INTEGER, unique), `activeCategoryKey` (INTEGER, unique) — materialized invariant keys for active-budget uniqueness.
+- **New columns on `group_members`:** `currentUserGroupKey` (INTEGER, unique) — materialized invariant key ensuring one current user per group.
+- **New columns on `raw_notifications`:** `dedupeFingerprint` (TEXT, unique) — deterministic SHA-256 fingerprint for notification deduplication.
+- **New columns on `planned_expenses`:** `openSourceOccurrenceKey` (TEXT, unique) — materialized invariant key for open planned occurrences.
+- **Group expenses index hardened:** `group_expenses.expenseId` index converted to UNIQUE.
+
+**Phase 8 additions (migration 105→106):**
+
+- **New table:** `background_job_runs` — persistent record of worker executions. Columns: id, workerName, startedAt, finishedAt, status (SCHEDULED/RUNNING/SUCCESS/FAILED/RETRY), rowsScanned, rowsUpdated, notificationsSent, retryReason, errorMessage. Indices on `(workerName, startedAt)` and `(status)`.
 
 The full schema now covers:
 

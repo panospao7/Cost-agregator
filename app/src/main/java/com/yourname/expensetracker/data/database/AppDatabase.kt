@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 104
+const val APP_DATABASE_SCHEMA_VERSION = 106
 
 @Database(
     entities = [
@@ -68,7 +68,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 104
         RecurringOccurrence::class,
         RecurringReminderDelivery::class,
         RecurringLifecycleEvent::class,
-        PrivacyAuditEvent::class
+        PrivacyAuditEvent::class,
+        BackgroundJobRun::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -129,6 +130,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recurringReminderDeliveryDao(): RecurringReminderDeliveryDao
     abstract fun recurringLifecycleEventDao(): RecurringLifecycleEventDao
     abstract fun privacyAuditDao(): PrivacyAuditDao
+    abstract fun backgroundJobRunDao(): BackgroundJobRunDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -5024,20 +5026,41 @@ abstract class AppDatabase : RoomDatabase() {
                         notifyAtWarning REAL NOT NULL DEFAULT 0.75 CHECK(notifyAtWarning > 0),
                         notifyAtCritical REAL NOT NULL DEFAULT 0.9 CHECK(notifyAtCritical > 0),
                         rollover INTEGER NOT NULL DEFAULT 0,
+                        currency TEXT NOT NULL DEFAULT 'EUR',
+                        currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT',
                         createdAt INTEGER NOT NULL,
                         lastWarningNotifiedAt INTEGER,
                         lastCriticalNotifiedAt INTEGER,
                         lastExceededNotifiedAt INTEGER,
+                        activeOverallKey INTEGER,
+                        activeCategoryKey INTEGER,
                         CHECK(notifyAtWarning <= notifyAtCritical),
                         FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
                     )
                     """.trimIndent()
                 )
-                db.execSQL("INSERT INTO budgets_new SELECT * FROM budgets")
+                db.execSQL("""
+                    INSERT INTO budgets_new (
+                        id, categoryId, amount, period, periodMode, startDate,
+                        isActive, notifyAtWarning, notifyAtCritical, rollover,
+                        currency, currencyAssumption, createdAt,
+                        lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt,
+                        activeOverallKey, activeCategoryKey
+                    )
+                    SELECT
+                        id, categoryId, amount, period, periodMode, startDate,
+                        isActive, notifyAtWarning, notifyAtCritical, rollover,
+                        currency, currencyAssumption, createdAt,
+                        lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt,
+                        activeOverallKey, activeCategoryKey
+                    FROM budgets
+                """.trimIndent())
                 db.execSQL("DROP TABLE budgets")
                 db.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_activeOverallKey ON budgets (activeOverallKey)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_activeCategoryKey ON budgets (activeCategoryKey)")
             }
         }
 
@@ -5957,7 +5980,187 @@ val MIGRATION_103_104 = object : androidx.room.migration.Migration(103, 104) {
     }
 }
 
-/**
+// Migration 104 -> 105: Phase 7 — Database Invariants.
+// Adds materialized invariant key columns + unique indexes for:
+//   budgets     — activeOverallKey, activeCategoryKey
+//   group_members — currentUserGroupKey
+//   group_expenses — expenseId unique index
+//   raw_notifications — dedupeFingerprint
+//   planned_expenses — openSourceOccurrenceKey
+val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
+    override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+        val fkWasEnabled = database.query("PRAGMA foreign_keys").use {
+            it.moveToFirst(); it.getInt(0) == 1
+        }
+        if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+        try {
+            database.beginTransaction()
+            try {
+                // ── Step 1: Heal duplicate data (before adding constraints) ───────
+
+                // 1a. Budgets: deactivate duplicate active overall budgets (keep highest id)
+                database.execSQL("""
+                    UPDATE budgets SET isActive = 0
+                    WHERE isActive = 1 AND categoryId IS NULL
+                      AND id NOT IN (
+                          SELECT MAX(id) FROM budgets
+                          WHERE isActive = 1 AND categoryId IS NULL
+                      )
+                """.trimIndent())
+
+                // 1b. Budgets: deactivate duplicate active category budgets (keep highest id per category)
+                database.execSQL("""
+                    UPDATE budgets SET isActive = 0
+                    WHERE isActive = 1 AND categoryId IS NOT NULL
+                      AND id NOT IN (
+                          SELECT MAX(id) FROM budgets
+                          WHERE isActive = 1 AND categoryId IS NOT NULL
+                          GROUP BY categoryId
+                      )
+                """.trimIndent())
+
+                // 1c. Group members: demote duplicate current users (keep highest id per group)
+                database.execSQL("""
+                    UPDATE group_members SET isCurrentUser = 0
+                    WHERE isCurrentUser = 1
+                      AND id NOT IN (
+                          SELECT MAX(id) FROM group_members
+                          WHERE isCurrentUser = 1
+                          GROUP BY groupId
+                      )
+                """.trimIndent())
+
+                // 1d. Group expenses: nullify duplicate expense links (keep earliest id)
+                database.execSQL("""
+                    UPDATE group_expenses SET expenseId = NULL
+                    WHERE expenseId IS NOT NULL
+                      AND id NOT IN (
+                          SELECT MIN(id) FROM group_expenses
+                          WHERE expenseId IS NOT NULL
+                          GROUP BY expenseId
+                      )
+                """.trimIndent())
+
+                // 1e. Planned expenses: supersede duplicate occurrence keys
+                // For each duplicate sourceOccurrenceKey among PLANNED rows, keep the newest row,
+                // set older rows to CANCELLED
+                database.execSQL("""
+                    UPDATE planned_expenses SET status = 'CANCELLED'
+                    WHERE sourceOccurrenceKey IS NOT NULL
+                      AND status = 'PLANNED'
+                      AND id NOT IN (
+                          SELECT MAX(id) FROM planned_expenses
+                          WHERE sourceOccurrenceKey IS NOT NULL AND status = 'PLANNED'
+                          GROUP BY sourceOccurrenceKey
+                      )
+                """.trimIndent())
+
+                // ── Step 2: Add new columns ──────────────────────────────────────
+
+                database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER DEFAULT NULL")
+                database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER DEFAULT NULL")
+                database.execSQL("ALTER TABLE group_members ADD COLUMN currentUserGroupKey INTEGER DEFAULT NULL")
+                database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT DEFAULT NULL")
+                database.execSQL("ALTER TABLE planned_expenses ADD COLUMN openSourceOccurrenceKey TEXT DEFAULT NULL")
+
+                // ── Step 3: Backfill materialized keys ───────────────────────────
+
+                // Budgets: backfill activeOverallKey and activeCategoryKey
+                database.execSQL("""
+                    UPDATE budgets SET activeOverallKey = 1
+                    WHERE isActive = 1 AND categoryId IS NULL
+                """.trimIndent())
+                database.execSQL("""
+                    UPDATE budgets SET activeCategoryKey = categoryId
+                    WHERE isActive = 1 AND categoryId IS NOT NULL
+                """.trimIndent())
+
+                // Group members: backfill currentUserGroupKey
+                database.execSQL("""
+                    UPDATE group_members SET currentUserGroupKey = groupId
+                    WHERE isCurrentUser = 1
+                """.trimIndent())
+
+                // Planned expenses: backfill openSourceOccurrenceKey
+                database.execSQL("""
+                    UPDATE planned_expenses SET openSourceOccurrenceKey = sourceOccurrenceKey
+                    WHERE status = 'PLANNED' AND sourceOccurrenceKey IS NOT NULL
+                """.trimIndent())
+
+                // Raw notifications: backfill dedupeFingerprint for existing rows
+                // Uses a deterministic concatenation (SHA-256 not available in SQLite)
+                database.execSQL("""
+                    UPDATE raw_notifications SET dedupeFingerprint =
+                      packageName || '|' || CAST(timestamp AS TEXT) || '|' ||
+                      COALESCE(title, '') || '|' || COALESCE(text, '') || '|' ||
+                      COALESCE(bigText, '')
+                """.trimIndent())
+
+                // ── Step 4: Drop old indexes & create new Room-compatible indexes ──
+
+                // Budgets: recreate indexes including new unique ones
+                database.execSQL("DROP INDEX IF EXISTS index_budgets_categoryId")
+                database.execSQL("DROP INDEX IF EXISTS index_budgets_isActive")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_activeOverallKey ON budgets (activeOverallKey)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_activeCategoryKey ON budgets (activeCategoryKey)")
+
+                // Group members: drop old non-unique composite, create new unique key index
+                database.execSQL("DROP INDEX IF EXISTS index_group_members_groupId_isCurrentUser")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members (groupId)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_group_members_currentUserGroupKey ON group_members (currentUserGroupKey)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_name ON group_members (groupId, name)")
+
+                // Group expenses: drop old non-unique, create unique
+                database.execSQL("DROP INDEX IF EXISTS index_group_expenses_expenseId")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_group_expenses_expenseId ON group_expenses (expenseId)")
+
+                // Raw notifications: create unique fingerprint index
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_notifications_dedupeFingerprint ON raw_notifications (dedupeFingerprint)")
+
+                // Planned expenses: create unique open occurrence key index
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_planned_expenses_openSourceOccurrenceKey ON planned_expenses (openSourceOccurrenceKey)")
+
+                database.setTransactionSuccessful()
+            } finally {
+                database.endTransaction()
+            }
+        } finally {
+            if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
+        }
+    }
+}
+
+        val MIGRATION_105_106 = object : androidx.room.migration.Migration(105, 106) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS background_job_runs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        workerName TEXT NOT NULL,
+                        startedAt INTEGER NOT NULL,
+                        finishedAt INTEGER DEFAULT NULL,
+                        status TEXT NOT NULL DEFAULT 'RUNNING',
+                        rowsScanned INTEGER NOT NULL DEFAULT 0,
+                        rowsUpdated INTEGER NOT NULL DEFAULT 0,
+                        notificationsSent INTEGER NOT NULL DEFAULT 0,
+                        retryReason TEXT DEFAULT NULL,
+                        errorMessage TEXT DEFAULT NULL
+                    )
+                """.trimIndent())
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS idx_bg_job_runs_worker_started " +
+                    "ON background_job_runs (workerName, startedAt)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS idx_bg_job_runs_status " +
+                    "ON background_job_runs (status)"
+                )
+            }
+        }
+
+        /**
       * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
          *
@@ -6096,7 +6299,9 @@ MIGRATION_91_92,
         MIGRATION_100_101,
         MIGRATION_101_102,
         MIGRATION_102_103,
-        MIGRATION_103_104
+        MIGRATION_103_104,
+        MIGRATION_104_105,
+        MIGRATION_105_106
     )
     }
 }

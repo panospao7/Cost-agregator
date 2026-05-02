@@ -33,7 +33,7 @@ import androidx.room.PrimaryKey
     ],
     indices = [
         Index(value = ["groupId"]),
-        Index(value = ["expenseId"]),
+        Index(value = ["expenseId"], unique = true),
         Index(value = ["paidById"]),
         Index(value = ["groupId", "date"]),
         Index(value = ["isReimbursable"])  // Index for budget offset queries

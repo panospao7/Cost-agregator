@@ -42,7 +42,10 @@ interface BudgetDao {
         // during the deactivation pass; the real keepId is applied after insert).
         @Suppress("KotlinConstantConditions")
         deactivateAllActiveOverallBudgets()
-        return insert(budget)
+        return insert(budget.copy(
+            activeOverallKey = 1,
+            activeCategoryKey = null
+        ))
     }
 
     /**
@@ -58,7 +61,10 @@ interface BudgetDao {
             "insertAndActivateCategory requires a non-null categoryId"
         }
         deactivateAllActiveCategoryBudgets(catId)
-        return insert(budget)
+        return insert(budget.copy(
+            activeOverallKey = null,
+            activeCategoryKey = catId
+        ))
     }
 
     /**
@@ -80,12 +86,22 @@ interface BudgetDao {
             }
         }
 
-        update(budget)
+        // Set materialized keys based on active state and scope
+        val updatedBudget = if (budget.isActive) {
+            when (budget.categoryId) {
+                null -> budget.copy(activeOverallKey = 1, activeCategoryKey = null)
+                else -> budget.copy(activeOverallKey = null, activeCategoryKey = budget.categoryId)
+            }
+        } else {
+            budget.copy(activeOverallKey = null, activeCategoryKey = null)
+        }
+
+        update(updatedBudget)
     }
 
     /**
      * Toggles a budget's active state while enforcing the single-active-budget
-     * invariant when activating.
+     * invariant when activating. Also updates materialized keys.
      */
     @Transaction
     suspend fun setActiveAndEnforceScope(id: Long, isActive: Boolean) {
@@ -109,19 +125,27 @@ interface BudgetDao {
         deleteAll()
         budgets.forEach { budget ->
             when {
-                !budget.isActive -> insert(budget)
+                !budget.isActive -> insert(budget.copy(activeOverallKey = null, activeCategoryKey = null))
                 budget.categoryId == null -> insertAndActivateOverall(budget)
                 else -> insertAndActivateCategory(budget)
             }
         }
     }
 
-    /** Deactivate **all** active overall budgets (categoryId IS NULL). */
-    @Query("UPDATE budgets SET isActive = 0 WHERE categoryId IS NULL AND isActive = 1")
+    /** Deactivate **all** active overall budgets (categoryId IS NULL), clearing their materialized keys. */
+    @Query("""
+        UPDATE budgets SET isActive = 0,
+            activeOverallKey = NULL, activeCategoryKey = NULL
+        WHERE categoryId IS NULL AND isActive = 1
+    """)
     suspend fun deactivateAllActiveOverallBudgets()
 
-    /** Deactivate **all** active budgets for [categoryId]. */
-    @Query("UPDATE budgets SET isActive = 0 WHERE categoryId = :categoryId AND isActive = 1")
+    /** Deactivate **all** active budgets for [categoryId], clearing their materialized keys. */
+    @Query("""
+        UPDATE budgets SET isActive = 0,
+            activeOverallKey = NULL, activeCategoryKey = NULL
+        WHERE categoryId = :categoryId AND isActive = 1
+    """)
     suspend fun deactivateAllActiveCategoryBudgets(categoryId: Long)
 
     @Query("SELECT * FROM budgets")
@@ -149,17 +173,27 @@ interface BudgetDao {
     suspend fun getByCategory(categoryId: Long): Budget?
 
     /**
-     * Deactivate all active overall budgets except the one with [keepId].
+     * Deactivate all active overall budgets except the one with [keepId],
+     * clearing their materialized keys.
      * Used to enforce single-active-overall-budget invariant.
      */
-    @Query("UPDATE budgets SET isActive = 0 WHERE categoryId IS NULL AND isActive = 1 AND id != :keepId")
+    @Query("""
+        UPDATE budgets SET isActive = 0,
+            activeOverallKey = NULL, activeCategoryKey = NULL
+        WHERE categoryId IS NULL AND isActive = 1 AND id != :keepId
+    """)
     suspend fun deactivateOtherOverallBudgets(keepId: Long)
 
     /**
-     * Deactivate all active budgets for [categoryId] except the one with [keepId].
+     * Deactivate all active budgets for [categoryId] except the one with [keepId],
+     * clearing their materialized keys.
      * Used to enforce single-active-category-budget invariant.
      */
-    @Query("UPDATE budgets SET isActive = 0 WHERE categoryId = :categoryId AND isActive = 1 AND id != :keepId")
+    @Query("""
+        UPDATE budgets SET isActive = 0,
+            activeOverallKey = NULL, activeCategoryKey = NULL
+        WHERE categoryId = :categoryId AND isActive = 1 AND id != :keepId
+    """)
     suspend fun deactivateOtherCategoryBudgets(categoryId: Long, keepId: Long)
 
     @Query("UPDATE budgets SET lastWarningNotifiedAt = :timestamp WHERE id = :id")
@@ -171,8 +205,40 @@ interface BudgetDao {
     @Query("UPDATE budgets SET lastExceededNotifiedAt = :timestamp WHERE id = :id")
     suspend fun updateExceededNotification(id: Long, timestamp: Long)
 
-    @Query("UPDATE budgets SET isActive = :isActive WHERE id = :id")
+    /** Set active state and materialized keys based on the budget's scope. */
+    @Query("""
+        UPDATE budgets SET
+            isActive = :isActive,
+            activeOverallKey = CASE WHEN :isActive = 1 AND categoryId IS NULL THEN 1 ELSE NULL END,
+            activeCategoryKey = CASE WHEN :isActive = 1 AND categoryId IS NOT NULL THEN categoryId ELSE NULL END
+        WHERE id = :id
+    """)
     suspend fun setActive(id: Long, isActive: Boolean)
+
+    /** Low-level: deactivate a budget and clear its materialized keys by id. */
+    @Query("""
+        UPDATE budgets SET isActive = 0,
+            activeOverallKey = NULL, activeCategoryKey = NULL
+        WHERE id = :id
+    """)
+    suspend fun deactivateAndClearKeys(id: Long)
+
+    /** Count active overall keys (should be 0 or 1). */
+    @Query("SELECT COUNT(*) FROM budgets WHERE activeOverallKey IS NOT NULL")
+    suspend fun countActiveOverallKeys(): Int
+
+    /** Find active category keys that appear more than once (invariant violation). */
+    @Query("""
+        SELECT activeCategoryKey AS keyValue, COUNT(*) AS cnt
+        FROM budgets WHERE activeCategoryKey IS NOT NULL
+        GROUP BY activeCategoryKey HAVING cnt > 1
+    """)
+    suspend fun findDuplicateActiveCategoryKeys(): List<DuplicateKeyEntry>
+
+    data class DuplicateKeyEntry(
+        val keyValue: Long,
+        val cnt: Int
+    )
 
     @Query("DELETE FROM budgets")
     suspend fun deleteAll()

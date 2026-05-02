@@ -18,7 +18,8 @@ import androidx.room.PrimaryKey
     ],
     indices = [
         Index(value = ["date"]),
-        Index(value = ["categoryId"])
+        Index(value = ["categoryId"]),
+        Index(value = ["openSourceOccurrenceKey"], unique = true)
     ]
 )
 data class PlannedExpense(
@@ -45,7 +46,9 @@ data class PlannedExpense(
     /** Unified merchant key (for matching with actual expenses). */
     val merchantKey: String? = null,
     /** Last update timestamp (must be set on every mutation). */
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    /** Materialized invariant key: set to sourceOccurrenceKey when status='PLANNED', else NULL. */
+    val openSourceOccurrenceKey: String? = null
 )
 
 enum class PlannedExpensePriority {

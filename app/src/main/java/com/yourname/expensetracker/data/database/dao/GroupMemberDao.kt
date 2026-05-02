@@ -59,10 +59,10 @@ interface GroupMemberDao {
     suspend fun getCurrentUser(groupId: Long): GroupMember?
 
     /**
-     * Clears the current-user flag for every member in [groupId].
+     * Clears the current-user flag and materialized key for every member in [groupId].
      * Used internally by [setCurrentUser] before promoting a new member.
      */
-    @Query("UPDATE group_members SET isCurrentUser = 0 WHERE groupId = :groupId AND isCurrentUser = 1")
+    @Query("UPDATE group_members SET isCurrentUser = 0, currentUserGroupKey = NULL WHERE groupId = :groupId AND isCurrentUser = 1")
     suspend fun clearCurrentUser(groupId: Long)
 
     /**
@@ -95,8 +95,9 @@ interface GroupMemberDao {
      *
      * Returns the number of rows updated (0 or 1). The query is group-scoped so
      * a mismatched [groupId]/[memberId] pair touches nothing.
+     * Also sets the materialized [currentUserGroupKey] to [groupId].
      */
-    @Query("UPDATE group_members SET isCurrentUser = 1 WHERE id = :memberId AND groupId = :groupId")
+    @Query("UPDATE group_members SET isCurrentUser = 1, currentUserGroupKey = :groupId WHERE id = :memberId AND groupId = :groupId")
     suspend fun markAsCurrentUser(groupId: Long, memberId: Long): Int
     
     @Query("DELETE FROM group_members WHERE groupId = :groupId")
