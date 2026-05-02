@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
@@ -68,7 +69,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val bankStatementLifecycleProcessor: BankStatementLifecycleProcessor,
     private val sideEffectDispatcher: ReceiptSideEffectDispatcher,
     private val duplicateDetector: ReceiptDuplicateDetector,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) {
 
     companion object {
@@ -96,6 +98,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      *         [Result.failure] on validation or processing error.
      */
     suspend fun processReceiptInput(uri: Uri): Result<ScannedReceipt> {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        }
+
         // 1. Validate input
         val validation = inputValidator.validate(uri)
         if (!validation.isValid) {
@@ -326,6 +333,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      *         [Result.failure] on error.
      */
     suspend fun processEmailReceipt(emailData: EmailReceiptData): Result<ScannedReceipt> {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        }
+
         // 1. Check message ID dedup via sourceFingerprint
         if (emailData.messageId.isNotBlank()) {
             val existing = scannedReceiptDao.getBySourceFingerprint(emailData.messageId)
@@ -476,6 +488,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      * @return [Result.success] on completion, [Result.failure] on error.
      */
     suspend fun deleteReceipt(receiptId: Long): Result<Unit> {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        }
+
         // 1. Look up receipt — fail fast if not found
         val receipt = scannedReceiptDao.getById(receiptId)
             ?: return Result.failure(IllegalArgumentException("Receipt not found: $receiptId"))

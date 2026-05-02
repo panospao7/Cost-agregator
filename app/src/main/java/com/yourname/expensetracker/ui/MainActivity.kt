@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.ui
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -63,6 +64,7 @@ import com.yourname.expensetracker.ui.screens.split.VisualSplitEditorScreen
 import com.yourname.expensetracker.ui.screens.transactions.TransactionsScreen
 import com.yourname.expensetracker.ui.screens.warranty.WarrantyTrackerScreen
 import com.yourname.expensetracker.ui.screens.currency.CurrencyManagementScreen
+import com.yourname.expensetracker.ui.screens.backup.BackupRestoreScreen
 import com.yourname.expensetracker.ui.screens.export.ExportOptionsScreen
 import com.yourname.expensetracker.ui.screens.groups.SharedExpenseGroupsScreen
 import com.yourname.expensetracker.ui.screens.recurring.RecurringExpensesScreen
@@ -375,6 +377,34 @@ fun MainScreen(
         }
     }
     
+    // ── Restart-required check (after restore) ──────────────────────
+    val restartPrefs = remember {
+        context.getSharedPreferences("app_restart_check", Context.MODE_PRIVATE)
+    }
+    var showRestartRequiredDialog by remember {
+        mutableStateOf(restartPrefs.getBoolean("restore_complete_restart_required", false))
+    }
+    if (showRestartRequiredDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showRestartRequiredDialog = false
+                restartPrefs.edit().remove("restore_complete_restart_required").apply()
+            },
+            title = { Text("Restart Required") },
+            text = {
+                Text("A database restore was completed. Please restart the app to ensure all data is loaded correctly.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRestartRequiredDialog = false
+                    restartPrefs.edit().remove("restore_complete_restart_required").apply()
+                }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -764,6 +794,11 @@ fun MainScreen(
                 }
                 is NavigationDestination.ExportOptions -> {
                     ExportOptionsScreen(
+                        onNavigateBack = { navigation.navigateBack() }
+                    )
+                }
+                is NavigationDestination.BackupRestore -> {
+                    BackupRestoreScreen(
                         onNavigateBack = { navigation.navigateBack() }
                     )
                 }

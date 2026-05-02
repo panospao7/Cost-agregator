@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.data.location.internal.anonymizeForLog
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
@@ -42,11 +43,18 @@ class LocationBackfillWorker @AssistedInject constructor(
     private val expenseRepository: ExpenseRepository,
     private val locationResolver: LocationResolver,
     private val merchantLocationRepository: MerchantLocationRepository,
-    private val privacyGate: PrivacyGate
+    private val privacyGate: PrivacyGate,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         Log.d(TAG, "Backfill worker started")
+
+        // Defense-in-depth: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            Log.w(TAG, "Writes blocked during restore mode, skipping")
+            return@withContext Result.success()
+        }
 
         // WorkerSpec gate: check if this worker is enabled
         val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return@withContext Result.success()

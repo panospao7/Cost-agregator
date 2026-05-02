@@ -30,10 +30,24 @@ class AppStartupCoordinator @Inject constructor(
 
     fun initialize(application: Application) {
         configureDebugTools()
+
+        // Check if a restore completed and the app needs a restart.
+        // Must run BEFORE checkRestoreJournal() which resets the mode to NORMAL.
+        if (restoreMaintenanceMode.currentMode() == RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED) {
+            val prefs = application.getSharedPreferences(PREFS_RESTART_CHECK, Application.MODE_PRIVATE)
+            prefs.edit().putBoolean(KEY_RESTART_REQUIRED, true).apply()
+            Timber.w("Restore complete — restart required flag set")
+        }
+
         checkRestoreJournal()
         registerLifecycleObserver()
         scheduleStartupWork(application)
         syncProactiveBriefingWork()
+    }
+
+    companion object {
+        private const val PREFS_RESTART_CHECK = "app_restart_check"
+        private const val KEY_RESTART_REQUIRED = "restore_complete_restart_required"
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.recurring.lifecycle
 
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
 import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
@@ -37,7 +38,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
     private val timeProvider: TimeProvider,
     private val manualRecurringExpenseDao: ManualRecurringExpenseDao,
     private val reminderDeliveryDao: RecurringReminderDeliveryDao,
-    private val lifecycleEventDao: RecurringLifecycleEventDao
+    private val lifecycleEventDao: RecurringLifecycleEventDao,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) {
     companion object {
         /** Source type used for manual recurring rules. */
@@ -61,6 +63,11 @@ class RecurringLifecycleCoordinator @Inject constructor(
         endDate: Long,
         reminderWindows: List<String> = listOf("DUE_DAY")
     ): MaterializationResult {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+
         val rule = manualRecurringExpenseDao.getById(ruleId)
             ?: throw IllegalArgumentException("Recurring rule not found: id=$ruleId")
 
@@ -194,6 +201,11 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * @param newStatus The new status value.
      */
     suspend fun updateOccurrenceStatus(occurrenceId: Long, newStatus: String) {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+
         val now = timeProvider.now()
         // Load the current occurrence to get the old status
         val occurrence = occurrenceDao.getById(occurrenceId)

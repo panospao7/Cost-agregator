@@ -5,6 +5,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
@@ -34,10 +35,17 @@ class WarrantyExpirationWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted params: WorkerParameters,
     private val warrantyRepository: WarrantyTrackerRepository,
-    private val notificationService: NotificationService
+    private val notificationService: NotificationService,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        // ── Defense-in-depth: block writes during restore maintenance mode ─
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            Timber.w("Writes blocked during restore mode, skipping")
+            return Result.success()
+        }
+
         // ── WorkerSpec gate: check if this worker is enabled ──────────────
         val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return Result.success()
         if (!spec.enabled) {

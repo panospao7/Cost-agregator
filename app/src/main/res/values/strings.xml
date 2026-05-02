@@ -560,6 +560,8 @@
     <string name="feature_manual_recurring_desc">Manage recurring bills</string>
     <string name="feature_shared_groups">Shared Expense Groups</string>
     <string name="feature_shared_groups_desc">Split expenses with others</string>
+    <string name="feature_backup_restore">Backup &amp; Restore</string>
+    <string name="feature_backup_restore_desc">Create and restore backups</string>
     
     <!-- Groups -->
     <string name="groups_title">Shared Expense Groups</string>
@@ -2314,5 +2316,24 @@
     <string name="personality_social_name">The Social Spender</string>
     <string name="personality_minimalist_name">The Minimalist</string>
     <string name="personality_balanced_name">The Balanced</string>
+
+    <!-- Backup & Restore -->
+    <string name="backup_restore_title">Backup &amp; Restore</string>
+    <string name="backup_restore_create_button">Create Backup</string>
+    <string name="backup_restore_password_label">Encryption Password</string>
+    <string name="backup_restore_password_placeholder">Enter password</string>
+    <string name="backup_restore_creating">Creating backup…</string>
+    <string name="backup_restore_restoring">Restoring backup…</string>
+    <string name="backup_restore_restore_button">Restore Backup</string>
+    <string name="backup_restore_select_file">Select backup file</string>
+    <string name="backup_restore_last_backup">Last backup: %1$s</string>
+    <string name="backup_restore_no_backup">No backup created yet</string>
+    <string name="backup_restore_success">Backup created successfully</string>
+    <string name="backup_restore_restore_success">Restore completed successfully</string>
+    <string name="backup_restore_restart_required">Restart required. Please restart the app to use the restored data.</string>
+    <string name="backup_restore_error_format">Error: %1$s</string>
+    <string name="backup_restore_wrong_password">Incorrect password or corrupt backup file</string>
+    <string name="backup_restore_dismiss">Dismiss</string>
+    <string name="backup_restore_restart_now">Restart Now</string>
 
 </resources>

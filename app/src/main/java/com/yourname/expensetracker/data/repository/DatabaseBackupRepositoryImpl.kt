@@ -302,6 +302,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
     }
     
+    @Deprecated("Use createCostBackup() for production. Raw DB export is debug-only.")
     override suspend fun exportDatabase(): Result<File> = withContext(ioDispatcher) {
         try {
             val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
@@ -432,11 +433,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      * @param redacted Whether to sanitize sensitive data (default: true)
      * @return Result containing the .costbackup File
      */
-    suspend fun createCostBackup(
+    override suspend fun createCostBackup(
         password: String,
-        includeReceiptImages: Boolean = true,
-        redacted: Boolean = true
-    ): Result<java.io.File> = withContext(ioDispatcher) {
+        includeReceiptImages: Boolean,
+        redacted: Boolean
+    ): Result<File> = withContext(ioDispatcher) {
         try {
             // Privacy gate check
             val encryptedDecision = privacyGate.check(

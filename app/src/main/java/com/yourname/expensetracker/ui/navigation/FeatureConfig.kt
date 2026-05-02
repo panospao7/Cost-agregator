@@ -222,6 +222,15 @@ data class FeatureConfig(
                 destination = NavigationDestination.SharedExpenseGroups,
                 descriptionRes = R.string.feature_shared_groups_desc,
                 isNew = true
+            ),
+            FeatureConfig(
+                id = "backup-restore",
+                titleRes = R.string.feature_backup_restore,
+                icon = Icons.Rounded.Backup,
+                color = Color(0xFF607D8B),
+                destination = NavigationDestination.BackupRestore,
+                descriptionRes = R.string.feature_backup_restore_desc,
+                isNew = true
             )
         )
         

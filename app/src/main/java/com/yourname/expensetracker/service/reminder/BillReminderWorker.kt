@@ -8,6 +8,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.workers.WorkerSpec
 import dagger.assisted.Assisted
@@ -25,11 +26,18 @@ import java.util.concurrent.TimeUnit
 class BillReminderWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
-    private val coordinator: RecurringLifecycleCoordinator
+    private val coordinator: RecurringLifecycleCoordinator,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
         Log.d(TAG, "BillReminderWorker started — checking for due reminders")
+
+        // Defense-in-depth: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            Log.w(TAG, "Writes blocked during restore mode, skipping")
+            return Result.success()
+        }
 
         // WorkerSpec gate: check if this worker is enabled
         val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return Result.success()

@@ -27,6 +27,20 @@ interface DatabaseBackupRepository {
     suspend fun importDatabase(sourceFile: File): Result<DatabaseImportSummary>
     
     /**
+     * Create a .costbackup bundle (encrypted ZIP with manifest, checksums,
+     * database snapshot, and receipt images).
+     * @param password The user-provided encryption password
+     * @param includeReceiptImages Whether to include receipt image assets (default: true)
+     * @param redacted Whether to sanitize sensitive data (default: true)
+     * @return Result containing the .costbackup File
+     */
+    suspend fun createCostBackup(
+        password: String,
+        includeReceiptImages: Boolean = true,
+        redacted: Boolean = true
+    ): Result<File>
+
+    /**
      * Restore a .costbackup bundle (encrypted ZIP with manifest + assets).
      * @param bundleFile The .costbackup file to restore
      * @param password The user-provided encryption password

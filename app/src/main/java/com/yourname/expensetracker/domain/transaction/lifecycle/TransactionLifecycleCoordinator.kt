@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.transaction.lifecycle
 
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -43,7 +44,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
     private val transactionEventDao: TransactionEventDao,
     private val timeProvider: TimeProvider,
     private val sideEffectDispatcher: TransactionSideEffectDispatcher,
-    private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator
+    private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) {
     /**
      * Creates an expense with full lifecycle handling:
@@ -56,6 +58,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * @return A [CreateExpenseResult] indicating the outcome (created, duplicate, error, etc.).
      */
     suspend fun createExpense(request: CreateExpenseRequest): CreateExpenseResult {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            return CreateExpenseResult.Error(IllegalStateException("Database writes blocked during restore"))
+        }
+
         val now = timeProvider.now()
 
         // 1. Validate
@@ -265,6 +272,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         source: String = "USER_EDIT"
     ) {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+
         val now = timeProvider.now()
 
         // 1. Load existing expense for beforeSnapshot
@@ -353,6 +365,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
      *         [Result.failure] if the expense was not found or an error occurred.
      */
     suspend fun deleteExpense(expenseId: Long): Result<Unit> {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        }
         val expense = expenseDao.getById(expenseId)
             ?: return Result.failure(IllegalArgumentException("Expense not found: $expenseId"))
         return deleteExpense(expense)
@@ -366,6 +382,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * @return [Result.success] on success, [Result.failure] on error.
      */
     suspend fun deleteExpense(expense: Expense): Result<Unit> {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        }
         return try {
             val now = timeProvider.now()
             val snapshot = expenseToSnapshot(expense)

@@ -153,6 +153,7 @@ private fun NavigationDestination.toSaveToken(): String = when (this) {
     is NavigationDestination.SubscriptionManagement -> "subscription_management"
     is NavigationDestination.TaxConfiguration -> "tax_configuration"
     is NavigationDestination.ExportOptions -> "export_options"
+    is NavigationDestination.BackupRestore -> "backup_restore"
     is NavigationDestination.SharedExpenseGroups -> "shared_expense_groups"
     // Budget entity is intentionally not serialized; reopening null-budget route is safe.
     is NavigationDestination.BudgetForecasting -> "budget_forecasting"
@@ -226,6 +227,7 @@ private fun destinationFromSaveToken(token: String): NavigationDestination? {
         baseToken == "subscription_management" -> NavigationDestination.SubscriptionManagement
         baseToken == "tax_configuration" -> NavigationDestination.TaxConfiguration
         baseToken == "export_options" -> NavigationDestination.ExportOptions
+        baseToken == "backup_restore" -> NavigationDestination.BackupRestore
         baseToken == "shared_expense_groups" -> NavigationDestination.SharedExpenseGroups
         baseToken == "budget_forecasting" -> NavigationDestination.BudgetForecasting()
         baseToken == "ai_settings" -> NavigationDestination.AiSettings

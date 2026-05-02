@@ -93,6 +93,7 @@ sealed class NavigationDestination {
     data object SubscriptionManagement : NavigationDestination()
     data object TaxConfiguration : NavigationDestination()
     data object ExportOptions : NavigationDestination()
+    data object BackupRestore : NavigationDestination()
     data object SharedExpenseGroups : NavigationDestination()
     data class BudgetForecasting(val budget: BudgetEntity? = null) : NavigationDestination()
     
@@ -126,6 +127,7 @@ sealed class NavigationDestination {
             SubscriptionManagement,
             TaxConfiguration,
             ExportOptions,
+            BackupRestore,
             RecurringExpenses,
             ManualRecurringExpense,
             SharedExpenseGroups,

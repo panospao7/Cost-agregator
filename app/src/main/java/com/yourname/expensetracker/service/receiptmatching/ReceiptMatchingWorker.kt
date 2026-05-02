@@ -5,6 +5,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.MatchStatus
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
@@ -27,10 +28,17 @@ class ReceiptMatchingWorker @AssistedInject constructor(
     private val receiptRepository: ReceiptRepository,
     private val matcher: ReceiptTransactionMatcher,
     private val receiptLinkService: ReceiptLinkService,
-    private val notificationService: com.yourname.expensetracker.domain.service.NotificationService
+    private val notificationService: com.yourname.expensetracker.domain.service.NotificationService,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        // Defense-in-depth: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            Timber.w("Writes blocked during restore mode, skipping")
+            return Result.success()
+        }
+
         // WorkerSpec gate: check if this worker is enabled
         val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return Result.success()
         if (!spec.enabled) {
