@@ -14,6 +14,21 @@ import org.junit.Before
 import org.junit.Test
 import java.util.Calendar
 
+/**
+ * Tests for [SynthesisEngine].
+ *
+ * ## Test gaps (not yet covered):
+ * - Block-party occurrence path: test the `calculateBlockPartyData` method with
+ *   the `dailySpending` path (currently only the expense-fallback path is covered).
+ *   Verify that block-party data correctly maps daily spending floats onto the
+ *   day-of-month grid.
+ * - Legacy fallback: test that when modern data sources (e.g. merged recurring
+ *   patterns) are unavailable, the engine falls back to legacy heuristics without
+ *   crashing or producing degenerate forecasts.
+ * - Detected patterns: verify that unconfirmed (low-confidence) recurring patterns
+ *   are properly excluded from the committed-obligations sum, while still appearing
+ *   in the likely category.
+ */
 class SynthesisEngineTest : AnalyticsEngineTestBase() {
 
     private lateinit var engine: SynthesisEngine

@@ -4,6 +4,27 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+/**
+ * Room entity representing a raw notification captured from the Android
+ * notification listener service.
+ *
+ * Each notification is captured with its package name, title, text, and big text
+ * for downstream parsing into [Expense] records. Deduplication is enforced via
+ * a unique index on [dedupeFingerprint] (a deterministic hash of the notification
+ * content). Notifications outside the capture window (too old) are periodically
+ * pruned by [DataRetentionWorker].
+ *
+ * ## Deduplication
+ * - [dedupeFingerprint] is a materialized SHA-256 hash of package+title+text+timestamp.
+ * - The UNIQUE index on [dedupeFingerprint] prevents duplicate expense creation
+ *   when the same notification is re-dispatched by the system.
+ *
+ * ## Indexes
+ * - [packageName], [timestamp] — filtered queries by source app + time range.
+ * - [isRelevant] — quick filtering for the review queue.
+ * - Multi-column covering index on [packageName], [timestamp], [title], [text], [bigText]
+ *   for batch dedup scans.
+ */
 @Entity(
     tableName = "raw_notifications",
     indices = [

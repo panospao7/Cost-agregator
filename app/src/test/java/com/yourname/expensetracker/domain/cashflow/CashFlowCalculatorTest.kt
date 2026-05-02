@@ -22,6 +22,21 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Date
 
+/**
+ * Tests for [CashFlowCalculator].
+ *
+ * ## Test gaps (not yet covered):
+ * - Weekly rule multiple bills: verify that when multiple recurring bills fall due
+ *   in the same week, the calculator correctly accumulates each one rather than
+ *   de-duplicating or skipping patterns.
+ * - PAID exclusion: test that expenses/bills already marked as paid are excluded
+ *   from upcoming-obligation and cash-flow projections.
+ * - Sorted by due date: confirm that the output list of daily cash-flow entries
+ *   is sorted chronologically by due date, especially when expenses span multiple
+ *   days with tie-breaking rules.
+ * - Generation failure: test that when [RecurringExpenseEngine.getPatterns] throws,
+ *   the calculator degrades gracefully (e.g. falls back to known expenses only).
+ */
 class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
 
     private lateinit var expenseRepository: ExpenseRepository

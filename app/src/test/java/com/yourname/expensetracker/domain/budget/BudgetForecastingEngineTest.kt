@@ -20,6 +20,17 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 
+/**
+ * Tests for [BudgetForecastingEngine].
+ *
+ * ## Test gaps (not yet covered):
+ * - Mixed-currency normalization: ensure that when expense history contains multiple
+ *   currencies, the forecast normalizes all amounts to the home currency before
+ *   computing averages, trends, and confidence scores.
+ * - Non-home-currency budget: test a budget whose currency differs from the home
+ *   currency, verifying that conversion is applied and the overspend probability
+ *   correctly reflects the converted amounts.
+ */
 class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
     private lateinit var budgetRepository: BudgetRepository

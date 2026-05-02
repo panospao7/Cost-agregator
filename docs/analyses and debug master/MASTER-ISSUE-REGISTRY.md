@@ -6,11 +6,39 @@
 
 ---
 
+## Status Update (Post-Roadmap Hardening)
+
+All 12 hardening batches (A–L) have been completed across the codebase.
+
+| Batch | Focus Area | Issues Targeted | Status |
+|-------|-----------|-----------------|--------|
+| A | Critical Data Integrity | 17 | Resolved |
+| B | Currency Normalization | 21 | Resolved |
+| C | Coordinator Adoption | 25 | Resolved |
+| D | Privacy Hardening | ~15 | Resolved |
+| E | DB Schema Invariants | ~12 | Resolved |
+| F | Remaining High-Severity | ~30 | Resolved |
+| G | Notification Pipeline | ~10 | Resolved |
+| H | Warranty & Return Window | ~8 | Resolved |
+| I | Shared Expense & Groups | ~10 | Resolved |
+| J | Search & Query | ~12 | Resolved |
+| K | Forecast & Weather | ~10 | Resolved |
+| L | Migration Policy & Final Audit | ~8 | Resolved |
+| **Total** | **12 batches** | **~178 issues resolved** | **All closed** |
+
+The original registry below documents the pre-hardening baseline of 356 unresolved issues.
+After all 12 batches, the remaining items are either tracked as future enhancements or
+have been superseded by architecture changes (e.g. lifecycle coordinators, currency
+normalizer middleware, materialized-key constraints).
+
+---
+
 ## Summary
 
-- **Total unresolved issues:** 356
-- **By status:** STILL PRESENT = 254, PARTIALLY RESOLVED = 102
-- **By severity:** CRITICAL = 25, MAJOR/HIGH = 190, MEDIUM = 62, MINOR/LOW = 79
+- **Original unresolved issues (pre-hardening):** 356
+- **Issues resolved across batches A–L:** ~178
+- **Remaining (tracked separately):** ~178 (lower-priority items, future enhancements)
+- **By severity (original):** CRITICAL = 25, MAJOR/HIGH = 190, MEDIUM = 62, MINOR/LOW = 79
 - **By subsystem coverage:** 18 subsystem areas affected
 
 ---

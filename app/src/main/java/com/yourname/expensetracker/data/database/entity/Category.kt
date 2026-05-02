@@ -4,6 +4,18 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+/**
+ * Room entity representing an expense category.
+ *
+ * Categories are used to classify expenses (e.g. "Groceries", "Transport", "Utilities").
+ * Each category has a name, an emoji icon, and a hex color for UI display.
+ * Default categories (isDefault = true) cannot be deleted.
+ *
+ * ## Invariants
+ * - Name must be non-blank and at most 50 characters.
+ * - Icon must be at most 10 characters (typically a single emoji).
+ * - Color must be a valid 6-digit hex code prefixed with '#'.
+ */
 @Entity(tableName = "categories")
 data class Category(
     @PrimaryKey(autoGenerate = true)

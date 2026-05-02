@@ -34,6 +34,21 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 
+/**
+ * Tests for [DatabaseBackupRepositoryImpl] covering backup/restore lifecycle.
+ *
+ * ## Test gaps (not yet covered):
+ * - Privacy gate enforcement during export: verify that when [PrivacyGate] denies
+ *   an export action (e.g. export of location data when location privacy is off),
+ *   the repository honours the decision and does not leak protected data.
+ * - Privacy gate enforcement during import: test that import respects privacy
+ *   settings and does not restore settings/profiles that the user has opted out of.
+ * - Multi-profile privacy boundary: test that restoring a backup from a different
+ *   device/profile does not import privacy-sensitive data that conflicts with
+ *   current device settings.
+ * - Concurrent backup/restore conflicts: verify that starting a restore while
+ *   a backup is in progress correctly cancels/queues the conflicting operation.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])

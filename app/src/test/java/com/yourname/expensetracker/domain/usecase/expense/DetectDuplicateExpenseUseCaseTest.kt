@@ -15,6 +15,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
+/**
+ * Tests for [DetectDuplicateExpenseUseCase].
+ *
+ * ## Test gaps (not yet covered):
+ * - ReceiptDuplicateDetector integration: test the full path from receipt ingestion
+ *   through [ReceiptDuplicateDetector] to verify that receipts matching existing
+ *   expenses by merchant/amount/date are flagged before creating duplicates.
+ * - Cross-source deduplication end-to-end: verify that notifications, manual entries,
+ *   and CSV imports all route through the same dedup policy and produce consistent
+ *   duplicate or non-duplicate results.
+ * - Currency-aware dedup: confirm that expenses with the same amount but different
+ *   currencies are NOT treated as duplicates (e.g. €50 vs $50).
+ * - Time-window edge cases: test the exact boundary (±windowMs) of the duplicate
+ *   detection window to ensure inclusive/exclusive handling is correct.
+ */
 class DetectDuplicateExpenseUseCaseTest : AnalyticsEngineTestBase() {
 
     private lateinit var expenseRepository: ExpenseRepository

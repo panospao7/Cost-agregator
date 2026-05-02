@@ -4,6 +4,22 @@ import androidx.room.*
 import com.yourname.expensetracker.data.database.entity.Budget
 import kotlinx.coroutines.flow.Flow
 
+/**
+ * Data-access object for the [budgets][Budget] table.
+ *
+ * Provides CRUD operations plus transactional helpers for switching active budgets
+ * (deactivating the old active budget and activating the new one in a single
+ * transaction). Active-budget invariants are enforced at the DB level via
+ * materialized-key columns and UNIQUE indexes:
+ * - At most one active overall budget per category.
+ * - Category budgets are exclusive with the overall budget.
+ *
+ * ## Batch operations
+ * - [insertWithDeactivation] atomically deactivates the current active budget
+ *   for the same category before inserting the new one.
+ * - Standard [insert] uses ABORT conflict strategy and will fail if a unique
+ *   constraint is violated.
+ */
 @Dao
 interface BudgetDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)

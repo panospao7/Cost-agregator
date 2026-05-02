@@ -1302,3 +1302,43 @@ class SynthesisEngine @Inject constructor(
 | **67→68** | **Migration repair pass: rebuild anomaly/feature-wave tables to canonical schemas, fix malformed zero-column tables, preserve data when structure is valid** |
 
 This appendix is historical context for the earlier feature-wave rollout and is not part of the current architecture body.
+
+---
+
+## Post-Roadmap Hardening (Batches A–L)
+
+After the initial feature-wave rollout, the codebase underwent 12 structured hardening batches to address data-integrity, currency-safety, privacy, and invariant-enforcement issues identified across 21 review documents.
+
+### Batch Summary
+
+| Batch | Scope | Key Changes |
+|-------|-------|-------------|
+| **A** | Critical Data Integrity (17 issues) | Fixed NotificationRepository.deleteAll() wipe, PendingReviewDao REPLACE data loss, non-transactional group operations, cascade-delete risks, budget autopilot period mismatch |
+| **B** | Currency Normalization (21 issues) | Populated baseAmount/baseCurrency/exchangeRateUsed fields, fixed raw-sum aggregations across dashboard, forecast, location, warranty; added currency-aware filtering |
+| **C** | Coordinator Adoption (25 issues) | Routed legacy paths through ReceiptLifecycleCoordinator, TransactionLifecycleCoordinator, GroupLifecycleCoordinator; eliminated split-brain receipt-linking |
+| **D** | Privacy Hardening (~15 issues) | Closed bypassable PrivacyGate entry points; added privacy checks to backup/export, location, AI cloud calls, notification capture |
+| **E** | DB Schema Invariants (~12 issues) | Added materialized-key CHECK constraints for active budgets, group members; unique indexes for dedupe keys; FK enforcement for paidById same-group rule |
+| **F** | Remaining High-Severity (~30 issues) | Fixed AI output validation, confidence-scale normalization, period-boundary correctness, search query currency-awareness |
+| **G** | Notification Pipeline (~10 issues) | Added dedupe-fingerprint unique index, oversized-amount protection, reliability retry logic, fallback parser coverage |
+| **H** | Warranty & Return Window (~8 issues) | Fixed cascade-delete from receipt→warranty, added price-protection currency safety, manual warranty receipt-placeholder EUR hardcode |
+| **I** | Shared Expense & Groups (~10 issues) | Soft-delete consistency, settlement-calculator precision, multi-currency group settlement, budget offset engine hardening |
+| **J** | Search & Query (~12 issues) | Currency-aware min/max filters, effectiveAmount normalization in largest-queries, cross-source deduplication time-window fixes |
+| **K** | Forecast & Weather (~10 issues) | Weather forecast recurring-pattern integration, dashboard-vs-weather data-scope alignment, stress-fallback degraded-mode tests |
+| **L** | Migration Policy & Final Audit (~8 issues) | Migration path for schema versions 1–5, worker-config freeze resolution, startup-workflow conditional scheduling, migration repair pass (67→68) |
+
+### Architectural Impact
+
+- **Lifecycle Coordinators** now mediate all write paths for receipts, transactions, groups, and recurring expenses, replacing ad-hoc repository methods.
+- **AnalyticsCurrencyNormalizer** middleware sits between all DAO aggregations and engine consumers, ensuring multi-currency safety without per-engine changes.
+- **Materialized-Key Constraints** (CHECK + UNIQUE) enforce active-budget and group-membership invariants at the SQLite level, preventing data corruption from code bugs.
+- **PrivacyGate** is invoked at every public entry point of backup, export, location, and AI services; all privacy decisions are audited via `PrivacyAuditDao`.
+- **Migration Policy** now includes a forward-only repair-migration pattern (used in 67→68) and a schema-version 1–5 import compatibility layer.
+
+### Metrics
+
+- ~178 issues resolved across 12 batches
+- ~120 files modified or added
+- 6 lifecycle coordinators introduced
+- 3 normalizer/validator middleware services added (currency, privacy, AI-output)
+- 15+ materialized-key constraints deployed
+- Database version advanced from v68 to v106

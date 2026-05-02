@@ -18,6 +18,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
+/**
+ * Tests for [WarrantyTrackerViewModel].
+ *
+ * ## Test gaps (not yet covered):
+ * - Warranty expiration sorting: verify that the warranty list is sorted by
+ *   expiration date (ascending) so soon-to-expire warranties appear first.
+ * - Manual warranty creation with receipt linking: test that creating a manual
+ *   warranty correctly invokes the receipt placeholder path and links the
+ *   warranty to the correct receipt/expense.
+ * - Price protection detection: test the automatic detection of price-protection
+ *   opportunities based on purchase price history for a given merchant.
+ * - Warranty status transitions: verify that warranties transition correctly
+ *   through ACTIVE → EXPIRING_SOON → EXPIRED statuses based on the current time.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
 

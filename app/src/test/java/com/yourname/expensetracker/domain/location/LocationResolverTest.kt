@@ -28,6 +28,21 @@ import org.junit.Test
  * Test 2 – when [merchantKey] is null, the cacheKey is derived via
  *           [MerchantKeyGenerator.generate] from the raw merchant name.
  */
+/**
+ * Tests for [LocationResolver].
+ *
+ * ## Test gaps (not yet covered):
+ * - GPS-based merchant bias: test that when a transaction is very recent (within
+ *   the recency threshold), the resolver prefers the device GPS location over
+ *   cached corrections.
+ * - Multi-merchant cluster resolution: verify that when multiple merchants share
+ *   the same location, the correct merchant match is returned based on transaction
+ *   merchant name.
+ * - Location cache eviction: test that stale cache entries are evicted and the
+ *   resolver falls back to geocoding/NearbyPoi when the cache is empty.
+ * - Error propagation: test that failures in [GeocodingService] or
+ *   [NearbyPoiService] are handled gracefully without crashing the caller.
+ */
 class LocationResolverTest {
 
     private lateinit var resolver: LocationResolver

@@ -102,6 +102,22 @@ import org.junit.Test
 import java.io.File
 import javax.inject.Provider
 
+/**
+ * End-to-end tests for the notification → expense → dashboard pipeline.
+ *
+ * ## Test gaps (not yet covered):
+ * - Notification deduplication: test that consecutive identical notifications
+ *   (same merchant, amount, text) produce only one expense entry.
+ * - Dashboard reflection after notification capture: verify that a newly captured
+ *   notification expense immediately appears in dashboard totals and category
+ *   breakdowns without manual refresh.
+ * - Currency parsing from notification text: test that the notification parser
+ *   correctly extracts non-EUR currencies (USD, GBP, etc.) from raw notification
+ *   text and sets the expense currency accordingly.
+ * - Error handling for malformed notifications: test that a notification with
+ *   missing amount, malformed date, or empty merchant text is handled gracefully
+ *   (skipped or flagged for review, not crashed).
+ */
 class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
 
     private lateinit var parserRegistry: AppParserRegistry

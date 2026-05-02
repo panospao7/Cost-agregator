@@ -27,6 +27,20 @@ import org.junit.Before
 import org.junit.Test
 import java.util.Calendar
 
+/**
+ * Tests for [FinancialStressForecastEngine].
+ *
+ * ## Test gaps (not yet covered):
+ * - Status filtering: verify that expense/budget status filters are correctly applied
+ *   when computing stress forecasts (e.g. only active budgets, only confirmed expenses).
+ * - Currency normalization: ensure multi-currency expenses are normalized to home
+ *   currency before aggregation, and that non-home-currency budgets are handled.
+ * - Generation failure fallback: test that when Monte Carlo simulation fails (throws),
+ *   the engine falls back to a safe degraded forecast with MODERATE risk level.
+ * - Exclusive end boundary: confirm that the end boundary of date ranges is treated
+ *   as exclusive (or inclusive) consistently, preventing off-by-one errors in
+ *   lookback windows.
+ */
 class FinancialStressForecastEngineTest {
 
     private lateinit var synthesisEngine: SynthesisEngine

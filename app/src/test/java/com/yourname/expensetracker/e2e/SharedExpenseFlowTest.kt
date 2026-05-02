@@ -12,6 +12,20 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+/**
+ * End-to-end tests for the shared-expense pipeline.
+ *
+ * ## Test gaps (not yet covered):
+ * - Group settlement calculation: test that [SettlementCalculator] correctly
+ *   computes balances and suggested transfers for a group with mixed expenses
+ *   (some shared, some individual).
+ * - Shared expense budget offset: verify that shared expenses reduce the effective
+ *   budget pressure on the paying member, while reimbursements restore it.
+ * - Multi-currency groups: test shared expenses where different members pay in
+ *   different currencies, verifying that settlement amounts are normalized.
+ * - Member removal edge case: test that removing a member from a group correctly
+ *   adjusts their share of pending shared expenses.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SharedExpenseFlowTest : ViewModelTestUtils() {
 
