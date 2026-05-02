@@ -7,6 +7,39 @@ import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Natural language search engine for expense queries.
+ *
+ * ## Known Limitations
+ *
+ * ### M1: Amount filters not currency-aware
+ * Amount comparisons in [executeSearch] and [buildSearchFilter] compare raw
+ * doubles without any currency conversion. If the user has expenses in multiple
+ * currencies, an amount filter like "over $50" will match expenses of any currency
+ * by nominal value only. A proper fix would require currency-aware amount comparison
+ * that converts filter amounts to each expense's currency (or vice versa) using
+ * the [com.yourname.expensetracker.domain.currency.CurrencyConverter].
+ *
+ * ### M2: Legacy parser bugs
+ * - **Merchant extraction**: The [extractMerchants] method uses a basic regex
+ *   (`(?:at|from)\s+([A-Z][a-zA-Z]+)`) that only captures single-word capitalized
+ *   merchants preceded by "at" or "from". Multi-word merchants, merchants without
+ *   those prepositions, and lowercase merchants are missed entirely.
+ * - **Filter ignored during execution**: In [executeSearch], category and location
+ *   filters are parsed during [interpretQuery] but NOT applied during the
+ *   FIND_TRANSACTIONS query execution — only merchants and amounts are filtered.
+ * - **No cross-filter narrowing**: When multiple filter types are extracted (e.g.
+ *   date + category + amount), each is applied independently without cross-validation,
+ *   which can produce broader result sets than the user intended.
+ *
+ * ### M3: Multi-filter drilldown produces broader results than answer
+ * When multiple filters are combined (e.g. date range + category + merchant),
+ * [executeSearch] returns the unfiltered expense list from the repository and then
+ * applies filters in memory. Because the repository query is only date-bounded,
+ * all matching-date expenses are loaded first; subsequent in-memory filters may
+ * appear to produce a narrower set but the initial data pull can be very large.
+ * For proper drilldown, filters should be pushed down to the repository/DAO layer.
+ */
 @Singleton
 class NaturalLanguageSearchEngine @Inject constructor(
     private val expenseQueryRepository: NaturalLanguageExpenseQueryRepository,
@@ -160,6 +193,22 @@ class NaturalLanguageSearchEngine @Inject constructor(
         )
     }
     
+    /**
+     * Executes the search described by the interpretation.
+     *
+     * ## Currency-awareness gap (M1)
+     * Amount comparisons in this method compare raw [Double] values without
+     * currency conversion. An expense with amount=50.0 in JPY will match a
+     * filter "over 50" just as readily as one with amount=50.0 in EUR.
+     * This is incorrect for multi-currency users. See class KDoc for details.
+     *
+     * ## Multi-filter drilldown (M3)
+     * The initial data pull from [expenseQueryRepository] is only date-bounded;
+     * all other filters (amount, merchant, category, location) are applied
+     * in-memory after loading. This means loading can be unnecessarily broad
+     * when multiple filters are active. Filters should ideally be pushed down
+     * to the DAO layer for efficient querying.
+     */
     suspend fun executeSearch(interpretation: QueryInterpretation): List<NaturalLanguageExpense> {
         val (startMs, endMs) = resolveDateRangeMillis(interpretation.dateRange)
 

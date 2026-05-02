@@ -30,6 +30,21 @@ data class MatchSuggestion(
     val expenseAmount: Double?
 )
 
+/**
+ * ViewModel for the receipt matching screen.
+ *
+ * ## N3: ReceiptMatchingViewModel legacy path
+ * All link/unlink mutations go through [ReceiptLinkService], which is the
+ * single owner of receipt-expense associations (it manages the join table,
+ * legacy [ScannedReceipt.expenseId] field, and audit events). There is no
+ * remaining legacy path that directly manipulates [ScannedReceipt.expenseId]
+ * without going through [ReceiptLinkService].
+ *
+ * The [runAutoMatching] method uses [ReceiptLinkService.linkReceiptToExpense]
+ * for auto-matches and [ReceiptRepository.saveMatchSuggestion] for suggested
+ * matches (which are later approved via [approveSuggestion], also through
+ * [ReceiptLinkService]).
+ */
 @HiltViewModel
 class ReceiptMatchingViewModel @Inject constructor(
     private val receiptRepository: ReceiptRepository,

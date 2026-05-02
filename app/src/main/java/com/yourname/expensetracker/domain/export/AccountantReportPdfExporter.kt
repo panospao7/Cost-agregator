@@ -20,6 +20,15 @@ import javax.inject.Inject
  * CORRECT: Already groups expenses by currency using `reportCurrencyCode()`.
  * No EUR assumptions — totals, breakdowns, and large-transaction sections all
  * correctly use per-currency grouping and display the actual currency code.
+ *
+ * ## M5: PDF reports mix deposits/transfers with expenses
+ * The [export] method processes ALL [Expense] items without filtering by
+ * [com.yourname.expensetracker.data.database.entity.TransactionType].
+ * Deposits, transfers, and other non-expense transaction types are included
+ * alongside purchases in the totals, category breakdowns, and large-transaction
+ * reviews. A future fix should filter to only [TransactionType.PURCHASE] (or
+ * apply a configurable type filter) so that the report reflects actual spending
+ * rather than all account activity.
  */
 class AccountantReportPdfExporter @Inject constructor(
     private val timeProvider: TimeProvider

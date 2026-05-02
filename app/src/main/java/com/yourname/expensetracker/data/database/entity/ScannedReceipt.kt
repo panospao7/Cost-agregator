@@ -49,6 +49,21 @@ data class ScannedReceipt(
     val parsedTotal: Double?,
     val parsedMerchant: String?,
     val parsedDate: Long?,
+    /**
+     * JSON array of line items (parsed receipt items).
+     *
+     * ## N1: Receipt line items stored as JSON, not relational
+     * This field stores line items as a serialized JSON string rather than in
+     * a normalized relational table. This makes it impossible to query, join,
+     * or aggregate individual line items at the database level — e.g. "find
+     * all receipts that contain 'milk'" requires deserializing every row.
+     *
+     * A future migration should extract line items into a separate
+     * `receipt_line_items` table with columns for description, quantity,
+     * unitPrice, totalPrice, and a foreign key back to [ScannedReceipt].
+     * Once the relational table is populated, this JSON column can be
+     * deprecated and eventually removed.
+     */
     val parsedItems: String?,        // JSON array of line items
     val parsedTaxAmount: Double?,
     @ColumnInfo(defaultValue = "EUR") val currency: String = "EUR",

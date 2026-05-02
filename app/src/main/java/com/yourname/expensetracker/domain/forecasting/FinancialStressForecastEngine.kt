@@ -37,6 +37,13 @@ import java.util.Random
  *   (HIGH/MODERATE/LOW via [SimulationConfidence]).
  * - This engine intentionally keeps risk-tier semantics isolated; UI may adapt
  *   probability tiers and simulation confidence side-by-side.
+ *
+ * ## O4: AI cash flow forecast confidence indicator
+ * This engine is deterministic (not AI-based). The [StressHorizon.probabilityOfCrunch]
+ * field serves as a de facto confidence indicator — higher probability means more
+ * confident prediction of a cash crunch. If an AI-based cash flow forecast is added
+ * in the future, it should mirror the [FinancialForecast.confidence] field pattern
+ * (0.0–1.0 range) and expose it to the UI for transparency.
  */
 @Singleton
 class FinancialStressForecastEngine @Inject constructor(

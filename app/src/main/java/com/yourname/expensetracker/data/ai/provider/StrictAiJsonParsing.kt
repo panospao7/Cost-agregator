@@ -10,6 +10,18 @@ import org.json.JSONObject
  * range constraints to reject hallucinated or malformed values
  * before they propagate into the domain layer.
  *
+ * ## O5: AI response validation gaps (VERIFIED — already fixed)
+ * Batch H verified that all AI response parsing sites use [boundedConfidenceOrNull]
+ * to validate confidence values:
+ * - [CloudDedupeJudgeService.parseResponse] — confidence bounded via coerceIn
+ * - [OnDeviceDedupeJudgeService] — uses boundedConfidenceOrNull
+ * - [DashboardBriefingResponseParser] — uses boundedConfidenceOrNull
+ * - [CloudCategorizationAssistService] — uses boundedConfidenceOrNull
+ * - [OnDeviceCategorizationAssistService] — uses boundedConfidenceOrNull
+ * - [SuggestCategoryFallbackUseCase] — uses boundedConfidenceOrNull
+ * - [JudgePendingReviewDuplicateUseCase] — uses boundedConfidenceOrNull
+ * No gaps remain; all AI confidence values are properly validated.
+ *
  * @see boundedConfidenceOrNull for confidence bounded to [0,1]
  * @see positiveIdOrNull for strictly positive ID values
  * @see finiteFloatOrNull for finite float without range check

@@ -29,6 +29,18 @@ import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchE
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import java.time.format.DateTimeFormatter
 
+/**
+ * Natural language search screen.
+ *
+ * ## M7-M10: Known display issues
+ * - See [NaturalLanguageSearchViewModel] KDoc for a full list of display bugs.
+ * - The [TransactionResultCard] always formats amounts in home currency
+ *   regardless of the expense's original currency (M7).
+ * - The [InterpretationCard] does not display currency on extracted amounts (M8).
+ * - Category chips use naive single-word capitalization (M9).
+ * - Mixed-currency total relies on [CurrencyConverter] with no stale-rate
+ *   fallback (M10).
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun NaturalLanguageSearchScreen(

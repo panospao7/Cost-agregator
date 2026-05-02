@@ -36,6 +36,14 @@ import timber.log.Timber
 /**
  * CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig.
  * API key is retrieved from encrypted storage at runtime, not compiled into APK.
+ *
+ * ## O3: Dedupe judge unbounded confidence (VERIFIED — already fixed)
+ * Batch H verified that confidence values parsed from the AI response are
+ * properly bounded to [0, 1]:
+ * - [parseResponse] line ~288: `coerceIn(0f, 1f)` on the parsed confidence
+ * - [StrictAiJsonParsing.boundedConfidenceOrNull] enforces [0f..1f] range
+ * - [OnDeviceDedupeJudgeService] also uses `boundedConfidenceOrNull`
+ * No edge cases remain where an out-of-range confidence can propagate.
  */
 @Singleton
 class CloudDedupeJudgeService @Inject constructor(

@@ -33,6 +33,20 @@ import javax.inject.Singleton
  * 5. Deterministic Fallback - No AI, just use existing parsed data
  * 
  * This ensures maximum accuracy while respecting user privacy settings.
+ *
+ * ## O1: Cloud→on-device fallback pattern
+ * This service already implements a full cloud→on-device fallback chain
+ * via [orderedAttemptsFor] and the retry loop in [executeWithFallback].
+ * Other hybrid services (e.g. [HybridDedupeJudgeService]) do NOT have
+ * this retry chain — they simply delegate directly to the selected route
+ * without any fallback if the primary route fails. For details, see
+ * the individual hybrid service KDoc entries.
+ *
+ * ## O2: Confidence not propagated to UI (partial)
+ * Confidence scores are tracked in [AttemptDetails.confidence] and exposed
+ * in [ReceiptAssistAttemptDetail], but the UI does not currently display
+ * per-attempt confidence to the end user. The final suggestion uses
+ * the confidence from whichever attempt succeeded first.
  */
 @Singleton
 class SmartReceiptAssistService @Inject constructor(

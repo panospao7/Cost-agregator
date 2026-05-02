@@ -14,6 +14,35 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * ViewModel for the natural language search screen.
+ *
+ * ## M7-M10: Known search/report display issues
+ *
+ * ### M7: Amounts displayed without original currency context
+ * When results include expenses in multiple currencies, the `TransactionResultCard`
+ * in the screen always formats amounts using `homeCurrency` from settings.
+ * This means a JPY-denominated expense would be shown as "€50" instead of "¥50"
+ * if the home currency is EUR. A proper fix should display the expense's native
+ * currency alongside or instead of the home-currency equivalent.
+ *
+ * ### M8: Interpretation card shows amounts without currency
+ * The `InterpretationCard` displays extracted amounts (e.g. "over 50") without
+ * any currency qualifier. If the user asked "over €50" vs "over $50", the
+ * distinction is lost. The chip should include the detected currency symbol.
+ *
+ * ### M9: Category chip uses simple capitalization
+ * Category names in `InterpretationCard` use a naive `capitalize()` that only
+ * uppercases the first letter. Multi-word categories (e.g. "groceries" becomes
+ * "Groceries", but "health & fitness" becomes "Health & fitness") may not be
+ * properly capitalized for the user's locale.
+ *
+ * ### M10: Total conversion for mixed currencies may mislead
+ * The [performSearch] method converts all expenses to home currency for the
+ * total display. If conversion rates are stale or unavailable for a currency,
+ * the total will be incorrect. This is noted in the conversion logic at line ~87
+ * but no fallback is provided for missing conversion rates.
+ */
 @OptIn(FlowPreview::class)
 @HiltViewModel
 class NaturalLanguageSearchViewModel @Inject constructor(

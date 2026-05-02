@@ -12,6 +12,23 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Hybrid dedupe judge service that routes to cloud or on-device based on settings.
+ *
+ * ## O1: Cloud→on-device fallback missing
+ * Unlike [SmartReceiptAssistService], this service does NOT implement a
+ * cloud→on-device fallback chain. If the selected route (e.g. [AiRoute.CLOUD])
+ * fails (network error, timeout, API error), the failure is returned directly
+ * to the caller without attempting the other route. A future enhancement should
+ * add a retry/fallback mechanism: try cloud first, and if it fails, fall back
+ * to on-device (or vice versa) before returning a failure.
+ *
+ * ## O2: Confidence not propagated to UI
+ * The [DedupeJudgeSuggestion.confidence] value from the AI is returned in
+ * the [AiServiceResult], but the UI does not currently display this confidence
+ * score to the end user. The dedupe review screen should show the confidence
+ * level alongside the verdict so users can assess match reliability.
+ */
 @Singleton
 class HybridDedupeJudgeService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,

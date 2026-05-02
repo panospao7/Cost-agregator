@@ -9,6 +9,22 @@ import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Repository for receipt item categorization data.
+ *
+ * ## N4: Item categorization status consistency
+ * Status consistency (e.g. ensuring that a receipt's
+ * [com.yourname.expensetracker.data.database.entity.CategorizationStatus] is
+ * correctly updated when categorizations are saved or corrected) is handled
+ * by the calling use cases ([com.yourname.expensetracker.domain.ai.usecase.CategorizeReceiptItemsUseCase]
+ * and related flows). This repository focuses on persistence and retrieval
+ * — it does not independently manage status transitions.
+ *
+ * Batch G fixes verified that:
+ * - [saveCategorizationResult] inserts items without side-effecting receipt status
+ * - [updateUserCorrection] records corrections without overriding status
+ * - Status transitions are driven by the domain layer, not this repository
+ */
 @Singleton
 class ReceiptItemCategorizationRepository @Inject constructor(
     private val dao: ReceiptItemCategorizationDao

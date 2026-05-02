@@ -14,6 +14,24 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 
+/**
+ * Parses raw OCR text from receipt images into structured data.
+ *
+ * ## N5: Tax amount duplicated (line item total + receipt total)
+ * The [parse] method extracts `tax` independently from OCR text patterns
+ * (via [extractTax]) and also computes a cross-validated `finalTotal`. If a
+ * receipt includes the tax amount as a separate line item AND also as a
+ * receipt total tax field, there is a risk that the tax value is counted
+ * twice: once in the sum of line items and once in the explicit tax field.
+ *
+ * Currently the parser does NOT subtract the tax value from the line-item
+ * sum when computing the subtotal ([finalSubtotal] = total - tax). If the
+ * total already excludes tax (common in some receipt formats), this
+ * calculation will incorrectly inflate the subtotal. A future fix should
+ * detect whether the receipt total is tax-inclusive or tax-exclusive
+ * (e.g. by checking for a "TOTAL INCLUDING VAT" vs "SUBTOTAL" indicator)
+ * and adjust the subtotal calculation accordingly.
+ */
 @Singleton
 class ReceiptParser @Inject constructor(
     private val merchantRules: MerchantRulesPolicy,

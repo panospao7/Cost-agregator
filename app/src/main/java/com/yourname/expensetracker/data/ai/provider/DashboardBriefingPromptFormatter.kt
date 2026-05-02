@@ -18,6 +18,17 @@ import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Builds prompts for the AI dashboard briefing feature.
+ *
+ * ## M6: AI prompt schema lacks minAmount/maxAmount
+ * The JSON schema in the prompt (line ~74) includes only `title`, `text`,
+ * `tone`, and `confidence`. There is no mechanism to request filtering by
+ * minimum or maximum transaction amount — the AI cannot be asked "show me
+ * transactions over $500" via the briefing prompt. A future enhancement
+ * should add optional `minAmount`/`maxAmount` fields to the prompt schema
+ * and pass them through from the [DashboardBriefingInput].
+ */
 @Singleton
 class DashboardBriefingPromptFormatter private constructor(
     private val textResolver: (UiText) -> String

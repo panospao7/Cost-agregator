@@ -44,6 +44,21 @@ sealed class MatchResult {
     object NoMatch : MatchResult()
 }
 
+/**
+ * Matches scanned receipts to existing expense transactions.
+ *
+ * ## N2: Receipt matching doesn't check currency
+ * The matching algorithm in [calculateMatchScore] compares receipt and
+ * transaction amounts as raw doubles without verifying that both are in
+ * the same currency. If a receipt has "EUR" currency and the candidate
+ * transaction is in "USD", the amount match could be coincidental (e.g.
+ * both happen to be 50.0) even though the actual values differ by the
+ * exchange rate. This lowers matching reliability for multi-currency users.
+ *
+ * The [calculateMatchScore] method now includes a currency-compatibility
+ * penalty: when receipt currency differs from transaction currency and no
+ * conversion is possible, the amount score is halved.
+ */
 @Singleton
 class ReceiptTransactionMatcher @Inject constructor(
     private val expenseRepository: ExpenseRepository,
@@ -93,10 +108,15 @@ class ReceiptTransactionMatcher @Inject constructor(
         transaction: Expense
     ): Pair<Double, MatchFactors> {
         // 1. Amount match (35% weight)
+        // N2: Currency compatibility check — if currencies differ and no
+        // conversion is possible, the amount score is halved as a penalty
+        // because nominal-value comparison is unreliable across currencies.
         val receiptAmount = receipt.parsedTotal ?: 0.0
+        val currenciesMatch = receipt.currency.equals(transaction.currency, ignoreCase = true)
         val amountDiff = abs(receiptAmount - transaction.effectiveAmount)
         val amountScore = if (transaction.effectiveAmount > 0) {
-            1.0 - (amountDiff / transaction.effectiveAmount).coerceIn(0.0, 1.0)
+            val rawScore = 1.0 - (amountDiff / transaction.effectiveAmount).coerceIn(0.0, 1.0)
+            if (currenciesMatch) rawScore else rawScore * 0.5
         } else {
             0.0
         }

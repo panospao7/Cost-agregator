@@ -2,6 +2,18 @@ package com.yourname.expensetracker.domain.model
 
 import java.time.Instant
 
+/**
+ * Financial forecast result.
+ *
+ * ## O4: AI cash flow forecast has no confidence indicator
+ * This model already carries a [confidence] field (0.0–1.0) that represents
+ * the overall confidence in the forecast. The AI cash flow forecast path
+ * (if one is added in the future) should populate this field with an
+ * appropriate confidence value derived from AI response quality.
+ *
+ * The deterministic [FinancialStressForecastEngine] uses [StressHorizon.probabilityOfCrunch]
+ * as a probability-based confidence indicator instead.
+ */
 data class FinancialForecast(
     val horizon: ForecastHorizon,
     val generatedAt: Instant,

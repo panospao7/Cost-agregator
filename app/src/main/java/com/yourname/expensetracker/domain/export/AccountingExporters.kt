@@ -8,6 +8,14 @@ import java.util.Locale
 
 /**
  * CRITICAL FIX (CRITICAL-4): Safe CSV/IIF exporters with proper escaping.
+ *
+ * ## M4: Export paging lacks atomicity
+ * Each exporter ([QuickBooksIIFExporter], [XeroCSVExporter], [FreshBooksExporter])
+ * receives a fully-materialized [List] of expenses. There is no paging or
+ * streaming — for very large data sets this can cause OOM. Additionally, the
+ * export is not transactional: if the process is interrupted mid-export, the
+ * output will be a truncated file with no rollback mechanism. A future fix
+ * should implement cursor-based paging and write-ahead buffering.
  */
 
 class QuickBooksIIFExporter {
