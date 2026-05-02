@@ -146,9 +146,23 @@ class RestoreJournal @Inject constructor(
 
     /**
      * Transitions the journal to a new state.
+     *
+     * @param entry the current journal entry
+     * @param newState the target state
+     * @param error optional error message
+     * @param safetyBackupPath optional path to the safety backup (used for crash recovery)
      */
-    fun transitionTo(entry: JournalEntry, newState: JournalState, error: String? = null): JournalEntry {
-        val updated = entry.copy(state = newState, error = error ?: entry.error)
+    fun transitionTo(
+        entry: JournalEntry,
+        newState: JournalState,
+        error: String? = null,
+        safetyBackupPath: String? = null
+    ): JournalEntry {
+        val updated = entry.copy(
+            state = newState,
+            error = error ?: entry.error,
+            safetyBackupPath = safetyBackupPath ?: entry.safetyBackupPath
+        )
         writeJournal(updated)
         return updated
     }
@@ -258,7 +272,7 @@ class RestoreJournal @Inject constructor(
     /**
      * Cleans up staging database files.
      */
-    private fun cleanStagingFiles(entry: JournalEntry) {
+    fun cleanStagingFiles(entry: JournalEntry) {
         if (entry.stagedDbPath != null) {
             val stagedFile = File(entry.stagedDbPath)
             if (stagedFile.exists()) {

@@ -16,6 +16,7 @@ import com.yourname.expensetracker.service.reminder.BillReminderWorker
 import com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -37,6 +38,9 @@ class AppStartupCoordinator @Inject constructor(
 
     /**
      * Checks for a pending restore journal on startup and handles crash recovery.
+     *
+     * For destructive states (SWAPPING, VERIFYING), this actually restores the
+     * safety backup to recover the live database rather than just logging.
      */
     private fun checkRestoreJournal() {
         when (val recovery = restoreJournal.checkAndRecover()) {
@@ -54,9 +58,66 @@ class AppStartupCoordinator @Inject constructor(
             }
 
             is RestoreJournal.RecoveryResult.RecoveredFromSwap -> {
-                Timber.e("Startup: detected incomplete restore from state: %s", recovery.entry.state)
-                // Don't block startup — the journal recovery is best-effort.
-                // The db may need manual recovery.
+                val entry = recovery.entry
+                Timber.e("Startup: detected incomplete restore from state: %s", entry.state)
+
+                // Attempt recovery from safety backup
+                val safetyBackupPath = entry.safetyBackupPath
+                if (safetyBackupPath != null) {
+                    val safetyBackupFile = File(safetyBackupPath)
+                    if (safetyBackupFile.exists() && safetyBackupFile.canRead()) {
+                        val liveDbPath = entry.liveDbPath
+                        if (liveDbPath != null) {
+                            try {
+                                val liveDbFile = File(liveDbPath)
+                                val liveDbWalFile = File(liveDbPath + "-wal")
+                                val liveDbShmFile = File(liveDbPath + "-shm")
+                                val safetyWalFile = File(safetyBackupFile.parentFile, "${safetyBackupFile.name}-wal")
+                                val safetyShmFile = File(safetyBackupFile.parentFile, "${safetyBackupFile.name}-shm")
+
+                                // Remove potentially corrupt live DB files
+                                liveDbFile.delete()
+                                liveDbWalFile.delete()
+                                liveDbShmFile.delete()
+
+                                // Restore from safety backup
+                                safetyBackupFile.inputStream().use { input ->
+                                    liveDbFile.outputStream().use { output ->
+                                        input.copyTo(output)
+                                    }
+                                }
+                                if (safetyWalFile.exists()) {
+                                    safetyWalFile.inputStream().use { input ->
+                                        liveDbWalFile.outputStream().use { output ->
+                                            input.copyTo(output)
+                                        }
+                                    }
+                                }
+                                if (safetyShmFile.exists()) {
+                                    safetyShmFile.inputStream().use { input ->
+                                        liveDbShmFile.outputStream().use { output ->
+                                            input.copyTo(output)
+                                        }
+                                    }
+                                }
+
+                                Timber.w("Startup: successfully recovered live DB from safety backup after incomplete restore")
+                            } catch (e: Exception) {
+                                Timber.e(e, "Startup: failed to recover from safety backup during crash recovery")
+                            }
+                        } else {
+                            Timber.e("Startup: journal has safety backup path but no live DB path; cannot recover")
+                        }
+                    } else {
+                        Timber.e("Startup: safety backup file not found or unreadable: %s", safetyBackupPath)
+                    }
+                } else {
+                    Timber.e("Startup: journal has no safety backup path; cannot recover from incomplete restore")
+                }
+
+                // Clean up staging files and delete journal regardless of recovery outcome
+                restoreJournal.cleanStagingFiles(entry)
+                restoreJournal.deleteJournal()
             }
 
             is RestoreJournal.RecoveryResult.CriticalRecoveryRequired -> {

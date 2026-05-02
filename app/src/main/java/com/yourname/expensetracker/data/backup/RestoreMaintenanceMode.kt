@@ -101,15 +101,17 @@ class RestoreMaintenanceMode @Inject constructor(
     // ── Worker control ────────────────────────────────────────────
 
     /**
-     * Cancels all 7 background workers by their WorkManager tags.
-     * This prevents any new enqueues while maintenance mode is active.
+     * Cancels all 7 background workers by their unique work names.
+     * All workers are enqueued via [enqueueUniquePeriodicWork] or [enqueueUniqueWork]
+     * with their [WorkerSpec.name] as the unique name, so [cancelUniqueWork] is the
+     * correct API to pause them.
      */
     private fun pauseAllWorkers() {
         val workManager = WorkManager.getInstance(context)
         val workerNames = WorkerSpec.DEFAULTS.keys
         for (name in workerNames) {
-            workManager.cancelAllWorkByTag(name)
-            Timber.d("Cancelled worker: %s", name)
+            workManager.cancelUniqueWork(name)
+            Timber.d("Cancelled unique worker: %s", name)
         }
     }
 

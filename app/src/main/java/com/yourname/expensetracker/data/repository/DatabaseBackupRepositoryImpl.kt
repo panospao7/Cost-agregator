@@ -613,8 +613,32 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
             }
 
+            // 6a. Open staged DB with Room to trigger migration BEFORE swapping to live.
+            //     This ensures any schema migration failures are caught while the live DB
+            //     is still intact and before a safety backup is created.
+            try {
+                val stagedDatabase = AppDatabase.fileBuilder(context, stagedDbName).build()
+                try {
+                    // Opening writable DB triggers Room migration if needed
+                    stagedDatabase.openHelper.writableDatabase
+                    Timber.d("Staged DB Room migration triggered successfully")
+                } finally {
+                    runCatching { stagedDatabase.close() }
+                }
+            } catch (e: Exception) {
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                restoreJournal.failJournal(journalEntry, "Staged migration failed: ${e.message}")
+                stagedDbFile.delete()
+                tempDir.deleteRecursively()
+                // Delete any migrated WAL/SHM files Room may have created
+                File(stagedDbPath + "-wal").delete()
+                File(stagedDbPath + "-shm").delete()
+                return@withContext Result.failure(
+                    Exception("Staged database migration failed: ${e.message}")
+                )
+            }
+
             // 7. Create safety backup
-            restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.SAFETY_BACKUP_CREATED)
             val safetyBackupResult = createSafetyBackup()
             if (safetyBackupResult.isFailure) {
                 val reason = safetyBackupResult.exceptionOrNull()?.message ?: "Unknown error"
@@ -629,7 +653,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             val safetyBackupFile = safetyBackupResult.getOrNull()
                 ?: return@withContext Result.failure(Exception("Safety backup created but path unavailable"))
 
-            // 8. Swap live DB with staged DB
+            // 8. Persist safety backup path in journal before swap, so crash recovery
+            //    can restore from it if the process dies during the swap.
+            restoreJournal.transitionTo(
+                journalEntry,
+                RestoreJournal.JournalState.SAFETY_BACKUP_CREATED,
+                safetyBackupPath = safetyBackupFile.absolutePath
+            )
+            // Swap live DB with staged DB
             restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.SWAPPING)
             val liveDbWalFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-wal")
             val liveDbShmFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-shm")
@@ -790,9 +821,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     }
 
     /**
-     * Restores receipt asset files from the extracted bundle.
+     * Restores receipt asset files from the extracted bundle and updates
+     * the [ScannedReceipt.imagePath] in the database to point to the new location.
+     *
+     * Backup files are named as "{receiptId}_{originalFilename}", so we parse the
+     * receipt ID from the filename to locate the corresponding DB record.
      */
-    private fun restoreReceiptAssets(
+    private suspend fun restoreReceiptAssets(
         assetsDir: java.io.File,
         manifest: CostbackupBundle.BackupManifest
     ) {
@@ -811,8 +846,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             return
         }
 
-        // Build a map of file hash → new path for deduplication
         val dao = database.scannedReceiptDao()
+        var restoredCount = 0
+        var updateErrors = 0
+
         for (assetFile in receiptFiles) {
             try {
                 // Generate new UUID-based filename to avoid path conflicts
@@ -827,11 +864,44 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     }
                 }
 
-                Timber.d("Restored receipt asset: %s -> %s", assetFile.name, destFile.absolutePath)
+                // Parse receipt ID from backup filename format: "{receiptId}_{originalFilename}"
+                val receiptId = assetFile.nameWithoutExtension
+                    .substringBefore("_")
+                    .toLongOrNull()
+
+                if (receiptId != null && receiptId > 0L) {
+                    // Look up the receipt in the (restored) database by its original ID
+                    val receipt = dao.getById(receiptId)
+                    if (receipt != null) {
+                        dao.update(receipt.copy(imagePath = destFile.absolutePath))
+                        Timber.d(
+                            "Restored and updated receipt image path: %s -> %s (receiptId=%d)",
+                            assetFile.name, destFile.absolutePath, receiptId
+                        )
+                    } else {
+                        Timber.w(
+                            "Receipt record not found for restored asset (id=%d, file=%s); " +
+                                "imagePath not updated",
+                            receiptId, assetFile.name
+                        )
+                    }
+                } else {
+                    Timber.w(
+                        "Could not parse receipt ID from filename: %s; imagePath not updated",
+                        assetFile.name
+                    )
+                }
+                restoredCount++
             } catch (e: Exception) {
                 Timber.e(e, "Failed to restore receipt asset: %s", assetFile.name)
+                updateErrors++
             }
         }
+
+        Timber.d(
+            "Receipt asset restore complete: %d files restored, %d update errors",
+            restoredCount, updateErrors
+        )
     }
 
     override suspend fun importDatabase(sourceFile: File): Result<DatabaseImportSummary> = withContext(ioDispatcher) {

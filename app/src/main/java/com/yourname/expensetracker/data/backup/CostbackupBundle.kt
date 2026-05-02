@@ -8,10 +8,6 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.security.MessageDigest
-import java.security.SecureRandom
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -27,9 +23,10 @@ import java.util.zip.ZipOutputStream
  * The outer archive is a header + AES-256-GCM ciphertext:
  *   COSTBACKUP1 (10B magic)
  *   format_version (2B, big-endian uint16)
- *   salt (16B)
- *   iv (12B)
  *   [ciphertext...]
+ *
+ * Encryption is handled entirely by [BackupEncryptionService], which embeds
+ * its own salt (16B) and IV (12B) as a prefix to the ciphertext payload.
  *
  * Inside the ciphertext is a standard ZIP archive.
  */
@@ -37,10 +34,9 @@ object CostbackupBundle {
 
     private const val MAGIC = "COSTBACKUP1"
     private const val FORMAT_VERSION: UShort = 1u
-    private const val SALT_LENGTH = 16
-    private const val IV_LENGTH = 12
 
-    private const val HEADER_SIZE = 10 + 2 + SALT_LENGTH + IV_LENGTH
+    /** Header size: magic (10) + format version (2) = 12 bytes. */
+    private const val HEADER_SIZE = 10 + 2
 
     // ── Manifest / Checksums data classes (manual JSON) ───────────
 
@@ -155,29 +151,24 @@ object CostbackupBundle {
     // ── Header helpers ─────────────────────────────────────────────
 
     /**
-     * Writes the .costbackup header (magic, version, salt, IV) to [stream],
-     * then returns the salt and IV so the caller can re-use them for encryption.
+     * Writes the .costbackup header (magic, version) to [stream].
+     * Encryption metadata (salt, IV) is handled by [BackupEncryptionService]
+     * and embedded in the ciphertext payload.
      */
-    private fun writeHeader(stream: FileOutputStream): Pair<ByteArray, ByteArray> {
-        val salt = ByteArray(SALT_LENGTH).also { SecureRandom().nextBytes(it) }
-        val iv = ByteArray(IV_LENGTH).also { SecureRandom().nextBytes(it) }
-
+    private fun writeHeader(stream: FileOutputStream) {
         stream.write(MAGIC.toByteArray(Charsets.US_ASCII))
         stream.write(byteArrayOf(
             (FORMAT_VERSION.toInt() shr 8).toByte(),
             FORMAT_VERSION.toInt().toByte()
         ))
-        stream.write(salt)
-        stream.write(iv)
-
-        return Pair(salt, iv)
     }
 
     /**
      * Reads and validates the .costbackup header from [bytes].
-     * Returns (salt, iv, remainingCiphertext).
+     * Returns the remaining ciphertext (which includes salt + IV embedded by
+     * [BackupEncryptionService]).
      */
-    fun readHeader(bytes: ByteArray): Triple<ByteArray, ByteArray, ByteArray> {
+    fun readHeader(bytes: ByteArray): ByteArray {
         require(bytes.size >= HEADER_SIZE) {
             "File too short: ${bytes.size} bytes, expected at least $HEADER_SIZE"
         }
@@ -203,18 +194,10 @@ object CostbackupBundle {
             )
         }
 
-        // Salt
-        val salt = bytes.copyOfRange(offset, offset + SALT_LENGTH)
-        offset += SALT_LENGTH
-
-        // IV
-        val iv = bytes.copyOfRange(offset, offset + IV_LENGTH)
-        offset += IV_LENGTH
-
-        // Remaining ciphertext
+        // Remaining ciphertext (BackupEncryptionService embeds its own salt + IV)
         val ciphertext = bytes.copyOfRange(offset, bytes.size)
 
-        return Triple(salt, iv, ciphertext)
+        return ciphertext
     }
 
     // ── Create ────────────────────────────────────────────────────
@@ -243,10 +226,10 @@ object CostbackupBundle {
         // 1. Build ZIP in memory
         val zipBytes = buildZip(databaseFile, receiptFiles, tableCounts, databaseVersion, redacted, includeReceiptImages)
 
-        // 2. Encrypt with user password
+        // 2. Encrypt with user password (BackupEncryptionService embeds salt + IV)
         val encrypted = encryptionService.encrypt(zipBytes, password)
 
-        // 3. Write header + ciphertext to output file
+        // 3. Write header (magic + version) + ciphertext to output file
         outputFile.parentFile?.mkdirs()
         FileOutputStream(outputFile).use { fos ->
             writeHeader(fos)
@@ -272,8 +255,8 @@ object CostbackupBundle {
     ): Result<ExtractionResult> = runCatching {
         val bundleBytes = bundleFile.readBytes()
 
-        // 1. Read and validate header
-        val (salt, iv, ciphertext) = readHeader(bundleBytes)
+        // 1. Read and validate header (salt + IV are inside ciphertext, managed by BackupEncryptionService)
+        val ciphertext = readHeader(bundleBytes)
 
         // 2. Decrypt
         val zipBytes = try {
@@ -292,29 +275,48 @@ object CostbackupBundle {
             throw InvalidBackupFormatException("Decrypted data is not a valid ZIP archive")
         }
 
-        // 4. Extract ZIP
-        outputDir.mkdirs()
-        val extractedFiles = mutableMapOf<String, File>()
-        val zis = ZipInputStream(zipBytes.inputStream())
-        try {
-            var entry = zis.nextEntry
-            while (entry != null) {
-                val targetFile = File(outputDir, entry.name)
-                if (entry.isDirectory) {
-                    targetFile.mkdirs()
-                } else {
-                    targetFile.parentFile?.mkdirs()
-                    FileOutputStream(targetFile).use { fos ->
-                        zis.copyTo(fos)
+            // 4. Extract ZIP (with ZIP Slip protection)
+            outputDir.mkdirs()
+            val extractedFiles = mutableMapOf<String, File>()
+            val zis = ZipInputStream(zipBytes.inputStream())
+            try {
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    // ZIP Slip prevention: resolve against outputDir and verify canonical path
+                    val entryName = entry.name.replace('\\', '/')
+                    // Reject entries with parent directory traversal
+                    if (entryName.contains("..") &&
+                        entryName.split("/").any { it == ".." }
+                    ) {
+                        throw InvalidBackupFormatException(
+                            "ZIP entry with path traversal rejected: ${entry.name}"
+                        )
                     }
-                    extractedFiles[entry.name] = targetFile
+                    val targetFile = File(outputDir, entryName)
+                    val canonicalTarget = targetFile.canonicalPath
+                    val canonicalOutput = outputDir.canonicalPath
+                    if (!canonicalTarget.startsWith(canonicalOutput + File.separator) &&
+                        canonicalTarget != canonicalOutput
+                    ) {
+                        throw InvalidBackupFormatException(
+                            "ZIP entry escapes output directory: ${entry.name}"
+                        )
+                    }
+                    if (entry.isDirectory) {
+                        targetFile.mkdirs()
+                    } else {
+                        targetFile.parentFile?.mkdirs()
+                        FileOutputStream(targetFile).use { fos ->
+                            zis.copyTo(fos)
+                        }
+                        extractedFiles[entry.name] = targetFile
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
                 }
-                zis.closeEntry()
-                entry = zis.nextEntry
+            } finally {
+                zis.close()
             }
-        } finally {
-            zis.close()
-        }
 
         // 5. Read manifest
         val manifestFile = extractedFiles["manifest.json"]
@@ -333,14 +335,17 @@ object CostbackupBundle {
         for ((relPath, expectedHash) in checksums.entries) {
             val file = extractedFiles[relPath]
             if (file == null) {
-                warnings += "Missing file in extraction: $relPath"
+                val msg = "Missing file in extraction: $relPath"
+                warnings += msg
                 checksumsVerified = false
-                continue
+                throw ChecksumMismatchException(msg)
             }
             val actualHash = sha256Hex(file)
             if (actualHash != expectedHash) {
-                warnings += "Checksum mismatch for $relPath: expected $expectedHash, got $actualHash"
+                val msg = "Checksum mismatch for $relPath: expected $expectedHash, got $actualHash"
+                warnings += msg
                 checksumsVerified = false
+                throw ChecksumMismatchException(msg)
             }
         }
 
