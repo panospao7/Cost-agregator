@@ -9,6 +9,14 @@ import androidx.room.PrimaryKey
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
+/**
+ * Planned expense entity.
+ *
+ * Materialized-key CHECK constraint (applied via migration 106→107):
+ *  - Non-PLANNED status               → openSourceOccurrenceKey IS NULL
+ *  - PLANNED with sourceOccurrenceKey → openSourceOccurrenceKey = sourceOccurrenceKey (non-null)
+ *  - PLANNED without sourceOccurrenceKey → openSourceOccurrenceKey IS NULL
+ */
 @Entity(
     tableName = "planned_expenses",
     foreignKeys = [

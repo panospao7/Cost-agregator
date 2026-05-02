@@ -23,6 +23,11 @@ enum class BudgetPeriod {
  * layer because Room schema must match generated metadata):
  *  - At most one active overall budget: `UNIQUE(isActive) WHERE isActive = 1 AND categoryId IS NULL`
  *  - At most one active budget per category: `UNIQUE(categoryId) WHERE isActive = 1 AND categoryId IS NOT NULL`
+ *
+ * Materialized-key CHECK constraint (applied via migration 106→107):
+ *  - Inactive (isActive=0)          → activeOverallKey IS NULL AND activeCategoryKey IS NULL
+ *  - Active overall (categoryId=NULL) → activeOverallKey = 1 AND activeCategoryKey IS NULL
+ *  - Active by category             → activeOverallKey IS NULL AND activeCategoryKey = categoryId
  */
 @Entity(
     tableName = "budgets",

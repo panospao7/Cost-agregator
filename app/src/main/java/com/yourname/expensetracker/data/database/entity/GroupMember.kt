@@ -8,6 +8,10 @@ import androidx.room.PrimaryKey
 
 /**
  * Represents a member of an expense group.
+ *
+ * Materialized-key CHECK constraint (applied via migration 106→107):
+ *  - Non-current-user (isCurrentUser=0) → currentUserGroupKey IS NULL
+ *  - Current user (isCurrentUser=1)     → currentUserGroupKey = groupId
  */
 @Entity(
     tableName = "group_members",

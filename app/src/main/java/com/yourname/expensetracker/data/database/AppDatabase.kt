@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 106
+const val APP_DATABASE_SCHEMA_VERSION = 107
 
 @Database(
     entities = [
@@ -4882,7 +4882,10 @@ abstract class AppDatabase : RoomDatabase() {
          *    odometer ordering.
          *  - pending_reviews: suggestedAmount > 0, suggestedType ∈ known enum set.
          *  - budgets: amount > 0, notifyAtWarning > 0, notifyAtCritical > 0,
-         *    notifyAtWarning ≤ notifyAtCritical.
+         *    notifyAtWarning ≤ notifyAtCritical,
+         *    materialized-key invariant (activeOverallKey / activeCategoryKey).
+         *  - group_members: currentUserGroupKey invariant.
+         *  - planned_expenses: openSourceOccurrenceKey invariant.
          */
         val FRESH_INSTALL_CALLBACK = object : RoomDatabase.Callback() {
             override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -5012,7 +5015,8 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_reviews_status_suggestedMerchantKey_suggestedDate ON pending_reviews (status, suggestedMerchantKey, suggestedDate)")
 
                 // budgets: amount > 0, notifyAtWarning > 0, notifyAtCritical > 0,
-                // notifyAtWarning <= notifyAtCritical
+                // notifyAtWarning <= notifyAtCritical,
+                // materialized key invariant (activeOverallKey / activeCategoryKey)
                 db.execSQL(
                     """
                     CREATE TABLE budgets_new (
@@ -5035,6 +5039,13 @@ abstract class AppDatabase : RoomDatabase() {
                         activeOverallKey INTEGER,
                         activeCategoryKey INTEGER,
                         CHECK(notifyAtWarning <= notifyAtCritical),
+                        CHECK(
+                            (isActive = 0 AND activeOverallKey IS NULL AND activeCategoryKey IS NULL)
+                            OR
+                            (isActive = 1 AND categoryId IS NULL AND activeOverallKey = 1 AND activeCategoryKey IS NULL)
+                            OR
+                            (isActive = 1 AND categoryId IS NOT NULL AND activeOverallKey IS NULL AND activeCategoryKey = categoryId)
+                        ),
                         FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
                     )
                     """.trimIndent()
@@ -5061,6 +5072,75 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_activeOverallKey ON budgets (activeOverallKey)")
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_activeCategoryKey ON budgets (activeCategoryKey)")
+
+                // ── Phase 7: materialized key CHECK constraints ───────────────────────────
+
+                // group_members: currentUserGroupKey invariant
+                db.execSQL(
+                    """
+                    CREATE TABLE group_members_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId INTEGER NOT NULL,
+                        name TEXT NOT NULL,
+                        email TEXT,
+                        isCurrentUser INTEGER NOT NULL DEFAULT 0,
+                        joinedAt INTEGER NOT NULL,
+                        currentUserGroupKey INTEGER,
+                        CHECK(
+                            (isCurrentUser = 0 AND currentUserGroupKey IS NULL)
+                            OR
+                            (isCurrentUser = 1 AND currentUserGroupKey = groupId)
+                        ),
+                        FOREIGN KEY (groupId) REFERENCES expense_groups(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("INSERT INTO group_members_new SELECT * FROM group_members")
+                db.execSQL("DROP TABLE group_members")
+                db.execSQL("ALTER TABLE group_members_new RENAME TO group_members")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members (groupId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId_isCurrentUser ON group_members (groupId, isCurrentUser)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_name ON group_members (groupId, name)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_group_members_currentUserGroupKey ON group_members (currentUserGroupKey)")
+
+                // planned_expenses: openSourceOccurrenceKey invariant
+                db.execSQL(
+                    """
+                    CREATE TABLE planned_expenses_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        description TEXT NOT NULL,
+                        amount REAL NOT NULL,
+                        currency TEXT NOT NULL DEFAULT 'EUR',
+                        currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT',
+                        date INTEGER NOT NULL,
+                        categoryId INTEGER,
+                        isRecurring INTEGER NOT NULL DEFAULT 0,
+                        priority TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        sourceOccurrenceKey TEXT,
+                        sourceRecurringRuleId INTEGER,
+                        status TEXT NOT NULL DEFAULT 'PLANNED',
+                        linkedActualExpenseId INTEGER,
+                        merchantKey TEXT,
+                        updatedAt INTEGER NOT NULL,
+                        openSourceOccurrenceKey TEXT,
+                        CHECK(
+                            (status != 'PLANNED' AND openSourceOccurrenceKey IS NULL)
+                            OR
+                            (status = 'PLANNED' AND openSourceOccurrenceKey IS NOT NULL)
+                            OR
+                            (status = 'PLANNED' AND sourceOccurrenceKey IS NULL AND openSourceOccurrenceKey IS NULL)
+                        ),
+                        FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("INSERT INTO planned_expenses_new SELECT * FROM planned_expenses")
+                db.execSQL("DROP TABLE planned_expenses")
+                db.execSQL("ALTER TABLE planned_expenses_new RENAME TO planned_expenses")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_date ON planned_expenses (date)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_categoryId ON planned_expenses (categoryId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_planned_expenses_openSourceOccurrenceKey ON planned_expenses (openSourceOccurrenceKey)")
             }
         }
 
@@ -6170,6 +6250,167 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        // Migration 106 -> 107: Phase 7 follow-up — CHECK constraints on materialized invariant keys.
+        //
+        // Adds DB-level CHECK constraints to enforce consistency of the materialized invariant
+        // keys that were added in MIGRATION_104_105:
+        //   budgets         — activeOverallKey, activeCategoryKey
+        //   group_members   — currentUserGroupKey
+        //   planned_expenses — openSourceOccurrenceKey
+        //
+        // Each constraint is a table-level CHECK that ensures the materialized key is
+        // consistent with the business logic columns that drive it (isActive, categoryId,
+        // isCurrentUser, status, sourceOccurrenceKey). This prevents raw insert() calls
+        // from bypassing the repository-layer invariant maintenance.
+        //
+        // Table rebuilds are required because CHECK constraints are part of CREATE TABLE DDL
+        // in SQLite and cannot be added via ALTER TABLE.
+        val MIGRATION_106_107 = object : androidx.room.migration.Migration(106, 107) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                val fkWasEnabled = database.query("PRAGMA foreign_keys").use {
+                    it.moveToFirst(); it.getInt(0) == 1
+                }
+                if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                try {
+                    database.beginTransaction()
+                    try {
+                        // ── 1. Budgets: rebuild with materialized key CHECK ──────────────
+                        //
+                        // Invariant:
+                        //   - Inactive budget    → both keys NULL
+                        //   - Active OVERALL     → activeOverallKey = 1, activeCategoryKey = NULL
+                        //   - Active CATEGORY    → activeOverallKey = NULL, activeCategoryKey = categoryId
+                        database.execSQL("""
+                            CREATE TABLE budgets_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                categoryId INTEGER,
+                                amount REAL NOT NULL CHECK(amount > 0),
+                                period TEXT NOT NULL,
+                                periodMode TEXT NOT NULL DEFAULT 'ROLLING',
+                                startDate INTEGER NOT NULL,
+                                isActive INTEGER NOT NULL DEFAULT 1,
+                                notifyAtWarning REAL NOT NULL DEFAULT 0.75 CHECK(notifyAtWarning > 0),
+                                notifyAtCritical REAL NOT NULL DEFAULT 0.9 CHECK(notifyAtCritical > 0),
+                                rollover INTEGER NOT NULL DEFAULT 0,
+                                currency TEXT NOT NULL DEFAULT 'EUR',
+                                currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT',
+                                createdAt INTEGER NOT NULL,
+                                lastWarningNotifiedAt INTEGER,
+                                lastCriticalNotifiedAt INTEGER,
+                                lastExceededNotifiedAt INTEGER,
+                                activeOverallKey INTEGER,
+                                activeCategoryKey INTEGER,
+                                CHECK(notifyAtWarning <= notifyAtCritical),
+                                CHECK(
+                                    (isActive = 0 AND activeOverallKey IS NULL AND activeCategoryKey IS NULL)
+                                    OR
+                                    (isActive = 1 AND categoryId IS NULL AND activeOverallKey = 1 AND activeCategoryKey IS NULL)
+                                    OR
+                                    (isActive = 1 AND categoryId IS NOT NULL AND activeOverallKey IS NULL AND activeCategoryKey = categoryId)
+                                ),
+                                FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                            )
+                        """.trimIndent())
+
+                        database.execSQL("INSERT INTO budgets_new SELECT * FROM budgets")
+                        database.execSQL("DROP TABLE budgets")
+                        database.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
+
+                        // Recreate Room-declared budgets indexes
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_activeOverallKey ON budgets (activeOverallKey)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_activeCategoryKey ON budgets (activeCategoryKey)")
+
+                        // ── 2. Group members: rebuild with CHECK constraint ──────────────
+                        //
+                        // Invariant:
+                        //   - Non-current-user → currentUserGroupKey IS NULL
+                        //   - Current user     → currentUserGroupKey = groupId
+                        database.execSQL("""
+                            CREATE TABLE group_members_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                groupId INTEGER NOT NULL,
+                                name TEXT NOT NULL,
+                                email TEXT,
+                                isCurrentUser INTEGER NOT NULL DEFAULT 0,
+                                joinedAt INTEGER NOT NULL,
+                                currentUserGroupKey INTEGER,
+                                CHECK(
+                                    (isCurrentUser = 0 AND currentUserGroupKey IS NULL)
+                                    OR
+                                    (isCurrentUser = 1 AND currentUserGroupKey = groupId)
+                                ),
+                                FOREIGN KEY (groupId) REFERENCES expense_groups(id) ON DELETE CASCADE
+                            )
+                        """.trimIndent())
+
+                        database.execSQL("INSERT INTO group_members_new SELECT * FROM group_members")
+                        database.execSQL("DROP TABLE group_members")
+                        database.execSQL("ALTER TABLE group_members_new RENAME TO group_members")
+
+                        // Recreate Room-declared group_members indexes
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members (groupId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId_isCurrentUser ON group_members (groupId, isCurrentUser)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_name ON group_members (groupId, name)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_currentUserGroupKey ON group_members (currentUserGroupKey)")
+
+                        // ── 3. Planned expenses: rebuild with CHECK constraint ──────────
+                        //
+                        // Invariant:
+                        //   - Non-PLANNED status → openSourceOccurrenceKey IS NULL
+                        //   - PLANNED with sourceOccurrenceKey → openSourceOccurrenceKey = sourceOccurrenceKey (non-null)
+                        //   - PLANNED without sourceOccurrenceKey → openSourceOccurrenceKey IS NULL
+                        database.execSQL("""
+                            CREATE TABLE planned_expenses_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                description TEXT NOT NULL,
+                                amount REAL NOT NULL,
+                                currency TEXT NOT NULL DEFAULT 'EUR',
+                                currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT',
+                                date INTEGER NOT NULL,
+                                categoryId INTEGER,
+                                isRecurring INTEGER NOT NULL DEFAULT 0,
+                                priority TEXT NOT NULL,
+                                createdAt INTEGER NOT NULL,
+                                sourceOccurrenceKey TEXT,
+                                sourceRecurringRuleId INTEGER,
+                                status TEXT NOT NULL DEFAULT 'PLANNED',
+                                linkedActualExpenseId INTEGER,
+                                merchantKey TEXT,
+                                updatedAt INTEGER NOT NULL,
+                                openSourceOccurrenceKey TEXT,
+                                CHECK(
+                                    (status != 'PLANNED' AND openSourceOccurrenceKey IS NULL)
+                                    OR
+                                    (status = 'PLANNED' AND openSourceOccurrenceKey IS NOT NULL)
+                                    OR
+                                    (status = 'PLANNED' AND sourceOccurrenceKey IS NULL AND openSourceOccurrenceKey IS NULL)
+                                ),
+                                FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                            )
+                        """.trimIndent())
+
+                        database.execSQL("INSERT INTO planned_expenses_new SELECT * FROM planned_expenses")
+                        database.execSQL("DROP TABLE planned_expenses")
+                        database.execSQL("ALTER TABLE planned_expenses_new RENAME TO planned_expenses")
+
+                        // Recreate Room-declared planned_expenses indexes
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_date ON planned_expenses (date)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_categoryId ON planned_expenses (categoryId)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_planned_expenses_openSourceOccurrenceKey ON planned_expenses (openSourceOccurrenceKey)")
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
+                } finally {
+                    if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
+                }
+            }
+        }
+
         /**
       * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -6311,7 +6552,8 @@ MIGRATION_91_92,
         MIGRATION_102_103,
         MIGRATION_103_104,
         MIGRATION_104_105,
-        MIGRATION_105_106
+        MIGRATION_105_106,
+        MIGRATION_106_107
     )
     }
 }
