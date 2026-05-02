@@ -25,8 +25,14 @@ data/
 │   ├── ExportAnonymizer.kt               # Strips raw text from exports
 │   └── DataRetentionWorker.kt            # WorkManager purging worker
 │
+├── backup/                # **NEW — Backup/restore subsystem (Phase 9)**
+│   ├── CostbackupBundle.kt               # .costbackup ZIP format (AES-256-GCM, manifest, checksums, receipt images)
+│   ├── RestoreMaintenanceMode.kt         # Worker pause + coordinator write-blocking during restore
+│   ├── RestoreJournal.kt                 # Crash-safe 8-state restore journal with crash recovery
+│   └── BackupVerifier.kt                 # 56-entity 3-tier verification via PRAGMA integrity_check + FK check
+│
 ├── database/               # Room ORM + migrations, entities, query models
-│   ├── AppDatabase.kt      # RoomDatabase (v104, 56 entity references)
+│   ├── AppDatabase.kt      # RoomDatabase (v106, 56 entity references)
 │   ├── converter/          # Type converters
 │   │   └── Converters.kt   # @TypeConverter for complex types
 │   ├── dao/                # Current DAO set
@@ -141,10 +147,10 @@ data/
 
 | Aspect | Details |
 |--------|---------|
-| **Version** | 104 |
+| **Version** | 106 (no migration in Phase 9 or Phase 10 — schema stays at v106) |
 | **Total Entities** | 56 (RecurringLifecycleEvent, PrivacyAuditEvent added; 4 new columns on planned_expenses + raw_notifications + scanned_receipts) |
 | **Total DAOs** | 54 (RecurringLifecycleEventDao, PrivacyAuditDao added) |
-| **Total Migrations** | 95 (MIGRATION_6_7 → MIGRATION_103_104) |
+| **Total Migrations** | 97 (MIGRATION_6_7 → MIGRATION_105_106) |
 | **Type Converters** | Custom: Enums, Lists, Dates |
 | **Export Schema** | ✓ Enabled (for migrations verification) |
 
@@ -216,6 +222,8 @@ data/
 | **102** | **Recurring lifecycle audit: `recurring_lifecycle_events` table** |
 | **103** | **Privacy gate audit: `privacy_audit_events` table** |
 | **104** | **Data retention: `rawContentPurgedAt` on raw_notifications + `rawOcrTextPurgedAt` on scanned_receipts** |
+| **105** | **DB Invariants (Phase 7): Budget CHECK constraints, schema hardening, fresh-install callback alignment** |
+| **106** | **DB Invariants (Phase 7 cont.): Final invariant layer. Phases 9+10 add no schema changes — stays at v106.** |
 
 ---
 
@@ -497,7 +505,7 @@ data/
 
 | Repository | Purpose | Key Methods |
 |------------|---------|------------|
-| **DatabaseBackupRepositoryImpl** | Export/restore & versioning | exportDatabase, importDatabase, getBackupList, deleteBackup, restoreFromBackup |
+| **DatabaseBackupRepositoryImpl** | .costbackup bundle export/restore + legacy .db/.enc support | createCostBackup, restoreCostBackup, exportDatabase, importDatabase, createSafetyBackup, getDatabaseStats. Uses CostbackupBundle, RestoreMaintenanceMode, RestoreJournal, BackupVerifier. |
 | **AccountingExportRepository** | Tax/accounting report generation | exportForTaxSeason, generateP&L, generateCashFlow, categorizeForTaxes |
 | **NotificationRepository** | Raw notification CRUD & filtering | insertNotification, getById, getAll, delete, markAsProcessed, getByPackageAndTime |
 
@@ -707,6 +715,17 @@ suspend fun getExpensesDynamic(query: SupportSQLiteQuery): List<ExpenseWithCateg
 - `recurring_reminder_deliveries` table holds scheduled reminders per occurrence and window
 - Supported windows: DUE_DAY, N_DAYS_BEFORE (e.g., 3_DAYS_BEFORE, 7_DAYS_BEFORE), OVERDUE
 - Designed for a `ReminderDispatchWorker` (WorkManager) that queries `getPendingDeliveries(now)`
+
+### 16. **Backup/Restore Pipeline (Phase 9)**
+- **`.costbackup` bundle format**: `CostbackupBundle` — outer header (10B magic + 2B version) + AES-256-GCM ciphertext containing a ZIP with manifest.json, database.sqlite, checksums.json, and files/receipts/.
+- **Maintenance mode**: `RestoreMaintenanceMode` pauses all 7 background workers via `WorkManager.cancelUniqueWork()` and blocks notification ingestion during restore via `isWritesAllowed()` check.
+- **Crash-safe restore journal**: `RestoreJournal` — 8-state state machine (PREPARING → STAGED → SAFETY_BACKUP_CREATED → SWAPPING → VERIFYING → COMPLETE or ROLLING_BACK). On app start, `AppStartupCoordinator.checkRestoreJournal()` calls `restoreJournal.checkAndRecover()` to auto-recover from failed restores.
+- **56-entity verification**: `BackupVerifier` — 3-tier: TIER_1_EXACT (30 tables, row count must match), TIER_2_VALIDITY (16 tables, FK/integrity check), TIER_3_OPTIONAL (10 tables, may be absent). Runs PRAGMA integrity_check + foreign_key_check + per-table COUNT.
+
+### 17. **Double-Counting Fix (Phase 10)**
+- **ForecastInputAssembler.assemble()** — before merging planned expenses into the forecast input, queries `RecurringOccurrenceDao.getByDateRange()` to build a set of materialized occurrenceKeys. Planned expenses whose `sourceOccurrenceKey` matches any PLANNED/PAID occurrence are excluded.
+- **MonthlySavingsSweepUseCase.calculateKnownUpcomingObligations()** — same occurrence-key dedup: MUST-priority planned expenses with a matching `sourceOccurrenceKey` in the materialized set are excluded from the known-upcoming total.
+- Both fixes use the same pattern: `planned.sourceOccurrenceKey !in materializedOccurrenceKeys`.
 
 ---
 
@@ -940,4 +959,4 @@ Totals omitted intentionally; current inventory is in flux.
 
 ---
 
-**Last Updated**: May 2026 | **Schema Version**: 104 | **Total Entities**: 56 | **Total DAOs**: 54 | **Total Repositories**: 36+
+**Last Updated**: May 2026 | **Schema Version**: 106 | **Total Entities**: 56 | **Total DAOs**: 54 | **Total Repositories**: 36+ | **Phase 9+10**: No schema migration | **data/backup/**: 4 files | **Double-count fix**: ForecastInputAssembler + MonthlySavingsSweepUseCase (occurrence-based dedup)

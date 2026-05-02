@@ -17,6 +17,8 @@
 | **Location** | `location/LocationInsightsEngine.kt` | Dashboard + Analytics |
 | **Savings** | `savings/SmartSavingsEngine.kt` | `LifestyleSavingsPromptUseCase` |
 | **Transaction Lifecycle** | `transaction/lifecycle/TransactionLifecycleCoordinator.kt` | `coordinator.createExpense(request)` |
+| **Backup & Restore** | `backup/DatabaseBackupRepository.kt` + `data/backup/CostbackupBundle.kt` | `databaseBackupRepository.createCostBackup(password)` / `.restoreCostBackup(bundle, password)` |
+| **Data Quality** | `analytics/DataQualityReport.kt` | `DataQualityReport.fromNormalization(normalization, ...)` |
 
 ### By Problem
 
@@ -43,6 +45,9 @@
 | ...make AI recommendations? | Feature-specific input builder → `ExecuteFinancialQueryUseCase` |
 | ...split an expense? | `EnhancedSplitManager` |
 | ...convert currency? | `CurrencyConverter` |
+| ...create an encrypted backup? | `DatabaseBackupRepository.createCostBackup(password)` — produces `.costbackup` bundle (AES-256-GCM, manifest, checksums, receipt images) |
+| ...restore from a backup? | `DatabaseBackupRepository.restoreCostBackup(bundleFile, password)` — uses `CostbackupBundle.extract()` + `RestoreMaintenanceMode` (pauses workers) + `RestoreJournal` (crash-safe journal) + `BackupVerifier` (56-table verification) |
+| ...check data quality? | `DataQualityReport.fromNormalization(normalization, ...)` — returns `isReliable` and `qualityLabel` for UI |
 
 ## Key Types
 
@@ -78,6 +83,23 @@ Semantic period classification:
 | `THIS_YEAR`, `LAST_YEAR` | `CUSTOM` |
 
 **Rule:** Calendar labels **must** use calendar helpers (`getMonthRange`, `getWeekRange`). Rolling labels **must** use rolling helpers (`getLastNCalendarDaysRange`). Never mix them.
+
+### `PeriodKind.toPeriodRange()` (`domain/core/time/` — Phase 10)
+
+Converts a `PeriodKind` enum to a concrete `PeriodRange` anchored at `now`:
+
+```kotlin
+val range = PeriodKind.THIS_MONTH.toPeriodRange(now = timeProvider.now())
+// Returns PeriodRange(kind=THIS_MONTH, start=Apr 1 00:00, end=May 1 00:00)
+
+val custom = PeriodKind.CUSTOM.toPeriodRange(
+    now = timeProvider.now(),
+    customStart = 1700000000000L,
+    customEnd = 1700086400000L
+)
+```
+
+Delegates to `TimePeriodUtils` for all calendar-aware boundary computation. Requires explicit `customStart`/`customEnd` for `CUSTOM` or throws `IllegalArgumentException`.
 
 ### `ExpenseSource` (`domain/transaction/`)
 
@@ -242,6 +264,35 @@ ReceiptProcessingStatus.PARSED         // Fully parsed
 ReceiptProcessingStatus.EXPENSE_CREATED // Linked to expense
 ReceiptProcessingStatus.DELETED        // Removed
 ```
+
+### `DataQualityReport` (`domain/analytics/` — Phase 10)
+
+Unified data quality report for analytics, forecasting, and currency pipelines:
+
+```kotlin
+data class DataQualityReport(
+    val totalExpenses: Int,
+    val expensesWithCurrency: Int,
+    val expensesWithMerchant: Int,
+    val expensesWithCategory: Int,
+    val conversionConfidence: Float,  // 0.0–1.0
+    val warnings: List<String>
+)
+
+// Factory from normalizer output
+val report = DataQualityReport.fromNormalization(
+    normalization = normalizerResult,
+    totalWithCurrency = ...,
+    totalWithMerchant = ...,
+    totalWithCategory = ...
+)
+
+// Quick checks
+if (report.isReliable) { /* totalExpenses > 0 && confidence >= 0.5 */ }
+label = report.qualityLabel  // "Excellent" | "Good" | "Fair" | "Poor" | "No Data"
+```
+
+---
 
 ### `TimeProvider` (`domain/util/`)
 
@@ -436,7 +487,42 @@ class MyService @Inject constructor(
 
 **When to use:** Any code that creates, updates, or deletes an expense must go through the coordinator. Direct `expenseDao.insertAtomic()` is forbidden outside grandfathered files.
 
-### Pattern 5: Normalization → Classification
+### Pattern 6: Backup & Restore (Phase 9)
+
+```kotlin
+// ── Create encrypted backup ──
+val result = databaseBackupRepository.createCostBackup(
+    password = userPassword,
+    includeReceiptImages = true,
+    redacted = true
+)
+result.onSuccess { backupFile ->
+    // backupFile = File("/.../expense_tracker_backup_2026-05-02_14-30-00.costbackup")
+}
+
+// ── Restore from backup ──
+val restoreResult = databaseBackupRepository.restoreCostBackup(
+    bundleFile = selectedFile,
+    password = userPassword
+)
+when (restoreResult) {
+    is DatabaseImportResult.Success -> { /* normal restart */ }
+    is DatabaseImportResult.SuccessNeedsRestart -> { /* app restart required */ }
+    is DatabaseImportResult.Error -> { /* show error */ }
+}
+```
+
+**Internally during restore:**
+1. `RestoreMaintenanceMode.enter(RESTORE_PREPARING)` pauses all 7 workers
+2. `CostbackupBundle.extract()` decrypts + unpacks ZIP with ZIP Slip protection
+3. `BackupVerifier.verifyQuick()` runs integrity + FK + Tier 1 count checks
+4. `RestoreJournal.beginJournal()` writes PREPARING → STAGED → SAFETY_BACKUP_CREATED → SWAPPING → VERIFYING
+5. DB file swap (staged → live), then `RestoreJournal.commitJournal()` or `ROLLING_BACK`
+6. `RestoreMaintenanceMode.exit(forceRestartRequired = true)` → restart flag set
+
+**Crash recovery:** On next app start, `AppStartupCoordinator.checkRestoreJournal()` calls `restoreJournal.checkAndRecover()` to auto-recover from any interrupted state.
+
+### Pattern 7: Normalization → Classification
 
 ```kotlin
 // CategorizationEngine pipeline:
@@ -538,12 +624,14 @@ Large files (potential refactor candidates):
 4. **No Direct `now()`:** Never call `System.currentTimeMillis()`, `Instant.now()`, or `LocalDate.now()` in business logic. Inject `TimeProvider` and call `timeProvider.now()`.
 5. **DST-Safe Day Math:** Do NOT use `(end - start) / 86_400_000` for day counts — use `TimePeriodUtils.daysBetween(start, end)`.
 6. **ALWAYS use the Coordinator for writes:** Never call `expenseDao.insertAtomic()`, `expenseDao.update()`, or `expenseDao.delete()` directly outside the grandfathered list in `DAO_ACCESS_GUARDRAILS.md`. Bypassing the coordinator skips validation, deduplication, event logging, and side effects.
-6. **Merchant Normalization:** Must use canonical key (`MerchantKeyGenerator.generate()`) for lookups.
-7. **Category IDs:** Can be null. Treat as "Uncategorized" / "GENERAL".
-8. **Timezone Handling:** All timestamps are UTC milliseconds. No timezone conversion in domain.
-9. **Leap Year:** BudgetCalculator handles Feb 29 correctly.
-10. **Empty Lists:** Analytics gracefully handle zero transactions (return empty insights, not crash).
-11. **Null Safety:** Use `?.let { }` for optional fields (category, merchant, location).
+7. **Merchant Normalization:** Must use canonical key (`MerchantKeyGenerator.generate()`) for lookups.
+8. **Category IDs:** Can be null. Treat as "Uncategorized" / "GENERAL".
+9. **Timezone Handling:** All timestamps are UTC milliseconds. No timezone conversion in domain.
+10. **Leap Year:** BudgetCalculator handles Feb 29 correctly.
+11. **Empty Lists:** Analytics gracefully handle zero transactions (return empty insights, not crash).
+12. **Null Safety:** Use `?.let { }` for optional fields (category, merchant, location).
+13. **Restore blocks ALL writes:** During restore, `RestoreMaintenanceMode.isWritesAllowed()` returns false. Coordinators must check this before writing. Any direct DAO insert during restore will succeed but may be overwritten by the DB file swap.
+14. **Planned expense double-counting:** When merging planned expenses into forecasts, always filter out those whose `sourceOccurrenceKey` matches a materialized occurrence. See `ForecastInputAssembler` and `MonthlySavingsSweepUseCase` for the canonical pattern.
 
 ## Integration Checklist
 
@@ -567,6 +655,11 @@ Large files (potential refactor candidates):
 - [ ] **Use `ReceiptLifecycleCoordinator` for receipt processing:** never call `scannedReceiptDao` or `ReceiptRepository` directly for receipt creation
 - [ ] **Use `ReceiptLinkService` for receipt-expense links:** never call `receiptExpenseLinkDao` or `scannedReceiptDao.update(expenseId=...)` directly
 - [ ] **Inject `TimeProvider` for timestamps:** never call `System.currentTimeMillis()`
+- [ ] **If creating a backup:** use `DatabaseBackupRepository.createCostBackup(password)`, not manual ZIP/encryption
+- [ ] **If restoring a backup:** use `DatabaseBackupRepository.restoreCostBackup(bundleFile, password)` — this handles maintenance mode, journal, and verification
+- [ ] **If writing data during restore:** check `RestoreMaintenanceMode.isWritesAllowed()` first — returns false during all restore states except NORMAL and BACKUP_EXPORTING
+- [ ] **If merging planned expenses into forecast:** apply occurrence-key dedup from `ForecastInputAssembler` (filter out planned expenses whose `sourceOccurrenceKey` matches a materialized occurrence)
+- [ ] **If computing savings sweep:** apply same occurrence-key dedup in `MonthlySavingsSweepUseCase` for known-upcoming obligations
 
 ---
 

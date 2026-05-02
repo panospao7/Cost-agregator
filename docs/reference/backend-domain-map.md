@@ -24,6 +24,7 @@
 
 | Directory | Current focus |
 |-----------|---------------|
+| `backup/` | **NEW — Backup/restore domain contracts**: `DatabaseBackupRepository` (interface), `DatabaseExportResult`, `DatabaseImportResult`, `DatabaseStats`, `DatabaseImportSummary` |
 | `common/` | Shared helpers such as hashing and general-purpose utilities |
 | `core/money/` | **NEW — Type-safe money primitives**: `CurrencyCode`, `MoneyAmount`, `MoneyAggregate`, `MoneyBucket`, `ConvertedMoney`, `ConversionFailure`, `CurrencyAssumption`, `MoneyMappers`, `MoneyFormatUtils` |
 | `core/time/` | **NEW — Typed time period models**: `PeriodRange` (half-open `[start, end)` with kind/zone/label), `PeriodKind` (TODAY, THIS_WEEK, THIS_MONTH, LAST_7_DAYS, etc.) |
@@ -86,6 +87,8 @@ Domain Layer (This Document)
 **Purpose:** Produce current budget status, historical series, and cash-flow projections for dashboards and forecasts.
 
 **Key outputs:** budget trends, remaining runway, scenario-based forecast results, and series data for UI widgets.
+
+**Phase 10 currency normalization:** `BudgettingForecastingEngine.getSpentAmount()` now routes through `AnalyticsCurrencyNormalizer` instead of raw DAO SQL sums — all multi-currency expenses are converted to home currency before aggregation. Conversion warnings are logged but do not block the computation.
 
 ---
 
@@ -227,7 +230,7 @@ Domain Layer (This Document)
 
 | Service | File | Purpose |
 |---------|------|---------|
-| `ForecastInputAssembler` | `forecasting/ForecastInputAssembler.kt` | Central forecast-input assembler. Merges manual recurring patterns + planned expenses into a single forecast input. Injects `RecurringLifecycleCoordinator` for future occurrence-based dedup. Used by weather/dashboard forecast paths. |
+| `ForecastInputAssembler` | `forecasting/ForecastInputAssembler.kt` | Central forecast-input assembler. Merges manual recurring patterns + planned expenses into a single forecast input. Injects `RecurringLifecycleCoordinator` for future occurrence-based dedup. **Phase 10 double-count fix:** Cross-deduplicates planned expenses against materialized occurrences via `RecurringOccurrenceDao.getByDateRange()` — planned expenses whose `sourceOccurrenceKey` matches a PLANNED/PAID occurrence are excluded. Used by weather/dashboard forecast paths. |
 
 ---
 
@@ -246,7 +249,7 @@ Domain Layer (This Document)
 | File | Purpose | Input | Output |
 |------|---------|-------|--------|
 | `LifestyleSavingsPromptUseCase.kt` | Generate savings recommendations | Spending patterns | SavingsGoal |
-| `MonthlySavingsSweepUseCase.kt` | Execute automated savings transfer | Account, amount | Result |
+| `MonthlySavingsSweepUseCase.kt` | Compute end-of-month savings sweep recommendation. Analyzes budget underspend, MC risk buffer, safe sweep amount. **Phase 10 double-count fix:** Occurrence-key dedup in `calculateKnownUpcomingObligations()` — MUST-priority planned expenses with matching `sourceOccurrenceKey` in materialized occurrences are excluded. Returns `SavingsSweepRecommendation` or null. | Account, amount | Result |
 
 ---
 
@@ -324,6 +327,7 @@ Domain Layer (This Document)
 |------|---------|-------------|
 | `PeriodRange.kt` | Typed half-open period model | `[startInclusiveMillis, endExclusiveMillis)` with `kind` (PeriodKind), `zoneId`, `label`, `contains()` — replaces raw `Pair<Long, Long>` |
 | `PeriodKind.kt` | Semantic period classification | Enum: `TODAY`, `THIS_WEEK`, `LAST_WEEK`, `LAST_7_DAYS`, `THIS_MONTH`, `LAST_MONTH`, `LAST_30_DAYS`, `THIS_QUARTER`, `LAST_QUARTER`, `THIS_YEAR`, `LAST_YEAR`, `CUSTOM`; distinguishes calendar vs rolling semantics |
+| | **Extension: `PeriodKind.toPeriodRange()`** | Converts enum to concrete `PeriodRange` anchored at `now`. Delegates to `TimePeriodUtils` for calendar-aware boundary computation. Requires explicit `customStart`/`customEnd` for `CUSTOM`. Added Phase 10. |
 
 ### Transaction Lifecycle Models (New — `transaction/`)
 **Directory:** `transaction/`
@@ -374,10 +378,10 @@ Domain Layer (This Document)
 | File | Purpose | Key Details |
 |------|---------|-------------|
 | `CurrencyCode.kt` | Type-safe ISO 4217 currency code (inline value class) | Replaces raw `String` codes; `parse()` returns null for invalid input |
-| `MoneyAmount.kt` | Amount + currency pair | Throws on mixed-currency `plus()`/`minus()`; supports `times()`, `abs()` |
+| `MoneyAmount.kt` | **★ APPROVED TYPE ★** Amount + currency pair | KDoc declares this the single approved domain type for all monetary values. Throws on mixed-currency `plus()`/`minus()`; supports `times()`, `abs()`. ZERO_EUR companion. |
 | `ConvertedMoney.kt` | Full conversion trace | Original + converted + rate + timestamp + `ConversionStatus` (SUCCESS, FAILED_MISSING_RATE, SAME_CURRENCY, APPROXIMATE_RATE, LEGACY_NOT_CONVERTED) |
 | `MoneyBucket.kt` | Per-currency subtotal | Currency, amount, transaction count |
-| `MoneyAggregate.kt` | **Primary aggregation return type** | `displayAmount`, `displayCurrency`, `sourceBuckets`, `conversionFailures`, `isPartial`, `warningMessage` — replaces raw `Double` totals |
+| `MoneyAggregate.kt` | **★ APPROVED TYPE ★ Primary aggregation return type** | KDoc declares this the single approved result type for all financial aggregation. `displayAmount`, `displayCurrency`, `sourceBuckets`, `conversionFailures`, `isPartial`, `warningMessage` — replaces raw `Double` totals. Includes `singleCurrency()`, `empty()`, `partial()` factory methods. |
 | `ConversionFailure.kt` | Failed conversion record | `originalAmount` (MoneyAmount), `targetCurrency`, `reason` (MISSING_RATE, INVALID_AMOUNT, RATE_STALE, UNKNOWN) |
 | `CurrencyAssumption.kt` | Enum for why a currency was assigned | `UNKNOWN`, `ASSUMED_HOME_CURRENCY`, `ASSUMED_LEGACY_EUR`, `USER_CONFIRMED`, `PARSED_FROM_SOURCE` |
 | `MoneyMappers.kt` | Bridge utilities | Maps `ConversionResult` → `ConvertedMoney`, `FailedConversion` → `ConversionFailure`, `Expense` → `MoneyAmount` |
@@ -623,6 +627,7 @@ interface AiCapabilityRouter {
 | `SpendingPersonalityClassifier.kt` | Spending type classification |
 | `TotalsAggregationEngine.kt` | Aggregate spending metrics |
 | `TransferDirectionAnalytics.kt` | Transfer vs purchase analysis |
+| `DataQualityReport.kt` | **NEW (Phase 10)** — Unified data quality report aggregating metrics from analytics, forecasting, currency conversion, and AI pipelines. Fields: totalExpenses, expensesWithCurrency, expensesWithMerchant, expensesWithCategory, conversionConfidence (0.0–1.0), warnings. Factory: `fromNormalization()` pipes `AnalyticsNormalizationResult` into the report. `isReliable` returns true when totalExpenses > 0 and conversionConfidence >= 0.5. |
 
 ### Intelligence Services
 **Directory:** `intelligence/`
@@ -673,8 +678,7 @@ interface AiCapabilityRouter {
 | `EnhancedSplitManager.kt` | Expense splitting |
 | `SpendingChallengeManager.kt` | Challenge creation/tracking |
 | `NaturalLanguageSearchEngine.kt` | Voice/text search |
-| `DatabaseBackupRepository.kt` | Backup operations |
-| `DatabaseOperationResults.kt` | Backup result types |
+| `DatabaseBackupRepository.kt` | Domain interface for backup/restore. `createCostBackup(password)` → `.costbackup` bundle. `restoreCostBackup(bundleFile, password)` → `DatabaseImportResult`. `getDatabaseStats()` → `DatabaseStats`. |
 | `BankApiIntegration.kt` | Bank data sync |
 
 ---

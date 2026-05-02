@@ -193,6 +193,7 @@
 | `analytics/SpendingThresholdCalculator.kt` | SpendingThresholdCalculator | Calculates spending thresholds | Engine | - | No |
 | `analytics/TotalsAggregationEngine.kt` | TotalsAggregationEngine | Aggregates financial totals | Engine | - | No |
 | `analytics/TransferDirectionAnalytics.kt` | TransferDirectionAnalytics | Analyzes transfer directions | Engine | - | No |
+| `analytics/DataQualityReport.kt` | DataQualityReport | **NEW (Phase 10)** — Unified data quality report. Fields: totalExpenses, expensesWithCurrency/Merchant/Category, conversionConfidence (0.0–1.0), warnings. Factories: `empty()`, `fromNormalization()`. `isReliable` when totalExpenses > 0 && conversionConfidence >= 0.5. `qualityLabel`: "No Data" / "Excellent" / "Good" / "Fair" / "Poor". | Model | AnalyticsNormalizationResult | No |
 
 ### Backup & Export (7 files)
 
@@ -200,8 +201,8 @@
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `backup/DatabaseBackupRepository.kt` | DatabaseBackupRepository | Database backup interface | Repository | - | No |
-| `backup/DatabaseOperationResults.kt` | DatabaseOperationResults | Backup operation result models | Model | - | No |
+| `backup/DatabaseBackupRepository.kt` | DatabaseBackupRepository | Domain interface for backup/restore. Methods: `createCostBackup(password, includeReceiptImages, redacted)` → `.costbackup` bundle; `restoreCostBackup(bundleFile, password)` → `DatabaseImportResult`; `getDatabaseStats()` → `DatabaseStats`; `createSafetyBackup()`; `getLegacyPublicBackupNotice()`. | Repository | - | No |
+| `backup/DatabaseOperationResults.kt` | DatabaseOperationResults | Backup result models. `DatabaseExportResult` (Loading/Success/Error), `DatabaseImportResult` (Loading/Success/SuccessNeedsRestart/Error), `DatabaseImportSummary` (10 per-table counts + `hasMeaningfulData()`), `DatabaseStats`. | Model | - | No |
 | `export/AccountingExporters.kt` | AccountingExporters | Accounting system exporters | Service | - | No |
 | `export/ExportTransaction.kt` | ExportTransaction | Transaction export models | Model | - | No |
 
@@ -781,6 +782,17 @@
 | `ai/worker/AiWorkSchedulerImpl.kt` | AiWorkSchedulerImpl | Work scheduler implementation | Service | - | No |
 | `ai/worker/DailyBriefingWorker.kt` | DailyBriefingWorker | Daily briefing worker | Worker | DashboardBriefingService | No |
 
+### Backup/Restore Data Layer (4 files — Phase 9)
+
+**Location:** `com.yourname.expensetracker.data.backup`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `backup/CostbackupBundle.kt` | CostbackupBundle | .costbackup ZIP format: header (COSTBACKUP1 magic + 2B version) + AES-256-GCM ciphertext → ZIP with manifest.json, database.sqlite, checksums.json, files/receipts/. Includes `create()`, `extract()` (with ZIP Slip protection), `BackupManifest`, `ChecksumsManifest`, `ExtractionResult`. Exceptions: WrongBackupPasswordException, UnsupportedBackupVersionException, InvalidBackupFormatException, ChecksumMismatchException. | Service | BackupEncryptionService | No |
+| `backup/RestoreMaintenanceMode.kt` | RestoreMaintenanceMode | @Singleton. Manages 8-state maintenance mode (NORMAL, BACKUP_EXPORTING, RESTORE_PREPARING, ..., RESTORE_COMPLETE_RESTART_REQUIRED). `enter(mode)` pauses all 7 workers via `WorkManager.cancelUniqueWork()`. `isWritesAllowed()` blocks coordinator writes when mode != NORMAL. State persisted in SharedPreferences. | Service | WorkManager, SharedPreferences | No |
+| `backup/RestoreJournal.kt` | RestoreJournal | @Singleton. Crash-safe 8-state restore journal: PREPARING → STAGED → SAFETY_BACKUP_CREATED → SWAPPING → VERIFYING → COMPLETE or ROLLING_BACK → FAILED. `checkAndRecover()` returns `RecoveryResult` sealed class (NoAction, CompleteClean, CleanedNonDestructive, RecoveredFromSwap, CriticalRecoveryRequired). `cleanStagingFiles()` removes staged DB + WAL/SHM. Journal persisted as JSON in `filesDir/restore_journal.json`. | Service | Context (filesDir) | No |
+| `backup/BackupVerifier.kt` | BackupVerifier | 56-entity 3-tier verification: TIER_1_EXACT (30 tables, row count must match manifest), TIER_2_VALIDITY (16 tables, FK check), TIER_3_OPTIONAL (10 tables, may be absent). Runs PRAGMA integrity_check + PRAGMA foreign_key_check. `verify(db, expectedCounts)` → `VerificationSummary`. `verifyQuick()` throws on failure for pre-swap validation. | Utility | SQLiteDatabase | No |
+
 ### Other Data Layer Services (23 files)
 
 **Location:** Various data subsystems
@@ -1047,13 +1059,14 @@ Engine (integration with other domain logic)
 
 | Metric | Count |
 |--------|-------|
-| **Domain Files** | 283 (+12 privacy gate files) |
-| **Data Files** | 222 (+4 privacy data files + 2 new entities/DAOs) |
+| **Domain Files** | 283 (+12 privacy gate files + 2 backup contracts) |
+| **Data Files** | 222 (+4 privacy data files + 2 new entities/DAOs + 4 backup data files) |
 | **DI Modules** | 28 (+1 PrivacyModule) |
 | **Total Backend Files** | 533+ |
 | **Test Files** | 317+ |
-| **Database Entities** | 62 (+ RecurringLifecycleEvent, PrivacyAuditEvent) |
-| **DAOs** | 61 (+ RecurringLifecycleEventDao, PrivacyAuditDao) |
+| **Database Entities** | 56 (unchanged from Phase 7; Phase 9+10 add no entities) |
+| **DAOs** | 54 (unchanged from Phase 7) |
+| **DB Version** | 106 (no migration in Phase 9 or Phase 10) |
 | **Repositories** | 56 |
 | **Use Cases** | ~30 |
 | **Engines** | ~50 |
@@ -1083,6 +1096,10 @@ Engine (integration with other domain logic)
 18. **Privacy Gate Pattern (Phase 6)** - `PrivacyGate` interface with 4 specialized implementations composed via `CompositePrivacyGate`. Every gate check is audit-logged. Capabilities are evaluated against `PrivacySettings` with fail-closed semantics.
 19. **Data Retention Purging (Phase 6)** - `DataRetentionWorker` periodically purges raw notification content and OCR text based on configurable retention days, tracked via `rawContentPurgedAt` / `rawOcrTextPurgedAt` sentinel columns.
 20. **Backup Encryption Pipeline (Phase 6)** - `BackupEncryptionService` (AES-256-GCM + PBKDF2) + `ExportAnonymizer` (PII stripping) gated by `BackupPrivacyGate`.
+21. **Backup/Restore Pipeline (Phase 9)** - `CostbackupBundle` (header + AES-256-GCM → ZIP with manifest/checksums/assets) + `RestoreMaintenanceMode` (worker pause + coordinator write-block) + `RestoreJournal` (8-state crash-safe journal + `checkAndRecover()`) + `BackupVerifier` (56-entity 3-tier verification).
+22. **Maintenance Mode with Write Blocking (Phase 9)** - `RestoreMaintenanceMode` pauses all 7 background workers via `WorkManager.cancelUniqueWork()` during restore. `isWritesAllowed()` returned to coordinators to block notification ingestion and expense writes. State persisted across process death via SharedPreferences.
+23. **Occurrence-Based Deduplication (Phase 10)** - `ForecastInputAssembler.assemble()` and `MonthlySavingsSweepUseCase.calculateKnownUpcomingObligations()` both query `RecurringOccurrenceDao.getByDateRange()` to build a set of materialized occurrenceKeys. Planned expenses whose `sourceOccurrenceKey` matches any PLANNED/PAID occurrence are excluded to prevent double-counting.
+24. **Data Quality Report (Phase 10)** - `DataQualityReport` aggregates quality metrics from `AnalyticsCurrencyNormalizer`, `DataQualityAssessor`, and `FinancialHealthScoreV2`. `isReliable` and `qualityLabel` provide quick-consumption API for UI warnings.
 
 ---
 
