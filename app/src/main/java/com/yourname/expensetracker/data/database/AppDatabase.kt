@@ -6364,11 +6364,11 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                             )
                         """.trimIndent())
 
-                        database.execSQL("INSERT INTO budgets_new SELECT * FROM budgets")
-                        database.execSQL("DROP TABLE budgets")
-                        database.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
+                            database.execSQL("INSERT INTO budgets_new (id, categoryId, amount, periodMode, periodModeValue, isActive, createdAt, notifyAtWarning, notifyAtCritical, name, rolloverEnabled, currency, displayCurrency, currencyAssumption, effectiveLimit, budgetScope, spendingType, activeOverallKey, activeCategoryKey) SELECT id, categoryId, amount, periodMode, periodModeValue, isActive, createdAt, notifyAtWarning, notifyAtCritical, name, rolloverEnabled, currency, displayCurrency, currencyAssumption, effectiveLimit, budgetScope, spendingType, NULL, NULL FROM budgets")
+                            database.execSQL("DROP TABLE budgets")
+                            database.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
 
-                        // Recreate Room-declared budgets indexes
+                            // Recreate Room-declared budgets indexes
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
                         database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_activeOverallKey ON budgets (activeOverallKey)")
@@ -6397,7 +6397,10 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                             )
                         """.trimIndent())
 
-                        database.execSQL("INSERT INTO group_members_new SELECT * FROM group_members")
+                        database.execSQL("""
+                            INSERT INTO group_members_new (id, groupId, name, email, isCurrentUser, joinedAt, currentUserGroupKey)
+                            SELECT id, groupId, name, email, isCurrentUser, joinedAt, NULL FROM group_members
+                        """.trimIndent())
                         database.execSQL("DROP TABLE group_members")
                         database.execSQL("ALTER TABLE group_members_new RENAME TO group_members")
 
@@ -6443,7 +6446,10 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                             )
                         """.trimIndent())
 
-                        database.execSQL("INSERT INTO planned_expenses_new SELECT * FROM planned_expenses")
+                        database.execSQL("""
+                            INSERT INTO planned_expenses_new (id, description, amount, currency, currencyAssumption, date, categoryId, isRecurring, priority, createdAt, sourceOccurrenceKey, sourceRecurringRuleId, status, linkedActualExpenseId, merchantKey, updatedAt, openSourceOccurrenceKey)
+                            SELECT id, description, amount, currency, currencyAssumption, date, categoryId, isRecurring, priority, createdAt, sourceOccurrenceKey, sourceRecurringRuleId, status, linkedActualExpenseId, merchantKey, updatedAt, NULL FROM planned_expenses
+                        """.trimIndent())
                         database.execSQL("DROP TABLE planned_expenses")
                         database.execSQL("ALTER TABLE planned_expenses_new RENAME TO planned_expenses")
 
@@ -6527,7 +6533,10 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                             )
                         """.trimIndent())
 
-                        database.execSQL("INSERT INTO planned_expenses_new SELECT * FROM planned_expenses")
+                        database.execSQL("""
+                            INSERT INTO planned_expenses_new (id, description, amount, currency, currencyAssumption, date, categoryId, isRecurring, priority, createdAt, sourceOccurrenceKey, sourceRecurringRuleId, status, linkedActualExpenseId, merchantKey, updatedAt, openSourceOccurrenceKey)
+                            SELECT id, description, amount, currency, currencyAssumption, date, categoryId, isRecurring, priority, createdAt, sourceOccurrenceKey, sourceRecurringRuleId, status, linkedActualExpenseId, merchantKey, updatedAt, openSourceOccurrenceKey FROM planned_expenses
+                        """.trimIndent())
                         database.execSQL("DROP TABLE planned_expenses")
                         database.execSQL("ALTER TABLE planned_expenses_new RENAME TO planned_expenses")
 
@@ -6599,7 +6608,10 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                                 FOREIGN KEY (expenseId) REFERENCES expenses(id) ON DELETE SET NULL
                             )
                         """.trimIndent())
-                        database.execSQL("INSERT INTO warranties_new SELECT * FROM warranties")
+                        database.execSQL("""
+                            INSERT INTO warranties_new (id, receiptId, expenseId, productName, merchantName, purchaseDate, warrantyDurationMonths, warrantyEndDate, warrantyType, supportPhone, supportEmail, warrantyDocumentUrl, notes, status, claimedAt, createdAt, updatedAt, autoDetected, extractionConfidence, extractionSource, needsReview)
+                            SELECT id, receiptId, expenseId, productName, merchantName, purchaseDate, warrantyDurationMonths, warrantyEndDate, warrantyType, supportPhone, supportEmail, warrantyDocumentUrl, notes, status, claimedAt, createdAt, updatedAt, autoDetected, extractionConfidence, extractionSource, needsReview FROM warranties
+                        """.trimIndent())
                         database.execSQL("DROP TABLE warranties")
                         database.execSQL("ALTER TABLE warranties_new RENAME TO warranties")
                         database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_warranties_receiptId ON warranties (receiptId)")
@@ -6673,7 +6685,10 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                                 FOREIGN KEY (groupId) REFERENCES expense_groups(id) ON DELETE CASCADE
                             )
                         """.trimIndent())
-                        database.execSQL("INSERT INTO group_members_new SELECT * FROM group_members")
+                        database.execSQL("""
+                            INSERT INTO group_members_new (id, groupId, name, email, isCurrentUser, joinedAt, currentUserGroupKey)
+                            SELECT id, groupId, name, email, isCurrentUser, joinedAt, currentUserGroupKey FROM group_members
+                        """.trimIndent())
                         database.execSQL("DROP TABLE group_members")
                         database.execSQL("ALTER TABLE group_members_new RENAME TO group_members")
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members (groupId)")
@@ -6951,7 +6966,10 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                                 FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE RESTRICT
                             )
                         """.trimIndent())
-                        database.execSQL("INSERT INTO budgets_new SELECT * FROM budgets")
+                        database.execSQL("""
+                            INSERT INTO budgets_new (id, categoryId, amount, period, periodMode, startDate, isActive, notifyAtWarning, notifyAtCritical, rollover, currency, currencyAssumption, createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt, activeOverallKey, activeCategoryKey)
+                            SELECT id, categoryId, amount, period, periodMode, startDate, isActive, notifyAtWarning, notifyAtCritical, rollover, currency, currencyAssumption, createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt, activeOverallKey, activeCategoryKey FROM budgets
+                        """.trimIndent())
                         database.execSQL("DROP TABLE budgets")
                         database.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
                         database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
