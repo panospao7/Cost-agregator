@@ -253,4 +253,9 @@ object DaoModule {
     @Singleton
     fun provideRecurringLifecycleEventDao(database: AppDatabase): RecurringLifecycleEventDao =
         database.recurringLifecycleEventDao()
+
+    @Provides
+    @Singleton
+    fun providePrivacyAuditDao(database: AppDatabase): PrivacyAuditDao =
+        database.privacyAuditDao()
 }

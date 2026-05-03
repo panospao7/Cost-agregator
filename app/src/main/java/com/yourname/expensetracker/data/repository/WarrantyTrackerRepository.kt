@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import dagger.Lazy
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.delay
@@ -38,7 +39,7 @@ import javax.inject.Singleton
 class WarrantyTrackerRepository @Inject constructor(
     private val warrantyDao: WarrantyDao,
     private val returnWindowDao: ReturnWindowDao,
-    private val receiptRepository: ReceiptRepository,
+    private val receiptRepository: Lazy<ReceiptRepository>,
     private val cloudExtractionService: CloudWarrantyExtractionService,
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiPolicy: AiPolicy,
@@ -163,7 +164,7 @@ class WarrantyTrackerRepository @Inject constructor(
     }
 
     suspend fun upsertReturnWindowForReceipt(receiptId: Long, fallbackWarranty: Warranty? = null): Long? {
-        val receipt = receiptRepository.getReceiptById(receiptId) ?: return null
+        val receipt = receiptRepository.get().getReceiptById(receiptId) ?: return null
         // Skip return window creation for bank statements, manual placeholders, and failed OCR receipts
         if (receipt.documentType == "BANK_STATEMENT" || receipt.documentType == "MANUAL_PLACEHOLDER" ||
             receipt.processingStatus == "OCR_FAILED") {
@@ -364,6 +365,6 @@ class WarrantyTrackerRepository @Inject constructor(
             currency = "EUR",
             confidence = 1f
         )
-        return receiptRepository.insertReceipt(receipt)
+        return receiptRepository.get().insertReceipt(receipt)
     }
 }

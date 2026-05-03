@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.di.IoDispatcher
+import dagger.Lazy
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -26,7 +27,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class SharedExpenseBudgetOffsetEngine @Inject constructor(
-    private val groupsRepository: GroupsRepository,
+    private val groupsRepository: Lazy<GroupsRepository>,
     private val expenseRepository: ExpenseRepository,
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
@@ -55,7 +56,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
         }
         val allPeriodExpenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
         val expenseCategoryMap = allPeriodExpenses.associateBy { it.id }
-        val activeGroups = groupsRepository.getActiveGroupsWithDetails()
+        val activeGroups = groupsRepository.get().getActiveGroupsWithDetails()
 
         val inScopeGroupExpenses = activeGroups.mapNotNull { groupAggregate ->
             val currentUserMember = groupAggregate.members.find { it.isCurrentUser } ?: return@mapNotNull null

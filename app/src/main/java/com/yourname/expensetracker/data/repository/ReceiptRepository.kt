@@ -32,6 +32,7 @@ import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifec
 import com.yourname.expensetracker.domain.usecase.warranty.AutoCreateWarrantyFromReceiptUseCase
 import com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult
 import com.yourname.expensetracker.di.IoDispatcher
+import dagger.Lazy
 // import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
@@ -64,7 +65,7 @@ class ReceiptRepository @Inject constructor(
     private val debugIssueDetector: DebugIssueDetector,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
-    private val warrantyUseCase: AutoCreateWarrantyFromReceiptUseCase,
+    private val warrantyUseCase: Lazy<AutoCreateWarrantyFromReceiptUseCase>,
     private val coordinator: TransactionLifecycleCoordinator,
     private val receiptLinkService: ReceiptLinkService
 ) {
@@ -185,7 +186,7 @@ class ReceiptRepository @Inject constructor(
 
                 // F1: Trigger warranty extraction after receipt is saved
                 try {
-                    val warrantyResult = warrantyUseCase.execute(receiptId, ocrResult.fullText)
+                    val warrantyResult = warrantyUseCase.get().execute(receiptId, ocrResult.fullText)
                     when (warrantyResult) {
                         is WarrantyCreationResult.Success -> {
                             Timber.d("Warranty created for receipt $receiptId with confidence ${warrantyResult.confidence}%")

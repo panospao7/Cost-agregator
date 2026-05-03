@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import dagger.Lazy
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,7 +29,7 @@ import javax.inject.Singleton
 class TransactionSideEffectDispatcher @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val categoryDao: CategoryDao,
-    private val budgetMonitor: BudgetMonitor,
+    private val budgetMonitor: Lazy<BudgetMonitor>,
     private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
     private val merchantCategoryRepository: MerchantCategoryRepository
 ) {
@@ -47,7 +48,7 @@ class TransactionSideEffectDispatcher @Inject constructor(
 
         // 1. Budget check (fire-and-forget, best-effort)
         runSafely("budget check for expense $expenseId") {
-            budgetMonitor.checkBudgets()
+            budgetMonitor.get().checkBudgets()
         }
 
         // 2. Load the expense for anomaly checking and pattern learning
