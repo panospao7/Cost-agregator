@@ -6323,6 +6323,35 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 }
                 if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
 
+                // Ensure all columns from the Room entity exist (safe-guard for skip-migration paths)
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN documentType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN processingStatus TEXT NOT NULL DEFAULT 'CAPTURED'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN imageHash TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN textFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN semanticFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN ocrConfidence REAL") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN parseFailureReason TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE group_members ADD COLUMN currentUserGroupKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN openSourceOccurrenceKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceOccurrenceKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceRecurringRuleId INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN status TEXT NOT NULL DEFAULT 'PLANNED'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN linkedActualExpenseId INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN merchantKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
+
                 try {
                     database.beginTransaction()
                     try {
@@ -6485,6 +6514,35 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 }
                 if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
 
+                // Ensure all columns from the Room entity exist (safe-guard for skip-migration paths)
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN documentType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN processingStatus TEXT NOT NULL DEFAULT 'CAPTURED'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN imageHash TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN textFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN semanticFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN ocrConfidence REAL") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN parseFailureReason TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE group_members ADD COLUMN currentUserGroupKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN openSourceOccurrenceKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceOccurrenceKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceRecurringRuleId INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN status TEXT NOT NULL DEFAULT 'PLANNED'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN linkedActualExpenseId INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN merchantKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
+
                 try {
                     database.beginTransaction()
                     try {
@@ -6575,6 +6633,35 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                     it.moveToFirst(); it.getInt(0) == 1
                 }
                 if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                // Ensure all columns from the Room entity exist (safe-guard for skip-migration paths)
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN documentType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN processingStatus TEXT NOT NULL DEFAULT 'CAPTURED'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN imageHash TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN textFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN semanticFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN ocrConfidence REAL") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN parseFailureReason TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE group_members ADD COLUMN currentUserGroupKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN openSourceOccurrenceKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceOccurrenceKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceRecurringRuleId INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN status TEXT NOT NULL DEFAULT 'PLANNED'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN linkedActualExpenseId INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN merchantKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
 
                 try {
                     database.beginTransaction()
@@ -6745,6 +6832,35 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 }
                 if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
 
+                // Ensure all columns from the Room entity exist (safe-guard for skip-migration paths)
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN documentType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN processingStatus TEXT NOT NULL DEFAULT 'CAPTURED'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN imageHash TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN textFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN semanticFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN ocrConfidence REAL") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN parseFailureReason TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE group_members ADD COLUMN currentUserGroupKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN openSourceOccurrenceKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceOccurrenceKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceRecurringRuleId INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN status TEXT NOT NULL DEFAULT 'PLANNED'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN linkedActualExpenseId INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN merchantKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
+
                 try {
                     database.beginTransaction()
                     try {
@@ -6811,6 +6927,35 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
         //   the synthetic 0.01 sentinel with explicit null).
         val MIGRATION_110_111 = object : androidx.room.migration.Migration(110, 111) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Ensure all columns from the Room entity exist (safe-guard for skip-migration paths)
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN documentType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN processingStatus TEXT NOT NULL DEFAULT 'CAPTURED'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN imageHash TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN textFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN semanticFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN ocrConfidence REAL") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN parseFailureReason TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE group_members ADD COLUMN currentUserGroupKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN openSourceOccurrenceKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceOccurrenceKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceRecurringRuleId INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN status TEXT NOT NULL DEFAULT 'PLANNED'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN linkedActualExpenseId INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN merchantKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
+
                 // ── CURR-2: Exchange rates historical index ─────────────────────────
                 // 0. Ensure validDate column exists (may be missing on very old installs)
                 try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
@@ -6945,6 +7090,35 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                     it.moveToFirst(); it.getInt(0) == 1
                 }
                 if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                // Ensure all columns from the Room entity exist (safe-guard for skip-migration paths)
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN rawContentPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE raw_notifications ADD COLUMN dedupeFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN rawOcrTextPurgedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN documentType TEXT NOT NULL DEFAULT 'UNKNOWN'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN processingStatus TEXT NOT NULL DEFAULT 'CAPTURED'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN sourceFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN imageHash TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN textFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN semanticFingerprint TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN ocrConfidence REAL") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN parseFailureReason TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE scanned_receipts ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE expenses ADD COLUMN source TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeOverallKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE budgets ADD COLUMN activeCategoryKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE group_members ADD COLUMN currentUserGroupKey INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN openSourceOccurrenceKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceOccurrenceKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN sourceRecurringRuleId INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN status TEXT NOT NULL DEFAULT 'PLANNED'") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN linkedActualExpenseId INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN merchantKey TEXT") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE planned_expenses ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }
 
                 try {
                     database.beginTransaction()
