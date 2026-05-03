@@ -149,8 +149,8 @@ abstract class AppDatabase : RoomDatabase() {
          * Affected locations (11 occurrences as of v108):
          *   - MIGRATION_49_50  (expenses_new, scanned_receipts_new)
          *   - MIGRATION_68_69  (expenses_new)
-         *   - FRESH_INSTALL_CALLBACK (savings_goals_new, mileage_tracking_new,
-         *     pending_reviews_new, group_members_new, planned_expenses_new)
+         *   - ~~FRESH_INSTALL_CALLBACK (savings_goals_new, mileage_tracking_new,
+         *     pending_reviews_new, group_members_new, planned_expenses_new)~~ FIXED v112
          *   - MIGRATION_106_107 (budgets_new, group_members_new,
          *     planned_expenses_new)
          *   - MIGRATION_107_108 (planned_expenses_new)
@@ -4978,11 +4978,22 @@ abstract class AppDatabase : RoomDatabase() {
                         currentAmount REAL NOT NULL DEFAULT 0.0 CHECK(currentAmount >= 0),
                         targetDate INTEGER,
                         protectionLevel TEXT NOT NULL,
+                        currency TEXT NOT NULL DEFAULT 'EUR',
+                        currencyAssumption TEXT NOT NULL DEFAULT 'LEGACY_DEFAULT',
                         createdAt INTEGER NOT NULL
                     )
                     """.trimIndent()
                 )
-                db.execSQL("INSERT INTO savings_goals_new SELECT * FROM savings_goals")
+                db.execSQL("""
+                    INSERT INTO savings_goals_new (
+                        id, name, targetAmount, currentAmount, targetDate,
+                        protectionLevel, currency, currencyAssumption, createdAt
+                    )
+                    SELECT
+                        id, name, targetAmount, currentAmount, targetDate,
+                        protectionLevel, currency, currencyAssumption, createdAt
+                    FROM savings_goals
+                """.trimIndent())
                 db.execSQL("DROP TABLE savings_goals")
                 db.execSQL("ALTER TABLE savings_goals_new RENAME TO savings_goals")
 
@@ -5017,7 +5028,22 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                     """.trimIndent()
                 )
-                db.execSQL("INSERT INTO mileage_tracking_new SELECT * FROM mileage_tracking")
+                db.execSQL("""
+                    INSERT INTO mileage_tracking_new (
+                        id, date, startOdometer, endOdometer, distanceKm,
+                        startLocation, endLocation, startLatitude, startLongitude,
+                        endLatitude, endLongitude, isBusinessTrip, tripPurpose,
+                        businessProject, clientName, deductionRatePerKm,
+                        calculatedDeduction, linkedExpenseId, fuelCost, notes, createdAt
+                    )
+                    SELECT
+                        id, date, startOdometer, endOdometer, distanceKm,
+                        startLocation, endLocation, startLatitude, startLongitude,
+                        endLatitude, endLongitude, isBusinessTrip, tripPurpose,
+                        businessProject, clientName, deductionRatePerKm,
+                        calculatedDeduction, linkedExpenseId, fuelCost, notes, createdAt
+                    FROM mileage_tracking
+                """.trimIndent())
                 db.execSQL("DROP TABLE mileage_tracking")
                 db.execSQL("ALTER TABLE mileage_tracking_new RENAME TO mileage_tracking")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_mileage_tracking_linkedExpenseId ON mileage_tracking (linkedExpenseId)")
@@ -5168,7 +5194,14 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                     """.trimIndent()
                 )
-                db.execSQL("INSERT INTO group_members_new SELECT * FROM group_members")
+                db.execSQL("""
+                    INSERT INTO group_members_new (
+                        id, groupId, name, email, isCurrentUser, joinedAt, currentUserGroupKey
+                    )
+                    SELECT
+                        id, groupId, name, email, isCurrentUser, joinedAt, currentUserGroupKey
+                    FROM group_members
+                """.trimIndent())
                 db.execSQL("DROP TABLE group_members")
                 db.execSQL("ALTER TABLE group_members_new RENAME TO group_members")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members (groupId)")
@@ -5208,7 +5241,22 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                     """.trimIndent()
                 )
-                db.execSQL("INSERT INTO planned_expenses_new SELECT * FROM planned_expenses")
+                db.execSQL("""
+                    INSERT INTO planned_expenses_new (
+                        id, description, amount, currency, currencyAssumption,
+                        date, categoryId, isRecurring, priority, createdAt,
+                        sourceOccurrenceKey, sourceRecurringRuleId, status,
+                        linkedActualExpenseId, merchantKey, updatedAt,
+                        openSourceOccurrenceKey
+                    )
+                    SELECT
+                        id, description, amount, currency, currencyAssumption,
+                        date, categoryId, isRecurring, priority, createdAt,
+                        sourceOccurrenceKey, sourceRecurringRuleId, status,
+                        linkedActualExpenseId, merchantKey, updatedAt,
+                        openSourceOccurrenceKey
+                    FROM planned_expenses
+                """.trimIndent())
                 db.execSQL("DROP TABLE planned_expenses")
                 db.execSQL("ALTER TABLE planned_expenses_new RENAME TO planned_expenses")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_date ON planned_expenses (date)")
