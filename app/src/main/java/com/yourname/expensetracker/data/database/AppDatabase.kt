@@ -4602,11 +4602,11 @@ abstract class AppDatabase : RoomDatabase() {
                                 startLongitude REAL,
                                 endLatitude REAL,
                                 endLongitude REAL,
-                                isBusinessTrip INTEGER NOT NULL DEFAULT 1,
+                        isBusinessTrip INTEGER NOT NULL,
                                 tripPurpose TEXT NOT NULL,
                                 businessProject TEXT,
                                 clientName TEXT,
-                                deductionRatePerKm REAL NOT NULL DEFAULT 0.30 CHECK(deductionRatePerKm >= 0),
+                        deductionRatePerKm REAL NOT NULL CHECK(deductionRatePerKm >= 0),
                                 calculatedDeduction REAL,
                                 linkedExpenseId INTEGER,
                                 fuelCost REAL CHECK(fuelCost IS NULL OR fuelCost >= 0),
@@ -5002,11 +5002,11 @@ abstract class AppDatabase : RoomDatabase() {
                         startLongitude REAL,
                         endLatitude REAL,
                         endLongitude REAL,
-                        isBusinessTrip INTEGER NOT NULL DEFAULT 1,
+                        isBusinessTrip INTEGER NOT NULL,
                         tripPurpose TEXT NOT NULL,
                         businessProject TEXT,
                         clientName TEXT,
-                        deductionRatePerKm REAL NOT NULL DEFAULT 0.30 CHECK(deductionRatePerKm >= 0),
+                        deductionRatePerKm REAL NOT NULL CHECK(deductionRatePerKm >= 0),
                         calculatedDeduction REAL,
                         linkedExpenseId INTEGER,
                         fuelCost REAL CHECK(fuelCost IS NULL OR fuelCost >= 0),
@@ -5050,12 +5050,34 @@ abstract class AppDatabase : RoomDatabase() {
                         suggestedAccountName TEXT,
                         suggestedLatitude REAL,
                         suggestedLongitude REAL,
+                        extractionState TEXT NOT NULL DEFAULT 'REAL_EXTRACTION',
                         FOREIGN KEY (rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL,
                         FOREIGN KEY (scannedReceiptId) REFERENCES scanned_receipts(id) ON DELETE SET NULL
                     )
                     """.trimIndent()
                 )
-                db.execSQL("INSERT INTO pending_reviews_new SELECT * FROM pending_reviews")
+                db.execSQL("""
+                    INSERT INTO pending_reviews_new (
+                        id, rawNotificationId, scannedReceiptId,
+                        suggestedAmount, suggestedCurrency, suggestedMerchant,
+                        suggestedMerchantKey, suggestedType, suggestedCategoryId,
+                        suggestedDate, confidence, matchType, explanation,
+                        packageName, notificationTitle, notificationText,
+                        createdAt, status, suggestedDirection,
+                        suggestedAccountName, suggestedLatitude, suggestedLongitude,
+                        extractionState
+                    )
+                    SELECT
+                        id, rawNotificationId, scannedReceiptId,
+                        suggestedAmount, suggestedCurrency, suggestedMerchant,
+                        suggestedMerchantKey, suggestedType, suggestedCategoryId,
+                        suggestedDate, confidence, matchType, explanation,
+                        packageName, notificationTitle, notificationText,
+                        createdAt, status, suggestedDirection,
+                        suggestedAccountName, suggestedLatitude, suggestedLongitude,
+                        COALESCE(extractionState, 'REAL_EXTRACTION')
+                    FROM pending_reviews
+                """.trimIndent())
                 db.execSQL("DROP TABLE pending_reviews")
                 db.execSQL("ALTER TABLE pending_reviews_new RENAME TO pending_reviews")
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_pending_reviews_rawNotificationId ON pending_reviews (rawNotificationId)")
@@ -5097,9 +5119,9 @@ abstract class AppDatabase : RoomDatabase() {
                             OR
                             (isActive = 1 AND categoryId IS NOT NULL AND activeOverallKey IS NULL AND activeCategoryKey = categoryId)
                         ),
-                        FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
+                        FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE RESTRICT
                     )
-                    """.trimIndent()
+                """.trimIndent()
                 )
                 db.execSQL("""
                     INSERT INTO budgets_new (
