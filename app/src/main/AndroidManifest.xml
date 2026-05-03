@@ -78,7 +78,7 @@
         <service
             android:name=".service.NotificationCaptureService"
             android:exported="true"
-            android:foregroundServiceType="dataSync|location"
+            android:foregroundServiceType="dataSync"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />

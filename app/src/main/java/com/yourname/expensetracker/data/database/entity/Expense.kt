@@ -55,7 +55,7 @@ data class Expense(
     val id: Long = 0,
     
     val amount: Double,
-    @ColumnInfo(defaultValue = "EUR") val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "'EUR'") val currency: String = "EUR",
     
     val merchant: String,
     
@@ -81,7 +81,7 @@ data class Expense(
     /** Source of this expense. Nullable for legacy rows; backfilled by migration. */
     val source: String? = null,
 
-    @ColumnInfo(defaultValue = "UNKNOWN") val paymentMethod: PaymentMethod = PaymentMethod.UNKNOWN,
+    @ColumnInfo(defaultValue = "'UNKNOWN'") val paymentMethod: PaymentMethod = PaymentMethod.UNKNOWN,
     @ColumnInfo(defaultValue = "0") val isManualEntry: Boolean = false,
     val notes: String? = null,
 

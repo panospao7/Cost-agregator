@@ -166,8 +166,8 @@ class ReviewQueueRepository @Inject constructor(
             latitude = finalLatitude ?: review.suggestedLatitude,
             longitude = finalLongitude ?: review.suggestedLongitude,
             locationSource = when {
-                finalLatitude != null -> AppConfig.Location.SOURCE_USER_MANUAL
-                review.suggestedLatitude != null -> AppConfig.Location.SOURCE_DEVICE_GPS
+                finalLatitude != null && finalLongitude != null -> AppConfig.Location.SOURCE_USER_MANUAL
+                review.suggestedLatitude != null && review.suggestedLongitude != null -> AppConfig.Location.SOURCE_DEVICE_GPS
                 else -> null
             },
             placeId = finalPlaceId,
@@ -491,7 +491,7 @@ class ReviewQueueRepository @Inject constructor(
                 suggestedMerchantKey = MerchantKeyGenerator.generate("Unknown"),
                 suggestedType = TransactionType.PURCHASE.name,
                 suggestedCategoryId = null,
-                confidence = 1.0f,
+                confidence = 0.0f,
                 packageName = notification.packageName,
                 notificationTitle = notification.title,
                 notificationText = notification.text ?: notification.bigText,

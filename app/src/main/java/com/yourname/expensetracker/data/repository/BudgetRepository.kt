@@ -31,6 +31,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
 
+/**
+ * Repository for budget data and status calculations.
+ *
+ * Coordinates between BudgetDao, CategoryDao, ExpenseDao, and multi-currency
+ * services to provide budget snapshots, spending status, and health assessments.
+ * Uses [MultiCurrencyRepository] for currency-safe aggregation.
+ */
 @Singleton
 class BudgetRepository @Inject constructor(
     private val budgetDao: BudgetDao,

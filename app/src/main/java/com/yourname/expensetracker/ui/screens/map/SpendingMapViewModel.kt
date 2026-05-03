@@ -229,14 +229,14 @@ class SpendingMapViewModel @Inject constructor(
                 expenseId = forMarker.expenseId,
                 latitude = poi.latitude,
                 longitude = poi.longitude,
-                source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_OVERPASS_POI,
+                source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_USER_CONFIRMED_POI,
                 placeId = poi.osmId,
                 address = poi.displayAddress
             )
             val resolved = LocationResolutionResult.Resolved(
                 latitude = poi.latitude,
                 longitude = poi.longitude,
-                source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_OVERPASS_POI,
+                source = com.yourname.expensetracker.domain.config.AppConfig.Location.SOURCE_USER_CONFIRMED_POI,
                 osmId = poi.osmId,
                 displayAddress = poi.displayAddress,
                 confidence = 0.9f

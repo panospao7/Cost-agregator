@@ -10,7 +10,7 @@ import javax.inject.Singleton
 /**
  * Supported currencies in the app.
  */
-enum class SupportedCurrency(val code: String, val symbol: String, val displayName: String) {
+enum class SupportedCurrency(val code: String, val symbol: String, val displayName: String, val isActive: Boolean = true) {
     EUR("EUR", "€", "Euro"),
     USD("USD", "$", "US Dollar"),
     GBP("GBP", "£", "British Pound"),
@@ -26,7 +26,7 @@ enum class SupportedCurrency(val code: String, val symbol: String, val displayNa
     HUF("HUF", "Ft", "Hungarian Forint"),
     RON("RON", "lei", "Romanian Leu"),
     BGN("BGN", "лв", "Bulgarian Lev"),
-    HRK("HRK", "kn", "Croatian Kuna"),
+    HRK("HRK", "kn", "Croatian Kuna", isActive = false),
     ISK("ISK", "kr", "Icelandic Krona");
 
     companion object {

@@ -85,6 +85,7 @@ object AppConfig {
         const val SOURCE_NOMINATIM_NAME_ONLY = "NOMINATIM_NAME_ONLY"
         const val SOURCE_OVERPASS_POI = "OVERPASS_POI"
         const val SOURCE_USER_MANUAL = "USER_MANUAL"
+        const val SOURCE_USER_CONFIRMED_POI = "USER_CONFIRMED_POI"
         const val SOURCE_DEVICE_GPS = "DEVICE_GPS"
         const val SOURCE_PHOTON = "PHOTON"
         const val SOURCE_GEOAPIFY = "GEOAPIFY"

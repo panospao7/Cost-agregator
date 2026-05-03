@@ -196,12 +196,20 @@ class AppStartupCoordinator @Inject constructor(
      * scheduling without updating individual worker code.
      */
     private fun scheduleStartupWork(application: Application) {
-        LocationBackfillWorker.schedule(application)
-        MerchantKeyBackfillWorker.schedule(application)
-        WarrantyExpirationWorker.schedule(application)
-        DataRetentionWorker.schedule(application)
-        BillReminderWorker.schedule(application)
-        ReceiptMatchingWorker.schedule(application)
+        // WRK-8: Wrap each schedule() call individually so one failure
+        // does not prevent other workers from being scheduled.
+        runCatching { LocationBackfillWorker.schedule(application) }
+            .onFailure { Timber.w(it, "Failed to schedule LocationBackfillWorker") }
+        runCatching { MerchantKeyBackfillWorker.schedule(application) }
+            .onFailure { Timber.w(it, "Failed to schedule MerchantKeyBackfillWorker") }
+        runCatching { WarrantyExpirationWorker.schedule(application) }
+            .onFailure { Timber.w(it, "Failed to schedule WarrantyExpirationWorker") }
+        runCatching { DataRetentionWorker.schedule(application) }
+            .onFailure { Timber.w(it, "Failed to schedule DataRetentionWorker") }
+        runCatching { BillReminderWorker.schedule(application) }
+            .onFailure { Timber.w(it, "Failed to schedule BillReminderWorker") }
+        runCatching { ReceiptMatchingWorker.schedule(application) }
+            .onFailure { Timber.w(it, "Failed to schedule ReceiptMatchingWorker") }
     }
 
     private fun syncProactiveBriefingWork() {

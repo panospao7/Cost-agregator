@@ -260,18 +260,12 @@ class NotificationCaptureService : NotificationListenerService() {
             
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {
-                    // Android 14+ (API 34) requires foregroundServiceType to include "location"
-                    // when reading device location from a foreground service.
-                    // We combine DATA_SYNC + LOCATION so both capabilities are declared.
-                    val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
-                            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                    } else {
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                    }
+                    // PRV-10: Notification capture does not read device location,
+                    // so only DATA_SYNC is needed as foregroundServiceType.
+                    val serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
                     startForeground(FOREGROUND_ID, notification, serviceType)
                 } catch (e: Exception) {
-                    Timber.e(e, "Failed to start foreground with type DATA_SYNC|LOCATION, fallback to generic")
+                    Timber.e(e, "Failed to start foreground with type DATA_SYNC, fallback to generic")
                     startForeground(FOREGROUND_ID, notification)
                 }
             } else {

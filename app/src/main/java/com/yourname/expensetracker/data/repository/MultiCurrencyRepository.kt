@@ -496,6 +496,7 @@ class MultiCurrencyRepository @Inject constructor(
                 amounts.add(Pair(bucket.total, bucket.currency))
                 sourceBuckets.add(MoneyBucket(CurrencyCode(bucket.currency), bucket.total, bucket.txCount))
             }
+                else -> Timber.w("Unexpected bucket type in aggregate: ${bucket?.javaClass?.name}")
             }
         }
         val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)

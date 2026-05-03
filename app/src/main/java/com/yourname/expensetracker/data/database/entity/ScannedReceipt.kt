@@ -66,15 +66,15 @@ data class ScannedReceipt(
      */
     val parsedItems: String?,        // JSON array of line items
     val parsedTaxAmount: Double?,
-    @ColumnInfo(defaultValue = "EUR") val currency: String = "EUR",
+    @ColumnInfo(defaultValue = "'EUR'") val currency: String = "EUR",
     val confidence: Float,
     @ColumnInfo(defaultValue = "NULL") val expenseId: Long? = null,
-    @ColumnInfo(defaultValue = "UNMATCHED") val matchStatus: MatchStatus = MatchStatus.UNMATCHED,
+    @ColumnInfo(defaultValue = "'UNMATCHED'") val matchStatus: MatchStatus = MatchStatus.UNMATCHED,
     @ColumnInfo(defaultValue = "NULL") val matchConfidence: Float? = null,
     @ColumnInfo(defaultValue = "NULL") val suggestedExpenseId: Long? = null,
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     @ColumnInfo(defaultValue = "0") val createdAt: Long = 0L,
-    @ColumnInfo(defaultValue = "PENDING") val itemCategorizationStatus: CategorizationStatus = CategorizationStatus.PENDING,
+    @ColumnInfo(defaultValue = "'PENDING'") val itemCategorizationStatus: CategorizationStatus = CategorizationStatus.PENDING,
 
     // NEW Phase 4 fields
     @ColumnInfo(defaultValue = "'UNKNOWN'") val sourceType: String = "UNKNOWN",

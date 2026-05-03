@@ -79,10 +79,13 @@ object CurrencyFormatter {
 
     private fun currencyNumberFormat(currencyCode: String, showCents: Boolean): NumberFormat {
         return NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
-            currency = runCatching { Currency.getInstance(currencyCode) }
+            val resolvedCurrency = runCatching { Currency.getInstance(currencyCode) }
                 .getOrElse { Currency.getInstance(DEFAULT_CURRENCY) }
-            minimumFractionDigits = if (showCents) 2 else 0
-            maximumFractionDigits = if (showCents) 2 else 0
+            currency = resolvedCurrency
+            // Use the currency's default fraction digits (e.g., EUR/USD → 2, JPY → 0, BHD → 3)
+            val fractionDigits = if (showCents) resolvedCurrency.defaultFractionDigits else 0
+            minimumFractionDigits = fractionDigits
+            maximumFractionDigits = fractionDigits
         }
     }
 }

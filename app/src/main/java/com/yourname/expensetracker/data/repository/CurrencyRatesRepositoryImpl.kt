@@ -90,7 +90,9 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
             }
 
             currencyConverter.storeRates(rates, source = "ecb")
-            currencySettingsRepository.setLastRateUpdate(timeProvider.now())
+            if (rates.isNotEmpty()) {
+                currencySettingsRepository.setLastRateUpdate(timeProvider.now())
+            }
             rates.size
         } finally {
             connection.disconnect()

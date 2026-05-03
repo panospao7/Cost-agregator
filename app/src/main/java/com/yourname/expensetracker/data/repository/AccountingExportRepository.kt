@@ -44,6 +44,22 @@ class AccountingExportRepository @Inject constructor(
     private val accountantReportPdfExporter: AccountantReportPdfExporter,
     private val timeProvider: TimeProvider
 ) {
+    companion object {
+        /** Maximum allowed export date range in days (10 years). */
+        private const val MAX_EXPORT_RANGE_DAYS: Long = 3650
+        /** Maximum allowed export date range in milliseconds. */
+        private const val MAX_EXPORT_RANGE_MS: Long = MAX_EXPORT_RANGE_DAYS * 24L * 60L * 60L * 1000L
+    }
+
+    /**
+     * Exports expenses within the given date range in the specified format.
+     *
+     * @param context Android context for file I/O.
+     * @param startDate Start of date range (epoch ms, must be > 0 and < endDate).
+     * @param endDate End of date range (epoch ms, must be > startDate).
+     * @param format Export format (QuickBooks, Xero, FreshBooks, PDF).
+     * @throws IllegalArgumentException if date range is invalid.
+     */
     suspend fun exportExpenses(
         context: Context,
         startDate: Long,
@@ -51,6 +67,11 @@ class AccountingExportRepository @Inject constructor(
         format: ExportFormat
     ): ExportResult = withContext(Dispatchers.IO) {
         try {
+            // BAK-15: Validate date range — reject non-positive, zero-width, or inverted ranges
+            require(startDate > 0L) { "startDate must be positive" }
+            require(endDate > startDate) { "endDate must be after startDate" }
+            require(endDate - startDate <= MAX_EXPORT_RANGE_MS) { "Date range exceeds maximum ($MAX_EXPORT_RANGE_DAYS days)" }
+
             // A.9 Batch 6: fetch via deterministic exhaustive paging so that
             // exports are never silently truncated and row ordering is stable
             // (date ASC, id ASC, merchant COLLATE NOCASE ASC).

@@ -86,16 +86,20 @@ class NotificationSubscriptionDetector @Inject constructor(
         val now = timeProvider.now()
         val candidates = mutableListOf<SubscriptionCandidateResult>()
 
-        // Group transactions by canonical merchant name
+        // Group transactions by (canonical merchant name, currency) to avoid
+        // conflating subscriptions in different currencies (REC-12).
         val groupedByMerchant = transactions.groupBy { expenseWithCategory ->
-            val merchant = expenseWithCategory.expense.merchant
-            try {
+            val expense = expenseWithCategory.expense
+            val merchant = expense.merchant
+            val currency = expense.currency.uppercase()
+            val normalizedMerchant = try {
                 val normalizedResult = merchantNormalizer.normalize(merchant, autoCreate = false)
                 normalizedResult.canonical.normalizedName
             } catch (e: Exception) {
                 Timber.w(e, "Failed to normalize merchant: $merchant")
                 merchant.lowercase().trim()
             }
+            "$normalizedMerchant::$currency"
         }
 
         Timber.d("Analyzing ${groupedByMerchant.size} merchant groups for subscription patterns")

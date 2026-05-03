@@ -35,6 +35,6 @@ data class ExchangeRate(
     val rate: Double,              // Exchange rate (how much 1 unit of fromCurrency is worth in toCurrency)
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     val lastUpdated: Long = 0L,
-    @ColumnInfo(defaultValue = "manual") val source: String = "manual",  // "manual", "api", "cached"
+    @ColumnInfo(defaultValue = "'manual'") val source: String = "manual",  // "manual", "api", "cached"
     @ColumnInfo(defaultValue = "0") val validDate: Long = 0L
 )

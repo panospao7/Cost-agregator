@@ -253,6 +253,7 @@ interface ExpenseDao {
     """)
     suspend fun getRecentExpensesWithCategoryForMerchant(merchant: String, since: Long): List<ExpenseWithCategory>
     
+    @Deprecated("Returns raw Double without currency conversion. Use MultiCurrencyRepository for currency-aware aggregation.")
     @Query("SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND isNotMine = 0")
     fun getTotalSpentFlow(): Flow<Double?>
 
