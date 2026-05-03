@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.privacy
 
 data class PrivacySettings(
-    val notificationCaptureEnabled: Boolean = false,
+    val notificationCaptureEnabled: Boolean = true,  // Default ON — core app feature, user can disable in Privacy Settings
     val cloudAiEnabled: Boolean = false,
     val redactBeforeCloud: Boolean = true,
     val receiptImageCloudEnabled: Boolean = false,

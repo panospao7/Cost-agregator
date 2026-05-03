@@ -80,7 +80,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
     }
 
     private fun Preferences.toPrivacySettings(): PrivacySettings = PrivacySettings(
-        notificationCaptureEnabled = this[Keys.NOTIFICATION_CAPTURE_ENABLED] ?: false,
+        notificationCaptureEnabled = this[Keys.NOTIFICATION_CAPTURE_ENABLED] ?: true,
         cloudAiEnabled = this[Keys.CLOUD_AI_ENABLED] ?: false,
         redactBeforeCloud = this[Keys.REDACT_BEFORE_CLOUD] ?: true,
         receiptImageCloudEnabled = this[Keys.RECEIPT_IMAGE_CLOUD_ENABLED] ?: false,
