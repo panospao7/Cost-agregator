@@ -6855,6 +6855,9 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 try {
                     database.beginTransaction()
                     try {
+                        // Ensure extractionState column exists (may be missing on older installs)
+                        try { database.execSQL("ALTER TABLE pending_reviews ADD COLUMN extractionState TEXT") } catch (_: Exception) { }
+
                         // Create new table with nullable suggestedAmount
                         database.execSQL("""
                             CREATE TABLE IF NOT EXISTS pending_reviews_new (
