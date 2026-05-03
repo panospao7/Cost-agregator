@@ -21,6 +21,28 @@ import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * ## CURRENCY NORMALIZATION: GAP — no normalization applied
+ * This engine does **not** inject [AnalyticsCurrencyNormalizer] and operates
+ * directly on raw `Double` totals returned by the DAO layer via
+ * [ExpenseRepository]. If the database contains expenses in multiple
+ * currencies, the following methods will produce incorrect results because
+ * they sum amounts in different currencies without conversion:
+ *
+ * - [getMonthlyTotals] — uses `monthly.total` from raw DAO query
+ * - [getWeeklyTotals] — uses `weekly.total` from raw DAO query
+ * - [getDailyTotals] / [getDailyTotalsForRange] — uses `daily.total` from raw DAO
+ * - [getYearlyTotals] — uses `expenseRepository.getTotalForPeriod(...)` (raw)
+ * - [getCategoryBreakdown] — uses `result.total` from raw DAO query
+ * - [getAverageForPeriodType] — computes averages from raw repository totals
+ *
+ * ### Recommended fix
+ * Inject [AnalyticsCurrencyNormalizer] and normalize the expense snapshots
+ * (or the individual totals) before aggregation. Alternatively, ensure the
+ * DAO layer only returns expenses already filtered to a single currency
+ * (e.g. the user's home currency) — but this would require schema-level
+ * currency context.
+ */
 @Singleton
 class TotalsAggregationEngine @Inject constructor(
     private val expenseRepository: ExpenseRepository,

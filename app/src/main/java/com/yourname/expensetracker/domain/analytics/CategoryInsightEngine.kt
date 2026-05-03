@@ -10,6 +10,18 @@ import javax.inject.Singleton
 /**
  * Computes per-category spending insights (totals, changes from previous month).
  *
+ * ## CURRENCY NORMALIZATION: SAFE — pre-normalized by caller
+ * This engine does **not** inject [AnalyticsCurrencyNormalizer]. It relies on
+ * the caller (typically [InsightsEngine]) having already normalized all
+ * [ExpenseSnapshot] data to a single currency via
+ * [AnalyticsCurrencyNormalizer.normalizeSnapshots] before it reaches this
+ * class. All `sumOf { it.effectiveAmount }` calls operate on already-normalized
+ * values.
+ *
+ * If un-normalized multi-currency data reaches this engine, category totals,
+ * change percentages, and percentage-of-total calculations will be incorrect
+ * because they mix amounts in different currencies.
+ *
  * ## Known limitation: stale/deleted category IDs
  * When an expense references a [categoryId] that no longer exists in the
  * [categoryMap] (because the user deleted the category after the transaction

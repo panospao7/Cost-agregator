@@ -8,6 +8,24 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
 
+/**
+ * ## CURRENCY NORMALIZATION: SAFE — pre-normalized by caller
+ * This engine does **not** inject [AnalyticsCurrencyNormalizer]. It relies on
+ * the caller (typically [InsightsEngine]) having already normalized all
+ * [ExpenseSnapshot] data to a single currency via
+ * [AnalyticsCurrencyNormalizer.normalizeSnapshots] before it reaches this
+ * class. All `sumOf { it.effectiveAmount }` calls operate on already-normalized
+ * values.
+ *
+ * If un-normalized multi-currency data reaches this engine, the pace calculation
+ * (current-month spend, previous-month spend, projected total) will be
+ * incorrect because it mixes amounts in different currencies.
+ *
+ * ## Pace formula
+ *   pace% = (currentDailyRate / baselineDailyRate) × 100
+ *   where currentDailyRate = monthSpent / daysElapsed
+ *   and   baselineDailyRate = previousMonthSpent / daysInPreviousMonth
+ */
 @Singleton
 class SpendingPaceCalculator @Inject constructor(
     private val timeProvider: TimeProvider

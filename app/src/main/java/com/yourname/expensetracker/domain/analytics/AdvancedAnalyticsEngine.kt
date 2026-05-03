@@ -30,6 +30,17 @@ import kotlin.math.sqrt
 /**
  * Advanced analytics engine for detailed spending analysis.
  * Provides temporal category breakdowns, merchant intelligence, and statistical insights.
+ *
+ * ## CURRENCY NORMALIZATION: SAFE — fully normalized
+ * This engine injects [AnalyticsCurrencyNormalizer] and normalizes every data
+ * path before performing any arithmetic:
+ * - [getCategoryAnalytics] — normalizes current and previous expenses (lines 163-166)
+ * - [getMerchantAnalytics] — normalizes current and historical expenses (lines 270-273)
+ * - [getSpendingPatterns] — normalizes expenses (lines 364-365)
+ * - [getStatisticalInsights] — normalizes expenses (lines 472-473)
+ *
+ * All `sumOf { it.effectiveAmount }`, `amounts.sum()`, and other raw-Double
+ * arithmetic operate on normalized values. No gap exists.
  */
 @Singleton
 class AdvancedAnalyticsEngine @Inject constructor(

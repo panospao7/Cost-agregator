@@ -20,6 +20,19 @@ import kotlin.coroutines.cancellation.CancellationException
 // === Engine ===
 
 /**
+ * ## CURRENCY NORMALIZATION: Caller responsibility
+ * This engine does **not** inject [AnalyticsCurrencyNormalizer]. All amount
+ * arithmetic (averages, medians, anomaly detection, daily totals) operates
+ * directly on [ExpenseSnapshot.effectiveAmount] — which is only safe if the
+ * caller has already normalized the data to a single currency before passing
+ * it in. If un-normalized multi-currency data reaches this engine, raw
+ * `Double` sums (e.g. `map { it.effectiveAmount }.average()`,
+ * `maxByOrNull { it.effectiveAmount }`, `monthTotals.merge(key, p.effectiveAmount)`)
+ * will produce incorrect results by mixing values in different currencies.
+ *
+ * Callers should use [AnalyticsCurrencyNormalizer.normalizeSnapshots] before
+ * passing expenses to [generateInsights] or [getLegacyInsights].
+ *
  * ## CURRENCY LIMITATION: Hardcoded EUR default
  * Several methods in this engine default `displayCurrency` to `"EUR"` when no
  * currency is provided by the caller. This means insights (formatting, comparison)
