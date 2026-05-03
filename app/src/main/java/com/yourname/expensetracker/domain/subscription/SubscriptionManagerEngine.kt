@@ -163,6 +163,11 @@ class SubscriptionManagerEngine @Inject constructor(
     
     /**
      * Record a price change for a subscription.
+     *
+     * REC-7: After recording the price history entry, also updates the
+     * [ManualRecurringExpense.amount] on the subscription entity so that
+     * downstream consumers (dashboard, budget calculations, recurring
+     * expense generation) see the current price without stale data.
      */
     suspend fun recordPriceChange(
         subscriptionId: Long,
@@ -182,6 +187,14 @@ class SubscriptionManagerEngine @Inject constructor(
                 changeReason = reason
             )
             priceHistoryDao.insert(priceHistory)
+
+            // REC-7: Update the subscription's current amount so it reflects
+            // the new price immediately rather than showing the old amount
+            // until the next full sync.
+            val subscription = recurringExpenseRepository.getById(subscriptionId)
+            if (subscription != null && abs(subscription.amount - newAmount) > 0.01) {
+                recurringExpenseRepository.update(subscription.copy(amount = newAmount))
+            }
         }
     }
     

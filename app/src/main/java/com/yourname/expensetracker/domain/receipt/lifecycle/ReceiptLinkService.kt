@@ -200,6 +200,20 @@ class ReceiptLinkService @Inject constructor(
                     }
                 }
 
+                // WRN-N1: After unlinking the receipt from the expense, also clear
+                // the expenseId on any associated Warranty and ReturnWindow records
+                // so they don't retain stale references to the now-unlinked expense.
+                warrantyDao.updateExpenseIdByReceiptId(
+                    receiptId = receiptId,
+                    expenseId = null,
+                    updatedAt = now
+                )
+                returnWindowDao.updateExpenseIdByReceiptId(
+                    receiptId = receiptId,
+                    expenseId = null,
+                    updatedAt = now
+                )
+
                 // 3. Write lifecycle event
                 val sourceType = receipt?.sourceType ?: "UNKNOWN"
                 val documentType = receipt?.documentType ?: "UNKNOWN"
@@ -213,7 +227,7 @@ class ReceiptLinkService @Inject constructor(
                         oldStatus = null,
                         newStatus = null,
                         actor = "system",
-                        message = "Receipt unlinked from expense $expenseId",
+                        message = "Receipt unlinked from expense $expenseId. Warranty/return expenseId cleared.",
                         metadata = null,
                         errorDetails = null
                     )

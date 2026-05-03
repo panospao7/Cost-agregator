@@ -44,6 +44,26 @@ import javax.inject.Singleton
 // ─── Domain models exposed to the UI layer ───────────────────────────────────
 
 sealed class DashboardWidget {
+    /**
+     * DSH-6: Safe-to-spend widget showing how much the user can safely spend
+     * for the remainder of the budget period.
+     *
+     * ## Fallback behavior
+     * When no budget is configured (`totalBudget == null`), the widget falls back
+     * to displaying the **month-to-date total spend** (not a remaining budget).
+     * This can be confusing because the amount shown is money *already spent*
+     * rather than money *available to spend*.
+     *
+     * ## Recommended CTA
+     * UI should display a call-to-action encouraging users to set a budget when
+     * `totalBudget == null`:
+     * > "Set a monthly budget to see how much you can safely spend."
+     *
+     * @param amount       Safe-to-spend amount when a budget exists, or
+     *                     month-to-date total spent as a fallback.
+     * @param totalBudget  The overall budget amount, or `null` if no budget is set.
+     * @param daysRemaining Days left in the current budget period.
+     */
     data class SafeToSpend(
         val amount: Double,
         val totalBudget: Double?,

@@ -239,6 +239,26 @@ class NominatimGeocodingService @Inject constructor(
         }
     }
 
+    /**
+     * Executes an HTTP request with exponential-backoff retries for
+     * server errors (5xx) and rate-limits (429).
+     *
+     * ## LOC-11: Rate-limit compliance
+     * This retry loop incorporates a `delay()` between attempts that starts at
+     * [initialDelayMs] and doubles up to 2s.  In addition, every entry into
+     * [executeRequest] is gated by [withRateLimit], which enforces a minimum
+     * 1-second interval between successive Nominatim requests via a mutex + delay.
+     *
+     * Together, these two mechanisms ensure that:
+     * - Nominatim's 1 req/sec policy is respected even during retry sequences.
+     * - Burst retries do not overflow the rate-limit window.
+     *
+     * @param request        The HTTP request to execute.
+     * @param maxAttempts    Maximum number of attempts (default 3).
+     * @param initialDelayMs Initial backoff delay in ms (default 300).
+     * @return The successful HTTP response.
+     * @throws IOException if all attempts fail.
+     */
     private suspend fun executeWithRetry(
         request: Request,
         maxAttempts: Int = 3,

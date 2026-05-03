@@ -65,12 +65,24 @@ class ReceiptParser @Inject constructor(
         val lineItems: List<LineItem>,
         val confidence: Float,
         /**
-         * RCP-4: Set to `true` when we detect that tax is already included
+         * RCP-4 / RCP-14: Set to `true` when we detect that tax is already included
          * in both line item totals and the receipt total. Downstream consumers
          * should check this flag to avoid double-counting tax (e.g. when
          * computing subtotal = total - tax, if the total is tax-inclusive
          * and the line items already sum to the total including tax, the
          * subtraction would be incorrect for tax-exclusive calculations).
+         *
+         * ## When `taxInclusive == true`:
+         * - **Do NOT** add tax to item-level totals — each [LineItem.totalPrice]
+         *   already contains the proportional tax.
+         * - **Do NOT** subtract tax from the receipt total when saving as expense amount.
+         * - If a tax-exclusive subtotal is needed: `subtotal = total - tax`.
+         * - The sum of line items approximates `total` (within 5%) — both include tax.
+         *
+         * ## When `taxInclusive == false` (default):
+         * - The receipt total may be tax-exclusive; tax is a separate surcharge.
+         * - Line items likely do not include tax either.
+         * - `subtotal = total - tax` is the correct tax-exclusive amount.
          */
         val taxInclusive: Boolean = false
     )
@@ -180,6 +192,16 @@ class ReceiptParser @Inject constructor(
         //    sum is close to the total (within 5%), the tax is already embedded
         //    in both the line items and the receipt total. Mark as inclusive so
         //    downstream consumers avoid double-counting.
+        //
+        // RCP-14: When `taxInclusive == true`, the receipt total already contains
+        // the tax amount and so do the item totals. Downstream consumers MUST
+        // NOT subtract tax from line-item totals or add it to the subtotal;
+        // doing so would count the tax twice.  The correct approach is:
+        //   - Use `total` as-is for the expense amount.
+        //   - If item-level amounts are needed, each LineItem.totalPrice already
+        //     includes the proportional tax — do not add tax on top.
+        //   - For a tax-exclusive subtotal, compute: subtotal = total - tax.
+        //     The line items sum already approximates `total` (within 5%).
         val taxInclusive = if (finalTotal != null && tax != null && lineItems.isNotEmpty()) {
             val itemsSum = lineItems.sumOf { it.totalPrice }
             val diff = kotlin.math.abs(finalTotal - itemsSum)

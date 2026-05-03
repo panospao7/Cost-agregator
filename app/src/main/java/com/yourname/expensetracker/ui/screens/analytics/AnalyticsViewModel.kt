@@ -298,8 +298,11 @@ class AnalyticsViewModel @Inject constructor(
             TimePeriod.ALL -> 0L
             else -> TimePeriodUtils.getStartOfYear(now)
         }
-        val periodLength = currentEnd - currentStart
-        val previousStart = currentStart - periodLength
+        // SRH-11: Use calendar-aware TimePeriodUtils instead of raw ms
+        // subtraction so that DST transitions and varying month lengths
+        // are handled correctly.
+        val daysInPeriod = TimePeriodUtils.daysBetween(currentStart, currentEnd).coerceAtLeast(1)
+        val previousStart = TimePeriodUtils.addDays(currentStart, -daysInPeriod)
         val previousEnd = currentStart
         val allExpenses = expenseRepository.getExpensesBetween(fullWindowStart, currentEnd)
         val previousExpenses = expenseRepository.getExpensesBetween(previousStart, previousEnd)

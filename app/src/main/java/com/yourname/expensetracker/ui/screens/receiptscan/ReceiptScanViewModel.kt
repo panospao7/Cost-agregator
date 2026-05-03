@@ -895,9 +895,20 @@ class ReceiptScanViewModel @Inject constructor(
         )
     }
 
+    /**
+     * RCP-11: Confidence threshold for quick-save.
+     * Only offer quick-save when OCR confidence is above this minimum.
+     * Low-confidence scans should go through manual review instead.
+     */
+    private val QUICK_SAVE_MIN_CONFIDENCE = 0.5f
+
     private fun buildQuickSavePreview(currentState: ReceiptScanState): ReceiptQuickSavePreview? {
         if (!currentState.receiptQuickSaveEnabled || currentState.step != ScanStep.REVIEW) return null
         if (currentState.receiptId == null || currentState.isSaving) return null
+
+        // RCP-11: Skip quick-save when OCR confidence is too low — the
+        // extracted data is unreliable and requires user review.
+        if (currentState.ocrConfidence < QUICK_SAVE_MIN_CONFIDENCE) return null
 
         var merchant = currentState.editMerchant.trim()
         var amount = AmountUtils.parseAmount(currentState.editAmount)

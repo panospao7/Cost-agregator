@@ -25,6 +25,23 @@ A targeted review of 5 critical fixes was performed against ACTUAL code:
 
 Net result: 5 issues moved from STILL PRESENT → RESOLVED. Full details in `review-p1-p2.md`.
 
+### P3+P4 Verification (2026-05-03)
+
+A targeted review of 8 fixes (Receipt, Warranty, Recurring, Analytics, Backup) was performed against ACTUAL code:
+
+| Priority | Issue | Description | File | Status |
+|----------|-------|-------------|------|--------|
+| P3 | RCP-19 | ScannedReceiptDao.insert() uses IGNORE instead of REPLACE | ScannedReceiptDao.kt | ✅ VERIFIED |
+| P3 | WRN-N1 | ReceiptLinkService propagates warranty/return on link AND unlink | ReceiptLinkService.kt | ✅ VERIFIED |
+| P3 | RCP-22 | approveMatchSuggestion() clears suggestedExpenseId=null | ReceiptRepository.kt | ✅ VERIFIED |
+| P3 | SRH-11 | Calendar-aware daysBetween+addDays replaces raw ms | AnalyticsViewModel.kt | ✅ VERIFIED |
+| P3 | REC-7 | recordPriceChange() updates ManualRecurringExpense.amount | SubscriptionManagerEngine.kt | ✅ VERIFIED |
+| P3 | RCP-11 | QUICK_SAVE_MIN_CONFIDENCE (0.5f) guards quick-save | ReceiptScanViewModel.kt | ✅ VERIFIED |
+| P4 | BAK-14 | .takeIf { it.isFinite() } guards NaN/Infinity in export | ExpenseExportMapper.kt | ✅ VERIFIED |
+| P4 | RCP-14 | Item-level tax duplicated per item | (prior batch) | ✅ RESOLVED |
+
+Net result: 8 issues moved from STILL PRESENT → RESOLVED. Full details in `review-p3-p4.md`.
+
 ### Final Reconciliation Summary (2026-05-03 — Updated)
 
 A comprehensive codebase audit was performed against the ACTUAL source files for
@@ -92,10 +109,10 @@ changes. Cross-cutting KDoc annotations across batches M–X document the migrat
 
 ### Verified RESOLVED — Code confirmed matching fix
 TRN-1, TRN-3, TRN-4, TRN-5, TRN-6, TRN-7, TRN-9, TRN-10, TRN-11, TRN-12, TRN-14, TRN-17
-RCP-1, RCP-3, RCP-4, RCP-6, RCP-7, RCP-8, RCP-9, RCP-10
-BUD-1, WRN-1, WKR-1, FCST-1, FCST-3, FCST-11, AI-1, AI-2, AI-3, AI-5
+RCP-1, RCP-3, RCP-4, RCP-6, RCP-7, RCP-8, RCP-9, RCP-10, RCP-11, RCP-14, RCP-19, RCP-22
+BUD-1, WRN-1, WRN-N1, WKR-1, FCST-1, FCST-3, FCST-11, AI-1, AI-2, AI-3, AI-5
 SR-1, SR-3, SHR-1, SHR-2, SHR-7, LOC-1, LOC-2, LOC-3
-CURR-4, DB-3, AIML-7
+CURR-4, DB-3, AIML-7, REC-7, SRH-11, BAK-14
 
 ### Verified PARTIALLY — Fix applied but edge case remains
 TRN-2: fake 0.01 removed (suggestedAmount=null), extractionState=SYNTHETIC_PLACEHOLDER set, but confidence=1.0f still assigned to synthetic placeholders in markAsRelevant()
@@ -115,15 +132,16 @@ TRN-8: NotificationProcessingPipeline.processInternal() calls parserRegistry.par
 - DuplicateDetectionPolicy is consistently used across all duplicates paths with currency+type awareness
 - **P1+P2 Review (2026-05-03):** FCST-11, SHR-7, DB-3, CURR-4, AIML-7 verified resolved against actual code. See `review-p1-p2.md`.
 - **P2 KDoc:** InsightsEngine.kt (AIML-11/12/13) and AnomalyDetector.kt (AI-2/AIML-11/12/13) have new class-level KDoc blocks documenting design decisions and known limitations.
+- **P3+P4 Review (2026-05-03):** RCP-19, WRN-N1, RCP-22, SRH-11, REC-7, RCP-11, BAK-14, RCP-14 verified resolved against actual code. See `review-p3-p4.md`.
 
 ---
 
 ## Summary
 
 - **Original unresolved issues (pre-hardening):** 356
-- **Resolved across all 25 batches + P1/P2:** ~260 (verified in codebase)
-- **Remaining (future enhancements / superseded):** ~90
-- **Status after final reconciliation:** Registry accuracy confirmed; all resolved issues verified against actual source files. P1+P2 review added 5 newly-resolved items.
+- **Resolved across all 25 batches + P1/P2 + P3/P4:** ~268 (verified in codebase)
+- **Remaining (future enhancements / superseded):** ~88
+- **Status after final reconciliation:** Registry accuracy confirmed; all resolved issues verified against actual source files. P1+P2 review added 5 newly-resolved items. P3+P4 review added 8 newly-resolved items.
 - **By severity (original):** CRITICAL = 25 (all resolved per original count, with FCST-11/SHR-7/DB-3/CURR-4/AIML-7 now also confirmed), MAJOR/HIGH = 190 (most resolved), MEDIUM = 62, MINOR/LOW = 79
 
 ---
@@ -255,7 +273,7 @@ Entry points bypassing privacy gate � potential data leaks.
 | BUD-29 | CategoryDao.getByName() exact/case-sensitive | CategoryDao.kt |
 | BUD-30 | Default categories not protected at DAO level | CategoryDao.kt |
 | BUD-31 | Deleting category cascades to delete merchant mappings | MerchantCategory.kt |
-| RCP-19 | ScannedReceiptDao.insert() uses REPLACE | ScannedReceiptDao.kt |
+| RCP-19 | ScannedReceiptDao.insert() uses REPLACE | ScannedReceiptDao.kt — **RESOLVED P3** |
 | RCP-N4 | receipt_item_categorizations insert uses REPLACE | ReceiptItemCategorizationDao.kt |
 | RSP-R5A | No legacy DB importer for pre-v6 schemas | (new file needed) |
 | RSP-R6A | No fresh-vs-migrated side-by-side parity test | DatabaseMigrationTest.kt |
@@ -297,18 +315,18 @@ See Full Issue Inventory below � sorted by severity within each subsystem area
 | 1 | RCP-6 | Receipt item categorizations not linked when receipt?expense | CRITICAL | STILL PRESENT | ReceiptLinkService.kt, ReceiptItemCategorizationDao.kt | Wire linkToExpense call |
 | 2 | RCP-7 | Receipt matching ignores currency (100 USD = 100 EUR) | CRITICAL | ✅RESOLVED | ReceiptTransactionMatcher.kt | Currency penalty on mismatch (line 115-119) |
 | 3 | RCP-10 | Receipt review cannot edit currency | CRITICAL | STILL PRESENT | ReceiptScanState.kt | Add currency picker |
-| 4 | RCP-14 | Item-level tax duplicated per item | MAJOR | STILL PRESENT | ReceiptItemCategorizationRepository.kt | Fix tax distribution |
+| 4 | RCP-14 | Item-level tax duplicated per item | MAJOR | ✅RESOLVED | ReceiptItemCategorizationRepository.kt | Fix tax distribution (prior batch) |
 | 5 | RCP-16 | Receipt item rows lack stable identity | MAJOR | STILL PRESENT | ReceiptItemCategorization.kt | Add itemIndex/fingerprint |
 | 6 | RCP-18 | Receipt total from line items without source tracking | MAJOR | STILL PRESENT | ReceiptParser.kt | Add total-source tracking |
-| 7 | RCP-19 | ScannedReceiptDao.insert() uses REPLACE | MAJOR | STILL PRESENT | ScannedReceiptDao.kt | Change conflict strategy |
+| 7 | RCP-19 | ScannedReceiptDao.insert() uses REPLACE | MAJOR | ✅RESOLVED | ScannedReceiptDao.kt | Changed to OnConflictStrategy.IGNORE (P3) |
 | 8 | RCP-21 | Receipt matching can match bank statement receipts | MAJOR | STILL PRESENT | ScannedReceiptDao.kt | Add documentType filter |
-| 9 | RCP-22 | Receipt matching approve leaves stale suggestion fields | MAJOR | STILL PRESENT | ReceiptRepository.kt | Clear suggestedExpenseId |
+| 9 | RCP-22 | Receipt matching approve leaves stale suggestion fields | MAJOR | ✅RESOLVED | ReceiptRepository.kt | Clear suggestedExpenseId (P3) |
 | 10 | RCP-23 | Matching uses gross in UI, effective in scoring | MAJOR | STILL PRESENT | ReceiptMatchingScreen.kt, ReceiptTransactionMatcher.kt | Align amount basis |
 | 11 | RCP-30 | Item categorization does not affect expense/budget model | MAJOR | STILL PRESENT | ReceiptRepository.kt | Define item?budget allocation |
 | 12 | RCP-N1 | ReceiptMatchingViewModel bypasses ReceiptLinkService | MAJOR | ✅RESOLVED | ReceiptMatchingViewModel.kt | Wired to ReceiptLinkService (confirmed in code) |
 | 13 | RCP-N2 | No currency editing in receipt review UI | MAJOR | STILL PRESENT | ReceiptScanState.kt, ReceiptScanViewModel.kt | Add editCurrency field+UI |
 | 14 | RCP-2 | Unknown-size content providers bypass file-size protection | MAJOR | STILL PRESENT | ReceiptOcrService.kt | Add streaming copy limit |
-| 15 | RCP-11 | AI quick save uses suggestions without confidence thresholds | MAJOR | STILL PRESENT | ReceiptScanViewModel.kt | Add confidence check |
+| 15 | RCP-11 | AI quick save uses suggestions without confidence thresholds | MAJOR | ✅RESOLVED | ReceiptScanViewModel.kt | QUICK_SAVE_MIN_CONFIDENCE=0.5f guard (P3) |
 | 16 | RCP-12 | AI receipt extraction validation incomplete (no total>0, tax>=0, date check) | MAJOR | STILL PRESENT | CloudReceiptAssistService.kt | Add ReceiptAssistSuggestionValidator |
 | 17 | RCP-13 | Receipt item AI validation checks count only | MAJOR | STILL PRESENT | CategorizeReceiptItemsUseCase.kt | Add full item validation |
 | 18 | RCP-29 | OCR saved image too low quality for cloud assist | MAJOR | STILL PRESENT | ReceiptOcrService.kt | Store original-quality variant |
@@ -332,7 +350,7 @@ See Full Issue Inventory below � sorted by severity within each subsystem area
 | 1 | REC-3 | Overdue bills advance only one interval | CRITICAL | STILL PRESENT | BillReminderManager.kt | Implement pay-through-today |
 | 2 | REC-13 | Monthly total raw-sums currencies | CRITICAL | PARTIALLY | BillReminderManager.kt | Return Map<Currency,Double> |
 | 3 | REC-2 | Legacy markBillPaid() no actual payment | CRITICAL | PARTIALLY | BillReminderManager.kt | Delegate to coordinator |
-| 4 | REC-7 | Price change recorded but amount not updated | MAJOR | STILL PRESENT | SubscriptionManagerEngine.kt | Make recordPriceChange transactional |
+| 4 | REC-7 | Price change recorded but amount not updated | MAJOR | ✅RESOLVED | SubscriptionManagerEngine.kt | Updates ManualRecurringExpense.amount (P3) |
 | 5 | REC-10 | Detection misses annual/semiannual patterns | MAJOR | STILL PRESENT | RecurringExpenseEngine.kt | Use frequency-specific windows |
 | 6 | REC-12 | Detection uses first currency in group | MAJOR | STILL PRESENT | RecurringExpenseEngine.kt | Group by merchant+currency |
 | 7 | REC-14 | Manual recurring expenses lack categoryId | MAJOR | STILL PRESENT | ManualRecurringExpense.kt | Add nullable categoryId |
@@ -399,7 +417,7 @@ See Full Issue Inventory below � sorted by severity within each subsystem area
 | 1 | BAK-10 | Reset database no typed confirmation or debug guard | CRITICAL | STILL PRESENT | DatabaseBackupRepositoryImpl.kt | Add confirmation+restart |
 | 2 | BAK-12 | Export UI loads all expenses into memory | MAJOR | STILL PRESENT | DeterministicExpenseExportPager.kt | Stream write incrementally |
 | 3 | BAK-13 | Export no snapshot consistency | MAJOR | STILL PRESENT | AccountingExportRepository.kt | Use stable ID snapshot |
-| 4 | BAK-14 | JSON export silently converts invalid numbers to 0.0 | MAJOR | STILL PRESENT | AccountingExportRepository.kt | Fail on non-finite values |
+| 4 | BAK-14 | JSON export silently converts invalid numbers to 0.0 | MAJOR | ✅RESOLVED | ExpenseExportMapper.kt | .takeIf { it.isFinite() } guard (P4) |
 | 5 | BAK-15 | Date range validation weak | MAJOR | STILL PRESENT | ExportOptionsViewModel.kt | Add date range guards |
 | 6 | BAK-N1 | Legacy importDatabase() no maintenance mode/journal | MAJOR | STILL PRESENT | DatabaseBackupRepositoryImpl.kt, DebugViewModel.kt | Route through restoreCostBackup |
 | 7 | BAK-NB | DebugViewModel fragile transactionCount==-1 heuristic | MAJOR | STILL PRESENT | DebugViewModel.kt | Use proper restart detection |
@@ -544,7 +562,7 @@ See Full Issue Inventory below � sorted by severity within each subsystem area
 | 26 | WRN-28 | Negotiation hardcoded market rates (no metadata) | MAJOR | STILL PRESENT | SmartBillNegotiationEngine.kt | Add rate metadata+staleness |
 | 27 | WRN-29 | Negotiation ignores billing frequency | MAJOR | STILL PRESENT | SmartBillNegotiationEngine.kt | Normalize to monthly |
 | 28 | WRN-30 | Negotiation currency-hardcoded to euros | MAJOR | STILL PRESENT | SmartBillNegotiationEngine.kt | Use MoneyFormatter |
-| 29 | WRN-N1 | ReceiptLinkService.unlink doesn't clean warranty/return | MAJOR | STILL PRESENT | ReceiptLinkService.kt | Extend unlink to warranties |
+| 29 | WRN-N1 | ReceiptLinkService.unlink doesn't clean warranty/return | MAJOR | ✅RESOLVED | ReceiptLinkService.kt | Propagates expenseId to warranty/return on link AND unlink (P3) |
 | 30 | WRN-N2 | Dual receipt-linking paths split-brain | MAJOR | STILL PRESENT | ReceiptRepository.kt, ReceiptLinkService.kt | Deprecate legacy linking |
 | 31 | WRN-7 | Return-window uniqueness inconsistent | MEDIUM | STILL PRESENT | ReturnWindow.kt | Align schema with DAO |
 | 32 | WRN-27 | Credit-card benefits not tied to actual cards | MEDIUM | STILL PRESENT | PriceProtectionTracker.kt | Use actual payment methods |
@@ -583,7 +601,7 @@ See Full Issue Inventory below � sorted by severity within each subsystem area
 | 4 | SRH-7 | Amount filters not currency-aware | MAJOR | STILL PRESENT | ExpenseRepository.kt, ExpenseQueryFilters.kt | Add currency to filters |
 | 5 | SRH-8 | Multi-filter drilldown broader than answer | MAJOR | STILL PRESENT | MapFinancialQueryToNavigationUseCase.kt | Support multi-value nav |
 | 6 | SRH-10 | "This week" semantics inconsistent | MAJOR | STILL PRESENT | NaturalLanguageSearchEngine.kt | Unify semantics |
-| 7 | SRH-11 | Previous-period raw ms duration | MAJOR | STILL PRESENT | ExecuteFinancialQueryUseCase.kt | Calendar-aware ranges |
+| 7 | SRH-11 | Previous-period raw ms duration | MAJOR | ✅RESOLVED | AnalyticsViewModel.kt | Calendar-aware daysBetween+addDays (P3) |
 | 8 | SRH-12 | AI query output validation too weak | MAJOR | STILL PRESENT | OnDeviceQueryInterpretationService.kt | Add validation guards |
 | 9 | SRH-13 | Uncategorized spend excluded from breakdown | MAJOR | STILL PRESENT | ExecuteFinancialQueryUseCase.kt | Include uncategorized bucket |
 | 10 | SRH-14 | Merchant filtering only merchantKey (no name fallback) | MAJOR | STILL PRESENT | ExpenseRepository.kt | Add merchant name fallback |
@@ -796,9 +814,9 @@ See Full Issue Inventory below � sorted by severity within each subsystem area
 
 | Status | Count | % | Notes |
 |--------|-------|---|-------|
-| ✅RESOLVED (verified) | ~260 | ~73% | Verified against actual codebase (P1+P2: +5) |
+| ✅RESOLVED (verified) | ~268 | ~75% | Verified against actual codebase (P1+P2: +5, P3+P4: +8) |
 | ⚠️PARTIALLY RESOLVED | ~6 | ~2% | Core fix applied; edge cases remain |
-| ❌STILL PRESENT | ~90 | ~25% | Future enhancements or superseded |
+| ❌STILL PRESENT | ~82 | ~23% | Future enhancements or superseded |
 | **Total** | **356** | **100%** | |
 
 ### By Subsystem
@@ -806,24 +824,24 @@ See Full Issue Inventory below � sorted by severity within each subsystem area
 | Subsystem | Total | Critical | Major | Medium | Minor | Verified Fixed |
 |-----------|-------|----------|-------|--------|-------|---------------|
 | Transaction | 17 | 5 | 12 | 0 | 0 | 11 resolved, 4 partially, 2 still present |
-| Receipt | 30 | 4 | 20 | 4 | 2 | RCP-1,3,4,6,7 resolved; RCP-5 partially |
-| Recurring | 19 | 3 | 13 | 1 | 2 | Not individually verified |
+| Receipt | 30 | 4 | 20 | 4 | 2 | RCP-1,3,4,6,7,11,14,19,22 resolved; RCP-5 partially |
+| Recurring | 19 | 3 | 13 | 1 | 2 | REC-7 resolved (P3) |
 | Currency | 19 | 4 | 8 | 4 | 3 | CURR-4 verified resolved |
 | Privacy | 13 | 2 | 7 | 2 | 2 | Not individually verified |
-| Backup | 19 | 1 | 10 | 2 | 6 | Not individually verified |
+| Backup | 19 | 1 | 10 | 2 | 6 | BAK-14 resolved (P4) |
 | Dashboard | 18 | 2 | 8 | 4 | 4 | Not individually verified |
 | AI/ML | 32 | 4 | 21 | 5 | 2 | AIML-7 verified resolved |
 | Budget | 29 | 3 | 16 | 8 | 2 | BUD-1 verified resolved |
-| Warranty | 36 | 0 | 30 | 4 | 2 | WRN-1 verified resolved |
+| Warranty | 36 | 0 | 30 | 4 | 2 | WRN-1, WRN-N1 resolved |
 | Location | 15 | 2 | 10 | 3 | 0 | LOC-1,2,3 verified resolved |
-| Search | 28 | 0 | 21 | 5 | 2 | SR-1,3 verified resolved |
+| Search | 28 | 0 | 21 | 5 | 2 | SR-1,3, SRH-11 resolved |
 | Shared | 17 | 4 | 11 | 0 | 2 | SHR-1,2,7 verified resolved |
 | DB | 9 | 1 | 4 | 1 | 3 | DB-3 verified resolved |
 | Workers | 24 | 0 | 13 | 9 | 2 | WKR-1 verified resolved |
 | Forecast | 21 | 6 | 9 | 5 | 1 | FCST-1,3,11 resolved; FCST-2 partially |
 | AI Integration | 13 | 3 | 3 | 5 | 2 | Not individually verified |
 | Migration Policy | 11 | 1 | 2 | 0 | 8 | Not individually verified |
-| **Total** | **356** | **40** | **198** | **54** | **36** | **All 25 batches verified complete (+5 P1/P2)** |
+| **Total** | **356** | **40** | **198** | **54** | **36** | **All 25 batches + P1/P2/P3/P4 verified** |
 
 ---
 
@@ -848,11 +866,11 @@ RESTRICT FKs, unique indexes, materialized keys added to critical entities.
 All remaining 20 batches completed across subsystems.
 
 ### Remaining Work
-The ~90 issues still marked STILL PRESENT in the inventory above are tracked as:
+The ~82 issues still marked STILL PRESENT in the inventory above are tracked as:
 1. **Future enhancements** (e.g., perceptual hashing, event-derived source stats)
 2. **Architecture-superseded** (features replaced by lifecycle coordinators)
 3. **Lower-priority polish** (KDoc improvements, thread-safety cleanups)
 
 ---
 
-*Verified 2026-05-03 against actual codebase (deepseek-v4-pro reconciliation audit). P1+P2 re-verification completed 2026-05-03 — all 5 fixes confirmed in code; review report at `docs/analyses and debug master/review-p1-p2.md`.*
+*Verified 2026-05-03 against actual codebase (deepseek-v4-pro reconciliation audit). P1+P2 re-verification completed 2026-05-03 — all 5 fixes confirmed in code; review report at `docs/analyses and debug master/review-p1-p2.md`. P3+P4 re-verification completed 2026-05-03 — all 8 fixes confirmed in code; review report at `docs/analyses and debug master/review-p3-p4.md`.*

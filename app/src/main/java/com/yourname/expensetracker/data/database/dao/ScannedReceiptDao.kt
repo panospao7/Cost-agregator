@@ -7,7 +7,17 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ScannedReceiptDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * RCP-19: Use IGNORE instead of REPLACE to prevent silently overwriting
+     * existing receipts. REPLACE would delete the old row and insert a new one
+     * with a different ID (auto-generated primary key), breaking foreign-key
+     * references (e.g. pending_reviews, receipt_events, warranties).
+     *
+     * With IGNORE, if a conflict occurs (e.g. duplicate via fingerprint/hash),
+     * the insert is skipped and the existing row is preserved. Callers should
+     * check the returned rowId (0 == conflict) and handle accordingly.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(receipt: ScannedReceipt): Long
 
     @Update

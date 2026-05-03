@@ -212,6 +212,14 @@ class NaturalLanguageSearchEngine @Inject constructor(
      * rate. If conversion fails (missing rate), the raw amount is used as
      * fallback and the comparison may be inaccurate — this is logged.
      *
+     * ## SRH-2: Category and location filters are parsed but NOT applied
+     * The [interpretQuery] method extracts [locations] and [categories] from
+     * the natural language query and stores them in [SearchFilter]. However,
+     * [executeSearch] currently only filters by **merchants** and **amounts**
+     * — the category and location filters are **ignored** during query execution.
+     * This means a query like "find food expenses in Paris" will match ALL
+     * transactions in the date range regardless of category or location.
+     *
      * ## Multi-filter drilldown (M3)
      * The initial data pull from [expenseQueryRepository] is only date-bounded;
      * all other filters (amount, merchant, category, location) are applied
