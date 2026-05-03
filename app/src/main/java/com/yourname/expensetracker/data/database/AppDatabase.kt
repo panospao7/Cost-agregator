@@ -6235,18 +6235,18 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 database.execSQL("DROP INDEX IF EXISTS index_budgets_isActive")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_activeOverallKey ON budgets (activeOverallKey)")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_activeCategoryKey ON budgets (activeCategoryKey)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_activeOverallKey ON budgets (activeOverallKey)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_activeCategoryKey ON budgets (activeCategoryKey)")
 
                 // Group members: drop old non-unique composite, create new unique key index
                 database.execSQL("DROP INDEX IF EXISTS index_group_members_groupId_isCurrentUser")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members (groupId)")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_group_members_currentUserGroupKey ON group_members (currentUserGroupKey)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_currentUserGroupKey ON group_members (currentUserGroupKey)")
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_name ON group_members (groupId, name)")
 
                 // Group expenses: drop old non-unique, create unique
                 database.execSQL("DROP INDEX IF EXISTS index_group_expenses_expenseId")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_group_expenses_expenseId ON group_expenses (expenseId)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_expenses_expenseId ON group_expenses (expenseId)")
 
                 // Raw notifications: nullify duplicate fingerprints before creating unique index
                 database.execSQL("""
@@ -6259,10 +6259,10 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                 """.trimIndent())
 
                 // Raw notifications: create unique fingerprint index
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_notifications_dedupeFingerprint ON raw_notifications (dedupeFingerprint)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_raw_notifications_dedupeFingerprint ON raw_notifications (dedupeFingerprint)")
 
                 // Planned expenses: create unique open occurrence key index
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_planned_expenses_openSourceOccurrenceKey ON planned_expenses (openSourceOccurrenceKey)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_planned_expenses_openSourceOccurrenceKey ON planned_expenses (openSourceOccurrenceKey)")
 
                 database.setTransactionSuccessful()
             } finally {
