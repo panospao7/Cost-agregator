@@ -6364,7 +6364,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                             )
                         """.trimIndent())
 
-                            database.execSQL("INSERT INTO budgets_new (id, categoryId, amount, periodMode, periodModeValue, isActive, createdAt, notifyAtWarning, notifyAtCritical, name, rolloverEnabled, currency, displayCurrency, currencyAssumption, effectiveLimit, budgetScope, spendingType, activeOverallKey, activeCategoryKey) SELECT id, categoryId, amount, periodMode, periodModeValue, isActive, createdAt, notifyAtWarning, notifyAtCritical, name, rolloverEnabled, currency, displayCurrency, currencyAssumption, effectiveLimit, budgetScope, spendingType, NULL, NULL FROM budgets")
+                            database.execSQL("INSERT INTO budgets_new (id, categoryId, amount, period, periodMode, startDate, isActive, notifyAtWarning, notifyAtCritical, rollover, currency, currencyAssumption, createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt, activeOverallKey, activeCategoryKey) SELECT id, categoryId, amount, period, periodMode, startDate, isActive, notifyAtWarning, notifyAtCritical, rollover, currency, currencyAssumption, createdAt, lastWarningNotifiedAt, lastCriticalNotifiedAt, lastExceededNotifiedAt, NULL, NULL FROM budgets")
                             database.execSQL("DROP TABLE budgets")
                             database.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
 
