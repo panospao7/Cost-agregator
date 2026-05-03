@@ -13,17 +13,12 @@ import kotlinx.coroutines.flow.Flow
 /**
  * Data-access object for [Category] entities.
  *
- * ## BUD-28: Category name uniqueness
- * Category names are NOT enforced as unique at the DB level. Two categories
- * with the same name (differing only in case, e.g. "Food" vs "food") can
- * coexist, which leads to UI confusion and double-counting in reports.
+ * ## BUD-28: Category name uniqueness (applied)
+ * Category names are enforced as unique at the DB level via a UNIQUE index
+ * on `name COLLATE NOCASE` (see MIGRATION_112_113). The [getByName] and
+ * [existsByName] queries both use `COLLATE NOCASE` for case-insensitive lookups.
  *
- * A future migration should add a UNIQUE index on `name COLLATE NOCASE`
- * to enforce case-insensitive uniqueness, together with a deduplication
- * pass that merges existing duplicates. The [getByName] query already uses
- * exact matching; after the migration it should use `COLLATE NOCASE`.
- *
- * See also [Category.name] normalization in the entity's `init` block.
+ * See also [Category.normalizedName] for the computed lowercase+trimmed form.
  */
 @Dao
 interface CategoryDao {
@@ -59,6 +54,9 @@ interface CategoryDao {
 
     @Query("SELECT * FROM categories WHERE name = :name COLLATE NOCASE LIMIT 1")
     suspend fun getByName(name: String): Category?
+
+    @Query("SELECT COUNT(*) FROM categories WHERE name = :name COLLATE NOCASE")
+    suspend fun existsByName(name: String): Int
 
     @Query("SELECT * FROM categories ORDER BY isDefault DESC, name ASC")
     suspend fun getAll(): List<Category>

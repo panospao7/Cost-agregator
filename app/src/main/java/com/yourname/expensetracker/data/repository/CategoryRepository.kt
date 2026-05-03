@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
@@ -15,6 +17,7 @@ import timber.log.Timber
 
 @Singleton
 class CategoryRepository @Inject constructor(
+    private val database: AppDatabase,
     private val categoryDao: CategoryDao,
     private val merchantCategoryDao: MerchantCategoryDao,
     private val categorizationEngine: CategorizationEngine,
@@ -84,10 +87,35 @@ class CategoryRepository @Inject constructor(
         }
     }
 
-    suspend fun addCategory(name: String, icon: String, color: String) = withContext(Dispatchers.IO) {
-        val category = Category(name = name, icon = icon, color = color)
-        categoryDao.insert(category)
-        hybridExpenseClassifier.get().invalidateCategorySnapshot()
+    /**
+     * Add a new category with name normalization and case-insensitive duplicate detection.
+     *
+     * The name is trimmed and lowercased before insertion (consistent with
+     * [Category.normalizedName]). If a category with the same normalized name
+     * already exists, the existing category is returned instead of inserting
+     * a duplicate.
+     *
+     * The check-then-insert is wrapped in a transaction to prevent races.
+     *
+     * @return the newly created or existing [Category].
+     */
+    suspend fun addCategory(name: String, icon: String, color: String): Category = withContext(Dispatchers.IO) {
+        // Normalize: trim whitespace and lowercase for consistency with Category.normalizedName
+        val normalizedName = name.trim().lowercase()
+
+        return@withContext database.withTransaction {
+            // Check for existing case-insensitive match
+            val existing = categoryDao.getByName(normalizedName)
+            if (existing != null) {
+                Timber.d("addCategory: returning existing category '%s' (id=%d)", existing.name, existing.id)
+                return@withTransaction existing
+            }
+
+            val category = Category(name = normalizedName, icon = icon, color = color)
+            val id = categoryDao.insert(category)
+            hybridExpenseClassifier.get().invalidateCategorySnapshot()
+            category.copy(id = id)
+        }
     }
 
     suspend fun learnMerchantCategory(merchantName: String, categoryId: Long) = withContext(Dispatchers.IO) {
@@ -95,6 +123,6 @@ class CategoryRepository @Inject constructor(
     }
     
     suspend fun getCategoryByName(name: String): Category? = withContext(Dispatchers.IO) {
-        categoryDao.getAll().find { it.name.equals(name, ignoreCase = true) }
+        categoryDao.getByName(name)
     }
 }

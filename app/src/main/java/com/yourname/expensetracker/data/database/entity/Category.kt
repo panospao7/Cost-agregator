@@ -25,6 +25,12 @@ data class Category(
     val color: String, // Hex color code
     @ColumnInfo(defaultValue = "0") val isDefault: Boolean = false // If true, cannot be deleted (easily)
 ) {
+    /**
+     * Normalized version of the name: trimmed and lowercased.
+     * Used for case-insensitive uniqueness checks.
+     */
+    val normalizedName: String get() = name.trim().lowercase()
+
     init {
         require(name.isNotBlank()) { "Category name cannot be blank" }
         require(name.length <= 50) { "Category name too long (max 50 chars)" }

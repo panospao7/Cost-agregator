@@ -10,7 +10,7 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 112
+const val APP_DATABASE_SCHEMA_VERSION = 113
 
 @Database(
     entities = [
@@ -5276,6 +5276,8 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_date ON planned_expenses (date)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_categoryId ON planned_expenses (categoryId)")
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_planned_expenses_openSourceOccurrenceKey ON planned_expenses (openSourceOccurrenceKey)")
+                // ── Case-insensitive unique index on categories ──
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_categories_name_nocase ON categories(name COLLATE NOCASE)")
             }
         }
 
@@ -7252,14 +7254,39 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        // MIGRATION_112_113 — Category name uniqueness with COLLATE NOCASE
+        // ═════════════════════════════════════════════════════════════════════
+        //
+        // Adds a UNIQUE index on categories(name COLLATE NOCASE) to enforce
+        // case-insensitive category name uniqueness at the DB level.
+        // See also Category.normalizedName and CategoryRepository.addCategory
+        // for application-level deduplication.
+        val MIGRATION_112_113 = object : androidx.room.migration.Migration(112, 113) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Deduplicate existing categories that differ only by case.
+                // Keep the first occurrence (lowest id) for each case-insensitive name.
+                database.execSQL("""
+                    DELETE FROM categories WHERE id NOT IN (
+                        SELECT MIN(id) FROM categories GROUP BY name COLLATE NOCASE
+                    )
+                """.trimIndent())
+
+                // Create unique index with NOCASE collation
+                database.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_categories_name_nocase
+                    ON categories(name COLLATE NOCASE)
+                """.trimIndent())
+            }
+        }
+
         /**
-       * Creates an in-memory [RoomDatabase.Builder] pre-configured with
-           * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
-         *
-         * Every test that needs a fresh `AppDatabase` **must** go through this
-         * factory so that supplementary indexes (Batch 3 through Batch 8) are
-         * present, matching the production fresh-install path.
-         */
+        * Creates an in-memory [RoomDatabase.Builder] pre-configured with
+            * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
+          *
+          * Every test that needs a fresh `AppDatabase` **must** go through this
+          * factory so that supplementary indexes (Batch 3 through Batch 8) are
+          * present, matching the production fresh-install path.
+          */
         @JvmStatic
         fun fileBuilder(
             context: android.content.Context,
@@ -7399,7 +7426,8 @@ MIGRATION_91_92,
         MIGRATION_108_109,
         MIGRATION_109_110,
         MIGRATION_110_111,
-        MIGRATION_111_112
+        MIGRATION_111_112,
+        MIGRATION_112_113
     )
     }
 }
