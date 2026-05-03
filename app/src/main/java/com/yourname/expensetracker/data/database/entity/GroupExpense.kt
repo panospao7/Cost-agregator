@@ -17,24 +17,22 @@ import com.yourname.expensetracker.domain.core.money.MoneyAmount
  * the Phase 7 invariant requirement. Only one group_expense row may reference
  * a given expense at any time. This is enforced at the DB level.
  *
- * ## SHR-7: paidById cross-group rule
+ * ## SHR-7: paidById cross-group rule — ENFORCED AT DB LEVEL
  * The `paidById` FK references GroupMember with RESTRICT, which prevents deleting
- * a member who has paid expenses. However, there is NO DB-level trigger to enforce
- * that `paidById` belongs to the same group as `groupId`. A future migration should
- * add a CHECK constraint or trigger:
+ * a member who has paid expenses. Additionally, migration 108→109 creates the
+ * trigger `enforce_paid_by_same_group` which ABORTs any INSERT where `paidById`
+ * references a member whose `groupId` differs from the row's `groupId`:
  * ```
- * CREATE TRIGGER group_expense_paid_by_same_group
+ * CREATE TRIGGER IF NOT EXISTS enforce_paid_by_same_group
  * BEFORE INSERT ON group_expenses
- * FOR EACH ROW
  * BEGIN
- *     SELECT RAISE(ABORT, 'paidById must be a member of the same group')
- *     WHERE NOT EXISTS (
- *         SELECT 1 FROM group_members
- *         WHERE id = NEW.paidById AND groupId = NEW.groupId
- *     );
+ *     SELECT CASE WHEN (
+ *         SELECT groupId FROM group_members WHERE id = NEW.paidById
+ *     ) != NEW.groupId
+ *     THEN RAISE(ABORT, 'paidById must belong to same group') END;
  * END;
  * ```
- * Until then, this invariant is enforced by the application layer only.
+ * This trigger is verified to exist in MIGRATION_108_109 (lines 6856–6866).
  */
 @Entity(
     tableName = "group_expenses",

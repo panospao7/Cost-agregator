@@ -19,6 +19,28 @@ import kotlin.coroutines.cancellation.CancellationException
 
 // === Engine ===
 
+/**
+ * ## AIML-11: Confidence propagation
+ * Insights that rely on AI-classified transactions inherit the classifier's
+ * confidence score. The `adjustedConfidence` from [ConfidenceRouter] is stored
+ * on the [PendingReview] and propagated through to insights. Callers should
+ * check confidence thresholds before surfacing AI-derived insights to the user.
+ *
+ * ## AIML-12: Stale category IDs
+ * Category references obtained at classification time may become stale if the
+ * user renames or deletes categories after the expense is created. This engine
+ * resolves category IDs via the `categoryMap` parameter provided by the caller
+ * at insight-generation time. If a category has been deleted, the insight falls
+ * back to `category = null` rather than displaying a dangling reference.
+ *
+ * ## AIML-13: Duplicate-inflated trust
+ * Repeated identical transactions from the same merchant can inflate the
+ * confidence score in pattern-detection logic. The recurring-expense
+ * suppression in [AnomalyDetector.detect] mitigates this by excluding expenses
+ * whose merchant key matches a known recurring rule. The merchant-level
+ * anomaly detection in [findAnomalies] also uses an adaptive multiplier
+ * (3× to 5×) that grows stricter as historical data accumulates.
+ */
 @Singleton
 class InsightsEngine @Inject constructor(
     private val expenseRepository: ExpenseRepository,

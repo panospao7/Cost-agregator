@@ -41,6 +41,7 @@ import com.yourname.expensetracker.domain.ai.model.toRuntimeStatusMessage
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.service.debug.MigrationResult
 import kotlinx.coroutines.launch
 import java.util.*
 
@@ -1221,6 +1222,7 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
     var showImportDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
     var showCsvImportDialog by remember { mutableStateOf(false) }
+    var showLegacyMigrationDialog by remember { mutableStateOf(false) }
     
     Card(
         modifier = Modifier
@@ -1320,6 +1322,16 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
                 ) {
                     Text(stringResource(R.string.debug_import_csv_button), fontSize = 12.sp)
                 }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Legacy Database Migration Button
+                OutlinedButton(
+                    onClick = { showLegacyMigrationDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.debug_migrate_legacy_db), fontSize = 12.sp)
+                }
             }
         }
     
@@ -1366,6 +1378,37 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
         )
     }
     
+    // Legacy Database Migration Result Handling
+    val migrationResult by viewModel.migrationResult.collectAsState()
+    LaunchedEffect(migrationResult) {
+        migrationResult?.let { result ->
+            val message = buildString {
+                appendLine("✅ Migration complete!")
+                appendLine("Categories: ${result.categories.imported} imported, ${result.categories.skipped} skipped, ${result.categories.failed} failed")
+                appendLine("Expenses: ${result.expenses.imported} imported, ${result.expenses.skipped} skipped, ${result.expenses.failed} failed")
+                appendLine("Budgets: ${result.budgets.imported} imported, ${result.budgets.failed} failed")
+                appendLine("Recurring: ${result.recurringRules.imported} imported, ${result.recurringRules.failed} failed")
+                appendLine("Planned: ${result.plannedExpenses.imported} imported, ${result.plannedExpenses.failed} failed")
+                appendLine("Savings: ${result.savingsGoals.imported} imported, ${result.savingsGoals.failed} failed")
+            }
+            android.widget.Toast.makeText(context, message.trimEnd(), android.widget.Toast.LENGTH_LONG).show()
+            viewModel.clearMigrationResult()
+            viewModel.loadDatabaseStats()
+        }
+    }
+
+    // Legacy Migration File Picker Dialog
+    if (showLegacyMigrationDialog) {
+        LegacyMigrationDialog(
+            context = context,
+            onDismiss = { showLegacyMigrationDialog = false },
+            onMigrate = { uri ->
+                viewModel.migrateLegacyDatabase(uri)
+                showLegacyMigrationDialog = false
+            }
+        )
+    }
+
     // CSV Import Dialog
     if (showCsvImportDialog) {
         CsvImportDialog(
@@ -1619,6 +1662,120 @@ private fun CsvImportDialog(
                 enabled = selectedUri != null && !isImporting
             ) {
                 Text(stringResource(R.string.debug_import_csv))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
+@Composable
+private fun LegacyMigrationDialog(
+    context: Context,
+    onDismiss: () -> Unit,
+    onMigrate: (android.net.Uri) -> Unit
+) {
+    var selectedFileName by remember { mutableStateOf<String?>(null) }
+    var selectedUri by remember { mutableStateOf<android.net.Uri?>(null) }
+
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: android.net.Uri? ->
+        uri?.let { selectedUri = it }
+        selectedUri?.let { uri ->
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex >= 0) {
+                        selectedFileName = cursor.getString(nameIndex)
+                    }
+                }
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Migrate Legacy Database") },
+        text = {
+            Column {
+                Text(
+                    text = "Select an old backup database file (.db) to migrate data into the current app.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Categories, expenses, budgets, recurring rules, planned expenses, and savings goals will be imported.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Duplicate items (by name or dedup key) will be skipped.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedButton(
+                    onClick = { launcher.launch(arrayOf("application/octet-stream", "*/*")) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (selectedFileName == null) "Select database file" else "Change file")
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (selectedFileName != null) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "Selected:",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                selectedFileName!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        "No file selected. Choose a .db file from your backup.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "Existing data with the same name/keys will be preserved. No data will be overwritten.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    selectedUri?.let { onMigrate(it) }
+                },
+                enabled = selectedUri != null
+            ) {
+                Text("Migrate Data")
             }
         },
         dismissButton = {

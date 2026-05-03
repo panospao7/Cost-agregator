@@ -30,10 +30,13 @@ interface ExchangeRateDao {
     
     @Query("DELETE FROM exchange_rates WHERE lastUpdated < :olderThan")
     suspend fun deleteOldRates(olderThan: Long)
-    
+
+    @Query("SELECT * FROM exchange_rates WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency AND validDate <= :validDate ORDER BY validDate DESC LIMIT 1")
+    suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, validDate: Long): ExchangeRate?
+
     @Query("SELECT COUNT(*) FROM exchange_rates")
     suspend fun getRateCount(): Int
-    
+
     @Query("DELETE FROM exchange_rates")
     suspend fun deleteAllRates()
 }

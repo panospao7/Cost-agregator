@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.ui.screens.debug
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.R
@@ -17,6 +18,8 @@ import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
+import com.yourname.expensetracker.service.debug.LegacyDataMigrationService
+import com.yourname.expensetracker.service.debug.MigrationResult
 import com.yourname.expensetracker.util.CsvExpenseImporter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -25,6 +28,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.yourname.expensetracker.domain.util.TimeProvider
+import java.io.File
 import javax.inject.Inject
 
 @HiltViewModel
@@ -43,7 +47,8 @@ class DebugViewModel @Inject constructor(
     private val aiEngagementRepository: AiEngagementRepository,
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
     private val databaseBackupRepository: com.yourname.expensetracker.domain.backup.DatabaseBackupRepository,
-    val csvExpenseImporter: CsvExpenseImporter
+    val csvExpenseImporter: CsvExpenseImporter,
+    private val legacyDataMigrationService: LegacyDataMigrationService
 ) : ViewModel() {
 
     private data class ClearAllUndoSnapshot(
@@ -341,6 +346,10 @@ class DebugViewModel @Inject constructor(
     private val _databaseImportResult = MutableStateFlow<com.yourname.expensetracker.domain.backup.DatabaseImportResult?>(null)
     val databaseImportResult: StateFlow<com.yourname.expensetracker.domain.backup.DatabaseImportResult?> = _databaseImportResult
 
+    // Legacy DB Migration
+    private val _migrationResult = MutableStateFlow<MigrationResult?>(null)
+    val migrationResult: StateFlow<MigrationResult?> = _migrationResult
+
     // Emits after successful import so UI can force refresh/reload if needed
     private val _databaseImportRefreshSignal = MutableSharedFlow<Long>(extraBufferCapacity = 1)
     val databaseImportRefreshSignal: SharedFlow<Long> = _databaseImportRefreshSignal
@@ -484,5 +493,40 @@ class DebugViewModel @Inject constructor(
     
     fun clearImportResult() {
         _databaseImportResult.value = null
+    }
+
+    fun clearMigrationResult() {
+        _migrationResult.value = null
+    }
+
+    fun migrateLegacyDatabase(uri: Uri) {
+        viewModelScope.launch {
+            _migrationResult.value = null
+            val tempFile: File? = withContext(Dispatchers.IO) {
+                try {
+                    val temp = File.createTempFile("legacy_migration_", ".db", context.cacheDir)
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        temp.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    temp
+                } catch (e: Exception) {
+                    null
+                }
+            }
+
+            if (tempFile == null) {
+                return@launch
+            }
+
+            val result = withContext(Dispatchers.IO) {
+                legacyDataMigrationService.migrateFromBackup(tempFile.absolutePath)
+            }
+
+            tempFile.delete()
+
+            _migrationResult.value = result
+        }
     }
 }

@@ -67,16 +67,61 @@ class CashFlowCalculator @Inject constructor(
         val calendar = Calendar.getInstance()
         val results = mutableListOf<DailyCashFlow>()
         var runningBalance = startingBalance
-        
-        // Get historical data for the period
+
         val startTime = startDate.time
         val endTime = endDate.time
-        
-        val historicalExpenses = expenseRepository.getExpensesBetween(startTime, endTime)
-        
-        // Get recurring patterns for prediction
+
+        // ── Pre-compute occurrence-driven predictions (FCST-3) ──────────────
+        // Part 1: Manual rules — materialise occurrences via the lifecycle
+        // coordinator, then query PLANNED occurrences for the full range.
         val recurringPatterns = recurringPatternsProvider.getConfirmedPatterns()
-        
+        val ruleIds = recurringPatterns
+            .filter { it.id != null }
+            .mapNotNull { it.id }
+            .distinct()
+
+        if (ruleIds.isNotEmpty()) {
+            for (ruleId in ruleIds) {
+                try {
+                    recurringLifecycleCoordinator.generateOccurrences(ruleId, startTime, endTime)
+                } catch (e: Exception) {
+                    Timber.w(e, "$TAG: generateOccurrences failed for ruleId=%d", ruleId)
+                }
+            }
+        }
+
+        val plannedOccurrences = if (ruleIds.isNotEmpty()) {
+            recurringOccurrenceDao.getByDateRange(startTime, endTime)
+                .filter {
+                    it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
+                        it.sourceId in ruleIds &&
+                        it.status == "PLANNED"
+                }
+        } else {
+            emptyList()
+        }
+
+        // Build a day-indexed map from occurrences (yyyy-MM-dd → patterns)
+        val occurrencePatternsByDay = mutableMapOf<String, MutableList<RecurringPattern>>()
+        for (occ in plannedOccurrences) {
+            val occCal = Calendar.getInstance().apply { timeInMillis = occ.dueDate }
+            val dayKey = String.format(
+                Locale.US, "%04d-%02d-%02d",
+                occCal.get(Calendar.YEAR),
+                occCal.get(Calendar.MONTH) + 1,
+                occCal.get(Calendar.DAY_OF_MONTH)
+            )
+            occurrencePatternsByDay.getOrPut(dayKey) { mutableListOf() }
+                .add(occ.toRecurringPattern())
+        }
+
+        // Part 2: Detected-only patterns (no manual rule) —
+        // ad-hoc date matching on nextExpectedDate.
+        val detectedPatterns = recurringPatterns.filter { it.id == null }
+
+        // Get historical data for the period
+        val historicalExpenses = expenseRepository.getExpensesBetween(startTime, endTime)
+
         // Group historical expenses by day key (yyyy-MM-dd) to avoid cross-year collisions
         val expensesByDay = mutableMapOf<String, MutableList<Expense>>()
         for (expense in historicalExpenses) {
@@ -91,7 +136,7 @@ class CashFlowCalculator @Inject constructor(
             val list = expensesByDay.getOrPut(dayKey) { mutableListOf() }
             list.add(expense)
         }
-        
+
         // Process each day
         calendar.time = startDate
         while (calendar.time.before(endDate)) {
@@ -103,10 +148,10 @@ class CashFlowCalculator @Inject constructor(
                 calendar.get(Calendar.MONTH) + 1,
                 calendar.get(Calendar.DAY_OF_MONTH)
             )
-            
+
             // Get day's expenses
             val dayExpenses = expensesByDay[dayKey] ?: mutableListOf()
-            
+
             // Split into inflow and outflow using explicit transaction-type classification.
             // Inflow  = DEPOSIT, or TRANSFER with transferDirection == INCOMING.
             // Outflow = PURCHASE, WITHDRAWAL, or TRANSFER with transferDirection == OUTGOING.
@@ -129,12 +174,17 @@ class CashFlowCalculator @Inject constructor(
                     else -> { /* UNKNOWN – no cash-flow impact */ }
                 }
             }
-            
-            // Calculate predicted recurring for this day
+
+            // Calculate predicted recurring for this day — two-path approach (FCST-3)
             val predictedRecurringList = mutableListOf<RecurringPattern>()
+
+            // Path 1: Occurrence-driven predictions from manual rules
+            occurrencePatternsByDay[dayKey]?.let { predictedRecurringList.addAll(it) }
+
+            // Path 2: Detected-only patterns — ad-hoc date matching on nextExpectedDate
             val currentDayStart = TimePeriodUtils.getStartOfDay(currentDay.time)
             val currentDayEnd = TimePeriodUtils.getEndOfDay(currentDay.time)
-            for (pattern in recurringPatterns) {
+            for (pattern in detectedPatterns) {
                 val expectedDayStart = TimePeriodUtils.getStartOfDay(pattern.nextExpectedDate)
                 if (expectedDayStart >= currentDayStart && expectedDayStart < currentDayEnd) {
                     predictedRecurringList.add(pattern)

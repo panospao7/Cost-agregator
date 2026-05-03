@@ -1236,6 +1236,7 @@
     <string name="debug_current_data">Current Data:</string>
     <string name="debug_transactions_count">%1$d transactions</string>
     <string name="debug_import_csv_button">📄 Import from CSV (Old Phone)</string>
+    <string name="debug_migrate_legacy_db">🗄️ Migrate Legacy DB</string>
     <string name="debug_import_no_file">No file selected</string>
     <string name="debug_import_csv_format_description">Format: date,amount,merchant,category,description</string>
     <string name="debug_select_csv_file">Select CSV File</string>

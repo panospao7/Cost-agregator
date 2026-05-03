@@ -142,6 +142,81 @@ class CurrencyConverter @Inject constructor(
     }
 
     /**
+     * Convert an amount from one currency to another using the exchange rate
+     * valid as of [atMillis] (epoch ms).
+     *
+     * This enables historically-accurate currency conversion for reports and
+     * cash-flow projections on past dates. The lookup queries
+     * [ExchangeRateDao.getRateAsOf] which returns the most recent rate whose
+     * [ExchangeRate.validDate] ≤ [atMillis].
+     *
+     * Falls back through direct rate → via EUR intermediate, matching the
+     * same strategy as [convert]. Returns null if no historical rate is found.
+     */
+    suspend fun convertAsOf(
+        amount: Double,
+        fromCurrency: String,
+        toCurrency: String,
+        atMillis: Long
+    ): ConversionResult? = withContext(Dispatchers.IO) {
+        if (fromCurrency.uppercase() == toCurrency.uppercase()) {
+            return@withContext ConversionResult(
+                originalAmount = amount,
+                originalCurrency = fromCurrency,
+                convertedAmount = amount,
+                targetCurrency = toCurrency,
+                rateUsed = 1.0,
+                timestamp = atMillis
+            )
+        }
+
+        // Try direct rate first
+        val directRate = exchangeRateStore.getRateAsOf(
+            fromCurrency.uppercase(),
+            toCurrency.uppercase(),
+            atMillis
+        )
+
+        if (directRate != null) {
+            return@withContext ConversionResult(
+                originalAmount = amount,
+                originalCurrency = fromCurrency,
+                convertedAmount = amount * directRate.rate,
+                targetCurrency = toCurrency,
+                rateUsed = directRate.rate,
+                timestamp = directRate.lastUpdated
+            )
+        }
+
+        // Try via EUR as intermediate
+        val toEurRate = exchangeRateStore.getRateAsOf(
+            fromCurrency.uppercase(),
+            DEFAULT_BASE_CURRENCY,
+            atMillis
+        )
+        val fromEurRate = exchangeRateStore.getRateAsOf(
+            DEFAULT_BASE_CURRENCY,
+            toCurrency.uppercase(),
+            atMillis
+        )
+
+        if (toEurRate != null && fromEurRate != null) {
+            val combinedRate = toEurRate.rate * fromEurRate.rate
+            return@withContext ConversionResult(
+                originalAmount = amount,
+                originalCurrency = fromCurrency,
+                convertedAmount = amount * combinedRate,
+                targetCurrency = toCurrency,
+                rateUsed = combinedRate,
+                timestamp = maxOf(toEurRate.lastUpdated, fromEurRate.lastUpdated)
+            )
+        }
+
+        Timber.w("No exchange rate available for $fromCurrency to $toCurrency as of $atMillis")
+        null
+    }
+
+    /**
      * Convert a list of amounts in various currencies to a single target currency.
      * Returns a strict aggregate result in the target currency and a list of failures.
      *

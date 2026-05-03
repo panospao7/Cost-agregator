@@ -18,6 +18,7 @@ data class DomainExchangeRate(
  */
 interface ExchangeRateStore {
     suspend fun getRate(fromCurrency: String, toCurrency: String): DomainExchangeRate?
+    suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate?
     suspend fun insertOrUpdate(rate: DomainExchangeRate)
     suspend fun insertOrUpdateAll(rates: List<DomainExchangeRate>)
     fun getAllRatesForBase(baseCurrency: String): Flow<List<DomainExchangeRate>>

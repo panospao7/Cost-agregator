@@ -37,6 +37,30 @@ import kotlin.math.abs
  * and expenses whose merchant key matches are excluded from statistical outlier
  * detection. This prevents routine bills from triggering anomaly alerts while
  * still catching unusual spikes in recurring amounts.
+ *
+ * ## AIML-11: Confidence propagation
+ * This detector does NOT use AI confidence scores — it uses purely statistical
+ * methods (IQR, MAD, contextual) on raw numerical amounts. However, the
+ * [detect] method receives pre-filtered expenses that may have been created
+ * via the AI auto-accept path (see [NotificationProcessingPipeline]).
+ * These expenses carry no confidence metadata, so the statistical methods
+ * treat them identically to manually-entered transactions.
+ *
+ * ## AIML-12: Stale category IDs
+ * Category IDs from stale AI classifications are handled at the caller level
+ * ([InsightsEngine.findAnomalies]) which resolves category references through
+ * the `categoryMap` parameter. If a category has been deleted, the anomaly
+ * is displayed without a category reference rather than showing a stale ID.
+ *
+ * ## AIML-13: Duplicate-inflated trust
+ * Repeated identical transactions from the same merchant can create a
+ * statistical baseline that masks genuinely anomalous spikes (e.g. a €50
+ * recurring charge every month raises the category average, so a €150
+ * one-time charge becomes harder to detect). The recurring-expense suppression
+ * parameter [suppressRecurringMerchantKeys] mitigates this by removing
+ * known-recurring expenses from the statistical pool before computing
+ * thresholds. Callers are responsible for computing the suppression set
+ * from [com.yourname.expensetracker.domain.logic.RecurringExpenseEngine.getPatterns].
  */
 @Singleton
 class AnomalyDetector @Inject constructor(
