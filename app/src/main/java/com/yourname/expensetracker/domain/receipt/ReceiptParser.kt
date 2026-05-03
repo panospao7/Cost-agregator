@@ -4,7 +4,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
 import java.util.regex.Pattern
-import java.text.SimpleDateFormat  // Migration: prefer java.time.format.DateTimeFormatter (thread-safe)
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -647,8 +649,7 @@ class ReceiptParser @Inject constructor(
             Regex("""(\d{1,2})\s?[/.-]\s?(\d{1,2})\s?[/.-]\s?(\d{2})\b""")
         )
 
-        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
-        sdf.isLenient = false
+        val dateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.US)
 
         for (pattern in datePatterns) {
             pattern.find(text)?.let { match ->
@@ -661,7 +662,8 @@ class ReceiptParser @Inject constructor(
                 val currentYear = TimePeriodUtils.getYear(now)
                 if (yearInt in (currentYear - 10)..(currentYear + 1)) { 
                     try {
-                        return sdf.parse("$d/$m/$year")?.time
+                        val parsed = LocalDate.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year", dateFormatter)
+                        return parsed.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
                     } catch (e: Exception) {
                         Timber.d("Failed to parse date: $d/$m/$year")
                     }

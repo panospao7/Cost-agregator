@@ -49,8 +49,9 @@ class QuickBooksIIFExporter {
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
         val fundingAccount = expense.sourceAccountName
         val categoryAccount = categories[expense.categoryId] ?: "Uncategorized"
-        val amount = CurrencyFormatter.formatForExport(expense.amount)
-        val splitAmount = CurrencyFormatter.formatForExport(-expense.amount)
+        val safeAmount = expense.amount.takeIf { it.isFinite() } ?: 0.0
+        val amount = CurrencyFormatter.formatForExport(safeAmount)
+        val splitAmount = CurrencyFormatter.formatForExport(-safeAmount)
         val memo = escapeIifField(expense.notes ?: "")
         val name = escapeIifField(expense.merchant)
 

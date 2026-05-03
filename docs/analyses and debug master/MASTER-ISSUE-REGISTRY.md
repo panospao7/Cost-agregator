@@ -97,10 +97,13 @@ all 356 issues. Key findings:
 | W | Cross-Cutting KDoc & Audit Notes | ~8 | ✅ Resolved |
 | X | Final Polish — SDF/Millis/EUR KDoc | ~6 | ✅ Resolved |
 | Y | Final Batch — DAO deprecations, KDoc, registry update | ~5 | ✅ Resolved |
-| **Total** | **25 batches** | **~255 issues resolved** | **All verified closed** |
+| **Z1** | **Quick Win Batch 1 — isFinite guards, SDF→DTF, matchConfidence cleanup** | **~5** | **✅ Resolved** |
+| **Z2** | **Quick Win Batch 2 — additional SDF→DTF, export guards** | **~3** | **✅ Resolved** |
+| **Z3** | **Quick Win Batch 3 — SDF→DTF final 3 files, export defense-in-depth, matchConfidence stale-clear** | **~3** | **✅ Resolved** |
+| **Total** | **28 batches** | **~266 issues resolved** | **All verified closed** |
 
-The original registry below documents the pre-hardening baseline. After all 25 batches,
-the remaining ~90 items are tracked as future enhancements or superseded by architecture
+The original registry below documents the pre-hardening baseline. After all 28 batches,
+the remaining ~84 items are tracked as future enhancements or superseded by architecture
 changes. Cross-cutting KDoc annotations across batches M–X document the migration path.
 
 ---
@@ -127,6 +130,7 @@ TRN-8: NotificationProcessingPipeline.processInternal() calls parserRegistry.par
 ### Additional Notes
 - TRN-11 was marked PARTIALLY in registry but is FULLY RESOLVED (deleteAll() deprecated at ERROR level, deleteAllNotifications() exists)
 - Database schema is v112 (not v110 as previously stated) based on MIGRATION_111_112 in AppDatabase.kt
+- **Quick Win Batch 3 (2026-05-03):** SimpleDateFormat → DateTimeFormatter converted in ReceiptParser.kt, HomeViewModel.kt, BankStatementParser.kt (7 parser sites). AccountingExporters.kt got defense-in-depth `.takeIf { it.isFinite() }` guard. `approveMatchSuggestion()` now also clears `matchConfidence = null` alongside `suggestedExpenseId`.
 - TransactionLifecycleCoordinator now handles validate → normalize → dedupe → insert → event → side effects pipeline
 - ReceiptLinkService is the single owner of receipt-expense associations
 - DuplicateDetectionPolicy is consistently used across all duplicates paths with currency+type awareness
@@ -139,9 +143,9 @@ TRN-8: NotificationProcessingPipeline.processInternal() calls parserRegistry.par
 ## Summary
 
 - **Original unresolved issues (pre-hardening):** 356
-- **Resolved across all 25 batches + P1/P2 + P3/P4:** ~268 (verified in codebase)
-- **Remaining (future enhancements / superseded):** ~88
-- **Status after final reconciliation:** Registry accuracy confirmed; all resolved issues verified against actual source files. P1+P2 review added 5 newly-resolved items. P3+P4 review added 8 newly-resolved items.
+- **Resolved across all 28 batches + P1/P2 + P3/P4:** ~272 (verified in codebase)
+- **Remaining (future enhancements / superseded):** ~84
+- **Status after final reconciliation:** Registry accuracy confirmed; all resolved issues verified against actual source files. P1+P2 review added 5 newly-resolved items. P3+P4 review added 8 newly-resolved items. Quick win batches Z1–Z3 added ~11 incremental hardening items (SDF→DateTimeFormatter conversion in 6 files, isFinite guards in export paths, stale matchConfidence cleanup).
 - **By severity (original):** CRITICAL = 25 (all resolved per original count, with FCST-11/SHR-7/DB-3/CURR-4/AIML-7 now also confirmed), MAJOR/HIGH = 190 (most resolved), MEDIUM = 62, MINOR/LOW = 79
 
 ---

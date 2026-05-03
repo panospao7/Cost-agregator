@@ -4,7 +4,11 @@ import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import java.util.regex.Pattern
 import java.util.Locale
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
@@ -376,8 +380,11 @@ class BankStatementParser @Inject constructor(
         return try {
             // Normalize spaces and commas
             val normalized = dateStr.replace(Regex("""\s*,\s*|\s+"""), " ").trim()
-            val sdf = SimpleDateFormat("MMM d yyyy", Locale.US)
-            sdf.parse(normalized)?.time
+            val formatter = DateTimeFormatter.ofPattern("MMM d yyyy", Locale.US)
+            LocalDate.parse(normalized, formatter)
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
         } catch (e: Exception) {
             null
         }
@@ -470,9 +477,11 @@ class BankStatementParser @Inject constructor(
      */
     private fun parseGreekBankDateTime(dateStr: String, timeStr: String): Long? {
         return try {
-            val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.US)
-            sdf.isLenient = false
-            sdf.parse("$dateStr $timeStr")?.time
+            val formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss", Locale.US)
+            LocalDateTime.parse("$dateStr $timeStr", formatter)
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
         } catch (e: Exception) {
             // Fallback: try just the date
             parseGreekBankDate(dateStr)
@@ -499,9 +508,11 @@ class BankStatementParser @Inject constructor(
      */
     private fun parseGreekBankDate(dateStr: String): Long? {
         return try {
-            val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
-            sdf.isLenient = false
-            sdf.parse(dateStr)?.time
+            val formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.US)
+            LocalDate.parse(dateStr, formatter)
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
         } catch (e: Exception) {
             null
         }
@@ -682,8 +693,7 @@ class BankStatementParser @Inject constructor(
             Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](\d{2})""")
         )
 
-        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
-        sdf.isLenient = false
+        val dateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.US)
 
         val now = timeProvider.now()
         val currentYear = TimePeriodUtils.getYear(now)
@@ -700,10 +710,8 @@ class BankStatementParser @Inject constructor(
                 
                 if (yearInt in minYear..currentYear) {
                     try {
-                        val parsedDate = sdf.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year")?.time
-                        if (parsedDate != null) {
-                            foundDates.add(parsedDate)
-                        }
+                        val parsedDate = LocalDate.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year", dateFormatter)
+                        foundDates.add(parsedDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
                     } catch (e: Exception) {
                         // Skip invalid dates
                     }
@@ -731,8 +739,7 @@ class BankStatementParser @Inject constructor(
             Regex("""(\d{1,2})[/.-](\d{1,2})[/.-](\d{2})""")
         )
 
-        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US)
-        sdf.isLenient = false
+        val dateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.US)
 
         val now = timeProvider.now()
         val currentYear = TimePeriodUtils.getYear(now)
@@ -746,7 +753,8 @@ class BankStatementParser @Inject constructor(
                 
                 if (yearInt in minYear..currentYear) {
                     try {
-                        return sdf.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year")?.time
+                        val parsed = LocalDate.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year", dateFormatter)
+                        return parsed.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
                     } catch (e: Exception) {
                         if (BuildConfig.DEBUG) Timber.d("Failed to parse date: $d/$m/$year")
                     }

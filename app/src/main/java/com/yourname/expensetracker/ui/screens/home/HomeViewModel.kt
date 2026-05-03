@@ -50,8 +50,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import java.text.SimpleDateFormat  // Migration: prefer java.time.format.DateTimeFormatter (thread-safe)
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
 
@@ -147,9 +148,9 @@ class HomeViewModel @Inject constructor(
     val homeCurrency: StateFlow<String> = currencySettingsRepository.homeCurrency()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "EUR")
 
-    private val dateKeyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    private val dateKeyFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
     private fun dashboardBriefingKeyForToday(): String =
-        "dashboard_home:${dateKeyFormat.format(Date(timeProvider.now()))}"
+        "dashboard_home:${Instant.ofEpochMilli(timeProvider.now()).atZone(ZoneId.systemDefault()).format(dateKeyFormat)}"
     // TODO: Replace with actual UserSessionProvider
     private val defaultRecommendationUserId = "default_user"
 

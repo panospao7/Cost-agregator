@@ -930,11 +930,12 @@ class ReceiptRepository @Inject constructor(
         val receipt = scannedReceiptDao.getById(receiptId) ?: return
         val suggestedId = receipt.suggestedExpenseId ?: return
         
-        // RCP-22: Clear suggestedExpenseId after approval to prevent stale
-        // references from being reused if the receipt is later unlinked.
+        // RCP-22: Clear suggestedExpenseId and matchConfidence after approval to
+        // prevent stale references from being reused if the receipt is later unlinked.
         val updated = receipt.copy(
             expenseId = suggestedId,
             suggestedExpenseId = null,
+            matchConfidence = null,
             matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.MANUALLY_MATCHED,
             updatedAt = timeProvider.now()
         )

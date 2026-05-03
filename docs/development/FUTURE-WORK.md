@@ -3,8 +3,8 @@
 > Generated: 2026-05-03 | Sources: MASTER-ISSUE-REGISTRY.md, REMAINING-ISSUES-PLAN.md,
 > validate-major-*.md (4 files), review-p1-p2.md, review-p3-p4.md
 >
-> **Status:** 25 hardening batches (A–Y) completed, ~268 of 356 issues resolved.
-> This document tracks the ~88 remaining items after final reconciliation.
+> **Status:** 28 hardening batches (A–Y, Z1–Z3) completed, ~272 of 356 issues resolved.
+> This document tracks the ~84 remaining items after final reconciliation.
 
 ---
 
@@ -29,8 +29,8 @@
 | Workers (WKR) | 3 | 4 | 3 | 2 | **12** |
 | Forecast (FCST) | 1 | 6 | 5 | 1 | **13** |
 | AI Integration (AID) | 3 | 3 | 2 | 1 | **9** |
-| Migration Policy (RSP) | 5 | 1 | 1 | 2 | **9** |
-| **Total** | **45** | **85** | **67** | **15** | **212** |
+| Migration Policy (RSP) | 4 | 1 | 1 | 2 | **8** |
+| **Total** | **44** | **85** | **67** | **15** | **211** |
 
 > **Note:** "Infrastructure" items are cross-cutting concerns that span multiple subsystems.
 > The total count (212) includes _all_ sub-items; many issues have multiple sub-items
@@ -443,7 +443,7 @@ Each item includes:
 | RSP-R4A | No pre-upgrade backup prompt | **Small** | None | Medium | Add upgrade detection |
 | RSP-R5A | No legacy DB importer for pre-v6 schemas | **Large** | RSP-R2A | Medium | Implement `LegacyDatabaseImporter` |
 | RSP-R6A | No fresh-vs-migrated side-by-side parity test | **Large** | RSP-R3A | Medium | Add parity test |
-| RSP-A2 | `SimpleDateFormat` not thread-safe in `CsvExpenseImporter` | **Small** | None | Medium | Use `DateTimeFormatter` |
+| RSP-A2 | `SimpleDateFormat` → `DateTimeFormatter` | **Small** | None | Medium | ✅ RESOLVED — CsvExpenseImporter, ReceiptParser, HomeViewModel, BankStatementParser all converted. ~7 parser sites migrated across Batch 3 quick wins. |
 | RSP-A3 | `countRowsFromSourceTable` uses string interpolation (SQL injection risk) | **Small** | None | High | Add table name whitelist |
 
 ---
@@ -494,7 +494,7 @@ Quick wins: deprecations, dead-code removal, KDoc, single-line guards.
 | WKR | WRK-8 (runCatching), WRK-N1 (gate), WRK-N5 (REPLACE), WRK-13 (guard), WRK-14 (logs), WRK-N3 (ID gen), WRK-N4 (delivery) |
 | FCST | FCST-N1 (manual entities), FCST-N5 (dead code), FCST-N4 (status filter), FCST-17 (diagnostics) |
 | AID | AID-N4 (bounded confidence), AID-N6 (defaults), AID-E (comment), AID-F (logs) |
-| RSP | RSP-R2B (schema JSON), RSP-R3C (FK check), RSP-R4A (backup prompt), RSP-A2 (DateTimeFormatter), RSP-A3 (whitelist) |
+| RSP | RSP-R2B (schema JSON), RSP-R3C (FK check), RSP-R4A (backup prompt), RSP-A3 (whitelist) |
 
 ### SHORT-TERM — Medium Effort (1-4 hours each, ~85 items)
 
