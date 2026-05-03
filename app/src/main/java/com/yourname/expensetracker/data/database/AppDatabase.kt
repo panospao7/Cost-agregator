@@ -4900,10 +4900,10 @@ abstract class AppDatabase : RoomDatabase() {
          * originally used the `idx_` prefix.  MIGRATION_106_107 corrected these
          * to `index_` to match Room's auto-naming convention.  However, the
          * FRESH_INSTALL_CALLBACK below still uses the old `idx_` prefix for:
-         *   - `idx_budgets_activeOverallKey`         (entity: index_budgets_activeOverallKey)
-         *   - `idx_budgets_activeCategoryKey`        (entity: index_budgets_activeCategoryKey)
-         *   - `idx_group_members_currentUserGroupKey`(entity: index_group_members_currentUserGroupKey)
-         *   - `idx_planned_expenses_openSourceOccurrenceKey` (entity: index_planned_expenses_openSourceOccurrenceKey)
+         *   - `index_budgets_activeOverallKey`         (matches entity)
+         *   - `index_budgets_activeCategoryKey`        (matches entity)
+         *   - `index_group_members_currentUserGroupKey` (matches entity)
+         *   - `index_planned_expenses_openSourceOccurrenceKey` (matches entity)
          *
          * These `CREATE UNIQUE INDEX IF NOT EXISTS` statements are idempotent
          * and functionally correct (the prefix difference does not affect
@@ -4916,7 +4916,7 @@ abstract class AppDatabase : RoomDatabase() {
          * ## MIG-1: Fresh-install callback parity
          * Index name parity between FRESH_INSTALL_CALLBACK and entity
          * declarations was documented in Batch E (see E5 above). The four
-         * `idx_`-prefixed indexes in the callback are intentionally kept
+         * `index_`-prefixed indexes in the callback now match Room entity conventions.
          * as-is because:
          *  - They are backed by `CREATE UNIQUE INDEX IF NOT EXISTS`, which is
          *    idempotent — both `idx_` and `index_` forms can coexist harmlessly.
@@ -5121,8 +5121,8 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE budgets_new RENAME TO budgets")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_categoryId ON budgets (categoryId)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_budgets_isActive ON budgets (isActive)")
-                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_activeOverallKey ON budgets (activeOverallKey)")
-                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_activeCategoryKey ON budgets (activeCategoryKey)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_activeOverallKey ON budgets (activeOverallKey)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_activeCategoryKey ON budgets (activeCategoryKey)")
 
                 // ── Phase 7: materialized key CHECK constraints ───────────────────────────
 
@@ -5152,7 +5152,7 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members (groupId)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId_isCurrentUser ON group_members (groupId, isCurrentUser)")
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_name ON group_members (groupId, name)")
-                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_group_members_currentUserGroupKey ON group_members (currentUserGroupKey)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_currentUserGroupKey ON group_members (currentUserGroupKey)")
 
                 // planned_expenses: openSourceOccurrenceKey invariant
                 db.execSQL(
@@ -5191,7 +5191,7 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE planned_expenses_new RENAME TO planned_expenses")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_date ON planned_expenses (date)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_planned_expenses_categoryId ON planned_expenses (categoryId)")
-                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_planned_expenses_openSourceOccurrenceKey ON planned_expenses (openSourceOccurrenceKey)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_planned_expenses_openSourceOccurrenceKey ON planned_expenses (openSourceOccurrenceKey)")
             }
         }
 
