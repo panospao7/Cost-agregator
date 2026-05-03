@@ -112,7 +112,10 @@ interface MerchantLocationDao {
     @Query("SELECT * FROM merchant_location_corrections WHERE normalizedMerchantName = :merchantKey AND areaLatitude IS NULL AND areaLongitude IS NULL ORDER BY createdAt DESC LIMIT 1")
     suspend fun getLatestGlobalCorrection(merchantKey: String): MerchantLocationCorrection?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun upsertCorrection(correction: MerchantLocationCorrection)
 
     @Delete

@@ -12,7 +12,10 @@ interface SavingsGoalDao {
     @Query("SELECT * FROM savings_goals WHERE id = :goalId")
     suspend fun getById(goalId: Long): SavingsGoal?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertGoal(goal: SavingsGoal): Long
 
     @Delete

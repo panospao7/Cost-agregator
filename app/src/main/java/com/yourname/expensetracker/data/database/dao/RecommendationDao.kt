@@ -77,14 +77,16 @@ interface RecommendationDao {
     
     /**
      * Insert a new recommendation.
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
      */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(recommendation: RecommendationEntity)
     
     /**
      * Insert multiple recommendations.
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
      */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(recommendations: List<RecommendationEntity>)
     
     /**

@@ -17,8 +17,9 @@ interface SpendingPersonalityProfileDao {
     /**
      * Insert a new personality profile.
      * Returns the ID of the inserted profile.
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
      */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(profile: SpendingPersonalityProfileEntity): Long
     
     /**

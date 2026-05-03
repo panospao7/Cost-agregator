@@ -22,8 +22,11 @@ interface MerchantCategoryDao {
      * Prefer the repository-level method that handles canonical name normalization
      * and deduplication before inserting.
      */
+    /**
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
+     */
     @Deprecated("Use repository-level insert with canonical name normalization instead")
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(merchantCategory: MerchantCategory)
 
     /**
@@ -31,8 +34,11 @@ interface MerchantCategoryDao {
      * Prefer the repository-level method that handles canonical name normalization
      * and deduplication before inserting.
      */
+    /**
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
+     */
     @Deprecated("Use repository-level insertAll with canonical name normalization instead")
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(merchantCategories: List<MerchantCategory>)
     
     @Query("SELECT * FROM merchant_categories")

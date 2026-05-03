@@ -23,14 +23,16 @@ interface SavingsSweepPlanDao {
 
     /**
      * Insert a new sweep plan.
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
      */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(plan: SavingsSweepPlan): Long
 
     /**
      * Insert multiple sweep plans (for multi-goal allocation).
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
      */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(plans: List<SavingsSweepPlan>): List<Long>
 
     /**

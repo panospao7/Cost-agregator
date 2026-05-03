@@ -10,9 +10,18 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ExchangeRateDao {
     
+    /**
+     * Uses REPLACE intentionally: exchange rates are keyed on a unique composite
+     * index (fromCurrency + toCurrency + validDate), so newer rate data for the
+     * same currency pair and date should overwrite older data. No risk of
+     * accidental cross-row data loss — each pair/date is independently keyed.
+     */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdate(rate: ExchangeRate): Long
     
+    /**
+     * Bulk variant — same REPLACE semantics as [insertOrUpdate].
+     */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateAll(rates: List<ExchangeRate>)
     

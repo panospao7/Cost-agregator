@@ -28,7 +28,10 @@ interface SpendingChallengeDao {
     )
     suspend fun getActiveChallenges(): List<SpendingChallengeEntity>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(challenge: SpendingChallengeEntity): Long
 
     @Query(

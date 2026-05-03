@@ -14,10 +14,16 @@ interface BudgetAdjustmentDao {
     
     // ==================== RECOMMENDATIONS ====================
     
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertRecommendation(recommendation: BudgetAdjustmentRecommendation): Long
     
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertRecommendations(recommendations: List<BudgetAdjustmentRecommendation>): List<Long>
     
     @Update
