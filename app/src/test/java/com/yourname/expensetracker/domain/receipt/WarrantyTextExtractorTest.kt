@@ -6,8 +6,9 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.text.SimpleDateFormat
-import java.util.Calendar
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 class WarrantyTextExtractorTest {
@@ -105,9 +106,9 @@ class WarrantyTextExtractorTest {
     fun `parseDate accepts 2-digit year in dd slash MM slash yy format`() {
         // Build a date string 5 days ago in dd/MM/yy format, which is within the
         // reasonable purchase-date window.
-        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -5) }
-        val twoDigitYearFmt = SimpleDateFormat("dd/MM/yy", Locale.getDefault())
-        val dateStr = twoDigitYearFmt.format(cal.time)
+        val date = LocalDate.now().minusDays(5)
+        val twoDigitYearFmt = DateTimeFormatter.ofPattern("dd/MM/yy", Locale.getDefault())
+        val dateStr = twoDigitYearFmt.format(date)
 
         val ocrText = "Date: $dateStr\n2 Year Warranty"
         val result = extractor.extract(ocrText)
@@ -120,9 +121,9 @@ class WarrantyTextExtractorTest {
      */
     @Test
     fun `parseDate accepts 2-digit year in MM slash dd slash yy format`() {
-        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -5) }
-        val twoDigitYearFmt = SimpleDateFormat("MM/dd/yy", Locale.getDefault())
-        val dateStr = twoDigitYearFmt.format(cal.time)
+        val date = LocalDate.now().minusDays(5)
+        val twoDigitYearFmt = DateTimeFormatter.ofPattern("MM/dd/yy", Locale.getDefault())
+        val dateStr = twoDigitYearFmt.format(date)
 
         val ocrText = "Date: $dateStr\n2 Year Warranty"
         val result = extractor.extract(ocrText)
@@ -137,9 +138,9 @@ class WarrantyTextExtractorTest {
      */
     @Test
     fun `parseDate accepts full month name in MMMM dd comma yyyy format`() {
-        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -5) }
-        val fullMonthFmt = SimpleDateFormat("MMMM dd, yyyy", Locale.US)
-        val dateStr = fullMonthFmt.format(cal.time)  // e.g. "April 04, 2026"
+        val date = LocalDate.now().minusDays(5)
+        val fullMonthFmt = DateTimeFormatter.ofPattern("MMMM dd, yyyy", Locale.US)
+        val dateStr = fullMonthFmt.format(date)  // e.g. "April 04, 2026"
 
         val ocrText = "Purchase Date: $dateStr\n1 Year Warranty"
         val result = extractor.extract(ocrText)
@@ -153,9 +154,9 @@ class WarrantyTextExtractorTest {
      */
     @Test
     fun `parseDate accepts full month name in dd MMMM yyyy format`() {
-        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -5) }
-        val fullMonthFmt = SimpleDateFormat("dd MMMM yyyy", Locale.US)
-        val dateStr = fullMonthFmt.format(cal.time)  // e.g. "04 April 2026"
+        val date = LocalDate.now().minusDays(5)
+        val fullMonthFmt = DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale.US)
+        val dateStr = fullMonthFmt.format(date)  // e.g. "04 April 2026"
 
         val ocrText = "Date: $dateStr\n1 Year Warranty"
         val result = extractor.extract(ocrText)
@@ -169,9 +170,9 @@ class WarrantyTextExtractorTest {
      */
     @Test
     fun `parseDate accepts uppercased full month name as produced by internal OCR normalization`() {
-        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -5) }
-        val fullMonthFmt = SimpleDateFormat("MMMM dd, yyyy", Locale.US)
-        val mixedCaseDateStr = fullMonthFmt.format(cal.time)  // e.g. "April 04, 2026"
+        val date = LocalDate.now().minusDays(5)
+        val fullMonthFmt = DateTimeFormatter.ofPattern("MMMM dd, yyyy", Locale.US)
+        val mixedCaseDateStr = fullMonthFmt.format(date)  // e.g. "April 04, 2026"
         // Simulate what normalizeText does — uppercase the whole string
         val upperCaseOcrText = "PURCHASE DATE: ${mixedCaseDateStr.uppercase(Locale.getDefault())}\n2 YEAR WARRANTY"
 
@@ -185,8 +186,8 @@ class WarrantyTextExtractorTest {
 
     @Test
     fun `extract accepts receipts older than one year when date is still plausible`() {
-        val calendar = Calendar.getInstance().apply { add(Calendar.YEAR, -3) }
-        val dateStr = SimpleDateFormat("MMMM dd, yyyy", Locale.US).format(calendar.time)
+        val date = LocalDate.now().minusYears(3)
+        val dateStr = DateTimeFormatter.ofPattern("MMMM dd, yyyy", Locale.US).format(date)
 
         val result = extractor.extract(
             """
@@ -238,10 +239,8 @@ class WarrantyTextExtractorTest {
     // -------------------------------------------------------------------------
 
     private fun recentDateString(): String {
-        val format = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-        val calendar = Calendar.getInstance().apply {
-            add(Calendar.DAY_OF_YEAR, -5)
-        }
-        return format.format(calendar.time)
+        val formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.getDefault())
+        val date = LocalDate.now().minusDays(5)
+        return formatter.format(date)
     }
 }

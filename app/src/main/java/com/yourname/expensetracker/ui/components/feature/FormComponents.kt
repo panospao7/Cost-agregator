@@ -11,8 +11,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.R
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
@@ -139,10 +140,10 @@ fun FormDateField(
     enabled: Boolean = true
 ) {
     var showDatePicker by remember { mutableStateOf(false) }
-    val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
+    val dateFormat = DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault())
     
     OutlinedTextField(
-        value = dateFormat.format(Date(dateMillis)),
+        value = dateFormat.format(Instant.ofEpochMilli(dateMillis).atZone(ZoneId.systemDefault())),
         onValueChange = {},
         readOnly = true,
         label = { Text(label) },

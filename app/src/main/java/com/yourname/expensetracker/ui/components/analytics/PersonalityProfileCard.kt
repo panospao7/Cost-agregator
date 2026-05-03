@@ -31,8 +31,10 @@ import com.yourname.expensetracker.domain.analytics.SpendingPersonalityProfile
 import com.yourname.expensetracker.domain.analytics.SpendingPersonalityType
 import com.yourname.expensetracker.ui.components.BentoCard
 import com.yourname.expensetracker.ui.theme.SemanticColors
-import java.text.DateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import kotlin.math.roundToInt
 
 @Composable
@@ -261,6 +263,7 @@ private fun personalityColor(type: SpendingPersonalityType): Color = when (type)
 private fun formatTimestamp(timestamp: Long): String {
     if (timestamp <= 0L) return "just now"
     return runCatching {
-        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(timestamp))
+        DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
+            .format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
     }.getOrDefault("just now")
 }

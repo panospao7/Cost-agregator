@@ -20,7 +20,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -30,7 +32,7 @@ fun ReceiptMatchingScreen(
     viewModel: ReceiptMatchingViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
-    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
+    val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault()) }
 
     Scaffold(
         topBar = {
@@ -156,7 +158,7 @@ fun ReceiptMatchingScreen(
 @Composable
 private fun UnmatchedReceiptCard(
     receipt: com.yourname.expensetracker.data.database.entity.ScannedReceipt,
-    dateFormat: SimpleDateFormat,
+    dateFormat: DateTimeFormatter,
     onManualMatch: () -> Unit,
     onSkip: () -> Unit,
     onRerun: () -> Unit
@@ -173,7 +175,7 @@ private fun UnmatchedReceiptCard(
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
-                text = dateFormat.format(Date(receipt.parsedDate ?: receipt.createdAt)),
+                text = dateFormat.format(Instant.ofEpochMilli(receipt.parsedDate ?: receipt.createdAt).atZone(ZoneId.systemDefault())),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -203,7 +205,7 @@ private fun UnmatchedReceiptCard(
 private fun ManualMatchDialog(
     receipt: com.yourname.expensetracker.data.database.entity.ScannedReceipt,
     candidates: List<com.yourname.expensetracker.data.database.entity.Expense>,
-    dateFormat: SimpleDateFormat,
+    dateFormat: DateTimeFormatter,
     onDismiss: () -> Unit,
     onSelectExpense: (Long) -> Unit
 ) {
@@ -242,7 +244,7 @@ private fun ManualMatchDialog(
                                         fontWeight = FontWeight.Medium
                                     )
                                     Text(
-                                        text = "${String.format("%.2f", expense.amount)} • ${dateFormat.format(Date(expense.date))}",
+                                        text = "${String.format("%.2f", expense.amount)} • ${dateFormat.format(Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()))}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -292,7 +294,7 @@ private fun StatCard(
 @Composable
 private fun MatchSuggestionCard(
     suggestion: MatchSuggestion,
-    dateFormat: SimpleDateFormat,
+    dateFormat: DateTimeFormatter,
     onApprove: () -> Unit,
     onReject: () -> Unit
 ) {
@@ -318,7 +320,7 @@ private fun MatchSuggestionCard(
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        text = "${dateFormat.format(Date(suggestion.receipt.parsedDate ?: suggestion.receipt.createdAt))}",
+                        text = "${dateFormat.format(Instant.ofEpochMilli(suggestion.receipt.parsedDate ?: suggestion.receipt.createdAt).atZone(ZoneId.systemDefault()))}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

@@ -4,7 +4,9 @@ import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
-import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 class BankStatementParserTest {
@@ -149,9 +151,15 @@ class BankStatementParserTest {
         // date column), the parser should pick the second date (15/03/2025)
         // as the transaction date.
 
-        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US).apply { isLenient = false }
-        val expectedDate = sdf.parse("15/03/2025")!!.time  // transaction date
-        val valueDateMillis = sdf.parse("18/03/2025")!!.time
+        val dateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.US)
+        val expectedDate = LocalDate.parse("15/03/2025", dateFormatter)
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()  // transaction date
+        val valueDateMillis = LocalDate.parse("18/03/2025", dateFormatter)
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
 
         val blocks = listOf(
             // Header row (y: 10–30) — VALUE DATE appears first
@@ -440,8 +448,11 @@ class BankStatementParserTest {
         //
         // Parser should pick the first date column (15/03/2025).
 
-        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US).apply { isLenient = false }
-        val expectedDate = sdf.parse("15/03/2025")!!.time
+        val dateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.US)
+        val expectedDate = LocalDate.parse("15/03/2025", dateFormatter)
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
 
         val blocks = listOf(
             // Header row (y: 10–30) — TRANSACTION DATE appears first

@@ -1253,7 +1253,7 @@ fun RecurringItem(item: RecurringCandidate, homeCurrency: String = item.displayC
                 }
                 item.nextExpectedDate?.let { nextDate ->
                     val dateStr = remember(nextDate) {
-                        java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault()).format(nextDate)
+                        java.time.format.DateTimeFormatter.ofPattern("MMM dd", java.util.Locale.getDefault()).format(java.time.Instant.ofEpochMilli(nextDate).atZone(java.time.ZoneId.systemDefault()))
                     }
                     Text("Next expected: $dateStr", style = MaterialTheme.typography.labelSmall, color = SemanticColors.PrimaryLight)
                 }
@@ -1556,8 +1556,8 @@ fun SuspectTransactionCard(item: SuspectTransaction, homeCurrency: String = item
         SuspectReason.EXTREME_OUTLIER -> SemanticColors.DangerRed.copy(alpha = 0.08f) to "🚨"
     }
     val dateLabel = remember(item.dateMs) {
-        java.text.SimpleDateFormat("MMM dd, HH:mm", java.util.Locale.getDefault())
-            .format(java.util.Date(item.dateMs))
+        java.time.format.DateTimeFormatter.ofPattern("MMM dd, HH:mm", java.util.Locale.getDefault())
+            .format(java.time.Instant.ofEpochMilli(item.dateMs).atZone(java.time.ZoneId.systemDefault()))
     }
 
     Card(
@@ -1706,13 +1706,13 @@ fun TravelInsightCard(travel: TravelInsight, homeCurrency: String = "EUR") {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(6.dp))
-                val tripFmt = java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault())
+                val tripFmt = java.time.format.DateTimeFormatter.ofPattern("MMM dd", java.util.Locale.getDefault())
                 travel.travelTrips.take(3).forEach { trip ->
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        val dateRange = "${tripFmt.format(java.util.Date(trip.startDate))} – ${tripFmt.format(java.util.Date(trip.endDate))}"
+                        val dateRange = "${tripFmt.format(java.time.Instant.ofEpochMilli(trip.startDate).atZone(java.time.ZoneId.systemDefault()))} – ${tripFmt.format(java.time.Instant.ofEpochMilli(trip.endDate).atZone(java.time.ZoneId.systemDefault()))}"
                         Text(
                             trip.destinationHint?.let { "$it ($dateRange)" } ?: dateRange,
                             style = MaterialTheme.typography.bodySmall,

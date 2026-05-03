@@ -3,9 +3,10 @@ package com.yourname.expensetracker.data.email.provider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Test
-import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
-import java.util.TimeZone
 
 class EmailReceiptParserTest {
 
@@ -40,9 +41,10 @@ class EmailReceiptParserTest {
     }
 
     private fun expectedUtcMillis(pattern: String, value: String): Long {
-        return SimpleDateFormat(pattern, Locale.US).apply {
-            timeZone = TimeZone.getTimeZone("UTC")
-        }.parse(value)!!.time
+        return LocalDate.parse(value, DateTimeFormatter.ofPattern(pattern, Locale.US))
+            .atStartOfDay(ZoneId.of("UTC"))
+            .toInstant()
+            .toEpochMilli()
     }
 
     private class TestEmailParser : BaseEmailParser() {

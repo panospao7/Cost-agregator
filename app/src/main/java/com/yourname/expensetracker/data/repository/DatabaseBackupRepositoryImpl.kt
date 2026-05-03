@@ -31,7 +31,9 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
 import java.security.SecureRandom
-import java.text.SimpleDateFormat
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.*
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -347,7 +349,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
 
             // Create timestamped filename
-            val timestamp = SimpleDateFormat(DATE_FORMAT, Locale.getDefault()).format(Date())
+            val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US).format(LocalDateTime.now(ZoneId.systemDefault()))
             val backupFileName = "${BACKUP_PREFIX}${timestamp}.db"
             val encryptedFileName = "${BACKUP_PREFIX}${timestamp}.enc"
 
@@ -464,7 +466,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
 
             // Copy DB to temp for snapshot
-            val timestamp = SimpleDateFormat(DATE_FORMAT, Locale.getDefault()).format(Date())
+            val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US).format(LocalDateTime.now(ZoneId.systemDefault()))
             val tempDb = java.io.File(context.cacheDir, "costbackup_snapshot_${timestamp}.db")
             try {
                 dbFile.inputStream().use { input ->
@@ -1678,7 +1680,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
             }
             
-            val timestamp = SimpleDateFormat(DATE_FORMAT, Locale.getDefault()).format(Date())
+            val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US).format(LocalDateTime.now(ZoneId.systemDefault()))
             val safetyBackupFileName = "${BACKUP_PREFIX}SAFETY_${timestamp}.db"
             
             val appDir = context.filesDir

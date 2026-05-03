@@ -29,8 +29,9 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.text.NumberFormat
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 internal fun isAmountParseableAndPositive(amount: String): Boolean {
@@ -273,9 +274,9 @@ fun CurrencyManagementScreen(
                                 )
                                 
                                 uiState.lastUpdated?.let { timestamp ->
-                                    val dateFormat = SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault())
+                                    val dateFormat = DateTimeFormatter.ofPattern("MMM dd, HH:mm", Locale.getDefault())
                                     Text(
-                                        text = stringResource(R.string.label_updated_format, dateFormat.format(Date(timestamp))),
+                                        text = stringResource(R.string.label_updated_format, dateFormat.format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = SemanticColors.TextSecondary
                                     )

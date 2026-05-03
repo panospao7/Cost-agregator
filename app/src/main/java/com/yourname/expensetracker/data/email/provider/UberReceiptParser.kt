@@ -1,8 +1,12 @@
 package com.yourname.expensetracker.data.email.provider
 
 import timber.log.Timber
-import java.text.SimpleDateFormat
-import java.util.Calendar
+import java.time.Instant
+import java.time.LocalDate
+import java.time.MonthDay
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoField
 import java.util.Locale
 import java.util.regex.Pattern
 
@@ -203,31 +207,33 @@ class UberReceiptParser : BaseEmailParser() {
     private fun parseUberDate(dateStr: String, receivedAt: Long): Long? {
         parseDate(dateStr)?.let { return it }
 
-        val receivedCalendar = Calendar.getInstance().apply { timeInMillis = receivedAt }
-        val receivedYear = receivedCalendar.get(Calendar.YEAR)
+        val receivedInstant = Instant.ofEpochMilli(receivedAt)
+        val receivedZone = ZoneId.systemDefault()
+        val receivedYear = receivedInstant.atZone(receivedZone).year
         val futureClampThresholdMs = 7L * 24L * 60L * 60L * 1000L
-        
+
         val formats = listOf(
-            SimpleDateFormat("MMMM dd, yyyy", Locale.US),
-            SimpleDateFormat("MMM dd, yyyy", Locale.US),
-            SimpleDateFormat("MMMM dd", Locale.US),
-            SimpleDateFormat("MMM dd", Locale.US)
+            DateTimeFormatter.ofPattern("MMMM dd, yyyy", Locale.US),
+            DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.US),
+            DateTimeFormatter.ofPattern("MMMM dd", Locale.US),
+            DateTimeFormatter.ofPattern("MMM dd", Locale.US)
         )
-        
+
         for (format in formats) {
             try {
-                val parsed = format.parse(dateStr) ?: continue
-                val cal = Calendar.getInstance()
-                cal.time = parsed
-                val isYearlessFormat = !format.toPattern().contains("yyyy")
-                if (cal.get(Calendar.YEAR) == 1970) {
-                    cal.set(Calendar.YEAR, receivedYear)
+                val accessor = format.parse(dateStr)
+                val hasYear = accessor.isSupported(ChronoField.YEAR)
+                val zdt = if (hasYear) {
+                    LocalDate.from(accessor).atStartOfDay(receivedZone)
+                } else {
+                    val monthDay = MonthDay.from(accessor)
+                    monthDay.atYear(receivedYear).atStartOfDay(receivedZone)
                 }
-
-                if (isYearlessFormat && cal.timeInMillis > receivedAt + futureClampThresholdMs) {
-                    cal.add(Calendar.YEAR, -1)
+                val millis = zdt.toInstant().toEpochMilli()
+                if (!hasYear && millis > receivedAt + futureClampThresholdMs) {
+                    return zdt.minusYears(1).toInstant().toEpochMilli()
                 }
-                return cal.timeInMillis
+                return millis
             } catch (_: Exception) {
                 continue
             }

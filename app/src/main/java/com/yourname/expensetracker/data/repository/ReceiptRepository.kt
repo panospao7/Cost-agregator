@@ -2,7 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import android.net.Uri
 import androidx.room.withTransaction
-import java.util.Date
+import java.time.Instant
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -866,7 +866,7 @@ class ReceiptRepository @Inject constructor(
             PARSED VALUES:
             • Merchant:  ${receipt.parsedMerchant ?: "NULL"}
             • Total:     ${receipt.parsedTotal ?: "NULL"}
-            • Date:      ${receipt.parsedDate?.let { Date(it) } ?: "NULL"}
+            • Date:      ${receipt.parsedDate?.let { Instant.ofEpochMilli(it).toString() } ?: "NULL"}
             • Tax:       ${receipt.parsedTaxAmount ?: "NULL"}
             • Currency:  ${receipt.currency}
             • Confidence: ${receipt.confidence}

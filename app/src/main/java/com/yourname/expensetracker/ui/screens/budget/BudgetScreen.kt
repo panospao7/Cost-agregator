@@ -52,7 +52,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import java.text.SimpleDateFormat
+import java.time.format.DateTimeFormatter
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -451,7 +451,7 @@ fun BudgetCard(
         )
     }
     
-    val monthYearFormat = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()) }
+    val monthYearFormat = remember { DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()) }
     val periodMode = remember(status.budget.periodMode) { status.budget.periodMode.uppercase(Locale.getDefault()) }
     val periodLabel = remember(status.budget.period) {
         status.budget.period.name.lowercase().replaceFirstChar { it.titlecase(Locale.getDefault()) }
@@ -468,7 +468,7 @@ fun BudgetCard(
     }
     val periodDescription = remember(status.periodStart, status.periodEnd, status.budget.period, periodMode) {
         if (periodMode == "CALENDAR" && status.budget.period == BudgetPeriod.MONTHLY) {
-            "${monthYearFormat.format(Date(status.periodStart))} (Calendar)"
+            "${monthYearFormat.format(java.time.Instant.ofEpochMilli(status.periodStart).atZone(java.time.ZoneId.systemDefault()))} (Calendar)"
         } else if (periodMode == "ROLLING") {
             val rollingLabel = when (status.budget.period) {
                 BudgetPeriod.MONTHLY -> "Rolling 30d"

@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import timber.log.Timber
 
@@ -26,7 +27,7 @@ data class ExpenseWithCategory(
     val category: Category?
 ) {
     private companion object {
-        private val DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM dd, HH:mm")
+        private val DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM dd, HH:mm", Locale.getDefault())
     }
 
     val formattedDate: String by lazy {

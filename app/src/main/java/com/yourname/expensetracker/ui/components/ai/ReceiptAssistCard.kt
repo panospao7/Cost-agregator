@@ -25,8 +25,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
@@ -100,10 +101,10 @@ fun ReceiptAssistCard(
 
             suggestion.date?.let { date ->
                 val context = LocalContext.current
-                val dateFormat = remember { SimpleDateFormat(context.getString(R.string.receipt_date_format), Locale.getDefault()) }
+                val dateFormat = remember { DateTimeFormatter.ofPattern(context.getString(R.string.receipt_date_format), Locale.getDefault()) }
                 SuggestionRow(
                     label = stringResource(R.string.label_date),
-                    value = dateFormat.format(Date(date.value)),
+                    value = dateFormat.format(Instant.ofEpochMilli(date.value).atZone(ZoneId.systemDefault())),
                     rationale = date.rationale,
                     onApply = onApplyDate
                 )

@@ -1,8 +1,9 @@
 package com.yourname.expensetracker.data.email.provider
 
 import com.yourname.expensetracker.domain.util.AmountUtils
-import java.text.ParsePosition
-import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.regex.Pattern
 
@@ -160,14 +161,13 @@ abstract class BaseEmailParser : EmailReceiptParser {
 
         for (locale in supportedDateLocales) {
             for (pattern in datePatterns) {
-                val formatter = SimpleDateFormat(pattern, locale).apply {
-                    isLenient = false
-                }
-
-                val position = ParsePosition(0)
-                val parsed = formatter.parse(normalized, position)
-                if (parsed != null && position.index == normalized.length) {
-                    return parsed.time
+                try {
+                    val formatter = DateTimeFormatter.ofPattern(pattern, locale)
+                    val parsed = formatter.parse(normalized)
+                    val localDate = LocalDate.from(parsed)
+                    return localDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                } catch (_: Exception) {
+                    continue
                 }
             }
         }

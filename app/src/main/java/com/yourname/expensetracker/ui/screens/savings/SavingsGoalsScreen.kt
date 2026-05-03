@@ -26,7 +26,9 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.usecase.savings.GoalAllocation
 import com.yourname.expensetracker.domain.usecase.savings.SavingsSweepRecommendation
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -37,7 +39,7 @@ fun SavingsGoalsScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
-    val dateFormat = remember { SimpleDateFormat("MMM yyyy", Locale.getDefault()) }
+    val dateFormat = remember { DateTimeFormatter.ofPattern("MMM yyyy", Locale.getDefault()) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showAddGoalDialog by remember { mutableStateOf(false) }
@@ -374,7 +376,7 @@ private fun AddGoalDialog(
     val isAmountValid = parsedAmount != null && parsedAmount > 0.0
     val dateLabel = remember(targetDateMillis) {
         targetDateMillis?.let { millis ->
-            SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(millis))
+            DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.getDefault()).format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
         } ?: ""
     }
 
@@ -508,7 +510,7 @@ private fun AddGoalDialog(
 @Composable
 private fun GoalCard(
     goal: SavingsGoal,
-    dateFormat: SimpleDateFormat,
+    dateFormat: DateTimeFormatter,
     onClick: () -> Unit,
     onQuickAdd: () -> Unit,
     homeCurrency: String
@@ -537,7 +539,7 @@ private fun GoalCard(
                     
                 if (goal.targetDate != null) {
                     Text(
-                        text = stringResource(R.string.savings_target_date, dateFormat.format(Date(goal.targetDate))),
+                        text = stringResource(R.string.savings_target_date, dateFormat.format(Instant.ofEpochMilli(goal.targetDate).atZone(ZoneId.systemDefault()))),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -702,8 +704,8 @@ private fun SweepRecommendationCard(
     onDismiss: () -> Unit,
     homeCurrency: String
 ) {
-    val dateFormat = remember { SimpleDateFormat("MMM d", Locale.getDefault()) }
-    val monthEndDate = remember(recommendation.monthEnd) { Date(recommendation.monthEnd) }
+    val dateFormat = remember { DateTimeFormatter.ofPattern("MMM d", Locale.getDefault()) }
+    val monthEndDate = remember(recommendation.monthEnd) { Instant.ofEpochMilli(recommendation.monthEnd).atZone(ZoneId.systemDefault()) }
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -734,7 +736,7 @@ private fun SweepRecommendationCard(
                     Text(
                         text = stringResource(
                             R.string.savings_month_ends_format,
-                            dateFormat.format(monthEndDate)
+                            dateFormat.format(monthEndDate.toLocalDate())
                         ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)

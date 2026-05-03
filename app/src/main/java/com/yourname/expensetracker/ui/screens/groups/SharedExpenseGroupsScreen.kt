@@ -31,8 +31,9 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -586,7 +587,7 @@ private fun ExpenseCard(
     expense: GroupExpenseWithDetails,
     groupCurrency: String
 ) {
-    val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
+    val dateFormat = DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault())
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -622,7 +623,7 @@ private fun ExpenseCard(
             Spacer(modifier = Modifier.height(4.dp))
             
             Text(
-                text = stringResource(R.string.label_paid_by_format, expense.paidByName, dateFormat.format(Date(expense.expense.date))),
+                text = stringResource(R.string.label_paid_by_format, expense.paidByName, dateFormat.format(Instant.ofEpochMilli(expense.expense.date).atZone(ZoneId.systemDefault()))),
                 style = MaterialTheme.typography.bodySmall,
                 color = SemanticColors.TextSecondary
             )

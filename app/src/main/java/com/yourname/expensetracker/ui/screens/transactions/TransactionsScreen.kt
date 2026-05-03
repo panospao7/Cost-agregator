@@ -67,7 +67,6 @@ import com.yourname.expensetracker.ui.components.TransferDirectionBadge
 import com.yourname.expensetracker.ui.components.LocationSearchPicker
 import com.yourname.expensetracker.ui.components.common.ListSkeleton
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
 import java.util.*
 
 private fun OwnershipFilter.toRepositoryOwnershipFilter(): com.yourname.expensetracker.data.repository.OwnershipFilter {

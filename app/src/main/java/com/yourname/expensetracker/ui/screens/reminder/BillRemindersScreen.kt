@@ -20,7 +20,9 @@ import com.yourname.expensetracker.domain.reminder.ReminderUrgency
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
@@ -130,7 +132,7 @@ private fun BillReminderCard(
     homeCurrency: String,
     onMarkPaid: () -> Unit
 ) {
-    val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
+    val dateFormat = DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault())
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -202,7 +204,7 @@ private fun BillReminderCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = stringResource(R.string.bill_reminders_due_format, dateFormat.format(java.util.Date(reminder.dueDate))),
+                    text = stringResource(R.string.bill_reminders_due_format, dateFormat.format(Instant.ofEpochMilli(reminder.dueDate).atZone(ZoneId.systemDefault()))),
                     style = MaterialTheme.typography.bodySmall
                 )
                 

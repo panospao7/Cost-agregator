@@ -35,8 +35,9 @@ import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -437,7 +438,7 @@ private fun SubscriptionCard(
     onDelete: (SubscriptionInfo) -> Unit,
     onRecordUsage: ((Long) -> Unit)?
 ) {
-    val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
+    val dateFormat = DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault())
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -517,7 +518,7 @@ private fun SubscriptionCard(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "Renews ${dateFormat.format(Date(subscription.subscription.nextDate))}",
+                text = "Renews ${dateFormat.format(Instant.ofEpochMilli(subscription.subscription.nextDate).atZone(ZoneId.systemDefault()))}",
                 style = MaterialTheme.typography.bodySmall,
                 color = SemanticColors.TextSecondary
             )
@@ -712,7 +713,7 @@ private fun AddSubscriptionDialog(
     var category by remember { mutableStateOf("") }
     var nextDate by remember { mutableStateOf<Long?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
-    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
+    val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault()) }
     
     val categories = listOf(
         stringResource(R.string.category_streaming),
@@ -812,7 +813,7 @@ private fun AddSubscriptionDialog(
                 }
 
                 OutlinedTextField(
-                    value = nextDate?.let { dateFormat.format(Date(it)) }.orEmpty(),
+                    value = nextDate?.let { dateFormat.format(Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault())) }.orEmpty(),
                     onValueChange = {},
                     readOnly = true,
                     label = { Text(stringResource(R.string.recurring_next_date_label)) },

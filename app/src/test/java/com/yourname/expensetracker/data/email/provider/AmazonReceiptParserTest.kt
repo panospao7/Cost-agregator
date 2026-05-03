@@ -3,7 +3,9 @@ package com.yourname.expensetracker.data.email.provider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Test
-import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 class AmazonReceiptParserTest {
@@ -31,6 +33,9 @@ class AmazonReceiptParserTest {
     }
 
     private fun expectedLocalDateMillis(value: String): Long {
-        return SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value)!!.time
+        return LocalDate.parse(value, DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US))
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
     }
 }

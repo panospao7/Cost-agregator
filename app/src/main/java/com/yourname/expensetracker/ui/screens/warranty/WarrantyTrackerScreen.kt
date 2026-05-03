@@ -31,7 +31,10 @@ import com.yourname.expensetracker.ui.components.emptystate.EmptyStateAction
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateActionType
 import com.yourname.expensetracker.ui.components.emptystate.EmptyStateScreenKeys
 import com.yourname.expensetracker.ui.navigation.NavigationDestination
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.*
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 
@@ -45,7 +48,7 @@ fun WarrantyTrackerScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val completedActionKeys by actionRegistry.completedActions.collectAsState()
-    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
+    val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault()) }
     var showManualAddDialog by remember { mutableStateOf(false) }
 
     // Get contextual actions for empty state
@@ -303,7 +306,7 @@ private fun ManualWarrantyDialog(
 ) {
     var productName by remember { mutableStateOf("") }
     var merchantName by remember { mutableStateOf("") }
-    var purchaseDateText by remember { mutableStateOf(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())) }
+    var purchaseDateText by remember { mutableStateOf(DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.getDefault()).format(LocalDate.now())) }
     var durationMonthsText by remember { mutableStateOf("24") }
     var supportPhone by remember { mutableStateOf("") }
 
@@ -352,7 +355,8 @@ private fun ManualWarrantyDialog(
         },
         confirmButton = {
             val parsedDate = runCatching {
-                SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(purchaseDateText)?.time
+                LocalDate.parse(purchaseDateText, DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.getDefault()))
+                    .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             }.getOrNull()
             val parsedDuration = durationMonthsText.toIntOrNull()
             val canSave = productName.isNotBlank() && merchantName.isNotBlank() && parsedDate != null && (parsedDuration ?: 0) > 0
@@ -419,7 +423,7 @@ private fun SummaryCard(
 @Composable
 private fun WarrantyCard(
     warranty: Warranty,
-    dateFormat: SimpleDateFormat,
+    dateFormat: DateTimeFormatter,
     referenceNowMillis: Long,
     onMarkClaimed: () -> Unit,
     onDelete: () -> Unit,
@@ -514,7 +518,7 @@ private fun WarrantyCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = stringResource(R.string.warranty_expires_date, dateFormat.format(Date(warranty.warrantyEndDate))),
+                text = stringResource(R.string.warranty_expires_date, dateFormat.format(Instant.ofEpochMilli(warranty.warrantyEndDate).atZone(ZoneId.systemDefault()))),
                 style = MaterialTheme.typography.bodyMedium
             )
 

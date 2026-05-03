@@ -16,7 +16,9 @@ import com.yourname.expensetracker.domain.forecasting.StressHorizon
 import com.yourname.expensetracker.domain.forecasting.StressRiskLevel
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.*
 
 @Composable
@@ -369,6 +371,6 @@ private fun getRiskEmoji(riskLevel: StressRiskLevel): String {
 }
 
 private fun formatDate(timestamp: Long): String {
-    val sdf = SimpleDateFormat("MMM d", Locale.getDefault())
-    return sdf.format(Date(timestamp))
+    val sdf = DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())
+    return sdf.format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
 }

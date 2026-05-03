@@ -30,7 +30,9 @@ import com.yourname.expensetracker.ui.components.BentoCard
 import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.mappers.MonteCarloBudgetImpactUiMapper
 import com.yourname.expensetracker.ui.theme.SemanticColors
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.*
 
 /**
@@ -429,6 +431,6 @@ private fun RadarPrimaryAction(
  * Helper to format date for display.
  */
 private fun formatDate(timestamp: Long): String {
-    val dateFormat = SimpleDateFormat("MMM d", Locale.getDefault())
-    return dateFormat.format(Date(timestamp))
+    val dateFormat = DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())
+    return dateFormat.format(Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()))
 }

@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -52,7 +53,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
         endDate: Long,
         includeMileage: Boolean = true
     ): BusinessExpenseReport = withContext(Dispatchers.IO) {
-        val dateFormat = DateTimeFormatter.ofPattern("dd/MM/yyyy")
+        val dateFormat = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.US)
         
         // Get all business expenses – enforce purchase-only at the boundary
         val expenses = businessExpenseRepository.getBusinessExpenses(startDate, endDate)
@@ -230,7 +231,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
         endDate: Long,
         includeMileage: Boolean = true
     ): String = withContext(Dispatchers.IO) {
-        val dateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        val dateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
         val csv = StringBuilder()
         
         // Header

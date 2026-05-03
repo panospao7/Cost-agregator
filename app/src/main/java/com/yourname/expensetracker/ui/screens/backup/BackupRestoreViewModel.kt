@@ -53,10 +53,10 @@ class BackupRestoreViewModel @Inject constructor(
                 val stats = databaseBackupRepository.getDatabaseStats()
                 val lastBackup = stats.lastBackupDate
                 if (lastBackup != null && lastBackup > 0L) {
-                    val formatted = java.text.SimpleDateFormat(
+                    val formatted = java.time.format.DateTimeFormatter.ofPattern(
                         "yyyy-MM-dd HH:mm",
                         java.util.Locale.getDefault()
-                    ).format(java.util.Date(lastBackup))
+                    ).format(java.time.Instant.ofEpochMilli(lastBackup).atZone(java.time.ZoneId.systemDefault()))
                     _uiState.value = _uiState.value.copy(lastBackupDate = formatted)
                 }
             } catch (e: Exception) {
@@ -92,10 +92,10 @@ class BackupRestoreViewModel @Inject constructor(
                         isBackingUp = false,
                         successMessage = "Backup created successfully: ${file.name}",
                         lastBackupFile = file.absolutePath,
-                        lastBackupDate = java.text.SimpleDateFormat(
+                        lastBackupDate = java.time.format.DateTimeFormatter.ofPattern(
                             "yyyy-MM-dd HH:mm",
                             java.util.Locale.getDefault()
-                        ).format(java.util.Date())
+                        ).format(java.time.LocalDateTime.now().atZone(java.time.ZoneId.systemDefault()))
                     )
                 },
                 onFailure = { error ->

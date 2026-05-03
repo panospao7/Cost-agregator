@@ -30,8 +30,9 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -339,7 +340,7 @@ private fun RecurringExpenseCard(
     onDelete: (ManualRecurringExpense) -> Unit,
     onMarkPaid: ((ManualRecurringExpense) -> Unit)?
 ) {
-    val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
+    val dateFormat = DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault())
     val isUpcoming = expense.nextDate <= referenceNowMillis + (7 * TimePeriodUtils.DAY_IN_MILLIS)
     
     Card(
@@ -409,14 +410,14 @@ private fun RecurringExpenseCard(
                 
                 if (isUpcoming && expense.isActive) {
                     Text(
-                        text = stringResource(R.string.label_due_format, dateFormat.format(Date(expense.nextDate))),
+                        text = stringResource(R.string.label_due_format, dateFormat.format(Instant.ofEpochMilli(expense.nextDate).atZone(ZoneId.systemDefault()))),
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFFFF9800),
                         fontWeight = FontWeight.Medium
                     )
                 } else {
                     Text(
-                        text = stringResource(R.string.label_next_format, dateFormat.format(Date(expense.nextDate))),
+                        text = stringResource(R.string.label_next_format, dateFormat.format(Instant.ofEpochMilli(expense.nextDate).atZone(ZoneId.systemDefault()))),
                         style = MaterialTheme.typography.bodySmall,
                         color = SemanticColors.TextSecondary
                     )
@@ -524,9 +525,9 @@ private fun AddRecurringExpenseDialog(
                 }
                 
                 // Next Date
-                val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
+                val dateFormat = DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault())
                 OutlinedTextField(
-                    value = dateFormat.format(Date(nextDate)),
+                    value = dateFormat.format(Instant.ofEpochMilli(nextDate).atZone(ZoneId.systemDefault())),
                     onValueChange = {},
                     readOnly = true,
                     label = { Text(stringResource(R.string.recurring_next_date_label)) },

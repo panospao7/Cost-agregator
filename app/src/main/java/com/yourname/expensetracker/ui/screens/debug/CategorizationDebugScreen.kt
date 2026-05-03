@@ -30,7 +30,9 @@ import com.yourname.expensetracker.domain.categorization.LayerDebugResult
 import com.yourname.expensetracker.domain.categorization.MatchType
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.*
 import kotlinx.coroutines.launch
 
@@ -60,9 +62,9 @@ fun CategorizationDebugScreen(
     
     val initialTimeString = remember(initialTimestamp) {
         if (initialTimestamp != null) {
-            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(initialTimestamp))
+            DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()).format(Instant.ofEpochMilli(initialTimestamp).atZone(ZoneId.systemDefault()))
         } else {
-            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+            DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()).format(java.time.LocalTime.now())
         }
     }
     var timeString by remember { mutableStateOf(initialTimeString) }

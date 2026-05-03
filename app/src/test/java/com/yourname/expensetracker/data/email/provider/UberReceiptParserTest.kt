@@ -4,7 +4,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
-import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
@@ -120,7 +122,10 @@ class UberReceiptParserTest {
     }
 
     private fun expectedLocalDateMillis(value: String): Long {
-        return SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value)!!.time
+        return LocalDate.parse(value, DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US))
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
     }
 
     private fun utcMillis(year: Int, month: Int, dayOfMonth: Int): Long {

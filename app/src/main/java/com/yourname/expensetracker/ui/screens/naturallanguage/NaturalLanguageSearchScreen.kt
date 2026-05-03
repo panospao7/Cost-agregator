@@ -28,6 +28,7 @@ import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpense
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchEngine
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * Natural language search screen.
@@ -389,7 +390,7 @@ fun TransactionResultCard(
     onClick: () -> Unit,
     homeCurrency: String
 ) {
-    val dateFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy")
+    val dateFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.getDefault())
     val date = java.time.Instant.ofEpochMilli(expense.date)
         .atZone(java.time.ZoneId.systemDefault())
         .toLocalDate()

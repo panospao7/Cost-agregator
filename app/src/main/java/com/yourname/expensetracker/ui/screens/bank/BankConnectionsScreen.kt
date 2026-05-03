@@ -21,8 +21,9 @@ import com.yourname.expensetracker.data.database.entity.SyncStatus
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -194,7 +195,7 @@ private fun BankConnectionCard(
     onSync: () -> Unit,
     onDisconnect: () -> Unit
 ) {
-    val dateFormat = SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault())
+    val dateFormat = DateTimeFormatter.ofPattern("MMM dd, HH:mm", Locale.getDefault())
     
     Card(
         modifier = Modifier.fillMaxWidth()
@@ -229,7 +230,7 @@ private fun BankConnectionCard(
             
             connection.lastSync?.let { lastSync ->
                 Text(
-                    text = stringResource(R.string.label_last_synced_format, dateFormat.format(Date(lastSync))),
+                    text = stringResource(R.string.label_last_synced_format, dateFormat.format(Instant.ofEpochMilli(lastSync).atZone(ZoneId.systemDefault()))),
                     style = MaterialTheme.typography.bodySmall
                 )
             }

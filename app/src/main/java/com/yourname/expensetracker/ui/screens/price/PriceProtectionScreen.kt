@@ -29,6 +29,7 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
+import java.util.Locale
 import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -229,7 +230,7 @@ fun PriceDropCard(
     onFileClaim: (String) -> Unit,
     homeCurrency: String
 ) {
-    val dateFormatter = DateTimeFormatter.ofPattern("MMM dd")
+    val dateFormatter = DateTimeFormatter.ofPattern("MMM dd", Locale.getDefault())
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -490,7 +491,7 @@ fun ProtectedItemCard(
     onTrackItem: () -> Unit,
     onRemoveFromTracking: () -> Unit
 ) {
-    val dateFormatter = DateTimeFormatter.ofPattern("MMM dd, yyyy")
+    val dateFormatter = DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault())
     val purchaseDate = Instant.ofEpochMilli(item.purchaseDate)
         .atZone(ZoneId.systemDefault())
         .toLocalDate()
