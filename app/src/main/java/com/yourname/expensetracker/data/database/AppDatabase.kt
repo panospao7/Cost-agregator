@@ -6906,7 +6906,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                                 createdAt, status,
                                 suggestedDirection, suggestedAccountName,
                                 suggestedLatitude, suggestedLongitude,
-                                extractionState
+                                COALESCE(extractionState, 'REAL_EXTRACTION')
                             FROM pending_reviews
                         """.trimIndent())
 
