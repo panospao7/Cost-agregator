@@ -6448,7 +6448,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
 
                         database.execSQL("""
                             INSERT INTO planned_expenses_new (id, description, amount, currency, currencyAssumption, date, categoryId, isRecurring, priority, createdAt, sourceOccurrenceKey, sourceRecurringRuleId, status, linkedActualExpenseId, merchantKey, updatedAt, openSourceOccurrenceKey)
-                            SELECT id, description, amount, currency, currencyAssumption, date, categoryId, isRecurring, priority, createdAt, sourceOccurrenceKey, sourceRecurringRuleId, status, linkedActualExpenseId, merchantKey, updatedAt, NULL FROM planned_expenses
+                            SELECT id, description, amount, NULL, NULL, date, categoryId, isRecurring, priority, createdAt, sourceOccurrenceKey, sourceRecurringRuleId, status, linkedActualExpenseId, merchantKey, updatedAt, NULL FROM planned_expenses
                         """.trimIndent())
                         database.execSQL("DROP TABLE planned_expenses")
                         database.execSQL("ALTER TABLE planned_expenses_new RENAME TO planned_expenses")
