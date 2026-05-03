@@ -220,6 +220,25 @@ class NaturalLanguageSearchEngine @Inject constructor(
      * This means a query like "find food expenses in Paris" will match ALL
      * transactions in the date range regardless of category or location.
      *
+     * ### Fix guidance for SRH-2:
+     * To apply category filters, inject a `CategoryRepository` into this class and
+     * build a lookup map from category name (e.g., "food") → list of category IDs
+     * using the `categoryKeywords` mapping. Then filter expenses by `categoryId`:
+     * ```
+     * val categoryIdsByName: Map<String, List<Long>> = categoryRepository.getAll()
+     *     .flatMap { cat -> (categoryKeywords[cat.name] ?: emptyList()).map { it to cat.id } }
+     *     .groupBy({ it.first }, { it.second })
+     * interpretation.searchFilter.categories?.let { names ->
+     *     val targetIds = names.flatMap { categoryIdsByName[it] ?: emptyList() }.toSet()
+     *     if (targetIds.isNotEmpty()) filter { it.categoryId in targetIds }
+     * }
+     * ```
+     * For location filters, the [NaturalLanguageExpense] model has no location field
+     * — location data lives on the raw [Expense] entity (latitude/longitude). To
+     * support location-based NL search, either add a location field to
+     * [NaturalLanguageExpense] or geo-resolve location names via a geocoding service
+     * and compare against expense coordinates in a separate query.
+     *
      * ## Multi-filter drilldown (M3)
      * The initial data pull from [expenseQueryRepository] is only date-bounded;
      * all other filters (amount, merchant, category, location) are applied

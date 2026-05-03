@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao
 import com.yourname.expensetracker.data.database.entity.HealthScoreHistory
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
@@ -43,7 +44,9 @@ class FinancialHealthScoreV2 @Inject constructor(
     private val healthScoreHistoryDao: HealthScoreHistoryDao,
     private val timeProvider: TimeProvider,
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    /** @suppress Injected for AIML-25: upcoming-bill-aware runway calculation. */
+    private val cashFlowCalculator: CashFlowCalculator
 ) {
     companion object {
         // Component weights (must sum to 1.0)
@@ -310,6 +313,23 @@ class FinancialHealthScoreV2 @Inject constructor(
         // SAFE: savings goals are user-defined in home currency (amounts are logically already in home currency)
         val totalSavings = savingsGoals.sumOf { it.currentAmount }
 
+        // AIML-25: Subtract upcoming known bills from savings so the runway reflects
+        // the net buffer available after paying committed/likely obligations.
+        val daysRemainingInPeriod = TimePeriodUtils.daysBetween(
+            timeProvider.now().coerceIn(periodStart, periodEnd),
+            periodEnd
+        ).coerceAtLeast(0)
+        val upcomingBills = if (daysRemainingInPeriod > 0) {
+            try {
+                cashFlowCalculator.getUpcomingBills(daysAhead = daysRemainingInPeriod)
+                    .sumOf { it.averageAmount }
+            } catch (e: Exception) {
+                Timber.w(e, "Failed to compute upcoming bills for runway, using gross savings")
+                0.0
+            }
+        } else 0.0
+        val netSavings = (totalSavings - upcomingBills).coerceAtLeast(0.0)
+
         // If no expenses, return neutral (insufficient spending baseline)
         if (monthlyExpenses <= 0) {
             return 50
@@ -324,9 +344,9 @@ class FinancialHealthScoreV2 @Inject constructor(
             monthlyExpenses
         )
 
-        // Calculate runway in months
+        // Calculate runway in months (using netSavings which subtracts upcoming bills)
         val runwayMonths = if (monthlyExpenses > 0) {
-            totalSavings / monthlyExpenses
+            netSavings / monthlyExpenses
         } else {
             RUNWAY_TARGET_MONTHS // If no expenses, assume perfect runway
         }

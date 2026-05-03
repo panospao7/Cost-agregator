@@ -247,7 +247,14 @@ class TotalsAggregationEngine @Inject constructor(
                     val startMs = TimePeriodUtils.getStartOfMonth(TimePeriodUtils.addMonths(now, -12))
                     val months = expenseRepository.getMonthlyTotalsForPeriod(startMs, now)
                     if (excludeCurrent) {
-                        months.dropLast(1).map { it.total }.average().takeIf { !it.isNaN() } ?: 0.0
+                        // DSH-13: Use time-based filtering instead of positional dropLast(1).
+                        // The current (incomplete) month is excluded by comparing startDate
+                        // against the start of the current month, not by array position.
+                        val currentMonthStart = TimePeriodUtils.getStartOfMonth(now)
+                        months.filter { it.startDate < currentMonthStart }
+                            .map { it.total }
+                            .average()
+                            .takeIf { !it.isNaN() } ?: 0.0
                     } else {
                         months.map { it.total }.average().takeIf { !it.isNaN() } ?: 0.0
                     }
@@ -256,7 +263,13 @@ class TotalsAggregationEngine @Inject constructor(
                     val startMs = TimePeriodUtils.getStartOfWeek(TimePeriodUtils.addDays(now, -56))
                     val weeks = expenseRepository.getWeeklyTotalsForPeriod(startMs, now)
                     if (excludeCurrent) {
-                        weeks.dropLast(1).map { it.total }.average().takeIf { !it.isNaN() } ?: 0.0
+                        // DSH-13: Same time-based fix — exclude current incomplete week
+                        // by comparing startDate against the start of the current week.
+                        val currentWeekStart = TimePeriodUtils.getStartOfWeek(now)
+                        weeks.filter { it.startDate < currentWeekStart }
+                            .map { it.total }
+                            .average()
+                            .takeIf { !it.isNaN() } ?: 0.0
                     } else {
                         weeks.map { it.total }.average().takeIf { !it.isNaN() } ?: 0.0
                     }

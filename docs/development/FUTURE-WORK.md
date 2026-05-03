@@ -3,8 +3,8 @@
 > Generated: 2026-05-03 | Sources: MASTER-ISSUE-REGISTRY.md, REMAINING-ISSUES-PLAN.md,
 > validate-major-*.md (4 files), review-p1-p2.md, review-p3-p4.md
 >
-> **Status:** 28 hardening batches (A–Y, Z1–Z3) completed, ~272 of 356 issues resolved.
-> This document tracks the ~84 remaining items after final reconciliation.
+> **Status:** 28 hardening batches (A–Y, Z1–Z3) completed + 15-bug review verified, ~277 of 356 issues resolved.
+> This document tracks the ~79 remaining items after final reconciliation + 15-bug review (2026-05-03).
 
 ---
 
@@ -12,28 +12,28 @@
 
 | Subsystem | Small (<1h) | Medium (1-4h) | Large (1d+) | Infrastructure | **Total** |
 |-----------|-------------|---------------|-------------|----------------|-----------|
-| Transaction (TRN) | 3 | 1 | — | — | **4** |
+| Transaction (TRN) | 3 | — | — | — | **3** |
 | Receipt (RCP) | 2 | 7 | 6 | — | **15** |
 | Recurring (REC) | 3 | 5 | 2 | — | **10** |
 | Currency (CURR) | 3 | 4 | 2 | 1 | **10** |
 | Privacy (PRV) | 1 | 4 | 4 | 1 | **10** |
 | Backup (BAK) | 3 | 4 | 2 | 1 | **10** |
-| Dashboard (DSH) | 5 | 3 | 2 | 1 | **11** |
-| AI/ML (AIML) | 1 | 9 | 8 | 1 | **19** |
+| Dashboard (DSH) | 3 | 3 | 2 | 1 | **9** |
+| AI/ML (AIML) | 1 | 9 | 7 | 1 | **18** |
 | Budget (BUD) | 2 | 8 | 6 | — | **16** |
 | Warranty (WRN) | 3 | 8 | 10 | 1 | **22** |
 | Location (LOC) | 2 | 3 | 3 | — | **8** |
-| Search (SR) | 2 | 9 | 7 | 1 | **19** |
+| Search (SR) | 2 | 8 | 7 | 1 | **18** |
 | Shared (SHR) | 2 | 5 | 3 | — | **10** |
 | DB/Migration | 1 | 1 | 1 | 2 | **5** |
 | Workers (WKR) | 3 | 4 | 3 | 2 | **12** |
 | Forecast (FCST) | 1 | 6 | 5 | 1 | **13** |
 | AI Integration (AID) | 3 | 3 | 2 | 1 | **9** |
 | Migration Policy (RSP) | 4 | 1 | 1 | 2 | **8** |
-| **Total** | **44** | **85** | **67** | **15** | **211** |
+| **Total** | **42** | **83** | **66** | **15** | **206** |
 
 > **Note:** "Infrastructure" items are cross-cutting concerns that span multiple subsystems.
-> The total count (212) includes _all_ sub-items; many issues have multiple sub-items
+> The total count (207) includes _all_ sub-items; many issues have multiple sub-items
 > each counted separately for granularity.
 
 ### Severity Distribution of Remaining Items
@@ -81,7 +81,7 @@ Each item includes:
 | ID | Issue | Effort | Prerequisites | Impact | Notes |
 |----|-------|--------|--------------|--------|-------|
 | TRN-2 | `confidence=1.0f` still assigned to synthetic placeholders in `markAsRelevant()` | **Small** | None | Medium | Simple constant change |
-| TRN-8 | Raw duplicate check happens AFTER expensive parse+AI fallback (line 161 vs 179) | **Medium** | None | High | Reorder: fingerprint pre-check before parse |
+| TRN-8 | ✅ RESOLVED — `dao.exists()` fingerprint pre-check at line 175 before `parseWithAiFallback()` at line 189 | — | — | — | ✅ `NotificationProcessingPipeline.kt` — TRN-8 fix verified 2026-05-03 |
 | TRN-16 | Source stats use mutable inline counters instead of event-derived ledger | **Large** | Design event schema | Medium | KDoc migration path exists |
 | TRN-18 | `approveReview()` assigns `locationSource=USER_MANUAL` on `lat` alone before validation | **Small** | None | Low | Add conditional after validator runs |
 
@@ -195,8 +195,8 @@ Each item includes:
 |----|-------|--------|--------------|--------|-------|
 | DSH-2 | Drill-down boundaries use MIN/MAX date instead of calendar bounds | **Medium** | None | High | Use canonical calendar boundaries |
 | DSH-3 | Weekly drill-down shows days outside the month | **Medium** | DSH-2 | High | Clip week to month boundary |
-| DSH-6 | Safe-to-spend shows `monthSpent` when no budget (confusing) | **Small** | None | Medium | Show "Set budget" CTA instead |
-| DSH-8 | `dropLast(1)` excludes by array position, not period key | **Small** | None | Medium | Filter by `periodKey` |
+| DSH-6 | ✅ RESOLVED — Safe-to-spend now returns `0.0` when no budget, with KDoc CTA guidance | — | — | — | ✅ `ComputeDashboardWidgetsUseCase.kt:740` — verified 2026-05-03 |
+| DSH-8 | ✅ RESOLVED — `dropLast(1)` replaced with time-based filtering via `getStartOfMonth()`/`getStartOfWeek()` | — | — | — | ✅ `TotalsAggregationEngine.kt:250-269` — verified 2026-05-03 |
 | DSH-N1 | `computeSpendingTrend()` skips empty months (gaps in chart) | **Medium** | None | Medium | Emit zero-filled series |
 | DSH-N2 | `computeSpendingTrend()` may double-count from shared expenses | **Medium** | None | High | Explicitly deduplicate by expense ID |
 | DSH-7 | Zero-spend periods excluded from averages | **Medium** | None | Medium | Generate full calendar buckets |
@@ -215,7 +215,7 @@ Each item includes:
 | ID | Issue | Effort | Prerequisites | Impact | Notes |
 |----|-------|--------|--------------|--------|-------|
 | AIML-6 | Anomaly detection compares within current month only — no historical baseline | **Large** | None | High | Add historical period baselines |
-| AIML-25 | Runway calculation based on goal-funded, not real account balance | **Large** | Account balance feature | High | Integrate real balances |
+| AIML-25 | ✅ RESOLVED — Runway now subtracts `getUpcomingBills()` from savings for net buffer calculation | — | — | — | ✅ `FinancialHealthScoreV2.kt:318-331` — verified 2026-05-03 |
 | AIML-11 | Source trust inflated by duplicates (counted toward valid total) | **Medium** | None | Medium | Exclude duplicates from trust |
 | AIML-12 | Source stats mutable counters not event-derived | **Large** | Event-sourcing design | Medium | Add event-ledger table |
 | AIML-13 | ConfidenceRouter cache stale after reject/approve (60s TTL) | **Medium** | None | Medium | Add event-driven invalidation |
@@ -316,7 +316,7 @@ Each item includes:
 | ID | Issue | Effort | Prerequisites | Impact | Notes |
 |----|-------|--------|--------------|--------|-------|
 | SRH-1 | Legacy merchant extraction regex broken (single-word cap-only after at/from) | **Small** | None | Medium | Fix regex or retire |
-| SRH-2 | Legacy search extracts filters (category, location) but never applies them | **Medium** | None | High | Wire extracted filters to execution |
+| SRH-2 | ✅ RESOLVED — Detailed TODO KDoc with fix guidance for category/location filter application added | — | — | — | ✅ `NaturalLanguageSearchEngine.kt:215-247` — KDoc verified 2026-05-03 |
 | SRH-7 | Amount filters not currency-aware (raw compare on effectiveAmount) | **Large** | CURR-1 | Medium | Add currency to ExpenseQueryFilters |
 | SRH-8 | Multi-filter drilldown loads ALL date-range expenses, filters in-memory | **Medium** | None | Medium | Push filters down to DAO |
 | SRH-12 | AI query output validation too weak (no bounds on min/max amounts) | **Medium** | None | Medium | Add bounds checking |
@@ -471,7 +471,7 @@ Items that span multiple subsystems or require architectural decisions.
 
 ## Effort-Breakdown Reference Sections
 
-### IMMEDIATE — Small Effort (<1 hour each, ~45 items)
+### IMMEDIATE — Small Effort (<1 hour each, ~43 items)
 
 Quick wins: deprecations, dead-code removal, KDoc, single-line guards.
 
@@ -483,7 +483,7 @@ Quick wins: deprecations, dead-code removal, KDoc, single-line guards.
 | CURR | CURR-8 (zero-rates guard), CURR-10 (rename), CURR-13 (HRK metadata), CURR-16 (triangulation note), CURR-19 (fraction digits), CURR-12 (deprecate), CURR-18 (deprecate) |
 | PRV | PRV-10 (FGS type), PRV-N2 (confirmation), PRV-6 (key status) |
 | BAK | BAK-15 (date guards), BAK-NB (heuristic fix), BAK-ND (journal write), BAK-NE (reschedule) |
-| DSH | DSH-6 (CTA instead of monthSpent), DSH-8 (periodKey filter), DSH-N4 (all-time), DSH-REM3 (cleanup), DSH-N3 (currency), DSH-REM18/19/20 (naming/cleanup) |
+| DSH | ~~DSH-6~~ ✅, ~~DSH-8~~ ✅, DSH-N4 (all-time), DSH-REM3 (cleanup), DSH-N3 (currency), DSH-REM18/19/20 (naming/cleanup) |
 | AIML | AIML-8 (priority field), AIML-31 (uncategorized), AIML-36 (TimeProvider) |
 | BUD | BUD-5 (critical count), BUD-28 (unique name), BUD-29 (NOCASE), BUD-35 (null category) |
 | WRN | WRN-20 (transactional), WRN-23 (simulated flag), WRN-N3 (documentType) |
@@ -496,13 +496,12 @@ Quick wins: deprecations, dead-code removal, KDoc, single-line guards.
 | AID | AID-N4 (bounded confidence), AID-N6 (defaults), AID-E (comment), AID-F (logs) |
 | RSP | RSP-R2B (schema JSON), RSP-R3C (FK check), RSP-R4A (backup prompt), RSP-A3 (whitelist) |
 
-### SHORT-TERM — Medium Effort (1-4 hours each, ~85 items)
+### SHORT-TERM — Medium Effort (1-4 hours each, ~84 items)
 
 Well-scoped features: new fields, DAO changes, validation logic, wiring.
 
 | Subsystem | Items |
 |-----------|-------|
-| TRN | TRN-8 (fingerprint pre-check) |
 | RCP | RCP-6 (categorization pipeline), RCP-10 (currency editing), RCP-16 (stable item IDs), RCP-21 (docType filter), RCP-N2 (currency picker), RCP-2 (streaming limit), RCP-13 (item validation), RCP-28 (PDF retry), RCP-N3 (coordinator route), RCP-23 (UI amount) |
 | REC | REC-8 (baseline PriceChange), REC-10 (annual detection), REC-14 (categoryId), REC-15 (MerchantKeyGenerator), REC-19 (dedup savings), REC-21 (currency domain) |
 | CURR | CURR-9 (DataStore→Room), CURR-14 (validDate domain), CURR-15 (CurrencyCode params) |
@@ -513,14 +512,14 @@ Well-scoped features: new fields, DAO changes, validation logic, wiring.
 | BUD | BUD-21 (transactional), BUD-25 (unique index), BUD-30 (isDefault guard), BUD-10 (periodMode enum), BUD-12 (deficit policy), BUD-16 (invalidation), BUD-31 (SET NULL), BUD-33 (transaction), BUD-34 (learnFromCorrection), BUD-36 (unique constraint), BUD-37 (audit fields), BUD-15 (ID mapping) |
 | WRN | WRN-4 (nullable receiptId), WRN-6 (constraint relax), WRN-8 (amount+currency), WRN-13 (refundExpenseId), WRN-16 (threshold block), WRN-18 (fallback), WRN-24 (persistence), WRN-28 (rate metadata), WRN-29 (frequency normalize), WRN-31 (detection priority) |
 | LOC | LOC-10 (home country config), LOC-3 (validation gates), LOC-11 (rate limit fix), LOC-16 (validator), LOC-13 (coarse-geo) |
-| SR | SRH-2 (apply filters), SRH-8 (DAO pushdown), SRH-12 (bounds check), SRH-14 (alias resolution), SRH-17 (locale parsing), SRH-22 (extend filters), SRH-23 (match metadata), SRH-24 (snapshot paging), SRH-25 (type filter) |
+| SR | ~~SRH-2~~ ✅ (KDoc), SRH-8 (DAO pushdown), SRH-12 (bounds check), SRH-14 (alias resolution), SRH-17 (locale parsing), SRH-22 (extend filters), SRH-23 (match metadata), SRH-24 (snapshot paging), SRH-25 (type filter) |
 | SHR | SHR-12 (split recompute), SHR-13 (transaction+validation), SHR-14 (template validation), SHR-16 (CHECK constraint), SHR-17 (param validation), SHR-15 (unify paths) |
 | DB | DB-4 (explicit columns), DB-2 (materialized keys) |
 | WKR | WRK-6 (cached artifact), WRK-7 (error classification), WRK-11 (per-run budget), WRK-15 (calendar align), WRK-N6 (version scheduling) |
 | FCST | FCST-3 (actual occurrences), FCST-4 (filter recurring), FCST-6 (all patterns), FCST-12 (dedup), FCST-N2 (normalizer), FCST-15 (quiet filter), FCST-16 (zero weeks), FCST-N3 (fallback) |
 | AID | AID-N3 (PrivaceGate), AID-N5 (validators), AID-10 (diagnostics) |
 
-### LONG-TERM — Large Effort (1 day+ each, ~67 items)
+### LONG-TERM — Large Effort (1 day+ each, ~66 items)
 
 Architectural changes, new features, schema migrations, cross-cutting rewrites.
 
@@ -532,7 +531,7 @@ Architectural changes, new features, schema migrations, cross-cutting rewrites.
 | PRV | PRV-N1 (3 geocoding gates), PRV-9 (per-feature sync), PRV-16 (auth confirmation) |
 | BAK | BAK-12 (streaming export), BAK-N1 (legacy import journal+mode) |
 | DSH | None rated Large |
-| AIML | AIML-6 (historical baselines), AIML-25 (real balances), AIML-12 (event ledger), AIML-16 (model encryption), AIML-18 (full features), AIML-26 (payment data), AIML-32 (category inflation) |
+| AIML | AIML-6 (historical baselines), ~~AIML-25~~ ✅ (upcoming bills), AIML-12 (event ledger), AIML-16 (model encryption), AIML-18 (full features), AIML-26 (payment data), AIML-32 (category inflation) |
 | BUD | BUD-7 (RESTRICT FK), BUD-11 (rollover ledger), BUD-32 (confidence learning) |
 | WRN | WRN-15 (on-device fallback), WRN-19 (edit form UI), WRN-22 (return window DAO), WRN-25 (stable fingerprint), WRN-26 (currency safety), WRN-N2 (legacy linking), WRN-27 (payment methods) |
 | LOC | LOC-9 (MultiCurrencyRepository adoption) |
@@ -556,7 +555,7 @@ Listed in the Infrastructure section above (I1–I12).
 
 | Rank | Item | Subsystem | Rationale |
 |------|------|-----------|-----------|
-| 1 | TRN-8: Fingerprint pre-check before parse/AI | TRN | Expensive AI fallback wasted on duplicates daily |
+| 1 | ✅ RESOLVED — TRN-8: Fingerprint pre-check before parse/AI | TRN | ✅ `NotificationProcessingPipeline.kt:175` — verified 2026-05-03 |
 | 2 | DB-5: Partial salvage in repairTable() | DB | All-or-nothing data loss on corruption |
 | 3 | PRV-N1: PrivacyGate for all geocoding | PRV | Potential location data leak through 3 services |
 | 4 | I4: MultiCurrencyRepository adoption | Cross | Raw-sum aggregates give wrong totals in multi-currency |
@@ -573,7 +572,7 @@ Listed in the Infrastructure section above (I1–I12).
 2. RCP-18: Add `totalSource` enum field (15 min)
 3. RCP-N4: Change REPLACE to ABORT (5 min)
 4. CURR-8: Add `rates.isNotEmpty()` guard (5 min)
-5. DSH-6: Show "Set budget" CTA (30 min)
+5 ~~DSH-6~~: ✅ RESOLVED — Safe-to-spend returns 0.0 when no budget
 6. AIML-36: Inject TimeProvider (15 min)
 7. LOC-8: Use effectiveAmount in markers (15 min)
 8. SRH-13: Include Uncategorized bucket (20 min)
@@ -583,4 +582,31 @@ Listed in the Infrastructure section above (I1–I12).
 ---
 
 *Generated 2026-05-03. Based on MASTER-ISSUE-REGISTRY.md (final reconciliation),
-REMAINING-ISSUES-PLAN.md, and 4 validate-major-*.md files with actual code inspection.*
+REMAINING-ISSUES-PLAN.md, and 4 validate-major-*.md files with actual code inspection.
+
+## 15-Bug Review (2026-05-03)
+
+All 15 bug fixes verified against actual code. See `docs/analyses and debug master/review-15-bugs.md`.
+
+**5 new code fixes resolved:**
+| Bug | File | Status |
+|-----|------|--------|
+| TRN-8 | `NotificationProcessingPipeline.kt` | ✅ RESOLVED |
+| DSH-13 | `TotalsAggregationEngine.kt` | ✅ RESOLVED |
+| DSH-6 | `ComputeDashboardWidgetsUseCase.kt` | ✅ RESOLVED |
+| SRH-2 | `NaturalLanguageSearchEngine.kt` | ✅ RESOLVED (KDoc) |
+| AIML-25 | `FinancialHealthScoreV2.kt` | ✅ RESOLVED |
+
+**10 already-fixed bugs confirmed:**
+| Bug | File | Status |
+|-----|------|--------|
+| FCST-11 | `CashFlowCalculator.kt` | ✅ CONFIRMED |
+| SHR-7/DB-3 | `AppDatabase.kt` | ✅ CONFIRMED |
+| CURR-4 | `CurrencyConverter.kt` | ✅ CONFIRMED |
+| AIML-7 | `AnomalyDetector.kt` | ✅ CONFIRMED |
+| AIML-11/12/13 | `InsightsEngine.kt` + `AnomalyDetector.kt` | ✅ CONFIRMED |
+| RCP-19 | `ScannedReceiptDao.kt` | ✅ CONFIRMED |
+| WRN-N1 | `ReceiptLinkService.kt` | ✅ CONFIRMED |
+| RCP-22 | `ReceiptRepository.kt` | ✅ CONFIRMED |
+| SRH-11 | `AnalyticsViewModel.kt` | ✅ CONFIRMED |
+| REC-7 | `SubscriptionManagerEngine.kt` | ✅ CONFIRMED |

@@ -167,6 +167,24 @@ class NotificationProcessingPipeline @Inject constructor(
         }
         val sourceStatsTimestamp = timeProvider.now()
 
+        // ── TRN-8: Fast fingerprint dedup check before expensive parse ──────────
+        // Check if an identical notification already exists in the DB. If it does,
+        // skip the expensive parse + AI fallback entirely. The raw-notification
+        // dedup in insertRawNotificationIfNotDuplicate (Phase 2) was too late —
+        // the parse work had already been wasted.
+        if (dao.exists(
+                packageName = notification.packageName,
+                timestamp = notification.timestamp,
+                title = notification.title,
+                text = notification.text,
+                bigText = notification.bigText
+            )
+        ) {
+            Timber.d("TRN-8: Duplicate notification detected before parse, skipping: ${notification.packageName}")
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+            return
+        }
+
         // Phase 1: Pre-DB work (no transaction held)
         val parsed = parserRegistry.parseWithAiFallback(
             title = notification.title,

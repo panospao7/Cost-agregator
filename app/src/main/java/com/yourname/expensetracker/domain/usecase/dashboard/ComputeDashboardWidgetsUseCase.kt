@@ -734,7 +734,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
             add(
                 DashboardWidget.SafeToSpend(
-                    amount = if (ctx.overallBudget != null) ctx.safeToSpend else ctx.monthSpent,
+                    // DSH-6: When no budget is configured (totalBudget == null), set amount to 0.0
+                    // so the UI can show a clear CTA ("Set a budget") instead of showing monthSpent,
+                    // which confusingly displays money *already spent* as if it were *available*.
+                    amount = if (ctx.overallBudget != null) ctx.safeToSpend else 0.0,
                     totalBudget = ctx.overallBudget?.budgetAmount,
                     daysRemaining = ctx.daysRemaining
                 )
