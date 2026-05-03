@@ -9,8 +9,7 @@ import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Locale
+import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 
 /**
@@ -32,21 +31,10 @@ class CsvExpenseImporter @Inject constructor(
 ) {
 
     /**
-     * Date parser for CSV import.
-     *
-     * ## Migration path
-     * `SimpleDateFormat` is not thread-safe. When this utility is called from
-     * concurrent flows, replace with `DateTimeFormatter.ofPattern("yyyy-MM-dd")`
-     * which is immutable and thread-safe. Example:
-     * ```
-     * private val dateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-     * // Usage: LocalDate.parse(dateStr, dateFormat)
-     * ```
-     * See [RSP-A2] in MASTER-ISSUE-REGISTRY.
+     * Thread-safe date parser for CSV import using [DateTimeFormatter]
+     * (immutable and thread-safe, unlike the legacy SimpleDateFormat).
      */
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
-        isLenient = false
-    }
+    private val dateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
     /**
      * Import expenses from raw CSV content.
@@ -126,8 +114,10 @@ class CsvExpenseImporter @Inject constructor(
 
             // Parse date
             val date = try {
-                dateFormat.parse(dateStr)?.time
-                    ?: return RowResult.Failed("Invalid date: $dateStr")
+                java.time.LocalDate.parse(dateStr, dateFormat)
+                    .atStartOfDay(java.time.ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli()
             } catch (e: Exception) {
                 return RowResult.Failed("Invalid date: $dateStr — ${e.message}")
             }

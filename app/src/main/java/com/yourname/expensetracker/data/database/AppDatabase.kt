@@ -3459,6 +3459,20 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+            /**
+             * Salvatage repair for a corrupted or schema-mismatched table.
+             *
+             * ## DB-5: Partial salvage limitation
+             * The current implementation is **all-or-nothing**: it only copies rows
+             * from the old table when **every** canonical column exists in the old
+             * table (`oldColumns.containsAll(canonicalColumns.toSet())`). If even
+             * one canonical column is missing (e.g. the old table was from a prior
+             * schema), all data is silently dropped — only the new empty table survives.
+             *
+             * A future improvement should implement **partial salvage**: copy rows
+             * for which all required columns exist, inserting NULL/defaults for
+             * missing columns, and log the count of salvaged vs dropped rows.
+             */
             private fun repairTable(
                 database: androidx.sqlite.db.SupportSQLiteDatabase,
                 tableName: String,

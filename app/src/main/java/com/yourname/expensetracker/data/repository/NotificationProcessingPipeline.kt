@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.ExtractionState
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
@@ -63,6 +64,15 @@ import javax.inject.Singleton
  *  - Classify merchants and transfer directions
  *  - Write the result (expense / pending review / rejected) inside a DB transaction
  *  - Trigger subscription detection after successful transaction processing
+ *
+ * ## TRN-8: Fingerprint pre-check before parse/AI fallback
+ * The current pipeline performs an expensive parse + optional AI fallback
+ * ([parserRegistry.parseWithAiFallback]) at line 161 **before** checking for
+ * duplicates. If the notification is a duplicate, the parse effort is wasted.
+ * A future optimisation should move the raw-notification duplicate check (or
+ * a lightweight fingerprint check) **before** the parse call, returning early
+ * when a matching raw notification already exists. The `insertRawNotificationIfNotDuplicate`
+ * guard at Phase 2 is too late — the expensive work has already been done.
  *
  * ## AID-9: AI auto-apply audit requirement
  * When [RoutingDecision.AUTO_ACCEPT] is chosen by the confidence router, the
@@ -239,7 +249,8 @@ class NotificationProcessingPipeline @Inject constructor(
                         explanation = "Oversized amount needs manual confirmation",
                         packageName = notification.packageName,
                         notificationTitle = notification.title,
-                        notificationText = notification.text ?: notification.bigText
+                        notificationText = notification.text ?: notification.bigText,
+                        extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
                     )
                     pendingReviewDao.upsertByRawNotificationId(review)
                     sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
@@ -304,7 +315,8 @@ class NotificationProcessingPipeline @Inject constructor(
                             explanation = "Transaction signal detected but parser failed — needs manual confirmation",
                             packageName = notification.packageName,
                             notificationTitle = notification.title,
-                            notificationText = notification.text ?: notification.bigText
+                            notificationText = notification.text ?: notification.bigText,
+                            extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
                         )
                         pendingReviewDao.upsertByRawNotificationId(review)
                         sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)

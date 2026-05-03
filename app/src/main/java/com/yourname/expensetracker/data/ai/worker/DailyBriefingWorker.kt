@@ -21,9 +21,8 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * Periodic WorkManager worker that proactively generates a daily AI dashboard briefing.
@@ -64,7 +63,10 @@ class DailyBriefingWorker @AssistedInject constructor(
 
         return try {
             val startedAt = timeProvider.now()
-            val dateKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(startedAt))
+            val dateKey = java.time.Instant.ofEpochMilli(startedAt)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+                .toString()
             val notificationId = NotificationIdGenerator.forGeneral(dateKey.hashCode().toLong())
             withTimeout(BRIEFING_PIPELINE_TIMEOUT_MS) {
                 val processedData = dashboardDataProvider

@@ -20,6 +20,14 @@ import kotlin.coroutines.cancellation.CancellationException
 // === Engine ===
 
 /**
+ * ## CURRENCY LIMITATION: Hardcoded EUR default
+ * Several methods in this engine default `displayCurrency` to `"EUR"` when no
+ * currency is provided by the caller. This means insights (formatting, comparison)
+ * will be denominated in EUR even when the user's home currency is different.
+ * A future migration should wire the user's actual home currency via
+ * [com.yourname.expensetracker.domain.currency.CurrencySettingsRepository.homeCurrency]
+ * and remove the hardcoded default.
+ *
  * ## AIML-11: Confidence propagation
  * Insights that rely on AI-classified transactions inherit the classifier's
  * confidence score. The `adjustedConfidence` from [ConfidenceRouter] is stored

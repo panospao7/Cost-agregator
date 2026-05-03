@@ -8,9 +8,9 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -52,7 +52,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
         endDate: Long,
         includeMileage: Boolean = true
     ): BusinessExpenseReport = withContext(Dispatchers.IO) {
-        val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+        val dateFormat = DateTimeFormatter.ofPattern("dd/MM/yyyy")
         
         // Get all business expenses – enforce purchase-only at the boundary
         val expenses = businessExpenseRepository.getBusinessExpenses(startDate, endDate)
@@ -106,8 +106,8 @@ class BusinessExpenseReportGenerator @Inject constructor(
             append("========================================\n")
             append("BUSINESS EXPENSE REPORT\n")
             append("========================================\n")
-            append("Period: ${dateFormat.format(Date(startDate))} - ${dateFormat.format(Date(endDate))}\n")
-            append("Generated: ${dateFormat.format(Date(timeProvider.now()))}\n")
+            append("Period: ${formatInstant(startDate, dateFormat)} - ${formatInstant(endDate, dateFormat)}\n")
+            append("Generated: ${formatInstant(timeProvider.now(), dateFormat)}\n")
             append("\n")
             append("SUMMARY\n")
             append("----------------------------------------\n")
@@ -155,7 +155,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
                 append("TOP 10 EXPENSES\n")
                 append("----------------------------------------\n")
                 for ((index, expense) in topExpenses.withIndex()) {
-                    val date = dateFormat.format(Date(expense.date))
+                    val date = formatInstant(expense.date, dateFormat)
                     val merchant = expense.merchant.take(25)
                     val purpose = expense.businessPurpose?.let { " - $it" } ?: ""
                     append("${index + 1}. ${date} - €${String.format("%.2f", expense.effectiveAmount)} - ${merchant}${purpose}\n")
@@ -167,7 +167,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
                 append("⚠️ EXPENSES MISSING RECEIPTS\n")
                 append("----------------------------------------\n")
                 for (expense in missingReceipts) {
-                    val date = dateFormat.format(Date(expense.date))
+                    val date = formatInstant(expense.date, dateFormat)
                     append("${date} - €${String.format("%.2f", expense.effectiveAmount)} - ${expense.merchant}\n")
                 }
                 append("\n")
@@ -230,7 +230,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
         endDate: Long,
         includeMileage: Boolean = true
     ): String = withContext(Dispatchers.IO) {
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val dateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd")
         val csv = StringBuilder()
         
         // Header
@@ -240,7 +240,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
         val expenses = businessExpenseRepository.getBusinessExpenses(startDate, endDate)
             .filter { it.transactionType.toDomain().isSpending }
         for (expense in expenses) {
-            val date = dateFormat.format(Date(expense.date))
+            val date = formatInstant(expense.date, dateFormat)
             val merchant = escapeCSV(expense.merchant)
             val category = escapeCSV(expense.businessCategory ?: "")
             val purpose = escapeCSV(expense.businessPurpose ?: "")
@@ -258,7 +258,7 @@ class BusinessExpenseReportGenerator @Inject constructor(
             
             val trips = businessExpenseRepository.getBusinessMileageBetween(startDate, endDate)
             for (trip in trips) {
-                val date = dateFormat.format(Date(trip.date))
+                val date = formatInstant(trip.date, dateFormat)
                 val startLoc = escapeCSV(trip.startLocation ?: "")
                 val endLoc = escapeCSV(trip.endLocation ?: "")
                 val purpose = escapeCSV(trip.tripPurpose)
@@ -279,6 +279,14 @@ class BusinessExpenseReportGenerator @Inject constructor(
         return if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
             "\"${value.replace("\"", "\"\"")}\""
         } else value
+    }
+
+    /**
+     * Formats an epoch-millis timestamp using the given [DateTimeFormatter].
+     * Thread-safe replacement for the legacy `SimpleDateFormat.format(Date(millis))`.
+     */
+    private fun formatInstant(millis: Long, formatter: DateTimeFormatter): String {
+        return Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate().format(formatter)
     }
 
     // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType

@@ -496,6 +496,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
         if (request.date > TimePeriodUtils.addDays(now, 1)) { // now + 1 day
             errors.add("Date cannot be in the future")
         }
+        // TODO: Make future-date tolerance configurable (e.g. via policy object).
+        // Currently uses a hardcoded 1-day tolerance. Some users may want
+        // stricter (reject any future date) or looser (allow scheduling weeks ahead).
 
         // Transfer validation
         if (request.transactionType == TransactionType.TRANSFER) {

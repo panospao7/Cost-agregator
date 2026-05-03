@@ -10,10 +10,16 @@ import com.yourname.expensetracker.data.database.entity.ReceiptItemCategorizatio
 @Dao
 interface ReceiptItemCategorizationDao {
     
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * RCP-N4: Changed from REPLACE to ABORT to prevent silent data loss.
+     * REPLACE would silently delete existing rows with the same primary key,
+     * discarding audit fields (userCorrectedCategoryId, userCorrectedAt, etc.).
+     * ABORT fails fast so callers must handle conflicts explicitly.
+     */
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(item: ReceiptItemCategorization): Long
-    
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertAll(items: List<ReceiptItemCategorization>): List<Long>
     
     @Update
