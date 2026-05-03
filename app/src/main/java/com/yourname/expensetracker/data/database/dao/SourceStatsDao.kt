@@ -42,7 +42,11 @@ interface SourceStatsDao {
     @Query("SELECT * FROM source_stats ORDER BY totalNotifications DESC")
     suspend fun getAll(): List<SourceStats>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Insert all source stats. Uses IGNORE because source stats are derived audit data;
+     * duplicates should never overwrite existing aggregated counters.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(stats: List<SourceStats>)
 
     @Query("""

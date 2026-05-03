@@ -68,29 +68,29 @@ data class ScannedReceipt(
     val parsedTaxAmount: Double?,
     @ColumnInfo(defaultValue = "EUR") val currency: String = "EUR",
     val confidence: Float,
-    val expenseId: Long? = null,
+    @ColumnInfo(defaultValue = "NULL") val expenseId: Long? = null,
     @ColumnInfo(defaultValue = "UNMATCHED") val matchStatus: MatchStatus = MatchStatus.UNMATCHED,
-    val matchConfidence: Float? = null,
-    val suggestedExpenseId: Long? = null,
+    @ColumnInfo(defaultValue = "NULL") val matchConfidence: Float? = null,
+    @ColumnInfo(defaultValue = "NULL") val suggestedExpenseId: Long? = null,
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
-    val createdAt: Long = 0L,
+    @ColumnInfo(defaultValue = "0") val createdAt: Long = 0L,
     @ColumnInfo(defaultValue = "PENDING") val itemCategorizationStatus: CategorizationStatus = CategorizationStatus.PENDING,
 
     // NEW Phase 4 fields
     @ColumnInfo(defaultValue = "'UNKNOWN'") val sourceType: String = "UNKNOWN",
     @ColumnInfo(defaultValue = "'UNKNOWN'") val documentType: String = "UNKNOWN",
     @ColumnInfo(defaultValue = "'CAPTURED'") val processingStatus: String = "CAPTURED",
-    val sourceFingerprint: String? = null,
-    val imageHash: String? = null,
-    val textFingerprint: String? = null,
-    val semanticFingerprint: String? = null,
-    val ocrConfidence: Float? = null,
-    val parseFailureReason: String? = null,
+    @ColumnInfo(defaultValue = "NULL") val sourceFingerprint: String? = null,
+    @ColumnInfo(defaultValue = "NULL") val imageHash: String? = null,
+    @ColumnInfo(defaultValue = "NULL") val textFingerprint: String? = null,
+    @ColumnInfo(defaultValue = "NULL") val semanticFingerprint: String? = null,
+    @ColumnInfo(defaultValue = "NULL") val ocrConfidence: Float? = null,
+    @ColumnInfo(defaultValue = "NULL") val parseFailureReason: String? = null,
     /** Must be set to timeProvider.now() on update. 0L = unset (sentinel). */
-    val updatedAt: Long = 0L,
+    @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0L,
 
     // Raw data retention: epoch ms when raw OCR text was purged, null = not yet purged
-    val rawOcrTextPurgedAt: Long? = null
+    @ColumnInfo(defaultValue = "NULL") val rawOcrTextPurgedAt: Long? = null
 ) {
     @get:Ignore
     val parsedTotalMoneyAmount: MoneyAmount? get() = parsedTotal?.let { MoneyAmount(it, CurrencyCode(currency)) }

@@ -10,7 +10,11 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface AiChatMessageDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Insert a chat message. Uses IGNORE because this is an audit/event table;
+     * duplicate messages (same auto-generated PK) should never replace existing ones.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(message: AiChatMessageEntity): Long
 
     @Query("SELECT * FROM ai_chat_messages WHERE sessionId = :sessionId ORDER BY createdAt ASC, id ASC")

@@ -25,8 +25,12 @@ import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
 import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.ui.theme.SemanticColors
-import java.text.SimpleDateFormat  // Migration: prefer DateTimeFormatter (thread-safe)
-import java.util.*
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -37,9 +41,9 @@ fun CashFlowCalendarScreen(
 ) {
     val state by viewModel.state.collectAsState()
     // Migration: replace with DateTimeFormatter.ofPattern("MMMM yyyy") for thread-safety
-    val dateFormat = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()) }
+    val dateFormat = remember { DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()) }
     // Migration: replace with DateTimeFormatter.ofPattern("EEE, MMM d, yyyy") for thread-safety
-    val selectedDateFormat = remember { SimpleDateFormat("EEE, MMM d, yyyy", Locale.getDefault()) }
+    val selectedDateFormat = remember { DateTimeFormatter.ofPattern("EEE, MMM d, yyyy", Locale.getDefault()) }
     val dailyCashFlowByDate = remember(state.dailyCashFlows) {
         state.dailyCashFlows.associateBy { normalizeDateKey(it.date) }
     }
@@ -81,7 +85,7 @@ fun CashFlowCalendarScreen(
                 }
                 
                 Text(
-                    text = dateFormat.format(state.currentMonth),
+                    text = Instant.ofEpochMilli(state.currentMonth.time).atZone(ZoneId.systemDefault()).format(dateFormat),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -209,7 +213,7 @@ fun CashFlowCalendarScreen(
                     onDismissRequest = { viewModel.selectDate(null) }
                 ) {
             DailyCashFlowDetails(
-                selectedDateLabel = selectedDateFormat.format(selectedDate),
+                selectedDateLabel = Instant.ofEpochMilli(selectedDate.time).atZone(ZoneId.systemDefault()).format(selectedDateFormat),
                 cashFlow = selectedCashFlow,
                 homeCurrency = state.homeCurrency
             )

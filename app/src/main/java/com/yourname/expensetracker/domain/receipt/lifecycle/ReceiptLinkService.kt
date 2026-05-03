@@ -113,8 +113,15 @@ class ReceiptLinkService @Inject constructor(
 
             // 4. For non-BANK_STATEMENT receipts: update legacy ScannedReceipt.expenseId
             // RCP-8: Ensure updatedAt is set on every ScannedReceipt update.
+            // RCP-22: Clear suggestedExpenseId to prevent stale suggestion reuse.
             if (!isBankStatement) {
-                scannedReceiptDao.update(receipt.copy(expenseId = expenseId, updatedAt = now))
+                scannedReceiptDao.update(
+                    receipt.copy(
+                        expenseId = expenseId,
+                        suggestedExpenseId = null,
+                        updatedAt = now
+                    )
+                )
             }
 
             // I1: Propagate expenseId to warranty and return window for this receipt

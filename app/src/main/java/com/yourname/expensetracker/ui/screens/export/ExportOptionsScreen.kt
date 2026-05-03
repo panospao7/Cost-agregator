@@ -34,8 +34,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.SimpleDateFormat  // Migration: prefer DateTimeFormatter (thread-safe)
-import java.util.Date
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -231,7 +233,7 @@ fun ExportOptionsScreen(
                                     else -> "csv"
                                 }
                                 // Migration: use DateTimeFormatter for thread-safety
-                                val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                                val timestamp = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss", Locale.US).format(LocalDateTime.now())
                                 saveLauncher.launch("expenses_$timestamp.$ext")
                             },
                             onShare = {
@@ -365,7 +367,7 @@ private fun DateRangeCard(
     onEndDateClick: () -> Unit
 ) {
     // Migration: use DateTimeFormatter.ofPattern("MMM dd, yyyy") for thread-safety
-    val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
+    val dateFormat = remember { DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.getDefault()) }
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -401,7 +403,7 @@ private fun DateRangeCard(
                         color = SemanticColors.TextSecondary
                     )
                     TextButton(onClick = onStartDateClick) {
-                        Text(dateFormat.format(Date(startDate)))
+                        Text(Instant.ofEpochMilli(startDate).atZone(ZoneId.systemDefault()).format(dateFormat))
                     }
                 }
                 
@@ -419,7 +421,7 @@ private fun DateRangeCard(
                         color = SemanticColors.TextSecondary
                     )
                     TextButton(onClick = onEndDateClick) {
-                        Text(dateFormat.format(Date(endDate)))
+                        Text(Instant.ofEpochMilli(endDate).atZone(ZoneId.systemDefault()).format(dateFormat))
                     }
                 }
             }

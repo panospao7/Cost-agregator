@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 112,
-    "identityHash": "2033ee083e4253eaa4d07594d6a5ce5f",
+    "identityHash": "64574f22f3fc82a1d9df4bae45e05ea3",
     "entities": [
       {
         "tableName": "raw_notifications",
@@ -1350,7 +1350,7 @@
       },
       {
         "tableName": "scanned_receipts",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `imagePath` TEXT, `rawOcrText` TEXT NOT NULL, `parsedTotal` REAL, `parsedMerchant` TEXT, `parsedDate` INTEGER, `parsedItems` TEXT, `parsedTaxAmount` REAL, `currency` TEXT NOT NULL DEFAULT 'EUR', `confidence` REAL NOT NULL, `expenseId` INTEGER, `matchStatus` TEXT NOT NULL DEFAULT 'UNMATCHED', `matchConfidence` REAL, `suggestedExpenseId` INTEGER, `createdAt` INTEGER NOT NULL, `itemCategorizationStatus` TEXT NOT NULL DEFAULT 'PENDING', `sourceType` TEXT NOT NULL DEFAULT 'UNKNOWN', `documentType` TEXT NOT NULL DEFAULT 'UNKNOWN', `processingStatus` TEXT NOT NULL DEFAULT 'CAPTURED', `sourceFingerprint` TEXT, `imageHash` TEXT, `textFingerprint` TEXT, `semanticFingerprint` TEXT, `ocrConfidence` REAL, `parseFailureReason` TEXT, `updatedAt` INTEGER NOT NULL, `rawOcrTextPurgedAt` INTEGER, FOREIGN KEY(`expenseId`) REFERENCES `expenses`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `imagePath` TEXT, `rawOcrText` TEXT NOT NULL, `parsedTotal` REAL, `parsedMerchant` TEXT, `parsedDate` INTEGER, `parsedItems` TEXT, `parsedTaxAmount` REAL, `currency` TEXT NOT NULL DEFAULT 'EUR', `confidence` REAL NOT NULL, `expenseId` INTEGER DEFAULT NULL, `matchStatus` TEXT NOT NULL DEFAULT 'UNMATCHED', `matchConfidence` REAL DEFAULT NULL, `suggestedExpenseId` INTEGER DEFAULT NULL, `createdAt` INTEGER NOT NULL DEFAULT 0, `itemCategorizationStatus` TEXT NOT NULL DEFAULT 'PENDING', `sourceType` TEXT NOT NULL DEFAULT 'UNKNOWN', `documentType` TEXT NOT NULL DEFAULT 'UNKNOWN', `processingStatus` TEXT NOT NULL DEFAULT 'CAPTURED', `sourceFingerprint` TEXT DEFAULT NULL, `imageHash` TEXT DEFAULT NULL, `textFingerprint` TEXT DEFAULT NULL, `semanticFingerprint` TEXT DEFAULT NULL, `ocrConfidence` REAL DEFAULT NULL, `parseFailureReason` TEXT DEFAULT NULL, `updatedAt` INTEGER NOT NULL DEFAULT 0, `rawOcrTextPurgedAt` INTEGER DEFAULT NULL, FOREIGN KEY(`expenseId`) REFERENCES `expenses`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
         "fields": [
           {
             "fieldPath": "id",
@@ -1410,7 +1410,8 @@
           {
             "fieldPath": "expenseId",
             "columnName": "expenseId",
-            "affinity": "INTEGER"
+            "affinity": "INTEGER",
+            "defaultValue": "NULL"
           },
           {
             "fieldPath": "matchStatus",
@@ -1422,18 +1423,21 @@
           {
             "fieldPath": "matchConfidence",
             "columnName": "matchConfidence",
-            "affinity": "REAL"
+            "affinity": "REAL",
+            "defaultValue": "NULL"
           },
           {
             "fieldPath": "suggestedExpenseId",
             "columnName": "suggestedExpenseId",
-            "affinity": "INTEGER"
+            "affinity": "INTEGER",
+            "defaultValue": "NULL"
           },
           {
             "fieldPath": "createdAt",
             "columnName": "createdAt",
             "affinity": "INTEGER",
-            "notNull": true
+            "notNull": true,
+            "defaultValue": "0"
           },
           {
             "fieldPath": "itemCategorizationStatus",
@@ -1466,43 +1470,51 @@
           {
             "fieldPath": "sourceFingerprint",
             "columnName": "sourceFingerprint",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "defaultValue": "NULL"
           },
           {
             "fieldPath": "imageHash",
             "columnName": "imageHash",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "defaultValue": "NULL"
           },
           {
             "fieldPath": "textFingerprint",
             "columnName": "textFingerprint",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "defaultValue": "NULL"
           },
           {
             "fieldPath": "semanticFingerprint",
             "columnName": "semanticFingerprint",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "defaultValue": "NULL"
           },
           {
             "fieldPath": "ocrConfidence",
             "columnName": "ocrConfidence",
-            "affinity": "REAL"
+            "affinity": "REAL",
+            "defaultValue": "NULL"
           },
           {
             "fieldPath": "parseFailureReason",
             "columnName": "parseFailureReason",
-            "affinity": "TEXT"
+            "affinity": "TEXT",
+            "defaultValue": "NULL"
           },
           {
             "fieldPath": "updatedAt",
             "columnName": "updatedAt",
             "affinity": "INTEGER",
-            "notNull": true
+            "notNull": true,
+            "defaultValue": "0"
           },
           {
             "fieldPath": "rawOcrTextPurgedAt",
             "columnName": "rawOcrTextPurgedAt",
-            "affinity": "INTEGER"
+            "affinity": "INTEGER",
+            "defaultValue": "NULL"
           }
         ],
         "primaryKey": {
@@ -7249,7 +7261,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '2033ee083e4253eaa4d07594d6a5ce5f')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '64574f22f3fc82a1d9df4bae45e05ea3')"
     ]
   }
 }

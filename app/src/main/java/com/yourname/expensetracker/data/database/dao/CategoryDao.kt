@@ -36,6 +36,12 @@ interface CategoryDao {
     @Query("SELECT * FROM categories WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<Long>): List<Category>
 
+    /**
+     * Direct insert that bypasses category name normalization.
+     * Prefer [com.yourname.expensetracker.data.repository.CategoryRepository.normalizeAndInsert]
+     * to ensure consistent naming.
+     */
+    @Deprecated("Use CategoryRepository.normalizeAndInsert() instead to apply name normalization")
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(category: Category): Long
     

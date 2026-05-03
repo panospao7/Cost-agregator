@@ -40,7 +40,11 @@ interface RawNotificationDao {
     @Delete
     suspend fun delete(notification: RawNotification)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * Insert all notifications. Uses IGNORE because raw notifications are audit/event
+     * data — duplicates (same auto-generated PK) should never replace existing records.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(notifications: List<RawNotification>)
     
     @Query("""

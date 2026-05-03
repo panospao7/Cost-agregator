@@ -17,9 +17,21 @@ interface MerchantCategoryDao {
     @Query("SELECT * FROM merchant_categories WHERE normalizedCanonicalName LIKE :prefix || '%'")
     suspend fun getCategoriesByPrefix(prefix: String): List<MerchantCategory>
 
+    /**
+     * Direct insert that bypasses merchant normalization.
+     * Prefer the repository-level method that handles canonical name normalization
+     * and deduplication before inserting.
+     */
+    @Deprecated("Use repository-level insert with canonical name normalization instead")
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(merchantCategory: MerchantCategory)
 
+    /**
+     * Direct bulk insert that bypasses merchant normalization.
+     * Prefer the repository-level method that handles canonical name normalization
+     * and deduplication before inserting.
+     */
+    @Deprecated("Use repository-level insertAll with canonical name normalization instead")
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(merchantCategories: List<MerchantCategory>)
     

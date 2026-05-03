@@ -285,8 +285,8 @@ class AccountantReportPdfExporter @Inject constructor(
         private val monthFormatter = DateTimeFormatter.ofPattern("MMM yyyy", locale)
         private val timestampFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", locale)
 
-        fun formatTwoDecimals(value: Double): String = twoDecimals.format(value)
-        fun formatOneDecimal(value: Double): String = oneDecimal.format(value)
+        fun formatTwoDecimals(value: Double): String = twoDecimals.format(value.takeIf { it.isFinite() } ?: 0.0)
+        fun formatOneDecimal(value: Double): String = oneDecimal.format(value.takeIf { it.isFinite() } ?: 0.0)
         fun formatDay(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).atZone(zoneId).format(dayFormatter)
         fun formatMonth(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).atZone(zoneId).format(monthFormatter)
         fun formatTimestamp(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).atZone(zoneId).format(timestampFormatter)

@@ -33,6 +33,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -506,8 +509,8 @@ class AnalyticsViewModel @Inject constructor(
 
         // === ANALYTICS DEBUG ===
         val periodDays = ((currentEnd - currentStart) / (24 * 60 * 60 * 1000)).toInt().coerceAtLeast(1)
-        val dateFormatter = java.text.SimpleDateFormat("MMM dd, yyyy HH:mm", java.util.Locale.getDefault())
-        fun formatTimestamp(ms: Long): String = dateFormatter.format(java.util.Date(ms))
+        val dateFormatter = DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm", Locale.getDefault())
+        fun formatTimestamp(ms: Long): String = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(dateFormatter)
 
         Timber.d("=== ANALYTICS DEBUG ===")
         Timber.d("Period: $period")
@@ -709,7 +712,7 @@ class AnalyticsViewModel @Inject constructor(
     ): List<VelocityAnomaly> {
         if (currentExpenses.size < 5) return emptyList()
 
-        val dayFormat = java.text.SimpleDateFormat("EEE MMM dd", java.util.Locale.getDefault())
+        val dayFormat = DateTimeFormatter.ofPattern("EEE MMM dd", Locale.getDefault())
 
         // Group expenses by day key (year-month-day)
         val byDay = mutableMapOf<Long, MutableList<ExpenseSnapshot>>()
@@ -741,7 +744,7 @@ class AnalyticsViewModel @Inject constructor(
                     ?: emptyList()
                 VelocityAnomaly(
                     dateMs = dayMs,
-                    dayLabel = dayFormat.format(java.util.Date(dayMs)),
+                    dayLabel = Instant.ofEpochMilli(dayMs).atZone(ZoneId.systemDefault()).format(dayFormat),
                     dayTotal = total,
                     monthDailyAvg = avg,
                     deviationMultiple = (total / avg).toFloat(),
