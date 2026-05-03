@@ -6812,6 +6812,10 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
         val MIGRATION_110_111 = object : androidx.room.migration.Migration(110, 111) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // ── CURR-2: Exchange rates historical index ─────────────────────────
+                // 0. Ensure validDate column exists (may be missing on very old installs)
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN validDate INTEGER") } catch (_: Exception) { }
+                try { database.execSQL("ALTER TABLE exchange_rates ADD COLUMN fetchedAt INTEGER") } catch (_: Exception) { }
+
                 // 1. Nullify any duplicate (fromCurrency, toCurrency, validDate) combinations
                 //    before creating the new unique index.  With the previous unique on
                 //    (fromCurrency, toCurrency) this is a safety measure for edge cases.
