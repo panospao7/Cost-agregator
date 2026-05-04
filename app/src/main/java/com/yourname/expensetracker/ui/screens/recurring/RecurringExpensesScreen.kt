@@ -131,6 +131,7 @@ class RecurringExpensesViewModel @Inject constructor(
                     id = entity.id,
                     description = entity.description,
                     amount = entity.amount,
+                    currency = entity.currency,
                     date = entity.date,
                     categoryId = entity.categoryId,
                     isRecurring = entity.isRecurring,

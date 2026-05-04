@@ -201,7 +201,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 updatedAt = timeProvider.now()
             )
 
-            val receiptId = scannedReceiptDao.insert(statementReceipt)
+            val receiptId = receiptRepository.insertReceipt(statementReceipt)
             if (receiptId <= 0) {
                 return Result.failure(
                     IllegalStateException("Failed to save bank statement receipt record")

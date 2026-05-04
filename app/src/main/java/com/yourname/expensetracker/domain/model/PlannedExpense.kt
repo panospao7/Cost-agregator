@@ -4,6 +4,7 @@ data class PlannedExpense(
     val id: Long,
     val description: String,
     val amount: Double,
+    val currency: String = "EUR",
     val date: Long,
     val categoryId: Long?,
     val isRecurring: Boolean,

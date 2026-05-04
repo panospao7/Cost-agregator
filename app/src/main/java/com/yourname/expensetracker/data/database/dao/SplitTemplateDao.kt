@@ -24,6 +24,10 @@ interface SplitTemplateDao {
     @Delete
     suspend fun deleteTemplate(template: SplitTemplate)
     
+    /**
+     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     @Query("UPDATE split_templates SET useCount = useCount + 1, updatedAt = :timestamp WHERE id = :templateId")
     suspend fun incrementUseCount(templateId: Long, timestamp: Long = System.currentTimeMillis())
     

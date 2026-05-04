@@ -33,6 +33,10 @@ interface RecommendationDao {
         id ASC
         LIMIT 5
     """)
+    /**
+     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     suspend fun getActiveByUser(userId: String, nowMillis: Long = System.currentTimeMillis()): List<RecommendationEntity>
 
     /**
@@ -53,6 +57,10 @@ interface RecommendationDao {
         createdAt DESC,
         id ASC
     """)
+    /**
+     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     suspend fun getAllActiveByUser(userId: String, nowMillis: Long = System.currentTimeMillis()): List<RecommendationEntity>
     
     /**
@@ -73,6 +81,10 @@ interface RecommendationDao {
         id ASC
         LIMIT 5
     """)
+    /**
+     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     fun observeActiveByUser(userId: String, nowMillis: Long = System.currentTimeMillis()): Flow<List<RecommendationEntity>>
     
     /**
@@ -105,6 +117,10 @@ interface RecommendationDao {
             updatedAt = :nowMillis
         WHERE id = :id
     """)
+    /**
+     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     suspend fun archive(id: String, nowMillis: Long = System.currentTimeMillis())
 
     /**
@@ -121,6 +137,10 @@ interface RecommendationDao {
           AND expiresAt > :nowMillis
           AND id NOT IN (:retainedIds)
     """)
+    /**
+     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     suspend fun archiveActiveOverflow(
         userId: String,
         retainedIds: List<String>,
@@ -138,6 +158,10 @@ interface RecommendationDao {
           AND expiresAt < :beforeTimestamp
           AND status != 'EXPIRED'
     """)
+    /**
+     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     suspend fun expireOld(userId: String, beforeTimestamp: Long, nowMillis: Long = System.currentTimeMillis())
 
     @Query("""
@@ -147,6 +171,10 @@ interface RecommendationDao {
         WHERE userId = :userId
           AND status = 'ACTIVE'
     """)
+    /**
+     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     suspend fun expireAllActiveByUser(userId: String, nowMillis: Long = System.currentTimeMillis()): Int
     
     /**
@@ -176,6 +204,12 @@ interface RecommendationDao {
     /**
      * Count active recommendations for a user.
      */
+    /**
+     * Count active recommendations for a user.
+     *
+     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     @Query("""
         SELECT COUNT(*) FROM recommendations
         WHERE userId = :userId 
@@ -187,6 +221,9 @@ interface RecommendationDao {
     
     /**
      * Delete all expired recommendations (cleanup).
+     *
+     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
      */
     @Query("DELETE FROM recommendations WHERE expiresAt < :nowMillis AND status = 'EXPIRED'")
     suspend fun deleteExpired(nowMillis: Long = System.currentTimeMillis()): Int

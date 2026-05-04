@@ -66,6 +66,9 @@ interface SpendingPersonalityProfileDao {
     
     /**
      * Mark a profile as viewed.
+     *
+     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
      */
     @Query("UPDATE spending_personality_profiles SET isViewed = 1, viewedAt = :timestamp WHERE id = :profileId")
     suspend fun markAsViewed(profileId: Long, timestamp: Long = System.currentTimeMillis())

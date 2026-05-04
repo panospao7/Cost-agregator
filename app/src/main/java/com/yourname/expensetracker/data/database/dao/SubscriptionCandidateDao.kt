@@ -76,6 +76,10 @@ interface SubscriptionCandidateDao {
             updatedAt = :timestamp
         WHERE id = :candidateId
     """)
+    /**
+     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     suspend fun markAsConverted(candidateId: Long, subscriptionId: Long, timestamp: Long = System.currentTimeMillis())
     
     /**
@@ -87,6 +91,10 @@ interface SubscriptionCandidateDao {
             updatedAt = :timestamp
         WHERE id = :candidateId
     """)
+    /**
+     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     suspend fun markAsRejected(candidateId: Long, timestamp: Long = System.currentTimeMillis())
     
     /**

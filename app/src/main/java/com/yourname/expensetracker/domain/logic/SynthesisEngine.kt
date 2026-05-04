@@ -163,9 +163,14 @@ class SynthesisEngine @Inject constructor(
             pattern.averageAmount * occurrences
         }
         
-        val committedPlanned = plannedExpenses.filter {
+        // Group by currency to avoid mixing different currencies in the sum
+        val committedPlannedByCurrency = plannedExpenses.filter {
             it.priority == PlannedExpensePriority.MUST && it.date >= startOfToday && it.date < endOfMonthExclusive
-        }.sumOf { it.amount }
+        }.groupBy { it.currency }.mapValues { (_, exps) -> exps.sumOf { it.amount } }
+        if (committedPlannedByCurrency.size > 1) {
+            Timber.w("$TAG: Multiple currencies in committed planned expenses: $committedPlannedByCurrency")
+        }
+        val committedPlanned = committedPlannedByCurrency.values.sum()
 
         val totalCommitted = committedUpcomingBills + committedPlanned
 
@@ -191,9 +196,14 @@ class SynthesisEngine @Inject constructor(
             pattern.averageAmount * occurrences
         }
         
-        val likelyPlanned = plannedExpenses.filter {
+        // Group by currency to avoid mixing different currencies in the sum
+        val likelyPlannedByCurrency = plannedExpenses.filter {
             it.priority == PlannedExpensePriority.LIKELY && it.date >= startOfToday && it.date < endOfMonthExclusive
-        }.sumOf { it.amount } * LIKELY_EXPENSE_WEIGHT
+        }.groupBy { it.currency }.mapValues { (_, exps) -> exps.sumOf { it.amount } }
+        if (likelyPlannedByCurrency.size > 1) {
+            Timber.w("$TAG: Multiple currencies in likely planned expenses: $likelyPlannedByCurrency")
+        }
+        val likelyPlanned = likelyPlannedByCurrency.values.sum() * LIKELY_EXPENSE_WEIGHT
         
         val monthlyRecurringTotal = recurringPatterns.sumOf { pattern ->
             when (pattern.frequency) {
@@ -244,14 +254,22 @@ class SynthesisEngine @Inject constructor(
             .groupBy { expense ->
                 dayCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
             }
-            .mapValues { it.value.sumOf { exp -> exp.amount } }
+            .mapValues { (_, exps) ->
+                val byCurrency = exps.groupBy { it.currency }.mapValues { (_, exps2) -> exps2.sumOf { it.amount } }
+                if (byCurrency.size > 1) Timber.w("$TAG: Multiple currencies in MUST planned expenses for day")
+                byCurrency.values.sum()
+            }
         
         val likelyExpensesByDay = plannedExpensesInRange
             .filter { it.priority == PlannedExpensePriority.LIKELY }
             .groupBy { expense ->
                 dayCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
             }
-            .mapValues { it.value.sumOf { exp -> exp.amount } * LIKELY_EXPENSE_WEIGHT }
+            .mapValues { (_, exps) ->
+                val byCurrency = exps.groupBy { it.currency }.mapValues { (_, exps2) -> exps2.sumOf { it.amount } }
+                if (byCurrency.size > 1) Timber.w("$TAG: Multiple currencies in LIKELY planned expenses for day")
+                byCurrency.values.sum() * LIKELY_EXPENSE_WEIGHT
+            }
 
         // Pre-compute running totals for O(n) projection instead of O(n²)
         val mustDays = mustExpensesByDay.keys.sorted()
@@ -358,15 +376,22 @@ class SynthesisEngine @Inject constructor(
         // Filter planned expenses for this month only using timestamp range
         // MUST at 100%, LIKELY at 70%, OPTIONAL ignored
         val thisMonthPlanned = components.plannedExpenses.filter { it.date >= startOfMonth && it.date < endOfMonthExclusive }
-        val totalMonthlyPlanned = thisMonthPlanned
+        // Group planned expenses by currency before summing
+        val thisMonthPlannedByCurrency = thisMonthPlanned
             .filter { it.priority != PlannedExpensePriority.OPTIONAL }
-            .sumOf { expense ->
+            .groupBy { it.currency }
+        if (thisMonthPlannedByCurrency.size > 1) {
+            Timber.w("$TAG: Multiple currencies in monthly planned expenses: ${thisMonthPlannedByCurrency.keys}")
+        }
+        val totalMonthlyPlanned = thisMonthPlannedByCurrency.values.sumOf { exps ->
+            exps.sumOf { expense ->
                 when (expense.priority) {
                     PlannedExpensePriority.MUST -> expense.amount
                     PlannedExpensePriority.LIKELY -> expense.amount * LIKELY_EXPENSE_WEIGHT
                     PlannedExpensePriority.OPTIONAL -> 0.0
                 }
             }
+        }
         
         // Centralized Logic Gain: Factoring in Goal Reserves (Savings)
         val goalReserves = components.goalReserves
@@ -431,11 +456,17 @@ class SynthesisEngine @Inject constructor(
             val plannedItemsOnDay = plannedByDay[day] ?: emptyList()
             val plannedOnDay = plannedItemsOnDay
                 .filter { it.priority != PlannedExpensePriority.OPTIONAL }
-                .sumOf { expense ->
-                    when (expense.priority) {
-                        PlannedExpensePriority.MUST -> expense.amount
-                        PlannedExpensePriority.LIKELY -> expense.amount * LIKELY_EXPENSE_WEIGHT
-                        PlannedExpensePriority.OPTIONAL -> 0.0
+                .groupBy { it.currency }
+                .let { byCurrency ->
+                    if (byCurrency.size > 1) Timber.w("$TAG: Multiple currencies in planned expenses for day $day")
+                    byCurrency.values.sumOf { exps ->
+                        exps.sumOf { expense ->
+                            when (expense.priority) {
+                                PlannedExpensePriority.MUST -> expense.amount
+                                PlannedExpensePriority.LIKELY -> expense.amount * LIKELY_EXPENSE_WEIGHT
+                                PlannedExpensePriority.OPTIONAL -> 0.0
+                            }
+                        }
                     }
                 }
             val plannedNames = plannedItemsOnDay.map { it.description }

@@ -50,12 +50,24 @@ interface BudgetAdjustmentDao {
     @Query("SELECT * FROM budget_adjustment_recommendations WHERE generatedAt > :since ORDER BY confidence DESC")
     suspend fun getRecentRecommendations(since: Long): List<BudgetAdjustmentRecommendation>
     
+    /**
+     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     @Query("UPDATE budget_adjustment_recommendations SET status = 'APPLIED', appliedAt = :timestamp WHERE id = :id")
     suspend fun markRecommendationApplied(id: Long, timestamp: Long = System.currentTimeMillis())
     
+    /**
+     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     @Query("UPDATE budget_adjustment_recommendations SET status = 'DISMISSED', dismissedAt = :timestamp WHERE id = :id")
     suspend fun markRecommendationDismissed(id: Long, timestamp: Long = System.currentTimeMillis())
     
+    /**
+     * @param now Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     @Query("UPDATE budget_adjustment_recommendations SET status = 'EXPIRED' WHERE status = 'PENDING' AND expiresAt < :now")
     suspend fun expireOldRecommendations(now: Long = System.currentTimeMillis())
     

@@ -48,9 +48,17 @@ interface AiArtifactDao {
      * Mark an artifact as dismissed so the UI does not surface it again,
      * while preserving the record for diagnostics.
      */
+    /**
+     * @param now Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     @Query("UPDATE ai_artifacts SET status = :dismissed, updatedAt = :now WHERE id = :id")
     suspend fun markDismissed(id: Long, dismissed: String = AiArtifactStatus.DISMISSED.name, now: Long = System.currentTimeMillis())
 
+    /**
+     * @param now Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     */
     @Query("UPDATE ai_artifacts SET status = :applied, updatedAt = :now WHERE id = :id")
     suspend fun markApplied(id: Long, applied: String = AiArtifactStatus.APPLIED.name, now: Long = System.currentTimeMillis())
 

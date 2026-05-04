@@ -91,24 +91,36 @@ interface SavingsSweepPlanDao {
 
     /**
      * Update plan status.
+     *
+     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
      */
     @Query("UPDATE savings_sweep_plan SET status = :status, actionedAt = :timestamp WHERE id = :planId")
     suspend fun updateStatus(planId: Long, status: SweepPlanStatus, timestamp: Long = System.currentTimeMillis())
 
     /**
      * Accept a sweep plan.
+     *
+     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
      */
     @Query("UPDATE savings_sweep_plan SET status = 'ACCEPTED', actionedAt = :timestamp WHERE id = :planId")
     suspend fun acceptPlan(planId: Long, timestamp: Long = System.currentTimeMillis())
 
     /**
      * Dismiss a sweep plan.
+     *
+     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
      */
     @Query("UPDATE savings_sweep_plan SET status = 'DISMISSED', actionedAt = :timestamp WHERE id = :planId")
     suspend fun dismissPlan(planId: Long, timestamp: Long = System.currentTimeMillis())
 
     /**
      * Mark plans as expired for months that have passed.
+     *
+     * @param currentTime Defaults to [System.currentTimeMillis] for backward compat;
+     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
      */
     @Query("UPDATE savings_sweep_plan SET status = 'EXPIRED' WHERE monthEnd < :currentTime AND status = 'PENDING'")
     suspend fun expireOldPlans(currentTime: Long = System.currentTimeMillis())

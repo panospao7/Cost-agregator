@@ -27,6 +27,7 @@ import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.debug.DebugIssueDetector
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.usecase.warranty.AutoCreateWarrantyFromReceiptUseCase
@@ -42,6 +43,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -67,7 +69,8 @@ class ReceiptRepository @Inject constructor(
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
     private val warrantyUseCase: Lazy<AutoCreateWarrantyFromReceiptUseCase>,
     private val coordinator: TransactionLifecycleCoordinator,
-    private val receiptLinkService: ReceiptLinkService
+    private val receiptLinkService: ReceiptLinkService,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     private companion object {
         // Use the canonical policy for all duplicate detection constants.
@@ -222,7 +225,7 @@ class ReceiptRepository @Inject constructor(
                     parsedDate = null, 
                     parsedItems = null,
                     parsedTaxAmount = null, // Explicitly null for failed parse
-                    currency = "EUR",
+                    currency = homeCurrency(),
                     confidence = 0f
                 )
                 val receiptId = scannedReceiptDao.insert(failedReceipt)
@@ -238,7 +241,7 @@ class ReceiptRepository @Inject constructor(
                         rawNotificationId = null,
                         scannedReceiptId = receiptId,
                         suggestedAmount = null,
-                        suggestedCurrency = "EUR",
+                        suggestedCurrency = homeCurrency(),
                         suggestedMerchant = "Parsing Failed",
                         suggestedMerchantKey = MerchantKeyGenerator.generate("Parsing Failed"),
                         suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
@@ -264,6 +267,7 @@ class ReceiptRepository @Inject constructor(
             imageUri.toString()
         }
 
+        val homeCur = homeCurrency()
         val receipt = ScannedReceipt(
             imagePath = path,
             rawOcrText = "[OCR Failed or Skipped]",
@@ -272,7 +276,7 @@ class ReceiptRepository @Inject constructor(
             parsedDate = timeProvider.now(),
             parsedItems = null,
             parsedTaxAmount = null,
-            currency = "EUR",
+            currency = homeCur,
             confidence = 0f
         )
         val receiptId = scannedReceiptDao.insert(receipt)
@@ -285,7 +289,7 @@ class ReceiptRepository @Inject constructor(
                 subtotal = null,
                 tax = null,
                 date = timeProvider.now(),
-                currency = "EUR",
+                currency = homeCur,
                 lineItems = emptyList(),
                 confidence = 0f
             )
@@ -319,6 +323,9 @@ class ReceiptRepository @Inject constructor(
      *  - Receipt-to-expense linking
      *  - Hybrid classifier correction learning
      *
+     * @param currency The expense currency. **Legacy default:** `"EUR"` is the
+     *   original hardcoded fallback; callers should explicitly pass the user's
+     *   home currency via [homeCurrency] instead.
      * @Deprecated Prefer using [TransactionLifecycleCoordinator.createExpense]
      * directly with [ReceiptLinkService.linkReceiptToExpense] for the linking
      * step. This method remains for backward compatibility but will be removed
@@ -452,6 +459,12 @@ class ReceiptRepository @Inject constructor(
                 )
             }
         }
+    }
+
+    /** Returns the user's home currency, falling back to "EUR" on error. */
+    private suspend fun homeCurrency(): String {
+        return runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
     }
 
     private suspend fun runPostCommitSafely(

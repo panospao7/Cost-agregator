@@ -3,6 +3,12 @@ package com.yourname.expensetracker.domain.model.dashboard
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
+/**
+ * Dashboard-level expense representation.
+ *
+ * @param currency Currency code (e.g. "EUR", "USD"). Always populated by callers;
+ *   the default "EUR" is a backward-compat placeholder — do not rely on it.
+ */
 data class DashboardExpense(
     val id: Long,
     val amount: Double,

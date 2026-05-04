@@ -3,11 +3,13 @@ package com.yourname.expensetracker.util
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
@@ -27,7 +29,8 @@ import javax.inject.Inject
  */
 class CsvExpenseImporter @Inject constructor(
     private val categoryDao: CategoryDao,
-    private val coordinator: TransactionLifecycleCoordinator
+    private val coordinator: TransactionLifecycleCoordinator,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
 
     /**
@@ -122,13 +125,21 @@ class CsvExpenseImporter @Inject constructor(
                 return RowResult.Failed("Invalid date: $dateStr — ${e.message}")
             }
 
-            // Parse amount
+            // Parse amount and detect currency symbol
+            val currencyFromSymbol = detectCurrencySymbol(amountStr)
             val amount = amountStr
                 .replace("€", "")
                 .replace("$", "")
+                .replace("£", "")
+                .replace("¥", "")
                 .trim()
                 .toDoubleOrNull()
                 ?: return RowResult.Failed("Invalid amount: $amountStr")
+
+            // Resolve currency: use symbol from CSV, or fall back to home currency
+            val resolvedCurrency = currencyFromSymbol
+                ?: runCatching { currencySettingsRepository.homeCurrency().first() }
+                    .getOrDefault("EUR")
 
             // Get or create category
             val categoryId = getOrCreateCategory(categoryName)
@@ -138,7 +149,7 @@ class CsvExpenseImporter @Inject constructor(
             val request = CreateExpenseRequest(
                 merchant = merchant,
                 amount = amount,
-                currency = "EUR",
+                currency = resolvedCurrency,
                 date = date,
                 transactionType = TransactionType.PURCHASE,
                 source = ExpenseSource.CSV_IMPORT,
@@ -213,6 +224,20 @@ class CsvExpenseImporter @Inject constructor(
             color = generateColorForCategory(name)
         )
         return categoryDao.insert(category)
+    }
+
+    /**
+     * Detects a currency code from a currency symbol in the amount string.
+     * Returns null if no known symbol is found.
+     */
+    private fun detectCurrencySymbol(amountStr: String): String? {
+        return when {
+            amountStr.contains("€") -> "EUR"
+            amountStr.contains("$") -> "USD"
+            amountStr.contains("£") -> "GBP"
+            amountStr.contains("¥") -> "JPY"
+            else -> null
+        }
     }
 
     private fun generateColorForCategory(name: String): String {
