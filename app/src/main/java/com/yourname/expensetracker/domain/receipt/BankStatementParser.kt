@@ -154,26 +154,45 @@ class BankStatementParser @Inject constructor(
             val rowBlocks = filteredRows[i]
             val rowText = rowStrings[i]
 
-            // Try parsers in order of specificity
-            
-            // 3. Try Revolut specific parsing (uses spatial data)
-            val revolutTx = tryParseRevolutTransaction(rowBlocks, homeCurrency)
-            if (revolutTx != null) {
-                transactions.add(revolutTx)
-                continue
+            // Auto-detect statement format from full OCR text.
+            // This determines parser priority order to avoid wrong-format matches.
+            val fullText = blocks.joinToString(" ") { it.text }
+            val isRevolut = fullText.contains("Revolut", ignoreCase = true)
+            val isGreekBank = fullText.contains("Τράπεζα") || fullText.contains("Εθνική") ||
+                    fullText.contains("ALPHA BANK", ignoreCase = true) ||
+                    fullText.contains("EUROBANK", ignoreCase = true) ||
+                    fullText.contains("ΠΕΙΡΑΙΩΣ")
+
+            // Try parsers in priority order based on detected format
+            val parserOrder = when {
+                isGreekBank -> listOf("greek", "generic", "revolut")
+                isRevolut -> listOf("revolut", "generic", "greek")
+                else -> listOf("generic", "greek", "revolut")
             }
 
-            // 4. Try Greek NBG specific parsing
-            val greekNbgTx = tryParseGreekNbgTransaction(rowText, homeCurrency)
-            if (greekNbgTx != null) {
-                transactions.add(greekNbgTx)
-                continue
-            }
-
-            // 5. Fallback to generic parsing
-            val genericTx = extractTransactionFromRow(rowText, columnInfo, homeCurrency)
-            if (genericTx != null) {
-                transactions.add(genericTx)
+            for (parser in parserOrder) {
+                when (parser) {
+                    "revolut" -> {
+                        val revolutTx = tryParseRevolutTransaction(rowBlocks, homeCurrency)
+                        if (revolutTx != null) {
+                            transactions.add(revolutTx)
+                            break
+                        }
+                    }
+                    "greek" -> {
+                        val greekNbgTx = tryParseGreekNbgTransaction(rowText, homeCurrency)
+                        if (greekNbgTx != null) {
+                            transactions.add(greekNbgTx)
+                            break
+                        }
+                    }
+                    "generic" -> {
+                        val genericTx = extractTransactionFromRow(rowText, columnInfo, homeCurrency)
+                        if (genericTx != null) {
+                            transactions.add(genericTx)
+                        }
+                    }
+                }
             }
         }
 
