@@ -91,6 +91,7 @@ class ReceiptOcrService @Inject constructor(
             "image/heic"
         )
         private const val MAX_FILE_SIZE = 20 * 1024 * 1024  // 20MB
+        private const val DEFAULT_BUFFER_SIZE = 8192
     }
 
     /**
@@ -121,21 +122,47 @@ class ReceiptOcrService @Inject constructor(
     suspend fun processUri(uriRef: String): OcrResult = processUri(Uri.parse(uriRef))
 
     private fun validateFileSize(uri: Uri) {
+        // --- RCP-2: Two-phase size validation ---
+        // Phase 1: Try the cheap content-provider statSize (works for most file:// URIs).
         val fileSize = context.contentResolver.openFileDescriptor(uri, "r")?.use {
             it.statSize
         }
 
-        // Some content providers don't expose size (statSize == -1).
-        // In that case we allow processing and rely on downstream decode/OCR safeguards.
-        if (fileSize == null || fileSize < 0) {
-            Timber.w("Unable to determine file size for URI: $uri. Skipping size validation.")
+        if (fileSize != null && fileSize >= 0) {
+            // Provider reported a definite size — simple bounds check.
+            if (fileSize > MAX_FILE_SIZE) {
+                throw IllegalArgumentException(
+                    "File too large: ${fileSize / 1024 / 1024}MB. Maximum: ${MAX_FILE_SIZE / 1024 / 1024}MB"
+                )
+            }
             return
         }
-        
-        if (fileSize > MAX_FILE_SIZE) {
-            throw IllegalArgumentException(
-                "File too large: ${fileSize / 1024 / 1024}MB. Maximum: ${MAX_FILE_SIZE / 1024 / 1024}MB"
-            )
+
+        // Phase 2: Content provider did NOT report size (statSize == -1 or null).
+        // Stream-copy up to MAX_FILE_SIZE + 1 bytes; if the stream has MORE data
+        // than the limit, reject immediately. This prevents OOM from huge files
+        // whose size cannot be determined upfront.
+        Timber.w("Content provider does not report file size for URI: $uri. Performing streaming size check (max ${MAX_FILE_SIZE / 1024 / 1024}MB).")
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                var totalRead = 0L
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    totalRead += bytesRead
+                    if (totalRead > MAX_FILE_SIZE) {
+                        throw IllegalArgumentException(
+                            "File too large (streaming check): exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit. URI: $uri"
+                        )
+                    }
+                }
+            } ?: throw IllegalArgumentException("Cannot open InputStream for URI: $uri")
+        } catch (e: IllegalArgumentException) {
+            throw e // Rethrow our own size-limit exception
+        } catch (e: Exception) {
+            // If streaming size check itself fails for any other reason,
+            // fall through with a warning rather than blocking the user.
+            Timber.w(e, "Streaming size check failed for URI: $uri — proceeding without size guarantee.")
         }
     }
 

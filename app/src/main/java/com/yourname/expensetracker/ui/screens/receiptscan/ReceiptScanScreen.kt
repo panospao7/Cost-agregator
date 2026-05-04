@@ -790,6 +790,14 @@ private fun ReviewStep(
 
     Spacer(modifier = Modifier.height(12.dp))
 
+    // Currency (RCP-10/N2)
+    CurrencyPicker(
+        selectedCurrency = state.editCurrency,
+        onCurrencySelected = { viewModel.updateCurrency(it) }
+    )
+
+    Spacer(modifier = Modifier.height(12.dp))
+
     // Date
     DateSelector(
         dateMs = state.editDate,
@@ -1238,6 +1246,67 @@ private fun ConfidenceIndicator(confidence: Float) {
             style = MaterialTheme.typography.labelSmall,
             color = color
         )
+    }
+}
+
+/**
+ * RCP-10/N2: Currency picker for receipt review.
+ * Allows the user to change the currency before saving.
+ * Defaults to OCR-detected currency or home currency.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CurrencyPicker(
+    selectedCurrency: String,
+    onCurrencySelected: (String) -> Unit
+) {
+    val currencies = listOf("EUR", "USD", "GBP", "CHF", "JPY", "CAD", "AUD")
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = stringResource(R.string.receipt_currency_label),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = it }
+        ) {
+            OutlinedTextField(
+                value = CurrencyFormatter.getCurrencySymbol(selectedCurrency).let { symbol ->
+                    "$symbol  $selectedCurrency"
+                },
+                onValueChange = {},
+                readOnly = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .menuAnchor(),
+                singleLine = true
+            )
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                currencies.forEach { currencyCode ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                CurrencyFormatter.getCurrencySymbol(currencyCode).let { symbol ->
+                                    "$symbol  $currencyCode"
+                                }
+                            )
+                        },
+                        onClick = {
+                            onCurrencySelected(currencyCode)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
     }
 }
 

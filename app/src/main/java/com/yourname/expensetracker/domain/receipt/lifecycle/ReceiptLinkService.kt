@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+import com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
@@ -35,6 +36,7 @@ class ReceiptLinkService @Inject constructor(
     private val receiptExpenseLinkDao: ReceiptExpenseLinkDao,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val receiptEventDao: ReceiptEventDao,
+    private val receiptItemCategorizationDao: ReceiptItemCategorizationDao,
     private val warrantyDao: WarrantyDao,
     private val returnWindowDao: ReturnWindowDao,
     private val timeProvider: TimeProvider
@@ -134,6 +136,14 @@ class ReceiptLinkService @Inject constructor(
                 receiptId = receiptId,
                 expenseId = expenseId,
                 updatedAt = now
+            )
+
+            // RCP-6: Propagate expenseId to receipt item categorizations so
+            // queries by expenseId (e.g. category totals per expense) work.
+            receiptItemCategorizationDao.linkToExpense(
+                receiptId = receiptId,
+                expenseId = expenseId,
+                timestamp = now
             )
 
             // 5. Write lifecycle event

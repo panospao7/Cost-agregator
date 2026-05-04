@@ -69,6 +69,7 @@ data class ReceiptScanState(
     // Editable fields
     val editMerchant: String = "",
     val editAmount: String = "",
+    val editCurrency: String = "EUR",
     val editDate: Long = 0L,
     val selectedCategoryId: Long? = null,
     val paymentMethod: PaymentMethod = PaymentMethod.CARD,
@@ -265,6 +266,7 @@ class ReceiptScanViewModel @Inject constructor(
                             showRawText = false,
                             editMerchant = "",
                             editAmount = "",
+                            editCurrency = "EUR",
                             editDate = now,
                             selectedCategoryId = null,
                             paymentMethod = PaymentMethod.CARD,
@@ -345,6 +347,7 @@ class ReceiptScanViewModel @Inject constructor(
                             editAmount = parsed.total?.let { total ->
                                 String.format("%.2f", total)
                             } ?: "",
+                            editCurrency = parsed.currency,
                             editDate = parsed.date ?: timeProvider.now(),
                             ocrConfidence = parsed.confidence,
                             selectedCategoryId = null, // Will be auto-detected on save
@@ -426,6 +429,14 @@ class ReceiptScanViewModel @Inject constructor(
 
     fun updateDate(dateMs: Long) {
         _state.update { it.copy(editDate = dateMs) }
+    }
+
+    /**
+     * RCP-10/N2: User can change the currency of the scanned receipt
+     * before saving. Default is the OCR-detected currency or home currency.
+     */
+    fun updateCurrency(currency: String) {
+        _state.update { it.copy(editCurrency = currency) }
     }
 
     fun selectCategory(categoryId: Long) {
@@ -1027,9 +1038,12 @@ class ReceiptScanViewModel @Inject constructor(
                 } catch (_: Exception) {
                     "EUR" // Safe fallback when home currency fails to load
                 }
-                val resolvedCurrency = _state.value.parsedReceipt?.currency
-                    ?.takeIf { it.isNotBlank() }
-                    ?: defaultCurrency
+                // RCP-10/N2: Use user-editable editCurrency, falling back to OCR currency then home currency
+                val resolvedCurrency = _state.value.editCurrency
+                    .takeIf { it.isNotBlank() }
+                    ?: _state.value.parsedReceipt?.currency
+                        ?.takeIf { it.isNotBlank() }
+                        ?: defaultCurrency
 
                 val result = receiptRepository.createExpenseFromReceipt(
                     receiptId = request.receiptId,

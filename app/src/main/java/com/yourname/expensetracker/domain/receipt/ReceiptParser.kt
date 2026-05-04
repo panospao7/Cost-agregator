@@ -105,11 +105,17 @@ class ReceiptParser @Inject constructor(
         val taxInclusive: Boolean = false
     )
 
+    /**
+     * @property itemIndex Sequential index within the receipt (0-based).
+     *                      RCP-16: Provides stable identity for fingerprint computation
+     *                      and stable keys in Compose lists.
+     */
     data class LineItem(
         val description: String,
         val quantity: Double?,
         val unitPrice: Double?,
-        val totalPrice: Double
+        val totalPrice: Double,
+        val itemIndex: Int = 0
     )
 
     // Total amount patterns (Greek + English receipts)
@@ -691,6 +697,7 @@ class ReceiptParser @Inject constructor(
 
     private fun extractLineItems(text: String): List<LineItem> {
         val items = mutableListOf<LineItem>()
+        var nextIndex = 0
 
         // Skip lines that look like totals/subtotals
         val skipLinePattern = Regex(
@@ -711,7 +718,8 @@ class ReceiptParser @Inject constructor(
                     description = desc,
                     quantity = null,
                     unitPrice = null,
-                    totalPrice = price
+                    totalPrice = price,
+                    itemIndex = nextIndex++
                 )
             )
         }
@@ -730,7 +738,8 @@ class ReceiptParser @Inject constructor(
                     description = desc,
                     quantity = qty,
                     unitPrice = if (qty > 0) price / qty else null,
-                    totalPrice = price
+                    totalPrice = price,
+                    itemIndex = nextIndex++
                 )
             )
         }
@@ -843,6 +852,7 @@ class ReceiptParser @Inject constructor(
             val obj = JSONObject().apply {
                 put("description", item.description)
                 put("totalPrice", item.totalPrice)
+                put("itemIndex", item.itemIndex)
                 item.quantity?.let { put("quantity", it) }
                 item.unitPrice?.let { put("unitPrice", it) }
             }
@@ -862,7 +872,8 @@ class ReceiptParser @Inject constructor(
                     description = obj.getString("description"),
                     totalPrice = obj.getDouble("totalPrice"),
                     quantity = if (obj.has("quantity")) obj.getDouble("quantity") else null,
-                    unitPrice = if (obj.has("unitPrice")) obj.getDouble("unitPrice") else null
+                    unitPrice = if (obj.has("unitPrice")) obj.getDouble("unitPrice") else null,
+                    itemIndex = if (obj.has("itemIndex")) obj.getInt("itemIndex") else i
                 )
             }
         } catch (e: Exception) {
