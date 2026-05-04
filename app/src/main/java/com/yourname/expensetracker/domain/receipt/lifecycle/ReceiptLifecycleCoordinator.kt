@@ -9,9 +9,11 @@ import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
+import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.domain.model.Result as DomainResult
 import com.yourname.expensetracker.domain.receipt.EmailReceiptData
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
@@ -136,10 +138,18 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         //    Ownership boundary: ReceiptRepository/OCR owns file persistence.
         //    The coordinator works with the imagePath from the response, not its own copy.
         return try {
-            val (receipt, _) = receiptRepository.processReceipt(
+            val (receipt, parsed) = receiptRepository.processReceipt(
                 imageUri = uri,
                 autoCreateReview = false
             )
+
+            // RCP-14 / RCP-6: Capture taxInclusive from the parser result for
+            // downstream propagation. The flag is not stored in the DB entity
+            // (ScannedReceipt lacks a taxInclusive column) so we carry it on
+            // the updated receipt copy for the caller's benefit. When
+            // taxInclusive == true, receipt.parsedTotal already contains the
+            // tax and must not be incremented further.
+            val taxInclusive = parsed.taxInclusive
 
             // 3. Compute file hash from repository-managed image path (best-effort, non-fatal)
             val fileHash = receipt.imagePath?.let { path ->
@@ -166,7 +176,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     externalSourceId = null
                 )
                 if (dupResult.isDuplicate && dupResult.matchType == "EXACT_HASH") {
-                    val existing = scannedReceiptDao.getById(dupResult.existingReceiptId!!)
+                    val existing = scannedReceiptDao.getById(dupResult.existingReceiptId!!)?.also {
+                        it.taxInclusive = taxInclusive
+                    }
                     if (existing != null) {
                         Timber.i("Duplicate receipt detected by exact hash: existingId=${existing.id}")
                         return Result.success(existing)
@@ -220,7 +232,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     textFingerprint = textFingerprint,
                     semanticFingerprint = semanticFingerprint,
                     updatedAt = now
-                )
+                ).also { it.taxInclusive = taxInclusive }
                 scannedReceiptDao.update(withFingerprints)
 
                 // Write DUPLICATE_DETECTED event with existing receipt ID in metadata
@@ -241,11 +253,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             errorDetails = null
                         )
                     )
+                    existing.taxInclusive = taxInclusive
                     return Result.success(existing)
                 }
             }
 
-            // 5. Update receipt with lifecycle metadata and fingerprints
+            // 5. Update receipt with lifecycle metadata and fingerprints,
+            //    and carry the taxInclusive flag for downstream consumers.
             val updated = receipt.copy(
                 imagePath = receipt.imagePath,
                 imageHash = fileHash ?: receipt.imageHash,
@@ -255,7 +269,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 textFingerprint = textFingerprint,
                 semanticFingerprint = semanticFingerprint,
                 updatedAt = timeProvider.now()
-            )
+            ).also { it.taxInclusive = taxInclusive }
             scannedReceiptDao.update(updated)
 
             // 6. Write lifecycle event
@@ -453,8 +467,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      * @return [Result.success] with [BankStatementResult] on success,
      *         [Result.failure] on error.
      */
-    suspend fun processBankStatement(uri: Uri): Result<BankStatementResult> {
-        return bankStatementLifecycleProcessor.processBankStatement(uri)
+    suspend fun processBankStatement(uri: Uri): DomainResult<BankStatementResult> {
+        val result = bankStatementLifecycleProcessor.processBankStatement(uri)
+        return result.fold(
+            onSuccess = { DomainResult.Success(it) },
+            onFailure = { DomainResult.Error(exception = it, message = it.message) }
+        )
     }
 
     /**
@@ -575,5 +593,51 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             Timber.e(e, "Failed to delete receipt: id=%d", receiptId)
             Result.failure(e)
         }
+    }
+
+    /**
+     * Creates an expense from a scanned receipt, respecting the tax-inclusive flag.
+     *
+     * RCP-14: When the receipt was parsed as tax-inclusive (i.e. [ScannedReceipt.parsedTotal]
+     * already contains the tax amount), this method uses the receipt's own parsed total
+     * as the expense amount — avoiding double-counting. The [ReceiptRepository.createExpenseFromReceipt]
+     * method handles the actual lookup and amount resolution; this coordinator method is
+     * a convenience that ensures the receipt-level `taxInclusive` flag is considered.
+     *
+     * @param receiptId The ID of the scanned receipt.
+     * @param merchant Override merchant name (falls back to receipt's parsed merchant if blank).
+     * @param amount Override amount (overridden by receipt's parsedTotal if tax-inclusive).
+     * @param currency Currency code.
+     * @param categoryId Optional category ID.
+     * @param date Transaction date.
+     * @param paymentMethod Payment method.
+     * @param notes Optional notes.
+     * @return [Result] with the created expense ID on success.
+     */
+    suspend fun createExpenseFromReceipt(
+        receiptId: Long,
+        merchant: String,
+        amount: Double,
+        currency: String = "EUR",
+        categoryId: Long?,
+        date: Long,
+        paymentMethod: PaymentMethod = PaymentMethod.CARD,
+        notes: String? = null
+    ): DomainResult<Long> {
+        // NOTE: The transient taxInclusive flag on ScannedReceipt is @Ignore
+        // and always returns false from the database. Tax-inclusive detection
+        // is handled upstream in ReceiptRepository.createExpenseFromReceipt
+        // via ReceiptParser.isTaxInclusive, so we pass the caller-supplied
+        // amount directly.
+        return receiptRepository.createExpenseFromReceipt(
+            receiptId = receiptId,
+            merchant = merchant,
+            amount = amount,
+            currency = currency,
+            categoryId = categoryId,
+            date = date,
+            paymentMethod = paymentMethod,
+            notes = notes
+        )
     }
 }

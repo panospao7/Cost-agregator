@@ -55,6 +55,22 @@ class ReceiptParser @Inject constructor(
         private val TIME_PATTERN = Regex("""\b\d{1,2}:\d{2}(:\d{2})?\b""")
         private val CHANGE_PATTERN = Regex("""(CHANGE|ΡΕΣΤΑ|RESTA|ΑΛΛΑΓΗ)""")
         private val QUANTITY_PREFIX_PATTERN = Regex("""^\d+\s*[xX*]\s*.+""")
+
+        /**
+         * RCP-14: Shared 5%-threshold detection for tax-inclusive receipts.
+         * Returns `true` when the sum of line item totals is within 5% of the
+         * receipt total AND a separate tax amount was extracted, indicating
+         * that tax is already embedded in both the line items and the total.
+         */
+        fun isTaxInclusive(
+            parsedTotal: Double?,
+            parsedTaxAmount: Double?,
+            lineItems: List<LineItem>?
+        ): Boolean {
+            if (parsedTotal == null || parsedTaxAmount == null || lineItems.isNullOrEmpty()) return false
+            val lineItemsSum = lineItems.sumOf { it.totalPrice }
+            return kotlin.math.abs(lineItemsSum - parsedTotal) < (parsedTotal * 0.05)
+        }
     }
 
     data class ParsedReceipt(

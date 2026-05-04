@@ -13,6 +13,8 @@ class BankStatementParserTest {
     private lateinit var parser: BankStatementParser
     private lateinit var currencyNormalizer: com.yourname.expensetracker.domain.util.CurrencyNormalizer
     private lateinit var merchantCleaner: com.yourname.expensetracker.domain.util.MerchantCleaner
+    private lateinit var timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+    private lateinit var currencySettingsRepository: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 
     @Before
     fun setup() {
@@ -22,7 +24,15 @@ class BankStatementParserTest {
         merchantCleaner = io.mockk.mockk {
             io.mockk.every { clean(any()) } answers { firstArg() }
         }
-        parser = BankStatementParser(currencyNormalizer, merchantCleaner)
+        timeProvider = io.mockk.mockk {
+            io.mockk.every { now() } returns System.currentTimeMillis()
+        }
+        val homeCurrencyFlow = io.mockk.mockk<kotlinx.coroutines.flow.Flow<String>>(relaxed = true)
+        io.mockk.coEvery { homeCurrencyFlow.first() } returns "EUR"
+        currencySettingsRepository = io.mockk.mockk {
+            io.mockk.every { homeCurrency() } returns homeCurrencyFlow
+        }
+        parser = BankStatementParser(currencyNormalizer, merchantCleaner, timeProvider, currencySettingsRepository)
     }
 
     @Test

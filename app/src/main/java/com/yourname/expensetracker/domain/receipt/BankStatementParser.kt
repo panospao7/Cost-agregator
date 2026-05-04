@@ -11,6 +11,8 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
+import com.yourname.expensetracker.domain.core.money.CurrencyAssumption
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -18,13 +20,16 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 import com.yourname.expensetracker.BuildConfig
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import timber.log.Timber
 
 @Singleton
 class BankStatementParser @Inject constructor(
     private val currencyNormalizer: CurrencyNormalizer,
     private val merchantCleaner: MerchantCleaner,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     companion object {
         // Header patterns for Greek National Bank
@@ -75,10 +80,40 @@ class BankStatementParser @Inject constructor(
     }
 
     /**
+     * Resolves the home currency from [CurrencySettingsRepository].
+     *
+     * Falls back to "EUR" with a warning log and
+     * [CurrencyAssumption.ASSUMED_HOME_CURRENCY] metadata hint if no home
+     * currency is configured.
+     */
+    private fun resolveHomeCurrency(): String {
+        return runCatching {
+            runBlocking {
+                val currency = currencySettingsRepository.homeCurrency().first()
+                if (currency.isNotBlank()) {
+                    currency
+                } else {
+                    Timber.w("No home currency configured, fallback to EUR (CurrencyAssumption.ASSUMED_HOME_CURRENCY)")
+                    "EUR"
+                }
+            }
+        }.getOrElse { e ->
+            Timber.w(e, "Failed to read home currency, fallback to EUR")
+            "EUR"
+        }
+    }
+
+    /**
      * Parse a list of text blocks (with spatial data) into multiple transactions.
      * Groups text into horizontal rows and then extracts data from each row.
+     *
+     * @param blocks The OCR text blocks to parse.
+     * @param homeCurrency The home currency to use when a transaction's currency
+     *            cannot be determined from the text.  Defaults to the user's
+     *            configured home currency via [CurrencySettingsRepository], or "EUR"
+     *            if none is configured (with a warning log).
      */
-    fun parse(blocks: List<TextBlock>, homeCurrency: String = "EUR"): List<ParsedTransaction> {
+    fun parse(blocks: List<TextBlock>, homeCurrency: String = resolveHomeCurrency()): List<ParsedTransaction> {
         if (blocks.isEmpty()) return emptyList()
 
         // 1. Group blocks into rows based on vertical proximity

@@ -93,21 +93,24 @@ data class ScannedReceipt(
     @ColumnInfo(defaultValue = "NULL") val rawOcrTextPurgedAt: Long? = null
 ) {
     @get:Ignore
-    val parsedTotalMoneyAmount: MoneyAmount? get() = parsedTotal?.let { MoneyAmount(it, CurrencyCode(currency)) }
-
-    @get:Ignore
     val parsedTaxMoneyAmount: MoneyAmount? get() = parsedTaxAmount?.let { MoneyAmount(it, CurrencyCode(currency)) }
 
     /**
-     * Returns the number of line items in [parsedItems], or 0 if null/empty.
+     * RCP-14: Transient flag indicating whether the receipt total and line item
+     * totals already include the tax amount. This is NOT persisted in the
+     * database; it is set during receipt processing (see
+     * [ReceiptLifecycleCoordinator.processReceiptInput]) and carried on the
+     * in-memory copy for downstream consumers (ViewModel, UI, expense creation).
      *
-     * Parses the JSON array stored in [parsedItems] to count entries.
-     *
-     * ## Future migration
-     * Once line items are migrated to a relational `receipt_line_items` table
-     * (see N1 note on [parsedItems]), this property should delegate to a
-     * `COUNT(*)` query on that table instead.
+     * When `true`:
+     * - Use [parsedTotal] directly as the expense amount — do NOT add tax.
+     * - Line item totals already include proportional tax.
+     * - For a tax-exclusive subtotal (e.g. for business reports):
+     *   `subtotal = parsedTotal - parsedTaxAmount`.
      */
+    @Ignore
+    var taxInclusive: Boolean = false
+
     @get:Ignore
     val lineItemCount: Int get() {
         if (parsedItems.isNullOrBlank()) return 0

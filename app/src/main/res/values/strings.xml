@@ -358,6 +358,7 @@
     <string name="receipt_merchant_placeholder">Store name</string>
     <string name="receipt_merchant_input_cd">Merchant name input field</string>
     <string name="receipt_total_amount_label">Total Amount</string>
+    <string name="receipt_total_amount_incl_tax_label">Total Amount (incl. tax)</string>
     <string name="receipt_amount_input_cd">Total amount input field</string>
     <string name="receipt_payment_method_label">Payment Method</string>
     <string name="receipt_payment_card_cd">Card payment method, %1$s</string>

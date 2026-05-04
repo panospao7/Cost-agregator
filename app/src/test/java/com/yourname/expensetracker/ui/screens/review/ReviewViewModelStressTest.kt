@@ -25,6 +25,7 @@ import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUse
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.ui.screens.debug.DebugData
 import com.yourname.expensetracker.ui.screens.debug.DebugDataStorage
 import io.mockk.coVerify
@@ -71,6 +72,7 @@ class ReviewViewModelStressTest {
     private lateinit var aiArtifactRepository: AiArtifactRepository
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
+    private lateinit var receiptLifecycleCoordinator: ReceiptLifecycleCoordinator
     private lateinit var viewModel: ReviewViewModel
 
     @Before
@@ -91,6 +93,7 @@ class ReviewViewModelStressTest {
         aiArtifactRepository = mockk(relaxed = true)
         aiSettingsRepository = mockk(relaxed = true)
         aiRuntimeDiagnostics = mockk(relaxed = true)
+        receiptLifecycleCoordinator = mockk(relaxed = true)
 
         every { reviewQueueRepository.getPendingReviews() } returns flowOf(emptyList())
         every { reviewQueueRepository.getPendingReviewCount() } returns flowOf(0)
@@ -113,7 +116,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator
         )
     }
 

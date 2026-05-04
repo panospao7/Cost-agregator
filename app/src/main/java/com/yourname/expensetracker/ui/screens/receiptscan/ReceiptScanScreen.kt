@@ -770,10 +770,14 @@ private fun ReviewStep(
 
     // Amount
     val amountInputCd = stringResource(R.string.receipt_amount_input_cd)
+    val totalLabelRes = if (parsed?.taxInclusive == true)
+        R.string.receipt_total_amount_incl_tax_label
+    else
+        R.string.receipt_total_amount_label
     OutlinedTextField(
         value = state.editAmount,
         onValueChange = { viewModel.updateAmount(it) },
-        label = { Text(stringResource(R.string.receipt_total_amount_label)) },
+        label = { Text(stringResource(totalLabelRes)) },
         leadingIcon = { 
             Text(getCurrencySymbol(parsed?.currency), fontSize = 18.sp, fontWeight = FontWeight.Bold) 
         },

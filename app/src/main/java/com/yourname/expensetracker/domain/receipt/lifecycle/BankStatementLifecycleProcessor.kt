@@ -59,7 +59,9 @@ class BankStatementLifecycleProcessor @Inject constructor(
     private val bankStatementParser: BankStatementParser,
     private val pendingReviewDao: PendingReviewDao,
     private val merchantNormalizer: MerchantNormalizer,
-    private val hybridClassifier: HybridExpenseClassifier
+    private val hybridClassifier: HybridExpenseClassifier,
+    private val duplicateDetector: ReceiptDuplicateDetector,
+    private val assetStore: ReceiptAssetStore
 ) {
 
     /**
@@ -78,6 +80,31 @@ class BankStatementLifecycleProcessor @Inject constructor(
         return try {
             // ── Step 1: Run OCR via ReceiptRepository ──────────────────────────
             val ocrResult = receiptRepository.runStatementOcr(uri)
+
+            // ── Step 1b: Duplicate detection via file hash ─────────────────────
+            val fileHash = ocrResult.savedImagePath.let { path ->
+                try {
+                    assetStore.computeFileHash(path).getOrNull()
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
+            if (fileHash != null) {
+                val dupResult = duplicateDetector.checkDuplicate(
+                    imageHash = fileHash,
+                    textFingerprint = null,
+                    semanticFingerprint = null,
+                    externalSourceId = null
+                )
+                if (dupResult.isDuplicate && dupResult.matchType == "EXACT_HASH") {
+                    val existingReceipt = scannedReceiptDao.getById(dupResult.existingReceiptId!!)
+                    if (existingReceipt != null) {
+                        Timber.i("Duplicate bank statement detected by exact hash: existingId=${existingReceipt.id}")
+                        return Result.failure(IllegalStateException("Duplicate bank statement: already processed (receiptId=${existingReceipt.id})"))
+                    }
+                }
+            }
 
             // ── Step 2: Parse transactions ─────────────────────────────────────
             val parsedTransactions = bankStatementParser.parse(ocrResult.blocks)

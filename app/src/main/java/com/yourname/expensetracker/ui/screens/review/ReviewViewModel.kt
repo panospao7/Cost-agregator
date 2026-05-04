@@ -30,6 +30,8 @@ import com.yourname.expensetracker.domain.ai.usecase.SuggestCategoryFallbackUseC
 import com.yourname.expensetracker.domain.ai.usecase.SuggestReceiptExtractionUseCase
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
 import com.yourname.expensetracker.domain.model.Result
+import com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementResult
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import timber.log.Timber
 // ...
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -85,7 +87,8 @@ class ReviewViewModel @Inject constructor(
     private val judgePendingReviewDuplicateUseCase: JudgePendingReviewDuplicateUseCase,
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiSettingsRepository: AiSettingsRepository,
-    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics
+    private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
+    private val receiptLifecycleCoordinator: ReceiptLifecycleCoordinator
 ) : ViewModel() {
     
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -727,18 +730,19 @@ class ReviewViewModel @Inject constructor(
                 _isBatchProcessing.value = true // Reuse batch loading state
                 _batchProgress.value = Pair(0, 1)
                 
-                val result = receiptRepository.processStatement(uri)
-                
-                // Store debug data and persist to file
-                result.debugData?.let { data ->
-                    _debugData.value = data
-                    debugDataStorage.save(data)
-                }
-                
-                if (result.failureCount > 0) {
-                    _errorMessage.value = "Failed to parse screenshot: ${result.errors.firstOrNull()}"
-                } else {
-                    _errorMessage.value = "Imported ${result.successCount} transactions from screenshot!"
+                when (val result = receiptLifecycleCoordinator.processBankStatement(uri)) {
+                    is Result.Success<*> -> {
+                        val bankResult = result.data as BankStatementResult
+                        _errorMessage.value = "Imported ${bankResult.transactionsFound} transactions from statement! " +
+                            "(${bankResult.reviewsCreated} reviews created, ${bankResult.duplicatesSkipped} duplicates skipped)"
+                    }
+                    is Result.Error -> {
+                        _errorMessage.value = "Failed to parse statement: ${result.message ?: result.exception?.message ?: "Unknown error"}"
+                    }
+                    is Result.Duplicate -> {
+                        _errorMessage.value = "Statement already processed (duplicate)"
+                    }
+                    Result.Loading -> { /* no-op */ }
                 }
             } catch (e: Exception) {
                 _errorMessage.value = "Import failed: ${e.message}"

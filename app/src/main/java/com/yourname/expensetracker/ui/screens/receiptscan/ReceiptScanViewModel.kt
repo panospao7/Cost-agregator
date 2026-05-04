@@ -289,6 +289,16 @@ class ReceiptScanViewModel @Inject constructor(
                         try { receiptParser.lineItemsFromJson(it) } catch (_: Exception) { emptyList() }
                     } ?: emptyList()
 
+                    // RCP-14: Detect tax-inclusive from stored data. The flag may
+                    // also be carried on the receipt entity's transient taxInclusive
+                    // field (set by ReceiptLifecycleCoordinator). Fall back to
+                    // recomputing from the available data using the shared utility.
+                    val computedTaxInclusive = ReceiptParser.isTaxInclusive(
+                        receipt.parsedTotal,
+                        receipt.parsedTaxAmount,
+                        lineItems
+                    )
+
                     val parsed = ReceiptParser.ParsedReceipt(
                         merchantName = receipt.parsedMerchant,
                         total = receipt.parsedTotal,
@@ -297,7 +307,8 @@ class ReceiptScanViewModel @Inject constructor(
                         date = receipt.parsedDate,
                         currency = receipt.currency,
                         lineItems = lineItems,
-                        confidence = receipt.confidence
+                        confidence = receipt.confidence,
+                        taxInclusive = receipt.taxInclusive || computedTaxInclusive
                     )
 
                     val processingTime = timeProvider.now() - startTime

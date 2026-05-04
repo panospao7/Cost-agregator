@@ -293,6 +293,23 @@ class ReceiptRepository @Inject constructor(
     }
 
     /**
+     * RCP-14: Detects whether a receipt's total and line items already include
+     * the tax amount (tax-inclusive). Returns `true` when:
+     * - The receipt has a [ScannedReceipt.parsedTotal]
+     * - The receipt has a [ScannedReceipt.parsedTaxAmount]
+     * - The receipt has line items (non-empty [ScannedReceipt.parsedItems])
+     * - The sum of line item totals is within 5% of the receipt total
+     *
+     * This mirrors the detection logic in [ReceiptParser.parse] for cases
+     * where the transient [ScannedReceipt.taxInclusive] flag was not carried
+     * through (e.g. receipts loaded from the database before the flag was added).
+     */
+    private fun detectTaxInclusive(receipt: ScannedReceipt): Boolean {
+        val lineItems = receipt.parsedItems?.let { receiptParser.lineItemsFromJson(it) }
+        return ReceiptParser.isTaxInclusive(receipt.parsedTotal, receipt.parsedTaxAmount, lineItems)
+    }
+
+    /**
      * Create an expense from a scanned receipt (after user review/edit)
      *
      * Uses [TransactionLifecycleCoordinator] for the full lifecycle:
@@ -329,6 +346,30 @@ class ReceiptRepository @Inject constructor(
         longitude: Double? = null,
         locationSource: String? = null
     ): com.yourname.expensetracker.domain.model.Result<Long> {
+        // ── RCP-14: Resolve effective amount for tax-inclusive receipts ──────
+        // If the receipt was parsed with tax-inclusive detection, use the
+        // receipt's own parsedTotal directly as the expense amount to avoid
+        // double-counting tax. This overrides the caller-supplied amount to
+        // guard against accidental tax double-counting.
+        val receiptRecord = scannedReceiptDao.getById(receiptId)
+        val effectiveAmount = if (receiptRecord != null) {
+            val isTaxInclusive = receiptRecord.taxInclusive || detectTaxInclusive(receiptRecord)
+            if (isTaxInclusive && receiptRecord.parsedTotal != null) {
+                if (kotlin.math.abs(receiptRecord.parsedTotal - amount) > 0.01) {
+                    Timber.w(
+                        "RCP-14: createExpenseFromReceipt override amount for tax-inclusive " +
+                            "receipt %d: caller passed %.2f, using parsedTotal %.2f",
+                        receiptId, amount, receiptRecord.parsedTotal
+                    )
+                }
+                receiptRecord.parsedTotal
+            } else {
+                amount
+            }
+        } else {
+            amount
+        }
+
         // 1. Normalize merchant
         val lookupResult = merchantNormalizer.normalize(merchant, autoCreate = true)
         val normalizedMerchant = lookupResult.canonical.normalizedName
@@ -336,13 +377,13 @@ class ReceiptRepository @Inject constructor(
         // 2. Auto-categorize if no category provided
         val finalCategoryId = categoryId ?: hybridClassifier.classify(
             merchantName = normalizedMerchant,
-            amount = amount
+            amount = effectiveAmount
         ).categoryId.takeIf { it > 0 }
 
         // 3. Create expense via TransactionLifecycleCoordinator (validate → normalize → dedupe → insert → event)
         val request = CreateExpenseRequest(
             merchant = normalizedMerchant,
-            amount = amount,
+            amount = effectiveAmount,
             currency = currency,
             date = date,
             transactionType = TransactionType.PURCHASE,
@@ -384,7 +425,7 @@ class ReceiptRepository @Inject constructor(
                         hybridClassifier.learnFromCorrection(
                             merchantName = normalizedMerchant,
                             correctCategoryId = finalCategoryId,
-                            amount = amount
+                            amount = effectiveAmount
                         )
                     }
                 }
