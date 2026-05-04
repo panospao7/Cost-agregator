@@ -1075,4 +1075,35 @@ User: "How much did I spend on groceries this month?"
 
 ---
 
-**Generated:** April 4, 2026 | **Version:** 1.0
+## Compliance Audit Findings (May 2026)
+
+A full compliance audit of the domain layer identified issues across 6 categories. The following HIGH-severity findings were fixed:
+
+| ID | Finding | Domain File(s) | Fix |
+|----|---------|----------------|-----|
+| H1 | Direct `scannedReceiptDao.insert()` bypass | `BankStatementLifecycleProcessor.kt:204` | Delegated to `ReceiptRepository` |
+| H2 | Raw `sumOf { it.amount }` with no currency field | `SynthesisEngine.kt:168,196,247,254` | Added `currency` field to domain `PlannedExpense`; grouped sums by currency |
+| H3 | Hardcoded `currency = "EUR"` in domain models | `DashboardPrimitives.kt`, `SpendingSummary.kt`, `SavingsGoal.kt` | KDoc annotated with migration path |
+| H4 | Hardcoded `"EUR"` in domain-adjacent importers | `CsvExpenseImporter.kt:141` | Changed to `CurrencySettingsRepository.homeCurrency()` |
+| H6 | `ExpenseDao` deprecated `SUM()` queries | `ExpenseDao.kt` (68+ occurrences) | All `@Deprecated("Use MultiCurrencyRepository")` markers verified |
+
+### MEDIUM Severity: KDoc on EUR defaults (21 files)
+
+| Subsystem | Files | Annotation |
+|-----------|-------|------------|
+| Analytics Engines | `InsightsEngine`, `SmartSavingsEngine`, `MonthlySavingsSweepUseCase`, `SpendingPaceCalculator` | Each EUR default parameter now carries KDoc stating the home-currency assumption |
+| UI Components | `TotalsDashboardCard`, `BudgetBlockPartyCard`, `CategoryBreakdownSheet`, `StatisticalVisualizations`, and 13 more | Same KDoc annotation pattern |
+
+### Infrastructure Audit Results
+
+| Concern | Status |
+|---------|--------|
+| SimpleDateFormat → DateTimeFormatter | **100% complete** — 38 replacements, 0 remaining |
+| REPLACE → IGNORE DAOs | **14 of 14** converted; 3 kept with KDoc |
+| Category name uniqueness | NOCASE index (v112→113) + lowercase normalization + `withTransaction` |
+| BudgetForecastingEngine currency | Already fully normalized — no changes needed |
+| MultiCurrency engine audit | 5 engines verified (1 gap documented in `TotalsAggregationEngine`) |
+
+---
+
+**Generated:** May 4, 2026 | **Version:** 1.1

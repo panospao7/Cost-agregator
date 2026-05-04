@@ -32,7 +32,7 @@ data/
 │   └── BackupVerifier.kt                 # 56-entity 3-tier verification via PRAGMA integrity_check + FK check
 │
 ├── database/               # Room ORM + migrations, entities, query models
-│   ├── AppDatabase.kt      # RoomDatabase (v106, 56 entity references)
+│   ├── AppDatabase.kt      # RoomDatabase (v113, 56 entity references)
 │   ├── converter/          # Type converters
 │   │   └── Converters.kt   # @TypeConverter for complex types
 │   ├── dao/                # Current DAO set
@@ -147,10 +147,10 @@ data/
 
 | Aspect | Details |
 |--------|---------|
-| **Version** | 106 (no migration in Phase 9 or Phase 10 — schema stays at v106) |
+| **Version** | 113 (post-compliance hardening; latest migration: MIGRATION_112_113) |
 | **Total Entities** | 56 (RecurringLifecycleEvent, PrivacyAuditEvent added; 4 new columns on planned_expenses + raw_notifications + scanned_receipts) |
 | **Total DAOs** | 54 (RecurringLifecycleEventDao, PrivacyAuditDao added) |
-| **Total Migrations** | 97 (MIGRATION_6_7 → MIGRATION_105_106) |
+| **Total Migrations** | 104 (MIGRATION_6_7 → MIGRATION_112_113) |
 | **Type Converters** | Custom: Enums, Lists, Dates |
 | **Export Schema** | ✓ Enabled (for migrations verification) |
 
@@ -224,6 +224,13 @@ data/
 | **104** | **Data retention: `rawContentPurgedAt` on raw_notifications + `rawOcrTextPurgedAt` on scanned_receipts** |
 | **105** | **DB Invariants (Phase 7): Budget CHECK constraints, schema hardening, fresh-install callback alignment** |
 | **106** | **DB Invariants (Phase 7 cont.): Final invariant layer. Phases 9+10 add no schema changes — stays at v106.** |
+| **107** | SimpleDateFormat→DateTimeFormatter migrations (no schema change) |
+| **108** | REPLACE→IGNORE DAO conversions (batch R+S, no schema change) |
+| **109** | Quick wins: isFinite guards, stale matchConfidence clear (Y1+Y8, no schema change) |
+| **110** | CURR-2 + TRN-2: exchange rate history, synthetic placeholder fixes |
+| **111** | BUD-1: budgets categoryId FK RESTRICT |
+| **112** | Category name uniqueness: COLLATE NOCASE index + lowercase normalization |
+| **113** | FRESH_INSTALL_CALLBACK alignment for NOCASE index |
 
 ---
 

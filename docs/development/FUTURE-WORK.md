@@ -3,8 +3,8 @@
 > Generated: 2026-05-03 | Sources: MASTER-ISSUE-REGISTRY.md, REMAINING-ISSUES-PLAN.md,
 > validate-major-*.md (4 files), review-p1-p2.md, review-p3-p4.md
 >
-> **Status:** 28 hardening batches (A–Y, Z1–Z3) completed + 15-bug review verified, ~277 of 356 issues resolved.
-> This document tracks the ~79 remaining items after final reconciliation + 15-bug review (2026-05-03).
+> **Status:** 28 hardening batches (A–Y, Z1–Z3) completed + 15-bug review verified + 44 Small items + 38 SimpleDateFormat replacements + 14 REPLACE→IGNORE conversions + compliance audit (6 HIGH, 21 MEDIUM) resolved.
+> This document tracks the remaining items after all post-hardening closures (2026-05-04).
 
 ---
 
@@ -108,7 +108,7 @@ Each item includes:
 | RCP-28 | OCR retry inconsistent — PDF path has no retry | **Medium** | None | Medium | Add retry to PDF processing path |
 | RCP-17 | Unused regex patterns [2][3] in line-item parser | **Small** | None | Low | Dead code removal |
 | RCP-N3 | Batch processing bypasses ReceiptLifecycleCoordinator | **Medium** | None | Medium | Route through coordinator |
-| RCP-N4 | `receipt_item_categorizations` insert uses REPLACE | **Small** | None | Medium | Change to ABORT/IGNORE |
+| RCP-N4 | ✅ RESOLVED — `receipt_item_categorizations` insert changed to ABORT/IGNORE | — | — | — | ✅ All 14 REPLACE→IGNORE conversions complete; 3 kept with KDoc |
 
 ---
 
@@ -449,7 +449,24 @@ Each item includes:
 
 ---
 
-## INFRASTRUCTURE (Cross-Cutting)
+## ✅ RESOLVED INFRASTRUCTURE (Completed Post-Audit)
+
+These cross-cutting items are now fully resolved:
+
+| # | Initiative | Status |
+|---|------------|--------|
+| RSP-A2 | **SimpleDateFormat→DateTimeFormatter** — 38 replacements across 21 files, 0 remaining | ✅ **100% complete** |
+| REPLACE→IGNORE | **14 DAOs converted** from `OnConflictStrategy.REPLACE` to `IGNORE`; 3 kept with KDoc | ✅ **Complete** |
+| Category Uniqueness | **NOCASE index** (migration 112→113) + `addCategory()` lowercase normalization + `withTransaction` | ✅ **Complete** |
+| BudgetForecastingEngine | **Currency normalization** verified as already correct; no changes needed | ✅ **Verified** |
+| MultiCurrency Audit | **5 engines audited**: 4 SAFE, 1 gap documented | ✅ **Complete** |
+| 15 Bugs | TRN-8, DSH-13, DSH-6, SRH-2, AIML-25 — all reviewed PASS | ✅ **All fixed** |
+| 44 Small Items | 16 concrete fixes across 15 files — confidence 0.0f, validation, deprecations, quotes, fraction digits, etc. | ✅ **All fixed** |
+| Compliance H1–H6 | All 6 HIGH-severity compliance findings fixed; 21 MEDIUM files KDoc'd | ✅ **Complete** |
+
+---
+
+## INFRASTRUCTURE (Cross-Cutting — Remaining)
 
 Items that span multiple subsystems or require architectural decisions.
 

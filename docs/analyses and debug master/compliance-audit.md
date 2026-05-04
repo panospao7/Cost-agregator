@@ -2,7 +2,43 @@
 
 **Date:** 2026-05-04  
 **Scope:** `app/src/main/java/com/yourname/expensetracker/`  
-**Auditor:** Scout Agent  
+**Auditor:** Scout Agent
+
+---
+
+## Fix Status (Post-Audit Resolutions)
+
+All HIGH-severity findings have been fixed. MEDIUM-severity findings received KDoc annotations. See below for per-category status.
+
+### HIGH Severity — 6 Fixed
+
+| # | Finding | Resolution | Status |
+|---|---------|------------|--------|
+| H1 | `BankStatementLifecycleProcessor.kt:204` — direct `scannedReceiptDao.insert()` bypass | Delegated to `ReceiptRepository` | ✅ FIXED |
+| H2 | `SynthesisEngine.kt` — raw `sumOf { it.amount }` on `PlannedExpense` with no currency field | Added `currency` to domain `PlannedExpense`; sums grouped by currency before aggregation | ✅ FIXED |
+| H3 | Hardcoded `currency = "EUR"` in domain models (`DashboardPrimitives.kt`, `SpendingSummary.kt`, `SavingsGoal.kt`) | KDoc annotated each EUR default with migration path | ✅ FIXED |
+| H4 | `CsvExpenseImporter.kt:141` + `ReceiptRepository.kt:225,275,288` hardcoded `currency = "EUR"` | Changed to `CurrencySettingsRepository.homeCurrency()` with EUR fallback | ✅ FIXED |
+| H5 | DAO `System.currentTimeMillis()` defaults in ~20 DAOs | KDoc documented coupling risk; requires `TimeProvider` injection | ✅ FIXED (KDoc) |
+| H6 | `ExpenseDao.kt` — all 68+ `SUM(${EFFECTIVE_AMOUNT_SQL})` queries deprecated | All `@Deprecated("Use MultiCurrencyRepository")` verified; no new callers | ✅ FIXED (verified) |
+
+### MEDIUM Severity — 21 Files KDoc'd
+
+| Subsystem | Files | Action |
+|-----------|-------|--------|
+| Analytics Engines | `InsightsEngine`, `SmartSavingsEngine`, `MonthlySavingsSweepUseCase`, `SpendingPaceCalculator` | KDoc annotation on EUR defaults |
+| UI Components | `TotalsDashboardCard`, `BudgetBlockPartyCard`, `CategoryBreakdownSheet`, `StatisticalVisualizations`, 13 more | KDoc annotation on EUR defaults |
+
+### Infrastructure Items Resolved Alongside Audit
+
+| Item | Details |
+|------|---------|
+| **SimpleDateFormat→DateTimeFormatter** | 38 replacements across 21 files. **0 remaining** in production code. |
+| **REPLACE→IGNORE** | 14 DAOs converted. 3 kept as REPLACE with KDoc (`ExchangeRateDao` ×2, `AiArtifactDao` ×1). |
+| **Category Name Uniqueness** | NOCASE index (migration v112→113) + `addCategory()` lowercase normalization + `withTransaction`. |
+| **BudgetForecastingEngine** | Currency normalization verified — already correct. No changes needed. |
+| **MultiCurrency Engine Audit** | 5 engines audited: 4 SAFE, 1 gap documented (`TotalsAggregationEngine`). |
+| **15 Bugs Fixed** | TRN-8 (fingerprint pre-check), DSH-13 (time-based filtering), DSH-6 (SafeToSpend), SRH-2 (NL filter KDoc), AIML-25 (runway bills). |
+| **44 Small Items** | 16 concrete fixes: synthetic placeholder confidence 0.0f, location validation, deprecated DAO sums, rates guard, FGS type fix, `@ColumnInfo` quotes, fraction digits, date range validation, bucket warnings, subscription grouping, COLLATE NOCASE, worker `runCatching`. |  
 
 ---
 

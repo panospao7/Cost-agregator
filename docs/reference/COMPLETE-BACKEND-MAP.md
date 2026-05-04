@@ -1,6 +1,6 @@
 # Complete Backend & Database Map - ExpenseTracker
 
-**Generated:** 2026-05-01  
+**Generated:** 2026-05-04  
 **Total Files Mapped:** 490+ (255 domain + 208 data + 27 di)  
 **Test Coverage:** 317+ test files in `app/src/test/java`
 
@@ -1069,7 +1069,7 @@ Engine (integration with other domain logic)
 | **Test Files** | 317+ |
 | **Database Entities** | 56 (unchanged from Phase 7; Phase 9+10 add no entities) |
 | **DAOs** | 54 (unchanged from Phase 7) |
-| **DB Version** | 106 (no migration in Phase 9 or Phase 10) |
+| **DB Version** | 113 (post-compliance hardening; latest migration: 112→113) |
 | **Repositories** | 56 |
 | **Use Cases** | ~30 |
 | **Engines** | ~50 |

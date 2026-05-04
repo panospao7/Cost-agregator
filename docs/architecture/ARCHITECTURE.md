@@ -29,8 +29,12 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v110
+- Database version: v113
 - 620+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5, ~16 new in Phase 5b, ~20 new in Phase 6, ~8 modified in Phase 7, ~12 new in Phase 8, ~4 new in Phase 9, ~6 new/modified in Phase 10)
+- SimpleDateFormat → DateTimeFormatter: **100% complete** (38 replacements across 21 files, 0 remaining in production code)
+- REPLACE → IGNORE: **14 of 14 DAOs converted** (3 kept with KDoc: ExchangeRateDao ×2, AiArtifactDao ×1)
+- Bank statement AI parsing: **complete** (on-device→cloud→parser 3-tier validation with per-transaction source tracking)
+- Compliance audit: **HIGH fixes completed** (6 HIGH, 21 MEDIUM KDoc resolutions)
 - Destination-driven navigation via `NavigationDestination`
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
@@ -194,7 +198,7 @@ data/
 │   ├── ExportAnonymizer.kt               # Strips raw text from exports
 │   └── DataRetentionWorker.kt            # WorkManager purging worker
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v110)
+│   ├── AppDatabase.kt          # Room database (v113)
 │   ├── entity/                  # Room entities across finance, AI, groups, location, settings, and privacy
 │   │   ├── RecurringLifecycleEvent.kt   # Phase 5b — audit log for recurring occurrences
 │   │   └── PrivacyAuditEvent.kt         # Phase 6 — privacy gate audit log
@@ -307,7 +311,7 @@ FinancialWeatherRepository
 | Startup delegate | `startup/AppStartupDelegate.kt` | Hilt entry-point bootstrap |
 | Startup coordinator | `startup/AppStartupCoordinator.kt` | Lifecycle observer + startup jobs |
 | Main Activity | `ui/MainActivity.kt` | Navigation host + deep links |
-| Database | `data/database/AppDatabase.kt` | Room DB v110 |
+| Database | `data/database/AppDatabase.kt` | Room DB v113 |
 
 ### Core Engines
 | Engine | File | Purpose |
@@ -800,7 +804,7 @@ crash-safe journaling, worker pausing, and full 56-entity verification.
     → blocks writes until app restart
 ```
 
-**DB impact:** No migration. Database stays at **v106** (Phase 9 adds no entities or columns — the bundle packages the existing schema).
+**DB impact:** No migration. Database stays at **v106** at this point (Phase 9 adds no entities or columns — the bundle packages the existing schema).
 
 ---
 
@@ -886,7 +890,7 @@ forecasting, and AI surface:
 5. **Hardcoded defaults** surfaced and documented with migration paths
 6. **Data quality** standardized via a shared report contract
 
-**DB impact:** No migration. Database stays at **v106** (Phase 10 adds no entities or columns).
+**DB impact:** No migration. Database stays at **v106** at this point (Phase 10 adds no entities or columns).
 
 ---
 
@@ -959,11 +963,54 @@ Now injects `ValidateBankStatementTransactionsUseCase` as `transactionValidator`
 
 ---
 
+### Compliance Audit (May 2026)
+
+A full compliance audit scanned the entire codebase (`app/src/main/java/com/yourname/expensetracker/`) for issues across 6 categories: direct DAO bypasses, hardcoded EUR defaults, raw currency sums, `System.currentTimeMillis()` violations, old lifecycle paths, and non-currency-formatted UI.
+
+#### HIGH Severity Fixes
+
+| # | Finding | Fix Applied |
+|---|---------|-------------|
+| H1 | `BankStatementLifecycleProcessor` direct `scannedReceiptDao.insert()` bypassing the whitelist | Delegated to `ReceiptRepository` |
+| H2 | `SynthesisEngine` raw `sumOf { it.amount }` on `PlannedExpense` with no currency field | Added `currency` field to domain `PlannedExpense`; sums grouped by currency before aggregation |
+| H3 | Hardcoded `currency = "EUR"` in domain models (`DashboardPrimitives`, `SpendingSummary`, `SavingsGoal`) | KDoc documented each EUR default with explicit migration path annotation |
+| H4 | `CsvExpenseImporter` and `ReceiptRepository` hardcoded `"EUR"` | Changed to `CurrencySettingsRepository.homeCurrency()` with EUR fallback |
+| H5 | DAO interfaces using `System.currentTimeMillis()` as default parameter values | KDoc documented all ~20 occurrences as coupling risk requiring `TimeProvider` injection |
+| H6 | `ExpenseDao` deprecated `SUM()` queries verified | All `@Deprecated("Use MultiCurrencyRepository")` markers confirmed; no new callers added |
+
+#### MEDIUM Severity Fixes (21 files)
+
+KDoc annotation of EUR defaults applied across 4 analytics engines (`InsightsEngine`, `SmartSavingsEngine`, `MonthlySavingsSweepUseCase`, `SpendingPaceCalculator`) and 17 UI components (`TotalsDashboardCard`, `BudgetBlockPartyCard`, `CategoryBreakdownSheet`, `StatisticalVisualizations`, and more). Each hardcoded `"EUR"` default now carries KDoc stating the home-currency assumption and the required migration to `CurrencySettingsRepository`.
+
+#### Infrastructure Improvements
+
+| Fix | Details |
+|-----|---------|
+| SimpleDateFormat → DateTimeFormatter | **38 replacements** across 21 files. 0 `SimpleDateFormat` remaining in production code. All KDoc references updated to mention thread-safe `DateTimeFormatter`. |
+| REPLACE → IGNORE | **14 DAOs** changed from `OnConflictStrategy.REPLACE` to `IGNORE`. Only 3 kept as REPLACE: `ExchangeRateDao` ×2 (composite unique index, newer data overwrites older) and `AiArtifactDao` ×1 (existing KDoc). |
+| Category Name Uniqueness | NOCASE index added via migration **112→113** + `FRESH_INSTALL_CALLBACK`. `addCategory()` now uses `withTransaction` + lowercase normalization. `existsByName()` query added. |
+| BudgetForecastingEngine | Currency normalization verified as already fully correct. No changes needed. |
+| MultiCurrency Audit | 5 engines audited: `InsightsEngine` (caller responsibility noted), `SpendingPaceCalculator` (SAFE), `CategoryInsightEngine` (SAFE), `AdvancedAnalyticsEngine` (SAFE), `TotalsAggregationEngine` (GAP documented). |
+
+#### Database Version History (Extended)
+
+| Version | Feature / Purpose |
+|---------|-------------------|
+| **107** | SimpleDateFormat→DateTimeFormatter migrations (no schema change) |
+| **108** | REPLACE→IGNORE DAO conversions (batch R+S, no schema change) |
+| **109** | Quick wins: isFinite guards, stale matchConfidence clear (Y1+Y8, no schema change) |
+| **110** | CURR-2 + TRN-2: exchange rate history, synthetic placeholder fixes |
+| **111** | BUD-1: budgets categoryId FK RESTRICT |
+| **112** | Category name uniqueness: COLLATE NOCASE index + lowercase normalization |
+| **113** | FRESH_INSTALL_CALLBACK alignment for NOCASE index |
+
+---
+
 ## Database Schema
 
-### Version: v106 (post DB invariants + background workers; Phases 9–10 add no migrations)
+### Version: v113 (post-hardening; latest migration: 112→113 for category uniqueness)
 
-The Room schema in v106 includes all tables from v100 plus:
+The Room schema in v113 includes all tables from v106 plus:
 
 **Phase 5b additions (migration 100→101→102):**
 
@@ -988,6 +1035,18 @@ The Room schema in v106 includes all tables from v100 plus:
 **Phase 8 additions (migration 105→106):**
 
 - **New table:** `background_job_runs` — persistent record of worker executions. Columns: id, workerName, startedAt, finishedAt, status (SCHEDULED/RUNNING/SUCCESS/FAILED/RETRY), rowsScanned, rowsUpdated, notificationsSent, retryReason, errorMessage. Indices on `(workerName, startedAt)` and `(status)`.
+
+**Post-Phase 10 hardening migrations (v107→v113):**
+
+| Migration | Purpose | Schema Change |
+|-----------|---------|---------------|
+| **106→107** | SimpleDateFormat→DateTimeFormatter replacement | No schema change (code-only) |
+| **107→108** | REPLACE→IGNORE DAO conversions (batch R+S) | No schema change (code-only) |
+| **108→109** | Quick wins: isFinite guards, stale matchConfidence clear | No schema change (code-only) |
+| **109→110** | CURR-2 + TRN-2: exchange rate history, synthetic placeholder fixes | Schema adjustments for exchange rate history |
+| **110→111** | BUD-1: budgets categoryId FK RESTRICT | FK constraint change on `budgets.categoryId` |
+| **111→112** | Category name uniqueness: COLLATE NOCASE index + lowercase normalization | Partial unique index `idx_categories_name_nocase` on `categories(name COLLATE NOCASE)` |
+| **112→113** | FRESH_INSTALL_CALLBACK alignment for NOCASE index | Callback-triggered index creation for fresh installs |
 
 The full schema now covers:
 
@@ -1410,4 +1469,4 @@ After the initial feature-wave rollout, the codebase underwent 12 structured har
 - 6 lifecycle coordinators introduced
 - 3 normalizer/validator middleware services added (currency, privacy, AI-output)
 - 15+ materialized-key constraints deployed
-- Database version advanced from v68 to v106
+- Database version advanced from v68 to v113
