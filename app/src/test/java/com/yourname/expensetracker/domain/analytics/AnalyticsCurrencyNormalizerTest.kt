@@ -20,7 +20,7 @@ class AnalyticsCurrencyNormalizerTest {
     @Before
     fun setup() {
         exchangeRateStore = FakeExchangeRateStore()
-        normalizer = AnalyticsCurrencyNormalizer(CurrencyConverter(exchangeRateStore), timeProvider = mock())
+        normalizer = AnalyticsCurrencyNormalizer(CurrencyConverter(exchangeRateStore, timeProvider = mockk()))
     }
 
     @Test

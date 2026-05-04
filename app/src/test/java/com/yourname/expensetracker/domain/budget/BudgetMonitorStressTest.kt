@@ -61,7 +61,7 @@ class BudgetMonitorStressTest {
                 else -> BudgetHealthStatus.ON_TRACK
             },
             periodStart = periodStart,
-            periodEnd = periodEnd
+            periodEnd = periodEnd,
             effectiveLimit = 0.0,
         )
 
@@ -141,7 +141,7 @@ class BudgetMonitorStressTest {
             percentUsed = 0.6f,
             healthStatus = BudgetHealthStatus.WARNING,
             periodStart = now - 86400000L,
-            periodEnd = now + 86400000L
+            periodEnd = now + 86400000L,
             effectiveLimit = 0.0,
         )
         coEvery { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(statusWithZeroSpent))

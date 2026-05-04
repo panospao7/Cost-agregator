@@ -50,13 +50,16 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         expenseRepository = mockk(relaxed = true)
         recurringExpenseEngine = mockk(relaxed = true)
         recurringExpenseRepository = mockk(relaxed = true)
+        val recurringPatternsProvider = mockk<MergedRecurringPatternsProvider>(relaxed = true)
+        val recurringLifecycleCoordinator = mockk<com.yourname.expensetracker.domain.transaction.lifecycle.RecurringLifecycleCoordinator>(relaxed = true)
+        val recurringOccurrenceDao = mockk<com.yourname.expensetracker.domain.forecasting.RecurringOccurrenceDao>(relaxed = true)
 
         calculator = CashFlowCalculator(
             expenseRepository = expenseRepository,
-            recurringExpenseEngine = recurringExpenseEngine,
-            recurringExpenseRepository = recurringExpenseRepository,
-            timeProvider = timeProvider
-            recurringOccurrenceDao = mock(),
+            recurringPatternsProvider = recurringPatternsProvider,
+            timeProvider = timeProvider,
+            recurringLifecycleCoordinator = recurringLifecycleCoordinator,
+            recurringOccurrenceDao = recurringOccurrenceDao
         )
     }
 
@@ -70,7 +73,6 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             expense(d1, 200.0, TransactionType.DEPOSIT),
             expense(d1, 40.0, TransactionType.PURCHASE),
             expense(d2, 30.0, TransactionType.PURCHASE)
-        recurringLifecycleCoordinator = mock(),
         )
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns tx
@@ -86,7 +88,6 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
                 nextExpectedDate = d2,
                 confidence = 1.0f,
                 previousDates = emptyList()
-            recurringPatternsProvider = mock(),
             )
         )
 

@@ -78,7 +78,7 @@ class AdvancedAnalyticsEngineDeepTest {
         coEvery { expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) } returns current
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns current
 
-        val result = engine.getCategoryAnalytics(period).first(, displayCurrency = "EUR")
+        val result = engine.getCategoryAnalytics(period, displayCurrency = "EUR").first
 
         assertApproxEquals(100.0, result.totalSpent)
         assertApproxEquals(25.0, result.averagePerTransaction)
@@ -106,7 +106,7 @@ class AdvancedAnalyticsEngineDeepTest {
         coEvery { expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) } returns current
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns current
 
-        val result = engine.getCategoryAnalytics(period).first(, displayCurrency = "EUR")
+        val result = engine.getCategoryAnalytics(period, displayCurrency = "EUR").first
 
         assertFalse(result.sparklineData.isEmpty())
         // Apr 1..Apr 20 inclusive => 20 points when current day is included.
@@ -133,7 +133,7 @@ class AdvancedAnalyticsEngineDeepTest {
         coEvery { expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) } returns current
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns current
 
-        val result = engine.getCategoryAnalytics(period).first(, displayCurrency = "EUR")
+        val result = engine.getCategoryAnalytics(period, displayCurrency = "EUR").first
 
         // Apr 1..Apr 9 inclusive => 9 points; no implicit extension to Apr 20.
         assertEquals(9, result.sparklineData.size)
@@ -159,7 +159,7 @@ class AdvancedAnalyticsEngineDeepTest {
         coEvery { expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) } returns current
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns current
 
-        val result = engine.getCategoryAnalytics(period).first(, displayCurrency = "EUR")
+        val result = engine.getCategoryAnalytics(period, displayCurrency = "EUR").first
 
         // Apr 25..May 4 inclusive => 10 points; no inclusion of Apr 20.
         assertEquals(10, result.sparklineData.size)

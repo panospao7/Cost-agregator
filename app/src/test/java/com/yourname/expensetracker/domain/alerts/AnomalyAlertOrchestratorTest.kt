@@ -375,7 +375,7 @@ class AnomalyAlertOrchestratorTest {
         deviationMultiple = deviation,
         category = null,
         detectionMethod = method,
-        categoryAvg = 20.0
+        categoryAvg = 20.0,
         displayCurrency = "EUR",
     )
 

@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -24,14 +25,14 @@ import org.junit.Test
 class GroupSettlementPipelineTest : AnalyticsEngineTestBase() {
 
     private val splitCalculator = SplitCalculator
-    private val settlementCalculator = SettlementCalculator(, currencySettingsRepository = mock())
+    private val settlementCalculator = SettlementCalculator(mockk())
     private lateinit var sharedExpenseManager: SharedExpenseManager
     private val dataPort = mockk<SharedExpenseDataPort>(relaxed = true)
 
     @Before
     override fun setUp() {
         super.setUp()
-        sharedExpenseManager = SharedExpenseManager(dataPort, timeProvider, testDispatcher, ioDispatcher = Unconfined)
+        sharedExpenseManager = SharedExpenseManager(dataPort, timeProvider, testDispatcher, ioDispatcher = Dispatchers.Unconfined)
     }
 
     @Test

@@ -39,8 +39,8 @@ class BudgetTrendBoundaryTest {
             expenseDao = expenseDao,
             budgetRepository = budgetRepository,
             budgetForecastDao = budgetForecastDao,
-            timeProvider = timeProvider
-            currencySettingsRepository = mock(),
+            timeProvider = timeProvider,
+            currencySettingsRepository = mockk(),
         )
     }
 
@@ -54,7 +54,6 @@ class BudgetTrendBoundaryTest {
             MonthlySpendingTotal("2026-01", 100.0, 1),
             MonthlySpendingTotal("2026-02", 110.0, 1),
             MonthlySpendingTotal("2026-03", 110.0, 1)
-        currencyConverter = mock(),
         )
         val exactlyPlus10 = engine.generateForecast(budget)
 
@@ -64,7 +63,6 @@ class BudgetTrendBoundaryTest {
             MonthlySpendingTotal("2026-01", 100.0, 1),
             MonthlySpendingTotal("2026-02", 90.0, 1),
             MonthlySpendingTotal("2026-03", 90.0, 1)
-        expenseRepository = mock(),
         )
         val exactlyMinus10 = engine.generateForecast(budget)
 

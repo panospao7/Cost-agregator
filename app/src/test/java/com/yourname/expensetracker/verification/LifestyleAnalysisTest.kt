@@ -21,7 +21,7 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
-        detector = LifestyleInflationDetector(expenseDao, timeProvider = mock())
+        detector = LifestyleInflationDetector(expenseDao, timeProvider = mockk())
     }
 
     @Test

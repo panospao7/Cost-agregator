@@ -14,6 +14,8 @@ import com.yourname.expensetracker.domain.ai.model.QueryComparison
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
 import com.yourname.expensetracker.domain.model.PeriodRange
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -34,7 +36,7 @@ class ExecuteFinancialQueryUseCaseTest {
     fun setup() {
         expenseRepository = mockk(relaxed = true)
         categoryRepository = mockk(relaxed = true)
-        useCase = ExecuteFinancialQueryUseCase(expenseRepository, categoryRepository, currencySettingsRepository = mock(), currencyConverter = mock())
+        useCase = ExecuteFinancialQueryUseCase(expenseRepository, categoryRepository, currencyConverter = mockk(), currencySettingsRepository = mockk())
     }
 
     @Test

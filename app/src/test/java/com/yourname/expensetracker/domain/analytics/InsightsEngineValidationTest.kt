@@ -119,7 +119,7 @@ class InsightsEngineValidationTest {
             previousMonthTotal = null,
             averageMonthlyTotal = null,
             pacePercentage = 0.0f,
-            paceStatus = PaceStatus.NO_BASELINE
+            paceStatus = PaceStatus.NO_BASELINE,
             displayCurrency = "EUR",
         )
     }
@@ -319,7 +319,7 @@ class InsightsEngineValidationTest {
             previousMonthTotal = 1500.0,
             averageMonthlyTotal = 1500.0,
             pacePercentage = 100.0f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
             displayCurrency = "EUR",
         )
         
@@ -359,7 +359,7 @@ class InsightsEngineValidationTest {
             previousMonthTotal = 1500.0,
             averageMonthlyTotal = 1500.0,
             pacePercentage = 60.0f, // Under pace
-            paceStatus = PaceStatus.UNDER_PACE
+            paceStatus = PaceStatus.UNDER_PACE,
             displayCurrency = "EUR",
         )
         
@@ -392,7 +392,7 @@ class InsightsEngineValidationTest {
             previousMonthTotal = 600.0,
             averageMonthlyTotal = null,
             pacePercentage = 100.0f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
             displayCurrency = "EUR",
         )
 

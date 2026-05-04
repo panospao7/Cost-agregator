@@ -176,7 +176,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             recurringExpenseEngine = recurringExpenseEngine,
             timeProvider = timeProvider,
             spendingPaceCalculator = spendingPaceCalculator,
-            anomalyDetector = AnomalyDetector(, timeProvider = mock()),
+            anomalyDetector = AnomalyDetector(timeProvider = mockk()),
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
@@ -216,8 +216,11 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             budgetRepository = budgetRepository,
             budgetForecastDao = budgetForecastDao,
             timeProvider = timeProvider,
-            ioDispatcher = Dispatchers.Unconfined
-            currencySettingsRepository = mock(),
+            ioDispatcher = Dispatchers.Unconfined,
+            analyticsCurrencyNormalizer = mockk(),
+            expenseRepository = mockk(),
+            currencySettingsRepository = mockk(),
+            currencyConverter = mockk()
         )
 
         monteCarloSimulator = mockk(relaxed = true)
@@ -230,7 +233,6 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = mockk(relaxed = true),
             cashFlowCalculator = mockk(relaxed = true)
-        currencyConverter = mock(),
         )
     }
 
@@ -242,7 +244,6 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             endMs = MARCH_30_END_EXCLUSIVE,
             label = "Mar 1-30",
             comparisonRange = null
-        analyticsCurrencyNormalizer = mock(),
         )
 
         val (statisticalInsights, _) = advancedEngine.getStatisticalInsights(period, "EUR")

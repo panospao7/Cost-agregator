@@ -83,7 +83,7 @@ class InsightsEngineDeepTest {
             previousMonthTotal = 930.0,
             averageMonthlyTotal = null,
             pacePercentage = 333.33f,
-            paceStatus = PaceStatus.OVER_PACE
+            paceStatus = PaceStatus.OVER_PACE,
             displayCurrency = "EUR",
         )
 

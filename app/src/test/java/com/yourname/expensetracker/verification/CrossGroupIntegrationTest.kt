@@ -129,7 +129,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             recurringExpenseEngine = recurringExpenseEngine,
             timeProvider = timeProvider,
             spendingPaceCalculator = spendingPaceCalculator,
-            anomalyDetector = AnomalyDetector(, timeProvider = mock()),
+            anomalyDetector = AnomalyDetector(timeProvider = mockk()),
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
@@ -195,7 +195,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
 
         val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
-        val forecastInputAssembler = ForecastInputAssembler(timeProvider, currencySettingsRepository = mock(), recurringLifecycleCoordinator = mock(), recurringOccurrenceDao = mock(), analyticsCurrencyNormalizer = mock())
+        val forecastInputAssembler = ForecastInputAssembler(timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk(), recurringLifecycleCoordinator = mockk(), recurringOccurrenceDao = mockk())
         val mergedRecurringPatternsProvider = MergedRecurringPatternsProvider(
             expenseRepository = expenseRepository,
             recurringExpenseRepository = mockk(relaxed = true),
@@ -248,7 +248,6 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
             stressForecastEngine = stressForecastEngine
-            multiCurrencyRepository = mock(),
         )
 
         val monthSpent = expenses.filter { it.transactionType == TransactionType.PURCHASE && it.date in ms(2026, 3, 1) until ms(2026, 4, 1) }
@@ -264,7 +263,6 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                 healthStatus = it.healthStatus,
                 periodStart = it.periodStart,
                 periodEnd = it.periodEnd
-            forecastInputAssembler = mock(),
             )
         }
 
@@ -338,7 +336,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         )
         coEvery { expenseDao.getExpensesBetweenUncapped(any(), any()) } returns expenses
 
-        val calculator = CarbonFootprintCalculator(expenseDao, timeProvider, currencySettingsRepository = mock(), analyticsCurrencyNormalizer = mock())
+        val calculator = CarbonFootprintCalculator(expenseDao, timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk())
         val report = calculator.calculateCarbonFootprint(ms(2026, 3, 1), ms(2026, 4, 1))
 
         val expectedTotal = 10.0 * 2.3 + 20.0 * 0.55 + 40.0 * 0.25
@@ -357,7 +355,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         )
         every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(lifestyleData)
 
-        val detector = LifestyleInflationDetector(expenseDao, timeProvider = mock())
+        val detector = LifestyleInflationDetector(expenseDao, timeProvider = mockk())
         val report = detector.analyzeLifestyleInflation(monthsToAnalyze = 6)
 
         every { timeProvider.now() } returns ms(2026, 3, 20)
@@ -487,14 +485,16 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                 coEvery { insertWithDeactivation(any()) } returns 1L
             },
             timeProvider = timeProvider,
-            ioDispatcher = Dispatchers.Unconfined
-            expenseRepository = mock(),
+            ioDispatcher = Dispatchers.Unconfined,
+            analyticsCurrencyNormalizer = mockk(),
+            expenseRepository = mockk(),
+            currencySettingsRepository = mockk(),
+            currencyConverter = mockk()
         )
 
         val forecast = engine.generateForecast(
             budget = Budget(categoryId = null, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = ms(2026, 3, 1)),
             forecastPeriodDays = 30
-        currencySettingsRepository = mock(),
         )
 
         assertTrue(forecast.predictedSpending > 0.0)
@@ -513,12 +513,11 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
 
         val insights = insightsEngine.generateInsights(categories, emptyList<Expense>())
         val advancedStats = advancedEngine.getStatisticalInsights(
-            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, ms(2026, 3, 1), ms(2026, 4, 1), "Mar", null, displayCurrency = "EUR")
-        currencyConverter = mock(),
+            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, ms(2026, 3, 1), ms(2026, 4, 1), "Mar", null)
         )
         val dailyTotals = totalsEngine.getDailyTotalsForRange(ms(2026, 3, 1), ms(2026, 4, 1))
-        val carbon = CarbonFootprintCalculator(expenseDao, timeProvider).calculateCarbonFootprint(ms(2026, 3, 1), ms(2026, 4, 1), analyticsCurrencyNormalizer = mock(), currencySettingsRepository = mock())
-        val lifestyle = LifestyleInflationDetector(expenseDao).analyzeLifestyleInflation(6, timeProvider = mock())
+        val carbon = CarbonFootprintCalculator(expenseDao, timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk()).calculateCarbonFootprint(ms(2026, 3, 1), ms(2026, 4, 1))
+        val lifestyle = LifestyleInflationDetector(expenseDao, timeProvider = mockk()).analyzeLifestyleInflation(6)
 
         val sharedManager = SharedExpenseManager(
             sharedExpenseDataPort = mockk {
@@ -526,8 +525,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                 coEvery { getGroupExpensesOnce(any()) } returns emptyList<SharedGroupExpense>()
             },
             timeProvider = timeProvider,
+            currencySettingsRepository = mockk(),
             ioDispatcher = Dispatchers.Unconfined
-            currencySettingsRepository = mock(),
         )
         val balances = sharedManager.calculateBalances(1L)
 

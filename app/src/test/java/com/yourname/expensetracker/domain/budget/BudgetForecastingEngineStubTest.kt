@@ -30,8 +30,8 @@ class BudgetForecastingEngineStubTest : AnalyticsEngineTestBase() {
             expenseDao = expenseDao,
             budgetRepository = budgetRepository,
             budgetForecastDao = budgetForecastDao,
-            timeProvider = timeProvider
-            currencySettingsRepository = mock(),
+            timeProvider = timeProvider,
+            currencySettingsRepository = mockk(),
         )
     }
 

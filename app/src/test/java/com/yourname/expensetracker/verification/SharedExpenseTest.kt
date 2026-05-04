@@ -32,8 +32,8 @@ class SharedExpenseTest {
     @Before
     fun setUp() {
         coEvery { sharedExpenseDataPort.getGroupOnce(any()) } returns null
-        manager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, Dispatchers.Unconfined, ioDispatcher = Unconfined)
-        settlementCalculator = SettlementCalculator(, currencySettingsRepository = mock())
+        manager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, Dispatchers.Unconfined, ioDispatcher = Dispatchers.Unconfined)
+        settlementCalculator = SettlementCalculator(mockk())
     }
 
     @Test
