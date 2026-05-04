@@ -274,6 +274,7 @@ Domain Layer (This Document)
 | `CategorizeReceiptItemsUseCase.kt` | AI categorization | Receipt items | Categorized items |
 | `InterpretFinancialQueryUseCase.kt` | Parse query intent | Query text | FinancialQueryIntent |
 | `GetAiRuntimeStatusUseCase.kt` | Check AI availability | - | OnDeviceModelStatus |
+| `ValidateBankStatementTransactionsUseCase.kt` | AI bank statement transaction validator. 3-tier pipeline: on-device AI → cloud AI (privacy-gated) → parser-only fallback. Returns per-transaction source tracking. | Raw OCR text + candidate transactions + home currency | List<CleanTransaction> |
 | `MapFinancialQueryToNavigationUseCase.kt` | Convert query to navigation | Query result | NavigationTarget |
 | `GenerateTransactionInsightUseCase.kt` | AI insight generation | Transaction | Insight text |
 | `PrioritizeReviewItemsUseCase.kt` | Rank pending reviews | Reviews | Prioritized list |
@@ -360,7 +361,7 @@ Domain Layer (This Document)
 | `ReceiptInputValidator` | `lifecycle/ReceiptInputValidator.kt` | URI/MIME/size validation | Checks readability, supported MIME types (JPEG, PNG, WebP, PDF, HEIC), file size limit (50 MB), image decode validity. Returns `ValidationResult`. |
 | `ReceiptDuplicateDetector` | `lifecycle/ReceiptDuplicateDetector.kt` | 3-signal deduplication | EXACT_HASH (SHA-256, 1.0), TEXT_FINGERPRINT (normalized OCR text, 0.95), SEMANTIC (merchant+amount+date+currency, 0.8), EXTERNAL_ID. Returns `DuplicateResult`. |
 | `ReceiptSideEffectDispatcher` | `lifecycle/ReceiptSideEffectDispatcher.kt` | Document-type-gated post-save effects | RETAIL_RECEIPT → warranty + categorization + matching + price protection. EMAIL_RECEIPT → categorization only. BANK_STATEMENT/MANUAL_PLACEHOLDER → no effects. |
-| `BankStatementLifecycleProcessor` | `lifecycle/BankStatementLifecycleProcessor.kt` | Statement-specific processing | OCR → parse transactions → create PendingReview entries → lifecycle events. Returns `BankStatementResult(receiptId, transactionsFound, reviewsCreated, duplicatesSkipped)`. |
+| `BankStatementLifecycleProcessor` | `lifecycle/BankStatementLifecycleProcessor.kt` | Statement-specific processing | OCR → parse → **AI validation via ValidateBankStatementTransactionsUseCase** → PendingReview creation → lifecycle events. AI step runs on-device first (privacy-safe), then cloud fallback (privacy-gated), then parser-only fallback. Tracks `validationSources: Map<Int, String>` per transaction (PARSER_ONLY/AI_VALIDATED/AI_CORRECTED). Returns `BankStatementResult(receiptId, transactionsFound, reviewsCreated, duplicatesSkipped, debugData)`. |
 
 ### Receipt Lifecycle Models (New — `receipt/`)
 **Directory:** `receipt/`

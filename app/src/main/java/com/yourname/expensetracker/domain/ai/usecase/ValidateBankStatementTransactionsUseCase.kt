@@ -7,6 +7,8 @@ import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import org.json.JSONArray
+import org.json.JSONException
+import org.json.JSONObject
 import timber.log.Timber
 import java.time.LocalDate
 import java.time.ZoneId
@@ -71,6 +73,11 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
         homeCurrency: String
     ): List<CleanTransaction> {
         if (candidateTransactions.isEmpty()) return emptyList()
+
+        Timber.d(
+            "validateTransactions: validating %d candidate transactions, OCR length=%d, homeCurrency=%s",
+            candidateTransactions.size, rawOcrText.length, homeCurrency
+        )
 
         // ── Step 1: Build the AI prompt ───────────────────────────────────
         val prompt = buildValidationPrompt(rawOcrText, candidateTransactions)
@@ -146,18 +153,29 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
 
     /**
      * Build the AI prompt combining raw OCR text and candidate transactions.
+     *
+     * Guards against null/blank [rawOcrText] to prevent sending empty prompts
+     * to the AI service.
      */
     private fun buildValidationPrompt(
         rawOcrText: String,
         candidates: List<DebugTransaction>
     ): String = buildString {
+        if (rawOcrText.isBlank()) {
+            Timber.w("buildValidationPrompt: rawOcrText is blank — AI validation will have no OCR context")
+        }
         appendLine("You are a bank statement transaction validator.")
         appendLine("Below is OCR text from a bank statement. Candidate transactions were extracted by a parser.")
         appendLine("Filter out any entries that are NOT real financial transactions (headers, bank info, page numbers, etc).")
         appendLine("For real transactions, correct the merchant name, amount, and date if the parser got them wrong.")
         appendLine()
         appendLine("--- OCR TEXT ---")
-        appendLine(rawOcrText.take(4000)) // limit to avoid token limits
+        if (rawOcrText.length > 4000) {
+            appendLine(rawOcrText.take(4000))
+            appendLine("… (OCR text truncated to 4000 characters)")
+        } else {
+            appendLine(rawOcrText)
+        }
         appendLine()
         appendLine("--- CANDIDATE TRANSACTIONS ---")
         candidates.forEachIndexed { i, tx ->
@@ -181,7 +199,15 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
             val cleanJson = text.removeSurrounding("```json\n", "\n```")
                 .removeSurrounding("```", "```")
                 .trim()
-            val jsonArray = JSONArray(cleanJson)
+            val jsonArray = try {
+                JSONArray(cleanJson)
+            } catch (e: JSONException) {
+                // AI may wrap the array in an object like {"transactions":[...]}
+                // or {"results":[...]}. Try unwrapping before giving up.
+                JSONObject(cleanJson).optJSONArray("transactions")
+                    ?: JSONObject(cleanJson).optJSONArray("results")
+                    ?: throw e
+            }
             val results = mutableListOf<CleanTransaction>()
 
             for (i in 0 until jsonArray.length()) {
@@ -202,6 +228,21 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
                     continue
                 }
 
+                // Determine whether the AI actually changed values vs the candidate.
+                // If any core field differs, mark as AI_CORRECTED; otherwise AI_VALIDATED.
+                val candidate = candidates.getOrNull(i)
+                val source = if (candidate != null && (
+                        merchant != candidate.merchant ||
+                        kotlin.math.abs(amount - candidate.amount) > 0.001 ||
+                        currency != candidate.currency ||
+                        kotlin.math.abs(date.toDouble() - candidate.date.toDouble()) > 1.0
+                    )
+                ) {
+                    "AI_CORRECTED"
+                } else {
+                    "AI_VALIDATED"
+                }
+
                 results.add(
                     CleanTransaction(
                         merchant = merchant,
@@ -209,7 +250,7 @@ class ValidateBankStatementTransactionsUseCase @Inject constructor(
                         currency = currency,
                         date = date,
                         confidence = confidence.coerceIn(0f, 1f),
-                        source = "AI_VALIDATED"
+                        source = source
                     )
                 )
             }

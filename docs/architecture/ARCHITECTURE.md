@@ -890,6 +890,75 @@ forecasting, and AI surface:
 
 ---
 
+### Bank Statement AI Validation (Post-Phase 10)
+
+A new AI pipeline validates and corrects bank statement OCR output before creating `PendingReview` entries. The pipeline is three-tier: on-device AI → cloud AI → deterministic parser fallback, with per-transaction source tracking for full auditability.
+
+#### AI Pipeline — `ValidateBankStatementTransactionsUseCase`
+
+**File:** `domain/ai/usecase/ValidateBankStatementTransactionsUseCase.kt`
+
+| Step | Component | Purpose |
+|------|-----------|---------|
+| 1 | `OnDeviceReceiptAssistService.suggestFromText()` | Privacy-preserving on-device AI (no network). Always tried first. |
+| 2 | `PrivacyGate.check(CLOUD_AI_BANK_STATEMENT)` | Gate check before any cloud data is sent. |
+| 3 | `SmartReceiptAssistService.suggestFromText()` | Cloud AI fallback via Gemini (on-device→cloud retry chain). |
+| 4 | Parser-only fallback | If both AI paths fail, all candidates are returned as `PARSER_ONLY`. |
+
+Each validated transaction carries a `source` field: `PARSER_ONLY`, `AI_VALIDATED` (AI confirmed), or `AI_CORRECTED` (AI changed values).
+
+#### `BankStatementParser.preFilterRows()`
+
+**File:** `domain/receipt/BankStatementParser.kt` (line 268)
+
+New row-level filter that strips noise before any transaction extraction:
+1. Blank/very short lines (headers, page numbers)
+2. Bank-specific header keywords
+3. Pure-number lines without date/amount patterns (card/account numbers)
+4. Date-only lines without amounts
+5. Exact duplicate rows (keeps first occurrence)
+
+#### Text-Only AI Services
+
+| Service | File | `suggestFromText()` Purpose |
+|---------|------|----------------------------|
+| `CloudReceiptAssistService` | `data/ai/provider/CloudReceiptAssistService.kt` | Text-only Gemini call with `CLOUD_AI_BANK_STATEMENT` privacy gate self-defense. Uses `temperature=0.1`, `responseMimeType=application/json`, no image handling. |
+| `OnDeviceReceiptAssistService` | `data/ai/provider/OnDeviceReceiptAssistService.kt` | Text-only ML Kit GenAI call with no image processing. |
+| `SmartReceiptAssistService` | `data/ai/provider/SmartReceiptAssistService.kt` | Orchestrates on-device→cloud text fallback. Privacy gate responsibility is delegated to the use case. |
+
+#### Privacy Capabilities — Bank Statement
+
+| Capability | Enum Value | Guarded By |
+|------------|-----------|------------|
+| Cloud AI bank statement | `PrivacyCapability.CLOUD_AI_BANK_STATEMENT` | `CloudAiPrivacyGate` — checks `cloudAiEnabled` setting |
+| AI bank statement parsing | `PrivacyCapability.AI_BANK_STATEMENT_PARSING` | `CloudAiPrivacyGate` — checks `cloudAiEnabled` setting |
+
+Both are gated by the master `cloudAiEnabled` toggle in `PrivacySettings`. `CloudAiPrivacyGate` now includes these capabilities in its `when` block alongside the existing `CLOUD_AI_RECEIPT_ASSIST` / `CLOUD_AI_ITEM_CATEGORIZATION` entries.
+
+#### Debug Data — Per-Transaction Source Tracking
+
+**File:** `domain/debug/DebugData.kt` (line 21)
+
+`DebugData.validationSources: Map<Int, String>` maps transaction index to its origin:
+- `"PARSER_ONLY"` — deterministic parser, no AI intervention
+- `"AI_VALIDATED"` — AI confirmed the parser's output
+- `"AI_CORRECTED"` — AI corrected merchant/amount/currency/date
+
+Exposed in debug JSON export as `validationSource` per transaction. `BankStatementLifecycleProcessor` logs the AI/PARSER split after validation.
+
+#### Wiring in `BankStatementLifecycleProcessor`
+
+**File:** `domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt` (line 72)
+
+Now injects `ValidateBankStatementTransactionsUseCase` as `transactionValidator`. After deterministic parsing (step 2), AI validation runs (step 2b):
+1. Converts parsed transactions to `DebugTransaction` list
+2. Calls `transactionValidator.validateTransactions(ocrText, candidates, homeCurrency)`
+3. Maps validated results to `validationSources: Map<Int, String>`
+4. Merges AI results (when `confidence > 0.5` and AI-sourced) with original parser values
+5. Logs the AI/PARSER split for diagnostics
+
+---
+
 ## Database Schema
 
 ### Version: v106 (post DB invariants + background workers; Phases 9–10 add no migrations)

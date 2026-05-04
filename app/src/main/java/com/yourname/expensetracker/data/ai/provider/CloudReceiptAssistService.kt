@@ -212,10 +212,30 @@ class CloudReceiptAssistService @Inject constructor(
      *
      * Used by [ValidateBankStatementTransactionsUseCase] as a cloud fallback
      * for bank statement transaction validation.
+     *
+     * ## Privacy gate
+     * This method checks [PrivacyCapability.CLOUD_AI_BANK_STATEMENT] before
+     * making the cloud API call.  If the gate denies the request the method
+     * returns [AiServiceResult.Failure] with [AiServiceError.Disabled].
+     * Callers should **not** skip the privacy gate — this defense-in-depth
+     * ensures the cloud service is self-defending regardless of which caller
+     * invokes it.
      */
     suspend fun suggestFromText(prompt: String): AiServiceResult<String> {
         if (apiKey.isBlank()) {
             return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
+        }
+
+        // PRIVACY GATE: Check cloud AI privacy gate before proceeding.
+        // Defense-in-depth — the use case also checks, but this ensures the
+        // cloud service is self-defending regardless of which caller invokes it.
+        val gateDecision = privacyGate.check(
+            PrivacyCapability.CLOUD_AI_BANK_STATEMENT,
+            mapOf("caller" to "suggestFromText")
+        )
+        if (gateDecision is PrivacyDecision.Denied) {
+            Timber.d("CloudReceiptAssistService: privacy gate denied suggestFromText: ${gateDecision.reason}")
+            return AiServiceResult.Failure(AiServiceError.Disabled(gateDecision.reason))
         }
 
         val parts = JSONArray().put(JSONObject().put("text", prompt))
@@ -251,35 +271,63 @@ class CloudReceiptAssistService @Inject constructor(
             .build()
 
         return withContext(Dispatchers.IO) {
-            try {
-                val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    return@withContext AiServiceResult.Failure(
-                        AiServiceError.HttpError(response.code, "suggestFromText HTTP ${response.code}")
-                    )
+            for (attempt in 1..CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                try {
+                    val response = client.newCall(request).execute()
+                    if (!response.isSuccessful) {
+                        val correlationId = CloudCorrelation.newCorrelationId()
+                        val errorClass = "HTTP_${response.code}"
+                        if (CloudRetryPolicy.isRetryable(response.code) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                            Timber.w(
+                                "CloudReceiptAssistService: suggestFromText retryable HTTP %d class=%s correlationId=%s (attempt %d/%d)",
+                                response.code, errorClass, correlationId, attempt, CloudRetryPolicy.MAX_RETRY_ATTEMPTS
+                            )
+                            // fall through to delay + retry
+                        } else {
+                            return@withContext AiServiceResult.Failure(
+                                AiServiceError.HttpError(response.code, "suggestFromText HTTP ${response.code} errorClass=$errorClass correlationId=$correlationId")
+                            )
+                        }
+                    } else {
+                        val body = response.body?.string()
+                            ?: return@withContext AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
+                        val root = JSONObject(body)
+                        val text = root.optJSONArray("candidates")
+                            ?.optJSONObject(0)
+                            ?.optJSONObject("content")
+                            ?.optJSONArray("parts")
+                            ?.optJSONObject(0)
+                            ?.optString("text")
+                            ?.trim()
+                            ?: return@withContext AiServiceResult.Failure(AiServiceError.ParseError("No text in Gemini response"))
+                        return@withContext AiServiceResult.Success(text)
+                    }
+                } catch (e: SocketTimeoutException) {
+                    if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        Timber.w(e, "CloudReceiptAssistService: suggestFromText timeout, retrying (%d/%d)", attempt, CloudRetryPolicy.MAX_RETRY_ATTEMPTS)
+                    } else {
+                        return@withContext AiServiceResult.Failure(AiServiceError.Timeout)
+                    }
+                } catch (e: SSLException) {
+                    Timber.w(e, "CloudReceiptAssistService: suggestFromText SSL failure")
+                    return@withContext AiServiceResult.Failure(AiServiceError.SslError)
+                } catch (e: IOException) {
+                    if (CloudRetryPolicy.isRetryableIoException(e) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                        Timber.w(e, "CloudReceiptAssistService: suggestFromText network failure, retrying (%d/%d)", attempt, CloudRetryPolicy.MAX_RETRY_ATTEMPTS)
+                    } else {
+                        return@withContext AiServiceResult.Failure(AiServiceError.Offline)
+                    }
+                } catch (e: Exception) {
+                    Timber.w(e, "CloudReceiptAssistService: suggestFromText error")
+                    return@withContext AiServiceResult.Failure(AiServiceError.Unknown(e.message))
                 }
-                val body = response.body?.string()
-                    ?: return@withContext AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
-                val root = JSONObject(body)
-                val text = root.optJSONArray("candidates")
-                    ?.optJSONObject(0)
-                    ?.optJSONObject("content")
-                    ?.optJSONArray("parts")
-                    ?.optJSONObject(0)
-                    ?.optString("text")
-                    ?.trim()
-                    ?: return@withContext AiServiceResult.Failure(AiServiceError.ParseError("No text in Gemini response"))
-                AiServiceResult.Success(text)
-            } catch (e: SocketTimeoutException) {
-                AiServiceResult.Failure(AiServiceError.Timeout)
-            } catch (e: SSLException) {
-                AiServiceResult.Failure(AiServiceError.SslError)
-            } catch (e: IOException) {
-                AiServiceResult.Failure(AiServiceError.Offline)
-            } catch (e: Exception) {
-                Timber.w(e, "CloudReceiptAssistService: suggestFromText error")
-                AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+
+                if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                    delay(CloudRetryPolicy.backoffDelayMs(attempt))
+                }
             }
+
+            AiServiceResult.Failure(AiServiceError.Unknown("suggestFromText retry attempts exhausted"))
         }
     }
 
@@ -463,7 +511,7 @@ class CloudReceiptAssistService @Inject constructor(
         val validatedTotal = suggestion.optJSONObject("total")?.toSuggestedDoubleOrNull()
             ?.takeIf { AiOutputValidators.isPositiveAmount(it.value) }
         val validatedTaxAmount = suggestion.optJSONObject("taxAmount")?.toSuggestedDoubleOrNull()
-            ?.let { if (it != null && !AiOutputValidators.isPositiveAmount(it.value)) null else it }
+            ?.let { if (!AiOutputValidators.isPositiveAmount(it.value)) null else it }
         val validatedDate = suggestion.optJSONObject("date")?.toSuggestedLongOrNull()
             ?.takeIf { AiOutputValidators.isPlausibleEpochMillis(it.value) }
 

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
+import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
@@ -11,6 +12,8 @@ import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.repository.toDbTransactionType
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.ai.usecase.CleanTransaction
+import com.yourname.expensetracker.domain.ai.usecase.DebugTransaction
 import com.yourname.expensetracker.domain.ai.usecase.ValidateBankStatementTransactionsUseCase
 import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
@@ -65,10 +68,9 @@ class BankStatementLifecycleProcessor @Inject constructor(
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val duplicateDetector: ReceiptDuplicateDetector,
-    private val assetStore: ReceiptAssetStore
-    // TODO: Inject ValidateBankStatementTransactionsUseCase for AI validation
-    // TODO: The use case will validate parser candidates with on-device/cloud AI:
-    // TODO:   private val transactionValidator: ValidateBankStatementTransactionsUseCase
+    private val assetStore: ReceiptAssetStore,
+    private val transactionValidator: ValidateBankStatementTransactionsUseCase,
+    private val recurringExpenseDao: ManualRecurringExpenseDao
 ) {
 
     /**
@@ -114,7 +116,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
             }
 
             // ── Step 2: Parse transactions ─────────────────────────────────────
-            val parsedTransactions = bankStatementParser.parse(ocrResult.blocks)
+            val homeCurrency = bankStatementParser.resolveHomeCurrencySuspend()
+            val parsedTransactions = bankStatementParser.parse(ocrResult.blocks, homeCurrency)
 
             val transactionsFound = parsedTransactions.size
             Timber.d("BankStatementLifecycleProcessor: %d transactions found", transactionsFound)
@@ -126,21 +129,59 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 )
             }
 
-            // ── Step 2b: AI validation (TODO) ─────────────────────────────────
-            // TODO: Wire in ValidateBankStatementTransactionsUseCase:
-            // TODO:   1. Convert parsedTransactions to DebugTransaction list
-            // TODO:   2. Call transactionValidator.validateTransactions(
-            // TODO:        rawOcrText = ocrResult.fullText,
-            // TODO:        candidateTransactions = debugTransactions,
-            // TODO:        homeCurrency = "..."
-            // TODO:      )
-            // TODO:   3. Use AI-validated CleanTransaction list (with "AI_VALIDATED" / "AI_CORRECTED" source)
-            // TODO:      for high-confidence items; fall back to parser-only ("PARSER_ONLY") for low-confidence ones
-            // TODO:   4. Log the split (AI-validated vs parser-only) to parsingLogs
-            // TODO:   5. Build validationSources map for DebugData
-            //
-            // For now, all transactions are treated as parser-only.
-            val validationSources: Map<Int, String> = parsedTransactions.indices.associateWith { "PARSER_ONLY" }
+            // ── Step 2b: AI validation ─────────────────────────────────────────
+            // Use ValidateBankStatementTransactionsUseCase to validate/correct
+            // parser candidates with on-device (or cloud) AI.
+            val debugTransactions = parsedTransactions.map { DebugTransaction.fromParsedTransaction(it) }
+            val validatedTransactions = transactionValidator.validateTransactions(
+                rawOcrText = ocrResult.fullText,
+                candidateTransactions = debugTransactions,
+                homeCurrency = homeCurrency
+            )
+            val validationSources: Map<Int, String> = validatedTransactions
+                .mapIndexed { i, tx -> i to tx.source }
+                .toMap()
+
+            // Log the AI validation split
+            val aiValidatedCount = validationSources.count { it.value.startsWith("AI_") }
+            parsingLogs.add("AI validation: $aiValidatedCount/${validatedTransactions.size} transactions AI-validated or corrected")
+            if (aiValidatedCount > 0) {
+                val correctedCount = validationSources.count { it.value == "AI_CORRECTED" }
+                parsingLogs.add("  AI_CORRECTED: $correctedCount, AI_VALIDATED: ${aiValidatedCount - correctedCount}")
+            }
+
+            // Build a merged list: use AI-validated values when confidence > 0.5,
+            // fall back to parser-only values otherwise.
+            data class MergedTransaction(
+                val merchant: String,
+                val amount: Double,
+                val currency: String,
+                val date: Long?,
+                val confidence: Float,
+                val type: ParsedTransactionType
+            )
+            val mergedTransactions = validatedTransactions.mapIndexed { i, cleanTx ->
+                val originalTx = parsedTransactions[i]
+                if (cleanTx.source.startsWith("AI_") && cleanTx.confidence > 0.5f) {
+                    MergedTransaction(
+                        merchant = cleanTx.merchant,
+                        amount = cleanTx.amount,
+                        currency = cleanTx.currency,
+                        date = if (cleanTx.date > 0L) cleanTx.date else originalTx.date,
+                        confidence = cleanTx.confidence,
+                        type = originalTx.type
+                    )
+                } else {
+                    MergedTransaction(
+                        merchant = originalTx.merchant,
+                        amount = originalTx.amount,
+                        currency = originalTx.currency,
+                        date = originalTx.date,
+                        confidence = originalTx.confidence,
+                        type = originalTx.type
+                    )
+                }
+            }
 
             // ── Step 3: Save statement receipt with lifecycle metadata ─────────
             val statementReceipt = ScannedReceipt(
@@ -188,7 +229,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
             var reviewsCreated = 0
             var duplicatesSkipped = 0
 
-            for (tx in parsedTransactions) {
+            for (tx in mergedTransactions) {
                 try {
                     // Normalize merchant
                     val lookupResult = merchantNormalizer.normalize(tx.merchant, autoCreate = true)
@@ -202,6 +243,20 @@ class BankStatementLifecycleProcessor @Inject constructor(
 
                     val transactionDate = tx.date ?: timeProvider.now()
                     val merchantKey = MerchantKeyGenerator.generate(normalizedMerchant)
+
+                    // ── Recurring rule active check ────────────────────────────
+                    // Log whether an active recurring rule exists for this merchant
+                    // so users can decide whether to merge with existing subscriptions.
+                    val existingRecurring = runCatching {
+                        recurringExpenseDao.getByMerchant(normalizedMerchant)
+                    }.getOrNull()
+                    if (existingRecurring != null) {
+                        if (existingRecurring.isActive) {
+                            parsingLogs.add("RECURRING: Active recurring rule exists for '${tx.merchant}' (id=${existingRecurring.id})")
+                        } else {
+                            parsingLogs.add("RECURRING: Inactive recurring rule found for '${tx.merchant}' (id=${existingRecurring.id}) — subscription may be paused or cancelled")
+                        }
+                    }
 
                     // ── Deduplication check ────────────────────────────────────
                     val existingPending = pendingReviewDao.getPendingByMerchant(

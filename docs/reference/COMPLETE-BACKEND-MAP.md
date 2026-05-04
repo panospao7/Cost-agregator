@@ -53,7 +53,7 @@
 | `receipt/lifecycle/ReceiptInputValidator.kt` | ReceiptInputValidator | URI/MIME/size validation before processing pipeline | Service | Context | No |
 | `receipt/lifecycle/ReceiptDuplicateDetector.kt` | ReceiptDuplicateDetector | 3-signal deduplication: EXACT_HASH (1.0), TEXT_FINGERPRINT (0.95), SEMANTIC (0.8), EXTERNAL_ID (1.0) | Service | ScannedReceiptDao, ReceiptExpenseLinkDao | No |
 | `receipt/lifecycle/ReceiptSideEffectDispatcher.kt` | ReceiptSideEffectDispatcher | Document-type-gated post-save side effects (warranty, categorization, matching, price protection) | Dispatcher | AutoCreateWarrantyFromReceiptUseCase, CategorizeReceiptItemsUseCase, ReceiptTransactionMatcher, PriceProtectionTracker | No |
-| `receipt/lifecycle/BankStatementLifecycleProcessor.kt` | BankStatementLifecycleProcessor | Statement-specific lifecycle: OCR → parse → PendingReview creation → lifecycle events | Processor | ReceiptRepository, ScannedReceiptDao, ReceiptEventDao, ReceiptLinkService, BankStatementParser, PendingReviewDao, MerchantNormalizer, HybridExpenseClassifier | No |
+| `receipt/lifecycle/BankStatementLifecycleProcessor.kt` | BankStatementLifecycleProcessor | Statement-specific lifecycle: OCR → parse → **AI validation via ValidateBankStatementTransactionsUseCase** → PendingReview creation → lifecycle events. AI step runs on-device first, cloud fallback second, parser fallback third. Tracks `validationSources: Map<Int, String>` per transaction. | Processor | ReceiptRepository, ScannedReceiptDao, ReceiptEventDao, ReceiptLinkService, BankStatementParser, PendingReviewDao, MerchantNormalizer, HybridExpenseClassifier, **ValidateBankStatementTransactionsUseCase** | No |
 | `receipt/lifecycle/BankStatementResult.kt` | BankStatementResult | Structured result: receiptId, transactionsFound, reviewsCreated, duplicatesSkipped | Model | - | No |
 
 ### Recurring Lifecycle Models (5 files)
@@ -83,7 +83,7 @@
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `privacy/PrivacyCapability.kt` | PrivacyCapability | Enum of 21 gated capabilities (NOTIFICATION_CAPTURE, CLOUD_AI_RECEIPT_ASSIST, EXTERNAL_GEOCODING, RAWBACKUP_EXPORT, ENCRYPTED_BACKUP, RAW_NOTIFICATION_RETENTION, etc.) | Enum | — | No |
+| `privacy/PrivacyCapability.kt` | PrivacyCapability | Enum of 23 gated capabilities (NOTIFICATION_CAPTURE, CLOUD_AI_RECEIPT_ASSIST, **CLOUD_AI_BANK_STATEMENT**, **AI_BANK_STATEMENT_PARSING**, EXTERNAL_GEOCODING, RAWBACKUP_EXPORT, ENCRYPTED_BACKUP, RAW_NOTIFICATION_RETENTION, etc.) | Enum | — | No |
 | `privacy/PrivacyGate.kt` | PrivacyGate | Interface: `check(capability, context) → PrivacyDecision`. Fail-closed, audit-logged, deterministic. | Service | PrivacySettings, PrivacyAuditLogger | No |
 | `privacy/PrivacyDecision.kt` | PrivacyDecision | Sealed interface: `Allowed` or `Denied(reason)` | Model | — | No |
 | `privacy/PrivacySettings.kt` | PrivacySettings | Data class: 10 boolean toggles (notificationCapture, cloudAi, redactBeforeCloud, receiptImageCloud, externalGeocoding, backgroundLocationBackfill, deviceGpsLocation, encryptedBackup, debugDataPersistence) + 2 retention day settings | Model | — | No |
@@ -91,7 +91,7 @@
 | `privacy/PrivacyAuditLogger.kt` | PrivacyAuditLogger | Logs every gate check decision (capability, decision, reason, context, caller) to privacy_audit_events table | Service | PrivacyAuditDao | No |
 | `privacy/NotificationPrivacyGate.kt` | NotificationPrivacyGate | Guards NOTIFICATION_CAPTURE and NOTIFICATION_PACKAGE_ALLOWLIST | Service | PrivacyGate, PrivacySettings | No |
 | `privacy/LocationPrivacyGate.kt` | LocationPrivacyGate | Guards EXTERNAL_GEOCODING, BACKGROUND_LOCATION_BACKFILL, DEVICE_GPS_LOCATION, OVERPASS_API | Service | PrivacyGate, PrivacySettings | No |
-| `privacy/CloudAiPrivacyGate.kt` | CloudAiPrivacyGate | Guards all CLOUD_AI_* capabilities + RECEIPT_IMAGE_CLOUD_UPLOAD | Service | PrivacyGate, PrivacySettings | No |
+| `privacy/CloudAiPrivacyGate.kt` | CloudAiPrivacyGate | Guards all CLOUD_AI_* capabilities + RECEIPT_IMAGE_CLOUD_UPLOAD. Now includes CLOUD_AI_BANK_STATEMENT and AI_BANK_STATEMENT_PARSING. | Service | PrivacyGate, PrivacySettings | No |
 | `privacy/BackupPrivacyGate.kt` | BackupPrivacyGate | Guards RAWBACKUP_EXPORT and ENCRYPTED_BACKUP based on encryptedBackupEnabled | Service | PrivacyGate, PrivacySettings | No |
 | `privacy/CompositePrivacyGate.kt` | CompositePrivacyGate | Chains all gates; returns first Denied or Allowed if all pass | Service | List<PrivacyGate> | No |
 | `privacy/RedactionSanitizer.kt` | RedactionSanitizer | PII redaction helper for notification text and OCR content before cloud calls | Utility | — | No |
@@ -171,6 +171,9 @@
 | `ai/usecase/SuggestCategoryFallbackUseCase.kt` | SuggestCategoryFallbackUseCase | Fallback category suggestion | UseCase | - | No |
 | `ai/usecase/SuggestReceiptExtractionUseCase.kt` | SuggestReceiptExtractionUseCase | Suggests receipt extraction | UseCase | ReceiptAssistService | No |
 | `ai/usecase/SyncProactiveBriefingWorkUseCase.kt` | SyncProactiveBriefingWorkUseCase | Syncs briefing work schedules | UseCase | AiWorkScheduler | No |
+| `ai/usecase/ValidateBankStatementTransactionsUseCase.kt` | ValidateBankStatementTransactionsUseCase | AI bank statement transaction validator. Takes raw OCR text + candidate transactions from [BankStatementParser], runs on-device AI first, then cloud AI as privacy-gated fallback, then parser-only fallback. Returns per-transaction source tracking (PARSER_ONLY / AI_VALIDATED / AI_CORRECTED). | UseCase | SmartReceiptAssistService, OnDeviceReceiptAssistService, PrivacyGate | Yes |
+| `ai/usecase/ValidateBankStatementTransactionsUseCase.kt` | CleanTransaction | Validated/corrected transaction result from AI pipeline. Fields: merchant, amount, currency, date, confidence, source. | Model | — | No |
+| `ai/usecase/ValidateBankStatementTransactionsUseCase.kt` | DebugTransaction | Lightweight parsed transaction with validationSource tracking (PARSER_ONLY / AI_VALIDATED / AI_CORRECTED). Companion: fromParsedTransaction(). | Model | ParsedTransaction | No |
 
 ### Analytics & Insights (16 files)
 
@@ -254,7 +257,7 @@
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
 | `debug/AiRuntimeDiagnostics.kt` | AiRuntimeDiagnostics | Diagnoses AI runtime issues | Utility | - | No |
-| `debug/DebugData.kt` | DebugData | Debug data models | Model | - | No |
+| `debug/DebugData.kt` | DebugData | Debug data models with `validationSources: Map<Int, String>` for per-transaction AI/PARSER source tracking (PARSER_ONLY, AI_VALIDATED, AI_CORRECTED). Exposed in JSON debug export as `validationSource` per transaction. | Model | ParsedTransaction | No |
 | `debug/DebugIssue.kt` | DebugIssue | Issue reporting models | Model | - | No |
 | `debug/DebugIssueDetector.kt` | DebugIssueDetector | Detects and reports issues | Engine | - | No |
 | `debug/NotificationSeeder.kt` | NotificationSeeder | Seeds test notifications | Utility | - | No |
@@ -434,7 +437,7 @@
 | `parser/parsers/GreekBankParser.kt` | GreekBankParser | Greek bank parser | Parser | - | No |
 | `parser/parsers/RevolutParser.kt` | RevolutParser | Revolut parser | Parser | - | No |
 | `parser/parsers/SmsParser.kt` | SmsParser | SMS parser | Parser | - | No |
-| `receipt/BankStatementParser.kt` | BankStatementParser | Bank statement parser | Parser | - | No |
+| `receipt/BankStatementParser.kt` | BankStatementParser | Bank statement parser. Includes `preFilterRows()` that strips bank headers, short lines, pure numbers, date-only rows, and exact duplicates before transaction extraction. | Parser | — | No |
 | `receipt/EnhancedMerchantExtractor.kt` | EnhancedMerchantExtractor | Merchant extraction | Engine | - | No |
 | `receipt/MerchantRulesPolicy.kt` | MerchantRulesPolicy | Merchant business rules | Service | - | No |
 | `receipt/OcrLanguageProcessor.kt` | OcrLanguageProcessor | OCR language processing | Engine | - | No |
@@ -736,7 +739,7 @@
 | `ai/provider/CloudDashboardBriefingService.kt` | CloudDashboardBriefingService | Cloud-based briefing | Service | - | No |
 | `ai/provider/CloudDedupeJudgeService.kt` | CloudDedupeJudgeService | Cloud-based dedup | Service | - | Yes |
 | `ai/provider/CloudQueryInterpretationService.kt` | CloudQueryInterpretationService | Cloud-based query | Service | - | Yes |
-| `ai/provider/CloudReceiptAssistService.kt` | CloudReceiptAssistService | Cloud receipt extraction | Service | - | Yes |
+| `ai/provider/CloudReceiptAssistService.kt` | CloudReceiptAssistService | Cloud receipt extraction via Gemini. Provides `suggestFromText()` for text-only bank statement AI validation with `CLOUD_AI_BANK_STATEMENT` privacy gate defense-in-depth. | Service | SecureKeyStorage, OkHttpClient, PrivacyGate | Yes |
 | `ai/provider/CloudReceiptItemCategorizationService.kt` | CloudReceiptItemCategorizationService | Cloud item categorization | Service | - | No |
 | `ai/provider/CloudReviewExplanationService.kt` | CloudReviewExplanationService | Cloud review explanation | Service | - | No |
 | `ai/provider/CloudWarrantyExtractionService.kt` | CloudWarrantyExtractionService | Cloud warranty extraction | Service | - | No |
@@ -759,12 +762,12 @@
 | `ai/provider/OnDeviceDedupeJudgeService.kt` | OnDeviceDedupeJudgeService | On-device dedup | Service | - | No |
 | `ai/provider/OnDeviceNotificationParser.kt` | OnDeviceNotificationParser | On-device parser | Service | - | No |
 | `ai/provider/OnDeviceQueryInterpretationService.kt` | OnDeviceQueryInterpretationService | On-device query | Service | - | No |
-| `ai/provider/OnDeviceReceiptAssistService.kt` | OnDeviceReceiptAssistService | On-device receipt | Service | - | No |
+| `ai/provider/OnDeviceReceiptAssistService.kt` | OnDeviceReceiptAssistService | On-device receipt via ML Kit GenAI. Provides `suggestFromText()` for text-only on-device AI bank statement validation (privacy-preserving, no network). | Service | GenerativeModel | No |
 | `ai/provider/OnDeviceReceiptItemCategorizationService.kt` | OnDeviceReceiptItemCategorizationService | On-device item cat | Service | - | No |
 | `ai/provider/OnDeviceReviewExplanationService.kt` | OnDeviceReviewExplanationService | On-device review | Service | - | No |
 | `ai/provider/OnDeviceReviewPriorityScorer.kt` | OnDeviceReviewPriorityScorer | On-device scorer | Service | - | No |
 | `ai/provider/OnDeviceSemanticDuplicateDetector.kt` | OnDeviceSemanticDuplicateDetector | On-device duplicate | Service | - | No |
-| `ai/provider/SmartReceiptAssistService.kt` | SmartReceiptAssistService | Smart receipt assist | Service | - | No |
+| `ai/provider/SmartReceiptAssistService.kt` | SmartReceiptAssistService | Smart receipt assist with cloud→on-device fallback chain. Provides `suggestFromText()` which orchestrates on-device→cloud text fallback for bank statement validation. Privacy gate responsibility delegated to the caller (ValidateBankStatementTransactionsUseCase). | Service | CloudReceiptAssistService, OnDeviceReceiptAssistService, PrivacyGate, AiCapabilityRouter | No |
 
 #### Provider Internals (4 files)
 

@@ -580,7 +580,8 @@ class ReceiptRepository @Inject constructor(
             val ocrResult: OcrResult = ocrService.processUri(imageUri)
 
             // 2. Parse as multiple transactions using spatial data
-            val parsedTransactions = statementParser.parse(ocrResult.blocks)
+            val homeCurrency = statementParser.resolveHomeCurrencySuspend()
+            val parsedTransactions = statementParser.parse(ocrResult.blocks, homeCurrency)
             
             if (parsedTransactions.isEmpty()) {
                 parsingLogs.add("No transactions found in bank statement")

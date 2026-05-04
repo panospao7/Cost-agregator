@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.receipt
 
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
+import kotlinx.coroutines.flow.first
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -58,7 +59,7 @@ class BankStatementParserTest {
             TextBlock("EUR", null, 310, 200, 350, 220)
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals(3, results.size)
         
@@ -101,10 +102,55 @@ class BankStatementParserTest {
             TextBlock("-20,00 EUR", null, 100, 195, 150, 215)
         )
         
-        val results = parser.parse(blocksWithAmounts)
+        val results = parser.parse(blocksWithAmounts, "EUR")
         assertEquals(2, results.size)
         assertEquals("Merchant1", results[0].merchant)
         assertEquals("Merchant2", results[1].merchant)
+    }
+
+    // -----------------------------------------------------------------------
+    //  NBG (Greek National Bank) statement parsing
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `nbg transaction row with debit marker is parsed correctly`() {
+        // Simulates a typical NBG statement row:
+        //   15/03/2025 10:30:00 17/03/2025 705 040 SKLAVENITIS ΜΑΡΚΟΠΟΥΛΟ Χ 12,50
+        //
+        // Format: DATE TIME VALUE_DATE STORE_CODE TX_CODE MERCHANT Χ/Π AMOUNT
+        //   Χ = ΧΡΕΩΣΗ (debit/purchase), Π = ΠΙΣΤΩΣΗ (credit/deposit)
+        val blocks = listOf(
+            TextBlock(
+                "15/03/2025 10:30:00 17/03/2025 705 040 SKLAVENITIS ΜΑΡΚΟΠΟΥΛΟ Χ 12,50",
+                null, 10, 100, 600, 120
+            )
+        )
+
+        val results = parser.parse(blocks, "EUR")
+
+        assertEquals("Expected 1 transaction", 1, results.size)
+        assertEquals("SKLAVENITIS ΜΑΡΚΟΠΟΥΛΟ", results[0].merchant)
+        assertEquals(12.50, results[0].amount, 0.01)
+        assertEquals(ParsedTransactionType.PURCHASE, results[0].type)
+        assertNotNull("Transaction should have a date", results[0].date)
+    }
+
+    @Test
+    fun `nbg transaction row with credit marker is parsed as DEPOSIT`() {
+        // Π = ΠΙΣΤΩΣΗ (credit/transfer)
+        val blocks = listOf(
+            TextBlock(
+                "20/03/2025 08:15:00 22/03/2025 710 042 ΜΙΣΘΟΔΟΣΙΑ ΕΤΑΙΡΕΙΑ Π 1.500,00",
+                null, 10, 100, 600, 120
+            )
+        )
+
+        val results = parser.parse(blocks, "EUR")
+
+        assertEquals("Expected 1 transaction", 1, results.size)
+        assertEquals("ΜΙΣΘΟΔΟΣΙΑ ΕΤΑΙΡΕΙΑ", results[0].merchant)
+        assertEquals(1500.0, results[0].amount, 0.01)
+        assertEquals(ParsedTransactionType.DEPOSIT, results[0].type)
     }
 
     // -----------------------------------------------------------------------
@@ -134,7 +180,7 @@ class BankStatementParserTest {
             TextBlock("1.250,00", null, 450, 50, 550, 70)
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals("Expected exactly 1 transaction", 1, results.size)
         assertEquals(
@@ -185,7 +231,7 @@ class BankStatementParserTest {
             TextBlock("-32,00 EUR", null, 480, 50, 560, 70)
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals("Expected exactly 1 transaction", 1, results.size)
         assertNotNull("Transaction should have a date", results[0].date)
@@ -250,7 +296,7 @@ class BankStatementParserTest {
             balanceStr = "€5,000.00"
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals("Expected 1 transaction", 1, results.size)
         assertEquals(1234.56, results[0].amount, 0.01)
@@ -268,7 +314,7 @@ class BankStatementParserTest {
             balanceStr = "€4.000,00"
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals("Expected 1 transaction", 1, results.size)
         assertEquals(1234.56, results[0].amount, 0.01)
@@ -289,7 +335,7 @@ class BankStatementParserTest {
             balanceStr = "€950.00"
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals(1, results.size)
         assertEquals(ParsedTransactionType.TRANSFER, results[0].type)
@@ -306,7 +352,7 @@ class BankStatementParserTest {
             balanceStr = "€1,120.00"
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals(1, results.size)
         assertEquals(ParsedTransactionType.TRANSFER, results[0].type)
@@ -323,7 +369,7 @@ class BankStatementParserTest {
             balanceStr = "€1,195.00"
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals(1, results.size)
         assertEquals(ParsedTransactionType.TRANSFER, results[0].type)
@@ -340,7 +386,7 @@ class BankStatementParserTest {
             balanceStr = "€800.00"
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals(1, results.size)
         assertEquals(ParsedTransactionType.WITHDRAWAL, results[0].type)
@@ -357,7 +403,7 @@ class BankStatementParserTest {
             balanceStr = "€700.00"
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals(1, results.size)
         assertEquals(ParsedTransactionType.WITHDRAWAL, results[0].type)
@@ -374,7 +420,7 @@ class BankStatementParserTest {
             balanceStr = "€1,500.00"
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals(1, results.size)
         assertEquals(ParsedTransactionType.DEPOSIT, results[0].type)
@@ -391,7 +437,7 @@ class BankStatementParserTest {
             balanceStr = "€1,529.99"
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals(1, results.size)
         assertEquals(ParsedTransactionType.DEPOSIT, results[0].type)
@@ -408,7 +454,7 @@ class BankStatementParserTest {
             balanceStr = "€1,539.99"
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals(1, results.size)
         assertEquals(ParsedTransactionType.DEPOSIT, results[0].type)
@@ -425,7 +471,7 @@ class BankStatementParserTest {
             balanceStr = "€1,535.49"
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals(1, results.size)
         assertEquals(ParsedTransactionType.PURCHASE, results[0].type)
@@ -442,7 +488,7 @@ class BankStatementParserTest {
             balanceStr = "£1,000.00"
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals(1, results.size)
         assertEquals(25.50, results[0].amount, 0.01)
@@ -478,7 +524,7 @@ class BankStatementParserTest {
             TextBlock("-8,90 EUR", null, 480, 50, 560, 70)
         )
 
-        val results = parser.parse(blocks)
+        val results = parser.parse(blocks, "EUR")
 
         assertEquals("Expected exactly 1 transaction", 1, results.size)
         assertNotNull("Transaction should have a date", results[0].date)

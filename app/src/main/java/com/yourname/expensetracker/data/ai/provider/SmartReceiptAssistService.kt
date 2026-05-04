@@ -107,24 +107,27 @@ class SmartReceiptAssistService @Inject constructor(
     }
 
     /**
-     * Send a text-only prompt through the AI service chain (cloud first,
-     * on-device fallback) and return the raw response text.
+     * Send a text-only prompt through the AI service chain (on-device first,
+     * cloud fallback) and return the raw response text.
      *
      * Skips image processing and receipt-specific prompt wrapping.
      * The [privacyGate] is NOT checked here — the caller
      * (e.g. [ValidateBankStatementTransactionsUseCase]) is responsible for
      * checking [PrivacyCapability.CLOUD_AI_BANK_STATEMENT] before calling.
+     *
+     * Order matches the use case design: on-device is privacy-preserving and
+     * works offline; cloud is only used as a fallback.
      */
     suspend fun suggestFromText(prompt: String): AiServiceResult<String> {
-        // Attempt 1: Cloud text AI
-        val cloudResult = cloudReceiptAssistService.suggestFromText(prompt)
-        if (cloudResult is AiServiceResult.Success) {
-            return cloudResult
+        // Attempt 1: On-device text AI (privacy-safe, no network)
+        val onDeviceResult = onDeviceReceiptAssistService.suggestFromText(prompt)
+        if (onDeviceResult is AiServiceResult.Success) {
+            return onDeviceResult
         }
 
-        // Attempt 2: On-device text AI
-        Timber.d("SmartReceiptAssist: suggestFromText cloud failed, falling back to on-device")
-        return onDeviceReceiptAssistService.suggestFromText(prompt)
+        // Attempt 2: Cloud text AI
+        Timber.d("SmartReceiptAssist: suggestFromText on-device failed, falling back to cloud")
+        return cloudReceiptAssistService.suggestFromText(prompt)
     }
 
     private suspend fun executeWithFallback(

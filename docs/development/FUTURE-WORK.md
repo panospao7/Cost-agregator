@@ -101,6 +101,7 @@ Each item includes:
 | RCP-30 | Item categorization siloed — no propagation to budgets/expense model | **Large** | RCP-16 | High | Wires categorization to ExpenseRepository |
 | RCP-N2 | No currency editing in receipt review UI (same root as RCP-10) | **Medium** | None | High | Add currency picker + field |
 | RCP-2 | Unknown-size content providers bypass file-size protection | **Medium** | None | High | Implement streaming copy with hard byte limit |
+| RCP-BSA | ✅ RESOLVED — Bank statement audit trail: `DebugData.validationSources` provides per-transaction AI/PARSER source tracking. `ValidateBankStatementTransactionsUseCase` returns each transaction with source=PARSER_ONLY/AI_VALIDATED/AI_CORRECTED. `BankStatementLifecycleProcessor` logs the AI/PARSER split for full auditability. | — | — | — | ✅ `DebugData.kt:21, ValidateBankStatementTransactionsUseCase.kt:32-39, BankStatementLifecycleProcessor.kt:141-151` — verified AI source tracking + audit log |
 | RCP-13 | Item AI validation checks count only; no per-item validation | **Medium** | None | Medium | Add per-item confidence/category/amount checks |
 | RCP-29 | OCR saves JPEG quality 80; original quality not preserved for cloud | **Small** | None | Medium | Save original-quality variant alongside |
 | RCP-27 | PDF processing silently limits to first 5 pages | **Small** | None | Low | Add user-visible warning |

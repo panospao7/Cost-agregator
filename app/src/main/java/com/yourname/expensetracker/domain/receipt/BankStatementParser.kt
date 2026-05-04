@@ -2,16 +2,13 @@ package com.yourname.expensetracker.domain.receipt
 
 import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
-import java.util.regex.Pattern
 import java.util.Locale
-import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import com.yourname.expensetracker.domain.util.AmountUtils
-import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.domain.core.money.CurrencyAssumption
+import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
@@ -20,7 +17,6 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 import com.yourname.expensetracker.BuildConfig
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 
@@ -42,6 +38,9 @@ class BankStatementParser @Inject constructor(
             "Γ.Ε.Μ.Η", "Μ.Α.Ε", "Ημ/νία Εκτύπωσης", "Κίνηση", "Αρ. Κάρτας",
             "Σελίδα", "Αρ. Λογαριασμού", "ΑΡ. ΛΟΓΑΡΙΑΣΜΟΥ", "ΙΒΑΝ", "Υπόλοιπο",
             "Κατάστημα", "Ημερομηνία", "Περιγραφή", "ΠΟΣΟ", "Ποσό",
+            // Greek — additional bank names and statement terms
+            "ALPHA BANK", "EUROBANK", "ΠΕΙΡΑΙΩΣ", "ΚΑΡΤΑΣ", "ΛΟΓΑΡΙΑΣΜΟΥ",
+            "ΥΠΟΚΑΤΑΣΤΗΜΑ",
             // English
             "www.", "page", "statement", "account", "balance", "date", "description",
             "amount", "debit", "credit", "transaction", "TOTAL", "SUBTOTAL",
@@ -97,22 +96,20 @@ class BankStatementParser @Inject constructor(
     }
 
     /**
-     * Resolves the home currency from [CurrencySettingsRepository].
+     * Resolves the home currency from [CurrencySettingsRepository] as a suspend function.
      *
      * Falls back to "EUR" with a warning log and
      * [CurrencyAssumption.ASSUMED_HOME_CURRENCY] metadata hint if no home
      * currency is configured.
      */
-    private fun resolveHomeCurrency(): String {
+    suspend fun resolveHomeCurrencySuspend(): String {
         return runCatching {
-            runBlocking {
-                val currency = currencySettingsRepository.homeCurrency().first()
-                if (currency.isNotBlank()) {
-                    currency
-                } else {
-                    Timber.w("No home currency configured, fallback to EUR (CurrencyAssumption.ASSUMED_HOME_CURRENCY)")
-                    "EUR"
-                }
+            val currency = currencySettingsRepository.homeCurrency().first()
+            if (currency.isNotBlank()) {
+                currency
+            } else {
+                Timber.w("No home currency configured, fallback to EUR (CurrencyAssumption.ASSUMED_HOME_CURRENCY)")
+                "EUR"
             }
         }.getOrElse { e ->
             Timber.w(e, "Failed to read home currency, fallback to EUR")
@@ -126,11 +123,10 @@ class BankStatementParser @Inject constructor(
      *
      * @param blocks The OCR text blocks to parse.
      * @param homeCurrency The home currency to use when a transaction's currency
-     *            cannot be determined from the text.  Defaults to the user's
-     *            configured home currency via [CurrencySettingsRepository], or "EUR"
-     *            if none is configured (with a warning log).
+     *            cannot be determined from the text.  The caller must resolve this
+     *            via [resolveHomeCurrencySuspend] or another mechanism.
      */
-    fun parse(blocks: List<TextBlock>, homeCurrency: String = resolveHomeCurrency()): List<ParsedTransaction> {
+    fun parse(blocks: List<TextBlock>, homeCurrency: String): List<ParsedTransaction> {
         if (blocks.isEmpty()) return emptyList()
 
         // 1. Group blocks into rows based on vertical proximity
@@ -271,7 +267,8 @@ class BankStatementParser @Inject constructor(
      */
     private fun preFilterRows(
         rows: List<List<TextBlock>>,
-        rowStrings: List<String>
+        rowStrings: List<String>,
+        minLineLength: Int = 10
     ): Pair<List<List<TextBlock>>, List<String>> {
         if (rows.isEmpty() || rowStrings.isEmpty()) return Pair(rows, rowStrings)
 
@@ -282,15 +279,20 @@ class BankStatementParser @Inject constructor(
             val line = rowStrings[i].trim()
 
             // 1. Skip blank / very short lines (headers, page numbers, noise)
-            if (line.length < MIN_LINE_LENGTH) continue
+            if (line.length < minLineLength) continue
 
             // 2. Skip lines containing bank-specific keywords
             val upper = line.uppercase()
             if (HEADER_KEYWORDS.any { keyword -> upper.contains(keyword.uppercase()) }) continue
 
-            // 3. Skip lines that are pure numbers (card/account numbers)
-            //    Allow lines that have at least one letter
-            if (!line.any { it.isLetter() }) continue
+            // 3. Skip lines that are pure numbers (card/account numbers) or noise,
+            //    UNLESS they also carry a date or amount pattern (possible OCR-mangled
+            //    transaction row where the merchant name was not captured).
+            val lineHasDateOrAmount = Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?""").containsMatchIn(line) ||
+                com.yourname.expensetracker.domain.util.CommonPatterns.AMOUNT_REGEX
+                    .matcher(line)
+                    .let { it.find() && it.group(2) != null }
+            if (!line.any { it.isLetter() } && !lineHasDateOrAmount) continue
 
             // 4. Skip lines with only dates but no amounts
             val hasDatePattern = Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?""").containsMatchIn(line)
@@ -462,7 +464,7 @@ class BankStatementParser @Inject constructor(
         }
         
         // Clean up merchant (remove "To:", "Card:", "Reference:", etc.)
-        merchant = merchant.replace(Regex("""(?i)\b(To:|From:|Card:|Reference:|Reference\b.*|Fee:.*)\b"""), "")
+        merchant = merchant.replace(Regex("""(?i)\b(To|From|Card|Reference|Fee)\s*:?\s*.*"""), "")
             .replace(Regex("""\s+"""), " ")
             .trim()
             
