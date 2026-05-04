@@ -735,6 +735,11 @@ class ReviewViewModel @Inject constructor(
                         val bankResult = result.data as BankStatementResult
                         _errorMessage.value = "Imported ${bankResult.transactionsFound} transactions from statement! " +
                             "(${bankResult.reviewsCreated} reviews created, ${bankResult.duplicatesSkipped} duplicates skipped)"
+                        // Save debug data for the debug viewer
+                        bankResult.debugData?.let { data ->
+                            _debugData.value = data
+                            debugDataStorage.save(data)
+                        }
                     }
                     is Result.Error -> {
                         _errorMessage.value = "Failed to parse statement: ${result.message ?: result.exception?.message ?: "Unknown error"}"

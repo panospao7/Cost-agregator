@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.repository.toDbTransactionType
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
@@ -29,12 +30,14 @@ import javax.inject.Singleton
  * @property transactionsFound Number of transactions parsed from the statement.
  * @property reviewsCreated  Number of [PendingReview] entries created.
  * @property duplicatesSkipped  Number of transactions skipped as duplicates.
+ * @property debugData Optional debug data for the debug viewer (OCR text, parsed transactions, logs).
  */
 data class BankStatementResult(
     val receiptId: Long,
     val transactionsFound: Int,
     val reviewsCreated: Int,
-    val duplicatesSkipped: Int
+    val duplicatesSkipped: Int,
+    val debugData: DebugData? = null
 )
 
 /**
@@ -242,11 +245,20 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 )
             )
 
+            val debugData = DebugData(
+                rawText = ocrResult.fullText,
+                parsedTransactions = parsedTransactions,
+                parsingLogs = parsingLogs,
+                processingTimeMs = timeProvider.now() - startTime,
+                parserUsed = "BankStatementParser"
+            )
+
             val result = BankStatementResult(
                 receiptId = receiptId,
                 transactionsFound = transactionsFound,
                 reviewsCreated = reviewsCreated,
-                duplicatesSkipped = duplicatesSkipped
+                duplicatesSkipped = duplicatesSkipped,
+                debugData = debugData
             )
 
             Timber.d("BankStatementLifecycleProcessor: result=%s", result)
