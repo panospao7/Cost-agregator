@@ -46,8 +46,10 @@ class BankStatementParser @Inject constructor(
             "amount", "debit", "credit", "transaction", "TOTAL", "SUBTOTAL",
             // Greeklish / other
             "SELIDA", "SELIS", "AP. CARD", "AP.  LOG",
-            // Greek AM/PM time markers and English equivalents
-            "πμ", "μμ", "π.μ.", "μ.μ.", "AM", "PM"
+            // NBG debit card statement column headers (OCR format)
+            "Λογαριασμός", "Χ/Π", "Τερματικό", "Χρεωστικής Κάρτας",
+            // English AM/PM markers
+            "AM", "PM"
         )
 
         // Header patterns for Greek National Bank
@@ -302,8 +304,10 @@ class BankStatementParser @Inject constructor(
             // 1. Skip blank / very short lines (headers, page numbers, noise)
             if (line.length < minLineLength) continue
 
-            // 1b. Filter out time-only patterns (πμ/μμ with digits) and pure time-of-day lines
-            if (line.matches(Regex(".*[πμ]\\.[μ]\\.\\s*\\d+.*|.*[πμ]μ\\s*\\d+.*|\\d+:\\d+.*"))) continue
+            // 1b. Filter out time-only patterns (πμ/μμ with digits) and pure time-of-day lines.
+            //     BUT keep lines that contain a date (transaction data rows have dates).
+            val hasDateForStep1b = Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?""").containsMatchIn(line)
+            if (!hasDateForStep1b && line.matches(Regex(".*[πμ]\\.[μ]\\.\\s*\\d+.*|.*[πμ]μ\\s*\\d+.*|\\d+:\\d+.*"))) continue
 
             // 2. Skip lines containing bank-specific keywords
             val upper = line.uppercase()
@@ -533,99 +537,202 @@ class BankStatementParser @Inject constructor(
 
     /**
      * Try to parse a Greek National Bank transaction line.
+     *
+     * Supports two formats:
+     *
+     * **Old format** (traditional bank statement):
+     *   DATE TIME VALUE_DATE STORE_CODE TX_CODE MERCHANT X/P AMOUNT
+     *   Example: 15/03/2025 10:30:00 17/03/2025 705 040 SKLAVENITIS ΜΑΡΚΟΠΟΥΛΟ Χ 12,50
+     *
+     * **New OCR format** (NBG debit card statement):
+     *   DATE TIME AM/PM 00 X/P AMOUNT TERMINAL DESCRIPTION
+     *   Example: 3/5/2026 4:41:36 μμ 00 Χ -2,9 85016130 ΑΓΟΡΑ (ΕΞΟΥΣΙΟΔΟΤΗΣΗ) - YES STORES
      */
     private fun tryParseGreekNbgTransaction(rowText: String, homeCurrency: String = "EUR"): ParsedTransaction? {
         val cleanRow = rowText.replace('\u00A0', ' ').trim()
-        
+
         // Skip header rows and non-transaction rows
-        if (cleanRow.contains("Ημερομηνία") || cleanRow.contains("Κατάστημα") || 
+        if (cleanRow.contains("Ημερομηνία") || cleanRow.contains("Κατάστημα") ||
             cleanRow.contains("Περιγραφή") || cleanRow.isBlank()) {
             return null
         }
-        
+
         try {
             // Split by whitespace
             val parts = cleanRow.split(Regex("\\s+"))
             if (parts.size < 6) return null
-            
-            // Find the Χ or Π indicator (this is our anchor point)
-            val typeIndex = parts.indexOfFirst { it == "Χ" || it == "Π" }
-            if (typeIndex < 0) return null
-            
-            // Extract transaction type
-            val type = when (parts[typeIndex]) {
-                "Χ" -> ParsedTransactionType.PURCHASE  // ΧΡΕΩΣΗ (debit)
-                "Π" -> ParsedTransactionType.DEPOSIT   // ΠΙΣΤΩΣΗ (credit/transfer)
-                else -> ParsedTransactionType.PURCHASE
+
+            // Detect format: if parts[2] is πμ or μμ → new OCR format
+            val isNewFormat = parts.size > 2 && (parts[2] == "πμ" || parts[2] == "μμ")
+
+            if (isNewFormat) {
+                // ── New OCR format ────────────────────────────────────────────
+                // parts[0]=date, [1]=time, [2]=πμ/μμ, [3]=00, [4]=X/P, [5]=amount,
+                // [6]=terminal, [7+]=description
+                if (parts.size < 8) return null
+
+                // X/P marker is at index 4
+                if (parts[4] != "Χ" && parts[4] != "Π") return null
+                val type = when (parts[4]) {
+                    "Χ" -> ParsedTransactionType.PURCHASE
+                    "Π" -> ParsedTransactionType.DEPOSIT
+                    else -> ParsedTransactionType.PURCHASE
+                }
+
+                // Amount at index 5 (Greek decimal comma handled by parseEuropeanNumber)
+                val amountStr = parts[5]
+                val amount = parseEuropeanNumber(amountStr)
+                if (amount == null || amount == 0.0) return null
+
+                // Parse date+time with Greek AM/PM
+                val dateStr = parts[0]   // d/M/yyyy
+                val timeStr = parts[1]   // h:mm:ss
+                val amPm = parts[2]      // πμ or μμ
+                val timestamp = parseGreekBankDateTimeWithAmPm(dateStr, timeStr, amPm)
+                if (timestamp == null) {
+                    if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Failed to parse NBG date: $dateStr $timeStr $amPm")
+                    return null
+                }
+
+                // Merchant: everything from parts[7] onwards
+                val rawMerchant = parts.subList(7, parts.size).joinToString(" ").trim()
+
+                // Strip known description prefixes
+                val merchant = rawMerchant
+                    .replace(Regex("""(?i)^ΑΓΟΡΑ\s*\(ΕΞΟΥΣΙΟΔΟΤΗΣΗ\)\s*[-–]\s*"""), "")
+                    .replace(Regex("""(?i)^3D\s+SECURE\s+E-COMMERCE\s+ΑΓΟΡΑ\s*[-–]\s*"""), "")
+                    .replace(Regex("""(?i)^ΑΓΟΡΑ\s*[-–]\s*"""), "")
+                    .trim()
+
+                if (merchant.isBlank()) {
+                    if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Empty merchant after stripping prefix in: $cleanRow")
+                    return null
+                }
+
+                val cleanedMerchant = merchantCleaner.clean(merchant)
+
+                if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").d("Parsed NBG (new): $cleanedMerchant €${kotlin.math.abs(amount)} ($type)")
+
+                return ParsedTransaction(
+                    amount = kotlin.math.abs(amount),
+                    currency = homeCurrency,
+                    merchant = cleanedMerchant,
+                    type = type,
+                    confidence = 0.90f,
+                    date = timestamp
+                )
+            } else {
+                // ── Old format ───────────────────────────────────────────────
+                // parts: DATE TIME VALUE_DATE STORE_CODE TX_CODE MERCHANT X/P AMOUNT
+                // Find the Χ or Π indicator
+                val typeIndex = parts.indexOfFirst { it == "Χ" || it == "Π" }
+                if (typeIndex < 0) return null
+
+                val type = when (parts[typeIndex]) {
+                    "Χ" -> ParsedTransactionType.PURCHASE
+                    "Π" -> ParsedTransactionType.DEPOSIT
+                    else -> ParsedTransactionType.PURCHASE
+                }
+
+                // Amount is right after X/P
+                if (typeIndex + 1 >= parts.size) return null
+                val amountStr = parts[typeIndex + 1]
+                val amount = parseEuropeanNumber(amountStr)
+                if (amount == null || amount == 0.0) return null
+
+                // Timestamp from first two parts
+                val dateStr = parts[0]
+                val timeStr = parts[1]
+                val timestamp = parseGreekBankDateTime(dateStr, timeStr)
+
+                // Merchant: between codes (after date/time/value-date) and X/P marker
+                val merchantStartIndex = parts.drop(2).indexOfFirst { part ->
+                    !part.matches(Regex("\\d+")) && !part.matches(Regex("\\d{2}/\\d{2}/\\d{4}"))
+                } + 2
+
+                if (merchantStartIndex < 2 || merchantStartIndex >= typeIndex) {
+                    if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Could not find merchant in: $cleanRow")
+                    return null
+                }
+
+                val merchantParts = parts.subList(merchantStartIndex, typeIndex)
+                val merchant = merchantParts.joinToString(" ").trim()
+
+                if (merchant.isBlank()) {
+                    if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Empty merchant in: $cleanRow")
+                    return null
+                }
+
+                val cleanedMerchant = merchantCleaner.clean(merchant)
+
+                if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").d("Parsed NBG (old): $cleanedMerchant €${kotlin.math.abs(amount)} ($type)")
+
+                return ParsedTransaction(
+                    amount = kotlin.math.abs(amount),
+                    currency = homeCurrency,
+                    merchant = cleanedMerchant,
+                    type = type,
+                    confidence = 0.90f,
+                    date = timestamp
+                )
             }
-            
-            // Extract amount (next part after Χ/Π)
-            if (typeIndex + 1 >= parts.size) return null
-            val amountStr = parts[typeIndex + 1]
-            val amount = parseEuropeanNumber(amountStr)
-            if (amount == null || amount == 0.0) return null
-            
-            // Extract timestamp (first two parts: date + time)
-            if (parts.size < 2) return null
-            val dateStr = parts[0]  // DD/MM/YYYY
-            val timeStr = parts[1]  // HH:MM:SS
-            val timestamp = parseGreekBankDateTime(dateStr, timeStr)
-            
-            // Extract merchant name
-            // Everything between the timestamp/codes and the Χ/Π indicator
-            // Skip: date (0), time (1), valeur date (2), store code (3), transaction code (4)
-            // Start from index 5 (or first non-numeric after index 2) until typeIndex
-            val merchantStartIndex = parts.drop(2).indexOfFirst { part ->
-                // Find first part that's not a pure number (not 705, 040, etc.)
-                !part.matches(Regex("\\d+")) && !part.matches(Regex("\\d{2}/\\d{2}/\\d{4}"))
-            } + 2
-            
-            if (merchantStartIndex < 2 || merchantStartIndex >= typeIndex) {
-                if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Could not find merchant in: $cleanRow")
-                return null
-            }
-            
-            // Join all parts between merchant start and type indicator
-            val merchantParts = parts.subList(merchantStartIndex, typeIndex)
-            val merchant = merchantParts.joinToString(" ").trim()
-            
-            if (merchant.isBlank()) {
-                if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Empty merchant in: $cleanRow")
-                return null
-            }
-            
-            // Clean merchant name
-            val cleanedMerchant = merchantCleaner.clean(merchant)
-            
-            if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").d("Parsed NBG: $cleanedMerchant €${kotlin.math.abs(amount)} ($type)")
-            
-            return ParsedTransaction(
-                amount = kotlin.math.abs(amount),
-                currency = homeCurrency,
-                merchant = cleanedMerchant,
-                type = type,
-                confidence = 0.90f, // High confidence for structured format
-                date = timestamp
-            )
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Failed to parse NBG transaction: ${e.message} | Row: $cleanRow")
-        return null
+            return null
+        }
     }
-}
     
     /**
      * Parse Greek bank date and time: DD/MM/YYYY HH:MM:SS
+     * Also handles single-digit day/month: d/M/yyyy H:mm:ss
      */
     private fun parseGreekBankDateTime(dateStr: String, timeStr: String): Long? {
         return try {
+            // Try strict format first (dd/MM/yyyy HH:mm:ss)
             val formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss", Locale.US)
             LocalDateTime.parse("$dateStr $timeStr", formatter)
                 .atZone(ZoneId.systemDefault())
                 .toInstant()
                 .toEpochMilli()
+        } catch (e1: Exception) {
+            try {
+                // Fallback: flexible single-digit day/month (d/M/yyyy H:mm:ss)
+                val flexFormatter = DateTimeFormatter.ofPattern("d/M/yyyy H:mm:ss", Locale.US)
+                LocalDateTime.parse("$dateStr $timeStr", flexFormatter)
+                    .atZone(ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli()
+            } catch (e2: Exception) {
+                // Final fallback: try just the date
+                parseGreekBankDate(dateStr)
+            }
+        }
+    }
+
+    /**
+     * Parse Greek bank date+time with Greek AM/PM (πμ/μμ).
+     * Handles format: d/M/yyyy h:mm:ss [πμ|μμ]
+     * Example: 3/5/2026 4:41:36 μμ
+     */
+    private fun parseGreekBankDateTimeWithAmPm(dateStr: String, timeStr: String, amPm: String): Long? {
+        return try {
+            // Convert Greek AM/PM to English
+            val normalizedAmPm = when (amPm.lowercase()) {
+                "πμ" -> "AM"
+                "μμ" -> "PM"
+                else -> return null  // unexpected marker
+            }
+            val dateTimeStr = "$dateStr $timeStr $normalizedAmPm"
+            // d/M/yyyy = flexible day/month (no leading zeros)
+            // h:mm:ss a = 12-hour clock with AM/PM
+            val formatter = DateTimeFormatter.ofPattern("d/M/yyyy h:mm:ss a", Locale.US)
+            LocalDateTime.parse(dateTimeStr, formatter)
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
         } catch (e: Exception) {
-            // Fallback: try just the date
-            parseGreekBankDate(dateStr)
+            if (BuildConfig.DEBUG) Timber.tag("BankStatementParser").w("Failed to parse NBG date with AM/PM: $dateStr $timeStr $amPm")
+            null
         }
     }
     
