@@ -122,7 +122,7 @@ class CalculateBudgetStatusUseCaseTest : AnalyticsEngineTestBase() {
             percentUsed = percentUsed,
             healthStatus = health,
             periodStart = 1_700_000_000_000L,
-            periodEnd = 1_702_592_000_000L
+            periodEnd = 1_702_592_000_000L,
             effectiveLimit = 0.0,
         )
     }

@@ -71,7 +71,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter = aiCapabilityRouter,
             aiSettingsRepository = aiSettingsRepository,
             aiPolicy = aiPolicy,
-            privacyGate = mock(),
+            privacyGate = mockk(),
         )
 
         val input = ReceiptAssistInput(
@@ -132,7 +132,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter = aiCapabilityRouter,
             aiSettingsRepository = aiSettingsRepository,
             aiPolicy = aiPolicy,
-            privacyGate = mock(),
+            privacyGate = mockk(),
         )
 
         val result = service.suggest(defaultInput())
@@ -171,7 +171,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter = aiCapabilityRouter,
             aiSettingsRepository = aiSettingsRepository,
             aiPolicy = aiPolicy,
-            privacyGate = mock(),
+            privacyGate = mockk(),
         )
 
         val result = service.suggest(defaultInput())
@@ -214,7 +214,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter = aiCapabilityRouter,
             aiSettingsRepository = aiSettingsRepository,
             aiPolicy = aiPolicy,
-            privacyGate = mock(),
+            privacyGate = mockk(),
         )
 
         val result = service.suggest(defaultInput())
@@ -262,7 +262,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter,
             aiSettingsRepository,
             aiPolicy,
-            privacyGate = mock(),
+            privacyGate = mockk(),
         )
 
         val result = service.suggest(defaultInput())
@@ -311,7 +311,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter,
             aiSettingsRepository,
             aiPolicy,
-            privacyGate = mock(),
+            privacyGate = mockk(),
         )
 
         val result = service.suggest(defaultInput())
@@ -358,7 +358,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter,
             aiSettingsRepository,
             aiPolicy,
-            privacyGate = mock(),
+            privacyGate = mockk(),
         )
 
         val result = service.suggest(defaultInput())
@@ -417,7 +417,7 @@ class SmartReceiptAssistServiceTest {
             aiCapabilityRouter,
             aiSettingsRepository,
             aiPolicy,
-            privacyGate = mock(),
+            privacyGate = mockk(),
         )
 
         assertTrue(service.usedImageInput(defaultInput()))

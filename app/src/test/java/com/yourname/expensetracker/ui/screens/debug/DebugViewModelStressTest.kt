@@ -144,7 +144,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
             aiEngagementRepository = aiEngagementRepository,
             aiRuntimeDiagnostics = aiRuntimeDiagnostics,
             databaseBackupRepository = databaseBackupRepository,
-            csvExpenseImporter = mockk(relaxed = true, legacyDataMigrationService = mock())
+            csvExpenseImporter = mockk(relaxed = true, legacyDataMigrationService = mockk())
         )
     }
 

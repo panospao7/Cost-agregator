@@ -121,13 +121,14 @@ class DashboardWidgetConsistencyTest {
             synthesisEngine = SynthesisEngine(timeProvider),
             monteCarloSimulator = monteCarloSimulator,
             timeProvider = timeProvider,
+            multiCurrencyRepository = mockk(),
             healthCalculator = healthCalculator,
             healthScoreV2 = healthScoreV2,
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
             monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
-            stressForecastEngine = stressForecastEngine
-            forecastInputAssembler = mock(),
+            stressForecastEngine = stressForecastEngine,
+            forecastInputAssembler = mockk(),
         )
     }
 
@@ -138,8 +139,7 @@ class DashboardWidgetConsistencyTest {
         val purchases = listOf(
             createExpense(100.0, monthStart + 86400000),
             createExpense(200.0, monthStart + 172800000),
-            createExpense(50.0, monthStart + 259200000, isSharedExpense = true, myShareAmount = 25.0)
-        multiCurrencyRepository = mock(),
+            createExpense(50.0, monthStart + 259200000, isSharedExpense = true, myShareAmount = 25.0),
         )
         val expectedMonthSpent = 100.0 + 200.0 + 25.0
 

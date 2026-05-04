@@ -52,8 +52,8 @@ class ReceiptMatchingWorkerTest {
                         workerParameters,
                         receiptRepository,
                         matcher,
-                        notificationService
-                        restoreMaintenanceMode = mock(),
+                        notificationService,
+                        restoreMaintenanceMode = mockk(),
                     )
                 }
             })

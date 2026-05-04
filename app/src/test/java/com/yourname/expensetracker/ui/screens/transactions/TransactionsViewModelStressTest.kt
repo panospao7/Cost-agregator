@@ -70,8 +70,8 @@ class TransactionsViewModelStressTest : ViewModelTestUtils() {
             recurringExpenseRepository,
             merchantLocationRepository,
             timeProvider,
-            geocodingService
-            currencySettingsRepository = mock(),
+            geocodingService,
+            currencySettingsRepository = mockk(),
         )
     }
 

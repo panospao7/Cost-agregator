@@ -823,7 +823,7 @@ class RecommendationStateManagerTest {
             sourceArtifactId = "",
             status = status,
             createdAt = nowMillis,
-            expiresAt = expiresAt
+            expiresAt = expiresAt,
             updatedAt = 0L,
         )
     }

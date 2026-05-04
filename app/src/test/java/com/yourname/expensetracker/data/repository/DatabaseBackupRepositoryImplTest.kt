@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -83,8 +84,8 @@ class DatabaseBackupRepositoryImplTest {
         every { supportDb.query("PRAGMA wal_checkpoint(FULL)") } answers { checkpointCursor(busyCode = 0) }
 
         // Privacy gate defaults — allow everything by default
-        every { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
-        every { privacySettingsRepository.getSettings() } returns PrivacySettings()
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
+        coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings()
         every { privacySettingsRepository.observeSettings() } returns kotlinx.coroutines.flow.flowOf(PrivacySettings())
 
         repository = createRepository(

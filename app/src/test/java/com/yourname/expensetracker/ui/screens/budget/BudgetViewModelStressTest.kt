@@ -57,7 +57,7 @@ class BudgetViewModelStressTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         
-        viewModel = BudgetViewModel(budgetRepository, categoryRepository, offsetEngine, autopilotEngine, timeProvider, currencySettingsRepository = mock())
+        viewModel = BudgetViewModel(budgetRepository, categoryRepository, offsetEngine, autopilotEngine, timeProvider, currencySettingsRepository = mockk())
     }
 
     @After

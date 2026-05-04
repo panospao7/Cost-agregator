@@ -72,7 +72,7 @@ abstract class AnalyticsEngineTestBase {
     val mainDispatcherRule = MainDispatcherRule(testDispatcher)
 
     // ============================================================================
-    // Mocks
+    // mockk
     // ============================================================================
 
     /**
@@ -152,7 +152,7 @@ abstract class AnalyticsEngineTestBase {
 
     @Before
     open fun setUp() {
-        // Create relaxed mocks
+        // Create relaxed mockk
         expenseDao = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
         categoryRepository = mockk(relaxed = true)
@@ -236,12 +236,12 @@ abstract class AnalyticsEngineTestBase {
             io.mockk.coEvery { expenseDao.getOldestExpenseDate() } returns oldest
         }
 
-        // Setup period-specific mocks
+        // Setup period-specific mockk
         setupPeriodSpecificMocks(expenses)
     }
 
     /**
-     * Configures period-specific mocks based on expense dates.
+     * Configures period-specific mockk based on expense dates.
      */
     private fun setupPeriodSpecificMocks(expenses: List<Expense>) {
         // Mock March 2026 queries

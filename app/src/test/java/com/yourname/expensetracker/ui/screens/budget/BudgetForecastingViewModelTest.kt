@@ -40,8 +40,8 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
 
         viewModel = BudgetForecastingViewModel(
             forecastingEngine = forecastingEngine,
-            recommendationEngine = recommendationEngine
-            currencySettingsRepository = mock(),
+            recommendationEngine = recommendationEngine,
+            currencySettingsRepository = mockk(),
         )
     }
 

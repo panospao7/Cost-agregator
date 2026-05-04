@@ -20,8 +20,9 @@ class ReceiptTransactionMatcherTest {
     private val matcher = ReceiptTransactionMatcher(
         expenseRepository = expenseRepository,
         merchantNormalizer = merchantNormalizer,
-        stringDistance = StringDistanceUtils
-        receiptLinkService = mock(),
+        stringDistance = StringDistanceUtils,
+        timeProvider = mockk(),
+        receiptLinkService = mockk(),
     )
 
     @Test
@@ -31,8 +32,7 @@ class ReceiptTransactionMatcherTest {
             id = 99L,
             merchant = "Store",
             amount = 12.34,
-            transactionType = TransactionType.DEPOSIT
-        timeProvider = mock(),
+            transactionType = TransactionType.DEPOSIT,
         )
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(deposit)

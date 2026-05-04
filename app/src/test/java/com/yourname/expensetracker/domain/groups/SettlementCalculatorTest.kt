@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.groups
 
 import com.yourname.expensetracker.assertApproxEquals
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -8,7 +9,7 @@ import org.junit.Test
 
 class SettlementCalculatorTest {
 
-    private val calculator = SettlementCalculator(, currencySettingsRepository = mock())
+    private val calculator = SettlementCalculator(currencySettingsRepository = mockk())
 
     @Test
     fun `crash test 4_6 triangle debt yields two transactions totaling 50`() {

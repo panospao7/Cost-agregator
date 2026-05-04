@@ -105,7 +105,7 @@ class DedupeJudgeInputBuilderTest {
 
         coVerify {
             expenseRepository.getDuplicateCandidatesInWindow(
-                amount = review.suggestedAmount,
+                amount = review.suggestedAmount!!,
                 date = review.suggestedDate!!,
                 currency = review.suggestedCurrency,
                 transactionType = TransactionType.PURCHASE,

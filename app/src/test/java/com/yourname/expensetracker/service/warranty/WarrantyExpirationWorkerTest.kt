@@ -51,8 +51,8 @@ class WarrantyExpirationWorkerTest {
                         appContext,
                         workerParameters,
                         warrantyRepository,
-                        notificationService
-                        restoreMaintenanceMode = mock(),
+                        notificationService,
+                        restoreMaintenanceMode = mockk(),
                     )
                 }
             })

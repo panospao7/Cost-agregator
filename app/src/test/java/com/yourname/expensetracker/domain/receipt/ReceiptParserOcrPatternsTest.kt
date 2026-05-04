@@ -25,7 +25,7 @@ class ReceiptParserOcrPatternsTest {
 
     @Before
     fun setup() {
-        parser = ReceiptParser(MerchantRulesRepository(), timeProvider = mock())
+        parser = ReceiptParser(MerchantRulesRepository(), timeProvider = mockk())
     }
 
     // ============================================

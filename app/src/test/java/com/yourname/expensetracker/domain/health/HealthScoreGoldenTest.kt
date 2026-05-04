@@ -55,8 +55,8 @@ class HealthScoreGoldenTest : AnalyticsEngineTestBase() {
             healthScoreHistoryDao = healthScoreHistoryDao,
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
-            currencySettingsRepository = currencySettingsRepository
-            cashFlowCalculator = mock(),
+            currencySettingsRepository = currencySettingsRepository,
+            cashFlowCalculator = mockk(),
         )
     }
 

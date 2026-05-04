@@ -141,7 +141,7 @@ class BudgetAlertPipelineTest : AnalyticsEngineTestBase() {
             percentUsed = percentUsed,
             healthStatus = healthStatusFor(percentUsed, warningThreshold, criticalThreshold),
             periodStart = periodStart,
-            periodEnd = periodEnd
+            periodEnd = periodEnd,
             effectiveLimit = 0.0,
         )
     }

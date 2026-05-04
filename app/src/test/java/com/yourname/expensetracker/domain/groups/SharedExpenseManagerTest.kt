@@ -34,8 +34,8 @@ class SharedExpenseManagerTest {
         manager = SharedExpenseManager(
             sharedExpenseDataPort = sharedExpenseDataPort,
             timeProvider = timeProvider,
+            currencySettingsRepository = mockk(),
             ioDispatcher = testDispatcher
-            currencySettingsRepository = mock(),
         )
     }
 
@@ -56,8 +56,8 @@ class SharedExpenseManagerTest {
                 date = 0L,
                 description = "Equal",
                 totalAmount = 90.0,
-                splitType = GroupSplitType.EQUAL
                 currency = "EUR",
+                splitType = GroupSplitType.EQUAL,
             ),
             SharedGroupExpense(
                 id = 2L,
@@ -67,9 +67,9 @@ class SharedExpenseManagerTest {
                 date = 0L,
                 description = "Amount",
                 totalAmount = 60.0,
-                splitType = GroupSplitType.CUSTOM_AMOUNT,
-                customSplitsSerialized = "1:10,2:20,3:30"
                 currency = "EUR",
+                splitType = GroupSplitType.CUSTOM_AMOUNT,
+                customSplitsSerialized = "1:10,2:20,3:30",
             ),
             SharedGroupExpense(
                 id = 3L,
@@ -79,9 +79,9 @@ class SharedExpenseManagerTest {
                 date = 0L,
                 description = "Percent",
                 totalAmount = 120.0,
-                splitType = GroupSplitType.CUSTOM_PERCENT,
-                customSplitsSerialized = "1:50,2:25,3:25"
                 currency = "EUR",
+                splitType = GroupSplitType.CUSTOM_PERCENT,
+                customSplitsSerialized = "1:50,2:25,3:25",
             ),
             SharedGroupExpense(
                 id = 4L,
@@ -91,9 +91,9 @@ class SharedExpenseManagerTest {
                 date = 0L,
                 description = "Unequal",
                 totalAmount = 40.0,
-                splitType = GroupSplitType.UNEQUAL,
-                customSplitsSerialized = "1:30,2:5,3:5"
                 currency = "EUR",
+                splitType = GroupSplitType.UNEQUAL,
+                customSplitsSerialized = "1:30,2:5,3:5",
             )
         )
 
@@ -191,8 +191,8 @@ class SharedExpenseManagerTest {
                 date = expenseDate,
                 description = "Dinner",
                 totalAmount = 90.0,
-                splitType = GroupSplitType.EQUAL
                 currency = "EUR",
+                splitType = GroupSplitType.EQUAL,
             )
         )
 
@@ -241,8 +241,8 @@ class SharedExpenseManagerTest {
                 date = 0L,
                 description = "paid",
                 totalAmount = 10.0,
-                splitType = GroupSplitType.EQUAL
                 currency = "EUR",
+                splitType = GroupSplitType.EQUAL,
             )
         )
 
@@ -270,9 +270,9 @@ class SharedExpenseManagerTest {
                 date = 0L,
                 description = "custom",
                 totalAmount = 30.0,
-                splitType = GroupSplitType.CUSTOM_AMOUNT,
-                customSplitsSerialized = "1:10,2:10,3:10"
                 currency = "EUR",
+                splitType = GroupSplitType.CUSTOM_AMOUNT,
+                customSplitsSerialized = "1:10,2:10,3:10",
             )
         )
 
@@ -300,8 +300,8 @@ class SharedExpenseManagerTest {
                 date = joinedAt,
                 description = "equal",
                 totalAmount = 30.0,
-                splitType = GroupSplitType.EQUAL
                 currency = "EUR",
+                splitType = GroupSplitType.EQUAL,
             )
         )
 
@@ -344,8 +344,8 @@ class SharedExpenseManagerTest {
                 date = joinedAt - 1L,
                 description = "equal",
                 totalAmount = 30.0,
-                splitType = GroupSplitType.EQUAL
                 currency = "EUR",
+                splitType = GroupSplitType.EQUAL,
             )
         )
 
@@ -382,8 +382,8 @@ class SharedExpenseManagerTest {
                 paidById = 1L,
                 description = "   ",
                 totalAmount = 100.0,
-                splitType = GroupSplitType.EQUAL
                 currency = "EUR",
+                splitType = GroupSplitType.EQUAL,
             )
         }
 
@@ -402,8 +402,8 @@ class SharedExpenseManagerTest {
                     paidById = 1L,
                     description = "Taxi",
                     totalAmount = amount,
-                    splitType = GroupSplitType.EQUAL
                     currency = "EUR",
+                    splitType = GroupSplitType.EQUAL,
                 )
             }
             assertEquals("Amount must be a positive finite number", error.message)
@@ -424,8 +424,8 @@ class SharedExpenseManagerTest {
                 paidById = 99L,
                 description = "Dinner",
                 totalAmount = 100.0,
-                splitType = GroupSplitType.EQUAL
                 currency = "EUR",
+                splitType = GroupSplitType.EQUAL,
             )
         }
 

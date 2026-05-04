@@ -82,7 +82,7 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
         every { analyticsRepository.getCategoryBreakdown(any(), any()) } returns flowOf(emptyList())
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { timeProvider.now() } returns System.currentTimeMillis()
-        coEvery { insightsEngine.generateInsights(any(), any(), any(), any()) } returns mockk(relaxed = true)
+        coEvery { insightsEngine.generateInsights(any(), any(), any(), any()) } returns mockk<InsightsSnapshot>(relaxed = true)
         every { insightsEngine.getLegacyInsights(any()) } returns emptyList()
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
         val now = System.currentTimeMillis()
@@ -93,10 +93,10 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
             label = "Test",
             comparisonRange = null
         )
-        coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any()) } returns emptyList(, displayCurrency = "EUR")
+        coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any(), any()) } returns Pair(emptyList(), emptyList())
         coEvery { advancedAnalyticsEngine.getMerchantAnalytics(any(), any()) } returns emptyList()
-        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any()) } throws RuntimeException("test", displayCurrency = "EUR")
-        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any()) } throws RuntimeException("test", displayCurrency = "EUR")
+        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any(), any()) } throws RuntimeException("test")
+        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any(), any()) } throws RuntimeException("test")
         every { locationInsightsEngine.compute(any()) } returns emptyList()
         every { areaSpendingEngine.compute(any()) } returns emptyList()
         every { travelDetectionEngine.compute(any()) } returns com.yourname.expensetracker.domain.location.TravelInsight(

@@ -510,7 +510,7 @@ class ComputeMoneyRadarUseCaseTest {
             percentUsed = 0f,
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = now - 20 * dayMs,
-            periodEnd = now + 10 * dayMs
+            periodEnd = now + 10 * dayMs,
             effectiveLimit = 0.0,
         )
     }

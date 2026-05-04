@@ -86,7 +86,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
         targetAmount = target,
         currentAmount = current,
         targetDate = targetDate,
-        protectionLevel = protection
+        protectionLevel = protection,
         createdAt = 0L,
     )
 
@@ -122,7 +122,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
         previousMonthTotal = previousTotal,
         averageMonthlyTotal = averageTotal,
         pacePercentage = if (averageTotal != null && averageTotal > 0) (currentSpent / averageTotal * 100).toFloat() else 0f,
-        paceStatus = paceStatus
+        paceStatus = paceStatus,
         displayCurrency = "EUR",
     )
 
@@ -718,7 +718,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             previousMonthTotal = null,
             averageMonthlyTotal = null,
             pacePercentage = 0f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
             displayCurrency = "EUR",
         )
 
@@ -748,7 +748,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             previousMonthTotal = null, // Null!
             averageMonthlyTotal = null, // Null!
             pacePercentage = 50f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
             displayCurrency = "EUR",
         )
 
@@ -813,7 +813,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 previousMonthTotal = null,
                 averageMonthlyTotal = null,
                 pacePercentage = 0f,
-                paceStatus = PaceStatus.ON_PACE
+                paceStatus = PaceStatus.ON_PACE,
                 displayCurrency = "EUR",
             )
         )
@@ -839,7 +839,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                     targetAmount = 1000.0,
                     currentAmount = 0.0,
                     targetDate = null, // NULL!
-                    protectionLevel = GoalProtectionLevel.STRICT
+                    protectionLevel = GoalProtectionLevel.STRICT,
                     createdAt = 0L,
                 )
             ),
@@ -1390,7 +1390,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 previousMonthTotal = null,
                 averageMonthlyTotal = null,
                 pacePercentage = 0f,
-                paceStatus = PaceStatus.ON_PACE
+                paceStatus = PaceStatus.ON_PACE,
                 displayCurrency = "EUR",
             )
         )
@@ -1517,7 +1517,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             previousMonthTotal = null,
             averageMonthlyTotal = null,
             pacePercentage = 0f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
             displayCurrency = "EUR",
         )
 
@@ -1685,7 +1685,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
                 previousMonthTotal = if (Random.nextBoolean()) Random.nextDouble(0.0, 15000.0) else null,
                 averageMonthlyTotal = if (Random.nextBoolean()) Random.nextDouble(0.0, 15000.0) else null,
                 pacePercentage = Random.nextFloat() * 200f,
-                paceStatus = PaceStatus.entries[Random.nextInt(PaceStatus.entries.size)]
+                paceStatus = PaceStatus.entries[Random.nextInt(PaceStatus.entries.size)],
                 displayCurrency = "EUR",
             )
         )

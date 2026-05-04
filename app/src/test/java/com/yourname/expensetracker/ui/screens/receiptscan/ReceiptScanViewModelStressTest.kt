@@ -105,8 +105,9 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             categorizeReceiptItemsUseCase,
             itemCategorizationRepository,
             aiArtifactRepository,
-            aiRuntimeDiagnostics
-            receiptParser = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
+            receiptParser = mockk(),
         )
     }
 

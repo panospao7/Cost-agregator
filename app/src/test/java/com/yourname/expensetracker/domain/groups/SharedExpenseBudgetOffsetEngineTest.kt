@@ -31,8 +31,8 @@ class SharedExpenseBudgetOffsetEngineTest {
         engine = SharedExpenseBudgetOffsetEngine(
             groupsRepository = groupsRepository,
             expenseRepository = expenseRepository,
-            ioDispatcher = Dispatchers.Unconfined
-            currencySettingsRepository = mock(),
+            ioDispatcher = Dispatchers.Unconfined,
+            currencySettingsRepository = mockk(),
         )
     }
 
@@ -53,8 +53,7 @@ class SharedExpenseBudgetOffsetEngineTest {
                 groupId = 10L,
                 members = listOf(
                     GroupMember(id = 100L, groupId = 10L, name = "Me", isCurrentUser = true),
-                    GroupMember(id = 101L, groupId = 10L, name = "Alex", isCurrentUser = false)
-                currencyConverter = mock(),
+                    GroupMember(id = 101L, groupId = 10L, name = "Alex", isCurrentUser = false),
                 ),
                 expenses = listOf(
                     GroupExpense(

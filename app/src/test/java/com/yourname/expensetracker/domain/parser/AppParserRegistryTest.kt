@@ -27,8 +27,9 @@ class AppParserRegistryTest {
         revolutParser = RevolutParser(currencyNormalizer, merchantCleaner),
         smsParser = SmsParser(currencyNormalizer, merchantCleaner),
         googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
-        genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = mock()),
-        aiFallbackParser = io.mockk.mockk(, timeProvider = mock())
+        genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = io.mockk.mockk()),
+        aiFallbackParser = io.mockk.mockk(),
+        timeProvider = io.mockk.mockk()
     )
 
     @Test

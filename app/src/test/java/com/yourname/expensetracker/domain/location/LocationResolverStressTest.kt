@@ -75,8 +75,9 @@ class LocationResolverStressTest {
             merchantClusterPort = merchantClusterPort,
             merchantCleaner = merchantCleaner,
             canonicalizer = canonicalizer,
-            greeklishNormalizer = greeklishNormalizer
-            privacyGate = mock(),
+            greeklishNormalizer = greeklishNormalizer,
+            timeProvider = mockk(),
+            privacyGate = mockk(),
         )
     }
 

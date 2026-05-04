@@ -66,7 +66,7 @@ class DailyBriefingWorkerTest {
                         analyticsRepository,
                         deliverProactiveBriefingNotificationUseCase,
                         timeProvider,
-                        privacyGate = mock(),
+                        privacyGate = mockk(),
                     )
                 }
             })

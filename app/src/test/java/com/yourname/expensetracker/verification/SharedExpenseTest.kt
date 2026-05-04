@@ -330,9 +330,9 @@ class SharedExpenseTest {
         date = date,
         description = "test",
         totalAmount = total,
-        splitType = splitType,
-        customSplitsSerialized = customSplits
         currency = "EUR",
+        splitType = splitType,
+        customSplitsSerialized = customSplits,
     )
 
     private val members3 = listOf(

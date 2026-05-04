@@ -171,8 +171,8 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             navigationTargetResolver,
             recommendationDismissalHandler,
             totalsAggregationEngine,
-            advancedAnalyticsEngine
-            currencySettingsRepository = mock(),
+            advancedAnalyticsEngine,
+            currencySettingsRepository = mockk(),
         )
     }
 
@@ -269,8 +269,8 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             navigationTargetResolver,
             recommendationDismissalHandler,
             totalsAggregationEngine,
-            advancedAnalyticsEngine
-            currencySettingsRepository = mock(),
+            advancedAnalyticsEngine,
+            currencySettingsRepository = mockk(),
         )
 
         viewModel.dashboard.test {
@@ -446,7 +446,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
                     previousMonthTotal = null,
                     averageMonthlyTotal = null,
                     pacePercentage = 0f,
-                    paceStatus = com.yourname.expensetracker.domain.analytics.PaceStatus.ON_PACE
+                    paceStatus = com.yourname.expensetracker.domain.analytics.PaceStatus.ON_PACE,
                     displayCurrency = "EUR",
                 )
             )
@@ -507,8 +507,8 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
             navigationTargetResolver,
             recommendationDismissalHandler,
             totalsAggregationEngine,
-            advancedAnalyticsEngine
-            currencySettingsRepository = mock(),
+            advancedAnalyticsEngine,
+            currencySettingsRepository = mockk(),
         )
         advanceUntilIdle()
         assertNotNull(vm.dashboard)

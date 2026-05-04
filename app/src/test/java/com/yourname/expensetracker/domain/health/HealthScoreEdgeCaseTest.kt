@@ -70,8 +70,8 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
             healthScoreHistoryDao = healthScoreHistoryDao,
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
-            currencySettingsRepository = currencySettingsRepository
-            cashFlowCalculator = mock(),
+            currencySettingsRepository = currencySettingsRepository,
+            cashFlowCalculator = mockk(),
         )
     }
 
@@ -268,7 +268,7 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
             percentUsed = if (amount > 0.0) (spent / amount).toFloat() else 0f,
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = periodStart,
-            periodEnd = periodEnd
+            periodEnd = periodEnd,
             effectiveLimit = 0.0,
         )
     }

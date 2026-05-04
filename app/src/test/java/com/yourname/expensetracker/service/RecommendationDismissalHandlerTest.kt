@@ -379,7 +379,7 @@ class RecommendationDismissalHandlerTest {
             category = "GENERAL",
             sourceArtifactId = "",
             status = status,
-            expiresAt = expiresAt
+            expiresAt = expiresAt,
             updatedAt = 0L,
         )
     }

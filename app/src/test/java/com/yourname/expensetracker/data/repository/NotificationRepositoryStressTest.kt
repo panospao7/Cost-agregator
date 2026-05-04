@@ -37,7 +37,7 @@ class NotificationRepositoryStressTest {
         coEvery { dao.getAllPackagesFlow() } returns MutableStateFlow(emptyList())
         coEvery { dao.getCountFlow() } returns MutableStateFlow(0)
         coEvery { dao.insert(any()) } returns 1L
-        coEvery { dao.exists(any(), any(), any(), any()) } returns false
+        coEvery { dao.exists(any(), any(), any(), any(), any()) } returns false
         coEvery { dao.delete(any()) } returns Unit
         coEvery { dao.deleteAll() } returns Unit
         coEvery { blockedPackageDao.block(any<BlockedPackage>()) } returns Unit

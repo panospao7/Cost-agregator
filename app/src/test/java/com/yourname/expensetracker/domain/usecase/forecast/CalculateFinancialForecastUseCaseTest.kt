@@ -61,7 +61,7 @@ class CalculateFinancialForecastUseCaseTest {
         synthesisEngine = mockk()
         timeBoundaryTicker = mockk()
         timeProvider = mockk()
-        forecastInputAssembler = ForecastInputAssembler(timeProvider, recurringLifecycleCoordinator = mock(), recurringOccurrenceDao = mock(), analyticsCurrencyNormalizer = mock(), currencySettingsRepository = mock())
+        forecastInputAssembler = ForecastInputAssembler(timeProvider, recurringLifecycleCoordinator = mockk(), recurringOccurrenceDao = mockk(), analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk())
 
         every { timeBoundaryTicker.dayBoundaryTicks() } returns flowOf(0L)
         every { timeProvider.now() } returns ms(2026, Calendar.JANUARY, 15, 12)

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.parser
 
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -12,7 +13,8 @@ class GenericTransactionParserStressTest {
     private val parser = GenericTransactionParser(
         currencyNormalizer = CurrencyNormalizer(),
         merchantCleaner = MerchantCleaner(),
-        directionDetector = TransferDirectionDetector(, timeProvider = mock())
+        directionDetector = TransferDirectionDetector(),
+        timeProvider = mockk()
     )
 
     @Test

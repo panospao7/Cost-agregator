@@ -43,7 +43,7 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
         coEvery { cashFlowCalculator.calculateDailyCashFlow(any(), any(), any()) } returns createMockCashFlows()
         coEvery { cashFlowCalculator.getUpcomingBills(30) } returns emptyList()
 
-        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = mock())
+        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = mockk())
     }
 
     @Test
@@ -173,7 +173,7 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
             recurringPattern("utilities", fixedNow.time + 2 * TimePeriodUtils.DAY_IN_MILLIS)
         )
 
-        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = mock())
+        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = mockk())
 
         viewModel.state.test {
             awaitItem() // initial

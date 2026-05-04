@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.naturallanguage
 
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,8 +12,10 @@ class NaturalLanguageSearchEngineVoiceInputTest {
         val speechGateway = FakeSpeechInputGateway()
         val engine = NaturalLanguageSearchEngine(
             expenseQueryRepository = FakeNaturalLanguageExpenseQueryRepository(),
-            speechInputGateway = speechGateway
-            currencyConverter = mock(),
+            speechInputGateway = speechGateway,
+            timeProvider = mockk(),
+            currencyConverter = mockk(),
+            currencySettingsRepository = mockk(),
         )
 
         var receivedResult: String? = null
@@ -28,8 +31,10 @@ class NaturalLanguageSearchEngineVoiceInputTest {
         val speechGateway = FakeSpeechInputGateway()
         val engine = NaturalLanguageSearchEngine(
             expenseQueryRepository = FakeNaturalLanguageExpenseQueryRepository(),
-            speechInputGateway = speechGateway
-            currencySettingsRepository = mock(),
+            speechInputGateway = speechGateway,
+            timeProvider = mockk(),
+            currencyConverter = mockk(),
+            currencySettingsRepository = mockk(),
         )
 
         var receivedError: SpeechInputError? = null
@@ -45,8 +50,10 @@ class NaturalLanguageSearchEngineVoiceInputTest {
         val speechGateway = FakeSpeechInputGateway()
         val engine = NaturalLanguageSearchEngine(
             expenseQueryRepository = FakeNaturalLanguageExpenseQueryRepository(),
-            speechInputGateway = speechGateway
-            timeProvider = mock(),
+            speechInputGateway = speechGateway,
+            timeProvider = mockk(),
+            currencyConverter = mockk(),
+            currencySettingsRepository = mockk(),
         )
 
         engine.startVoiceInput(onResult = {})

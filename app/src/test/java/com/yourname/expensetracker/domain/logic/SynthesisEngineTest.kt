@@ -286,7 +286,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
                 previousMonthTotal = null,
                 averageMonthlyTotal = null,
                 pacePercentage = 0.0f,
-                paceStatus = PaceStatus.ON_PACE
+                paceStatus = PaceStatus.ON_PACE,
                 displayCurrency = "EUR",
             )
         )
@@ -331,7 +331,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
                 previousMonthTotal = null,
                 averageMonthlyTotal = null,
                 pacePercentage = 0.0f,
-                paceStatus = PaceStatus.ON_PACE
+                paceStatus = PaceStatus.ON_PACE,
                 displayCurrency = "EUR",
             )
         )

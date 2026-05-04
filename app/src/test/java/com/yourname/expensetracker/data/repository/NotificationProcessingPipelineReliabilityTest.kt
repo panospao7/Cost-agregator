@@ -500,7 +500,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 packageName = notification1.packageName,
                 timestamp = notification1.timestamp,
                 title = notification1.title,
-                text = notification1.text
+                text = notification1.text,
                 bigText = "",
             )
         } returns false
@@ -509,7 +509,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 packageName = notification2.packageName,
                 timestamp = notification2.timestamp,
                 title = notification2.title,
-                text = notification2.text
+                text = notification2.text,
                 bigText = "",
             )
         } returns false
@@ -620,7 +620,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
         coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(capture(reviewSlot)) }
-        assertEquals(4.08, reviewSlot.captured.suggestedAmount, 0.0001)
+        assertEquals(4.08, reviewSlot.captured.suggestedAmount!!, 0.0001)
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndPending(notification.packageName, any()) }
         coVerify(exactly = 1) { rawDao.markRelevance(50L, true) }
         coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }

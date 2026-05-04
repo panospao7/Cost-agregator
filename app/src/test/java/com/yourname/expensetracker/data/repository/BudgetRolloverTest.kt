@@ -32,7 +32,7 @@ import java.util.TimeZone
  * Tests the "Compounding Rollover" implementation (LOG-002 BUG-2 FIX).
  *
  * A.9 Batch 2: Tests use a real [BudgetCalculator] with fixed UTC timestamps
- * and aggregate-query mocks (getTotalSpentFlow, getTotalForPeriod,
+ * and aggregate-query mockk (getTotalSpentFlow, getTotalForPeriod,
  * getCategorySpentInPeriod) instead of a mocked calculator + row-level reads.
  * This eliminates the OOM/hang caused by the relaxed-mock returning
  * `PeriodRange(0,0)` from `calculatePeriodWindowForTime`, which made the
@@ -62,7 +62,7 @@ class BudgetRolloverTest {
 
         budgetCalculator = BudgetCalculator(timeProvider)
 
-        // A.9: Default aggregate mocks — invalidation trigger + aggregate queries
+        // A.9: Default aggregate mockk — invalidation trigger + aggregate queries
         every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
@@ -356,8 +356,8 @@ class BudgetRolloverTest {
         val repo = BudgetRepository(
             budgetDao, categoryDao, expenseDao, calc,
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
-            currencyConverter, currencySettingsRepository
-            multiCurrencyRepository = mock(),
+            currencyConverter, currencySettingsRepository,
+            multiCurrencyRepository = mockk(),
         )
 
         // Budget: anchor 2025-01-31, monthly, amount €1 000, rollover = true

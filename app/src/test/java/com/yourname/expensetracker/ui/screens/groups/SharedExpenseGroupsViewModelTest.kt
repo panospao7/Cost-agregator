@@ -400,7 +400,7 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
         assertTrue(refreshedState.addingExpense)
         assertEquals(1L, refreshedState.selectedGroup?.group?.id)
         assertEquals(1, refreshedState.selectedGroup?.expenses?.size)
-        assertEquals(50.0, refreshedState.selectedGroup?.totalSpent, 0.0)
+        assertEquals(50.0, refreshedState.selectedGroup?.totalSpent ?: 0.0, 0.0)
     }
 
     private fun createViewModel(): SharedExpenseGroupsViewModel {
@@ -410,8 +410,8 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
             addGroupExpenseUseCase = addGroupExpenseUseCase,
             deleteGroupUseCase = deleteGroupUseCase,
             manualExpenseRepository = manualExpenseRepository,
-            expenseRepository = expenseRepository
-            currencySettingsRepository = mock(),
+            expenseRepository = expenseRepository,
+            currencySettingsRepository = mockk(),
         )
     }
 

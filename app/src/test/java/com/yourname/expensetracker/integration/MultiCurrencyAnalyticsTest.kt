@@ -30,7 +30,7 @@ class MultiCurrencyAnalyticsTest : AnalyticsEngineTestBase() {
         val exchangeRateStore = mockk<ExchangeRateStore>(relaxed = true)
         every { timeProvider.now() } returns ms(2026, 4, 15)
 
-        val converter = CurrencyConverter(exchangeRateStore, timeProvider = mock())
+        val converter = CurrencyConverter(exchangeRateStore, timeProvider = mockk())
         val repository = MultiCurrencyRepository(expenseDao, converter, timeProvider, TestCurrencySettingsRepository())
 
         coEvery { exchangeRateStore.getRate("USD", "EUR") } returns DomainExchangeRate(

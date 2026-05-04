@@ -120,7 +120,7 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
                     targetAmount = 1000.0,
                     currentAmount = 900.0,
                     targetDate = null,
-                    protectionLevel = GoalProtectionLevel.STRICT
+                    protectionLevel = GoalProtectionLevel.STRICT,
                     createdAt = 0L,
                 )
             ),
@@ -186,7 +186,7 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
             previousMonthTotal = 1200.0,
             averageMonthlyTotal = averageMonthlyTotal,
             pacePercentage = 100.0f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
             displayCurrency = "EUR",
         )
     }

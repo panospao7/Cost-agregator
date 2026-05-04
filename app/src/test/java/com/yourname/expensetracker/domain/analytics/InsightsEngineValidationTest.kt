@@ -102,7 +102,7 @@ class InsightsEngineValidationTest {
             dayOfWeekAnalyzer = dayOfWeekAnalyzer
         )
 
-        // Setup default mocks
+        // Setup default mockk
         coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseRepository.getCountForPeriod(any(), any()) } returns 0
         coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()

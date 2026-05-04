@@ -355,7 +355,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             percentUsed = ((MARCH_TOTAL_EFFECTIVE / BUDGET_AMOUNT) * 100.0).toFloat(),
             healthStatus = com.yourname.expensetracker.domain.budget.BudgetHealthStatus.ON_TRACK,
             periodStart = MARCH_START,
-            periodEnd = APRIL_START
+            periodEnd = APRIL_START,
             effectiveLimit = 0.0,
         )
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus))

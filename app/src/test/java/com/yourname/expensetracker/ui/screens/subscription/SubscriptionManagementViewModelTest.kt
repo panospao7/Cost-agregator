@@ -36,7 +36,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
         every { timeProvider.now() } returns fixedNow
         configureRepositoryWithSubscriptions(emptyList())
 
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mock())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mockk())
     }
 
     @Test
@@ -47,7 +47,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
                 createSubscription(id = 2L, merchant = "Spotify", amount = 10.0)
             )
         )
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mock())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mockk())
 
         advanceUntilIdle()
 
@@ -64,7 +64,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
                 createSubscription(id = 1L, merchant = "Netflix", amount = 15.0)
             )
         )
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mock())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mockk())
         advanceUntilIdle()
 
         viewModel.toggleSubscriptionStatus(1L)
@@ -94,7 +94,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
                 )
             )
         )
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mock())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mockk())
 
         advanceUntilIdle()
 
@@ -106,7 +106,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
     @Test
     fun `empty state when no subscriptions`() = runTest(testDispatcher) {
         configureRepositoryWithSubscriptions(emptyList())
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mock())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mockk())
 
         advanceUntilIdle()
 

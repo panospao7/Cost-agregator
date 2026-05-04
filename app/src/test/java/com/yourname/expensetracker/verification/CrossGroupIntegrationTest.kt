@@ -176,7 +176,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                 percentUsed = 33.75f,
                 healthStatus = BudgetHealthStatus.ON_TRACK,
                 periodStart = ms(2026, 3, 1),
-                periodEnd = ms(2026, 4, 1, effectiveLimit = 0.0)
+                periodEnd = ms(2026, 4, 1),
+                effectiveLimit = 0.0
             )
         )
 
@@ -390,8 +391,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                 date = ms(2026, 3, 5),
                 description = "Rent",
                 totalAmount = 120.0,
-                splitType = GroupSplitType.EQUAL
                 currency = "EUR",
+                splitType = GroupSplitType.EQUAL,
             )
         )
 

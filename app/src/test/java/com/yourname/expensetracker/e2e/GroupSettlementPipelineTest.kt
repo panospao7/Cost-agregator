@@ -176,9 +176,9 @@ class GroupSettlementPipelineTest : AnalyticsEngineTestBase() {
             date = 0L,
             description = "Shared Expense",
             totalAmount = totalAmount,
-            splitType = splitType,
-            customSplitsSerialized = customSplitsSerialized
             currency = "EUR",
+            splitType = splitType,
+            customSplitsSerialized = customSplitsSerialized,
         )
     }
 
@@ -190,7 +190,7 @@ class GroupSettlementPipelineTest : AnalyticsEngineTestBase() {
             memberName = memberName,
             paid = paid,
             shouldPay = shouldPay,
-            netBalance = netBalance
+            netBalance = netBalance,
             currency = "EUR",
         )
     }

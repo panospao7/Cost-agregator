@@ -22,7 +22,7 @@ class GenericTransactionParserTest {
             io.mockk.every { detectDirection(any(), any(), any(), any()) } returns null
             io.mockk.every { extractAccountName(any(), any(), any()) } returns null
         }
-        parser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = mock())
+        parser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = mockk())
     }
 
     // === SUCCESSFUL PARSING ===

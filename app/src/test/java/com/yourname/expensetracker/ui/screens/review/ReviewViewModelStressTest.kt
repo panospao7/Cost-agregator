@@ -95,7 +95,7 @@ class ReviewViewModelStressTest {
         aiRuntimeDiagnostics = mockk(relaxed = true)
         receiptLifecycleCoordinator = mockk(relaxed = true)
 
-        every { reviewQueueRepository.getPendingReviews() } returns flowOf(emptyList())
+        every { reviewQueueRepository.getAllPendingReviews() } returns flowOf(emptyList())
         every { reviewQueueRepository.getPendingReviewCount() } returns flowOf(0)
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         coEvery { debugDataStorage.load() } returns null
@@ -418,8 +418,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         viewModel.loadAiExplanation(reviewId = 10L)
@@ -475,8 +475,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         viewModel.loadAiExplanation(reviewId = 11L)
@@ -512,8 +512,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         viewModel.loadAiExplanation(reviewId = 20L)
@@ -547,8 +547,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         viewModel.loadAiExplanation(reviewId = 30L)
@@ -595,8 +595,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         // Two rapid calls before any coroutine advancement
@@ -625,7 +625,7 @@ class ReviewViewModelStressTest {
             receipt = null
         )
         val reviewsFlow = MutableStateFlow(listOf(item))
-        every { reviewQueueRepository.getPendingReviews() } returns reviewsFlow
+        every { reviewQueueRepository.getAllPendingReviews() } returns reviewsFlow
         coEvery { reviewQueueRepository.getPendingReviewWithReceiptById(60L) } returns item
         every { aiSettingsRepository.settings() } returns flowOf(
             AiSettings(aiEnabled = true, categorizationFallbackEnabled = true)
@@ -669,8 +669,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         advanceUntilIdle()
@@ -693,7 +693,7 @@ class ReviewViewModelStressTest {
             },
             receipt = null
         )
-        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getAllPendingReviews() } returns MutableStateFlow(listOf(item))
         coEvery { reviewQueueRepository.getPendingReviewWithReceiptById(62L) } returns item
         coEvery { suggestCategoryFallbackUseCase(item, false) } returns CategoryAssistGenerationResult.Error(
             "AI category assist failed."
@@ -730,8 +730,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         advanceUntilIdle()
@@ -755,7 +755,7 @@ class ReviewViewModelStressTest {
             receipt = null
         )
         val reviewsFlow = MutableStateFlow(listOf(item))
-        every { reviewQueueRepository.getPendingReviews() } returns reviewsFlow
+        every { reviewQueueRepository.getAllPendingReviews() } returns reviewsFlow
         coEvery { reviewQueueRepository.getPendingReviewWithReceiptById(61L) } returns item
         every { aiSettingsRepository.settings() } returns flowOf(
             AiSettings(aiEnabled = true, dedupeJudgeEnabled = true)
@@ -798,8 +798,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         advanceUntilIdle()
@@ -822,7 +822,7 @@ class ReviewViewModelStressTest {
             },
             receipt = null
         )
-        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getAllPendingReviews() } returns MutableStateFlow(listOf(item))
         coEvery { reviewQueueRepository.getPendingReviewWithReceiptById(63L) } returns item
         coEvery { judgePendingReviewDuplicateUseCase(item, false) } returns DedupeJudgeGenerationResult.Error(
             "AI duplicate assist failed."
@@ -859,8 +859,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         advanceUntilIdle()
@@ -897,8 +897,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -942,7 +942,7 @@ class ReviewViewModelStressTest {
             },
             receipt = null
         )
-        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getAllPendingReviews() } returns MutableStateFlow(listOf(item))
 
         viewModel = ReviewViewModel(
             notificationRepository,
@@ -958,8 +958,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -993,7 +993,7 @@ class ReviewViewModelStressTest {
             },
             receipt = null
         )
-        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getAllPendingReviews() } returns MutableStateFlow(listOf(item))
         coEvery {
             reviewQueueRepository.approveReview(
                 reviewId = 72L,
@@ -1036,8 +1036,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -1084,7 +1084,7 @@ class ReviewViewModelStressTest {
             },
             receipt = null
         )
-        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getAllPendingReviews() } returns MutableStateFlow(listOf(item))
         coEvery {
             reviewQueueRepository.approveReview(
                 reviewId = 73L,
@@ -1140,8 +1140,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
@@ -1176,7 +1176,7 @@ class ReviewViewModelStressTest {
             },
             receipt = null
         )
-        every { reviewQueueRepository.getPendingReviews() } returns MutableStateFlow(listOf(item))
+        every { reviewQueueRepository.getAllPendingReviews() } returns MutableStateFlow(listOf(item))
 
         viewModel = ReviewViewModel(
             notificationRepository,
@@ -1192,8 +1192,8 @@ class ReviewViewModelStressTest {
             judgePendingReviewDuplicateUseCase,
             aiArtifactRepository,
             aiSettingsRepository,
-            aiRuntimeDiagnostics
-            receiptLifecycleCoordinator = mock(),
+            aiRuntimeDiagnostics,
+            receiptLifecycleCoordinator = mockk(),
         )
 
         val field = ReviewViewModel::class.java.getDeclaredField("_reviewCaptureAssistStates")
