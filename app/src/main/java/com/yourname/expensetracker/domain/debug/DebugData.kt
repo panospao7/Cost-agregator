@@ -12,7 +12,13 @@ data class DebugData(
     val parsingLogs: List<String> = emptyList(),
     val processingTimeMs: Long = 0,
     val parserUsed: String = "Unknown",
-    val issues: List<DebugIssue> = emptyList()
+    val issues: List<DebugIssue> = emptyList(),
+    /**
+     * Maps transaction index to its validation source.
+     * Values: "PARSER_ONLY", "AI_VALIDATED", "AI_CORRECTED".
+     * An empty map means all transactions are PARSER_ONLY (legacy).
+     */
+    val validationSources: Map<Int, String> = emptyMap()
 ) {
     fun toJson(timestamp: Long): String {
         val issueCounts = issues.groupingBy { it.severity }.eachCount()
@@ -39,6 +45,7 @@ data class DebugData(
                 appendLine("      \"confidence\": ${tx.confidence},")
                 appendLine("      \"type\": \"${tx.type.name}\",")
                 appendLine("      \"date\": ${tx.date ?: "null"},")
+                appendLine("      \"validationSource\": \"${validationSources[index] ?: "PARSER_ONLY"}\",")
                 val txIssues = issues.filter { it.transactionIndex == index }
                 appendLine("      \"issues\": [${txIssues.joinToString { "\"${it.category}\"" }}]")
                 append("    }")

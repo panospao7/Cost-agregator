@@ -32,6 +32,23 @@ class BankStatementParser @Inject constructor(
     private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     companion object {
+        // ── Header / footer pre-filter constants ─────────────────────────────
+        /** Minimum line length (characters) to be considered a real transaction row. */
+        const val MIN_LINE_LENGTH: Int = 10
+
+        /** Bank-specific keywords that identify header, footer, or metadata lines. */
+        val HEADER_KEYWORDS: Set<String> = setOf(
+            // Greek
+            "Γ.Ε.Μ.Η", "Μ.Α.Ε", "Ημ/νία Εκτύπωσης", "Κίνηση", "Αρ. Κάρτας",
+            "Σελίδα", "Αρ. Λογαριασμού", "ΑΡ. ΛΟΓΑΡΙΑΣΜΟΥ", "ΙΒΑΝ", "Υπόλοιπο",
+            "Κατάστημα", "Ημερομηνία", "Περιγραφή", "ΠΟΣΟ", "Ποσό",
+            // English
+            "www.", "page", "statement", "account", "balance", "date", "description",
+            "amount", "debit", "credit", "transaction", "TOTAL", "SUBTOTAL",
+            // Greeklish / other
+            "SELIDA", "SELIS", "AP. CARD", "AP.  LOG"
+        )
+
         // Header patterns for Greek National Bank
         private val ACCOUNT_NUMBER_PATTERN = Regex("""Κίνηση Λογαριασμού\s+(\d+)""")
         private val IBAN_PATTERN = Regex("""ΙΒΑΝ\s*Λογαριασμού[:\s]+(GR\d+)""")
@@ -121,17 +138,22 @@ class BankStatementParser @Inject constructor(
         val rows = groupBlocksIntoRowLists(blocks)
         
         // Convert to strings for existing logic and header detection
-        val rowStrings = rows.map { rowBlocks ->
+        var rowStrings = rows.map { rowBlocks ->
             rowBlocks.sortedBy { it.left }.joinToString(" ") { it.text }
         }
+
+        // 1b. Pre-filter rows: strip headers, footers, page numbers, duplicates
+        val preFiltered = preFilterRows(rows, rowStrings)
+        val filteredRows = preFiltered.first
+        rowStrings = preFiltered.second
 
         // 2. Detect header columns to identify which date is which
         val columnInfo = detectDateColumns(rowStrings)
 
         val transactions = mutableListOf<ParsedTransaction>()
 
-        for (i in rows.indices) {
-            val rowBlocks = rows[i]
+        for (i in filteredRows.indices) {
+            val rowBlocks = filteredRows[i]
             val rowText = rowStrings[i]
 
             // Try parsers in order of specificity
@@ -234,6 +256,59 @@ class BankStatementParser @Inject constructor(
         return groupBlocksIntoRowLists(blocks).map { rowBlocks ->
             rowBlocks.joinToString(" ") { it.text }
         }
+    }
+
+    /**
+     * Pre-filter rows to remove headers, footers, page numbers, bank info,
+     * pure-number lines, date-only lines, and duplicates.
+     *
+     * Operates on row strings (text only) and returns the matching subset of
+     * [rows] and [rowStrings] with filtered-out rows removed.
+     *
+     * @param rows The grouped block rows (spatial data preserved).
+     * @param rowStrings The string representation of each row.
+     * @return A pair of (filteredRows, filteredRowStrings) with noise removed.
+     */
+    private fun preFilterRows(
+        rows: List<List<TextBlock>>,
+        rowStrings: List<String>
+    ): Pair<List<List<TextBlock>>, List<String>> {
+        if (rows.isEmpty() || rowStrings.isEmpty()) return Pair(rows, rowStrings)
+
+        val keptIndices = mutableSetOf<Int>()
+        val seenTexts = mutableSetOf<String>()
+
+        for (i in rowStrings.indices) {
+            val line = rowStrings[i].trim()
+
+            // 1. Skip blank / very short lines (headers, page numbers, noise)
+            if (line.length < MIN_LINE_LENGTH) continue
+
+            // 2. Skip lines containing bank-specific keywords
+            val upper = line.uppercase()
+            if (HEADER_KEYWORDS.any { keyword -> upper.contains(keyword.uppercase()) }) continue
+
+            // 3. Skip lines that are pure numbers (card/account numbers)
+            //    Allow lines that have at least one letter
+            if (!line.any { it.isLetter() }) continue
+
+            // 4. Skip lines with only dates but no amounts
+            val hasDatePattern = Regex("""\d{1,2}[/.-]\d{1,2}([/.-]\d{2,4})?""").containsMatchIn(line)
+            val hasAmount = com.yourname.expensetracker.domain.util.CommonPatterns.AMOUNT_REGEX
+                .matcher(line)
+                .let { it.find() && it.group(2) != null }
+            if (hasDatePattern && !hasAmount) continue
+
+            // 5. Skip exact duplicate lines (keep first occurrence)
+            if (line in seenTexts) continue
+            seenTexts.add(line)
+
+            keptIndices.add(i)
+        }
+
+        val filteredRows = keptIndices.map { rows[it] }
+        val filteredStrings = keptIndices.map { rowStrings[it] }
+        return Pair(filteredRows, filteredStrings)
     }
 
     /**

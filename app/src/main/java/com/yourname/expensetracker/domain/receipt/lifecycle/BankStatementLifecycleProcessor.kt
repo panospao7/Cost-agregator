@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.repository.toDbTransactionType
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.ai.usecase.ValidateBankStatementTransactionsUseCase
 import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.receipt.BankStatementParser
@@ -65,6 +66,9 @@ class BankStatementLifecycleProcessor @Inject constructor(
     private val hybridClassifier: HybridExpenseClassifier,
     private val duplicateDetector: ReceiptDuplicateDetector,
     private val assetStore: ReceiptAssetStore
+    // TODO: Inject ValidateBankStatementTransactionsUseCase for AI validation
+    // TODO: The use case will validate parser candidates with on-device/cloud AI:
+    // TODO:   private val transactionValidator: ValidateBankStatementTransactionsUseCase
 ) {
 
     /**
@@ -121,6 +125,22 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     IllegalStateException("No transactions found in bank statement")
                 )
             }
+
+            // ── Step 2b: AI validation (TODO) ─────────────────────────────────
+            // TODO: Wire in ValidateBankStatementTransactionsUseCase:
+            // TODO:   1. Convert parsedTransactions to DebugTransaction list
+            // TODO:   2. Call transactionValidator.validateTransactions(
+            // TODO:        rawOcrText = ocrResult.fullText,
+            // TODO:        candidateTransactions = debugTransactions,
+            // TODO:        homeCurrency = "..."
+            // TODO:      )
+            // TODO:   3. Use AI-validated CleanTransaction list (with "AI_VALIDATED" / "AI_CORRECTED" source)
+            // TODO:      for high-confidence items; fall back to parser-only ("PARSER_ONLY") for low-confidence ones
+            // TODO:   4. Log the split (AI-validated vs parser-only) to parsingLogs
+            // TODO:   5. Build validationSources map for DebugData
+            //
+            // For now, all transactions are treated as parser-only.
+            val validationSources: Map<Int, String> = parsedTransactions.indices.associateWith { "PARSER_ONLY" }
 
             // ── Step 3: Save statement receipt with lifecycle metadata ─────────
             val statementReceipt = ScannedReceipt(
@@ -250,7 +270,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 parsedTransactions = parsedTransactions,
                 parsingLogs = parsingLogs,
                 processingTimeMs = timeProvider.now() - startTime,
-                parserUsed = "BankStatementParser"
+                parserUsed = "BankStatementParser",
+                validationSources = validationSources
             )
 
             val result = BankStatementResult(

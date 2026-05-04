@@ -69,6 +69,32 @@ class OnDeviceReceiptAssistService @Inject constructor() : ReceiptAssistService 
         return builder.build()
     }
 
+    /**
+     * Send a text-only prompt to the on-device AI model and return the raw
+     * response text. Skips image processing and receipt-specific prompt wrapping.
+     *
+     * Used by [ValidateBankStatementTransactionsUseCase] to validate bank
+     * statement OCR output against candidate transactions.
+     */
+    suspend fun suggestFromText(prompt: String): AiServiceResult<String> {
+        return try {
+            val model = getOrCreateModel()
+            val builder = GenerateContentRequest.builder(TextPart(prompt))
+            builder.temperature = AppConfig.Ai.ON_DEVICE_RECEIPT_TEMPERATURE
+            builder.maxOutputTokens = AppConfig.Ai.ON_DEVICE_RECEIPT_MAX_TOKENS
+            val response = model.generateContent(builder.build())
+            val text = response.candidates.firstOrNull()?.text
+                ?: return AiServiceResult.Failure(AiServiceError.ParseError("Empty response"))
+            AiServiceResult.Success(text)
+        } catch (e: GenAiException) {
+            Timber.w(e, "OnDeviceReceiptAssistService: suggestFromText GenAI error (code=%d)", e.errorCode)
+            AiServiceResult.Failure(AiServiceError.Unknown("GenAI error code=${e.errorCode}"))
+        } catch (e: Exception) {
+            Timber.w(e, "OnDeviceReceiptAssistService: suggestFromText error")
+            AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+        }
+    }
+
     internal fun buildRequestForTest(input: ReceiptAssistInput): GenerateContentRequest = buildRequest(input)
 
     internal fun buildPrompt(input: ReceiptAssistInput): String {

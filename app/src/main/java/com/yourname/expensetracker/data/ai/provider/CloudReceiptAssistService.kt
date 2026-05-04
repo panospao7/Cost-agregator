@@ -206,6 +206,83 @@ class CloudReceiptAssistService @Inject constructor(
         }
     }
 
+    /**
+     * Send a text-only prompt to the cloud Gemini API and return the raw
+     * response text. Skips image handling and receipt-specific prompt wrapping.
+     *
+     * Used by [ValidateBankStatementTransactionsUseCase] as a cloud fallback
+     * for bank statement transaction validation.
+     */
+    suspend fun suggestFromText(prompt: String): AiServiceResult<String> {
+        if (apiKey.isBlank()) {
+            return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
+        }
+
+        val parts = JSONArray().put(JSONObject().put("text", prompt))
+        val requestJson = JSONObject().apply {
+            put(
+                "contents",
+                JSONArray().put(
+                    JSONObject().put("parts", parts)
+                )
+            )
+            put(
+                "generationConfig",
+                JSONObject().apply {
+                    put("temperature", 0.1)
+                    put("maxOutputTokens", AppConfig.Ai.RECEIPT_ASSIST_MAX_OUTPUT_TOKENS)
+                    put("responseMimeType", "application/json")
+                    put(
+                        "thinkingConfig",
+                        JSONObject().apply {
+                            put("thinkingBudget", 0)
+                        }
+                    )
+                }
+            )
+        }.toString()
+
+        val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.RECEIPT_ASSIST_CLOUD_MODEL}:generateContent"
+        val request = Request.Builder()
+            .url(url)
+            .post(requestJson.toRequestBody(JSON_MEDIA_TYPE))
+            .header("Content-Type", "application/json")
+            .header("x-goog-api-key", apiKey)
+            .build()
+
+        return withContext(Dispatchers.IO) {
+            try {
+                val response = client.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    return@withContext AiServiceResult.Failure(
+                        AiServiceError.HttpError(response.code, "suggestFromText HTTP ${response.code}")
+                    )
+                }
+                val body = response.body?.string()
+                    ?: return@withContext AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
+                val root = JSONObject(body)
+                val text = root.optJSONArray("candidates")
+                    ?.optJSONObject(0)
+                    ?.optJSONObject("content")
+                    ?.optJSONArray("parts")
+                    ?.optJSONObject(0)
+                    ?.optString("text")
+                    ?.trim()
+                    ?: return@withContext AiServiceResult.Failure(AiServiceError.ParseError("No text in Gemini response"))
+                AiServiceResult.Success(text)
+            } catch (e: SocketTimeoutException) {
+                AiServiceResult.Failure(AiServiceError.Timeout)
+            } catch (e: SSLException) {
+                AiServiceResult.Failure(AiServiceError.SslError)
+            } catch (e: IOException) {
+                AiServiceResult.Failure(AiServiceError.Offline)
+            } catch (e: Exception) {
+                Timber.w(e, "CloudReceiptAssistService: suggestFromText error")
+                AiServiceResult.Failure(AiServiceError.Unknown(e.message))
+            }
+        }
+    }
+
     internal fun buildRequestBodyForTest(input: ReceiptAssistInput, allowImage: Boolean): String =
         buildRequestPayload(input, allowImage, shouldRedact = false).jsonBody
 
