@@ -25,6 +25,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -108,8 +109,8 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
                     pendingCount = 0,
                     weather = FinancialWeather(
                         state = WeatherState.UNKNOWN,
-                        headline = "",
-                        summary = "",
+                        headline = UiText.DynamicString(""),
+                        summary = UiText.DynamicString(""),
                         icon = "",
                         riskLevel = 0,
                         totalCommitted = 0.0,
@@ -471,7 +472,7 @@ class HomeViewModelStressTest : ViewModelTestUtils() {
         assertEquals("financial_weather", HomeViewModel.getWidgetId(
             DashboardWidget.FinancialWeatherWidget(
                 FinancialWeather(
-                    WeatherState.UNKNOWN, "", "", "", 0, 0.0, 0.0, 0.0, 0.0
+                    WeatherState.UNKNOWN, UiText.DynamicString(""), UiText.DynamicString(""), "", 0, 0.0, 0.0, 0.0, 0.0
                 )
             )
         ))

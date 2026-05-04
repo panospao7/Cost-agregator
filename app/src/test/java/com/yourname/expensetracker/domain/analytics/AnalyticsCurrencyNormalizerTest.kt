@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.DomainExchangeRate
 import com.yourname.expensetracker.domain.currency.ExchangeRateStore
+import io.mockk.mockk
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.runTest
@@ -139,6 +140,9 @@ class AnalyticsCurrencyNormalizerTest {
         override suspend fun insertOrUpdateAll(rates: List<DomainExchangeRate>) {
             rates.forEach { insertOrUpdate(it) }
         }
+
+        override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? =
+            getRate(fromCurrency, toCurrency)
 
         override fun getAllRatesForBase(baseCurrency: String): Flow<List<DomainExchangeRate>> = emptyFlow()
 

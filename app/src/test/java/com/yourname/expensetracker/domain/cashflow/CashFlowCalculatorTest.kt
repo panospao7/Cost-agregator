@@ -8,8 +8,11 @@ import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -51,8 +54,8 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         recurringExpenseEngine = mockk(relaxed = true)
         recurringExpenseRepository = mockk(relaxed = true)
         val recurringPatternsProvider = mockk<MergedRecurringPatternsProvider>(relaxed = true)
-        val recurringLifecycleCoordinator = mockk<com.yourname.expensetracker.domain.transaction.lifecycle.RecurringLifecycleCoordinator>(relaxed = true)
-        val recurringOccurrenceDao = mockk<com.yourname.expensetracker.domain.forecasting.RecurringOccurrenceDao>(relaxed = true)
+        val recurringLifecycleCoordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true)
+        val recurringOccurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true)
 
         calculator = CashFlowCalculator(
             expenseRepository = expenseRepository,

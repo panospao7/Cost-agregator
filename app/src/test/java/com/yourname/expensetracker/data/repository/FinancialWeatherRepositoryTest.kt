@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
+import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.*

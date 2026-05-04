@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.ui.screens.savings
 
-import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
-import com.yourname.expensetracker.data.database.entity.SavingsGoal
+import com.yourname.expensetracker.domain.model.GoalProtectionLevel
+import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.savings.RecommendationSource
@@ -273,6 +273,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
             gamificationEngine = gamificationEngine,
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
             monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
+            timeProvider = mockk(),
             currencySettingsRepository = mockk(),
         )
     }
@@ -288,7 +289,9 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
             name = name,
             targetAmount = targetAmount,
             currentAmount = currentAmount,
+            targetDate = null,
             protectionLevel = GoalProtectionLevel.WARNING,
+            createdAt = 0L,
         )
     }
 }

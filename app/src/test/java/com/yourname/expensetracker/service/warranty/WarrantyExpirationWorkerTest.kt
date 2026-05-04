@@ -89,7 +89,7 @@ class WarrantyExpirationWorkerTest {
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(7) } returns emptyList()
         coEvery { warrantyRepository.getWarrantiesExpiringSoon(30) } returns listOf(sampleWarranty(id = 2L))
         val notificationIdSlot = slot<Int>()
-        every { notificationService.sendBudgetAlert(capture(notificationIdSlot), any(), any()) } returns Unit
+        every { notificationService.sendBudgetAlert(capture(notificationIdSlot), any(), any()) } returns NotificationService.DeliveryResult.DELIVERED
 
         val result = buildWorker().doWork()
 

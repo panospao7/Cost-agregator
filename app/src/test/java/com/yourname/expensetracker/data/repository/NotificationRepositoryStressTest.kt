@@ -179,7 +179,7 @@ class NotificationRepositoryStressTest {
         coEvery { pendingReviewDao.deleteAll() } returns Unit
         coEvery { userCorrectionDao.deleteAll() } returns Unit
 
-        repository.deleteAll()
+        repository.deleteAllNotifications()
     }
 
     @Test

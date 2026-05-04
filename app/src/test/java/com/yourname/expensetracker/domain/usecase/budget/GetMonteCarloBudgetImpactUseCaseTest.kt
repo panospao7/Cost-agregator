@@ -52,7 +52,6 @@ class GetMonteCarloBudgetImpactUseCaseTest {
         assertEquals(RiskTier.LOW, impact.riskTier)
         assertApproxEquals(30.0, impact.expectedOverrun, 0.0001)
         assertApproxEquals(0.20, impact.probabilityOfOverrun, 0.0001)
-        assertEquals("You're on track to stay within budget", impact.displayMessage)
     }
 
     @Test

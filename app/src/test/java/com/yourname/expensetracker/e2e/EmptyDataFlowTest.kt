@@ -26,7 +26,7 @@ class EmptyDataFlowTest : ViewModelTestUtils() {
         val summary = pipeline.analyticsRepository.getSpendingSummary(startMs, endMs).first()
 
         val stats = pipeline.advancedAnalyticsEngine
-            .getStatisticalInsights(pipeline.advancedAnalyticsEngine.getPeriodRange(AnalyticsPeriod.MONTH, now), displayCurrency = "EUR")
+            .getStatisticalInsights(pipeline.advancedAnalyticsEngine.getPeriodRange(AnalyticsPeriod.MONTH, now), displayCurrency = "EUR").first
 
         var loaded = pipeline.viewModel.state.value
         val collector = launch { pipeline.viewModel.state.collect { loaded = it } }

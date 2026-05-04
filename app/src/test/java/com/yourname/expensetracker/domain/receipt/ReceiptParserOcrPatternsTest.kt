@@ -18,6 +18,7 @@ import java.util.Calendar
  * 3. Check output for pass/fail results on each section
  */
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+import io.mockk.mockk
 
 class ReceiptParserOcrPatternsTest {
 

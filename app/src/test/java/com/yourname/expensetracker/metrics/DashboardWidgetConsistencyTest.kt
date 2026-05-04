@@ -169,7 +169,7 @@ class DashboardWidgetConsistencyTest {
             )
         )
         val planned = listOf(
-            PlannedExpense(0, "Trip", 500.0, monthStart + 25 * 86400000L, null, false, PlannedExpensePriority.MUST)
+            PlannedExpense(id = 0, description = "Trip", amount = 500.0, date = monthStart + 25 * 86400000L, categoryId = null, isRecurring = false, priority = PlannedExpensePriority.MUST)
         )
         val budgetStatus = BudgetStatusSnapshot(
             budgetCategoryId = null,

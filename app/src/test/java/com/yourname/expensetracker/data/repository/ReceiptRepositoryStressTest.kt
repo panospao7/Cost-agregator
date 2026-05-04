@@ -8,9 +8,11 @@ import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.model.Result
-import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
-import com.yourname.expensetracker.domain.budget.BudgetMonitor
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import dagger.Lazy
 import com.yourname.expensetracker.domain.debug.DebugIssueDetector
 import com.yourname.expensetracker.domain.intelligence.CrossSourceDeduplication
 import com.yourname.expensetracker.domain.intelligence.ml.ClassificationResult
@@ -53,7 +55,6 @@ class ReceiptRepositoryStressTest {
     private val scannedReceiptDao = mockk<ScannedReceiptDao>(relaxed = true)
     private val database = mockk<AppDatabase>(relaxed = true)
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
-    private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
     private val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
     private val ocrService = mockk<ReceiptOcrService>(relaxed = true)
     private val receiptParser = mockk<ReceiptParser>(relaxed = true)
@@ -61,8 +62,6 @@ class ReceiptRepositoryStressTest {
     private val categorizationEngine = mockk<CategorizationEngine>(relaxed = true)
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
     private val hybridClassifier = mockk<HybridExpenseClassifier>(relaxed = true)
-    private val budgetMonitor = mockk<BudgetMonitor>(relaxed = true)
-    private val anomalyAlertOrchestrator = mockk<AnomalyAlertOrchestrator>(relaxed = true)
     private val crossSourceDeduplication = mockk<CrossSourceDeduplication>(relaxed = true)
     private val debugIssueDetector = mockk<DebugIssueDetector>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
@@ -87,7 +86,6 @@ class ReceiptRepositoryStressTest {
         coEvery { expenseDao.getAllFlow(any()) } returns flowOf(emptyList())
         coEvery { pendingReviewDao.insert(any()) } returns 1L
         coEvery { pendingReviewDao.getPending(any()) } returns emptyList()
-        coEvery { merchantCategoryRepository.learnPattern(any(), any()) } returns Unit
         coEvery { warrantyUseCase.execute(any(), any()) } returns WarrantyCreationResult.Failure("test")
 
         repository = ReceiptRepository(
@@ -105,7 +103,7 @@ class ReceiptRepositoryStressTest {
             debugIssueDetector = debugIssueDetector,
             ioDispatcher = Dispatchers.Unconfined,
             timeProvider = timeProvider,
-            warrantyUseCase = warrantyUseCase,
+            warrantyUseCase = object : Lazy<AutoCreateWarrantyFromReceiptUseCase> { override fun get() = warrantyUseCase },
             coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
             receiptLinkService = mockk<ReceiptLinkService>(relaxed = true),
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),

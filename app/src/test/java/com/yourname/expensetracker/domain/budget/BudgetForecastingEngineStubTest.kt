@@ -8,6 +8,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -31,7 +32,11 @@ class BudgetForecastingEngineStubTest : AnalyticsEngineTestBase() {
             budgetRepository = budgetRepository,
             budgetForecastDao = budgetForecastDao,
             timeProvider = timeProvider,
+            ioDispatcher = Dispatchers.Unconfined,
+            analyticsCurrencyNormalizer = mockk(relaxed = true),
+            expenseRepository = mockk(relaxed = true),
             currencySettingsRepository = mockk(),
+            currencyConverter = mockk(relaxed = true),
         )
     }
 

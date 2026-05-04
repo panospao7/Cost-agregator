@@ -207,11 +207,11 @@ class WarrantyTrackerRepositoryTest {
     // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
     fun `markWarrantyAsClaimed updates status`() = runTest {
-        coEvery { warrantyDao.updateWarrantyStatus(1, WarrantyStatus.CLAIMED, any()) } just Runs
+        coEvery { warrantyDao.updateWarrantyStatus(1, WarrantyStatus.CLAIMED, any(), any()) } just Runs
         
         repository.markWarrantyAsClaimed(1)
         
-        coVerify { warrantyDao.updateWarrantyStatus(1, WarrantyStatus.CLAIMED, any()) }
+        coVerify { warrantyDao.updateWarrantyStatus(1, WarrantyStatus.CLAIMED, any(), any()) }
     }
 
     @Test

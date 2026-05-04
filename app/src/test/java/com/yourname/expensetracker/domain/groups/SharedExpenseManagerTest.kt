@@ -365,7 +365,8 @@ class SharedExpenseManagerTest {
                 description = "Bad split",
                 totalAmount = 100.0,
                 splitType = GroupSplitType.CUSTOM_AMOUNT,
-                customSplits = mapOf(1L to Double.NaN, 2L to 50.0, currency = "EUR")
+                customSplits = mapOf(1L to Double.NaN, 2L to 50.0),
+                currency = "EUR"
             )
             throw AssertionError("Expected IllegalArgumentException")
         } catch (e: IllegalArgumentException) {

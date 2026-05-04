@@ -116,6 +116,6 @@ class BudgetRecommendationEngineTest {
             currentSpending = 950.0
         )
 
-        assertEquals(0.0, recommendations.first { it.type == RecommendationType.REDUCE_SPENDING }.potentialSavings, 0.0)
+        assertEquals(0.0, recommendations.first { it.type == RecommendationType.REDUCE_SPENDING }.potentialSavings ?: 0.0, 0.0)
     }
 }

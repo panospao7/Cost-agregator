@@ -329,7 +329,10 @@ class BudgetAutopilotEngineTest {
             budgetForecastDao = budgetForecastDao,
             timeProvider = timeProvider,
             ioDispatcher = Dispatchers.Unconfined,
+            analyticsCurrencyNormalizer = mockk(relaxed = true),
+            expenseRepository = mockk(relaxed = true),
             currencySettingsRepository = mockk(),
+            currencyConverter = mockk(relaxed = true),
         )
         val forecast = forecastingEngine.generateForecast(budget)
 

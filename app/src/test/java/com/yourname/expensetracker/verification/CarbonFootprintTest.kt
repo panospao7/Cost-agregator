@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.carbon.CarbonFootprintCalculator
 import io.mockk.coEvery
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before

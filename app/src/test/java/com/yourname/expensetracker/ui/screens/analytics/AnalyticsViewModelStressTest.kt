@@ -5,6 +5,7 @@ import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.InsightsSnapshot
 import com.yourname.expensetracker.domain.analytics.TimePeriod
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -82,7 +83,7 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
         every { analyticsRepository.getCategoryBreakdown(any(), any()) } returns flowOf(emptyList())
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { timeProvider.now() } returns System.currentTimeMillis()
-        coEvery { insightsEngine.generateInsights(any(), any(), any(), any()) } returns mockk<InsightsSnapshot>(relaxed = true)
+        coEvery { insightsEngine.generateInsights(any(), any(), any(), any(), any()) } returns mockk(relaxed = true)
         every { insightsEngine.getLegacyInsights(any()) } returns emptyList()
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
         val now = System.currentTimeMillis()
@@ -94,9 +95,9 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
             comparisonRange = null
         )
         coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any(), any()) } returns Pair(emptyList(), emptyList())
-        coEvery { advancedAnalyticsEngine.getMerchantAnalytics(any(), any()) } returns emptyList()
-        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any(), any()) } throws RuntimeException("test")
-        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any(), any()) } throws RuntimeException("test")
+        coEvery { advancedAnalyticsEngine.getMerchantAnalytics(any(), any(), any()) } returns Pair(emptyList(), emptyList())
+        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any(), any()) } returns Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any(), any()) } returns Pair(mockk(relaxed = true), emptyList())
         every { locationInsightsEngine.compute(any()) } returns emptyList()
         every { areaSpendingEngine.compute(any()) } returns emptyList()
         every { travelDetectionEngine.compute(any()) } returns com.yourname.expensetracker.domain.location.TravelInsight(

@@ -4,6 +4,7 @@ import com.yourname.expensetracker.domain.parser.GenericTransactionParser
 import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
+import io.mockk.mockk
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import org.junit.Assert.assertEquals
@@ -32,7 +33,8 @@ class CurrencyNormalizerConsistencyTest {
         genericParser = GenericTransactionParser(
             currencyNormalizer,
             merchantCleaner,
-            TransferDirectionDetector()
+            TransferDirectionDetector(),
+            timeProvider = mockk()
         )
     }
 

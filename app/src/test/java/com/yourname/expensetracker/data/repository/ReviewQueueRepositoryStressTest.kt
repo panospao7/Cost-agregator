@@ -101,7 +101,7 @@ class ReviewQueueRepositoryStressTest {
 
     @Test
     fun `stress - getPendingReviews returns flow`() = runTest {
-        val result = repository.getPendingReviews()
+        val result = repository.getAllPendingReviews()
         assertNotNull(result)
     }
 

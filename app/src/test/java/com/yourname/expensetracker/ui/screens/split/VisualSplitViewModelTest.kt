@@ -219,9 +219,9 @@ class VisualSplitViewModelTest : ViewModelTestUtils() {
 
         val completedShares = buildCompletedSplitShares(participants, splitData)
 
-        assertEquals(25.0, completedShares[0].amount, 0.0)
-        assertEquals(25.0, completedShares[0].percentage, 0.0)
-        assertEquals(75.0, completedShares[1].amount, 0.0)
-        assertEquals(75.0, completedShares[1].percentage, 0.0)
+        assertEquals(25.0, completedShares[0].amount ?: 0.0, 0.0)
+        assertEquals(25.0, completedShares[0].percentage ?: 0.0, 0.0)
+        assertEquals(75.0, completedShares[1].amount ?: 0.0, 0.0)
+        assertEquals(75.0, completedShares[1].percentage ?: 0.0, 0.0)
     }
 }

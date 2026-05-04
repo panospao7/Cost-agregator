@@ -541,6 +541,9 @@ class DatabaseBackupRepositoryImplTest {
             backupEncryptionService = backupEncryptionService,
             exportAnonymizer = exportAnonymizer,
             secureKeyStorage = secureKeyStorage,
+            receiptAssetStore = mockk(relaxed = true),
+            restoreMaintenanceMode = mockk(relaxed = true),
+            restoreJournal = mockk(relaxed = true),
             stagedImportVerifier = stagedVerifier,
             liveImportVerifier = liveVerifier
         )

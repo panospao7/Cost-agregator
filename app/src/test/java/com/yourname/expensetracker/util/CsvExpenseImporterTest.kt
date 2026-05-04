@@ -3,6 +3,7 @@ package com.yourname.expensetracker.util
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import io.mockk.coEvery
@@ -28,7 +29,7 @@ class CsvExpenseImporterTest {
 
     @Before
     fun setup() {
-        importer = CsvExpenseImporter(categoryDao, expenseDao, currencySettingsRepository = mockk())
+        importer = CsvExpenseImporter(categoryDao, mockk<TransactionLifecycleCoordinator>(relaxed = true), currencySettingsRepository = mockk())
     }
 
     // ---- Constructor injection (DI path correctness) ----
@@ -36,7 +37,7 @@ class CsvExpenseImporterTest {
     @Test
     fun `importer can be instantiated with injected DAOs`() {
         // Verifies the constructor signature accepts DAOs (not Context)
-        val imp = CsvExpenseImporter(categoryDao, expenseDao, currencySettingsRepository = mockk())
+        val imp = CsvExpenseImporter(categoryDao, mockk<TransactionLifecycleCoordinator>(relaxed = true), currencySettingsRepository = mockk())
         assertThat(imp).isNotNull()
     }
 

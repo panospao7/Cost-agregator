@@ -63,7 +63,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             quickBooksExporter = QuickBooksIIFExporter(),
             xeroExporter = XeroCSVExporter(),
             freshBooksExporter = FreshBooksExporter(),
-            accountantReportPdfExporter = AccountantReportPdfExporter(timeProvider = mockk<TimeProvider>(relaxed = true))
+            accountantReportPdfExporter = AccountantReportPdfExporter(timeProvider = mockk<TimeProvider>(relaxed = true)),
+            timeProvider = mockk<TimeProvider>(relaxed = true)
         )
 
         tempCacheDir = createTempDir("export_test_cache")

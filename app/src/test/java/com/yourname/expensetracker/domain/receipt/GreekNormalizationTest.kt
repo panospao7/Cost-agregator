@@ -6,6 +6,7 @@ import org.junit.Test
 import java.lang.reflect.Method
 
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+import io.mockk.mockk
 
 class GreekNormalizationTest {
 

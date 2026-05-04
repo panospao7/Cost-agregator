@@ -302,7 +302,7 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
 
             // B.4 Batch 2: Verify NO orphan cleanup is attempted (atomic path rolls back automatically)
             coVerify(exactly = 0) { expenseRepository.getExpenseById(any()) }
-            coVerify(exactly = 0) { expenseRepository.deleteExpense(any()) }
+            coVerify(exactly = 0) { expenseRepository.deleteExpense(any<Long>()) }
 
             cancelAndIgnoreRemainingEvents()
         }
@@ -356,7 +356,7 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
 
             // B.4 Batch 2: Verify NO orphan cleanup is attempted
             coVerify(exactly = 0) { expenseRepository.getExpenseById(any()) }
-            coVerify(exactly = 0) { expenseRepository.deleteExpense(any()) }
+            coVerify(exactly = 0) { expenseRepository.deleteExpense(any<Long>()) }
 
             cancelAndIgnoreRemainingEvents()
         }

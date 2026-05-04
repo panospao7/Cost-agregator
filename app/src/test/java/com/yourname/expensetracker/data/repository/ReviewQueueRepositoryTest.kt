@@ -599,8 +599,8 @@ class ReviewQueueRepositoryTest {
         val captured = reviewSlot.captured
         assertTrue(
             "Fallback suggestedAmount must be > 0 to satisfy v76 CHECK constraint, was ${captured.suggestedAmount}",
-            captured.suggestedAmount > 0
+            (captured.suggestedAmount ?: 0.0) > 0
         )
-        assertEquals(0.01, captured.suggestedAmount, 0.001)
+        assertEquals(0.01, captured.suggestedAmount ?: 0.0, 0.001)
     }
 }

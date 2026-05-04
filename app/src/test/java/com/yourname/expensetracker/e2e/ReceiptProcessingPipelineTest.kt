@@ -74,7 +74,8 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
             canonicalizer = MerchantCanonicalizer(),
             greeklishNormalizer = greeklishNormalizer,
             semanticMatcher = SemanticKeywordMatcher(greeklishNormalizer),
-            contextEngine = ContextualInferenceEngine()
+            contextEngine = ContextualInferenceEngine(),
+            timeProvider = timeProvider
         )
     }
 

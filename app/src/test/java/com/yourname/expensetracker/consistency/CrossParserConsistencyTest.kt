@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Before
@@ -31,11 +32,12 @@ class CrossParserConsistencyTest {
         currencyNormalizer = CurrencyNormalizer()
         merchantCleaner = MerchantCleaner()
         revolutParser = RevolutParser(currencyNormalizer, merchantCleaner)
-        greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner)
+        greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner, homeCurrency = "EUR")
         genericParser = GenericTransactionParser(
             currencyNormalizer,
             merchantCleaner,
-            TransferDirectionDetector()
+            TransferDirectionDetector(),
+            timeProvider = mockk()
         )
     }
 

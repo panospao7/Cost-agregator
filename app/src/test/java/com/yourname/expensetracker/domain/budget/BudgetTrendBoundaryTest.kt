@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -40,7 +41,11 @@ class BudgetTrendBoundaryTest {
             budgetRepository = budgetRepository,
             budgetForecastDao = budgetForecastDao,
             timeProvider = timeProvider,
+            ioDispatcher = Dispatchers.Unconfined,
+            analyticsCurrencyNormalizer = mockk(relaxed = true),
+            expenseRepository = mockk(relaxed = true),
             currencySettingsRepository = mockk(),
+            currencyConverter = mockk(relaxed = true),
         )
     }
 

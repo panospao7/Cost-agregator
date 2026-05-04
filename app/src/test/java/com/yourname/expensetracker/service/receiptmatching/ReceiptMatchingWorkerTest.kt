@@ -8,8 +8,8 @@ import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
 import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
-import com.yourname.expensetracker.data.repository.ReceiptMatchingWorker
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.service.receiptmatching.ReceiptMatchingWorker
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
 import com.yourname.expensetracker.domain.service.NotificationService
@@ -52,7 +52,8 @@ class ReceiptMatchingWorkerTest {
                         workerParameters,
                         receiptRepository,
                         matcher,
-                        notificationService,
+                        receiptLinkService = mockk(relaxed = true),
+                        notificationService = notificationService,
                         restoreMaintenanceMode = mockk(),
                     )
                 }

@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
 import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

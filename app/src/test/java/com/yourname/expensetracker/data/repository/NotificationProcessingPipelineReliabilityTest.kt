@@ -38,6 +38,7 @@ import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
 import com.yourname.expensetracker.domain.subscription.NotificationSubscriptionDetector
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.subscription.SubscriptionCandidateResult
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery

@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupDetailsAggregate
 import com.yourname.expensetracker.data.repository.GroupsRepository
+import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -29,10 +30,11 @@ class SharedExpenseBudgetOffsetEngineTest {
     @Before
     fun setup() {
         engine = SharedExpenseBudgetOffsetEngine(
-            groupsRepository = groupsRepository,
+            groupsRepository = object : Lazy<GroupsRepository> { override fun get() = groupsRepository },
             expenseRepository = expenseRepository,
             ioDispatcher = Dispatchers.Unconfined,
             currencySettingsRepository = mockk(),
+            currencyConverter = mockk(relaxed = true),
         )
     }
 

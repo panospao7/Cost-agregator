@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.receipt
 
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue

@@ -12,11 +12,7 @@ import com.yourname.expensetracker.domain.ai.model.SuggestedValue
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.match
+import io.mockk.*
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -380,7 +376,7 @@ class SmartReceiptAssistServiceTest {
 
         val settings = defaultSettings()
         every { aiSettingsRepository.settings() } returns flowOf(settings)
-        every {
+        coEvery {
             aiCapabilityRouter.decide(
                 AiCapability.RECEIPT_EXTRACTION,
                 match { it.preferredMode == settings.preferredMode },
@@ -390,7 +386,7 @@ class SmartReceiptAssistServiceTest {
             route = AiRoute.ON_DEVICE,
             reason = "On-device preferred"
         )
-        every {
+        coEvery {
             aiCapabilityRouter.decide(
                 AiCapability.RECEIPT_EXTRACTION,
                 match { it.preferredMode.name == "CLOUD" },

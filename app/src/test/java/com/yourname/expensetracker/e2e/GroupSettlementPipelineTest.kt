@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -32,7 +33,7 @@ class GroupSettlementPipelineTest : AnalyticsEngineTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
-        sharedExpenseManager = SharedExpenseManager(dataPort, timeProvider, testDispatcher, ioDispatcher = Dispatchers.Unconfined)
+        sharedExpenseManager = SharedExpenseManager(dataPort, timeProvider, mockk<CurrencySettingsRepository>(relaxed = true), ioDispatcher = Dispatchers.Unconfined)
     }
 
     @Test

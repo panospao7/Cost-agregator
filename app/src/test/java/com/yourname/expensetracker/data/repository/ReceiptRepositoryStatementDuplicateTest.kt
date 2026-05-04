@@ -62,8 +62,6 @@ class ReceiptRepositoryStatementDuplicateTest {
     private val categorizationEngine = mockk<CategorizationEngine>(relaxed = true)
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
     private val hybridClassifier = mockk<HybridExpenseClassifier>(relaxed = true)
-    private val budgetMonitor = mockk<BudgetMonitor>(relaxed = true)
-    private val anomalyAlertOrchestrator = mockk<AnomalyAlertOrchestrator>(relaxed = true)
     private val crossSourceDeduplication = mockk<CrossSourceDeduplication>(relaxed = true)
     private val debugIssueDetector = mockk<DebugIssueDetector>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
@@ -101,7 +99,6 @@ class ReceiptRepositoryStatementDuplicateTest {
             database = database,
             scannedReceiptDao = scannedReceiptDao,
             expenseDao = expenseDao,
-            merchantCategoryRepository = merchantCategoryRepository,
             pendingReviewDao = pendingReviewDao,
             ocrService = ocrService,
             receiptParser = receiptParser,
@@ -109,13 +106,13 @@ class ReceiptRepositoryStatementDuplicateTest {
             categorizationEngine = categorizationEngine,
             merchantNormalizer = merchantNormalizer,
             hybridClassifier = hybridClassifier,
-            budgetMonitor = budgetMonitor,
-            anomalyAlertOrchestrator = anomalyAlertOrchestrator,
             crossSourceDeduplication = crossSourceDeduplication,
             debugIssueDetector = debugIssueDetector,
             ioDispatcher = Dispatchers.Unconfined,
             timeProvider = timeProvider,
-            warrantyUseCase = warrantyUseCase,
+            warrantyUseCase = dagger.Lazy { warrantyUseCase },
+            coordinator = mockk(relaxed = true),
+            receiptLinkService = mockk(relaxed = true),
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
         )
     }
@@ -157,7 +154,7 @@ class ReceiptRepositoryStatementDuplicateTest {
             blocks = emptyList(),
             savedImagePath = "/tmp/statement.png"
         )
-        every { statementParser.parse(any()) } returns parsedTransactions
+        every { statementParser.parse(any(), any()) } returns parsedTransactions
         coEvery {
             pendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware(
                 any(), any(), any(), any(), any(), any(), any(), any()

@@ -84,7 +84,7 @@ class AdvancedAnalyticsEngineTest {
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns expenses
         
         val period = AnalyticsPeriodRange(AnalyticsPeriod.WEEK, 0, 0, "Test", null)
-        val analysis = engine.getSpendingPatterns(period, displayCurrency = "EUR")
+        val analysis = engine.getSpendingPatterns(period, displayCurrency = "EUR").first
         
         val weekendWarrior = analysis.detectedPatterns.find { it.type == SpendingPatternType.WEEKEND_WARRIOR }
         assert(weekendWarrior != null)
@@ -102,7 +102,7 @@ class AdvancedAnalyticsEngineTest {
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns expenses
         
         val period = AnalyticsPeriodRange(AnalyticsPeriod.WEEK, 0, 0, "Test", null)
-        val stats = engine.getStatisticalInsights(period, displayCurrency = "EUR")
+        val stats = engine.getStatisticalInsights(period, displayCurrency = "EUR").first
         
         assertEquals(20.0, stats.meanTransaction, 0.01)
         assertEquals(30.0, stats.maxDailySpend, 0.01) // Assuming different days or same day summation

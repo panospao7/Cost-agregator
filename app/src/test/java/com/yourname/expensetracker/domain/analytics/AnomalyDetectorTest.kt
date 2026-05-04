@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import io.mockk.mockk
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
