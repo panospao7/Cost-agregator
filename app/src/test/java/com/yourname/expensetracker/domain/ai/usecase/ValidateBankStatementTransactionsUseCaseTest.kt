@@ -127,6 +127,104 @@ class ValidateBankStatementTransactionsUseCaseTest {
         assertEquals("PARSER_ONLY", result[0].source)
     }
 
+    @Test
+    fun `parseAiResponse with empty json returns empty list`() {
+        val candidates = listOf(
+            DebugTransaction(merchant = "Shop", amount = 10.0, currency = "EUR", date = 0L, confidence = 0.8f)
+        )
+
+        coEvery { onDeviceReceiptAssist.suggestFromText(any()) } returns AiServiceResult.Success("")
+
+        val result = runBlocking {
+            useCase.validateTransactions("OCR text", candidates, "EUR")
+        }
+
+        // Empty AI response should fall back to PARSER_ONLY
+        assertEquals(1, result.size)
+        assertEquals("PARSER_ONLY", result[0].source)
+    }
+
+    @Test
+    fun `parseAiResponse with wrapped envelope extracts transactions`() {
+        val candidates = listOf(
+            DebugTransaction(merchant = "Coffee", amount = 5.0, currency = "EUR", date = 0L, confidence = 0.8f)
+        )
+        val aiJson = """{"transactions":[{"merchant":"Coffee","amount":5.00,"currency":"EUR","date":"2025-03-15","confidence":0.95}]}"""
+
+        coEvery { onDeviceReceiptAssist.suggestFromText(any()) } returns AiServiceResult.Success(aiJson)
+
+        val result = runBlocking {
+            useCase.validateTransactions("OCR text", candidates, "EUR")
+        }
+
+        assertEquals(1, result.size)
+        assertEquals("Coffee", result[0].merchant)
+        assertEquals("AI_VALIDATED", result[0].source)
+        assertTrue("Confidence should be > 0.9", result[0].confidence > 0.9f)
+    }
+
+    @Test
+    fun `parseAiResponse with markdown fences strips formatting`() {
+        val candidates = listOf(
+            DebugTransaction(merchant = "Market", amount = 20.0, currency = "EUR", date = 0L, confidence = 0.8f)
+        )
+        val aiJson = """```json
+[{"merchant":"Market","amount":20.00,"currency":"EUR","date":"2025-03-10","confidence":0.88}]
+```"""
+
+        coEvery { onDeviceReceiptAssist.suggestFromText(any()) } returns AiServiceResult.Success(aiJson)
+
+        val result = runBlocking {
+            useCase.validateTransactions("OCR text", candidates, "EUR")
+        }
+
+        assertEquals(1, result.size)
+        assertEquals("Market", result[0].merchant)
+        assertEquals(20.0, result[0].amount, 0.001)
+    }
+
+    @Test
+    fun `ai corrected merchant name uses AI_CORRECTED source`() {
+        val candidates = listOf(
+            DebugTransaction(merchant = "Starbx", amount = 4.50, currency = "EUR", date = 0L, confidence = 0.8f)
+        )
+        // AI corrects merchant name
+        val aiJson = """[{"merchant":"Starbucks","amount":4.50,"currency":"EUR","date":"2025-03-15","confidence":0.95}]"""
+
+        coEvery { onDeviceReceiptAssist.suggestFromText(any()) } returns AiServiceResult.Success(aiJson)
+
+        val result = runBlocking {
+            useCase.validateTransactions("OCR text", candidates, "EUR")
+        }
+
+        assertEquals(1, result.size)
+        assertEquals("Starbucks", result[0].merchant)
+        assertEquals("AI_CORRECTED", result[0].source)
+    }
+
+    @Test
+    fun `both ai services unavailable returns parser only results`() {
+        val candidates = listOf(
+            DebugTransaction(merchant = "Bakery", amount = 3.50, currency = "EUR", date = 0L, confidence = 0.8f),
+            DebugTransaction(merchant = "Pharmacy", amount = 12.00, currency = "EUR", date = 0L, confidence = 0.8f)
+        )
+
+        coEvery { onDeviceReceiptAssist.suggestFromText(any()) } returns AiServiceResult.Failure(
+            com.yourname.expensetracker.domain.ai.model.AiServiceError.Unknown("unavailable")
+        )
+        coEvery { smartReceiptAssist.suggestFromText(any()) } returns AiServiceResult.Failure(
+            com.yourname.expensetracker.domain.ai.model.AiServiceError.Unknown("unavailable")
+        )
+        coEvery { privacyGate.check(PrivacyCapability.CLOUD_AI_BANK_STATEMENT, any()) } returns PrivacyDecision.Allowed
+
+        val result = runBlocking {
+            useCase.validateTransactions("OCR text", candidates, "EUR")
+        }
+
+        assertEquals(2, result.size)
+        assertTrue(result.all { it.source == "PARSER_ONLY" })
+    }
+
     companion object {
         // Helper to run suspend functions in tests
         private fun <T> runBlocking(block: suspend () -> T): T {

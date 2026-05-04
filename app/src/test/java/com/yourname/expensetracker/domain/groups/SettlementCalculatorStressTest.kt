@@ -1,6 +1,10 @@
 package com.yourname.expensetracker.domain.groups
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -9,7 +13,10 @@ import kotlin.system.measureNanoTime
 
 class SettlementCalculatorStressTest {
 
-    private val calculator = SettlementCalculator()
+    private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true).apply {
+        every { homeCurrency() } returns flowOf("EUR")
+    }
+    private val calculator = SettlementCalculator(currencySettingsRepository = currencySettingsRepository)
 
     @Test
     fun `15 member alternating plus minus one completes within solver budget without fallback bug B_03`() {
@@ -69,7 +76,8 @@ class SettlementCalculatorStressTest {
             memberName = name,
             paid = paid,
             shouldPay = shouldPay,
-            netBalance = net
+            netBalance = net,
+            currency = "EUR"
         )
     }
 }

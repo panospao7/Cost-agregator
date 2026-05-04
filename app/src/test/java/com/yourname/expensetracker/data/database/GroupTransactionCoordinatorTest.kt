@@ -19,6 +19,10 @@ import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.Result
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -83,7 +87,11 @@ class GroupTransactionCoordinatorTest {
         expenseDao = database.expenseDao()
         val transactionEventDao = database.transactionEventDao()
         transactionLifecycleCoordinator = TransactionLifecycleCoordinator(
-            expenseDao, transactionEventDao, timeProvider
+            database, expenseDao, transactionEventDao, timeProvider,
+            mockk<CurrencyConverter>(relaxed = true),
+            mockk<TransactionSideEffectDispatcher>(relaxed = true),
+            mockk<RecurringLifecycleCoordinator>(relaxed = true),
+            mockk<RestoreMaintenanceMode>(relaxed = true)
         )
         coordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, groupExpenseDao, expenseDao,

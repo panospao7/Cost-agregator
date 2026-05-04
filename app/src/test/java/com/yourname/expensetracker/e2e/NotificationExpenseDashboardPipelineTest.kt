@@ -13,7 +13,7 @@ import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.PromptStateDao
-import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
+import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
 import com.yourname.expensetracker.data.database.dao.SavingsGoalDao
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -69,6 +69,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.model.dashboard.DashboardExpense
 import com.yourname.expensetracker.domain.model.dashboard.DashboardTransactionType
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
@@ -211,10 +212,11 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             pendingReviewDao = mockk<PendingReviewDao>(relaxed = true),
             merchantCategoryRepository = merchantCategoryRepository,
             merchantNormalizer = merchantNormalizer,
-            transferDirectionAnalytics = TransferDirectionAnalytics()
+            transferDirectionAnalytics = TransferDirectionAnalytics(),
+            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
         )
 
-        val recurringExpenseDao = mockk<RecurringExpenseDao>(relaxed = true)
+        val recurringExpenseDao = mockk<ManualRecurringExpenseDao>(relaxed = true)
         coEvery { recurringExpenseDao.getAll() } returns emptyList()
         every { recurringExpenseDao.getAllFlow() } returns flowOf(emptyList())
 

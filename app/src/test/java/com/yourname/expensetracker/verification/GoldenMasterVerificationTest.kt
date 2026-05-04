@@ -38,6 +38,7 @@ import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.analytics.fixtures.GoldenDataSets
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
@@ -152,7 +153,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             pendingReviewDao = mockk(relaxed = true),
             merchantCategoryRepository = mockk(relaxed = true),
             merchantNormalizer = mockk(relaxed = true),
-            transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
+            transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true),
+            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
         )
 
         val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
@@ -225,7 +227,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             budgetCalculator = mockk<BudgetCalculator>(relaxed = true),
             monteCarloSimulator = monteCarloSimulator,
             timeProvider = timeProvider,
-            analyticsCurrencyNormalizer = mockk(relaxed = true)
+            analyticsCurrencyNormalizer = mockk(relaxed = true),
+            cashFlowCalculator = mockk(relaxed = true)
         )
     }
 
@@ -239,7 +242,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             comparisonRange = null
         )
 
-        val advancedAvg = advancedEngine.getStatisticalInsights(period, "EUR").averageDailySpend
+        val (statisticalInsights, _) = advancedEngine.getStatisticalInsights(period, "EUR")
+        val advancedAvg = statisticalInsights.averageDailySpend
         val totalsAvg = totalsEngine.getDailyTotalsForRange(MARCH_START, MARCH_30_END_EXCLUSIVE)
             .sumOf { it.totalAmount } / 30.0
 
@@ -262,7 +266,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             label = "Mar 2026",
             comparisonRange = null
         )
-        val advancedTotal = advancedEngine.getCategoryAnalytics(period, "EUR").sumOf { it.totalSpent }
+        val (categoryAnalytics1, _) = advancedEngine.getCategoryAnalytics(period, "EUR")
+        val advancedTotal = categoryAnalytics1.sumOf { it.totalSpent }
         val totalsTotal = totalsEngine.getDailyTotalsForRange(MARCH_START, APRIL_START)
             .sumOf { it.totalAmount }
 
@@ -395,7 +400,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             comparisonRange = null
         )
 
-        val advancedTotal = advancedEngine.getCategoryAnalytics(period).sumOf { it.totalSpent }
+        val (categoryAnalytics2, _) = advancedEngine.getCategoryAnalytics(period, "EUR")
+        val advancedTotal = categoryAnalytics2.sumOf { it.totalSpent }
         val dashboardTotal = dashboardEngine.generateDashboardData(MARCH_START, APRIL_START).totalSpent
 
         assertApproxEquals(MARCH_TOTAL_EFFECTIVE, advancedTotal, 0.01)
@@ -430,8 +436,9 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         mockAnalyticsDaoByRange(emptyList())
 
         val emptySnapshot = insightsEngine.generateInsights(contractCategories.toAnalyticsCategoryRefs(), emptyList(), "EUR")
-        val stats = advancedEngine.getStatisticalInsights(
-            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, MARCH_START, APRIL_START, "Mar 2026", null)
+        val (stats, _) = advancedEngine.getStatisticalInsights(
+            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, MARCH_START, APRIL_START, "Mar 2026", null),
+            "EUR"
         )
 
         assertApproxEquals(0.0, emptySnapshot.monthlyComparison.currentTotal, 0.01)
@@ -452,8 +459,9 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         )
         mockAnalyticsDaoByRange(single)
 
-        val stats = advancedEngine.getStatisticalInsights(
-            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, MARCH_START, MARCH_30_END_EXCLUSIVE, "Mar 1-30", null)
+        val (stats, _) = advancedEngine.getStatisticalInsights(
+            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, MARCH_START, MARCH_30_END_EXCLUSIVE, "Mar 1-30", null),
+            "EUR"
         )
 
         assertApproxEquals(100.0, stats.maxDailySpend, 0.01)
@@ -724,8 +732,9 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         )
         mockAnalyticsDaoByRange(single)
 
-        val stats = advancedEngine.getStatisticalInsights(
-            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, MARCH_START, MARCH_30_END_EXCLUSIVE, "Mar 1-30", null)
+        val (stats, _) = advancedEngine.getStatisticalInsights(
+            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, MARCH_START, MARCH_30_END_EXCLUSIVE, "Mar 1-30", null),
+            "EUR"
         )
 
         // Single transaction: verify it doesn't crash and returns correct stats
@@ -764,7 +773,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         )
 
         // All engines should use effectiveAmount (not raw amount)
-        val advancedTotal = advancedEngine.getCategoryAnalytics(period).sumOf { it.totalSpent }
+        val (categoryAnalytics3, _) = advancedEngine.getCategoryAnalytics(period, "EUR")
+        val advancedTotal = categoryAnalytics3.sumOf { it.totalSpent }
         val insightsTotal = insightsEngine.generateInsights(contractCategories.toAnalyticsCategoryRefs(), allTransactions.toExpenseSnapshots(), "EUR")
             .monthlyComparison.currentTotal
 

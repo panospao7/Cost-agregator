@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsPeriod
 import com.yourname.expensetracker.domain.analytics.AnalyticsPeriodRange
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.every
@@ -115,7 +116,8 @@ class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
             pendingReviewDao = mockk(relaxed = true),
             merchantCategoryRepository = mockk(relaxed = true),
             merchantNormalizer = mockk(relaxed = true),
-            transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
+            transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true),
+            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
         )
         val totalsEngine = TotalsAggregationEngine(repository, timeProvider, Dispatchers.Unconfined)
         val currencySettingsRepository = TestCurrencySettingsRepository()
@@ -135,9 +137,11 @@ class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
         val daoTotal = expenseDao.getTotalForPeriod(marchStart, aprilStart)
         val repoTotal = repository.getTotalForPeriod(marchStart, aprilStart)
         val totalsTotal = totalsEngine.getDailyTotalsForRange(marchStart, aprilStart).sumOf { it.totalAmount }
-        val advancedTotal = advancedEngine.getCategoryAnalytics(
-            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, marchStart, aprilStart, "Mar", null)
-        ).sumOf { it.totalSpent }
+        val (advancedAnalytics, _) = advancedEngine.getCategoryAnalytics(
+            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, marchStart, aprilStart, "Mar", null),
+            "EUR"
+        )
+        val advancedTotal = advancedAnalytics.sumOf { it.totalSpent }
 
         assertApproxEquals(expected, daoTotal, 0.0001)
         assertApproxEquals(expected, repoTotal, 0.0001)

@@ -5,7 +5,8 @@ import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
-import com.yourname.expensetracker.data.database.entity.SavingsGoal
+import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -14,6 +15,7 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.forecasting.ConfidenceLevel
 import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
@@ -64,7 +66,8 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             budgetCalculator = budgetCalculator,
             monteCarloSimulator = monteCarloSimulator,
             timeProvider = timeProvider,
-            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            cashFlowCalculator = mockk<CashFlowCalculator>(relaxed = true)
         )
     }
 
@@ -106,7 +109,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
 
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarloResult(400.0)
 
-        val goal = SavingsGoal(name = "Emergency", targetAmount = 5000.0, currentAmount = 1000.0)
+        val goal = SavingsGoal(id = 0L, name = "Emergency", targetAmount = 5000.0, currentAmount = 1000.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now)
         val result = engine.calculateSafeToSaveAmount(goal)
 
         // surplus = (100 + 200) * 0.5 = 150
@@ -150,7 +153,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarloResult(400.0)
 
         val result = engine.calculateSafeToSaveAmount(
-            SavingsGoal(name = "Trip", targetAmount = 2000.0, currentAmount = 200.0)
+            SavingsGoal(id = 0L, name = "Trip", targetAmount = 2000.0, currentAmount = 200.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now)
         )
 
         // monthly discretionary baseline uses only discretionary purchases: 90 / 3 = 30
@@ -166,7 +169,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
 
         val result = engine.calculateSafeToSaveAmount(
-            SavingsGoal(name = "Trip", targetAmount = 1000.0, currentAmount = 0.0)
+            SavingsGoal(id = 0L, name = "Trip", targetAmount = 1000.0, currentAmount = 0.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now)
         )
 
         assertApproxEquals(0.0, result.safeAmount)
@@ -188,7 +191,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarloResult(5000.0)
 
         val result = engine.calculateSafeToSaveAmount(
-            SavingsGoal(name = "Car", targetAmount = 7000.0, currentAmount = 1500.0)
+            SavingsGoal(id = 0L, name = "Car", targetAmount = 7000.0, currentAmount = 1500.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now)
         )
 
         assertEquals(0.0, result.safeAmount, 0.0)
@@ -205,8 +208,8 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
 
         val goals = listOf(
-            SavingsGoal(id = 1L, name = "Emergency", targetAmount = 1000.0, currentAmount = 900.0),
-            SavingsGoal(id = 2L, name = "Vacation", targetAmount = 1000.0, currentAmount = 200.0)
+            SavingsGoal(id = 1L, name = "Emergency", targetAmount = 1000.0, currentAmount = 900.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now),
+            SavingsGoal(id = 2L, name = "Vacation", targetAmount = 1000.0, currentAmount = 200.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now)
         )
 
         val recommendations = engine.calculatePortfolioRecommendations(goals)
@@ -227,8 +230,8 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
 
         val goals = listOf(
-            SavingsGoal(id = 1L, name = "Laptop", targetAmount = 1000.0, currentAmount = 990.0),
-            SavingsGoal(id = 2L, name = "Trip", targetAmount = 1000.0, currentAmount = 995.0)
+            SavingsGoal(id = 1L, name = "Laptop", targetAmount = 1000.0, currentAmount = 990.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now),
+            SavingsGoal(id = 2L, name = "Trip", targetAmount = 1000.0, currentAmount = 995.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now)
         )
 
         val recommendations = engine.calculatePortfolioRecommendations(goals)
@@ -252,7 +255,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
 
         val result = engine.calculateSafeToSaveAmount(
-            SavingsGoal(name = "Emergency", targetAmount = 5000.0, currentAmount = 1000.0)
+            SavingsGoal(id = 0L, name = "Emergency", targetAmount = 5000.0, currentAmount = 1000.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now)
         )
 
         assertApproxEquals(80.0, result.safeAmount, 0.01)
@@ -268,7 +271,8 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             percentUsed = 0.0f,
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = now,
-            periodEnd = now
+            periodEnd = now,
+            effectiveLimit = budgetAmount
         )
     }
 

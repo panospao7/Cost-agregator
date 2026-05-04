@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
-import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
+import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
@@ -15,7 +15,7 @@ import org.junit.Test
 
 class RecurringExpenseRepositoryTest {
 
-    private val dao = mockk<RecurringExpenseDao>()
+    private val dao = mockk<ManualRecurringExpenseDao>()
 
     private lateinit var repository: RecurringExpenseRepository
 

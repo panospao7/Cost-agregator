@@ -8,7 +8,7 @@ import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.MerchantStats
-import com.yourname.expensetracker.data.database.dao.RecurringExpenseDao
+import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -25,6 +25,7 @@ import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import io.mockk.coEvery
 import io.mockk.every
@@ -47,7 +48,7 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
     override fun setUp() {
         super.setUp()
 
-        val recurringExpenseDao = mockk<RecurringExpenseDao>(relaxed = true)
+        val recurringExpenseDao = mockk<ManualRecurringExpenseDao>(relaxed = true)
         coEvery { recurringExpenseDao.getAll() } returns emptyList()
 
         expenseRepository = ExpenseRepository(
@@ -57,7 +58,8 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
             pendingReviewDao = mockk(relaxed = true),
             merchantCategoryRepository = mockk(relaxed = true),
             merchantNormalizer = mockk(relaxed = true),
-            transferDirectionAnalytics = TransferDirectionAnalytics()
+            transferDirectionAnalytics = TransferDirectionAnalytics(),
+            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
         )
 
         val recurringExpenseRepository = RecurringExpenseRepository(recurringExpenseDao)

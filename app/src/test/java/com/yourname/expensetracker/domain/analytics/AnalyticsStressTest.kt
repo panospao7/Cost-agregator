@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -71,7 +72,8 @@ class AnalyticsStressTest {
             pendingReviewDao = mockk(relaxed = true),
             merchantCategoryRepository = mockk(relaxed = true),
             merchantNormalizer = mockk(relaxed = true),
-            transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
+            transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true),
+            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
         )
 
         val engine = AdvancedAnalyticsEngine(
@@ -86,8 +88,9 @@ class AnalyticsStressTest {
         )
 
         val startedAt = System.nanoTime()
-        val analytics = engine.getCategoryAnalytics(
-            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, start, end, "Mar 2026", null)
+        val (analytics, _) = engine.getCategoryAnalytics(
+            AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, start, end, "Mar 2026", null),
+            "EUR"
         )
         val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
 

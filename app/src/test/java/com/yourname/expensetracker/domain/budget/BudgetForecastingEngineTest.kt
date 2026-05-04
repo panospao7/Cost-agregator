@@ -8,10 +8,15 @@ import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -60,7 +65,12 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             expenseDao = expenseDao,
             budgetRepository = budgetRepository,
             budgetForecastDao = budgetForecastDao,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            ioDispatcher = Dispatchers.Unconfined,
+            analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true),
+            expenseRepository = mockk<ExpenseRepository>(relaxed = true),
+            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
+            currencyConverter = mockk<CurrencyConverter>(relaxed = true)
         )
     }
 

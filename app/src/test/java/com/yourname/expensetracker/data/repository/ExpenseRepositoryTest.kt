@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.UserCorrection
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import androidx.room.withTransaction
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -34,6 +35,7 @@ class ExpenseRepositoryTest {
     private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
     private val transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
+    private val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
 
     private lateinit var repository: ExpenseRepository
 
@@ -57,7 +59,8 @@ class ExpenseRepositoryTest {
             pendingReviewDao,
             merchantCategoryRepository,
             merchantNormalizer,
-            transferDirectionAnalytics
+            transferDirectionAnalytics,
+            transactionLifecycleCoordinator
         )
     }
 

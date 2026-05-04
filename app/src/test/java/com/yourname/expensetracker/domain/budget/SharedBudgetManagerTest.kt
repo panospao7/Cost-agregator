@@ -10,6 +10,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -31,7 +32,8 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
             budgetRepository = budgetRepository,
             expenseDao = expenseDao,
             budgetCalculator = budgetCalculator,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            ioDispatcher = Dispatchers.Unconfined
         )
     }
 

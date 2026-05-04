@@ -31,6 +31,7 @@ import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.ui.screens.analytics.AnalyticsViewModel
 import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.testCurrencyConverter
@@ -81,6 +82,7 @@ internal fun buildPipeline(
     val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
     val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
     val transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
+    val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
 
     val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
     val locationInsightsEngine = mockk<LocationInsightsEngine>(relaxed = true)
@@ -119,7 +121,8 @@ internal fun buildPipeline(
         pendingReviewDao = pendingReviewDao,
         merchantCategoryRepository = merchantCategoryRepository,
         merchantNormalizer = merchantNormalizer,
-        transferDirectionAnalytics = transferDirectionAnalytics
+        transferDirectionAnalytics = transferDirectionAnalytics,
+        transactionLifecycleCoordinator = transactionLifecycleCoordinator
     )
 
     val analyticsRepository = AnalyticsRepository(expenseDao, categoryRepository, currencySettingsRepository)

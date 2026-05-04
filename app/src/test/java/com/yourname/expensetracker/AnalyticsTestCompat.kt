@@ -26,6 +26,8 @@ import com.yourname.expensetracker.domain.currency.ExchangeRateStore
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -93,6 +95,12 @@ class TestCurrencySettingsRepository(
         return thresholdMs >= 0 && lastRateUpdateFlow.value <= 0L
     }
 
+    override fun emergencyBuffer(): Flow<Double> = MutableStateFlow(500.0)
+
+    override suspend fun setEmergencyBuffer(amount: Double) {
+        // no-op for tests
+    }
+
     override suspend fun clear() {
         homeCurrencyFlow.value = "EUR"
         lastRateUpdateFlow.value = 0L
@@ -103,6 +111,10 @@ class TestExchangeRateStore : ExchangeRateStore {
     private val rates = mutableMapOf<Pair<String, String>, DomainExchangeRate>()
 
     override suspend fun getRate(fromCurrency: String, toCurrency: String): DomainExchangeRate? {
+        return rates[fromCurrency.uppercase() to toCurrency.uppercase()]
+    }
+
+    override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? {
         return rates[fromCurrency.uppercase() to toCurrency.uppercase()]
     }
 
@@ -125,8 +137,11 @@ class TestExchangeRateStore : ExchangeRateStore {
     }
 }
 
-fun testCurrencyConverter(exchangeRateStore: ExchangeRateStore = TestExchangeRateStore()): CurrencyConverter {
-    return CurrencyConverter(exchangeRateStore)
+fun testCurrencyConverter(
+    exchangeRateStore: ExchangeRateStore = TestExchangeRateStore(),
+    timeProvider: TimeProvider = FakeTimeProvider(1_700_000_000_000L)
+): CurrencyConverter {
+    return CurrencyConverter(exchangeRateStore, timeProvider)
 }
 
 fun testAnalyticsCurrencyNormalizer(

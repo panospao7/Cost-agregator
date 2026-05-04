@@ -43,6 +43,7 @@ import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.analytics.TotalsAggregationEngine
 import com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.carbon.CarbonFootprintCalculator
@@ -112,7 +113,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             pendingReviewDao = mockk(relaxed = true),
             merchantCategoryRepository = mockk(relaxed = true),
             merchantNormalizer = mockk(relaxed = true),
-            transferDirectionAnalytics = mockk(relaxed = true)
+            transferDirectionAnalytics = mockk(relaxed = true),
+            transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
         )
 
         val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)

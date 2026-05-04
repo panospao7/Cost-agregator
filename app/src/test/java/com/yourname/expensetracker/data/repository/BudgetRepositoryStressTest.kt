@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -42,6 +43,7 @@ class BudgetRepositoryStressTest {
     private val offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
     private val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
     private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+    private val multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true)
 
     private lateinit var repository: BudgetRepository
 
@@ -72,7 +74,8 @@ class BudgetRepositoryStressTest {
             offsetEngine,
             TimeBoundaryTicker(timeProvider),
             currencyConverter,
-            currencySettingsRepository
+            currencySettingsRepository,
+            multiCurrencyRepository
         )
     }
 
@@ -411,7 +414,7 @@ class BudgetRepositoryStressTest {
         val repo = BudgetRepository(
             budgetDao, categoryDao, expenseDao, realCalc,
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
-            currencyConverter, currencySettingsRepository
+            currencyConverter, currencySettingsRepository, multiCurrencyRepository
         )
 
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))

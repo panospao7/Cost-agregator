@@ -291,6 +291,10 @@ class FakeExchangeRateStore(
         return storedRates[fromCurrency.uppercase() to toCurrency.uppercase()]
     }
 
+    override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? {
+        return storedRates[fromCurrency.uppercase() to toCurrency.uppercase()]
+    }
+
     override suspend fun insertOrUpdate(rate: DomainExchangeRate) {
         storedRates[rate.fromCurrency.uppercase() to rate.toCurrency.uppercase()] = rate
     }
@@ -343,6 +347,12 @@ class FakeCurrencySettingsRepository(
         val lastUpdate = lastRateUpdateFlow.value
         val now = System.currentTimeMillis()
         return lastUpdate == 0L || (now - lastUpdate) > thresholdMs
+    }
+
+    override fun emergencyBuffer(): Flow<Double> = MutableStateFlow(500.0)
+
+    override suspend fun setEmergencyBuffer(amount: Double) {
+        // no-op for tests
     }
 
     override suspend fun clear() {
@@ -400,7 +410,7 @@ fun createCanonicalRepository(
             (homeCurrency to CanonicalMultiCurrencyFixture.FOREIGN_CURRENCY) to (1.0 / usdToEurRate)
         )
     )
-    val currencyConverter = CurrencyConverter(exchangeRateStore)
+    val currencyConverter = CurrencyConverter(exchangeRateStore, FakeTimeProvider(fixedTime = fixedTime))
 
     // ── FakeTimeProvider ─────────────────────────────────────────────────
     val timeProvider = FakeTimeProvider(fixedTime = fixedTime)
@@ -552,8 +562,8 @@ class CanonicalMultiCurrencyFixtureTest {
 
         val settingsRepo = FakeCurrencySettingsRepository()
         val exchangeRateStore = FakeExchangeRateStore()
-        val currencyConverter = CurrencyConverter(exchangeRateStore)
         val timeProvider = FakeTimeProvider()
+        val currencyConverter = CurrencyConverter(exchangeRateStore, timeProvider)
 
         val repo = MultiCurrencyRepository(
             expenseDao = expenseDao,

@@ -14,6 +14,7 @@ import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -69,7 +70,8 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             healthScoreHistoryDao = healthScoreHistoryDao,
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
-            currencySettingsRepository = currencySettingsRepository
+            currencySettingsRepository = currencySettingsRepository,
+            cashFlowCalculator = mockk<CashFlowCalculator>(relaxed = true)
         )
     }
 
@@ -344,7 +346,8 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             percentUsed = if (amount > 0) (spent / amount).toFloat() else 0f,
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = now - 20 * dayMs,
-            periodEnd = now + 10 * dayMs
+            periodEnd = now + 10 * dayMs,
+            effectiveLimit = amount
         )
     }
 
