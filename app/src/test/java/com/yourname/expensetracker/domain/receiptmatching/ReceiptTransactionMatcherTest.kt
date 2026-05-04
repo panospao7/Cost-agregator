@@ -21,6 +21,7 @@ class ReceiptTransactionMatcherTest {
         expenseRepository = expenseRepository,
         merchantNormalizer = merchantNormalizer,
         stringDistance = StringDistanceUtils
+        receiptLinkService = mock(),
     )
 
     @Test
@@ -31,6 +32,7 @@ class ReceiptTransactionMatcherTest {
             merchant = "Store",
             amount = 12.34,
             transactionType = TransactionType.DEPOSIT
+        timeProvider = mock(),
         )
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(deposit)

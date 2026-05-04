@@ -3,11 +3,14 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
-import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.*
@@ -39,7 +42,13 @@ class FinancialWeatherRepositoryTest {
     @Before
     fun setup() {
         every { timeProvider.now() } returns 1705320000000L // Jan 15, 2024
-        forecastInputAssembler = ForecastInputAssembler(timeProvider)
+        forecastInputAssembler = ForecastInputAssembler(
+            timeProvider = timeProvider,
+            analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true),
+            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
+            recurringLifecycleCoordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true),
+            recurringOccurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true)
+        )
         
         repository = FinancialWeatherRepository(
             expenseRepository,
@@ -52,7 +61,8 @@ class FinancialWeatherRepositoryTest {
             synthesisEngine,
             narrativeGenerator,
             analyticsRepository,
-            timeProvider
+            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
+            timeProvider = timeProvider
         )
     }
 

@@ -18,7 +18,7 @@ class GreekBankParserTest {
         merchantCleaner = io.mockk.mockk {
             io.mockk.every { clean(any()) } answers { firstArg() ?: "Unknown" }
         }
-        parser = GreekBankParser(currencyNormalizer, merchantCleaner)
+        parser = GreekBankParser(currencyNormalizer, merchantCleaner, homeCurrency = "EUR")
     }
 
     @Test

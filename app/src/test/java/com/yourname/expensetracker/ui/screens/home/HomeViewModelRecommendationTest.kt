@@ -494,6 +494,7 @@ class HomeViewModelRecommendationTest {
             sourceArtifactId = "",
             status = status,
             expiresAt = expiresAt
+            updatedAt = 0L,
         )
     }
 }

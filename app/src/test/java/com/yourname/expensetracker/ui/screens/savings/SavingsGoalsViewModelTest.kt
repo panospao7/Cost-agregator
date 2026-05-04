@@ -273,6 +273,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
             gamificationEngine = gamificationEngine,
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
             monthlySavingsSweepUseCase = monthlySavingsSweepUseCase
+            currencySettingsRepository = mock(),
         )
     }
 
@@ -288,6 +289,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
             targetAmount = targetAmount,
             currentAmount = currentAmount,
             protectionLevel = GoalProtectionLevel.WARNING
+        timeProvider = mock(),
         )
     }
 }

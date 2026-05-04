@@ -329,6 +329,7 @@ class BudgetAutopilotEngineTest {
             budgetForecastDao = budgetForecastDao,
             timeProvider = timeProvider,
             ioDispatcher = Dispatchers.Unconfined
+            currencySettingsRepository = mock(),
         )
         val forecast = forecastingEngine.generateForecast(budget)
 
@@ -337,6 +338,7 @@ class BudgetAutopilotEngineTest {
             monthlyTotals = monthlyTotals,
             windowStartInclusive = windowStart,
             windowEndExclusive = parityNow
+        currencyConverter = mock(),
         )
         assertEquals(listOf("2026-01", "2026-02", "2026-03", "2026-04"), normalized.monthKeys)
         assertApproxEquals(100.0, normalized.values[0], 0.0001)

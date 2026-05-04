@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import dagger.Lazy
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
@@ -42,7 +43,9 @@ class WarrantyTrackerRepositoryTest {
         repository = WarrantyTrackerRepository(
             warrantyDao,
             returnWindowDao,
-            receiptRepository,
+            object : Lazy<ReceiptRepository> {
+                override fun get() = receiptRepository
+            },
             cloudExtractionService,
             aiSettingsRepository,
             aiPolicy,

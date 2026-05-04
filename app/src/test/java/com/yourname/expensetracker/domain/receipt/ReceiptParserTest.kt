@@ -14,7 +14,7 @@ class ReceiptParserTest {
 
     @Before
     fun setup() {
-        parser = ReceiptParser(MerchantRulesRepository())
+        parser = ReceiptParser(MerchantRulesRepository(), timeProvider = mock())
     }
 
     @Test

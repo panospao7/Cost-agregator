@@ -24,14 +24,14 @@ import org.junit.Test
 class GroupSettlementPipelineTest : AnalyticsEngineTestBase() {
 
     private val splitCalculator = SplitCalculator
-    private val settlementCalculator = SettlementCalculator()
+    private val settlementCalculator = SettlementCalculator(, currencySettingsRepository = mock())
     private lateinit var sharedExpenseManager: SharedExpenseManager
     private val dataPort = mockk<SharedExpenseDataPort>(relaxed = true)
 
     @Before
     override fun setUp() {
         super.setUp()
-        sharedExpenseManager = SharedExpenseManager(dataPort, timeProvider, testDispatcher)
+        sharedExpenseManager = SharedExpenseManager(dataPort, timeProvider, testDispatcher, ioDispatcher = Unconfined)
     }
 
     @Test
@@ -177,6 +177,7 @@ class GroupSettlementPipelineTest : AnalyticsEngineTestBase() {
             totalAmount = totalAmount,
             splitType = splitType,
             customSplitsSerialized = customSplitsSerialized
+            currency = "EUR",
         )
     }
 
@@ -189,6 +190,7 @@ class GroupSettlementPipelineTest : AnalyticsEngineTestBase() {
             paid = paid,
             shouldPay = shouldPay,
             netBalance = netBalance
+            currency = "EUR",
         )
     }
 }

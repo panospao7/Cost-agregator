@@ -60,7 +60,8 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             previousMonthTotal = null,
             averageMonthlyTotal = null,
             pacePercentage = 100.0f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
+            displayCurrency = "EUR",
         )
 
         // Act
@@ -96,7 +97,8 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             previousMonthTotal = null,
             averageMonthlyTotal = null,
             pacePercentage = 0.0f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
+            displayCurrency = "EUR",
         )
 
         // Act
@@ -127,7 +129,8 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             previousMonthTotal = null,
             averageMonthlyTotal = null,
             pacePercentage = 100.0f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
+            displayCurrency = "EUR",
         )
 
         // Act
@@ -162,7 +165,8 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             previousMonthTotal = null,
             averageMonthlyTotal = null,
             pacePercentage = 100.0f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
+            displayCurrency = "EUR",
         )
 
         // Act
@@ -190,7 +194,8 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             previousMonthTotal = null,
             averageMonthlyTotal = null,
             pacePercentage = 100.0f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
+            displayCurrency = "EUR",
         )
 
         val forecast = engine.synthesize(
@@ -239,7 +244,8 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             previousMonthTotal = null,
             averageMonthlyTotal = 310.0,
             pacePercentage = 100.0f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
+            displayCurrency = "EUR",
         )
 
         val forecast = engine.synthesize(
@@ -281,6 +287,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
                 averageMonthlyTotal = null,
                 pacePercentage = 0.0f,
                 paceStatus = PaceStatus.ON_PACE
+                displayCurrency = "EUR",
             )
         )
 
@@ -325,6 +332,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
                 averageMonthlyTotal = null,
                 pacePercentage = 0.0f,
                 paceStatus = PaceStatus.ON_PACE
+                displayCurrency = "EUR",
             )
         )
 
@@ -349,7 +357,8 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             previousMonthTotal = null,
             averageMonthlyTotal = null,
             pacePercentage = 100.0f,
-            paceStatus = PaceStatus.ON_PACE
+            paceStatus = PaceStatus.ON_PACE,
+            displayCurrency = "EUR",
         )
 
         val forecast = engine.synthesize(
@@ -441,7 +450,8 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
         targetAmount = target,
         currentAmount = current,
         targetDate = targetDate,
-        protectionLevel = protection
+        protectionLevel = protection,
+        createdAt = 0L,
     )
 
     private fun createBudgetStatus(health: BudgetHealthStatus = BudgetHealthStatus.ON_TRACK, limit: Double = 1000.0, categoryId: Long? = null) = BudgetStatusSnapshot(

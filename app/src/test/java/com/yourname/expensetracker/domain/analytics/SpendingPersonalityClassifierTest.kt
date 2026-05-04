@@ -109,9 +109,9 @@ class SpendingPersonalityClassifierTest {
             purchase(id = 10L, amount = 102.0, merchant = "Fuel", date = millis(2026, Calendar.MARCH, 9, 11), categoryId = 2L)
         )
         val budgets = listOf(
-            BudgetSnapshot(categoryId = 1L, amount = 450.0),
-            BudgetSnapshot(categoryId = 2L, amount = 350.0),
-            BudgetSnapshot(categoryId = 3L, amount = 250.0)
+            BudgetSnapshot(categoryId = 1L, amount = 450.0, currency = "EUR"),
+            BudgetSnapshot(categoryId = 2L, amount = 350.0, currency = "EUR"),
+            BudgetSnapshot(categoryId = 3L, amount = 250.0, currency = "EUR")
         )
 
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns (purchases + deposits)
@@ -284,8 +284,8 @@ class SpendingPersonalityClassifierTest {
             date = incomeDate
         )
         val budgets = listOf(
-            BudgetSnapshot(categoryId = 1L, amount = 200.0),
-            BudgetSnapshot(categoryId = 2L, amount = 100.0)
+            BudgetSnapshot(categoryId = 1L, amount = 200.0, currency = "EUR"),
+            BudgetSnapshot(categoryId = 2L, amount = 100.0, currency = "EUR")
         )
 
         val featureScores = invokeCalculateFeatureScores(

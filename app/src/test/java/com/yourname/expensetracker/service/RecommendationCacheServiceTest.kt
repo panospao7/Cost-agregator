@@ -33,7 +33,7 @@ class RecommendationCacheServiceTest {
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         repository = mockk()
-        cacheService = RecommendationCacheService(repository, testDispatcher)
+        cacheService = RecommendationCacheService(repository, testDispatcher, ioDispatcher = Unconfined)
     }
 
     @Test
@@ -376,6 +376,7 @@ class RecommendationCacheServiceTest {
             sourceArtifactId = "",
             status = status,
             expiresAt = expiresAt
+            updatedAt = 0L,
         )
     }
 }

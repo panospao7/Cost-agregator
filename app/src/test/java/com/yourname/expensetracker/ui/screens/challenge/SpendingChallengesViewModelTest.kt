@@ -40,7 +40,7 @@ class SpendingChallengesViewModelTest : ViewModelTestUtils() {
             unavailableReason = null
         )
 
-        viewModel = SpendingChallengesViewModel(challengeManager)
+        viewModel = SpendingChallengesViewModel(challengeManager, categoryRepository = mock(), currencySettingsRepository = mock())
         advanceUntilIdle()
 
         assertEquals(expectedChallenges, viewModel.activeChallenges.value)
@@ -55,7 +55,7 @@ class SpendingChallengesViewModelTest : ViewModelTestUtils() {
             unavailableReason = null
         )
 
-        viewModel = SpendingChallengesViewModel(challengeManager)
+        viewModel = SpendingChallengesViewModel(challengeManager, currencySettingsRepository = mock(), categoryRepository = mock())
         advanceUntilIdle()
 
         assertTrue(viewModel.activeChallenges.value.isEmpty())
@@ -65,7 +65,7 @@ class SpendingChallengesViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `refresh reloads no spend status and active challenge availability`() = runTest(testDispatcher) {
-        viewModel = SpendingChallengesViewModel(challengeManager)
+        viewModel = SpendingChallengesViewModel(challengeManager, categoryRepository = mock(), currencySettingsRepository = mock())
         advanceUntilIdle()
 
         val refreshedStatus = defaultNoSpendStatus().copy(currentStreakDays = 4)

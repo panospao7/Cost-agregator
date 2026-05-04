@@ -28,7 +28,7 @@ class CsvExpenseImporterTest {
 
     @Before
     fun setup() {
-        importer = CsvExpenseImporter(categoryDao, expenseDao)
+        importer = CsvExpenseImporter(categoryDao, expenseDao, currencySettingsRepository = mock())
     }
 
     // ---- Constructor injection (DI path correctness) ----
@@ -36,7 +36,7 @@ class CsvExpenseImporterTest {
     @Test
     fun `importer can be instantiated with injected DAOs`() {
         // Verifies the constructor signature accepts DAOs (not Context)
-        val imp = CsvExpenseImporter(categoryDao, expenseDao)
+        val imp = CsvExpenseImporter(categoryDao, expenseDao, currencySettingsRepository = mock())
         assertThat(imp).isNotNull()
     }
 

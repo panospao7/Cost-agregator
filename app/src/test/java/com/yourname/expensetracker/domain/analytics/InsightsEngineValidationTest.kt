@@ -120,6 +120,7 @@ class InsightsEngineValidationTest {
             averageMonthlyTotal = null,
             pacePercentage = 0.0f,
             paceStatus = PaceStatus.NO_BASELINE
+            displayCurrency = "EUR",
         )
     }
 
@@ -319,6 +320,7 @@ class InsightsEngineValidationTest {
             averageMonthlyTotal = 1500.0,
             pacePercentage = 100.0f,
             paceStatus = PaceStatus.ON_PACE
+            displayCurrency = "EUR",
         )
         
         every { timeProvider.now() } returns createDate(2024, 4, 10, 12, 0)
@@ -358,6 +360,7 @@ class InsightsEngineValidationTest {
             averageMonthlyTotal = 1500.0,
             pacePercentage = 60.0f, // Under pace
             paceStatus = PaceStatus.UNDER_PACE
+            displayCurrency = "EUR",
         )
         
         every { timeProvider.now() } returns createDate(2024, 4, 3, 12, 0)
@@ -390,6 +393,7 @@ class InsightsEngineValidationTest {
             averageMonthlyTotal = null,
             pacePercentage = 100.0f,
             paceStatus = PaceStatus.ON_PACE
+            displayCurrency = "EUR",
         )
 
         val categories = listOf(cat(id = 1))

@@ -4,6 +4,8 @@ import android.util.Log
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.location.GeocodingBatchResult
 import com.yourname.expensetracker.domain.location.GeocodingError
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
@@ -33,7 +35,7 @@ class GeocodingRetryHttpSemanticsTest {
     @Test
     fun `photon returns RateLimited after three 429 responses`() = runBlocking {
         val attempts = AtomicInteger(0)
-        val service = PhotonGeocodingService(client = rateLimitedClient(attempts))
+        val service = PhotonGeocodingService(client = rateLimitedClient(attempts), privacyGate = mockk<PrivacyGate>(relaxed = true))
 
         val result = service.searchMultiple(query = "coffee", biasLat = null, biasLon = null, limit = 5)
 
@@ -43,7 +45,7 @@ class GeocodingRetryHttpSemanticsTest {
     @Test
     fun `nominatim returns RateLimited after three 429 responses`() = runBlocking {
         val attempts = AtomicInteger(0)
-        val service = NominatimGeocodingService(client = rateLimitedClient(attempts))
+        val service = NominatimGeocodingService(client = rateLimitedClient(attempts), timeProvider = mockk<TimeProvider>(relaxed = true), privacyGate = mockk<PrivacyGate>(relaxed = true))
 
         val result = service.searchMultiple(query = "coffee", biasLat = null, biasLon = null, limit = 5)
 
@@ -53,7 +55,7 @@ class GeocodingRetryHttpSemanticsTest {
     @Test
     fun `nominatim returns final 503 response after retries`() = runBlocking {
         val attempts = AtomicInteger(0)
-        val service = NominatimGeocodingService(client = fixedResponseClient(attempts, code = 503, message = "Service Unavailable"))
+        val service = NominatimGeocodingService(client = fixedResponseClient(attempts, code = 503, message = "Service Unavailable"), privacyGate = mockk<PrivacyGate>(relaxed = true), timeProvider = mockk<TimeProvider>(relaxed = true))
 
         val result = service.searchMultiple(query = "coffee", biasLat = null, biasLon = null, limit = 5)
 
@@ -71,7 +73,8 @@ class GeocodingRetryHttpSemanticsTest {
         every { keyStorage.getKey(SecureKeyStorage.KEY_GEOAPIFY) } returns "test-geoapify-key"
         val service = GeoapifyGeocodingService(
             secureKeyStorage = keyStorage,
-            client = rateLimitedClient(attempts)
+            client = rateLimitedClient(attempts),
+            privacyGate = mockk<PrivacyGate>(relaxed = true)
         )
 
         val result = service.searchMultiple(query = "coffee", biasLat = null, biasLon = null, limit = 5)
@@ -86,7 +89,8 @@ class GeocodingRetryHttpSemanticsTest {
         every { keyStorage.getKey(SecureKeyStorage.KEY_GOOGLE_PLACES) } returns "test-google-key"
         val service = GooglePlacesGeocodingService(
             secureKeyStorage = keyStorage,
-            client = rateLimitedClient(attempts)
+            client = rateLimitedClient(attempts),
+            privacyGate = mockk<PrivacyGate>(relaxed = true)
         )
 
         val result = service.searchMultiple(query = "coffee", biasLat = null, biasLon = null, limit = 5)

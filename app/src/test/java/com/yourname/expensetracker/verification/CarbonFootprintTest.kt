@@ -18,7 +18,7 @@ class CarbonFootprintTest : AnalyticsEngineTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
-        calculator = CarbonFootprintCalculator(expenseDao)
+        calculator = CarbonFootprintCalculator(expenseDao, currencySettingsRepository = mock(), analyticsCurrencyNormalizer = mock(), timeProvider = mock())
     }
 
     @Test

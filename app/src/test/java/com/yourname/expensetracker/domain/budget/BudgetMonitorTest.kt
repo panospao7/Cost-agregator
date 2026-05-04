@@ -171,7 +171,8 @@ class BudgetMonitorTest {
             percentUsed = percentUsed,
             healthStatus = BudgetHealthStatus.WARNING,
             periodStart = periodStart,
-            periodEnd = periodStart + (7L * 24L * 60L * 60L * 1000L)
+            periodEnd = periodStart + (7L * 24L * 60L * 60L * 1000L),
+            effectiveLimit = 0.0
         )
     }
 

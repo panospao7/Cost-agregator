@@ -135,11 +135,11 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
         val directionDetector = TransferDirectionDetector()
 
         parserRegistry = AppParserRegistry(
-            greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner),
+            greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner, homeCurrency = "EUR"),
             revolutParser = RevolutParser(currencyNormalizer, merchantCleaner),
             smsParser = SmsParser(currencyNormalizer, merchantCleaner),
             googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
-            genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector),
+            genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = mock()),
             aiFallbackParser = object : NotificationFallbackParser {
                 override suspend fun parse(
                     title: String?,
@@ -148,6 +148,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
                     packageName: String
                 ) = null
             }
+        timeProvider = mock(),
         )
 
         val context = mockk<Context>(relaxed = true)
@@ -194,7 +195,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             canonicalizer = MerchantCanonicalizer(),
             greeklishNormalizer = greeklishNormalizer,
             semanticMatcher = SemanticKeywordMatcher(greeklishNormalizer),
-            contextEngine = ContextualInferenceEngine()
+            contextEngine = ContextualInferenceEngine(, timeProvider = mock())
         )
 
         classifier = HybridExpenseClassifier(
@@ -231,7 +232,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             recurringExpenseEngine = recurringExpenseEngine,
             timeProvider = timeProvider,
             spendingPaceCalculator = SpendingPaceCalculator(timeProvider),
-            anomalyDetector = AnomalyDetector(),
+            anomalyDetector = AnomalyDetector(, timeProvider = mock()),
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
@@ -329,7 +330,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             ): GroupExpenseCreationResult = GroupExpenseCreationResult.Error("Not needed in this test")
         }
 
-        val sharedExpenseManager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, testDispatcher)
+        val sharedExpenseManager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, testDispatcher, ioDispatcher = Unconfined)
 
         val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
         val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
@@ -347,10 +348,12 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
                 expenseRepository = expenseRepository,
                 sharedExpenseManager = sharedExpenseManager,
                 timeProvider = timeProvider
+                currencyConverter = mock(),
             ),
             timeBoundaryTicker = com.yourname.expensetracker.domain.util.TimeBoundaryTicker(timeProvider),
             currencyConverter = currencyConverter,
             currencySettingsRepository = currencySettingsRepository
+        currencySettingsRepository = mock(),
         )
 
         val savingsGoalDao = mockk<SavingsGoalDao>(relaxed = true)
@@ -363,17 +366,19 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
         val promptStateRepository = PromptStateRepository(promptStateDao, timeProvider)
 
         val lifestyleSavingsPromptUseCase = LifestyleSavingsPromptUseCase(
-            lifestyleInflationDetector = LifestyleInflationDetector(expenseDao),
+            lifestyleInflationDetector = LifestyleInflationDetector(expenseDao, timeProvider = mock()),
             savingsGoalRepository = savingsGoalRepository,
             promptStateRepository = promptStateRepository,
             timeProvider = timeProvider
+        ioDispatcher = Unconfined,
         )
 
-        val historicalDistribution = HistoricalSpendingDistribution(expenseRepository, timeProvider)
+        val historicalDistribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer = mock(), currencySettingsRepository = mock())
         val monteCarloSimulator = MonteCarloSpendingSimulator(
             historicalDistribution = historicalDistribution,
             dataQualityAssessor = DataQualityAssessor(),
             timeProvider = timeProvider
+        multiCurrencyRepository = mock(),
         )
 
         val computeMoneyRadarUseCase = ComputeMoneyRadarUseCase(
@@ -384,6 +389,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             expenseRepository = expenseRepository,
             budgetRepository = budgetRepository,
             timeProvider = timeProvider
+            recurringPatternsProvider = mock(),
         )
 
         val healthScoreV2 = FinancialHealthScoreV2(
@@ -395,6 +401,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository
+        anomalyAlertRepository = mock(),
         )
 
         val synthesisEngine = SynthesisEngine(timeProvider)
@@ -405,6 +412,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             expenseRepository = expenseRepository,
             budgetRepository = budgetRepository,
             timeProvider = timeProvider
+            recurringPatternsProvider = mock(),
         )
 
         dashboardUseCase = ComputeDashboardWidgetsUseCase(
@@ -417,6 +425,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
             stressForecastEngine = stressForecastEngine
+        analyticsCurrencyNormalizer = mock(),
         )
     }
 
@@ -428,6 +437,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             bigText = null,
             subText = null,
             packageName = "com.revolut.revolut"
+        currencySettingsRepository = mock(),
         )
 
         assertNotNull(parsed)
@@ -439,6 +449,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             notificationTitle = "Paid €45.30 at Lidl",
             notificationText = "Paid €45.30 at Lidl",
             packageName = "com.revolut.revolut"
+        multiCurrencyRepository = mock(),
         )
         assertEquals(2L, classification.categoryId)
         assertEquals(MatchType.RULE_MATCH, classification.matchType)

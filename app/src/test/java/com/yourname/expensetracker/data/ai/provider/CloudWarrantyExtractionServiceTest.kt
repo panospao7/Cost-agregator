@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionInput
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
@@ -36,7 +37,8 @@ class CloudWarrantyExtractionServiceTest {
     fun `extractWarranty returns null when API key is missing`() {
         val service = CloudWarrantyExtractionService(
             secureKeyStorage = createMockKeyStorage(apiKey = ""),
-            client = OkHttpClient()
+            client = OkHttpClient(),
+            privacyGate = mockk<PrivacyGate>(relaxed = true)
         )
 
         val result = runBlocking {
@@ -78,7 +80,8 @@ class CloudWarrantyExtractionServiceTest {
 
         val service = CloudWarrantyExtractionService(
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
-            client = client
+            client = client,
+            privacyGate = mockk<PrivacyGate>(relaxed = true)
         )
 
         val result = runBlocking {
@@ -127,7 +130,8 @@ class CloudWarrantyExtractionServiceTest {
 
         val service = CloudWarrantyExtractionService(
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
-            client = client
+            client = client,
+            privacyGate = mockk<PrivacyGate>(relaxed = true)
         )
 
         val result = runBlocking {
@@ -169,7 +173,8 @@ class CloudWarrantyExtractionServiceTest {
 
         val service = CloudWarrantyExtractionService(
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
-            client = client
+            client = client,
+            privacyGate = mockk<PrivacyGate>(relaxed = true)
         )
 
         val result = runBlocking {

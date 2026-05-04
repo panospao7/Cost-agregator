@@ -71,6 +71,7 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository
+            cashFlowCalculator = mock(),
         )
     }
 
@@ -268,6 +269,7 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = periodStart,
             periodEnd = periodEnd
+            effectiveLimit = 0.0,
         )
     }
 

@@ -383,7 +383,8 @@ class RecommendationRepositoryTest {
             priority = priority,
             category = category,
             sourceArtifactId = "",
-            status = status
+            status = status,
+            expiresAt = 0L,
         )
     }
 

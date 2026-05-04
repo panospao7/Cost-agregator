@@ -12,7 +12,7 @@ import org.junit.Test
 class GreekBankParserStressTest {
     private val parser = GreekBankParser(
         currencyNormalizer = CurrencyNormalizer(),
-        merchantCleaner = MerchantCleaner()
+        merchantCleaner = MerchantCleaner(, homeCurrency = "EUR")
     )
 
     @Test

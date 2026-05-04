@@ -74,7 +74,7 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
             recurringExpenseEngine = recurringExpenseEngine,
             timeProvider = timeProvider,
             spendingPaceCalculator = SpendingPaceCalculator(timeProvider),
-            anomalyDetector = AnomalyDetector(),
+            anomalyDetector = AnomalyDetector(, timeProvider = mock()),
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),

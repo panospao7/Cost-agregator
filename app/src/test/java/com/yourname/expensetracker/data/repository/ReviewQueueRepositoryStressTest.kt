@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -81,18 +82,16 @@ class ReviewQueueRepositoryStressTest {
             rawNotificationDao = rawNotificationDao,
             expenseDao = expenseDao,
             sourceStatsDao = sourceStatsDao,
-            scannedReceiptDao = scannedReceiptDao,
             userCorrectionDao = userCorrectionDao,
-            merchantCategoryRepository = merchantCategoryRepository,
             merchantNormalizer = merchantNormalizer,
             hybridClassifier = hybridClassifier,
             classifier = classifier,
             budgetMonitor = budgetMonitor,
-            anomalyAlertOrchestrator = anomalyAlertOrchestrator,
             parserRegistry = parserRegistry,
             timeProvider = timeProvider,
             confidenceRouter = confidenceRouter,
-            transactionLifecycleCoordinator = transactionLifecycleCoordinator
+            transactionLifecycleCoordinator = transactionLifecycleCoordinator,
+            receiptLinkService = mockk<ReceiptLinkService>(relaxed = true),
         )
     }
 

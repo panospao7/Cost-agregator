@@ -9,7 +9,7 @@ import com.yourname.expensetracker.data.repository.MerchantRulesRepository
 
 class GreekNormalizationTest {
 
-    private val parser = ReceiptParser(MerchantRulesRepository())
+    private val parser = ReceiptParser(MerchantRulesRepository(), timeProvider = mock())
     private val normalizeMethod: Method = ReceiptParser::class.java.getDeclaredMethod("normalizeGreekOcr", String::class.java)
 
     init {

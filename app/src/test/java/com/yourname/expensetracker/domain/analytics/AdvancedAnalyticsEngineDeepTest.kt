@@ -60,7 +60,7 @@ class AdvancedAnalyticsEngineDeepTest {
         coEvery { categoryRepository.getAll() } returns listOf(food)
         every { categoryRepository.allCategories } returns flowOf(listOf(food))
         coEvery { budgetRepository.getActiveBudgetSnapshots() } returns listOf(
-            BudgetSnapshot(categoryId = 1L, amount = 1000.0)
+            BudgetSnapshot(categoryId = 1L, amount = 1000.0, currency = "EUR")
         )
     }
 
@@ -78,7 +78,7 @@ class AdvancedAnalyticsEngineDeepTest {
         coEvery { expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) } returns current
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns current
 
-        val result = engine.getCategoryAnalytics(period).first()
+        val result = engine.getCategoryAnalytics(period).first(, displayCurrency = "EUR")
 
         assertApproxEquals(100.0, result.totalSpent)
         assertApproxEquals(25.0, result.averagePerTransaction)
@@ -106,7 +106,7 @@ class AdvancedAnalyticsEngineDeepTest {
         coEvery { expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) } returns current
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns current
 
-        val result = engine.getCategoryAnalytics(period).first()
+        val result = engine.getCategoryAnalytics(period).first(, displayCurrency = "EUR")
 
         assertFalse(result.sparklineData.isEmpty())
         // Apr 1..Apr 20 inclusive => 20 points when current day is included.
@@ -133,7 +133,7 @@ class AdvancedAnalyticsEngineDeepTest {
         coEvery { expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) } returns current
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns current
 
-        val result = engine.getCategoryAnalytics(period).first()
+        val result = engine.getCategoryAnalytics(period).first(, displayCurrency = "EUR")
 
         // Apr 1..Apr 9 inclusive => 9 points; no implicit extension to Apr 20.
         assertEquals(9, result.sparklineData.size)
@@ -159,7 +159,7 @@ class AdvancedAnalyticsEngineDeepTest {
         coEvery { expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) } returns current
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns current
 
-        val result = engine.getCategoryAnalytics(period).first()
+        val result = engine.getCategoryAnalytics(period).first(, displayCurrency = "EUR")
 
         // Apr 25..May 4 inclusive => 10 points; no inclusion of Apr 20.
         assertEquals(10, result.sparklineData.size)
@@ -177,7 +177,7 @@ class AdvancedAnalyticsEngineDeepTest {
         ).map { it.toSnapshot() }
         coEvery { expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) } returns expenses
 
-        val stats = engine.getStatisticalInsights(period)
+        val stats = engine.getStatisticalInsights(period, displayCurrency = "EUR")
 
         // mean=25, sample stddev=sqrt(500/3)=12.9099
         assertApproxEquals(25.0, stats.meanTransaction)
@@ -201,7 +201,7 @@ class AdvancedAnalyticsEngineDeepTest {
         ).map { it.toSnapshot() }
         coEvery { expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) } returns expenses
 
-        val stats = engine.getStatisticalInsights(period)
+        val stats = engine.getStatisticalInsights(period, displayCurrency = "EUR")
         val totalCount = stats.histogramBins.sumOf { it.count }
 
         assertEquals(3, totalCount)
@@ -221,7 +221,7 @@ class AdvancedAnalyticsEngineDeepTest {
         )
         coEvery { expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) } returns expenses
 
-        val patterns = engine.getSpendingPatterns(period)
+        val patterns = engine.getSpendingPatterns(period, displayCurrency = "EUR")
 
         assertApproxEquals(20.0, patterns.dayOfWeekStats[0]?.totalSpent ?: 0.0)
         assertApproxEquals(20.0, patterns.weekendVsWeekday.weekdayTotal)
@@ -289,8 +289,8 @@ class AdvancedAnalyticsEngineDeepTest {
         coEvery { expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) } returns emptyList()
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
 
-        val patterns = engine.getSpendingPatterns(period)
-        val stats = engine.getStatisticalInsights(period)
+        val patterns = engine.getSpendingPatterns(period, displayCurrency = "EUR")
+        val stats = engine.getStatisticalInsights(period, displayCurrency = "EUR")
 
         assertTrue(patterns.dayOfWeekStats.isEmpty())
         assertEquals(0, stats.daysWithSpending)

@@ -26,7 +26,7 @@ class CarbonFootprintCalculatorTest {
     @Before
     fun setup() {
         every { timeProvider.now() } returns 1_700_000_000_000L
-        calculator = CarbonFootprintCalculator(expenseDao, timeProvider)
+        calculator = CarbonFootprintCalculator(expenseDao, timeProvider, currencySettingsRepository = mock(), analyticsCurrencyNormalizer = mock())
     }
 
     @Test

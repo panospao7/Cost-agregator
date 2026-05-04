@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRe
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -64,7 +65,8 @@ class DailyBriefingWorkerTest {
                         dashboardDataProvider,
                         analyticsRepository,
                         deliverProactiveBriefingNotificationUseCase,
-                        timeProvider
+                        timeProvider,
+                        privacyGate = mock(),
                     )
                 }
             })

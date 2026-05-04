@@ -27,7 +27,7 @@ class DailyAverageFlowTest : ViewModelTestUtils() {
         val daoExpenses = pipeline.expenseDao.getExpensesBetween(period.startMs, period.endMs)
         assertEquals(30, daoExpenses.size)
 
-        val stats = pipeline.advancedAnalyticsEngine.getStatisticalInsights(period)
+        val stats = pipeline.advancedAnalyticsEngine.getStatisticalInsights(period, displayCurrency = "EUR")
         val engineAverage = stats.averageDailySpend
 
         val vmState = pipeline.awaitViewModelState(testDispatcher)
@@ -41,7 +41,7 @@ class DailyAverageFlowTest : ViewModelTestUtils() {
                 comparisonRange = null
             )
             pipeline.advancedAnalyticsEngine
-                .getStatisticalInsights(vmPeriod)
+                .getStatisticalInsights(vmPeriod, displayCurrency = "EUR")
                 .averageDailySpend
         } else {
             -1.0

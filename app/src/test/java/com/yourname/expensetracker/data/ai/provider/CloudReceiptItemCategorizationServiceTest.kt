@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.CloudCategoryOption
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
@@ -87,7 +88,7 @@ class CloudReceiptItemCategorizationServiceTest {
             }
             .build()
 
-        val service = CloudReceiptItemCategorizationService(keyStorage, client)
+        val service = CloudReceiptItemCategorizationService(keyStorage, client, mockk<PrivacyGate>(relaxed = true))
 
         val input = ReceiptItemCategorizationInput(
             receiptId = 1L,
@@ -153,7 +154,8 @@ class CloudReceiptItemCategorizationServiceTest {
 
         val service = CloudReceiptItemCategorizationService(
             keyStorage,
-            clientRespondingWithModelText(modelText)
+            clientRespondingWithModelText(modelText),
+            mockk<PrivacyGate>(relaxed = true)
         )
 
         val result = service.categorizeItems(defaultInput(cloudCategoryOptions = emptyList()))
@@ -190,7 +192,8 @@ class CloudReceiptItemCategorizationServiceTest {
 
         val service = CloudReceiptItemCategorizationService(
             keyStorage,
-            clientRespondingWithModelText(modelText)
+            clientRespondingWithModelText(modelText),
+            mockk<PrivacyGate>(relaxed = true)
         )
 
         val result = service.categorizeItems(defaultInput(cloudCategoryOptions = emptyList()))

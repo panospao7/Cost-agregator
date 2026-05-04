@@ -15,7 +15,7 @@ import java.util.Calendar
 
 class AnomalyDetectorTest {
 
-    private val detector = AnomalyDetector()
+    private val detector = AnomalyDetector(mockk(relaxed = true))
 
     @Test
     fun `shared expenses use effective amount for anomaly detection`() {

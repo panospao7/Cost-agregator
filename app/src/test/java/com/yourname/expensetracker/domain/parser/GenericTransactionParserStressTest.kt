@@ -12,7 +12,7 @@ class GenericTransactionParserStressTest {
     private val parser = GenericTransactionParser(
         currencyNormalizer = CurrencyNormalizer(),
         merchantCleaner = MerchantCleaner(),
-        directionDetector = TransferDirectionDetector()
+        directionDetector = TransferDirectionDetector(, timeProvider = mock())
     )
 
     @Test

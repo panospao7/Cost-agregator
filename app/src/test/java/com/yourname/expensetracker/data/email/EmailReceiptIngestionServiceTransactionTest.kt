@@ -11,6 +11,9 @@ import com.yourname.expensetracker.domain.intelligence.ml.MatchType as MerchantM
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.usecase.receipt.ProcessReceiptUseCase
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
@@ -48,10 +51,12 @@ class EmailReceiptIngestionServiceTransactionTest {
             processReceiptUseCase = processReceiptUseCase,
             expenseDao = database.expenseDao(),
             emailReceiptDao = database.emailReceiptDao(),
-            scannedReceiptDao = database.scannedReceiptDao(),
+            receiptLifecycleCoordinator = mockk<ReceiptLifecycleCoordinator>(relaxed = true),
+            receiptLinkService = mockk<ReceiptLinkService>(relaxed = true),
             merchantNormalizer = merchantNormalizer,
             categorizationEngine = categorizationEngine,
             timeProvider = timeProvider,
+            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
             database = database
         )
 

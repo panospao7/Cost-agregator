@@ -93,10 +93,10 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
             label = "Test",
             comparisonRange = null
         )
-        coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any()) } returns emptyList()
+        coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any()) } returns emptyList(, displayCurrency = "EUR")
         coEvery { advancedAnalyticsEngine.getMerchantAnalytics(any(), any()) } returns emptyList()
-        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any()) } throws RuntimeException("test")
-        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any()) } throws RuntimeException("test")
+        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any()) } throws RuntimeException("test", displayCurrency = "EUR")
+        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any()) } throws RuntimeException("test", displayCurrency = "EUR")
         every { locationInsightsEngine.compute(any()) } returns emptyList()
         every { areaSpendingEngine.compute(any()) } returns emptyList()
         every { travelDetectionEngine.compute(any()) } returns com.yourname.expensetracker.domain.location.TravelInsight(

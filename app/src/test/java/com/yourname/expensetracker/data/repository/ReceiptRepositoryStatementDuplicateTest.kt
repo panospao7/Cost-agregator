@@ -24,6 +24,7 @@ import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.usecase.warranty.AutoCreateWarrantyFromReceiptUseCase
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -114,7 +115,8 @@ class ReceiptRepositoryStatementDuplicateTest {
             debugIssueDetector = debugIssueDetector,
             ioDispatcher = Dispatchers.Unconfined,
             timeProvider = timeProvider,
-            warrantyUseCase = warrantyUseCase
+            warrantyUseCase = warrantyUseCase,
+            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
         )
     }
 

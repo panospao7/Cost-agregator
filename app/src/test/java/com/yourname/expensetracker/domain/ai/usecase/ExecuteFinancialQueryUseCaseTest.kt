@@ -34,7 +34,7 @@ class ExecuteFinancialQueryUseCaseTest {
     fun setup() {
         expenseRepository = mockk(relaxed = true)
         categoryRepository = mockk(relaxed = true)
-        useCase = ExecuteFinancialQueryUseCase(expenseRepository, categoryRepository)
+        useCase = ExecuteFinancialQueryUseCase(expenseRepository, categoryRepository, currencySettingsRepository = mock(), currencyConverter = mock())
     }
 
     @Test

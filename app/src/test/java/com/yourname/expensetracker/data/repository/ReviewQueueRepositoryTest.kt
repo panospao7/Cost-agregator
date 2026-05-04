@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
@@ -31,6 +32,7 @@ class ReviewQueueRepositoryTest {
     private val rawNotificationDao = mockk<RawNotificationDao>(relaxed = true)
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
     private val sourceStatsDao = mockk<SourceStatsDao>(relaxed = true)
+    private val receiptLinkService = mockk<ReceiptLinkService>(relaxed = true)
     private val scannedReceiptDao = mockk<ScannedReceiptDao>(relaxed = true)
     private val userCorrectionDao = mockk<UserCorrectionDao>(relaxed = true)
     private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
@@ -61,18 +63,16 @@ class ReviewQueueRepositoryTest {
             rawNotificationDao = rawNotificationDao,
             expenseDao = expenseDao,
             sourceStatsDao = sourceStatsDao,
-            scannedReceiptDao = scannedReceiptDao,
+            receiptLinkService = mockk<ReceiptLinkService>(relaxed = true),
             userCorrectionDao = userCorrectionDao,
-            merchantCategoryRepository = merchantCategoryRepository,
             merchantNormalizer = merchantNormalizer,
             hybridClassifier = hybridClassifier,
             classifier = classifier,
             budgetMonitor = budgetMonitor,
-            anomalyAlertOrchestrator = anomalyAlertOrchestrator,
             parserRegistry = parserRegistry,
             timeProvider = timeProvider,
             confidenceRouter = confidenceRouter,
-            transactionLifecycleCoordinator = transactionLifecycleCoordinator
+            transactionLifecycleCoordinator = transactionLifecycleCoordinator,
         )
     }
 

@@ -101,8 +101,6 @@ class NotificationProcessingPipelineReliabilityTest {
         merchantNormalizer = merchantNormalizer,
         hybridClassifier = hybridClassifier,
         classifier = classifier,
-        budgetMonitor = budgetMonitor,
-        anomalyAlertOrchestrator = anomalyAlertOrchestrator,
         timeProvider = timeProvider,
         directionDetector = directionDetector,
         analytics = analytics,
@@ -112,6 +110,7 @@ class NotificationProcessingPipelineReliabilityTest {
         dashboardFollowThroughEngine = dashboardFollowThroughEngine,
         recommendationRepository = recommendationRepository,
         subscriptionDetector = subscriptionDetector,
+        coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
         applicationScope = applicationScope
     )
 
@@ -169,7 +168,8 @@ class NotificationProcessingPipelineReliabilityTest {
                 packageName = notification.packageName,
                 timestamp = notification.timestamp,
                 title = notification.title,
-                text = notification.text
+                text = notification.text,
+                bigText = "",
             )
         } returns true
 
@@ -181,7 +181,8 @@ class NotificationProcessingPipelineReliabilityTest {
                 packageName = notification.packageName,
                 timestamp = notification.timestamp,
                 title = notification.title,
-                text = notification.text
+                text = notification.text,
+                bigText = "",
             )
         }
         coVerify(exactly = 0) { rawDao.insertOrIgnore(any()) }
@@ -207,7 +208,8 @@ class NotificationProcessingPipelineReliabilityTest {
                 packageName = notification.packageName,
                 timestamp = notification.timestamp,
                 title = notification.title,
-                text = notification.text
+                text = notification.text,
+                bigText = "",
             )
         } returns false
         coEvery { rawDao.insertOrIgnore(notification) } returns 42L
@@ -220,7 +222,8 @@ class NotificationProcessingPipelineReliabilityTest {
                 packageName = notification.packageName,
                 timestamp = notification.timestamp,
                 title = notification.title,
-                text = notification.text
+                text = notification.text,
+                bigText = "",
             )
             rawDao.insertOrIgnore(notification)
         }
@@ -384,7 +387,8 @@ class NotificationProcessingPipelineReliabilityTest {
                 packageName = notification.packageName,
                 timestamp = notification.timestamp,
                 title = notification.title,
-                text = notification.text
+                text = notification.text,
+                bigText = "",
             )
         } returns false
         coEvery {
@@ -497,6 +501,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification1.timestamp,
                 title = notification1.title,
                 text = notification1.text
+                bigText = "",
             )
         } returns false
         coEvery {
@@ -505,6 +510,7 @@ class NotificationProcessingPipelineReliabilityTest {
                 timestamp = notification2.timestamp,
                 title = notification2.title,
                 text = notification2.text
+                bigText = "",
             )
         } returns false
         coEvery { rawDao.insertOrIgnore(notification1) } returns 1L
@@ -580,7 +586,8 @@ class NotificationProcessingPipelineReliabilityTest {
                 packageName = notification.packageName,
                 timestamp = notification.timestamp,
                 title = notification.title,
-                text = notification.text
+                text = notification.text,
+                bigText = "",
             )
         } returns false
         coEvery { rawDao.insertOrIgnore(notification) } returns 50L
@@ -640,7 +647,8 @@ class NotificationProcessingPipelineReliabilityTest {
                 packageName = notification.packageName,
                 timestamp = notification.timestamp,
                 title = notification.title,
-                text = notification.text
+                text = notification.text,
+                bigText = "",
             )
         } returns false
         coEvery { rawDao.insertOrIgnore(notification) } returns 51L
@@ -700,7 +708,8 @@ class NotificationProcessingPipelineReliabilityTest {
                 packageName = notification.packageName,
                 timestamp = notification.timestamp,
                 title = notification.title,
-                text = notification.text
+                text = notification.text,
+                bigText = "",
             )
         } returns false
         coEvery { rawDao.insertOrIgnore(notification) } returns 55L
@@ -771,7 +780,8 @@ class NotificationProcessingPipelineReliabilityTest {
                 packageName = notification.packageName,
                 timestamp = notification.timestamp,
                 title = notification.title,
-                text = notification.text
+                text = notification.text,
+                bigText = "",
             )
         } returns false
         coEvery { rawDao.insertOrIgnore(notification) } returns 56L

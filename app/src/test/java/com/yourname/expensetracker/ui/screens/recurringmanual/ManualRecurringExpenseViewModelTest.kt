@@ -34,7 +34,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
         super.setup()
         every { timeProvider.now() } returns fixedNow
         coEvery { recurringExpenseRepository.getAll() } returns emptyList()
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider)
+        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mock())
     }
 
     @Test
@@ -59,7 +59,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
         )
         coEvery { recurringExpenseRepository.getAll() } returns expenses
 
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider)
+        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mock())
         advanceUntilIdle()
 
         viewModel.uiState.test {
@@ -87,7 +87,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
         coEvery { recurringExpenseRepository.getAll() } returnsMany listOf(emptyList(), listOf(added))
         coEvery { recurringExpenseRepository.insert(any()) } returns 10L
 
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider)
+        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mock())
         advanceUntilIdle()
 
         viewModel.uiState.test {
@@ -133,7 +133,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
             listOf(inactiveExpense)
         )
 
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider)
+        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mock())
         advanceUntilIdle()
 
         viewModel.uiState.test {
@@ -180,7 +180,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
             listOf(remaining)
         )
 
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider)
+        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mock())
         advanceUntilIdle()
 
         viewModel.uiState.test {

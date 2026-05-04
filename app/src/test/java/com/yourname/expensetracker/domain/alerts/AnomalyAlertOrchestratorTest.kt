@@ -376,6 +376,7 @@ class AnomalyAlertOrchestratorTest {
         category = null,
         detectionMethod = method,
         categoryAvg = 20.0
+        displayCurrency = "EUR",
     )
 
     private fun previousAlert(

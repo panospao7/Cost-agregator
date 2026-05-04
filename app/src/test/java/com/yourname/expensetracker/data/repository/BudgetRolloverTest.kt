@@ -77,7 +77,8 @@ class BudgetRolloverTest {
             offsetEngine,
             TimeBoundaryTicker(timeProvider),
             currencyConverter,
-            currencySettingsRepository
+            currencySettingsRepository,
+            multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
         )
     }
 
@@ -356,6 +357,7 @@ class BudgetRolloverTest {
             budgetDao, categoryDao, expenseDao, calc,
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
             currencyConverter, currencySettingsRepository
+            multiCurrencyRepository = mock(),
         )
 
         // Budget: anchor 2025-01-31, monthly, amount €1 000, rollover = true

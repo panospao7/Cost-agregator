@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.ai.provider
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationInput
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import io.mockk.every
 import io.mockk.mockk
 import okhttp3.Call
@@ -79,7 +80,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(any()) } returns mockCall
         every { mockCall.execute() } returns response
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient)
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
 
         val result = kotlinx.coroutines.runBlocking {
             service.interpret(
@@ -131,7 +132,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(any()) } returns mockCall
         every { mockCall.execute() } returns response
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient)
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
 
         val result = kotlinx.coroutines.runBlocking {
             service.interpret(
@@ -184,7 +185,7 @@ class CloudQueryInterpretationServiceTest {
         every { mockClient.newCall(capture(capturedRequests)) } returns mockCall
         every { mockCall.execute() } returns response
 
-        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient)
+        val service = CloudQueryInterpretationService(mockKeyStorage, mockClient, mockk<PrivacyGate>(relaxed = true))
 
         kotlinx.coroutines.runBlocking {
             service.interpret(

@@ -8,7 +8,7 @@ import org.junit.Test
 
 class SettlementCalculatorTest {
 
-    private val calculator = SettlementCalculator()
+    private val calculator = SettlementCalculator(, currencySettingsRepository = mock())
 
     @Test
     fun `crash test 4_6 triangle debt yields two transactions totaling 50`() {
@@ -77,14 +77,16 @@ class SettlementCalculatorTest {
                 fromMemberName = "B",
                 toMemberId = 1L,
                 toMemberName = "A",
-                amount = 30.0
+                amount = 30.0,
+                currency = "EUR"
             ),
             Settlement(
                 fromMemberId = 3L,
                 fromMemberName = "C",
                 toMemberId = 1L,
                 toMemberName = "A",
-                amount = 20.0
+                amount = 20.0,
+                currency = "EUR"
             )
         )
 
@@ -105,7 +107,8 @@ class SettlementCalculatorTest {
                 toMemberId = 1L,
                 toMemberName = "A",
                 amount = 10.0,
-                usedGreedyFallback = true
+                usedGreedyFallback = true,
+                currency = "EUR"
             )
         )
 
@@ -137,7 +140,8 @@ class SettlementCalculatorTest {
             memberName = name,
             paid = paid,
             shouldPay = shouldPay,
-            netBalance = net
+            netBalance = net,
+            currency = "EUR"
         )
     }
 }

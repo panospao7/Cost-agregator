@@ -12,6 +12,7 @@ class NaturalLanguageSearchEngineVoiceInputTest {
         val engine = NaturalLanguageSearchEngine(
             expenseQueryRepository = FakeNaturalLanguageExpenseQueryRepository(),
             speechInputGateway = speechGateway
+            currencyConverter = mock(),
         )
 
         var receivedResult: String? = null
@@ -28,6 +29,7 @@ class NaturalLanguageSearchEngineVoiceInputTest {
         val engine = NaturalLanguageSearchEngine(
             expenseQueryRepository = FakeNaturalLanguageExpenseQueryRepository(),
             speechInputGateway = speechGateway
+            currencySettingsRepository = mock(),
         )
 
         var receivedError: SpeechInputError? = null
@@ -44,6 +46,7 @@ class NaturalLanguageSearchEngineVoiceInputTest {
         val engine = NaturalLanguageSearchEngine(
             expenseQueryRepository = FakeNaturalLanguageExpenseQueryRepository(),
             speechInputGateway = speechGateway
+            timeProvider = mock(),
         )
 
         engine.startVoiceInput(onResult = {})

@@ -125,7 +125,7 @@ internal fun buildPipeline(
         transactionLifecycleCoordinator = transactionLifecycleCoordinator
     )
 
-    val analyticsRepository = AnalyticsRepository(expenseDao, categoryRepository, currencySettingsRepository)
+    val analyticsRepository = AnalyticsRepository(expenseDao, categoryRepository, currencySettingsRepository, analyticsCurrencyNormalizer = mock(), multiCurrencyRepository = mock())
     val spendingPersonalityClassifier = mockk<SpendingPersonalityClassifier>(relaxed = true)
 
     val insightsEngine = InsightsEngine(
@@ -133,7 +133,7 @@ internal fun buildPipeline(
         recurringExpenseEngine = recurringExpenseEngine,
         timeProvider = timeProvider,
         spendingPaceCalculator = SpendingPaceCalculator(timeProvider),
-        anomalyDetector = AnomalyDetector(),
+        anomalyDetector = AnomalyDetector(, timeProvider = mock()),
         monthlyComparisonCalculator = MonthlyComparisonCalculator(),
         categoryInsightEngine = CategoryInsightEngine(),
         merchantInsightEngine = MerchantInsightEngine(),

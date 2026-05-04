@@ -15,6 +15,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
@@ -221,7 +222,8 @@ class CloudReceiptAssistServiceTest {
         val service = CloudReceiptAssistService(
             aiSettingsRepository = settingsRepository,
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
-            client = client
+            client = client,
+            privacyGate = mockk<PrivacyGate>(relaxed = true)
         )
 
         val result = kotlinx.coroutines.runBlocking {

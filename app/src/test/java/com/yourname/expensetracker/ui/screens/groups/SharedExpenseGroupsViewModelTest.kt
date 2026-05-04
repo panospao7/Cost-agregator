@@ -411,6 +411,7 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
             deleteGroupUseCase = deleteGroupUseCase,
             manualExpenseRepository = manualExpenseRepository,
             expenseRepository = expenseRepository
+            currencySettingsRepository = mock(),
         )
     }
 

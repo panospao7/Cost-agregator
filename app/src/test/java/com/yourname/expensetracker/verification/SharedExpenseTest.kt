@@ -32,8 +32,8 @@ class SharedExpenseTest {
     @Before
     fun setUp() {
         coEvery { sharedExpenseDataPort.getGroupOnce(any()) } returns null
-        manager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, Dispatchers.Unconfined)
-        settlementCalculator = SettlementCalculator()
+        manager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, Dispatchers.Unconfined, ioDispatcher = Unconfined)
+        settlementCalculator = SettlementCalculator(, currencySettingsRepository = mock())
     }
 
     @Test
@@ -107,11 +107,11 @@ class SharedExpenseTest {
     @Test
     fun `settlement solver finds exact global minimum transfers`() {
         val balances = mapOf(
-            1L to MemberBalance(1L, "A", paid = 0.0, shouldPay = 0.0, netBalance = -6.0),
-            2L to MemberBalance(2L, "B", paid = 0.0, shouldPay = 0.0, netBalance = -5.0),
-            3L to MemberBalance(3L, "C", paid = 0.0, shouldPay = 0.0, netBalance = 1.0),
-            4L to MemberBalance(4L, "D", paid = 0.0, shouldPay = 0.0, netBalance = 5.0),
-            5L to MemberBalance(5L, "E", paid = 0.0, shouldPay = 0.0, netBalance = 5.0)
+            1L to MemberBalance(1L, "A", paid = 0.0, shouldPay = 0.0, netBalance = -6.0, currency = "EUR"),
+            2L to MemberBalance(2L, "B", paid = 0.0, shouldPay = 0.0, netBalance = -5.0, currency = "EUR"),
+            3L to MemberBalance(3L, "C", paid = 0.0, shouldPay = 0.0, netBalance = 1.0, currency = "EUR"),
+            4L to MemberBalance(4L, "D", paid = 0.0, shouldPay = 0.0, netBalance = 5.0, currency = "EUR"),
+            5L to MemberBalance(5L, "E", paid = 0.0, shouldPay = 0.0, netBalance = 5.0, currency = "EUR")
         )
 
         val settlements = settlementCalculator.calculateSettlements(balances)
@@ -332,6 +332,7 @@ class SharedExpenseTest {
         totalAmount = total,
         splitType = splitType,
         customSplitsSerialized = customSplits
+        currency = "EUR",
     )
 
     private val members3 = listOf(

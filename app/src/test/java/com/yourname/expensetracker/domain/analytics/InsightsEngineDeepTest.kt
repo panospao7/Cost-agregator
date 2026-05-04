@@ -84,6 +84,7 @@ class InsightsEngineDeepTest {
             averageMonthlyTotal = null,
             pacePercentage = 333.33f,
             paceStatus = PaceStatus.OVER_PACE
+            displayCurrency = "EUR",
         )
 
         val snapshot = engine.generateInsights(categories, emptyList(), "EUR")

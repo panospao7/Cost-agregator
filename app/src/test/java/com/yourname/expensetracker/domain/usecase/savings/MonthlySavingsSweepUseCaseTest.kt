@@ -84,6 +84,7 @@ class MonthlySavingsSweepUseCaseTest {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository
+            recurringOccurrenceDao = mock(),
         )
     }
 
@@ -94,6 +95,7 @@ class MonthlySavingsSweepUseCaseTest {
                 budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 900.0), // remaining 100
                 budgetStatus(budgetId = 2L, categoryId = 1L, amount = 600.0, spent = 520.0),     // remaining 80
                 budgetStatus(budgetId = 3L, categoryId = 2L, amount = 500.0, spent = 440.0)      // remaining 60
+            currencyConverter = mock(),
             )
         )
         every { savingsGoalRepository.getAllGoals() } returns flowOf(
@@ -329,6 +331,7 @@ class MonthlySavingsSweepUseCaseTest {
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = withinWindowNow - 20 * dayMs,
             periodEnd = withinWindowNow + 10 * dayMs
+            effectiveLimit = 0.0,
         )
     }
 

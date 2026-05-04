@@ -2,7 +2,9 @@ package com.yourname.expensetracker.data.location
 
 import android.util.Log
 import com.yourname.expensetracker.data.location.internal.executeCancellable
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import io.mockk.every
+import io.mockk.mockk
 import io.mockk.mockkStatic
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -72,7 +74,7 @@ class GeocodingCancellationTest {
             }
             .build()
 
-        val service = PhotonGeocodingService(client)
+        val service = PhotonGeocodingService(client, privacyGate = mockk<PrivacyGate>(relaxed = true))
         val deferred = async {
             service.searchMultiple(query = "coffee", biasLat = null, biasLon = null, limit = 5)
         }

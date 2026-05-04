@@ -127,6 +127,7 @@ class DashboardWidgetConsistencyTest {
             monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
             stressForecastEngine = stressForecastEngine
+            forecastInputAssembler = mock(),
         )
     }
 
@@ -138,6 +139,7 @@ class DashboardWidgetConsistencyTest {
             createExpense(100.0, monthStart + 86400000),
             createExpense(200.0, monthStart + 172800000),
             createExpense(50.0, monthStart + 259200000, isSharedExpense = true, myShareAmount = 25.0)
+        multiCurrencyRepository = mock(),
         )
         val expectedMonthSpent = 100.0 + 200.0 + 25.0
 

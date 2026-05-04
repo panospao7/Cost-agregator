@@ -47,6 +47,7 @@ class AddExpenseViewModelStressTest : ViewModelTestUtils() {
             expenseRepository,
             categoryRepository,
             timeProvider
+            currencySettingsRepository = mock(),
         )
     }
 

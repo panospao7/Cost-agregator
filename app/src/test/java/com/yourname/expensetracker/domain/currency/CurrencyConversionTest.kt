@@ -22,7 +22,7 @@ class CurrencyConversionTest {
 
     @Before
     fun setup() {
-        converter = CurrencyConverter(exchangeRateStore)
+        converter = CurrencyConverter(exchangeRateStore, timeProvider = mock())
     }
 
     @Test

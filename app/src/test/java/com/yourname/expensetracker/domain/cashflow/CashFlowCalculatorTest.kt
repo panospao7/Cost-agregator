@@ -56,6 +56,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             recurringExpenseEngine = recurringExpenseEngine,
             recurringExpenseRepository = recurringExpenseRepository,
             timeProvider = timeProvider
+            recurringOccurrenceDao = mock(),
         )
     }
 
@@ -69,6 +70,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             expense(d1, 200.0, TransactionType.DEPOSIT),
             expense(d1, 40.0, TransactionType.PURCHASE),
             expense(d2, 30.0, TransactionType.PURCHASE)
+        recurringLifecycleCoordinator = mock(),
         )
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns tx
@@ -84,6 +86,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
                 nextExpectedDate = d2,
                 confidence = 1.0f,
                 previousDates = emptyList()
+            recurringPatternsProvider = mock(),
             )
         )
 

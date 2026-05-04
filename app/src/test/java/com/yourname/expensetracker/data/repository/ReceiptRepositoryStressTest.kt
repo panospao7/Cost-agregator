@@ -94,7 +94,6 @@ class ReceiptRepositoryStressTest {
             database = database,
             scannedReceiptDao = scannedReceiptDao,
             expenseDao = expenseDao,
-            merchantCategoryRepository = merchantCategoryRepository,
             pendingReviewDao = pendingReviewDao,
             ocrService = ocrService,
             receiptParser = receiptParser,
@@ -102,13 +101,14 @@ class ReceiptRepositoryStressTest {
             categorizationEngine = categorizationEngine,
             merchantNormalizer = merchantNormalizer,
             hybridClassifier = hybridClassifier,
-            budgetMonitor = budgetMonitor,
-            anomalyAlertOrchestrator = anomalyAlertOrchestrator,
             crossSourceDeduplication = crossSourceDeduplication,
             debugIssueDetector = debugIssueDetector,
             ioDispatcher = Dispatchers.Unconfined,
             timeProvider = timeProvider,
-            warrantyUseCase = warrantyUseCase
+            warrantyUseCase = warrantyUseCase,
+            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
+            receiptLinkService = mockk<ReceiptLinkService>(relaxed = true),
+            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
         )
     }
 
@@ -118,7 +118,7 @@ class ReceiptRepositoryStressTest {
         val ocrResult = OcrResult(
             fullText = "Coffee Shop\nTotal: 12.50 EUR",
             blocks = emptyList(),
-            savedImagePath = "/path/to/saved.jpg"
+            savedImagePath = "/path/to/saved.jpg",
         )
         val parsed = ReceiptParser.ParsedReceipt(
             merchantName = "Coffee Shop",
@@ -128,7 +128,7 @@ class ReceiptRepositoryStressTest {
             date = System.currentTimeMillis(),
             currency = "EUR",
             lineItems = emptyList(),
-            confidence = 0.9f
+            confidence = 0.9f,
         )
 
         coEvery { ocrService.processUri(uri) } returns ocrResult

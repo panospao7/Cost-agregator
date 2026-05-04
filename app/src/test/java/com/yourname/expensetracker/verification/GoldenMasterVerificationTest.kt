@@ -176,7 +176,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             recurringExpenseEngine = recurringExpenseEngine,
             timeProvider = timeProvider,
             spendingPaceCalculator = spendingPaceCalculator,
-            anomalyDetector = AnomalyDetector(),
+            anomalyDetector = AnomalyDetector(, timeProvider = mock()),
             monthlyComparisonCalculator = MonthlyComparisonCalculator(),
             categoryInsightEngine = CategoryInsightEngine(),
             merchantInsightEngine = MerchantInsightEngine(),
@@ -217,6 +217,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             budgetForecastDao = budgetForecastDao,
             timeProvider = timeProvider,
             ioDispatcher = Dispatchers.Unconfined
+            currencySettingsRepository = mock(),
         )
 
         monteCarloSimulator = mockk(relaxed = true)
@@ -229,6 +230,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = mockk(relaxed = true),
             cashFlowCalculator = mockk(relaxed = true)
+        currencyConverter = mock(),
         )
     }
 
@@ -240,6 +242,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             endMs = MARCH_30_END_EXCLUSIVE,
             label = "Mar 1-30",
             comparisonRange = null
+        analyticsCurrencyNormalizer = mock(),
         )
 
         val (statisticalInsights, _) = advancedEngine.getStatisticalInsights(period, "EUR")
@@ -352,6 +355,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             healthStatus = com.yourname.expensetracker.domain.budget.BudgetHealthStatus.ON_TRACK,
             periodStart = MARCH_START,
             periodEnd = APRIL_START
+            effectiveLimit = 0.0,
         )
         every { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(budgetStatus))
 

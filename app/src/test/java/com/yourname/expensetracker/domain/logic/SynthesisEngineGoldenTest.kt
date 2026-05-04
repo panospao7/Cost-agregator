@@ -121,6 +121,7 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
                     currentAmount = 900.0,
                     targetDate = null,
                     protectionLevel = GoalProtectionLevel.STRICT
+                    createdAt = 0L,
                 )
             ),
             budgetStatuses = listOf(overallBudget(2000.0)),
@@ -186,6 +187,7 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
             averageMonthlyTotal = averageMonthlyTotal,
             pacePercentage = 100.0f,
             paceStatus = PaceStatus.ON_PACE
+            displayCurrency = "EUR",
         )
     }
 

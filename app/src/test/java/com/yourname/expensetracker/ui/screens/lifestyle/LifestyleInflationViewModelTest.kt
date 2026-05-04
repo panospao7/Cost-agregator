@@ -32,7 +32,7 @@ class LifestyleInflationViewModelTest : ViewModelTestUtils() {
     override fun setup() {
         super.setup()
         coEvery { lifestyleDetector.analyzeLifestyleInflation(any()) } returns lifestyleReport()
-        viewModel = LifestyleInflationViewModel(lifestyleDetector)
+        viewModel = LifestyleInflationViewModel(lifestyleDetector, currencySettingsRepository = mock())
     }
 
     @Test

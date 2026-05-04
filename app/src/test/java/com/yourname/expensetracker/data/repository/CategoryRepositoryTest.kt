@@ -2,10 +2,12 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import dagger.Lazy
 import io.mockk.coEvery
+import io.mockk.mockk
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -26,7 +28,13 @@ class CategoryRepositoryTest {
         val lazyClassifier = object : Lazy<HybridExpenseClassifier> {
             override fun get(): HybridExpenseClassifier = hybridExpenseClassifier
         }
-        repository = CategoryRepository(categoryDao, merchantCategoryDao, categorizationEngine, lazyClassifier)
+        repository = CategoryRepository(
+            database = mockk<AppDatabase>(relaxed = true),
+            categoryDao = categoryDao,
+            merchantCategoryDao = merchantCategoryDao,
+            categorizationEngine = categorizationEngine,
+            hybridExpenseClassifier = lazyClassifier
+        )
     }
 
     // TODO: Tautological mock test — consider adding real behavior assertion

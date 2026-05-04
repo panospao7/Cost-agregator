@@ -92,7 +92,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         every { repository.getCount() } returns flowOf(1)
         every { repository.getAllPackages() } returns flowOf(listOf("com.revolut"))
         every { repository.getBlockedPackages() } returns flowOf(listOf(BlockedPackage("com.spam.app")))
-        every { repository.getSourceStats() } returns flowOf(listOf(SourceStats("com.revolut", totalNotifications = 3)))
+        every { repository.getSourceStats() } returns flowOf(listOf(SourceStats("com.revolut", totalNotifications = 3)), lastSeen = 0L)
         every { repository.getClassifierStatsFlow() } returns flowOf(ClassifierStats(5, 2, 10, false))
 
         every { expenseRepository.getTotalSpent() } returns flowOf(42.5)
@@ -144,7 +144,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
             aiEngagementRepository = aiEngagementRepository,
             aiRuntimeDiagnostics = aiRuntimeDiagnostics,
             databaseBackupRepository = databaseBackupRepository,
-            csvExpenseImporter = mockk(relaxed = true)
+            csvExpenseImporter = mockk(relaxed = true, legacyDataMigrationService = mock())
         )
     }
 

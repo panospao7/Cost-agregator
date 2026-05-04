@@ -32,6 +32,7 @@ class SharedExpenseBudgetOffsetEngineTest {
             groupsRepository = groupsRepository,
             expenseRepository = expenseRepository,
             ioDispatcher = Dispatchers.Unconfined
+            currencySettingsRepository = mock(),
         )
     }
 
@@ -53,6 +54,7 @@ class SharedExpenseBudgetOffsetEngineTest {
                 members = listOf(
                     GroupMember(id = 100L, groupId = 10L, name = "Me", isCurrentUser = true),
                     GroupMember(id = 101L, groupId = 10L, name = "Alex", isCurrentUser = false)
+                currencyConverter = mock(),
                 ),
                 expenses = listOf(
                     GroupExpense(

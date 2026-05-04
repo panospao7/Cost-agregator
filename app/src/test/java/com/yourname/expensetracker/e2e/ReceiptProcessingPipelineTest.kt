@@ -45,7 +45,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     override fun setUp() {
         super.setUp()
 
-        receiptParser = ReceiptParser(MerchantRulesRepository())
+        receiptParser = ReceiptParser(MerchantRulesRepository(), timeProvider = mock())
 
         merchantNormalizationRepository = mockk(relaxed = true)
         coEvery { merchantNormalizationRepository.getAliasByNormalizedKey(any()) } returns null
@@ -74,7 +74,7 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
             canonicalizer = MerchantCanonicalizer(),
             greeklishNormalizer = greeklishNormalizer,
             semanticMatcher = SemanticKeywordMatcher(greeklishNormalizer),
-            contextEngine = ContextualInferenceEngine()
+            contextEngine = ContextualInferenceEngine(, timeProvider = mock())
         )
     }
 

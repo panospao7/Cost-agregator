@@ -12,6 +12,7 @@ import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -52,7 +53,8 @@ class GroupsRepositoryImplTest {
             memberDao = memberDao,
             groupExpenseDao = groupExpenseDao,
             coordinator = coordinator,
-            ioDispatcher = testDispatcher
+            ioDispatcher = testDispatcher,
+            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
         )
     }
 

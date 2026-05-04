@@ -53,6 +53,7 @@ class ReceiptMatchingWorkerTest {
                         receiptRepository,
                         matcher,
                         notificationService
+                        restoreMaintenanceMode = mock(),
                     )
                 }
             })

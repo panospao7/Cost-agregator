@@ -824,6 +824,7 @@ class RecommendationStateManagerTest {
             status = status,
             createdAt = nowMillis,
             expiresAt = expiresAt
+            updatedAt = 0L,
         )
     }
 }

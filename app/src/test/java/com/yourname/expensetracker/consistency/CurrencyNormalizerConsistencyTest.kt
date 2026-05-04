@@ -28,7 +28,7 @@ class CurrencyNormalizerConsistencyTest {
         currencyNormalizer = CurrencyNormalizer()
         val merchantCleaner = MerchantCleaner()
         revolutParser = RevolutParser(currencyNormalizer, merchantCleaner)
-        greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner)
+        greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner, homeCurrency = "EUR")
         genericParser = GenericTransactionParser(
             currencyNormalizer,
             merchantCleaner,

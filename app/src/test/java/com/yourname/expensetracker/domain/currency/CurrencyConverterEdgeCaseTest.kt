@@ -13,7 +13,7 @@ import org.junit.Test
 class CurrencyConverterEdgeCaseTest {
 
     private val exchangeRateStore = mockk<ExchangeRateStore>(relaxed = true)
-    private val converter = CurrencyConverter(exchangeRateStore)
+    private val converter = CurrencyConverter(exchangeRateStore, timeProvider = mock())
 
     @Test
     fun `unknown currency pair without any path returns null`() = runTest {

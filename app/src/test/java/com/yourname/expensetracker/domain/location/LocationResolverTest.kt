@@ -97,6 +97,7 @@ class LocationResolverTest {
             merchantCleaner     = merchantCleaner,
             canonicalizer       = canonicalizer,
             greeklishNormalizer = greeklishNormalizer
+            privacyGate = mock(),
         )
     }
 
@@ -107,6 +108,7 @@ class LocationResolverTest {
         correctedLongitude = 23.73,
         osmId = key,
         displayAddress = "Athens, GR"
+    timeProvider = mock(),
     )
 
     // ── Test 1: provided merchantKey is used as cacheKey ─────────────────────

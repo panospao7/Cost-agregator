@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.export.AccountingExportPolicy
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -62,7 +63,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             quickBooksExporter = QuickBooksIIFExporter(),
             xeroExporter = XeroCSVExporter(),
             freshBooksExporter = FreshBooksExporter(),
-            accountantReportPdfExporter = AccountantReportPdfExporter()
+            accountantReportPdfExporter = AccountantReportPdfExporter(timeProvider = mockk<TimeProvider>(relaxed = true))
         )
 
         tempCacheDir = createTempDir("export_test_cache")

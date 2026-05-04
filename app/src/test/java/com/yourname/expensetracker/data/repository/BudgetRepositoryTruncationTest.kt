@@ -59,7 +59,8 @@ class BudgetRepositoryTruncationTest {
         repository = BudgetRepository(
             budgetDao, categoryDao, expenseDao, budgetCalculator,
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
-            currencyConverter, currencySettingsRepository
+            currencyConverter, currencySettingsRepository,
+            multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
         )
     }
 
@@ -201,7 +202,8 @@ class BudgetRepositoryTruncationTest {
         val repo = BudgetRepository(
             budgetDao, categoryDao, expenseDao, realCalc,
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
-            currencyConverter, currencySettingsRepository
+            currencyConverter, currencySettingsRepository,
+            multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
         )
 
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
@@ -380,7 +382,8 @@ class BudgetRepositoryTruncationTest {
         val repo = BudgetRepository(
             budgetDao, categoryDao, expenseDao, realCalc,
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
-            currencyConverter, currencySettingsRepository
+            currencyConverter, currencySettingsRepository,
+            multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
         )
 
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))

@@ -2,7 +2,10 @@ package com.yourname.expensetracker.data.location
 
 import android.util.Log
 import com.yourname.expensetracker.domain.location.GeocodingLookupResult
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
+import io.mockk.mockk
 import io.mockk.mockkStatic
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
@@ -42,7 +45,7 @@ class NominatimGeocodingServiceLocaleTest {
                 }
                 .build()
 
-            val service = NominatimGeocodingService(client)
+            val service = NominatimGeocodingService(client, privacyGate = mockk<PrivacyGate>(relaxed = true), timeProvider = mockk<TimeProvider>(relaxed = true))
             val result = service.reverseGeocode(lat = 37.98381, lon = 23.727539)
 
             assertTrue(result is GeocodingLookupResult.Success)

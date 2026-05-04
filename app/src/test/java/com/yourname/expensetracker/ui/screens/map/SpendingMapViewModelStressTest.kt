@@ -68,6 +68,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             heatmapEngine,
             insightsEngine,
             geocodingService
+            timeProvider = mock(),
         )
     }
 
@@ -129,6 +130,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             heatmapEngine,
             insightsEngine,
             geocodingService
+            currencySettingsRepository = mock(),
         )
 
         // Wait for the init coroutine (runs on Dispatchers.IO) to finish
@@ -152,6 +154,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             makeExpense(3L, TransactionType.TRANSFER, 100.0),
             makeExpense(4L, TransactionType.WITHDRAWAL, 200.0),
             makeExpense(5L, TransactionType.UNKNOWN, 12.0)
+        currencyConverter = mock(),
         )
 
         every { expenseRepository.getLocatedExpenses() } returns flowOf(mixedExpenses)
@@ -166,6 +169,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             heatmapEngine,
             insightsEngine,
             geocodingService
+            timeProvider = mock(),
         )
 
         // Wait for the init coroutine to complete
@@ -191,6 +195,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             makeExpense(3L, TransactionType.TRANSFER, 300.0),
             makeExpense(4L, TransactionType.PURCHASE, 30.0),
             makeExpense(5L, TransactionType.WITHDRAWAL, 200.0)
+        currencyConverter = mock(),
         )
 
         every { expenseRepository.getLocatedExpenses() } returns flowOf(mixedExpenses)
@@ -205,6 +210,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             realEngine,
             insightsEngine,
             geocodingService
+            timeProvider = mock(),
         )
 
         // Wait for data load
@@ -227,6 +233,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             makeExpense(1L, TransactionType.PURCHASE, 50.0, lat = 40.7128, lon = -74.0060),
             makeExpense(2L, TransactionType.PURCHASE, 30.0, lat = 40.7128, lon = -74.0060),
             makeExpense(3L, TransactionType.PURCHASE, 100.0, lat = 40.7200, lon = -74.0100)
+        currencyConverter = mock(),
         )
 
         every { expenseRepository.getLocatedExpenses() } returns flowOf(purchases)
@@ -241,6 +248,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             realEngine,
             insightsEngine,
             geocodingService
+            timeProvider = mock(),
         )
 
         // Wait for data load
@@ -266,6 +274,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             date = 1_700_000_000_000L,
             locationSource = null,
             placeId = null
+        currencyConverter = mock(),
         )
         coEvery {
             locationResolver.resolve(
@@ -375,6 +384,7 @@ class SpendingMapHeatmapFilterTest : ViewModelTestUtils() {
             expenseRepository, categoryRepository, locationResolver,
             locationProvider, merchantLocationRepository,
             heatmapEngine, insightsEngine, geocodingService
+            currencySettingsRepository = mock(),
         )
 
         vm.state.test {
@@ -393,6 +403,7 @@ class SpendingMapHeatmapFilterTest : ViewModelTestUtils() {
             makeExpense(1L, TransactionType.PURCHASE, 25.0),
             makeExpense(2L, TransactionType.DEPOSIT, 500.0),
             makeExpense(3L, TransactionType.UNKNOWN, 12.0)
+        currencyConverter = mock(),
         )
 
         every { expenseRepository.getLocatedExpenses() } returns flowOf(mixedExpenses)
@@ -401,6 +412,7 @@ class SpendingMapHeatmapFilterTest : ViewModelTestUtils() {
             expenseRepository, categoryRepository, locationResolver,
             locationProvider, merchantLocationRepository,
             heatmapEngine, insightsEngine, geocodingService
+            currencyConverter = mock(),
         )
 
         vm.state.test {

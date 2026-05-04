@@ -22,12 +22,12 @@ class AppParserRegistryRoutingTest {
     @Before
     fun setup() {
         registry = AppParserRegistry(
-            greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner),
+            greekBankParser = GreekBankParser(currencyNormalizer, merchantCleaner, homeCurrency = "EUR"),
             revolutParser = RevolutParser(currencyNormalizer, merchantCleaner),
             smsParser = SmsParser(currencyNormalizer, merchantCleaner),
             googleWalletParser = GoogleWalletParser(currencyNormalizer, merchantCleaner),
-            genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector),
-            aiFallbackParser = io.mockk.mockk()
+            genericParser = GenericTransactionParser(currencyNormalizer, merchantCleaner, directionDetector, timeProvider = mock()),
+            aiFallbackParser = io.mockk.mockk(, timeProvider = mock())
         )
     }
 

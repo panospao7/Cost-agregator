@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantLocationRepository
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
@@ -52,7 +53,9 @@ class LocationBackfillWorkerTest {
                         workerParameters,
                         expenseRepository,
                         locationResolver,
-                        merchantLocationRepository
+                        merchantLocationRepository,
+                        privacyGate = mockk(relaxed = true),
+                        restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true)
                     )
                 }
             })

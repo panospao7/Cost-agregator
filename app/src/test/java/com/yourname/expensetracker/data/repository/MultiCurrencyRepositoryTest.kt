@@ -13,6 +13,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.FailedConversion
 import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.domain.model.Result
@@ -46,7 +47,7 @@ class MultiCurrencyRepositoryTest {
     @Before
     fun setUp() {
         every { timeProvider.now() } returns millis(2026, 4, 15)
-        repository = MultiCurrencyRepository(expenseDao, currencyConverter, timeProvider)
+        repository = MultiCurrencyRepository(expenseDao, currencyConverter, timeProvider, currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true))
     }
 
     // ── getMonthlyTotalsInHomeCurrency ─────────────────────────────────────

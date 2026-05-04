@@ -32,6 +32,7 @@ class SpendingChallengeManagerTest {
             expenseDao = expenseDao,
             spendingChallengeRepository = repository,
             timeProvider = timeProvider
+            ioDispatcher = Unconfined,
         )
     }
 

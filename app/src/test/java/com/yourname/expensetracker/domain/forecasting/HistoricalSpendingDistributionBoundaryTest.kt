@@ -222,7 +222,7 @@ class HistoricalSpendingDistributionBoundaryTest {
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
 
-        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider)
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer = mock(), currencySettingsRepository = mock())
         val result = distribution.computeDistribution()
 
         assertNotNull("Distribution should be computed", result)
@@ -254,7 +254,7 @@ class HistoricalSpendingDistributionBoundaryTest {
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
 
-        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider)
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, currencySettingsRepository = mock(), analyticsCurrencyNormalizer = mock())
         val result = distribution.computeDistribution()
 
         assertNotNull("Distribution should be computed", result)
@@ -295,7 +295,7 @@ class HistoricalSpendingDistributionBoundaryTest {
 
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns expenses
 
-        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider)
+        val distribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer = mock(), currencySettingsRepository = mock())
         val result = distribution.computeDistribution()
 
         assertNotNull("Distribution should be computed", result)

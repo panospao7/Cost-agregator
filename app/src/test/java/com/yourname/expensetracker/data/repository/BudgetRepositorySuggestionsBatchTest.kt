@@ -50,7 +50,8 @@ class BudgetRepositorySuggestionsBatchTest {
             offsetEngine = offsetEngine,
             timeBoundaryTicker = TimeBoundaryTicker(timeProvider),
             currencyConverter = currencyConverter,
-            currencySettingsRepository = currencySettingsRepository
+            currencySettingsRepository = currencySettingsRepository,
+            multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
         )
     }
 

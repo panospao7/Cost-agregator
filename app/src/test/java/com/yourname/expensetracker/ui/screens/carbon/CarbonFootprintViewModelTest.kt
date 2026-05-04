@@ -40,7 +40,7 @@ class CarbonFootprintViewModelTest : ViewModelTestUtils() {
         super.setup()
         every { timeProvider.now() } returns fixedNow
         coEvery { calculator.calculateCarbonFootprint(any(), any()) } returns carbonReport()
-        viewModel = CarbonFootprintViewModel(calculator, timeProvider)
+        viewModel = CarbonFootprintViewModel(calculator, timeProvider, currencySettingsRepository = mock())
     }
 
     @Test

@@ -33,7 +33,7 @@ class PriceProtectionViewModelTest {
         coEvery { priceTracker.getPriceProtectedItems() } returns emptyList()
         every { priceTracker.monitorPriceDrops() } returns flowOf(emptyList())
         
-        viewModel = PriceProtectionViewModel(priceTracker)
+        viewModel = PriceProtectionViewModel(priceTracker, currencySettingsRepository = mock())
     }
 
     @After

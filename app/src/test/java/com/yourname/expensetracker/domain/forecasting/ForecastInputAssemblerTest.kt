@@ -24,7 +24,7 @@ class ForecastInputAssemblerTest {
     @Before
     fun setup() {
         timeProvider = mockk()
-        assembler = ForecastInputAssembler(timeProvider)
+        assembler = ForecastInputAssembler(timeProvider, recurringLifecycleCoordinator = mock(), recurringOccurrenceDao = mock(), analyticsCurrencyNormalizer = mock(), currencySettingsRepository = mock())
         every { timeProvider.now() } returns ms(2026, Calendar.JANUARY, 15, 12)
     }
 

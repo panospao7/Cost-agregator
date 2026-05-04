@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
 import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.dto.AiArtifactRecord
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -32,7 +33,7 @@ class AiArtifactRepositoryImplTest {
     @Before
     fun setup() {
         dao = mockk(relaxed = true)
-        repository = AiArtifactRepositoryImpl(dao)
+        repository = AiArtifactRepositoryImpl(dao, timeProvider = mockk<TimeProvider>(relaxed = true))
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

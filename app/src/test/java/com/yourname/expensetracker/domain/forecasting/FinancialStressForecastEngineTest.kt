@@ -89,7 +89,13 @@ class FinancialStressForecastEngineTest {
             recurringPatternsProvider = mergedRecurringPatternsProvider,
             expenseRepository = expenseRepository,
             budgetRepository = budgetRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            analyticsCurrencyNormalizer = mockk(relaxed = true),
+            currencySettingsRepository = mockk(relaxed = true),
+            multiCurrencyRepository = mockk(relaxed = true),
+            recurringLifecycleCoordinator = mockk(relaxed = true),
+            recurringOccurrenceDao = mockk(relaxed = true),
+            currencyConverter = mockk(relaxed = true)
         )
     }
 
@@ -374,7 +380,8 @@ class FinancialStressForecastEngineTest {
             percentUsed = if (amount > 0) (spent / amount).toFloat() else 0f,
             healthStatus = BudgetHealthStatus.ON_TRACK,
             periodStart = now - 20 * dayMs,
-            periodEnd = now + 10 * dayMs
+            periodEnd = now + 10 * dayMs,
+            effectiveLimit = 0.0,
         )
     }
 

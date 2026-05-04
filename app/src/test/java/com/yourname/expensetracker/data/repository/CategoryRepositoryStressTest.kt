@@ -3,7 +3,9 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import dagger.Lazy
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
@@ -31,7 +33,13 @@ class CategoryRepositoryStressTest {
         // Normalize is suspend
         coEvery { categorizationEngine.normalize(any()) } returns "normalized"
         
-        repository = CategoryRepository(categoryDao, merchantCategoryDao, categorizationEngine)
+        repository = CategoryRepository(
+            database = mockk<AppDatabase>(relaxed = true),
+            categoryDao = categoryDao,
+            merchantCategoryDao = merchantCategoryDao,
+            categorizationEngine = categorizationEngine,
+            hybridExpenseClassifier = mockk<Lazy<com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier>>(relaxed = true)
+        )
     }
 
     // ============================================================================

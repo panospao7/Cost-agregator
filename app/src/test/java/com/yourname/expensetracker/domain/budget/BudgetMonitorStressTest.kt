@@ -62,6 +62,7 @@ class BudgetMonitorStressTest {
             },
             periodStart = periodStart,
             periodEnd = periodEnd
+            effectiveLimit = 0.0,
         )
 
     // ============================================================================
@@ -141,6 +142,7 @@ class BudgetMonitorStressTest {
             healthStatus = BudgetHealthStatus.WARNING,
             periodStart = now - 86400000L,
             periodEnd = now + 86400000L
+            effectiveLimit = 0.0,
         )
         coEvery { budgetRepository.getBudgetStatuses() } returns flowOf(listOf(statusWithZeroSpent))
         monitor.checkBudgets()
