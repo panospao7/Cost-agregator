@@ -19,6 +19,7 @@ fun PeriodGridView(
     isLoading: Boolean,
     onPeriodSelected: (PeriodTotal) -> Unit,
     modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     val columns = when (currentLevel) {

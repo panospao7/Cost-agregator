@@ -31,6 +31,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 fun PercentileGridCard(
     percentiles: TransactionPercentiles,
     modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     val a11yContentDesc = stringResource(
@@ -119,6 +120,7 @@ private fun PercentileColumn(
     isSecondary: Boolean = false,
     isSmall: Boolean = false,
     isLarge: Boolean = false,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     Column(
@@ -165,6 +167,7 @@ private fun PercentileColumn(
 fun TransactionHistogramChart(
     bins: List<HistogramBin>,
     modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     if (bins.isEmpty()) return
@@ -285,6 +288,7 @@ fun CategoryPercentileBadge(
     percentile25: Double,
     percentile75: Double,
     velocity: Double,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR",
     modifier: Modifier = Modifier
 ) {
@@ -351,6 +355,7 @@ fun RichMerchantCard(
     totalSpent: Double,
     transactionCount: Int,
     averagePerVisit: Double,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR",
     loyaltyScore: Float,
     consecutiveMonthsVisited: Int,

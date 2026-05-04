@@ -677,6 +677,7 @@ private fun EmptyGroupsState() {
 private fun CreateGroupDialog(
     onDismiss: () -> Unit,
     onCreate: (String, String?, String) -> Unit,
+    /** Placeholder default. Production callers should pass explicit currency. */
     homeCurrency: String = "EUR"
 ) {
     var name by remember { mutableStateOf("") }

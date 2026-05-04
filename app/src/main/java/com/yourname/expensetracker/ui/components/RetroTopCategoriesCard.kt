@@ -53,6 +53,7 @@ fun RetroTopCategoriesCard(
  modifier: Modifier = Modifier,
  onCategoryClick: ((CategorySpending) -> Unit)? = null,
  onViewAllTransactions: (() -> Unit)? = null,
+ /** Placeholder default. Production callers should pass explicit currency. */
  currency: String = "EUR"
 ) {
     var selectedCategory by remember { mutableStateOf<CategorySpending?>(null) }
@@ -204,6 +205,7 @@ private fun RetroCategoryRow(
     trendInfo: CategoryTrendInfo?,
     isTopRank: Boolean,
     onClick: () -> Unit,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "champion_pulse")
@@ -418,6 +420,7 @@ private fun RetroCategoryDetailDialog(
     transactions: List<DashboardExpense> = emptyList(),
     onDismiss: () -> Unit,
     onViewAll: (() -> Unit)? = null,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     var showTransactions by remember { mutableStateOf(true) }
@@ -656,6 +659,7 @@ private fun RetroTransactionsSection(
     transactions: List<DashboardExpense>,
     visibleCount: Int,
     onShowMore: () -> Unit,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     Column {
@@ -760,6 +764,7 @@ private fun RetroTransactionsSection(
 private fun RetroAnalyticsSection(
     category: CategorySpending,
     trendInfo: CategoryTrendInfo?,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     Column {

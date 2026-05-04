@@ -949,6 +949,7 @@ fun AutopilotBanner(
     onApply: (CategoryBudgetRecommendation) -> Unit,
     onApplyAll: () -> Unit,
     onDismiss: () -> Unit,
+    /** Placeholder default. Production callers should pass explicit currency. */
     homeCurrency: String = "EUR"
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -1096,6 +1097,7 @@ fun AutopilotBanner(
 fun AutopilotRecommendationItem(
     recommendation: CategoryBudgetRecommendation,
     onApply: () -> Unit,
+    /** Placeholder default. Production callers should pass explicit currency. */
     homeCurrency: String = "EUR"
 ) {
     val trendColor = when (recommendation.trend) {

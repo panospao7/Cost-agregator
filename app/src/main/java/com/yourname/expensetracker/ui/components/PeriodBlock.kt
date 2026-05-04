@@ -25,6 +25,7 @@ fun PeriodBlock(
     isSelected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     val backgroundColor = when (period.status) {

@@ -36,6 +36,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 fun SpendingTrendChart(
  series: List<SpendingTrendSeries>,
  modifier: Modifier = Modifier,
+ /** Placeholder default. Production callers should pass explicit currency. */
  currency: String = "EUR"
 ) {
     val currentSeries = series.filter { it.isCurrentMonth }

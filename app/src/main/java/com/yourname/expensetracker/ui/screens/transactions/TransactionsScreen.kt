@@ -794,6 +794,7 @@ private fun DateHeader(
     date: String,
     totalAmount: Double,
     itemCount: Int,
+    /** Placeholder default. Production callers should pass explicit currency. */
     homeCurrency: String = "EUR"
 ) {
     Box(

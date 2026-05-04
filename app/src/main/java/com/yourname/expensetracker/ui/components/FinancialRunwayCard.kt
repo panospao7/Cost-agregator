@@ -29,6 +29,7 @@ fun FinancialRunwayCard(
     likelyExpenses: Double,
     status: DashboardWidget.RunwayStatus,
     modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     // Guard negative days

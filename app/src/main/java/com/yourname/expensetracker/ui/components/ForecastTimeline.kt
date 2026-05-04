@@ -34,6 +34,7 @@ fun ForecastTimeline(
  projectedPoints: List<Double>,
  budgetLimit: Double,
  modifier: Modifier = Modifier,
+ /** Placeholder default. Production callers should pass explicit currency. */
  currency: String = "EUR"
 ) {
     Column(modifier = modifier) {

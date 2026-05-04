@@ -85,6 +85,7 @@ class SmartSavingsEngine @Inject constructor(
     suspend fun calculateSafeToSaveAmount(
         goal: SavingsGoal,
         timeHorizon: TimeHorizon = TimeHorizon.MONTH,
+        /** Placeholder default. Production callers should pass explicit currency. */
         homeCurrency: String = "EUR"
     ): SavingsRecommendation {
         return calculatePortfolioRecommendations(listOf(goal), timeHorizon, homeCurrency)
@@ -101,6 +102,7 @@ class SmartSavingsEngine @Inject constructor(
     suspend fun calculatePortfolioRecommendations(
         goals: List<SavingsGoal>,
         timeHorizon: TimeHorizon = TimeHorizon.MONTH,
+        /** Placeholder default. Production callers should pass explicit currency. */
         homeCurrency: String = "EUR"
     ): List<GoalSavingsRecommendation> {
         val incompleteGoals = goals.filter { goal ->
@@ -431,6 +433,7 @@ class SmartSavingsEngine @Inject constructor(
         amount: Double,
         goal: SavingsGoal,
         timeHorizon: TimeHorizon,
+        /** Placeholder default. Production callers should pass explicit currency. */
         homeCurrency: String = "EUR"
     ): String {
         val remaining = goal.targetAmount - goal.currentAmount

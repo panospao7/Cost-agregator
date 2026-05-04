@@ -40,6 +40,7 @@ class SpendingPaceCalculator @Inject constructor(
         previousMonthStart: Long,
         previousMonthEnd: Long,
         allExpenses: List<ExpenseSnapshot>,
+        /** Placeholder default. Production callers should pass explicit currency. */
         displayCurrency: String = "EUR"
     ): SpendingPace {
         val now = timeProvider.now()

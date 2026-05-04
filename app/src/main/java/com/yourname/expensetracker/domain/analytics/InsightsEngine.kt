@@ -89,6 +89,7 @@ class InsightsEngine @Inject constructor(
         periodRange: PeriodRange,
         categories: List<AnalyticsCategoryRef>,
         allExpenses: List<ExpenseSnapshot>,
+        /** Placeholder default. Production callers should pass explicit currency. */
         displayCurrency: String = "EUR",
         conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
     ): InsightsSnapshot {
@@ -121,6 +122,7 @@ class InsightsEngine @Inject constructor(
     suspend fun generateInsights(
         categories: List<AnalyticsCategoryRef>,
         allExpenses: List<ExpenseSnapshot>,
+        /** Placeholder default. Production callers should pass explicit currency. */
         displayCurrency: String = "EUR",
         conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
     ): InsightsSnapshot {
@@ -261,7 +263,7 @@ class InsightsEngine @Inject constructor(
 
     // === Legacy Compatibility ===
 
-    fun getLegacyInsights(snapshot: InsightsSnapshot, homeCurrency: String = "EUR"): List<SpendingInsight> {
+    fun getLegacyInsights(snapshot: InsightsSnapshot, /** Placeholder default. Production callers should pass explicit currency. */ homeCurrency: String = "EUR"): List<SpendingInsight> {
         val insights = mutableListOf<SpendingInsight>()
 
         // 1. Monthly Comparison (Spending Increase/Decrease)
@@ -685,7 +687,7 @@ class InsightsEngine @Inject constructor(
 
     // === Exposed Suspend Functions for Repository Usage ===
     
-    suspend fun getSpendingPaceSuspend(expenses: List<ExpenseSnapshot>? = null, displayCurrency: String = "EUR"): SpendingPace {
+    suspend fun getSpendingPaceSuspend(expenses: List<ExpenseSnapshot>? = null, /** Placeholder default. Production callers should pass explicit currency. */ displayCurrency: String = "EUR"): SpendingPace {
         val now = timeProvider.now()
         val currentMonth = getMonthPeriod(now)
         val previousMonth = getPreviousMonthPeriod(currentMonth)
@@ -699,7 +701,7 @@ class InsightsEngine @Inject constructor(
         return buildSpendingPace(currentMonth, previousMonth, recentExpenses, displayCurrency = displayCurrency)
     }
 
-    private fun formatCurrency(amount: Double, currency: String = "EUR"): String = CurrencyFormatter.format(amount, currency)
+    private fun formatCurrency(amount: Double, /** Placeholder default. Production callers should pass explicit currency. */ currency: String = "EUR"): String = CurrencyFormatter.format(amount, currency)
     
     private fun formatDate(dateMs: Long): String {
          return DateFormatterUtils.formatTimestampJavaTime(dateMs, "MMM dd")

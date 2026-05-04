@@ -33,6 +33,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 fun MonteCarloForecastCard(
     result: MonteCarloResult,
     modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     val confidenceColor = when (result.confidence.level) {

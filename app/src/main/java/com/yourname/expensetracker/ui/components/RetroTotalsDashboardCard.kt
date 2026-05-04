@@ -52,6 +52,7 @@ fun RetroTotalsDashboardCard(
     onEnterStage: (PeriodTotal) -> Unit,
     onViewAnalysis: (PeriodTotal) -> Unit,
     modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     var showStageDialog by remember { mutableStateOf<PeriodTotal?>(null) }
@@ -320,6 +321,7 @@ private fun RetroStageGrid(
     currentLevel: PeriodLevel,
     onStageSelected: (PeriodTotal) -> Unit,
     onStageLongPress: (PeriodTotal) -> Unit,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     val columns = when {
@@ -368,6 +370,7 @@ private fun RetroStageCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     // Calculate medal based on spending vs average
@@ -605,6 +608,7 @@ private fun RetroStageDialog(
     onDismiss: () -> Unit,
     onEnterStage: () -> Unit,
     onViewAnalysis: () -> Unit,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     val percentageOfAvg = if (averageAmount > 0) (period.totalAmount / averageAmount) * 100 else 100.0

@@ -58,6 +58,7 @@ fun BudgetBlockPartyCard(
  days: List<DayBudgetStatus>,
  modifier: Modifier = Modifier,
  onNavigateToDay: ((Long) -> Unit)? = null,
+ /** Placeholder default. Production callers should pass explicit currency. */
  currency: String = "EUR"
 ) {
     var selectedDay by remember { mutableStateOf<DayBudgetStatus?>(null) }
@@ -171,7 +172,7 @@ private fun BlockLegendItem(
 }
 
 @Composable
-fun DayBlock(day: DayBudgetStatus, onClick: () -> Unit, currency: String = "EUR") {
+fun DayBlock(day: DayBudgetStatus, onClick: () -> Unit, /** Placeholder default. Production callers should pass explicit currency. */ currency: String = "EUR") {
     val isBillDay = day.status == BlockStatus.BILL_DAY
     val color = when (day.status) {
         BlockStatus.UNDER_BUDGET -> SemanticColors.SuccessGreen
@@ -246,6 +247,7 @@ fun DayAtAGlanceDialog(
     day: DayBudgetStatus,
     onDismiss: () -> Unit,
     onViewTransactions: (() -> Unit)? = null,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     val dateStr = DateFormatterUtils.formatTimestampJavaTime(day.date, "MMM dd")

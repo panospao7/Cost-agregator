@@ -465,7 +465,7 @@ data class SavingsSweepRecommendation(
     /**
      * Get a human-readable summary of the sweep recommendation.
      */
-    fun getSummary(displayCurrency: String = "EUR"): String {
+    fun getSummary(/** Placeholder default. Production callers should pass explicit currency. */ displayCurrency: String = "EUR"): String {
         return "Safe to save: ${CurrencyFormatter.format(safeSweepAmount, displayCurrency)} " +
                "(underspend: ${CurrencyFormatter.format(totalUnderspend, displayCurrency)}, " +
                "risk buffer: ${CurrencyFormatter.format(riskBuffer, displayCurrency)})"

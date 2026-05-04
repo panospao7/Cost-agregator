@@ -45,6 +45,7 @@ fun TotalsDashboardCard(
     onLevelChanged: (PeriodLevel) -> Unit,
     onShowCategoryBreakdown: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     BentoCard(
@@ -118,6 +119,7 @@ private fun CurrentPeriodSummary(
     label: String,
     total: Double,
     status: PeriodStatus,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current

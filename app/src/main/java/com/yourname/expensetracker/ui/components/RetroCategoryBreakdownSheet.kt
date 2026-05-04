@@ -45,6 +45,7 @@ fun RetroCategoryBreakdownSheet(
     categories: List<CategoryBreakdown>,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     var showAll by remember { mutableStateOf(false) }
@@ -281,6 +282,7 @@ private fun RetroCategoryBreakdownRow(
     percentage: Float,
     medal: String?,
     rank: Int,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     val categoryColor = try {

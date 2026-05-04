@@ -34,6 +34,7 @@ fun CategoryBreakdownSheet(
     categories: List<CategoryBreakdown>,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     val displayCategories = categories.take(5)
@@ -127,7 +128,7 @@ fun CategoryBreakdownSheet(
 }
 
 @Composable
-private fun CategoryRow(category: CategorySpending, currency: String = "EUR") {
+private fun CategoryRow(category: CategorySpending, /** Placeholder default. Production callers should pass explicit currency. */ currency: String = "EUR") {
     Card(
         colors = CardDefaults.cardColors(containerColor = SemanticColors.GlassSurface),
         shape = RoundedCornerShape(12.dp)

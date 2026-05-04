@@ -52,6 +52,7 @@ fun RetroBudgetBlockPartyCard(
  days: List<DayBudgetStatus>,
  modifier: Modifier = Modifier,
  onNavigateToDay: ((Long) -> Unit)? = null,
+ /** Placeholder default. Production callers should pass explicit currency. */
  currency: String = "EUR"
 ) {
     var selectedDay by remember { mutableStateOf<DayBudgetStatus?>(null) }
@@ -797,6 +798,7 @@ private fun RetroDayAtAGlanceDialog(
     day: DayBudgetStatus,
     onDismiss: () -> Unit,
     onViewTransactions: (() -> Unit)? = null,
+    /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
     val dateStr = DateFormatterUtils.formatTimestampJavaTime(day.date, "MMM dd")
