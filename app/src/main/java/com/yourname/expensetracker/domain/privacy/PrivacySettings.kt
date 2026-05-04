@@ -5,6 +5,7 @@ data class PrivacySettings(
     val cloudAiEnabled: Boolean = false,
     val redactBeforeCloud: Boolean = true,
     val receiptImageCloudEnabled: Boolean = false,
+    val bankStatementAiEnabled: Boolean = false,
     val externalGeocodingEnabled: Boolean = false,
     val backgroundLocationBackfillEnabled: Boolean = false,
     val deviceGpsLocationEnabled: Boolean = false,

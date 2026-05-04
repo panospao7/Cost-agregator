@@ -32,12 +32,21 @@ class CloudAiPrivacyGate @Inject constructor(
             PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST,
             PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION,
             PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION,
-            PrivacyCapability.CLOUD_AI_BANK_STATEMENT,
-            PrivacyCapability.AI_BANK_STATEMENT_PARSING,
             PrivacyCapability.CLOUD_AI_DAILY_BRIEFING,
             PrivacyCapability.CLOUD_AI_GENERAL -> {
                 if (!settings.cloudAiEnabled) {
                     PrivacyDecision.Denied("Cloud AI is disabled by user setting")
+                } else {
+                    PrivacyDecision.Allowed
+                }
+            }
+
+            PrivacyCapability.CLOUD_AI_BANK_STATEMENT,
+            PrivacyCapability.AI_BANK_STATEMENT_PARSING -> {
+                if (!settings.cloudAiEnabled) {
+                    PrivacyDecision.Denied("Cloud AI is disabled by user setting")
+                } else if (!settings.bankStatementAiEnabled) {
+                    PrivacyDecision.Denied("Bank statement AI is disabled by user setting")
                 } else {
                     PrivacyDecision.Allowed
                 }

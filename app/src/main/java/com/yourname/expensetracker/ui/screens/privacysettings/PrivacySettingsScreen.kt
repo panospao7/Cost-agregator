@@ -118,6 +118,13 @@ fun PrivacySettingsScreen(
                     onCheckedChange = viewModel::setReceiptImageCloudEnabled
                 )
             }
+            item {
+                ToggleRow(
+                    label = "Bank statement AI validation",
+                    checked = settings.bankStatementAiEnabled,
+                    onCheckedChange = viewModel::setBankStatementAiEnabled
+                )
+            }
 
             item { HorizontalDivider() }
 

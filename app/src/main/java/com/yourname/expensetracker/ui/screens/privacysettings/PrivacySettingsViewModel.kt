@@ -37,6 +37,7 @@ class PrivacySettingsViewModel @Inject constructor(
     fun setCloudAiEnabled(enabled: Boolean) = update { it.copy(cloudAiEnabled = enabled) }
     fun setRedactBeforeCloud(enabled: Boolean) = update { it.copy(redactBeforeCloud = enabled) }
     fun setReceiptImageCloudEnabled(enabled: Boolean) = update { it.copy(receiptImageCloudEnabled = enabled) }
+    fun setBankStatementAiEnabled(enabled: Boolean) = update { it.copy(bankStatementAiEnabled = enabled) }
     fun setExternalGeocodingEnabled(enabled: Boolean) = update { it.copy(externalGeocodingEnabled = enabled) }
     fun setBackgroundLocationBackfillEnabled(enabled: Boolean) = update { it.copy(backgroundLocationBackfillEnabled = enabled) }
     fun setDeviceGpsLocationEnabled(enabled: Boolean) = update { it.copy(deviceGpsLocationEnabled = enabled) }

@@ -36,6 +36,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         val CLOUD_AI_ENABLED = booleanPreferencesKey("cloud_ai_enabled")
         val REDACT_BEFORE_CLOUD = booleanPreferencesKey("redact_before_cloud")
         val RECEIPT_IMAGE_CLOUD_ENABLED = booleanPreferencesKey("receipt_image_cloud_enabled")
+        val BANK_STATEMENT_AI_ENABLED = booleanPreferencesKey("bank_statement_ai_enabled")
         val EXTERNAL_GEOCODING_ENABLED = booleanPreferencesKey("external_geocoding_enabled")
         val BACKGROUND_LOCATION_BACKFILL_ENABLED = booleanPreferencesKey("background_location_backfill_enabled")
         val DEVICE_GPS_LOCATION_ENABLED = booleanPreferencesKey("device_gps_location_enabled")
@@ -69,6 +70,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
             prefs[Keys.CLOUD_AI_ENABLED] = updated.cloudAiEnabled
             prefs[Keys.REDACT_BEFORE_CLOUD] = updated.redactBeforeCloud
             prefs[Keys.RECEIPT_IMAGE_CLOUD_ENABLED] = updated.receiptImageCloudEnabled
+            prefs[Keys.BANK_STATEMENT_AI_ENABLED] = updated.bankStatementAiEnabled
             prefs[Keys.EXTERNAL_GEOCODING_ENABLED] = updated.externalGeocodingEnabled
             prefs[Keys.BACKGROUND_LOCATION_BACKFILL_ENABLED] = updated.backgroundLocationBackfillEnabled
             prefs[Keys.DEVICE_GPS_LOCATION_ENABLED] = updated.deviceGpsLocationEnabled
@@ -84,6 +86,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         cloudAiEnabled = this[Keys.CLOUD_AI_ENABLED] ?: false,
         redactBeforeCloud = this[Keys.REDACT_BEFORE_CLOUD] ?: true,
         receiptImageCloudEnabled = this[Keys.RECEIPT_IMAGE_CLOUD_ENABLED] ?: false,
+        bankStatementAiEnabled = this[Keys.BANK_STATEMENT_AI_ENABLED] ?: false,
         externalGeocodingEnabled = this[Keys.EXTERNAL_GEOCODING_ENABLED] ?: false,
         backgroundLocationBackfillEnabled = this[Keys.BACKGROUND_LOCATION_BACKFILL_ENABLED] ?: false,
         deviceGpsLocationEnabled = this[Keys.DEVICE_GPS_LOCATION_ENABLED] ?: false,

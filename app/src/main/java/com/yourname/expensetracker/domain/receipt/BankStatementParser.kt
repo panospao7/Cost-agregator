@@ -30,7 +30,7 @@ class BankStatementParser @Inject constructor(
     companion object {
         // ── Header / footer pre-filter constants ─────────────────────────────
         /** Minimum line length (characters) to be considered a real transaction row. */
-        const val MIN_LINE_LENGTH: Int = 10
+        const val MIN_LINE_LENGTH: Int = 15
 
         /** Bank-specific keywords that identify header, footer, or metadata lines. */
         val HEADER_KEYWORDS: Set<String> = setOf(
@@ -45,7 +45,9 @@ class BankStatementParser @Inject constructor(
             "www.", "page", "statement", "account", "balance", "date", "description",
             "amount", "debit", "credit", "transaction", "TOTAL", "SUBTOTAL",
             // Greeklish / other
-            "SELIDA", "SELIS", "AP. CARD", "AP.  LOG"
+            "SELIDA", "SELIS", "AP. CARD", "AP.  LOG",
+            // Greek AM/PM time markers and English equivalents
+            "πμ", "μμ", "π.μ.", "μ.μ.", "AM", "PM"
         )
 
         // Header patterns for Greek National Bank
@@ -268,7 +270,7 @@ class BankStatementParser @Inject constructor(
     private fun preFilterRows(
         rows: List<List<TextBlock>>,
         rowStrings: List<String>,
-        minLineLength: Int = 10
+        minLineLength: Int = MIN_LINE_LENGTH
     ): Pair<List<List<TextBlock>>, List<String>> {
         if (rows.isEmpty() || rowStrings.isEmpty()) return Pair(rows, rowStrings)
 
@@ -280,6 +282,9 @@ class BankStatementParser @Inject constructor(
 
             // 1. Skip blank / very short lines (headers, page numbers, noise)
             if (line.length < minLineLength) continue
+
+            // 1b. Filter out time-only patterns (πμ/μμ with digits) and pure time-of-day lines
+            if (line.matches(Regex(".*[πμ]\\.[μ]\\.\\s*\\d+.*|.*[πμ]μ\\s*\\d+.*|\\d+:\\d+.*"))) continue
 
             // 2. Skip lines containing bank-specific keywords
             val upper = line.uppercase()
@@ -301,7 +306,12 @@ class BankStatementParser @Inject constructor(
                 .let { it.find() && it.group(2) != null }
             if (hasDatePattern && !hasAmount) continue
 
-            // 5. Skip exact duplicate lines (keep first occurrence)
+            // 5. Skip single-word lines that have no date or amount pattern
+            //     (headers, summary labels, noise like "TOTAL", "ΣΥΝΟΛΟ", etc.)
+            val wordCount = line.split(Regex("\\s+")).count { it.isNotBlank() }
+            if (wordCount <= 1 && !lineHasDateOrAmount) continue
+
+            // 6. Skip exact duplicate lines (keep first occurrence)
             if (line in seenTexts) continue
             seenTexts.add(line)
 
