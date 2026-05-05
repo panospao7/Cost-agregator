@@ -1,0 +1,331 @@
+{
+  "schema": "dependency-graph-v1",
+  "generated": "2026-05-05",
+  "source": "Manual analysis of ExpenseTracker codebase",
+  "nodes": {
+    "NotificationCaptureService": {
+      "type": "service",
+      "package": "com.yourname.expensetracker.service",
+      "depends_on": ["NotificationFilter", "PrivacyGate", "RestoreMaintenanceMode", "NotificationProcessingPipeline"]
+    },
+    "NotificationFilter": {
+      "type": "service",
+      "package": "com.yourname.expensetracker.service",
+      "depends_on": ["PrivacyCapability.NOTIFICATION_CAPTURE"]
+    },
+    "PrivacyGate": {
+      "type": "interface",
+      "package": "com.yourname.expensetracker.domain.privacy",
+      "depends_on": ["PrivacySettingsRepository", "PrivacyAuditLogger"]
+    },
+    "RestoreMaintenanceMode": {
+      "type": "data",
+      "package": "com.yourname.expensetracker.data.backup",
+      "depends_on": ["RestoreJournal"]
+    },
+    "NotificationProcessingPipeline": {
+      "type": "repository",
+      "package": "com.yourname.expensetracker.data.repository",
+      "depends_on": ["AppParserRegistry", "ConfidenceRouter", "CategorizationEngine", "TransactionClassifier", "NotificationRepository"]
+    },
+    "NotificationRepository": {
+      "type": "repository",
+      "package": "com.yourname.expensetracker.data.repository",
+      "depends_on": ["RawNotificationDao", "BlockedPackageDao", "ExpenseDao", "PendingReviewDao", "UserCorrectionDao", "SourceStatsDao"]
+    },
+    "ReviewQueueRepository": {
+      "type": "repository",
+      "package": "com.yourname.expensetracker.data.repository",
+      "depends_on": ["PendingReviewDao", "RawNotificationDao", "ExpenseDao", "SourceStatsDao", "ReceiptLinkService", "TransactionLifecycleCoordinator", "BudgetMonitor", "HybridExpenseClassifier"]
+    },
+    "TransactionLifecycleCoordinator": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.transaction.lifecycle",
+      "depends_on": ["ExpenseDao", "TransactionEventDao", "TransactionSideEffectDispatcher", "DuplicateDetectionPolicy", "MerchantNormalizer"]
+    },
+    "TransactionSideEffectDispatcher": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.transaction.lifecycle",
+      "depends_on": ["BudgetMonitor", "AnomalyDetector", "MerchantNormalizer", "RecurringLifecycleCoordinator"]
+    },
+    "ReceiptLifecycleCoordinator": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.receipt.lifecycle",
+      "depends_on": ["ReceiptInputValidator", "ReceiptAssetStore", "ReceiptOcrService", "ReceiptParser", "ReceiptDuplicateDetector", "ScannedReceiptDao", "ReceiptEventDao", "ReceiptSideEffectDispatcher"]
+    },
+    "ReceiptSideEffectDispatcher": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.receipt.lifecycle",
+      "depends_on": ["AutoCreateWarrantyFromReceiptUseCase", "ReceiptItemCategorizationService", "ReceiptTransactionMatcher", "PriceProtectionTracker"]
+    },
+    "ReceiptLinkService": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.receipt.lifecycle",
+      "depends_on": ["ReceiptExpenseLinkDao", "ReceiptEventDao", "ExpenseDao"]
+    },
+    "RecurringLifecycleCoordinator": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.recurring.lifecycle",
+      "depends_on": ["RecurringOccurrenceExpander", "OccurrenceConflictResolver", "RecurringOccurrenceMaterializer", "RecurringOccurrenceDao", "RecurringReminderDeliveryDao", "RecurringLifecycleEventDao"]
+    },
+    "RecurringOccurrenceMaterializer": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.recurring.lifecycle",
+      "depends_on": ["RecurringOccurrenceDao", "RecurringReminderDeliveryDao"]
+    },
+    "RecurringPlanProjectionService": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.recurring",
+      "depends_on": ["PlannedExpenseDao"]
+    },
+    "DatabaseBackupRepositoryImpl": {
+      "type": "repository",
+      "package": "com.yourname.expensetracker.data.repository",
+      "depends_on": ["CostbackupBundle", "BackupEncryptionService", "ExportAnonymizer", "PrivacyGate", "RestoreJournal", "RestoreMaintenanceMode", "TransactionLifecycleCoordinator"]
+    },
+    "AppStartupCoordinator": {
+      "type": "startup",
+      "package": "com.yourname.expensetracker.startup",
+      "depends_on": ["AppBackgroundLifecycleObserver", "SyncProactiveBriefingWorkUseCase", "RestoreJournal", "RestoreMaintenanceMode"]
+    },
+    "CompositePrivacyGate": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.privacy",
+      "depends_on": ["NotificationPrivacyGate", "LocationPrivacyGate", "CloudAiPrivacyGate", "BackupPrivacyGate"]
+    },
+    "PrivacySettingsRepositoryImpl": {
+      "type": "repository",
+      "package": "com.yourname.expensetracker.data.privacy",
+      "depends_on": ["DataStore"]
+    },
+    "MultiCurrencyRepository": {
+      "type": "repository",
+      "package": "com.yourname.expensetracker.data.repository",
+      "depends_on": ["ExpenseDao", "CurrencyConverter", "TimeProvider", "CurrencySettingsRepository"]
+    },
+    "BudgetRepository": {
+      "type": "repository",
+      "package": "com.yourname.expensetracker.data.repository",
+      "depends_on": ["BudgetDao", "CategoryDao", "ExpenseDao", "BudgetCalculator", "SharedExpenseBudgetOffsetEngine", "CurrencyConverter", "MultiCurrencyRepository"]
+    },
+    "AnalyticsRepository": {
+      "type": "repository",
+      "package": "com.yourname.expensetracker.data.repository",
+      "depends_on": ["ExpenseDao", "CategoryRepository", "MultiCurrencyRepository", "AnalyticsCurrencyNormalizer"]
+    },
+    "FinancialWeatherRepository": {
+      "type": "repository",
+      "package": "com.yourname.expensetracker.data.repository",
+      "depends_on": ["ExpenseRepository", "BudgetRepository", "RecurringExpenseRepository", "PlannedExpenseRepository", "SavingsGoalRepository", "ForecastInputAssembler", "SynthesisEngine", "NarrativeGenerator", "AnalyticsRepository"]
+    },
+    "ReceiptRepository": {
+      "type": "repository",
+      "package": "com.yourname.expensetracker.data.repository",
+      "depends_on": ["ScannedReceiptDao", "ExpenseDao", "PendingReviewDao", "ReceiptLifecycleCoordinator", "ReceiptLinkService", "TransactionLifecycleCoordinator", "CategorizationEngine", "AutoCreateWarrantyFromReceiptUseCase"]
+    },
+    "ExpenseRepository": {
+      "type": "repository",
+      "package": "com.yourname.expensetracker.data.repository",
+      "depends_on": ["ExpenseDao", "UserCorrectionDao", "PendingReviewDao", "MerchantCategoryRepository", "MerchantNormalizer", "TransferDirectionAnalytics", "TransactionLifecycleCoordinator"]
+    },
+    "ExpenseDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "Expense"
+    },
+    "TransactionEventDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "TransactionEvent"
+    },
+    "PendingReviewDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "PendingReview"
+    },
+    "RawNotificationDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "RawNotification"
+    },
+    "ScannedReceiptDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "ScannedReceipt"
+    },
+    "BudgetDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "Budget"
+    },
+    "CategoryDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "Category"
+    },
+    "RecurringOccurrenceDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "RecurringOccurrence"
+    },
+    "RecurringReminderDeliveryDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "RecurringReminderDelivery"
+    },
+    "RecurringLifecycleEventDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "RecurringLifecycleEvent"
+    },
+    "ReceiptEventDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "ReceiptEvent"
+    },
+    "ReceiptExpenseLinkDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "ReceiptExpenseLink"
+    },
+    "PlannedExpenseDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "PlannedExpense"
+    },
+    "SavingsGoalDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "SavingsGoal"
+    },
+    "ExchangeRateDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "ExchangeRate"
+    },
+    "PrivacyAuditDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "PrivacyAuditEvent"
+    },
+    "WarrantyDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "Warranty"
+    },
+    "BackgroundJobRunDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "BackgroundJobRun"
+    },
+    "BlockedPackageDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "BlockedPackage"
+    },
+    "SourceStatsDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "SourceStats"
+    }
+  },
+  "edges": [
+    { "from": "NotificationCaptureService", "to": "NotificationFilter", "type": "gate-check" },
+    { "from": "NotificationCaptureService", "to": "PrivacyGate", "type": "gate-check" },
+    { "from": "NotificationCaptureService", "to": "RestoreMaintenanceMode", "type": "guard" },
+    { "from": "NotificationCaptureService", "to": "NotificationProcessingPipeline", "type": "delegates-to" },
+    { "from": "NotificationProcessingPipeline", "to": "AppParserRegistry", "type": "parser-routing" },
+    { "from": "NotificationRepository", "to": "RawNotificationDao", "type": "dao" },
+    { "from": "NotificationRepository", "to": "ExpenseDao", "type": "dao" },
+    { "from": "NotificationRepository", "to": "PendingReviewDao", "type": "dao" },
+    { "from": "NotificationRepository", "to": "BlockedPackageDao", "type": "dao" },
+    { "from": "ReviewQueueRepository", "to": "PendingReviewDao", "type": "dao" },
+    { "from": "ReviewQueueRepository", "to": "ExpenseDao", "type": "dao" },
+    { "from": "ReviewQueueRepository", "to": "TransactionLifecycleCoordinator", "type": "delegates-to" },
+    { "from": "TransactionLifecycleCoordinator", "to": "ExpenseDao", "type": "dao" },
+    { "from": "TransactionLifecycleCoordinator", "to": "TransactionEventDao", "type": "dao" },
+    { "from": "TransactionLifecycleCoordinator", "to": "TransactionSideEffectDispatcher", "type": "dispatches-to" },
+    { "from": "ReceiptLifecycleCoordinator", "to": "ScannedReceiptDao", "type": "dao" },
+    { "from": "ReceiptLifecycleCoordinator", "to": "ReceiptEventDao", "type": "dao" },
+    { "from": "ReceiptLifecycleCoordinator", "to": "ReceiptSideEffectDispatcher", "type": "dispatches-to" },
+    { "from": "ReceiptRepository", "to": "ScannedReceiptDao", "type": "dao" },
+    { "from": "ReceiptRepository", "to": "ExpenseDao", "type": "dao" },
+    { "from": "ReceiptRepository", "to": "ReceiptLifecycleCoordinator", "type": "delegates-to" },
+    { "from": "ReceiptRepository", "to": "TransactionLifecycleCoordinator", "type": "delegates-to" },
+    { "from": "RecurringLifecycleCoordinator", "to": "RecurringOccurrenceDao", "type": "dao" },
+    { "from": "RecurringLifecycleCoordinator", "to": "RecurringReminderDeliveryDao", "type": "dao" },
+    { "from": "RecurringLifecycleCoordinator", "to": "RecurringLifecycleEventDao", "type": "dao" },
+    { "from": "ExpenseRepository", "to": "ExpenseDao", "type": "dao" },
+    { "from": "ExpenseRepository", "to": "TransactionLifecycleCoordinator", "type": "delegates-to" },
+    { "from": "BudgetRepository", "to": "BudgetDao", "type": "dao" },
+    { "from": "BudgetRepository", "to": "ExpenseDao", "type": "dao" },
+    { "from": "BudgetRepository", "to": "CategoryDao", "type": "dao" },
+    { "from": "MultiCurrencyRepository", "to": "ExpenseDao", "type": "dao" },
+    { "from": "AnalyticsRepository", "to": "ExpenseDao", "type": "dao" },
+    { "from": "FinancialWeatherRepository", "to": "ExpenseRepository", "type": "depends-on" },
+    { "from": "FinancialWeatherRepository", "to": "BudgetRepository", "type": "depends-on" },
+    { "from": "FinancialWeatherRepository", "to": "RecurringExpenseRepository", "type": "depends-on" },
+    { "from": "FinancialWeatherRepository", "to": "PlannedExpenseRepository", "type": "depends-on" },
+    { "from": "AppStartupCoordinator", "to": "RestoreJournal", "type": "restore-check" },
+    { "from": "AppStartupCoordinator", "to": "RestoreMaintenanceMode", "type": "maintenance" },
+    { "from": "DatabaseBackupRepositoryImpl", "to": "PrivacyGate", "type": "gate-check" },
+    { "from": "DatabaseBackupRepositoryImpl", "to": "TransactionLifecycleCoordinator", "type": "delegates-to" },
+    { "from": "CompositePrivacyGate", "to": "NotificationPrivacyGate", "type": "composes" },
+    { "from": "CompositePrivacyGate", "to": "LocationPrivacyGate", "type": "composes" },
+    { "from": "CompositePrivacyGate", "to": "CloudAiPrivacyGate", "type": "composes" },
+    { "from": "CompositePrivacyGate", "to": "BackupPrivacyGate", "type": "composes" }
+  ],
+  "entry_points": [
+    "MainApplication",
+    "AppStartupCoordinator",
+    "NotificationCaptureService"
+  ],
+  "critical_paths": [
+    ["NotificationCaptureService", "NotificationProcessingPipeline", "NotificationRepository", "PendingReviewDao"],
+    ["NotificationCaptureService", "NotificationRepository", "ReviewQueueRepository", "TransactionLifecycleCoordinator", "ExpenseDao"],
+    ["ReceiptScanViewModel", "ReceiptLifecycleCoordinator", "ReceiptRepository", "TransactionLifecycleCoordinator", "ExpenseDao"],
+    ["HomeViewModel", "FinancialWeatherRepository", "ExpenseRepository", "ExpenseDao"],
+    ["HomeViewModel", "ComputeDashboardWidgetsUseCase", "MultiCurrencyRepository", "ExpenseDao"],
+    ["AppStartupCoordinator", "RestoreJournal"],
+    ["AppStartupCoordinator", "RestoreMaintenanceMode"]
+  ],
+  "impact_zones": {
+    "ExpenseDao": {
+      "impacted_flows": [
+        "Transaction Lifecycle (create/update/delete)",
+        "Notification Capture → Review → Approve",
+        "Receipt Scan → OCR → Save Expense",
+        "Dashboard Totals & Aggregation",
+        "Budget Status Calculation",
+        "Analytics & Insights",
+        "Financial Forecast",
+        "Recurring Expense Reconciliation",
+        "Currency Conversion (MultiCurrencyRepository)",
+        "Export & Backup",
+        "Groups/Shared Expenses",
+        "Savings Engine",
+        "Carbon Footprint",
+        "Investment Tracking",
+        "Location Enrichment"
+      ],
+      "impacted_viewmodels": [
+        "HomeViewModel", "TransactionsViewModel", "ReviewViewModel",
+        "BudgetViewModel", "AnalyticsViewModel", "AddExpenseViewModel",
+        "ReceiptScanViewModel", "SavingsGoalsViewModel", "CashFlowCalendarViewModel",
+        "CarbonFootprintViewModel", "SpendingMapViewModel", "DebugViewModel",
+        "BackupRestoreViewModel"
+      ]
+    },
+    "PrivacyGate": {
+      "impacted_flows": [
+        "Notification Capture (gated by NOTIFICATION_CAPTURE)",
+        "Cloud AI Briefing (gated by CLOUD_AI_BRIEFING)",
+        "Cloud AI Receipt Assist (gated by CLOUD_AI_RECEIPT_ASSIST)",
+        "Cloud AI Categorization (gated by CLOUD_AI_CATEGORIZATION_ASSIST)",
+        "External Geocoding (gated by EXTERNAL_GEOCODING)",
+        "Background Location (gated by BACKGROUND_LOCATION_BACKFILL)",
+        "Backup Export (gated by RAWBACKUP_EXPORT)"
+      ]
+    }
+  }
+}
