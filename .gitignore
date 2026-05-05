@@ -1,7 +1,6 @@
 # Gradle files
 .gradle/
 build/
-!build/reports/architecture/
 app/build/
 
 # Local configuration file (sdk.io.etc)
