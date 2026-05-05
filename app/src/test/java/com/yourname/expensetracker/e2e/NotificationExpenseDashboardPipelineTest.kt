@@ -51,6 +51,7 @@ import com.yourname.expensetracker.domain.categorization.SemanticKeywordMatcher
 import com.yourname.expensetracker.domain.forecasting.DataQualityAssessor
 import com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine
 import com.yourname.expensetracker.domain.forecasting.HistoricalSpendingDistribution
+import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
@@ -83,11 +84,13 @@ import com.yourname.expensetracker.domain.parser.parsers.GreekBankParser
 import com.yourname.expensetracker.domain.parser.parsers.RevolutParser
 import com.yourname.expensetracker.domain.parser.parsers.SmsParser
 import com.yourname.expensetracker.domain.usecase.budget.GetMonteCarloBudgetImpactUseCase
+import com.yourname.expensetracker.domain.usecase.dashboard.AnomalyAlertRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeMoneyRadarUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
+import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import io.mockk.coEvery
@@ -299,7 +302,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
                 name: String,
                 email: String?,
                 isCurrentUser: Boolean
-            ): Long? = null
+            ): com.yourname.expensetracker.domain.groups.Result<Unit, com.yourname.expensetracker.domain.groups.GroupValidationError> =
+                com.yourname.expensetracker.domain.groups.Result.Success(Unit)
 
             override suspend fun addExpenseWithLink(
                 groupId: Long,
@@ -345,14 +349,18 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             budgetCalculator = com.yourname.expensetracker.domain.budget.BudgetCalculator(timeProvider),
             timeProvider = timeProvider,
             offsetEngine = com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine(
-                groupsRepository = groupsRepository,
+                groupsRepository = object : dagger.Lazy<GroupsRepository> {
+                    override fun get(): GroupsRepository = groupsRepository
+                },
                 expenseRepository = expenseRepository,
-                sharedExpenseManager = sharedExpenseManager,
-                timeProvider = timeProvider
+                currencyConverter = currencyConverter,
+                currencySettingsRepository = currencySettingsRepository,
+                ioDispatcher = kotlinx.coroutines.Dispatchers.Unconfined
             ),
             timeBoundaryTicker = com.yourname.expensetracker.domain.util.TimeBoundaryTicker(timeProvider),
             currencyConverter = currencyConverter,
-            currencySettingsRepository = currencySettingsRepository
+            currencySettingsRepository = currencySettingsRepository,
+            multiCurrencyRepository = mockk()
         )
 
         val savingsGoalDao = mockk<SavingsGoalDao>(relaxed = true)
@@ -392,10 +400,16 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
         val stressForecastEngine = FinancialStressForecastEngine(
             synthesisEngine = synthesisEngine,
             monteCarloSimulator = monteCarloSimulator,
-            recurringExpenseEngine = recurringExpenseEngine,
+            recurringPatternsProvider = mockk(),
             expenseRepository = expenseRepository,
             budgetRepository = budgetRepository,
             timeProvider = timeProvider,
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+            currencySettingsRepository = currencySettingsRepository,
+            multiCurrencyRepository = mockk(),
+            recurringLifecycleCoordinator = mockk(),
+            recurringOccurrenceDao = mockk(),
+            currencyConverter = currencyConverter
         )
 
         val healthScoreV2 = FinancialHealthScoreV2(
@@ -517,8 +531,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             pendingCount = 0,
             weather = FinancialWeather(
                 state = WeatherState.UNKNOWN,
-                headline = "",
-                summary = "",
+                headline = UiText.DynamicString(""),
+                summary = UiText.DynamicString(""),
                 icon = "",
                 riskLevel = 0,
                 totalCommitted = 0.0,

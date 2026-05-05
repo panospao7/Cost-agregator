@@ -234,7 +234,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     private fun configureRepositoryWithGoals(initialGoals: List<SavingsGoal>) {
         goalsFlow = MutableStateFlow(initialGoals)
 
-        every { savingsGoalRepository.getAllGoals() } returns goalsFlow
+        every { savingsGoalRepository.observeSavingsGoals() } returns goalsFlow
 
         coEvery { savingsGoalRepository.addGoal(any()) } coAnswers {
             val incoming = invocation.args[0] as SavingsGoal

@@ -92,7 +92,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         every { repository.getCount() } returns flowOf(1)
         every { repository.getAllPackages() } returns flowOf(listOf("com.revolut"))
         every { repository.getBlockedPackages() } returns flowOf(listOf(BlockedPackage("com.spam.app")))
-        every { repository.getSourceStats() } returns flowOf(listOf(SourceStats("com.revolut", totalNotifications = 3)), lastSeen = 0L)
+        every { repository.getSourceStats() } returns flowOf(listOf(SourceStats("com.revolut", totalNotifications = 3, lastSeen = 0L)))
         every { repository.getClassifierStatsFlow() } returns flowOf(ClassifierStats(5, 2, 10, false))
 
         every { expenseRepository.getTotalSpent() } returns flowOf(42.5)
@@ -144,7 +144,8 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
             aiEngagementRepository = aiEngagementRepository,
             aiRuntimeDiagnostics = aiRuntimeDiagnostics,
             databaseBackupRepository = databaseBackupRepository,
-            csvExpenseImporter = mockk(relaxed = true, legacyDataMigrationService = mockk())
+            csvExpenseImporter = mockk(relaxed = true),
+            legacyDataMigrationService = mockk(relaxed = true)
         )
     }
 
@@ -189,6 +190,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
 
     @Test
     fun `stress - clear and reset actions delegate to repositories`() = runTest(testDispatcher) {
+        @Suppress("DEPRECATION_ERROR")
         coJustRun { repository.deleteAll() }
         coJustRun { expenseRepository.deleteAllExpenses() }
         coJustRun { budgetRepository.deleteAll() }
@@ -200,6 +202,7 @@ class DebugViewModelStressTest : ViewModelTestUtils() {
         viewModel.resetSourceStats()
         advanceUntilIdle()
 
+        @Suppress("DEPRECATION_ERROR")
         coVerify(exactly = 1) { repository.deleteAll() }
         coVerify(exactly = 1) { expenseRepository.deleteAllExpenses() }
         coVerify(exactly = 1) { budgetRepository.deleteAll() }

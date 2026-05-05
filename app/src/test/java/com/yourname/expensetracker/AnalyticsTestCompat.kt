@@ -150,6 +150,7 @@ fun testAnalyticsCurrencyNormalizer(
     return AnalyticsCurrencyNormalizer(currencyConverter)
 }
 
+@JvmName("generateInsightsWithExpenses")
 suspend fun InsightsEngine.generateInsights(
     categories: List<Category>,
     allExpenses: List<Expense>,
@@ -162,6 +163,7 @@ suspend fun InsightsEngine.generateInsights(
     conversionWarnings = conversionWarnings
 )
 
+@JvmName("generateInsightsWithExpenseSnapshots")
 suspend fun InsightsEngine.generateInsights(
     categories: List<Category>,
     allExpenses: List<ExpenseSnapshot>,
@@ -174,6 +176,7 @@ suspend fun InsightsEngine.generateInsights(
     conversionWarnings = conversionWarnings
 )
 
+@JvmName("generateInsightsWithAnalyticsCategoryRefs")
 suspend fun InsightsEngine.generateInsights(
     categories: List<AnalyticsCategoryRef>,
     allExpenses: List<Expense>,
@@ -189,6 +192,7 @@ suspend fun InsightsEngine.generateInsights(
 fun InsightsEngine.buildDailyTotals(expenses: List<Expense>, days: Int): Map<String, Double> =
     buildDailyTotals(expenses.toExpenseSnapshots(), days)
 
+@JvmName("calculateWithExpenseSnapshots")
 fun SpendingPaceCalculator.calculate(
     currentMonthStart: Long,
     previousMonthStart: Long,
@@ -202,6 +206,7 @@ fun SpendingPaceCalculator.calculate(
     displayCurrency = "EUR"
 )
 
+@JvmName("calculateWithExpenses")
 fun SpendingPaceCalculator.calculate(
     currentMonthStart: Long,
     previousMonthStart: Long,
@@ -215,18 +220,21 @@ fun SpendingPaceCalculator.calculate(
     displayCurrency = "EUR"
 )
 
+@JvmName("calculateMonthlyWithSnapshots")
 fun MonthlyComparisonCalculator.calculate(
     currentMonth: MonthPeriod,
     previousMonth: MonthPeriod?,
     allExpenses: List<ExpenseSnapshot>
 ): MonthlyComparison = calculate(currentMonth, previousMonth, allExpenses, "EUR")
 
+@JvmName("calculateMonthlyWithExpenses")
 fun MonthlyComparisonCalculator.calculate(
     currentMonth: MonthPeriod,
     previousMonth: MonthPeriod?,
     allExpenses: List<Expense>
 ): MonthlyComparison = calculate(currentMonth, previousMonth, allExpenses.toExpenseSnapshots(), "EUR")
 
+@JvmName("calculateCategoryWithSnapshots")
 fun CategoryInsightEngine.calculate(
     currentMonth: MonthPeriod,
     previousMonth: MonthPeriod?,
@@ -234,6 +242,7 @@ fun CategoryInsightEngine.calculate(
     allExpenses: List<ExpenseSnapshot>
 ) = calculate(currentMonth, previousMonth, categoryMap, allExpenses, "EUR")
 
+@JvmName("calculateCategoryWithExpenses")
 fun CategoryInsightEngine.calculate(
     currentMonth: MonthPeriod,
     previousMonth: MonthPeriod?,
@@ -241,32 +250,38 @@ fun CategoryInsightEngine.calculate(
     allExpenses: List<Expense>
 ) = calculate(currentMonth, previousMonth, categoryMap, allExpenses.toExpenseSnapshots(), "EUR")
 
+@JvmName("calculateMerchantWithSnapshots")
 fun MerchantInsightEngine.calculate(
     allExpenses: List<ExpenseSnapshot>
 ): List<MerchantInsight> = calculate(allExpenses, "EUR")
 
+@JvmName("calculateMerchantWithExpenses")
 fun MerchantInsightEngine.calculate(
     allExpenses: List<Expense>
 ): List<MerchantInsight> = calculate(allExpenses.toExpenseSnapshots(), "EUR")
 
+@JvmName("analyzeDayOfWeekWithSnapshots")
 fun DayOfWeekAnalyzer.analyze(
     startDate: Long,
     endDate: Long,
     allExpenses: List<ExpenseSnapshot>
 ) = analyze(startDate, endDate, allExpenses, "EUR")
 
+@JvmName("analyzeDayOfWeekWithExpenses")
 fun DayOfWeekAnalyzer.analyze(
     startDate: Long,
     endDate: Long,
     allExpenses: List<Expense>
 ) = analyze(startDate, endDate, allExpenses.toExpenseSnapshots(), "EUR")
 
+@JvmName("detectAnomaliesWithSnapshots")
 fun AnomalyDetector.detect(
     monthPeriod: MonthPeriod,
     categoryMap: Map<Long, AnalyticsCategoryRef>,
     allExpenses: List<ExpenseSnapshot>
 ) = detect(monthPeriod, categoryMap, allExpenses, "EUR")
 
+@JvmName("detectAnomaliesWithExpenses")
 fun AnomalyDetector.detect(
     monthPeriod: MonthPeriod,
     categoryMap: Map<Long, AnalyticsCategoryRef>,
