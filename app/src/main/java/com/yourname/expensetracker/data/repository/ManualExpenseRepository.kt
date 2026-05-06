@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -145,11 +146,11 @@ class ManualExpenseRepository @Inject constructor(
             locationSource = locationSource
         )
 
-        // ── Delegate to coordinator ──────────────────────────────────────────
+        // ── Delegate to coordinator (DEFER side effects until outer tx commits) ─
         var insertedExpenseForHook: Expense? = null
 
         val result = database.withTransaction {
-            when (val coordinatorResult = transactionLifecycleCoordinator.createExpense(request)) {
+            when (val coordinatorResult = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
                 is CreateExpenseResult.Created -> {
                     val id = coordinatorResult.expenseId
 
@@ -224,6 +225,14 @@ class ManualExpenseRepository @Inject constructor(
                     )
                 }
             }
+        }
+
+        // ── Deferred lifecycle side effects (now safely post-commit) ──────────
+        if (result is Result.Success) {
+            transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
+                result.data,
+                ExpenseSource.MANUAL_ENTRY
+            )
         }
 
         // ── Source-specific post-transaction side effects ─────────────────────

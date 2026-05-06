@@ -67,7 +67,8 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             monteCarloSimulator = monteCarloSimulator,
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
-            cashFlowCalculator = mockk<CashFlowCalculator>(relaxed = true)
+            cashFlowCalculator = mockk<CashFlowCalculator>(relaxed = true),
+            spendingThresholdCalculator = mockk(relaxed = true)
         )
     }
 

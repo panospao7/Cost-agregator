@@ -32,7 +32,7 @@ class ExpenseCategoryClassifierTest {
     }
 
     private fun createClassifier(): ExpenseCategoryClassifier =
-        ExpenseCategoryClassifier(context, ioDispatcher = testDispatcher)
+        ExpenseCategoryClassifier(context, ioDispatcher = testDispatcher, atRestEncryptionService = mockk(relaxed = true))
 
     private fun makeFeatures(merchant: String, tokens: List<String> = merchant.lowercase().split(" ")): ExpenseFeatures =
         ExpenseFeatures(

@@ -200,24 +200,26 @@ class BudgetMonitor @Inject constructor(
 
         // BUD-3: Only update notification timestamp if the notification was
         // actually delivered (e.g. user has notifications disabled).
+        val effectiveLimit = status.effectiveLimit
+
         when {
             percent >= 1.0f -> {
                 if (shouldNotify(budget.lastExceededNotifiedAt, now, periodStart, budget.period)) {
-                    if (sendNotification(budget.id.toInt(), budget, spent, "Budget Exceeded!", categoryName)) {
+                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Exceeded!", categoryName)) {
                         budgetRepository.updateExceededNotification(budget.id, now)
                     }
                 }
             }
             percent >= budget.notifyAtCritical && percent < 1.0f -> {
                 if (shouldNotify(budget.lastCriticalNotifiedAt, now, periodStart, budget.period)) {
-                    if (sendNotification(budget.id.toInt(), budget, spent, "Critical Budget Warning", categoryName)) {
+                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Critical Budget Warning", categoryName)) {
                         budgetRepository.updateCriticalNotification(budget.id, now)
                     }
                 }
             }
             percent >= budget.notifyAtWarning && percent < budget.notifyAtCritical -> {
                 if (shouldNotify(budget.lastWarningNotifiedAt, now, periodStart, budget.period)) {
-                    if (sendNotification(budget.id.toInt(), budget, spent, "Budget Warning", categoryName)) {
+                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Warning", categoryName)) {
                         budgetRepository.updateWarningNotification(budget.id, now)
                     }
                 }
@@ -241,19 +243,23 @@ class BudgetMonitor @Inject constructor(
         notificationId: Int,
         budget: Budget,
         spent: Double,
+        effectiveLimit: Double,
         title: String,
         categoryName: String
     ): Boolean {
-        val percent = (spent / budget.amount * 100).toInt()
+        val limit = if (effectiveLimit > 0) effectiveLimit else budget.amount
+        val percent = if (limit > 0) (spent / limit * 100).toInt() else 0
         val currencySymbol = com.yourname.expensetracker.domain.currency.SupportedCurrency
             .fromCode(budget.currency)?.symbol ?: budget.currency
         val content = String.format(
             Locale.US,
-            "You've spent %s%.2f (%d%%) of your %s budget.",
+            "You've spent %s%.2f (%d%%) of your %s budget (%s%.2f).",
             currencySymbol,
             spent,
             percent,
-            categoryName
+            categoryName,
+            currencySymbol,
+            limit
         )
 
         return notificationService.sendBudgetAlert(notificationId, title, content) ==

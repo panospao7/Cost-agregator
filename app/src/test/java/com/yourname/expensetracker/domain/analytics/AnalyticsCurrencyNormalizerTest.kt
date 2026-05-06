@@ -144,7 +144,7 @@ class AnalyticsCurrencyNormalizerTest {
         override suspend fun getRateAsOf(fromCurrency: String, toCurrency: String, atMillis: Long): DomainExchangeRate? =
             getRate(fromCurrency, toCurrency)
 
-        override fun getAllRatesForBase(baseCurrency: String): Flow<List<DomainExchangeRate>> = emptyFlow()
+        override fun getRatesToCurrency(targetCurrency: String): Flow<List<DomainExchangeRate>> = emptyFlow()
 
         override suspend fun getLatestRate(): DomainExchangeRate? = rates.values.maxByOrNull { it.lastUpdated }
 

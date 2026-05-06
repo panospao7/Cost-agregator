@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import javax.inject.Inject
@@ -72,7 +73,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
     private val duplicateDetector: ReceiptDuplicateDetector,
     private val assetStore: ReceiptAssetStore,
     private val transactionValidator: ValidateBankStatementTransactionsUseCase,
-    private val recurringExpenseRepository: RecurringExpenseRepository
+    private val recurringExpenseRepository: RecurringExpenseRepository,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) {
 
     /**
@@ -86,6 +88,9 @@ class BankStatementLifecycleProcessor @Inject constructor(
      * 6. Writes lifecycle events and returns the result.
      */
     suspend fun processBankStatement(uri: Uri): Result<BankStatementResult> {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        }
         val startTime = timeProvider.now()
         val parsingLogs = mutableListOf<String>()
 

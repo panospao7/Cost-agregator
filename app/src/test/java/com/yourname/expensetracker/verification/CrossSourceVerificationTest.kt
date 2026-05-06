@@ -33,6 +33,7 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -109,6 +110,8 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
         totalsAggregationEngine = TotalsAggregationEngine(
             expenseRepository = repository,
             timeProvider = timeProvider,
+            multiCurrencyRepository = mockk(),
+            categoryRepository = mockk(),
             ioDispatcher = Dispatchers.Unconfined
         )
 
@@ -158,7 +161,7 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
         val periodDays = ((end - start) / TimePeriodUtils.DAY_IN_MILLIS).toInt()
         val manualAvg = repoTotal / periodDays
         val totalsEngineAvg = totalsAggregationEngine.getDailyTotalsForRange(start, end)
-            .sumOf { it.totalAmount } / periodDays
+            .first().sumOf { it.totalAmount } / periodDays
 
         assertApproxEquals(manualAvg, advancedAvg, 0.01, "Manual vs Advanced: ")
         assertApproxEquals(manualAvg, totalsEngineAvg, 0.01, "Manual vs TotalsAggregationEngine: ")
@@ -267,7 +270,7 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
 
         val totalsEngineCount = totalsAggregationEngine
             .getDailyTotalsForRange(marchStart, aprilStart)
-            .sumOf { it.transactionCount }
+            .first().sumOf { it.transactionCount }
 
         assertEquals(repoCount, advancedCount)
         assertEquals(repoCount, totalsEngineCount)

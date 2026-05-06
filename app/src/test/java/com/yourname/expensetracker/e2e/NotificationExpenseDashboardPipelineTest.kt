@@ -206,7 +206,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             context = context,
             categoryRepository = categoryRepository,
             categorizationEngine = categorizationEngineRef,
-            nbClassifier = ExpenseCategoryClassifier(context),
+            nbClassifier = ExpenseCategoryClassifier(context, atRestEncryptionService = mockk()),
             timeProvider = timeProvider
         )
 

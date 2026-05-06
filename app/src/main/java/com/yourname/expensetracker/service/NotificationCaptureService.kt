@@ -34,19 +34,52 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import javax.inject.Inject
 
+/**
+ * Holds all text fields extracted from a notification's [android.os.Bundle].
+ *
+ * A single extraction pass produces this struct; every downstream consumer
+ * (filter, content hash, fingerprint, raw-notification entity, parser) uses the
+ * same instance so that fallback resolution is consistent everywhere.
+ */
+internal data class NotificationTextParts(
+    val title: String?,
+    val text: String?,
+    val bigText: String?,
+    val subText: String?,
+    val infoText: String?,
+    val summaryText: String?,
+    /** Resolved bigText with infoText/summaryText fallback. */
+    val effectiveBigText: String?
+) {
+    companion object {
+        fun extract(extras: android.os.Bundle): NotificationTextParts {
+            val title = extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString()
+            val text = extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString()
+            val bigText = extras.getCharSequence(android.app.Notification.EXTRA_BIG_TEXT)?.toString()
+            val subText = extras.getCharSequence(android.app.Notification.EXTRA_SUB_TEXT)?.toString()
+            val infoText = extras.getCharSequence(android.app.Notification.EXTRA_INFO_TEXT)?.toString()
+            val summaryText = extras.getCharSequence(android.app.Notification.EXTRA_SUMMARY_TEXT)?.toString()
+            val effectiveBigText = bigText?.takeIf { it.isNotBlank() }
+                ?: infoText?.takeIf { it.isNotBlank() }
+                ?: summaryText?.takeIf { it.isNotBlank() }
+            return NotificationTextParts(
+                title = title,
+                text = text,
+                bigText = bigText,
+                subText = subText,
+                infoText = infoText,
+                summaryText = summaryText,
+                effectiveBigText = effectiveBigText
+            )
+        }
+    }
+}
+
 internal fun computeNotificationContentHash(
     title: String?,
     text: String?,
-    bigText: String?
-): Int = (title.orEmpty() + text.orEmpty() + bigText.orEmpty()).hashCode()
-
-internal fun resolveEffectiveBigText(
-    bigText: String?,
-    infoText: String?,
-    summaryText: String?
-): String? = bigText?.takeIf { it.isNotBlank() }
-    ?: infoText?.takeIf { it.isNotBlank() }
-    ?: summaryText?.takeIf { it.isNotBlank() }
+    effectiveBigText: String?
+): Int = (title.orEmpty() + text.orEmpty() + effectiveBigText.orEmpty()).hashCode()
 
 internal class NotificationServiceWorkTracker {
     private val lock = Any()
@@ -114,17 +147,16 @@ internal class NotificationServiceWorkTracker {
  *
  * No ungated capture path exists.
  *
- * ## SET-1: Finance-app notifications
- * Verified that every notification-capture entry point checks the privacy gate:
- * - [onNotificationPosted] checks `PrivacyCapability.NOTIFICATION_CAPTURE`
- *   inside the launch coroutine (lines 337-343).
- * - [processNotificationBypassDedupe] (called by [refreshActiveNotifications])
- *   checks the same gate (lines 457-464).
- * - [onStartCommand] / [onListenerConnected] do NOT directly capture; they
- *   delegate to the gated paths above.
+ * ## Restore maintenance mode coverage
+ * Both [onNotificationPosted] and [processNotificationBypassDedupe] check
+ * [RestoreMaintenanceMode.isWritesAllowed] before any processing.
  *
- * When the privacy gate denies capture, the notification is silently dropped
- * (no persistence, no processing).
+ * ## Unified text extraction
+ * Both capture paths use [NotificationTextParts.extract] to resolve all
+ * notification fields (title, text, bigText, subText, infoText, summaryText)
+ * in a single pass. The resolved [NotificationTextParts.effectiveBigText] is
+ * used for filtering, content hashing, fingerprinting, and the raw notification
+ * entity — ensuring consistency across all consumers.
  */
 @AndroidEntryPoint
 class NotificationCaptureService : NotificationListenerService() {
@@ -317,42 +349,36 @@ class NotificationCaptureService : NotificationListenerService() {
             return
         }
         
-        // Extract notification data — preserve nullability until fallback resolution
+        // Single extraction pass — every downstream consumer (filter, hash,
+        // fingerprint, entity, parser) sees the same resolved fields.
         val extras = sbn.notification.extras
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+        val parts = NotificationTextParts.extract(extras)
 
-        // Preserve nullability through filter evaluation; normalization happens only
-        // inside the filter/hash helpers so fallback decisions remain intact.
+        // Filter uses effectiveBigText so notifications with transaction info
+        // in infoText/summaryText are not dropped prematurely (P0-2 fix).
         if (!NotificationFilter.shouldCapture(
                 packageName,
-                title,
-                text,
-                bigText
+                parts.title,
+                parts.text,
+                parts.effectiveBigText
             )) return
         
-        // Better deduplication using notification key + content
-        // sbn.key is unique to the notification slot
-        // contentHash ensures we catch updates to the same notification if content differs
-        // Normalize at the hash boundary only — use orEmpty() here, not earlier
-        val contentHash = computeNotificationContentHash(title, text, bigText)
+        // Content hash uses the same resolved fields as the filter so that an
+        // update to infoText/summaryText is seen as new content (P1-3 fix).
+        val contentHash = computeNotificationContentHash(parts.title, parts.text, parts.effectiveBigText)
         val dedupeKey = "${sbn.key}:$contentHash"
         val now = timeProvider.now()
         
         val lastProcessed = processedNotifications[dedupeKey]
         if (lastProcessed != null && (now - lastProcessed) < DEDUP_WINDOW_MS) {
-            // Already processed this exact content recently
             return
         }
         
-        // Update cache
         processedNotifications[dedupeKey] = now
         cleanupCacheIfNeeded()
 
         if (isShuttingDown) return
         workTracker.launch(serviceScope) {
-            // Check privacy gate before processing
             when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
                 is PrivacyDecision.Denied -> {
                     Timber.d("Privacy gate denied notification capture from $packageName")
@@ -360,7 +386,7 @@ class NotificationCaptureService : NotificationListenerService() {
                 }
                 is PrivacyDecision.Allowed -> { /* proceed */ }
             }
-            processNotification(sbn, packageName, title, text, bigText, extras)
+            processNotification(sbn, packageName, parts, extras)
         }
     }
     
@@ -377,24 +403,13 @@ class NotificationCaptureService : NotificationListenerService() {
     private suspend fun processNotification(
         sbn: StatusBarNotification,
         packageName: String,
-        title: String?,
-        text: String?,
-        bigText: String?,
+        parts: NotificationTextParts,
         extras: android.os.Bundle
     ) {
         if (repository.isPackageBlocked(packageName)) {
             Timber.d("Ignoring blocked package: $packageName")
             return
         }
-        
-        // Extract additional useful data for banking apps (sometimes hidden here)
-        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()
-        val infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString()
-        val summaryText = extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString()
-        
-        // Combine text for robust parsing - some apps put the real info in odd places.
-        // Treat blank bigText (null or whitespace-only) as absent so infoText/summaryText can win.
-        val effectiveBigText = resolveEffectiveBigText(bigText, infoText, summaryText)
 
         val extrasJson = try {
             buildExtrasJson(extras)
@@ -412,18 +427,18 @@ class NotificationCaptureService : NotificationListenerService() {
         val rawNotification = RawNotification(
             packageName = packageName,
             appName = appName,
-            title = title,
-            text = text,
-            bigText = effectiveBigText,
-            subText = subText,
+            title = parts.title,
+            text = parts.text,
+            bigText = parts.effectiveBigText,
+            subText = parts.subText,
             extrasJson = extrasJson,
             timestamp = sbn.postTime,
             capturedAt = timeProvider.now(),
             dedupeFingerprint = RawNotificationFingerprint.compute(
                 packageName = packageName,
-                title = title,
-                text = text,
-                bigText = effectiveBigText,
+                title = parts.title,
+                text = parts.text,
+                bigText = parts.effectiveBigText,
                 timestamp = sbn.postTime
             )
         )
@@ -452,28 +467,30 @@ class NotificationCaptureService : NotificationListenerService() {
 
     private fun processNotificationBypassDedupe(sbn: StatusBarNotification) {
         val packageName = sbn.packageName
-        
-        // Preserve nullability — do not collapse null to empty before fallback decisions
+
+        // Guard: block writes during restore (was missing before — NEW-3 fix)
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            Timber.d("Maintenance mode active — skipping refresh notification from %s", packageName)
+            return
+        }
+
         val extras = sbn.notification.extras
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-        val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+        val parts = NotificationTextParts.extract(extras)
 
         if (!NotificationFilter.shouldCapture(
                 packageName,
-                title,
-                text,
-                bigText
+                parts.title,
+                parts.text,
+                parts.effectiveBigText
             )) {
             Timber.d("Skipping (shouldCapture=false): $packageName")
             return
         }
         
-        Timber.d("Processing notification from: $packageName, title: $title")
+        Timber.d("Processing notification from: $packageName, title: ${parts.title}")
 
         if (isShuttingDown) return
         workTracker.launch(serviceScope) {
-            // Check privacy gate before processing
             when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
                 is PrivacyDecision.Denied -> {
                     Timber.d("Privacy gate denied notification capture from $packageName")
@@ -481,7 +498,7 @@ class NotificationCaptureService : NotificationListenerService() {
                 }
                 is PrivacyDecision.Allowed -> { /* proceed */ }
             }
-            processNotification(sbn, packageName, title, text, bigText, extras)
+            processNotification(sbn, packageName, parts, extras)
         }
     }
 

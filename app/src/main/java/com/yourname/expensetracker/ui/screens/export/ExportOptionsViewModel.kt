@@ -182,30 +182,37 @@ class ExportOptionsViewModel @Inject constructor(
                 }
 
                 withContext(Dispatchers.IO) {
-                    exportFile.writer().use { writer ->
-                        // Write format-specific header / JSON prefix
-                        writeStreamHeader(
-                            writer = writer,
-                            format = format,
-                            categories = categories,
-                            preview = previewCollector,
-                            rowCount = expenseCount,
-                            startDate = startDate,
-                            endDate = endDate
-                        )
+                    val tempFile = java.io.File(exportFile.parentFile, ".tmp_${exportFile.name}")
+                    try {
+                        tempFile.writer().use { writer ->
+                            writeStreamHeader(
+                                writer = writer,
+                                format = format,
+                                categories = categories,
+                                preview = previewCollector,
+                                rowCount = expenseCount,
+                                startDate = startDate,
+                                endDate = endDate
+                            )
 
-                        // Stream expenses page by page using keyset cursor
-                        streamExpensesToWriter(
-                            writer = writer,
-                            startDate = startDate,
-                            endDate = endDate,
-                            categories = categories,
-                            format = format,
-                            preview = previewCollector
-                        )
+                            streamExpensesToWriter(
+                                writer = writer,
+                                startDate = startDate,
+                                endDate = endDate,
+                                categories = categories,
+                                format = format,
+                                preview = previewCollector
+                            )
 
-                        // Write format-specific footer (e.g. JSON closing)
-                        writeStreamFooter(writer, format, previewCollector)
+                            writeStreamFooter(writer, format, previewCollector)
+                        }
+                        if (!tempFile.renameTo(exportFile)) {
+                            tempFile.copyTo(exportFile, overwrite = true)
+                            tempFile.delete()
+                        }
+                    } catch (e: Exception) {
+                        tempFile.delete()
+                        throw e
                     }
                 }
 
@@ -260,7 +267,7 @@ class ExportOptionsViewModel @Inject constructor(
             val line = buildString {
                 val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
                 val merchant = escapeCsv(expense.merchant)
-                val amount = escapeCsv(CurrencyFormatter.formatForExport(expense.amount))
+                val amount = escapeCsv(CurrencyFormatter.formatForExport(expense.effectiveAmount))
                 val currency = escapeCsv(expense.currency)
                 val category = escapeCsv(categories[expense.categoryId] ?: "Uncategorized")
                 val notes = escapeCsv(expense.notes ?: "")
@@ -312,7 +319,7 @@ class ExportOptionsViewModel @Inject constructor(
                 append("\"date\":\"").append(escapeJson(date)).append("\",")
                 append("\"timestamp\":").append(expense.date).append(',')
                 append("\"merchant\":\"").append(escapeJson(expense.merchant)).append("\",")
-                append("\"amount\":").append(formatJsonNumber(expense.amount)).append(',')
+                append("\"amount\":").append(formatJsonNumber(expense.effectiveAmount)).append(',')
                 append("\"currency\":\"").append(escapeJson(expense.currency)).append("\",")
                 append("\"category\":\"").append(escapeJson(category)).append("\",")
                 append("\"notes\":")
@@ -452,7 +459,7 @@ class ExportOptionsViewModel @Inject constructor(
                     val line = buildString {
                         val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
                         val merchant = escapeCsv(expense.merchant)
-                        val amount = escapeCsv(CurrencyFormatter.formatForExport(expense.amount))
+                        val amount = escapeCsv(CurrencyFormatter.formatForExport(expense.effectiveAmount))
                         val currency = escapeCsv(expense.currency)
                         val category = escapeCsv(categories[expense.categoryId] ?: "Uncategorized")
                         val notes = escapeCsv(expense.notes ?: "")
@@ -486,7 +493,7 @@ class ExportOptionsViewModel @Inject constructor(
                 append("\"date\":\"").append(escapeJson(date)).append("\",")
                 append("\"timestamp\":").append(expense.date).append(',')
                 append("\"merchant\":\"").append(escapeJson(expense.merchant)).append("\",")
-                append("\"amount\":").append(formatJsonNumber(expense.amount)).append(',')
+                append("\"amount\":").append(formatJsonNumber(expense.effectiveAmount)).append(',')
                 append("\"currency\":\"").append(escapeJson(expense.currency)).append("\",")
                 append("\"category\":\"").append(escapeJson(category)).append("\",")
                 append("\"notes\":")

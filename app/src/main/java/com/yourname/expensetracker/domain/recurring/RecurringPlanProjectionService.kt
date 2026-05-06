@@ -72,7 +72,7 @@ class RecurringPlanProjectionService @Inject constructor(
             val existing = plannedExpenseDao.getBySourceOccurrenceKey(occ.occurrenceKey)
             if (existing == null) {
                 val merchantName = occ.merchant ?: "Recurring Expense"
-                plannedExpenseDao.insertPlannedExpense(
+                val insertedId = plannedExpenseDao.insertPlannedExpense(
                     PlannedExpense(
                         description = merchantName,
                         amount = occ.expectedAmount,
@@ -83,12 +83,13 @@ class RecurringPlanProjectionService @Inject constructor(
                         priority = PlannedExpensePriority.MUST,
                         createdAt = now,
                         sourceOccurrenceKey = occ.occurrenceKey,
+                        openSourceOccurrenceKey = occ.occurrenceKey,
                         sourceRecurringRuleId = ruleId,
                         merchantKey = MerchantKeyGenerator.generate(merchantName),
                         updatedAt = now
                     )
                 )
-                created++
+                if (insertedId > 0) created++
             }
         }
 

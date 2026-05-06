@@ -11,6 +11,7 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
@@ -24,7 +25,7 @@ class TotalsAggregationEngineTest {
 
     @Before
     fun setup() {
-        engine = TotalsAggregationEngine(expenseRepository, timeProvider, Dispatchers.Unconfined)
+        engine = TotalsAggregationEngine(expenseRepository, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
         every { timeProvider.now() } returns System.currentTimeMillis()
     }
 
@@ -35,7 +36,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        val result = engine.getMonthlyTotals(2026)
+        val result = engine.getMonthlyTotals(2026).first()
 
         assertEquals(12, result.size)
         assertTrue(result.all { it.totalAmount == 0.0 && it.transactionCount == 0 })
@@ -59,7 +60,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        val result = engine.getMonthlyTotals(2026)
+        val result = engine.getMonthlyTotals(2026).first()
 
         assertEquals(12, result.size)
         val january = result.first { it.periodKey == "2026-01" }
@@ -76,7 +77,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        val result = engine.getWeeklyTotals(2026, 1)
+        val result = engine.getWeeklyTotals(2026, 1).first()
 
         assertTrue(result.isNotEmpty())
         assertTrue(result.all { it.totalAmount == 0.0 && it.transactionCount == 0 })
@@ -100,7 +101,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        val result = engine.getWeeklyTotals(2026, 1)
+        val result = engine.getWeeklyTotals(2026, 1).first()
 
         assertTrue(result.isNotEmpty())
         val week1 = result.first { it.periodKey == "2026-W3" }
@@ -117,7 +118,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        val result = engine.getDailyTotals(2026, 3)
+        val result = engine.getDailyTotals(2026, 3).first()
 
         assertEquals(7, result.size)
         assertTrue(result.all { it.totalAmount == 0.0 && it.transactionCount == 0 })
@@ -138,7 +139,7 @@ class TotalsAggregationEngineTest {
         )
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 25.0
 
-        val result = engine.getDailyTotalsForRange(dayStart, getEndOfDay(2026, Calendar.JANUARY, 14))
+        val result = engine.getDailyTotalsForRange(dayStart, getEndOfDay(2026, Calendar.JANUARY, 14)).first()
 
         assertEquals(3, result.size)
         assertEquals(50.0, result[0].totalAmount, 0.01)
@@ -164,7 +165,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns dailyTotals
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 40.0
 
-        val result = engine.getDailyTotals(2026, 3)
+        val result = engine.getDailyTotals(2026, 3).first()
 
         assertEquals(7, result.size)
         val day1 = result.first { it.totalAmount == 50.0 }
@@ -182,7 +183,7 @@ class TotalsAggregationEngineTest {
         )
         coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns categoryResults
 
-        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan")
+        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan").first()
 
         assertEquals(3, result.size)
         assertEquals(250.0, result[0].totalAmount, 0.01)
@@ -198,7 +199,7 @@ class TotalsAggregationEngineTest {
     fun `getCategoryBreakdown handles empty results`() = runTest {
         coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns emptyList()
 
-        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan")
+        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan").first()
 
         assertTrue(result.isEmpty())
     }
@@ -212,7 +213,7 @@ class TotalsAggregationEngineTest {
         )
         coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns categoryResults
 
-        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan")
+        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan").first()
 
         assertEquals("Large", result[0].category.name)
         assertEquals("Medium", result[1].category.name)
@@ -233,7 +234,7 @@ class TotalsAggregationEngineTest {
         )
         coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns categoryResults
 
-        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan")
+        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan").first()
 
         assertEquals(1, result.size)
         assertEquals("Unknown", result[0].category.name)
@@ -284,7 +285,7 @@ class TotalsAggregationEngineTest {
     fun `getMonthlyTotals handles repository exception`() = runTest {
         coEvery { expenseRepository.getMonthlyTotalsForPeriod(any(), any()) } throws RuntimeException("DB error")
 
-        val result = engine.getMonthlyTotals(2026)
+        val result = engine.getMonthlyTotals(2026).first()
 
         assertTrue(result.isEmpty())
     }
@@ -293,7 +294,7 @@ class TotalsAggregationEngineTest {
     fun `getWeeklyTotals handles repository exception`() = runTest {
         coEvery { expenseRepository.getWeeklyTotalsForPeriod(any(), any()) } throws RuntimeException("DB error")
 
-        val result = engine.getWeeklyTotals(2026, 1)
+        val result = engine.getWeeklyTotals(2026, 1).first()
 
         assertTrue(result.isEmpty())
     }
@@ -302,7 +303,7 @@ class TotalsAggregationEngineTest {
     fun `getDailyTotals handles repository exception`() = runTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } throws RuntimeException("DB error")
 
-        val result = engine.getDailyTotals(2026, 3)
+        val result = engine.getDailyTotals(2026, 3).first()
 
         assertTrue(result.isEmpty())
     }
@@ -311,7 +312,7 @@ class TotalsAggregationEngineTest {
     fun `getCategoryBreakdown handles repository exception`() = runTest {
         coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } throws RuntimeException("DB error")
 
-        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan")
+        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan").first()
 
         assertTrue(result.isEmpty())
     }
@@ -323,7 +324,7 @@ class TotalsAggregationEngineTest {
         )
         coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns categoryResults
 
-        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan")
+        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Jan").first()
 
         assertEquals(1, result.size)
         assertEquals(0.0, result[0].percentageOfTotal, 0.01)
@@ -348,7 +349,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        val result = engine.getWeeklyTotals(2026, 1)
+        val result = engine.getWeeklyTotals(2026, 1).first()
 
         assertEquals(5, result.size)
         assertEquals("W2", result.first { it.periodKey == "2026-W2" }.periodLabel)
@@ -382,7 +383,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        val result = engine.getMonthlyTotals(2026)
+        val result = engine.getMonthlyTotals(2026).first()
 
         assertEquals(12, result.size)
         val january = result.first { it.periodKey == "2026-01" }
@@ -408,7 +409,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns dailyTotals
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 50.0
 
-        val result = engine.getDailyTotalsForRange(dayStart, dayEnd)
+        val result = engine.getDailyTotalsForRange(dayStart, dayEnd).first()
 
         assertEquals(1, result.size)
         assertEquals(purchaseOnlyDailyTotal, result[0].totalAmount, 0.01)
@@ -425,7 +426,7 @@ class TotalsAggregationEngineTest {
         )
         coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns categoryResults
 
-        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Mar")
+        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Mar").first()
 
         assertEquals(2, result.size)
         val totalAmount = result.sumOf { it.totalAmount }
@@ -445,7 +446,7 @@ class TotalsAggregationEngineTest {
         )
         coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns categoryResults
 
-        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Mar")
+        val result = engine.getCategoryBreakdown(0L, System.currentTimeMillis(), "Mar").first()
 
         assertEquals("Large Category", result[0].category.name)
         assertEquals("Medium Category", result[1].category.name)
@@ -476,7 +477,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        val result = engine.getWeeklyTotals(2026, 1)
+        val result = engine.getWeeklyTotals(2026, 1).first()
 
         assertTrue(result.isNotEmpty())
         val targetWeek = result.first { it.periodKey == "2026-W2" }
@@ -509,7 +510,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns dailyTotals
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 60.0
 
-        val result = engine.getDailyTotals(2026, 3)
+        val result = engine.getDailyTotals(2026, 3).first()
 
         assertEquals(7, result.size)
         val day = result.first { it.totalAmount == purchaseOnlyTotal }
@@ -534,7 +535,7 @@ class TotalsAggregationEngineTest {
         coEvery { expenseRepository.getDailyTotalsWithDatesForPeriod(any(), any()) } returns dailyTotals
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns 70.0
 
-        val result = engine.getDailyTotalsForRange(day1Start, day2End)
+        val result = engine.getDailyTotalsForRange(day1Start, day2End).first()
 
         assertEquals(2, result.size)
         assertEquals(45.0, result[0].totalAmount, 0.01)
@@ -790,7 +791,7 @@ class TotalsAggregationEngineTest {
             }
         }
 
-        val result = engine.getYearlyTotals()
+        val result = engine.getYearlyTotals().first()
 
         val total2025 = result.find { it.periodKey == "2025" }
         val total2026 = result.find { it.periodKey == "2026" }
@@ -836,7 +837,7 @@ class TotalsAggregationEngineTest {
             }
         }
 
-        val result = engine.getYearlyTotals()
+        val result = engine.getYearlyTotals().first()
 
         val y2024 = result.find { it.periodKey == "2024" }
         val y2025 = result.find { it.periodKey == "2025" }

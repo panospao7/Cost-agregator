@@ -5,13 +5,15 @@ import com.yourname.expensetracker.data.database.entity.PrivacyAuditEvent
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.util.TimeProvider
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class PrivacyAuditLoggerImpl @Inject constructor(
-    private val dao: PrivacyAuditDao
+    private val dao: PrivacyAuditDao,
+    private val timeProvider: TimeProvider
 ) : PrivacyAuditLogger {
 
     override suspend fun logDecision(
@@ -19,7 +21,7 @@ class PrivacyAuditLoggerImpl @Inject constructor(
         decision: PrivacyDecision,
         context: Map<String, String>
     ) {
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         dao.insert(
             PrivacyAuditEvent(
                 capability = capability.name,

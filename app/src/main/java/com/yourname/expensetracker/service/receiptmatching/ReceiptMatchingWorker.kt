@@ -68,23 +68,23 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                 
                 when (matchResult) {
                     is MatchResult.AutoMatch -> {
-                        // Auto-link high confidence matches via ReceiptLinkService
-                        receiptLinkService.linkReceiptToExpense(
+                        val linkResult = receiptLinkService.linkReceiptToExpense(
                             receiptId = receipt.id,
                             expenseId = matchResult.transaction.id,
                             linkType = "AUTO_MATCH",
                             source = "MATCHING_WORKER",
                             confidence = matchResult.score.toFloat()
                         )
-                        autoMatched++
-                        
-                        // Notify user of auto-match
-                        // HIGH FIX: Use NotificationIdGenerator instead of toInt()
-                        notificationService.sendBudgetAlert(
-                            notificationId = com.yourname.expensetracker.domain.util.NotificationIdGenerator.forReceipt(receipt.id),
-                            title = applicationContext.getString(R.string.receipt_matching_auto_matched_title),
-                            message = applicationContext.getString(R.string.receipt_matching_auto_matched_message_format, receipt.parsedMerchant ?: applicationContext.getString(R.string.label_unknown))
-                        )
+                        if (linkResult.isSuccess) {
+                            autoMatched++
+                            notificationService.sendBudgetAlert(
+                                notificationId = com.yourname.expensetracker.domain.util.NotificationIdGenerator.forReceipt(receipt.id),
+                                title = applicationContext.getString(R.string.receipt_matching_auto_matched_title),
+                                message = applicationContext.getString(R.string.receipt_matching_auto_matched_message_format, receipt.parsedMerchant ?: applicationContext.getString(R.string.label_unknown))
+                            )
+                        } else {
+                            Timber.w("Auto-match link failed for receipt ${receipt.id}: ${linkResult.exceptionOrNull()?.message}")
+                        }
                     }
                     is MatchResult.Suggested -> {
                         // Save as suggestion for manual review (no link service call for suggestions)

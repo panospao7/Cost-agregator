@@ -15,6 +15,7 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -72,7 +73,7 @@ class TotalsAggregationEngineValidationTest {
     fun setup() {
         expenseRepository = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
-        engine = TotalsAggregationEngine(expenseRepository, timeProvider, Dispatchers.Unconfined)
+        engine = TotalsAggregationEngine(expenseRepository, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
     }
 
     // ========== SCENARIO 1: Known Data Verification ==========
@@ -112,7 +113,7 @@ class TotalsAggregationEngineValidationTest {
         coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 5300.0
         
         // When: Get monthly totals for 2024
-        val result = engine.getMonthlyTotals(2024)
+        val result = engine.getMonthlyTotals(2024).first()
         
         // Then: Verify totals match expected values
         assertEquals(12, result.size)
@@ -161,7 +162,7 @@ class TotalsAggregationEngineValidationTest {
         // When: Get daily totals for a week
         val startMs = createDate(2024, 4, 15)
         val endMs = createDate(2024, 4, 22)
-        val result = engine.getDailyTotalsForRange(startMs, endMs)
+        val result = engine.getDailyTotalsForRange(startMs, endMs).first()
         
         // Then: Verify totals match expected values
         assertEquals(7, result.size)
@@ -197,7 +198,7 @@ class TotalsAggregationEngineValidationTest {
         // When: Get daily totals for the day containing midnight
         val startMs = createDate(2024, 4, 15)
         val endMs = createDate(2024, 4, 16)
-        val result = engine.getDailyTotalsForRange(startMs, endMs)
+        val result = engine.getDailyTotalsForRange(startMs, endMs).first()
         
         // Then: Transaction should be included in April 15
         assertEquals(1, result.size)
@@ -228,7 +229,7 @@ class TotalsAggregationEngineValidationTest {
         // When: Get daily totals for the day containing 23:59:59
         val startMs = createDate(2024, 4, 15)
         val endMs = createDate(2024, 4, 16)
-        val result = engine.getDailyTotalsForRange(startMs, endMs)
+        val result = engine.getDailyTotalsForRange(startMs, endMs).first()
         
         // Then: Transaction should be included in April 15
         assertEquals(1, result.size)
@@ -244,7 +245,7 @@ class TotalsAggregationEngineValidationTest {
         coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0
         
         // When: Get monthly totals
-        val result = engine.getMonthlyTotals(2024)
+        val result = engine.getMonthlyTotals(2024).first()
         
         // Then: Should return explicit zero buckets
         assertEquals(12, result.size)
@@ -259,7 +260,7 @@ class TotalsAggregationEngineValidationTest {
         // When: Get category breakdown
         val startMs = createDate(2024, 4, 1)
         val endMs = createDate(2024, 5, 1)
-        val result = engine.getCategoryBreakdown(startMs, endMs, "April 2024")
+        val result = engine.getCategoryBreakdown(startMs, endMs, "April 2024").first()
         
         // Then: Should return empty list
         assertTrue(result.isEmpty())
@@ -400,7 +401,7 @@ class TotalsAggregationEngineValidationTest {
         // When: Get category breakdown
         val startMs = createDate(2024, 4, 1)
         val endMs = createDate(2024, 5, 1)
-        val result = engine.getCategoryBreakdown(startMs, endMs, "April 2024")
+        val result = engine.getCategoryBreakdown(startMs, endMs, "April 2024").first()
         
         // Then: Percentages should sum to 100
         val totalPercentage = result.sumOf { it.percentageOfTotal.toDouble() }
@@ -431,7 +432,7 @@ class TotalsAggregationEngineValidationTest {
         // When: Get category breakdown
         val startMs = createDate(2024, 4, 1)
         val endMs = createDate(2024, 5, 1)
-        val result = engine.getCategoryBreakdown(startMs, endMs, "April 2024")
+        val result = engine.getCategoryBreakdown(startMs, endMs, "April 2024").first()
         
         // Then: Single category should have 100%
         assertEquals(1, result.size)
@@ -447,7 +448,7 @@ class TotalsAggregationEngineValidationTest {
         )
         coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns categoryResults
 
-        val result = engine.getCategoryBreakdown(createDate(2024, 4, 1), createDate(2024, 5, 1), "April 2024")
+        val result = engine.getCategoryBreakdown(createDate(2024, 4, 1), createDate(2024, 5, 1), "April 2024").first()
         val roundedPercentSum = result.sumOf { kotlin.math.round(it.percentageOfTotal * 100) / 100.0 }
 
         // Rounded percentages should preserve the 100% invariant within small float tolerance.
@@ -529,7 +530,7 @@ class TotalsAggregationEngineValidationTest {
         }
         
         // When: Get yearly totals
-        val result = engine.getYearlyTotals()
+        val result = engine.getYearlyTotals().first()
         
         // Then: Should include years with data and current year
         assertEquals(4, result.size) // 2021, 2022, 2023, 2024
@@ -578,7 +579,7 @@ class TotalsAggregationEngineValidationTest {
             }
         }
 
-        val result = engine.getYearlyTotals()
+        val result = engine.getYearlyTotals().first()
 
         // Average of completed years = (5000 + 6000 + 7000) / 3 = 6000.0
         // 2021 (5000) < 6000 → UNDER_AVERAGE
@@ -631,7 +632,7 @@ class TotalsAggregationEngineValidationTest {
             }
         }
 
-        val result = engine.getYearlyTotals()
+        val result = engine.getYearlyTotals().first()
 
         val y2023 = result.find { it.periodKey == "2023" }
         val y2024 = result.find { it.periodKey == "2024" }

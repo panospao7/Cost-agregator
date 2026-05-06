@@ -1,10 +1,10 @@
 package com.yourname.expensetracker.domain.util
 
 import com.google.common.truth.Truth.assertThat
+import org.junit.Ignore
 import org.junit.Test
 import java.math.BigDecimal
 import java.math.RoundingMode
-import org.junit.Ignore
 
 /**
  * CRITICAL TESTS (CRITICAL-2 & HIGH-2): Money Class

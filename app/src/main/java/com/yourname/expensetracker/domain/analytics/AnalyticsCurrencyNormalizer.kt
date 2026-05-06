@@ -123,10 +123,11 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
             val normalizedAmount = when {
                 sourceCurrency == homeCurrency -> expense.effectiveAmount
                 else -> {
-                    val conversion = currencyConverter.convert(
+                    val conversion = currencyConverter.convertAsOf(
                         amount = expense.effectiveAmount,
                         fromCurrency = sourceCurrency.code,
-                        toCurrency = homeCurrency.code
+                        toCurrency = homeCurrency.code,
+                        atMillis = expense.date
                     )
                     if (conversion == null) {
                         accumulateWarning(

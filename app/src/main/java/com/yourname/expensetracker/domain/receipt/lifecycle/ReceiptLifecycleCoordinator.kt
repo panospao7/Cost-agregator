@@ -497,6 +497,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      * @return The auto-generated receipt ID.
      */
     suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
         val now = timeProvider.now()
         val updated = receipt.copy(
             sourceType = ReceiptSourceType.EMAIL.name,

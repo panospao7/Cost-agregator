@@ -37,6 +37,7 @@ class CategoryRepositoryStressTest {
             database = mockk<AppDatabase>(relaxed = true),
             categoryDao = categoryDao,
             merchantCategoryDao = merchantCategoryDao,
+            budgetDao = mockk(relaxed = true),
             categorizationEngine = categorizationEngine,
             hybridExpenseClassifier = mockk<Lazy<com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier>>(relaxed = true)
         )

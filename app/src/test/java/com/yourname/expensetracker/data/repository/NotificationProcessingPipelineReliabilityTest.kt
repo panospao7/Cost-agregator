@@ -112,6 +112,7 @@ class NotificationProcessingPipelineReliabilityTest {
         recommendationRepository = recommendationRepository,
         subscriptionDetector = subscriptionDetector,
         coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
+        transactionEventDao = mockk(relaxed = true),
         applicationScope = applicationScope
     )
 

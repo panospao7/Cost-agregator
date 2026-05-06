@@ -41,8 +41,13 @@ class AppStartupCoordinator @Inject constructor(
 
         checkRestoreJournal()
         registerLifecycleObserver()
-        scheduleStartupWork(application)
-        syncProactiveBriefingWork()
+
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            Timber.w("Startup: skipping worker scheduling — maintenance mode blocks writes")
+        } else {
+            scheduleStartupWork(application)
+            syncProactiveBriefingWork()
+        }
     }
 
     companion object {
@@ -136,10 +141,12 @@ class AppStartupCoordinator @Inject constructor(
 
             is RestoreJournal.RecoveryResult.CriticalRecoveryRequired -> {
                 Timber.e("Startup: CRITICAL — safety backup and live DB are both corrupt")
+                restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED)
+                Timber.e("Startup: maintenance mode blocks writes until manual recovery and app restart")
+                return
             }
         }
 
-        // Reset maintenance mode to NORMAL on startup if it was left in a non-restart state
         if (restoreMaintenanceMode.currentMode() != RestoreMaintenanceMode.Mode.NORMAL) {
             Timber.w("Startup: resetting maintenance mode from %s to NORMAL", restoreMaintenanceMode.currentMode())
             restoreMaintenanceMode.reset()

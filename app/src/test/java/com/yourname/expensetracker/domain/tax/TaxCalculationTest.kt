@@ -3,8 +3,8 @@ package com.yourname.expensetracker.domain.tax
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.domain.util.Money
 import com.yourname.expensetracker.domain.util.toMoney
-import org.junit.Test
 import org.junit.Ignore
+import org.junit.Test
 
 /**
  * CRITICAL TEST (HIGH-6): Tax Calculation Accuracy

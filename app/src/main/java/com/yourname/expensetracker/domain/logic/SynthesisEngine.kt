@@ -14,7 +14,7 @@ import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.runBlocking
+
 import timber.log.Timber
 import java.time.Instant
 import java.util.*
@@ -375,7 +375,7 @@ class SynthesisEngine @Inject constructor(
         )
     }
 
-    fun calculateBlockPartyData(
+    suspend fun calculateBlockPartyData(
         forecast: FinancialForecast,
         expenses: List<TransactionSummary>,
         dailySpending: List<Float>,
@@ -623,12 +623,8 @@ class SynthesisEngine @Inject constructor(
         val ruleIdsWithOccurrences = mutableSetOf<Long>()
 
         if (manualIds.isNotEmpty()) {
-            // runBlocking is acceptable here because this is called from a
-            // non-suspend context (calculateBlockPartyData) and the DAO query
-            // is purely read-only / fast.
-            val occurrences = runBlocking {
-                occurrenceDao.getByDateRange(monthStart, monthEnd)
-            }.filter {
+            val occurrences = occurrenceDao.getByDateRange(monthStart, monthEnd)
+            .filter {
                     it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
                         it.sourceId in manualIds &&
                         (it.status == "PLANNED" || it.status == "PAID")

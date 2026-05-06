@@ -78,7 +78,7 @@ class RevolutParser @Inject constructor(
 
         for (content in candidates) {
             val lower = content.lowercase()
-            if (REJECT_PATTERNS.any { lower.contains(it) }) return null
+            if (REJECT_PATTERNS.any { lower.contains(it) }) continue
 
             // Try patterns in order of specificity
             val paidAtMatcher = PAID_AT_PATTERN.matcher(content)

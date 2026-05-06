@@ -15,6 +15,7 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
@@ -477,16 +478,12 @@ class NotificationProcessingPipeline @Inject constructor(
         private const val SUBSCRIPTION_DETECTION_TIMEOUT_MS = 5_000L
         private const val MAX_CONCURRENT_RECOMMENDATION_JOBS = 2
         private const val SUBSCRIPTION_LOOKBACK_DAYS = 120
-        private val FINANCIAL_PACKAGES = setOf(
-            "com.google.android.apps.walletnfcrel",
-            "com.google.android.apps.nbu.paisa.user",
-            "gr.nbg.mobilebanking",
-            "mbanking.NBG",
-            "gr.alpha.mobile",
-            "com.eurobank.mobile",
-            "com.winbank.mobile",
-            "com.revolut.revolut"
-        )
+        /**
+         * Single source of truth for finance packages lives in [NotificationFilter.FINANCE_PACKAGES].
+         * This alias prevents the two sets from drifting out of sync.
+         */
+        private val FINANCIAL_PACKAGES: Set<String>
+            get() = com.yourname.expensetracker.service.NotificationFilter.FINANCE_PACKAGES
         private val CURRENCY_HINT_REGEX = Regex("""(€|\$|£|\bEUR\b|\bUSD\b|\bGBP\b)""", RegexOption.IGNORE_CASE)
         private val TRANSACTION_HINT_REGEX = Regex(
             """(paid|payment|purchase|transaction|transfer|sent|received|χρεωση|πληρωμη|αγορα|καταθεση|πιστωση)""",
@@ -833,7 +830,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             skipDeduplication = true
         )
 
-        return when (val result = coordinator.createExpense(request)) {
+        return when (val result = coordinator.createExpense(request, SideEffectMode.DEFER)) {
             is CreateExpenseResult.Created -> {
                 val expenseId = result.expenseId
                 dao.markRelevance(rawId, true)
@@ -995,6 +992,13 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             }
 
             is ParsedDbOutcome.AutoAccepted -> {
+                runPostCommitSafely("lifecycle side effects after auto-accept (expenseId=${dbOutcome.expenseId})") {
+                    coordinator.dispatchPostCreationSideEffects(
+                        dbOutcome.expenseId,
+                        ExpenseSource.NOTIFICATION_AUTO_ACCEPT
+                    )
+                }
+
                 runTransferAnalyticsPostCommit(
                     transactionType = preDb.transactionType,
                     direction = preDb.direction,

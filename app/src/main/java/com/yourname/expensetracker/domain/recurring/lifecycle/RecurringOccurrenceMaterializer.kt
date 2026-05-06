@@ -49,7 +49,7 @@ class RecurringOccurrenceMaterializer @Inject constructor(
      */
     suspend fun materialize(
         resolved: List<OccurrenceConflictResolver.ResolvedOccurrence>,
-        reminderWindows: List<String> = listOf("DUE_DAY")
+        reminderWindows: List<String> = emptyList()
     ): MaterializationResult = database.withTransaction {
         var created = 0
         var updated = 0

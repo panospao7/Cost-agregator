@@ -23,6 +23,7 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.usecase.receipt.ProcessReceiptUseCase
 import com.yourname.expensetracker.domain.usecase.receipt.ProcessedReceipt
@@ -165,7 +166,7 @@ class EmailReceiptIngestionService(
 
             val fingerprint = createFingerprint(normalizedMerchant, parsedReceipt.amount, parsedReceipt.date)
 
-            transactionRunner {
+            val result = transactionRunner {
                 // Step 4a: If a nonblank messageId is provided, check it first before any
                 // side effects. A nonblank messageId is globally unique (UNIQUE index on
                 // emailMessageId); finding it means we have already ingested this exact
@@ -284,6 +285,17 @@ class EmailReceiptIngestionService(
                 EmailReceiptResult.Success(receiptId, expenseIds)
             }
 
+            if (result is EmailReceiptResult.Success) {
+                for (expenseId in result.expenseIds) {
+                    try {
+                        coordinator.dispatchPostCreationSideEffects(expenseId, ExpenseSource.EMAIL_RECEIPT)
+                    } catch (e: Exception) {
+                        Timber.w(e, "Non-critical: failed to dispatch post-creation side effects for expense $expenseId")
+                    }
+                }
+            }
+
+            result
         } catch (e: EmailReceiptExpenseCreationException) {
             Timber.w(e, "Failed to finalize email receipt ingestion from $sender")
             return EmailReceiptResult.ParseError("Failed to create expense from receipt")
@@ -398,7 +410,7 @@ class EmailReceiptIngestionService(
                 ?.joinToString(prefix = "Email receipt: ", separator = ", ") { it.description }
         )
 
-        val expenseId = when (val result = coordinator.createExpense(request)) {
+        val expenseId = when (val result = coordinator.createExpense(request, SideEffectMode.DEFER)) {
             is CreateExpenseResult.Created -> result.expenseId
             else -> {
                 Timber.w("Failed to create expense for email receipt: $receiptId, result=$result")
@@ -406,14 +418,16 @@ class EmailReceiptIngestionService(
             }
         }
 
-        // Link receipt to the newly created expense via ReceiptLinkService
-        receiptLinkService.linkReceiptToExpense(
+        val linkResult = receiptLinkService.linkReceiptToExpense(
             receiptId = receiptId,
             expenseId = expenseId,
             linkType = "EMAIL_RECEIPT",
             source = ExpenseSource.EMAIL_RECEIPT.name,
             confidence = processedReceipt.categoryConfidence
         )
+        if (linkResult.isFailure) {
+            Timber.w("Email receipt link failed for receipt $receiptId → expense $expenseId: ${linkResult.exceptionOrNull()?.message}")
+        }
 
         return listOf(expenseId)
     }

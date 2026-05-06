@@ -56,6 +56,7 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -197,6 +198,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         totalsEngine = TotalsAggregationEngine(
             expenseRepository = repository,
             timeProvider = timeProvider,
+            multiCurrencyRepository = mockk(relaxed = true),
+            categoryRepository = categoryRepository,
             ioDispatcher = Dispatchers.Unconfined
         )
 
@@ -232,7 +235,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             monteCarloSimulator = monteCarloSimulator,
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = mockk(relaxed = true),
-            cashFlowCalculator = mockk(relaxed = true)
+            cashFlowCalculator = mockk(relaxed = true),
+            spendingThresholdCalculator = mockk(relaxed = true)
         )
     }
 
@@ -249,6 +253,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         val (statisticalInsights, _) = advancedEngine.getStatisticalInsights(period, "EUR")
         val advancedAvg = statisticalInsights.averageDailySpend
         val totalsAvg = totalsEngine.getDailyTotalsForRange(MARCH_START, MARCH_30_END_EXCLUSIVE)
+            .first()
             .sumOf { it.totalAmount } / 30.0
 
         assertApproxEquals(DAILY_AVERAGE_30_DAY, advancedAvg, 0.01)
@@ -273,6 +278,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         val (categoryAnalytics1, _) = advancedEngine.getCategoryAnalytics(period, "EUR")
         val advancedTotal = categoryAnalytics1.sumOf { it.totalSpent }
         val totalsTotal = totalsEngine.getDailyTotalsForRange(MARCH_START, APRIL_START)
+            .first()
             .sumOf { it.totalAmount }
 
         assertApproxEquals(MARCH_TOTAL_EFFECTIVE, insightsTotal, 0.01)
@@ -329,6 +335,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             .associateBy { it.category.name }
 
         val totalsMap = totalsEngine.getCategoryBreakdown(MARCH_START, APRIL_START, "Mar 2026")
+            .first()
             .associateBy { it.category.name }
 
         assertApproxEquals(FOOD_TOTAL, insightMap.getValue("Food").currentTotal, 0.01)

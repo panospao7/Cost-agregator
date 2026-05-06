@@ -136,7 +136,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             dayOfWeekAnalyzer = DayOfWeekAnalyzer()
         )
 
-        totalsEngine = TotalsAggregationEngine(expenseRepository, timeProvider, Dispatchers.Unconfined)
+        totalsEngine = TotalsAggregationEngine(expenseRepository, timeProvider, mockk(), mockk(), Dispatchers.Unconfined)
         val currencySettingsRepository = TestCurrencySettingsRepository()
         val analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(testCurrencyConverter())
         advancedEngine = AdvancedAnalyticsEngine(
@@ -413,7 +413,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         )
 
         mockAnalyticsDaoByRange(listOf(sharedExpense))
-        val total = totalsEngine.getDailyTotalsForRange(ms(2026, 3, 1), ms(2026, 4, 1)).sumOf { it.totalAmount }
+        val total = totalsEngine.getDailyTotalsForRange(ms(2026, 3, 1), ms(2026, 4, 1)).first().sumOf { it.totalAmount }
 
         assertApproxEquals(40.0, myShare, 0.0001)
         assertApproxEquals(40.0, total, 0.0001)
@@ -445,8 +445,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, marchStart, aprilStart, "Mar 2026", null),
             displayCurrency = "EUR"
         ).first.sumOf { it.totalSpent }
-        val totalsTotal = totalsEngine.getDailyTotalsForRange(marchStart, aprilStart).sumOf { it.totalAmount }
-        val categorySum = totalsEngine.getCategoryBreakdown(marchStart, aprilStart, "Mar 2026").sumOf { it.totalAmount }
+        val totalsTotal = totalsEngine.getDailyTotalsForRange(marchStart, aprilStart).first().sumOf { it.totalAmount }
+        val categorySum = totalsEngine.getCategoryBreakdown(marchStart, aprilStart, "Mar 2026").first().sumOf { it.totalAmount }
         val pace = spendingPaceCalculator.calculate(
             currentMonthStart = marchStart,
             previousMonthStart = ms(2026, 2, 1),
@@ -542,7 +542,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         assertTrue(insights.anomalies.isEmpty())
         assertApproxEquals(0.0, advancedStats.averageDailySpend, 0.0)
         assertEquals(0, advancedStats.daysWithSpending)
-        assertTrue(dailyTotals.isEmpty())
+        assertTrue(dailyTotals.first().isEmpty())
         assertApproxEquals(0.0, carbon.totalEmissionsKg, 0.0)
         assertTrue(carbon.categoryBreakdown.isEmpty())
         assertTrue(!lifestyle.lifestyleCreepDetected)
@@ -564,7 +564,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         mockAnalyticsDaoByRange(expenses)
 
         val insights = insightsEngine.generateInsights(categories, expenses)
-        val totals = totalsEngine.getDailyTotalsForRange(start, end).sumOf { it.totalAmount }
+        val totals = totalsEngine.getDailyTotalsForRange(start, end).first().sumOf { it.totalAmount }
         val advanced = advancedEngine.getCategoryAnalytics(
             AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, start, end, "Mar 2026", null),
             displayCurrency = "EUR"

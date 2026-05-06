@@ -10,13 +10,16 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
+import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
+import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -48,19 +51,30 @@ class TransactionLifecycleCoordinator @Inject constructor(
     private val currencyConverter: CurrencyConverter,
     private val sideEffectDispatcher: TransactionSideEffectDispatcher,
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     /**
      * Creates an expense with full lifecycle handling:
      * validate → normalize → dedupe → insert atomic → event.
      *
      * All database writes (insert + event) happen inside a Room transaction.
-     * Side effects are dispatched POST-COMMIT (outside the transaction).
+     * Side effects are dispatched POST-COMMIT (outside the transaction) when
+     * [sideEffectMode] is [SideEffectMode.IMMEDIATE] (the default).
+     *
+     * When called inside a caller-managed `database.withTransaction`, pass
+     * [SideEffectMode.DEFER] and call [dispatchPostCreationSideEffects] after
+     * the outer transaction commits to avoid running side effects for data
+     * that may later roll back.
      *
      * @param request The creation request containing all expense fields and policy controls.
+     * @param sideEffectMode Controls whether side effects run immediately or are deferred.
      * @return A [CreateExpenseResult] indicating the outcome (created, duplicate, error, etc.).
      */
-    suspend fun createExpense(request: CreateExpenseRequest): CreateExpenseResult {
+    suspend fun createExpense(
+        request: CreateExpenseRequest,
+        sideEffectMode: SideEffectMode = SideEffectMode.IMMEDIATE
+    ): CreateExpenseResult {
         // Guard: block writes during restore maintenance mode
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             return CreateExpenseResult.Error(IllegalStateException("Database writes blocked during restore"))
@@ -138,14 +152,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
         ).normalizeOwnership()
 
         // ── Currency conversion snapshot ──────────────────────────────────
-        // If the expense currency differs from the home currency (EUR),
-        // populate baseAmount/baseCurrency/exchangeRateUsed so that reports
-        // can reconstruct the original home-currency value without re-converting.
-        val homeCurrency = CurrencyConverter.DEFAULT_BASE_CURRENCY
+        // Populate baseAmount/baseCurrency/exchangeRateUsed so reports can
+        // reconstruct the home-currency value without re-converting.
+        val homeCurrency = try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (_: Exception) {
+            CurrencyConverter.DEFAULT_BASE_CURRENCY
+        }
         if (expense.currency != homeCurrency) {
-            // CURR-2: Use convertAsOf with the expense date to capture the
-            // historical exchange rate valid at the purchase time, rather than
-            // the latest rate which may differ from the rate on the purchase date.
             val conversion = runCatching {
                 currencyConverter.convertAsOf(
                     amount = expense.amount,
@@ -281,17 +295,32 @@ class TransactionLifecycleCoordinator @Inject constructor(
             return CreateExpenseResult.InsertConflict(expense.dedupeKey ?: "unknown")
         }
 
-        // 6. Dispatch post-creation side effects (best-effort, post-commit)
-        sideEffectDispatcher.dispatchOnCreated(insertedId, request.source)
-
-        // 7. Try to link this expense to a PLANNED recurring occurrence (best-effort)
-        try {
-            recurringLifecycleCoordinator.linkExpenseToOccurrence(insertedId)
-        } catch (_: Exception) {
-            // Non-critical — best effort; do not block the caller
+        // 6. Side effects — only if IMMEDIATE; DEFER shifts responsibility to caller
+        if (sideEffectMode == SideEffectMode.IMMEDIATE) {
+            dispatchPostCreationSideEffects(insertedId, request.source)
         }
 
         return CreateExpenseResult.Created(insertedId)
+    }
+
+    /**
+     * Dispatch post-creation side effects for an already-committed expense.
+     *
+     * Call this after your outer `database.withTransaction` has committed when
+     * you used [SideEffectMode.DEFER] in [createExpense]. Best-effort: failures
+     * are logged but do not propagate.
+     *
+     * @param expenseId The ID of the just-committed expense.
+     * @param source    The [ExpenseSource] that created the expense.
+     */
+    suspend fun dispatchPostCreationSideEffects(expenseId: Long, source: ExpenseSource) {
+        sideEffectDispatcher.dispatchOnCreated(expenseId, source)
+
+        try {
+            recurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId)
+        } catch (_: Exception) {
+            Timber.w("Non-critical: failed to link expense $expenseId to recurring occurrence")
+        }
     }
 
     /**
@@ -338,7 +367,15 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 currency = expense.currency,
                 transactionType = expense.transactionType
             )
-            val expenseWithNewKey = expense.copy(dedupeKey = newDedupeKey)
+            val newMerchantKey = if (existing.merchant != expense.merchant) {
+                MerchantKeyGenerator.generate(expense.merchant)
+            } else {
+                expense.merchantKey
+            }
+            val expenseWithNewKey = expense.copy(
+                dedupeKey = newDedupeKey,
+                merchantKey = newMerchantKey
+            )
 
             // Check for duplicate excluding the current expense
             val isDuplicate = expenseDao.isDuplicateCurrencyAware(
@@ -372,25 +409,32 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         // ── Currency conversion snapshot ──────────────────────────────────
-        // If the expense currency differs from the home currency (EUR),
-        // populate baseAmount/baseCurrency/exchangeRateUsed so that reports
-        // can reconstruct the original home-currency value without re-converting.
-        val homeCurrency = CurrencyConverter.DEFAULT_BASE_CURRENCY
-        val finalExpense = if (updatedExpense.currency != homeCurrency) {
+        val homeCurrencyUpdate = try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (_: Exception) {
+            CurrencyConverter.DEFAULT_BASE_CURRENCY
+        }
+        val finalExpense = if (updatedExpense.currency != homeCurrencyUpdate) {
             val conversion = runCatching {
-                currencyConverter.convert(updatedExpense.amount, updatedExpense.currency, homeCurrency)
+                currencyConverter.convertAsOf(
+                    amount = updatedExpense.amount,
+                    fromCurrency = updatedExpense.currency,
+                    toCurrency = homeCurrencyUpdate,
+                    atMillis = updatedExpense.date
+                )
             }.getOrNull()
             if (conversion != null) {
                 updatedExpense.copy(
                     baseAmount = conversion.convertedAmount,
-                    baseCurrency = homeCurrency,
+                    baseCurrency = homeCurrencyUpdate,
                     exchangeRateUsed = conversion.rateUsed
                 )
             } else {
                 Timber.w(
-                    "Cannot convert %s %.2f to %s for expense update; " +
+                    "Cannot convert %s %.2f to %s for expense update (as of %d); " +
                     "baseAmount/baseCurrency/exchangeRateUsed left at defaults",
-                    updatedExpense.currency, updatedExpense.amount, homeCurrency
+                    updatedExpense.currency, updatedExpense.amount, homeCurrency,
+                    updatedExpense.date
                 )
                 updatedExpense
             }
@@ -432,17 +476,25 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * load → write DELETED event → delete.
      *
      * @param expenseId The ID of the expense to delete.
+     * @param source    The origin of the deletion (e.g. "USER_ACTION", "GROUP_DELETE", "RESTORE").
+     * @param reason    Optional human-readable explanation for the deletion.
+     * @param actor     Optional actor identifier (user ID, worker name, etc.).
      * @return [Result.success] if the expense was found and deleted,
      *         [Result.failure] if the expense was not found or an error occurred.
      */
-    suspend fun deleteExpense(expenseId: Long): Result<Unit> {
+    suspend fun deleteExpense(
+        expenseId: Long,
+        source: String = "USER_ACTION",
+        reason: String? = null,
+        actor: String? = null
+    ): Result<Unit> {
         // Guard: block writes during restore maintenance mode
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             return Result.failure(IllegalStateException("Database writes blocked during restore"))
         }
         val expense = expenseDao.getById(expenseId)
             ?: return Result.failure(IllegalArgumentException("Expense not found: $expenseId"))
-        return deleteExpense(expense)
+        return deleteExpense(expense, source, reason, actor)
     }
 
     /**
@@ -450,9 +502,17 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * write DELETED event → delete.
      *
      * @param expense The expense entity to delete.
+     * @param source  The origin of the deletion (e.g. "USER_ACTION", "GROUP_DELETE", "RESTORE").
+     * @param reason  Optional human-readable explanation for the deletion.
+     * @param actor   Optional actor identifier (user ID, worker name, etc.).
      * @return [Result.success] on success, [Result.failure] on error.
      */
-    suspend fun deleteExpense(expense: Expense): Result<Unit> {
+    suspend fun deleteExpense(
+        expense: Expense,
+        source: String = "USER_ACTION",
+        reason: String? = null,
+        actor: String? = null
+    ): Result<Unit> {
         // Guard: block writes during restore maintenance mode
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             return Result.failure(IllegalStateException("Database writes blocked during restore"))
@@ -463,24 +523,22 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
             // Write lifecycle event + delete inside a single transaction
             database.withTransaction {
-                // 1. Write lifecycle event with structured JSON beforeSnapshot
                 transactionEventDao.insert(
                     TransactionEvent(
                         expenseId = expense.id,
                         eventType = LifecycleEventType.DELETED.name,
-                        source = "USER_ACTION",
-                        actor = null,
+                        source = source,
+                        actor = actor,
                         occurredAt = now,
                         dedupeKey = expense.dedupeKey,
                         duplicateExpenseId = null,
                         beforeSnapshot = snapshot,
                         afterSnapshot = null,
                         metadata = null,
-                        reason = null
+                        reason = reason
                     )
                 )
 
-                // 2. Delete the expense
                 expenseDao.delete(expense)
             }
 
@@ -566,16 +624,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         return errors
     }
 
-    private fun expenseToSnapshot(e: Expense): String {
-        return org.json.JSONObject().apply {
-            put("id", e.id)
-            put("amount", e.amount)
-            put("currency", e.currency)
-            put("merchant", e.merchant)
-            put("date", e.date)
-            put("type", e.transactionType)
-        }.toString()
-    }
+    private fun expenseToSnapshot(e: Expense): String = expenseToSnapshot(e.id, e)
 
     private fun expenseToSnapshot(id: Long, e: Expense): String {
         return org.json.JSONObject().apply {
@@ -583,8 +632,20 @@ class TransactionLifecycleCoordinator @Inject constructor(
             put("amount", e.amount)
             put("currency", e.currency)
             put("merchant", e.merchant)
+            put("merchantKey", e.merchantKey)
             put("date", e.date)
-            put("type", e.transactionType)
+            put("type", e.transactionType.name)
+            put("categoryId", e.categoryId ?: JSONObject.NULL)
+            put("dedupeKey", e.dedupeKey ?: JSONObject.NULL)
+            put("isNotMine", e.isNotMine)
+            put("isSharedExpense", e.isSharedExpense)
+            put("mySharePercentage", e.mySharePercentage ?: JSONObject.NULL)
+            put("myShareAmount", e.myShareAmount ?: JSONObject.NULL)
+            put("transferDirection", e.transferDirection?.name ?: JSONObject.NULL)
+            put("notes", e.notes ?: JSONObject.NULL)
+            put("baseAmount", e.baseAmount ?: JSONObject.NULL)
+            put("baseCurrency", e.baseCurrency ?: JSONObject.NULL)
+            put("exchangeRateUsed", e.exchangeRateUsed ?: JSONObject.NULL)
         }.toString()
     }
 

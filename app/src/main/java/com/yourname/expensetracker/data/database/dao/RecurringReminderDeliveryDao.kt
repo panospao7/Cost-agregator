@@ -20,6 +20,11 @@ interface RecurringReminderDeliveryDao {
     @Query("SELECT * FROM recurring_reminder_deliveries WHERE occurrenceId = :occurrenceId AND reminderWindow = :window LIMIT 1")
     suspend fun getByOccurrenceAndWindow(occurrenceId: Long, window: String): RecurringReminderDelivery?
 
-    @Query("SELECT * FROM recurring_reminder_deliveries WHERE status = 'SCHEDULED' AND scheduledAt <= :now ORDER BY scheduledAt")
+    @Query("""
+        SELECT * FROM recurring_reminder_deliveries
+        WHERE (status = 'SCHEDULED' AND scheduledAt <= :now)
+           OR (status = 'SNOOZED' AND snoozedUntil IS NOT NULL AND snoozedUntil <= :now)
+        ORDER BY COALESCE(snoozedUntil, scheduledAt)
+    """)
     suspend fun getPendingDeliveries(now: Long): List<RecurringReminderDelivery>
 }

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.recurring
 
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander.OccurrenceCandidate
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -57,20 +58,17 @@ class OccurrenceConflictResolver @Inject constructor() {
 
         return candidates.map { candidate ->
             val match = actualExpenses.firstOrNull { expense ->
-                // Skip expenses already linked to a previous candidate
                 if (matchedExpenseIds.contains(expense.id)) return@firstOrNull false
 
-                // 1. Same calendar day
+                if (expense.isNotMine) return@firstOrNull false
+                if (expense.transactionType == TransactionType.TRANSFER ||
+                    expense.transactionType == TransactionType.DEPOSIT ||
+                    expense.transactionType == TransactionType.UNKNOWN) return@firstOrNull false
+
                 if (!isSameCalendarDay(candidate.dueDate, expense.date)) return@firstOrNull false
-
-                // 2. Merchant matches (case-insensitive via canonical key)
                 if (!merchantsMatch(candidate.merchant, expense)) return@firstOrNull false
-
-                // 3. Amount within ±10% tolerance
                 if (!amountMatches(candidate.expectedAmount, expense.amount)) return@firstOrNull false
-
-                // 4. Same currency
-                if (candidate.expectedCurrency != expense.currency) return@firstOrNull false
+                if (!candidate.expectedCurrency.equals(expense.currency, ignoreCase = true)) return@firstOrNull false
 
                 true
             }

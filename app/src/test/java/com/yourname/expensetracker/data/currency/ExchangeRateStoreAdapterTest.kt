@@ -94,11 +94,11 @@ class ExchangeRateStoreAdapterTest {
                 source = "api"
             )
         )
-        every { exchangeRateDao.getAllRatesForBase(baseCurrency) } returns flowOf(entities)
+        every { exchangeRateDao.getRatesToCurrency(baseCurrency) } returns flowOf(entities)
 
-        val result = adapter.getAllRatesForBase(baseCurrency).first()
+        val result = adapter.getRatesToCurrency(baseCurrency).first()
 
-        verify(exactly = 1) { exchangeRateDao.getAllRatesForBase(baseCurrency) }
+        verify(exactly = 1) { exchangeRateDao.getRatesToCurrency(baseCurrency) }
         assertEquals(2, result.size)
         assertEquals(listOf("USD", "CHF"), result.map { it.fromCurrency })
         assertEquals(listOf(baseCurrency, baseCurrency), result.map { it.toCurrency })

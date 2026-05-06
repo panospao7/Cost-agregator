@@ -83,11 +83,9 @@ object NotificationFilter {
         "2fa", "two-factor", "verification code", "auth code",
         "password reset", "login attempt", "security code", "one-time",
         // Promotional / non-transactional
-        "offer", "promo", "discount", "cashback offer",
-        // English
-        "refund processed", "you received", "on hold",
-        // Greek
-        "κωδικ", "συνδεση", "προσφορα", "επιστροφ"
+        "promo code", "cashback offer",
+        // Greek — security/promo only
+        "κωδικός ασφαλείας", "κωδικ επαληθ", "συνδεση", "προσφορα"
     )
 
     /**
@@ -104,15 +102,18 @@ object NotificationFilter {
     fun shouldCapture(packageName: String, title: String?, text: String?, bigText: String?): Boolean {
         if (IGNORED_PACKAGES.contains(packageName)) return false
 
-        // PRV-2: Deny-keyword check — skip if content contains any deny keyword
+        // Finance apps bypass ALL heuristics — every notification is financial.
+        // Deny keywords do NOT apply here: bank 2FA / promo filtering is handled
+        // downstream by the parser and confidence router.
+        if (FINANCE_PACKAGES.contains(packageName)) return true
+
         val content = listOf(title, text, bigText)
             .joinToString(separator = " ") { it.orEmpty() }
             .lowercase()
 
+        // PRV-2: Deny-keyword check for non-finance packages (communication +
+        // unknown) — prevents 2FA codes and promos from being captured.
         if (DENY_KEYWORDS.any { content.contains(it) }) return false
-
-        // Finance apps bypass heuristics — every notification is financial
-        if (FINANCE_PACKAGES.contains(packageName)) return true
 
         // Communication apps (Gmail, Viber, SMS) and unknown packages both go
         // through the same heuristic gate: require amount + financial keyword.

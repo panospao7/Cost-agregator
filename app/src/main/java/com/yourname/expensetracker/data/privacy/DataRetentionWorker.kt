@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
 import com.yourname.expensetracker.data.database.entity.PrivacyAuditEvent
@@ -39,13 +40,18 @@ class DataRetentionWorker @AssistedInject constructor(
     @Assisted workerParams: WorkerParameters,
     private val privacySettingsRepository: PrivacySettingsRepository,
     private val appDatabase: AppDatabase,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
         Log.d(TAG, "Data retention worker started")
 
-        // E8: Respect WorkerSpec.DEFAULTS enabled flag
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            Log.w(TAG, "Writes blocked during restore mode, skipping")
+            return Result.success()
+        }
+
         val spec = WorkerSpec.DEFAULTS[WORK_NAME]
         if (spec != null && !spec.enabled) {
             Log.d(TAG, "Worker disabled via WorkerSpec.DEFAULTS, skipping")

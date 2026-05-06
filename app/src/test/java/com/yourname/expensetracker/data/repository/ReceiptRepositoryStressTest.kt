@@ -107,6 +107,7 @@ class ReceiptRepositoryStressTest {
             coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
             receiptLinkService = mockk<ReceiptLinkService>(relaxed = true),
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
+            receiptLifecycleCoordinator = mockk(relaxed = true),
         )
     }
 

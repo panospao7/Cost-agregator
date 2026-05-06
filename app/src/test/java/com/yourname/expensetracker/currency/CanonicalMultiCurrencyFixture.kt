@@ -303,9 +303,9 @@ class FakeExchangeRateStore(
         rates.forEach { insertOrUpdate(it) }
     }
 
-    override fun getAllRatesForBase(baseCurrency: String): Flow<List<DomainExchangeRate>> {
+    override fun getRatesToCurrency(targetCurrency: String): Flow<List<DomainExchangeRate>> {
         val matching = storedRates.values.filter {
-            it.fromCurrency.uppercase() == baseCurrency.uppercase()
+            it.toCurrency.uppercase() == targetCurrency.uppercase()
         }
         return flowOf(matching)
     }

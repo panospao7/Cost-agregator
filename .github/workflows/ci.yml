@@ -47,6 +47,9 @@ jobs:
       - name: Verify Room schema snapshots
         run: ./gradlew :app:verifyRoomSchemaSnapshots -PstrictRoomSchemas=true --no-daemon --stacktrace
 
+      - name: Verify no ignored-test growth
+        run: ./gradlew :app:verifyNoIgnoredGrowth -PmaxIgnoredTests=310 --no-daemon --stacktrace
+
       - name: Upload unit test results
         if: always()
         uses: actions/upload-artifact@v4

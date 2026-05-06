@@ -342,3 +342,42 @@ tasks.register("verifyRoomSchemaSnapshots") {
         }
     }
 }
+
+// HIGH-5: Wire schema verification into the Gradle 'check' lifecycle
+tasks.named("check") {
+    dependsOn("verifyRoomSchemaSnapshots")
+}
+
+// HIGH-6: Ignored-test count guard — fails if @Ignore annotations grow
+tasks.register("verifyNoIgnoredGrowth") {
+    group = "verification"
+    description = "Fails if the number of @Ignore-annotated test methods grows beyond the threshold"
+
+    doLast {
+        val maxAllowed = (findProperty("maxIgnoredTests")?.toString()?.toIntOrNull()) ?: 310
+        val testDirs = listOf(
+            file("$projectDir/src/test/java"),
+            file("$projectDir/src/test/kotlin"),
+            file("$projectDir/src/androidTest/java"),
+            file("$projectDir/src/androidTest/kotlin")
+        )
+        var ignoredCount = 0
+        for (dir in testDirs) {
+            if (dir.exists()) {
+                dir.walkTopDown()
+                    .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
+                    .forEach { file ->
+                        ignoredCount += file.readText().lines()
+                            .count { line -> line.contains("@Ignore") && !line.trimStart().startsWith("//") }
+                    }
+            }
+        }
+        logger.lifecycle("Ignored test methods/classes found: $ignoredCount (max allowed: $maxAllowed)")
+        if (ignoredCount > maxAllowed) {
+            throw GradleException(
+                "Ignored test count ($ignoredCount) exceeds threshold ($maxAllowed). " +
+                "Either fix/delete ignored tests or increase the threshold via -PmaxIgnoredTests=N."
+            )
+        }
+    }
+}

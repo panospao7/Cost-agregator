@@ -97,7 +97,7 @@ private fun parseSaveToken(token: String): Pair<String, Map<String, String>> {
     return base to params
 }
 
-private fun NavigationDestination.toSaveToken(): String = when (this) {
+internal fun NavigationDestination.toSaveToken(): String = when (this) {
     is NavigationDestination.Home -> "home"
     is NavigationDestination.Transactions -> buildSaveToken(
         base = "transactions",
@@ -164,7 +164,7 @@ private fun NavigationDestination.toSaveToken(): String = when (this) {
     is NavigationDestination.CategoryManagement -> "category_management"
 }
 
-private fun destinationFromSaveToken(token: String): NavigationDestination? {
+internal fun destinationFromSaveToken(token: String): NavigationDestination? {
     // Backward compatibility with older persisted format: visual_split_editor:<templateId>
     if (token.startsWith("visual_split_editor:")) {
         val templateId = token.substringAfter(':', "")

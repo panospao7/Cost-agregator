@@ -41,16 +41,17 @@ class WarrantyTrackerRepositoryTest {
     @Before
     fun setup() {
         repository = WarrantyTrackerRepository(
-            warrantyDao,
-            returnWindowDao,
-            object : Lazy<ReceiptRepository> {
+            database = mockk(relaxed = true),
+            warrantyDao = warrantyDao,
+            returnWindowDao = returnWindowDao,
+            receiptRepository = object : Lazy<ReceiptRepository> {
                 override fun get() = receiptRepository
             },
-            cloudExtractionService,
-            aiSettingsRepository,
-            aiPolicy,
-            aiCapabilityRouter,
-            timeProvider
+            cloudExtractionService = cloudExtractionService,
+            aiSettingsRepository = aiSettingsRepository,
+            aiPolicy = aiPolicy,
+            aiCapabilityRouter = aiCapabilityRouter,
+            timeProvider = timeProvider
         )
 
         every { aiSettingsRepository.settings() } returns settingsFlow

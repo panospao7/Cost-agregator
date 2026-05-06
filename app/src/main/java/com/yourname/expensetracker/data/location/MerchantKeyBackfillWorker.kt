@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.workers.WorkerSpec
@@ -35,13 +36,18 @@ import kotlinx.coroutines.withContext
 class MerchantKeyBackfillWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
-    private val expenseRepository: ExpenseRepository
+    private val expenseRepository: ExpenseRepository,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         Log.d(TAG, "Merchant-key backfill started")
 
-        // WorkerSpec gate: check if this worker is enabled
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            Log.w(TAG, "Writes blocked during restore mode, skipping")
+            return@withContext Result.success()
+        }
+
         val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return@withContext Result.success()
         if (!spec.enabled) {
             Log.w(TAG, "Worker $WORK_NAME disabled by spec, skipping")

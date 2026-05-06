@@ -62,11 +62,14 @@ class BillReminderWorker @AssistedInject constructor(
 
                 val title = "Bill due"
                 val body = buildNotificationBody(reminder)
-                sendNotification(reminder, title, body)
+                val delivered = sendNotification(reminder, title, body)
 
-                // Update delivery status to SENT
-                coordinator.markReminderSent(reminder.id)
-                sentCount++
+                if (delivered) {
+                    coordinator.markReminderSent(reminder.id)
+                    sentCount++
+                } else {
+                    Log.w(TAG, "Notification not delivered for reminder ${reminder.id}, leaving status unchanged")
+                }
             }
 
             Log.d(TAG, "BillReminderWorker completed — sent $sentCount reminders")
@@ -78,13 +81,21 @@ class BillReminderWorker @AssistedInject constructor(
     }
 
     /**
-     * Builds a basic "Bill due: X EUR for Y" notification body.
+     * Builds a notification body using actual occurrence details (merchant/amount/currency).
+     * Falls back to a generic message if the occurrence cannot be loaded.
      */
-    private fun buildNotificationBody(
+    private suspend fun buildNotificationBody(
         reminder: com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
     ): String {
-        val amount = "%.2f".format(reminder.occurrenceId)
-        return "Bill due: $amount EUR"
+        val occurrence = coordinator.getOccurrenceById(reminder.occurrenceId)
+        return if (occurrence != null) {
+            val amount = "%.2f".format(occurrence.expectedAmount)
+            val currency = occurrence.expectedCurrency
+            val merchant = occurrence.merchant ?: "Bill"
+            "$merchant due: $amount $currency"
+        } else {
+            "Bill reminder (details unavailable)"
+        }
     }
 
     /**
@@ -97,7 +108,7 @@ class BillReminderWorker @AssistedInject constructor(
         delivery: com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery,
         title: String,
         body: String
-    ) {
+    ): Boolean {
         ensureChannelExists()
 
         // Snooze action — marks delivery SNOOZED for 24h
@@ -132,11 +143,13 @@ class BillReminderWorker @AssistedInject constructor(
             .addAction(R.drawable.ic_dismiss, "Dismiss", dismissPendingIntent)
             .build()
 
-        val notificationId = (delivery.occurrenceId % Int.MAX_VALUE).toInt()
-        try {
+        val notificationId = (delivery.id % Int.MAX_VALUE).toInt()
+        return try {
             NotificationManagerCompat.from(applicationContext).notify(notificationId, notification)
+            true
         } catch (e: SecurityException) {
             Log.w(TAG, "Missing notification permission — cannot send notification", e)
+            false
         }
     }
 

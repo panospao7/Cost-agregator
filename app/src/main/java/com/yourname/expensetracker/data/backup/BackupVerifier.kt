@@ -67,12 +67,12 @@ object BackupVerifier {
         "ai_chat_messages"               to VerificationTier.TIER_2_VALIDITY,
         "recommendations"                to VerificationTier.TIER_2_VALIDITY,
         "receipt_item_categorizations"   to VerificationTier.TIER_2_VALIDITY,
-        "transaction_events"             to VerificationTier.TIER_2_VALIDITY,
-        "receipt_events"                 to VerificationTier.TIER_2_VALIDITY,
-        "receipt_expense_links"          to VerificationTier.TIER_2_VALIDITY,
-        "recurring_occurrences"          to VerificationTier.TIER_2_VALIDITY,
-        "recurring_reminder_deliveries"  to VerificationTier.TIER_2_VALIDITY,
-        "recurring_lifecycle_events"     to VerificationTier.TIER_2_VALIDITY,
+        "transaction_events"             to VerificationTier.TIER_1_EXACT,
+        "receipt_events"                 to VerificationTier.TIER_1_EXACT,
+        "receipt_expense_links"          to VerificationTier.TIER_1_EXACT,
+        "recurring_occurrences"          to VerificationTier.TIER_1_EXACT,
+        "recurring_reminder_deliveries"  to VerificationTier.TIER_1_EXACT,
+        "recurring_lifecycle_events"     to VerificationTier.TIER_1_EXACT,
 
         // ── Tier 3: Optional (10 tables) ──
         "exchange_rates"                 to VerificationTier.TIER_3_OPTIONAL,
@@ -198,6 +198,8 @@ object BackupVerifier {
                 VerificationTier.TIER_1_EXACT -> {
                     if (expected == null) {
                         false to "Table '$tableName' not found in manifest counts"
+                    } else if (actual == -1) {
+                        false to "Required table '$tableName' is missing from database"
                     } else if (actual != expected) {
                         false to "Count mismatch: expected $expected, actual $actual"
                     } else {
@@ -305,7 +307,7 @@ object BackupVerifier {
 
     private fun countRows(db: SQLiteDatabase, tableName: String): Int {
         return try {
-            if (!tableExists(db, tableName)) return 0
+            if (!tableExists(db, tableName)) return -1
             val cursor = db.rawQuery("SELECT COUNT(*) FROM \"$tableName\"", null)
             cursor.use {
                 if (it.moveToFirst()) it.getInt(0) else 0

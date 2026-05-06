@@ -92,5 +92,14 @@ class NaturalLanguageSearchEngineVoiceInputTest {
         override suspend fun getExpensesBetween(startMs: Long, endMs: Long): List<NaturalLanguageExpense> {
             return emptyList()
         }
+
+        override suspend fun getExpensesBetweenFiltered(
+            startMs: Long,
+            endMs: Long,
+            merchants: List<String>?,
+            categories: List<String>?,
+            minAmount: Double?,
+            maxAmount: Double?
+        ): List<NaturalLanguageExpense> = emptyList()
     }
 }

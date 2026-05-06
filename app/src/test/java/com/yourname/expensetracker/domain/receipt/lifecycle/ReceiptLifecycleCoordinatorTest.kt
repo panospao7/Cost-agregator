@@ -85,7 +85,10 @@ class ReceiptLifecycleCoordinatorTest {
             sideEffectDispatcher = sideEffectDispatcher,
             duplicateDetector = duplicateDetector,
             currencySettingsRepository = currencySettingsRepository,
-            restoreMaintenanceMode = restoreMaintenanceMode
+            restoreMaintenanceMode = restoreMaintenanceMode,
+            transactionLifecycleCoordinator = mockk(relaxed = true),
+            merchantNormalizer = mockk(relaxed = true),
+            hybridClassifier = mockk(relaxed = true)
         )
     }
 

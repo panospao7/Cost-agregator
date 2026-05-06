@@ -67,6 +67,8 @@ class DailyBriefingWorkerTest {
                         deliverProactiveBriefingNotificationUseCase,
                         timeProvider,
                         privacyGate = mockk(),
+                        aiArtifactRepository = mockk(),
+                        aiWorkScheduler = mockk(),
                     )
                 }
             })

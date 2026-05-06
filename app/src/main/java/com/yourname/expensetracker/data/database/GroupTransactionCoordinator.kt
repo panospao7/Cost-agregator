@@ -23,6 +23,7 @@ import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -514,7 +515,7 @@ class GroupTransactionCoordinator @Inject constructor(
                 )
 
                 // 3. Create system expense via TransactionLifecycleCoordinator
-                // (handles validation, deduplication, insertAtomic, and lifecycle event)
+                // Side effects are deferred until after this outer transaction commits
                 val createResult = transactionLifecycleCoordinator.createExpense(
                     CreateExpenseRequest(
                         merchant = description,
@@ -527,7 +528,8 @@ class GroupTransactionCoordinator @Inject constructor(
                         isManualEntry = true,
                         isSharedExpense = true,
                         myShareAmount = currentUserShare
-                    )
+                    ),
+                    SideEffectMode.DEFER
                 )
 
                 val systemExpenseId = when (createResult) {
@@ -582,6 +584,17 @@ class GroupTransactionCoordinator @Inject constructor(
                     groupExpenseId = groupExpenseId,
                     expenseId = systemExpenseId
                 )
+            }.also { result ->
+                if (result is GroupExpenseCreationResult.Success) {
+                    try {
+                        transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
+                            result.expenseId,
+                            ExpenseSource.GROUP_EXPENSE
+                        )
+                    } catch (e: Exception) {
+                        // Best-effort; do not fail the successful creation
+                    }
+                }
             }
         } catch (e: Exception) {
             GroupExpenseCreationResult.Error("Failed to create group expense atomically: ${e.message}")

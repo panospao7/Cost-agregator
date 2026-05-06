@@ -108,6 +108,10 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
             aiRuntimeDiagnostics,
             receiptLifecycleCoordinator = mockk(),
             receiptParser = mockk(),
+            transactionLifecycleCoordinator = mockk(),
+            receiptLinkService = mockk(),
+            merchantNormalizer = mockk(),
+            hybridClassifier = mockk(),
         )
     }
 

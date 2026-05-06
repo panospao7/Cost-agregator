@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
 import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
@@ -55,13 +56,18 @@ class DailyBriefingWorker @AssistedInject constructor(
     private val privacyGate: PrivacyGate,
     private val aiArtifactRepository: AiArtifactRepository,
     /** WRK-15: Used to re-schedule the next one-shot briefing at midnight. */
-    private val aiWorkScheduler: AiWorkScheduler
+    private val aiWorkScheduler: AiWorkScheduler,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
         Timber.d("DailyBriefingWorker: starting.")
 
-        // ── Runtime settings gate ────────────────────────────────────────
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            Timber.w("DailyBriefingWorker: writes blocked during restore mode, skipping")
+            return Result.success()
+        }
+
         val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING)
         if (gateCheck is PrivacyDecision.Denied) {
             Timber.w("DailyBriefingWorker: blocked by privacy gate: ${gateCheck.reason}")

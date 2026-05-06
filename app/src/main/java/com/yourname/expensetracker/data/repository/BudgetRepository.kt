@@ -258,10 +258,11 @@ class BudgetRepository @Inject constructor(
         start: Long,
         end: Long
     ): com.yourname.expensetracker.domain.core.money.MoneyAggregate {
+        val homeCurrency = resolveHomeCurrency()
         return if (categoryId != null) {
             multiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals(start, end)[categoryId]
                 ?: com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(
-                    CurrencyCode(MultiCurrencyRepository.DEFAULT_HOME_CURRENCY)
+                    CurrencyCode(homeCurrency)
                 )
         } else {
             multiCurrencyRepository.getHomeCurrencyPurchaseTotal(start, end)
@@ -311,14 +312,13 @@ class BudgetRepository @Inject constructor(
         return try {
             if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
             if (budget.startDate <= 0) throw IllegalArgumentException("Invalid budget start date")
+            val budgetToInsert = if (budget.createdAt == 0L) {
+                budget.copy(createdAt = timeProvider.now())
+            } else budget
             val id = when {
-                // Inactive budgets can never violate the partial unique indexes,
-                // so a plain insert is safe and avoids needless deactivation work.
-                !budget.isActive -> budgetDao.insert(budget)
-                // Active overall budget → atomically demote the previous active overall row.
-                budget.categoryId == null -> budgetDao.insertAndActivateOverall(budget)
-                // Active category budget → atomically demote the previous active row for this category.
-                else -> budgetDao.insertAndActivateCategory(budget)
+                !budgetToInsert.isActive -> budgetDao.insert(budgetToInsert)
+                budgetToInsert.categoryId == null -> budgetDao.insertAndActivateOverall(budgetToInsert)
+                else -> budgetDao.insertAndActivateCategory(budgetToInsert)
             }
             // budgetMonitor.checkBudgets() // Removed to avoid circular dependency. Monitor should observe flow.
             com.yourname.expensetracker.domain.model.Result.Success(id)

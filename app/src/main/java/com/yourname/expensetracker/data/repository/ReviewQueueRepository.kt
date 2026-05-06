@@ -26,6 +26,7 @@ import timber.log.Timber
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 
 @Singleton
@@ -230,7 +231,7 @@ class ReviewQueueRepository @Inject constructor(
                 skipDeduplication = true
             )
 
-            when (val result = transactionLifecycleCoordinator.createExpense(request)) {
+            when (val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
                 is CreateExpenseResult.Created -> {
                     val id = result.expenseId
                     review.rawNotificationId?.let { rawNotificationDao.markRelevance(it, true) }
@@ -315,6 +316,16 @@ class ReviewQueueRepository @Inject constructor(
                 confidenceRouter.invalidateAfterUserAction(review.packageName, review.suggestedMerchant)
             }
             return Result.Duplicate
+        }
+
+        // ── Deferred lifecycle side effects (now safely post-commit) ──────────
+        runPostCommitSafely(
+            action = "lifecycle side effects after review approval (reviewId=$reviewId, expenseId=$txnResult)"
+        ) {
+            transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
+                txnResult,
+                ExpenseSource.REVIEW_APPROVAL
+            )
         }
 
         // ── Source-specific post-commit side effects ─────────────────────────
@@ -507,7 +518,8 @@ class ReviewQueueRepository @Inject constructor(
 
         data class MarkAsRelevantOutcome(
             val shouldTrainAsTransaction: Boolean,
-            val shouldCheckBudgets: Boolean
+            val shouldCheckBudgets: Boolean,
+            val createdExpenseId: Long? = null
         )
 
         val outcome = database.withTransaction {
@@ -544,14 +556,15 @@ class ReviewQueueRepository @Inject constructor(
                         notes = expense.notes,
                         isManualEntry = false
                     )
-                    val result = transactionLifecycleCoordinator.createExpense(request)
+                    val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)
                     if (result is CreateExpenseResult.Created) {
                         val expenseId = result.expenseId
                         sourceStatsDao.incrementAccepted(notification.packageName)
                         userCorrectionDao.insert(correction)
                         MarkAsRelevantOutcome(
                             shouldTrainAsTransaction = true,
-                            shouldCheckBudgets = true
+                            shouldCheckBudgets = true,
+                            createdExpenseId = expenseId
                         )
                     } else {
                         sourceStatsDao.incrementDuplicate(notification.packageName)
@@ -583,6 +596,17 @@ class ReviewQueueRepository @Inject constructor(
                         shouldCheckBudgets = false
                     )
                 }
+            }
+        }
+
+        outcome.createdExpenseId?.let { expenseId ->
+            runPostCommitSafely(
+                action = "lifecycle side effects after markAsRelevant (notificationId=$id, expenseId=$expenseId)"
+            ) {
+                transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
+                    expenseId,
+                    ExpenseSource.NOTIFICATION_AUTO_ACCEPT
+                )
             }
         }
 

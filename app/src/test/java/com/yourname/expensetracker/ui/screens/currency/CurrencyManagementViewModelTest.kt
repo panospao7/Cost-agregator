@@ -39,7 +39,7 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
         every { settingsRepository.homeCurrency() } returns flowOf("EUR")
         every { settingsRepository.lastRateUpdate() } returns flowOf(1_700_000_000_000L)
         coEvery { settingsRepository.areRatesStale(any()) } returns false
-        every { currencyDataRepository.getAllRatesForBase("EUR") } returns flowOf(emptyList())
+        every { currencyDataRepository.getRatesToCurrency("EUR") } returns flowOf(emptyList())
 
         viewModel = createViewModel()
     }
@@ -50,7 +50,7 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
             ExchangeRate(fromCurrency = "EUR", toCurrency = "USD", rate = 1.1, lastUpdated = 1_700_000_100_000L),
             ExchangeRate(fromCurrency = "EUR", toCurrency = "GBP", rate = 0.86, lastUpdated = 1_700_000_200_000L)
         )
-        every { currencyDataRepository.getAllRatesForBase("EUR") } returns flowOf(rates)
+        every { currencyDataRepository.getRatesToCurrency("EUR") } returns flowOf(rates)
 
         viewModel = createViewModel()
 
@@ -119,7 +119,7 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
 
         // Extra entry for the setup viewModel's pending init coroutine
         every {
-            currencyDataRepository.getAllRatesForBase("EUR")
+            currencyDataRepository.getRatesToCurrency("EUR")
         } returnsMany listOf(flowOf(emptyList()), flowOf(beforeRates), flowOf(afterRates))
         coEvery { currencyRatesRepository.refresh("EUR") } returns 2
 
@@ -175,7 +175,8 @@ class CurrencyManagementViewModelTest : ViewModelTestUtils() {
             currencyDataRepository = currencyDataRepository,
             currencyConverter = currencyConverter,
             currencyRatesRepository = currencyRatesRepository,
-            settingsRepository = settingsRepository
+            settingsRepository = settingsRepository,
+            hybridClassifier = mockk(relaxed = true)
         )
     }
 }

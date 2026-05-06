@@ -263,7 +263,7 @@ class BankApiIntegration @Inject constructor(
 
         return CreateExpenseRequest(
             merchant = transaction.merchant,
-            amount = transaction.amount,
+            amount = kotlin.math.abs(transaction.amount),
             currency = transaction.currency,
             date = transaction.date,
             transactionType = transactionType,
@@ -284,7 +284,8 @@ class BankApiIntegration @Inject constructor(
             normalized.contains("withdraw") || normalized.contains("atm") || normalized.contains("cash withdrawal") -> TransactionType.WITHDRAWAL
             transaction.amount > 0 -> TransactionType.DEPOSIT
             transaction.amount < 0 -> TransactionType.PURCHASE
-            else -> TransactionType.UNKNOWN
+            transaction.amount == 0.0 -> TransactionType.UNKNOWN
+            else -> TransactionType.PURCHASE
         }
     }
     

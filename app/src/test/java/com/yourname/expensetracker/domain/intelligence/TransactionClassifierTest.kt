@@ -31,7 +31,7 @@ class TransactionClassifierTest {
         coEvery { userCorrectionRepository.getCount() } returns 0
         coEvery { userCorrectionRepository.getAll() } returns emptyList()
 
-        classifier = TransactionClassifier(context, userCorrectionRepository)
+        classifier = TransactionClassifier(context, userCorrectionRepository, atRestEncryptionService = mockk(relaxed = true))
     }
 
     @Test

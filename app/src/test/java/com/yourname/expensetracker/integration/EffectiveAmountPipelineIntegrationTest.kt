@@ -23,6 +23,7 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
@@ -119,7 +120,7 @@ class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
             transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true),
             transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
         )
-        val totalsEngine = TotalsAggregationEngine(repository, timeProvider, Dispatchers.Unconfined)
+        val totalsEngine = TotalsAggregationEngine(repository, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
         val currencySettingsRepository = TestCurrencySettingsRepository()
         val currencyConverter = testCurrencyConverter()
         val advancedEngine = AdvancedAnalyticsEngine(
@@ -136,7 +137,7 @@ class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
         val expected = 140.0
         val daoTotal = expenseDao.getTotalForPeriod(marchStart, aprilStart)
         val repoTotal = repository.getTotalForPeriod(marchStart, aprilStart)
-        val totalsTotal = totalsEngine.getDailyTotalsForRange(marchStart, aprilStart).sumOf { it.totalAmount }
+        val totalsTotal = totalsEngine.getDailyTotalsForRange(marchStart, aprilStart).first().sumOf { it.totalAmount }
         val (advancedAnalytics, _) = advancedEngine.getCategoryAnalytics(
             AnalyticsPeriodRange(AnalyticsPeriod.CUSTOM, marchStart, aprilStart, "Mar", null),
             "EUR"

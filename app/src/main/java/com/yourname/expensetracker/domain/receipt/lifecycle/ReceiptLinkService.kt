@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDa
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
+import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ReceiptExpenseLink
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
@@ -118,12 +119,19 @@ class ReceiptLinkService @Inject constructor(
         source: String,
         createdBy: String? = null,
         confidence: Float? = null,
-        allowRelink: Boolean = false
+        allowRelink: Boolean = false,
+        matchStatus: MatchStatus? = null
     ): Result<ReceiptExpenseLink> {
         // 1. Load receipt — fail fast if not found
         val receipt = scannedReceiptDao.getById(receiptId)
             ?: return Result.failure(
                 IllegalArgumentException("Receipt not found: $receiptId")
+            )
+
+        // 1b. Validate expense exists — fail fast if not found
+        val expense = expenseDao.getById(expenseId)
+            ?: return Result.failure(
+                IllegalArgumentException("Expense not found: $expenseId")
             )
 
         val isBankStatement =
@@ -157,16 +165,30 @@ class ReceiptLinkService @Inject constructor(
                 isPrimary = true,
                 metadata = null
             )
-            receiptExpenseLinkDao.insert(link)
+            val linkId = receiptExpenseLinkDao.insert(link)
+            if (linkId <= 0) {
+                return@withTransaction Result.failure(
+                    IllegalStateException(
+                        "Duplicate link: receipt $receiptId is already linked to expense $expenseId"
+                    )
+                )
+            }
 
             // 4. For non-BANK_STATEMENT receipts: update legacy ScannedReceipt.expenseId
             // RCP-8: Ensure updatedAt is set on every ScannedReceipt update.
             // RCP-22: Clear suggestedExpenseId to prevent stale suggestion reuse.
+            val resolvedMatchStatus = matchStatus ?: when (linkType) {
+                "AUTO_MATCH" -> MatchStatus.AUTO_MATCHED
+                "DIRECT_SAVE", "REVIEW_APPROVAL" -> MatchStatus.MANUALLY_MATCHED
+                else -> MatchStatus.MANUALLY_MATCHED
+            }
             if (!isBankStatement) {
                 scannedReceiptDao.update(
                     receipt.copy(
                         expenseId = expenseId,
                         suggestedExpenseId = null,
+                        matchStatus = resolvedMatchStatus,
+                        matchConfidence = confidence,
                         updatedAt = now
                     )
                 )

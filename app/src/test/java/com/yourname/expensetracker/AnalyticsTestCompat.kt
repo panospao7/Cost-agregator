@@ -128,7 +128,7 @@ class TestExchangeRateStore : ExchangeRateStore {
         }
     }
 
-    override fun getAllRatesForBase(baseCurrency: String): Flow<List<DomainExchangeRate>> = emptyFlow()
+    override fun getRatesToCurrency(targetCurrency: String): Flow<List<DomainExchangeRate>> = emptyFlow()
 
     override suspend fun getLatestRate(): DomainExchangeRate? = rates.values.maxByOrNull { it.lastUpdated }
 

@@ -88,13 +88,14 @@ class CloudDedupeJudgeServiceTest {
 
         val service = CloudDedupeJudgeService(
             secureKeyStorage = mockKeyStorage,
-            client = client
+            client = client,
+            privacyGate = mockk(relaxed = true)
         )
 
         val result = service.judge(sampleInput())
 
-        assertTrue(result is AiServiceResult.Success)
-        val success = result as AiServiceResult.Success
+        assertTrue(result is AiServiceResult.Success<*>)
+        val success = result as AiServiceResult.Success<com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion>
         assertEquals(DuplicateVerdict.LIKELY_DUPLICATE, success.value.verdict)
         assertEquals(AiTargetType.EXPENSE, success.value.matchedTargetType)
         assertEquals(2L, success.value.matchedTargetId)
@@ -115,7 +116,8 @@ class CloudDedupeJudgeServiceTest {
 
         val service = CloudDedupeJudgeService(
             secureKeyStorage = mockKeyStorage,
-            client = client
+            client = client,
+            privacyGate = mockk(relaxed = true)
         )
 
         val result = service.judge(sampleInput())
@@ -175,7 +177,8 @@ class CloudDedupeJudgeServiceTest {
 
         val service = CloudDedupeJudgeService(
             secureKeyStorage = mockKeyStorage,
-            client = client
+            client = client,
+            privacyGate = mockk(relaxed = true)
         )
 
         val result = service.judge(sampleInput())
@@ -221,13 +224,14 @@ class CloudDedupeJudgeServiceTest {
 
         val service = CloudDedupeJudgeService(
             secureKeyStorage = mockKeyStorage,
-            client = client
+            client = client,
+            privacyGate = mockk(relaxed = true)
         )
 
         val result = service.judge(sampleInput())
 
-        assertTrue(result is AiServiceResult.Success)
-        val success = result as AiServiceResult.Success
+        assertTrue(result is AiServiceResult.Success<*>)
+        val success = result as AiServiceResult.Success<com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion>
         assertNull(success.value.matchedTargetType)
         assertNull(success.value.matchedTargetId)
     }

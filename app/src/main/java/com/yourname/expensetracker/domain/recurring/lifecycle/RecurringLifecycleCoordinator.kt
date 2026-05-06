@@ -61,7 +61,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
         ruleId: Long,
         startDate: Long,
         endDate: Long,
-        reminderWindows: List<String> = listOf("DUE_DAY")
+        reminderWindows: List<String> = emptyList()
     ): MaterializationResult {
         // Guard: block writes during restore maintenance mode
         if (!restoreMaintenanceMode.isWritesAllowed()) {
@@ -192,6 +192,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
      */
     suspend fun getOccurrences(ruleId: Long): List<RecurringOccurrence> {
         return occurrenceDao.getBySource(SOURCE_TYPE_RECURRING_RULE, ruleId)
+    }
+
+    suspend fun getOccurrenceById(occurrenceId: Long): RecurringOccurrence? {
+        return occurrenceDao.getById(occurrenceId)
     }
 
     /**

@@ -32,6 +32,7 @@ class CategoryRepositoryTest {
             database = mockk<AppDatabase>(relaxed = true),
             categoryDao = categoryDao,
             merchantCategoryDao = merchantCategoryDao,
+            budgetDao = mockk(relaxed = true),
             categorizationEngine = categorizationEngine,
             hybridExpenseClassifier = lazyClassifier
         )

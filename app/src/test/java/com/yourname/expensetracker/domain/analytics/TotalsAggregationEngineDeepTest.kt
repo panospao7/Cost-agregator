@@ -13,6 +13,7 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -31,7 +32,7 @@ class TotalsAggregationEngineDeepTest {
     fun setup() {
         expenseRepository = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
-        engine = TotalsAggregationEngine(expenseRepository, timeProvider, Dispatchers.Unconfined)
+        engine = TotalsAggregationEngine(expenseRepository, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
         every { timeProvider.now() } returns dateMs(2026, 4, 15)
     }
 
@@ -58,10 +59,10 @@ class TotalsAggregationEngineDeepTest {
         val daily = engine.getDailyTotalsForRange(dateMs(2026, 2, 2), dateMs(2026, 2, 9))
         val yearly = engine.getYearlyTotals()
 
-        assertApproxEquals(300.0, monthly.sumOf { it.totalAmount })
-        assertApproxEquals(200.0, weekly.sumOf { it.totalAmount })
-        assertApproxEquals(50.0, daily.sumOf { it.totalAmount })
-        assertTrue(yearly.isNotEmpty())
+        assertApproxEquals(300.0, monthly.first().sumOf { it.totalAmount })
+        assertApproxEquals(200.0, weekly.first().sumOf { it.totalAmount })
+        assertApproxEquals(50.0, daily.first().sumOf { it.totalAmount })
+        assertTrue(yearly.first().isNotEmpty())
     }
 
     @Test
@@ -73,9 +74,9 @@ class TotalsAggregationEngineDeepTest {
 
         val result = engine.getCategoryBreakdown(dateMs(2026, 4, 1), dateMs(2026, 5, 1), "Apr")
 
-        assertApproxEquals(75.0, result.first { it.category.id == 1L }.percentageOfTotal, 0.01)
-        assertApproxEquals(25.0, result.first { it.category.id == 2L }.percentageOfTotal, 0.01)
-        assertApproxEquals(100.0, result.sumOf { it.percentageOfTotal }, 0.01)
+        assertApproxEquals(75.0, result.first().first { it.category.id == 1L }.percentageOfTotal, 0.01)
+        assertApproxEquals(25.0, result.first().first { it.category.id == 2L }.percentageOfTotal, 0.01)
+        assertApproxEquals(100.0, result.first().sumOf { it.percentageOfTotal }, 0.01)
     }
 
     @Test
@@ -127,10 +128,10 @@ class TotalsAggregationEngineDeepTest {
         coEvery { expenseRepository.getCategoryBreakdown(any(), any()) } returns emptyList()
         coEvery { expenseRepository.getAverageDailySpend(any(), any()) } returns null
 
-        assertTrue(engine.getMonthlyTotals(2026).all { it.totalAmount == 0.0 && it.transactionCount == 0 })
-        assertTrue(engine.getWeeklyTotals(2026, 1).all { it.totalAmount == 0.0 && it.transactionCount == 0 })
-        assertTrue(engine.getDailyTotals(2026, 1).all { it.totalAmount == 0.0 && it.transactionCount == 0 })
-        assertTrue(engine.getCategoryBreakdown(dateMs(2026, 4, 1), dateMs(2026, 5, 1), "Apr").isEmpty())
+        assertTrue(engine.getMonthlyTotals(2026).first().all { it.totalAmount == 0.0 && it.transactionCount == 0 })
+        assertTrue(engine.getWeeklyTotals(2026, 1).first().all { it.totalAmount == 0.0 && it.transactionCount == 0 })
+        assertTrue(engine.getDailyTotals(2026, 1).first().all { it.totalAmount == 0.0 && it.transactionCount == 0 })
+        assertTrue(engine.getCategoryBreakdown(dateMs(2026, 4, 1), dateMs(2026, 5, 1), "Apr").first().isEmpty())
         assertApproxEquals(0.0, engine.getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false))
     }
 

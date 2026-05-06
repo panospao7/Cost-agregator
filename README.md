@@ -108,7 +108,7 @@ ExpenseTracker/
 │   │   ├── database/
 │   │   │   ├── entity/          # 31 entities
 │   │   │   ├── dao/             # 35 DAOs
-│   │   │   └── AppDatabase.kt   # Version 46
+│   │   │   └── AppDatabase.kt   # Version 117
 │   │   └── repository/          # 20+ repositories
 │   ├── domain/
 │   │   ├── analytics/           # Dashboard & insights
@@ -190,8 +190,8 @@ See [PERFORMANCE_OPTIMIZATION.md](PERFORMANCE_OPTIMIZATION.md) for details.
 ## 📱 Requirements
 
 - **Min SDK:** 26 (Android 8.0)
-- **Target SDK:** 34 (Android 14)
-- **Compile SDK:** 34
+- **Target SDK:** 35 (Android 15)
+- **Compile SDK:** 35
 - **Java:** 17
 
 ## 🤝 Contributing
@@ -254,7 +254,7 @@ copies or substantial portions of the Software.
 
 - **Total Features:** 22 (including fully-implemented multi-currency support)
 - **Total Commits:** 17
-- **Database Version:** 92
+- **Database Version:** 117
 - **Entities:** 46+
 - **UI Screens:** 40+
 - **Lines of Code:** 60,000+

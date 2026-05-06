@@ -434,7 +434,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         )
     }
 
-    private fun computeBlockParty(
+    private suspend fun computeBlockParty(
         ctx: ComputeContext,
         runwayResult: RunwayResult
     ): List<DomainDayBudgetStatus> {
