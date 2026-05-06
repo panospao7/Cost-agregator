@@ -73,6 +73,33 @@ class ExportDataRepository @Inject constructor(
         return File(exportDir, "expenses_${timestampMs}.$extension")
     }
 
+    /**
+     * Fetches a single page of expenses using keyset cursor pagination.
+     * Thin wrapper around [DeterministicExpenseExportPager.fetchPage].
+     *
+     * Used by [streamExpensesToWriter] in [com.yourname.expensetracker.ui.screens.export.ExportOptionsViewModel]
+     * to stream export data without loading all rows into memory.
+     *
+     * @param startDate Start of the date range (inclusive).
+     * @param endDate   End of the date range (exclusive).
+     * @param pageSize  Number of rows per page.
+     * @param lastDate  Cursor date from last row of previous page (null for first page).
+     * @param lastId    Cursor id from last row of previous page (null for first page).
+     */
+    suspend fun getExpensesPage(
+        startDate: Long,
+        endDate: Long,
+        pageSize: Int,
+        lastDate: Long?,
+        lastId: Long?
+    ): List<Expense> = deterministicExpenseExportPager.fetchPage(
+        startDate = startDate,
+        endDate = endDate,
+        pageSize = pageSize,
+        lastDate = lastDate,
+        lastId = lastId
+    )
+
     suspend fun getCategoryNameMap(): Map<Long, String> =
         categoryRepository.getAll().associate { it.id to it.name }
 

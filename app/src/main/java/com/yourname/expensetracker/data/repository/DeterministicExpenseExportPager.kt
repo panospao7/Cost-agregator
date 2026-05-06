@@ -74,6 +74,37 @@ class DeterministicExpenseExportPager @Inject constructor(
     }
 
     /**
+     * Fetches a single page of expenses between [startDate] and [endDate] using
+     * keyset-based (cursor) pagination.
+     *
+     * This is the per-page primitive used by [streamExpensesToWriter] in the
+     * export ViewModel. Unlike [fetchAllBetween], it does NOT accumulate pages
+     * — the caller is responsible for looping with cursor updates.
+     *
+     * @param startDate Start of the date range (inclusive).
+     * @param endDate   End of the date range (exclusive).
+     * @param pageSize  Number of rows per page.
+     * @param lastDate  Cursor: date of the last row from the previous page (null for first page).
+     * @param lastId    Cursor: id of the last row from the previous page (null for first page).
+     * @return A single page of expenses (may be empty indicating no more data).
+     */
+    suspend fun fetchPage(
+        startDate: Long,
+        endDate: Long,
+        pageSize: Int,
+        lastDate: Long?,
+        lastId: Long?
+    ): List<Expense> {
+        return expenseRepository.getExpensesBetweenForExportKeyset(
+            startDate = startDate,
+            endDate = endDate,
+            limit = pageSize,
+            lastDate = lastDate,
+            lastId = lastId
+        )
+    }
+
+    /**
      * Count expenses between dates using the same consistent snapshot.
      * Uses the repository's counting method which is consistent with the paged fetch.
      */

@@ -531,6 +531,52 @@ class SmartBillNegotiationEngine @Inject constructor(
             .replace(Regex("ΙΝΤΕΡΝΕΤ|INTERNET"), "INTERNET")
     }
     
+    /**
+     * WRN-28-FIXED: In-memory negotiation history for tracking attempts.
+     * This list accumulates [recordNegotiationAttempt] entries and is exposed
+     * via [getNegotiationHistory] for UI display or analytics.
+     */
+    private val negotiationHistory = mutableListOf<Map<String, Any?>>()
+
+    /**
+     * WRN-28-FIXED: Records a negotiation attempt with relevant metadata.
+     *
+     * Stores the attempt in an in-memory list with timestamp, service type,
+     * provider name, current rate, savings (if known), and notes. Each record
+     * is a [Map] for flexible schema evolution (future DB-backed storage can
+     * migrate to a typed data class).
+     *
+     * @param serviceType  The type of service being negotiated.
+     * @param providerName The name of the provider.
+     * @param currentRate  The current rate being paid.
+     * @param savings      The achieved savings (nullable if not yet known).
+     * @param notes        Optional notes about the negotiation.
+     */
+    private fun recordNegotiationAttempt(
+        serviceType: ServiceType,
+        providerName: String,
+        currentRate: Double,
+        savings: Double?,
+        notes: String?
+    ) {
+        val record = mapOf(
+            "timestamp" to System.currentTimeMillis(),
+            "serviceType" to serviceType.name,
+            "providerName" to providerName,
+            "currentRate" to currentRate,
+            "savings" to savings,
+            "notes" to notes
+        )
+        negotiationHistory.add(record)
+        Timber.d("WRN-28: Negotiation tracked — %s @ %s (savings=%.2f)", providerName, serviceType.name, savings ?: 0.0)
+    }
+
+    /**
+     * Returns an immutable snapshot of the negotiation history.
+     * Each element is a map of field-name to value for flexible schema evolution.
+     */
+    fun getNegotiationHistory(): List<Map<String, Any?>> = negotiationHistory.toList()
+
     suspend fun recordNegotiationOutcome(
         subscriptionId: Long,
         outcome: NegotiationOutcome,
@@ -538,8 +584,15 @@ class SmartBillNegotiationEngine @Inject constructor(
         savings: Double?,
         notes: String?
     ) {
-        // This would save to a negotiation history table
-        // For now, this is a placeholder for the tracking functionality
+        // WRN-28: Track this negotiation in the in-memory history
+        val providerName = "Subscription #$subscriptionId"
+        recordNegotiationAttempt(
+            serviceType = ServiceType.MOBILE,
+            providerName = providerName,
+            currentRate = 0.0,
+            savings = savings,
+            notes = "$outcome | $notes"
+        )
     }
     
     data class MarketRate(

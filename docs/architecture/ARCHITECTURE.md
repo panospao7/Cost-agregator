@@ -29,7 +29,7 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v113
+- Database version: v117
 - 620+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5, ~16 new in Phase 5b, ~20 new in Phase 6, ~8 modified in Phase 7, ~12 new in Phase 8, ~4 new in Phase 9, ~6 new/modified in Phase 10)
 - SimpleDateFormat → DateTimeFormatter: **100% complete** (38 replacements across 21 files, 0 remaining in production code)
 - REPLACE → IGNORE: **14 of 14 DAOs converted** (3 kept with KDoc: ExchangeRateDao ×2, AiArtifactDao ×1)
@@ -39,7 +39,10 @@
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
 - Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver`; restore journal checked before any work is scheduled
-- WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `ReceiptMatchingWorker`, `DataRetentionWorker` (all 7 paused during restore via `RestoreMaintenanceMode`)
+- WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `ReceiptMatchingWorker`, `DataRetentionWorker` (all 7 paused during restore via `RestoreMaintenanceMode`). All workers use `WorkerSpecScheduler` for centralized scheduling with version-change detection.
+- `HybridRouter` (`domain/ai/HybridRouter.kt`) replaces duplicated cloud/on-device/fallback routing logic across 6 hybrid AI services (AID-4).
+- `AtRestEncryptionService` (`data/privacy/AtRestEncryptionService.kt`): AES-256-GCM via Android Keystore for ML model data at rest.
+- `SourceStatsEvent` entity + `SourceStatsEventDao`: event-based notification source stats tracking.
 - AI, location, shared-expense, split, privacy, backup-encryption, and `.costbackup` bundle backup/restore flows are first-class subsystems
 
 ---
@@ -198,7 +201,7 @@ data/
 │   ├── ExportAnonymizer.kt               # Strips raw text from exports
 │   └── DataRetentionWorker.kt            # WorkManager purging worker
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v113)
+│   ├── AppDatabase.kt          # Room database (v117)
 │   ├── entity/                  # Room entities across finance, AI, groups, location, settings, and privacy
 │   │   ├── RecurringLifecycleEvent.kt   # Phase 5b — audit log for recurring occurrences
 │   │   └── PrivacyAuditEvent.kt         # Phase 6 — privacy gate audit log
@@ -311,7 +314,7 @@ FinancialWeatherRepository
 | Startup delegate | `startup/AppStartupDelegate.kt` | Hilt entry-point bootstrap |
 | Startup coordinator | `startup/AppStartupCoordinator.kt` | Lifecycle observer + startup jobs |
 | Main Activity | `ui/MainActivity.kt` | Navigation host + deep links |
-| Database | `data/database/AppDatabase.kt` | Room DB v113 |
+| Database | `data/database/AppDatabase.kt` | Room DB v117 |
 
 ### Core Engines
 | Engine | File | Purpose |
@@ -717,7 +720,7 @@ Phase 7 materializes invariant key columns on 5 entities to enforce business-dom
 
 ### Phase 8 — Background Workers (May 2026)
 
-Phase 8 introduces a persistent job-run tracking table, a worker-specification model, and fixes/scheduling for 7 background workers.
+Phase 8 introduces a persistent job-run tracking table, a worker-specification model, a centralized scheduler, and fixes/scheduling for 7 background workers.
 
 #### New Components
 
@@ -726,6 +729,7 @@ Phase 8 introduces a persistent job-run tracking table, a worker-specification m
 | `BackgroundJobRun` (entity) | `data/database/entity/BackgroundJobRun.kt` | Persistent record of each worker execution: workerName, startedAt/finishedAt, status (SCHEDULED/RUNNING/SUCCESS/FAILED/RETRY), rowsScanned/Updated, notificationsSent, retryReason, errorMessage |
 | `BackgroundJobRunDao` | `data/database/dao/BackgroundJobRunDao.kt` | DAO with `insert()`, `update()`, `getRecent(workerName)`, `getStaleRunningRuns()` |
 | `WorkerSpec` | `domain/workers/WorkerSpec.kt` | Data class modeling worker name, version, enabled flag, constraints, repeat interval, backoff policy. Ships `DEFAULTS` map with specs for all 7 workers. |
+| `WorkerSpecScheduler` | `domain/workers/WorkerSpecScheduler.kt` | **Centralized scheduling object** that all workers use instead of duplicating schedule logic. Reads `WorkerSpec.DEFAULTS` by worker name, handles version-change detection (force REPLACE when version bumps), and delegates to `WorkManager.enqueueUniquePeriodicWork` / `enqueueUniqueWork`. Stateless Kotlin `object` — no DI needed. All 7 workers are scheduled via this scheduler in `AppStartupCoordinator`. |
 
 #### Workers Summary
 
@@ -1003,14 +1007,18 @@ KDoc annotation of EUR defaults applied across 4 analytics engines (`InsightsEng
 | **111** | BUD-1: budgets categoryId FK RESTRICT |
 | **112** | Category name uniqueness: COLLATE NOCASE index + lowercase normalization |
 | **113** | FRESH_INSTALL_CALLBACK alignment for NOCASE index |
+| **114** | **WRN-6/WRN-13/BUD-12:** warranties receiptId index non-unique; `refundExpenseId` column on `return_windows`; `rolloverDeficitTracking` column on `budgets` |
+| **115** | **I8:** Unique index on `budget_forecasts(budgetId, forecastDate)` to prevent duplicate forecasts |
+| **116** | **DB-8:** BudgetForecast FK from CASCADE to RESTRICT |
+| **117** | **SourceStatsEvent table:** Creates `source_stats_events` table for event-based notification source stats tracking |
 
 ---
 
 ## Database Schema
 
-### Version: v113 (post-hardening; latest migration: 112→113 for category uniqueness)
+### Version: v117 (post-hardening; latest migration: 116→117 for source_stats_events)
 
-The Room schema in v113 includes all tables from v106 plus:
+The Room schema in v117 includes all tables from v106 plus:
 
 **Phase 5b additions (migration 100→101→102):**
 
@@ -1036,7 +1044,7 @@ The Room schema in v113 includes all tables from v106 plus:
 
 - **New table:** `background_job_runs` — persistent record of worker executions. Columns: id, workerName, startedAt, finishedAt, status (SCHEDULED/RUNNING/SUCCESS/FAILED/RETRY), rowsScanned, rowsUpdated, notificationsSent, retryReason, errorMessage. Indices on `(workerName, startedAt)` and `(status)`.
 
-**Post-Phase 10 hardening migrations (v107→v113):**
+**Post-Phase 10 hardening migrations (v107→v117):**
 
 | Migration | Purpose | Schema Change |
 |-----------|---------|---------------|
@@ -1046,7 +1054,11 @@ The Room schema in v113 includes all tables from v106 plus:
 | **109→110** | CURR-2 + TRN-2: exchange rate history, synthetic placeholder fixes | Schema adjustments for exchange rate history |
 | **110→111** | BUD-1: budgets categoryId FK RESTRICT | FK constraint change on `budgets.categoryId` |
 | **111→112** | Category name uniqueness: COLLATE NOCASE index + lowercase normalization | Partial unique index `idx_categories_name_nocase` on `categories(name COLLATE NOCASE)` |
-| **112→113** | FRESH_INSTALL_CALLBACK alignment for NOCASE index | Callback-triggered index creation for fresh installs |
+| **112→113** | FRESH_INSTALL_CALLBACK alignment for NOCASE index |
+| **113→114** | WRN-6/WRN-13/BUD-12: warranties index + refundExpenseId + rolloverDeficitTracking | Schema: warranties index, return_windows col, budgets col |
+| **114→115** | I8: BudgetForecast unique index on (budgetId, forecastDate) | Partial unique index on `budget_forecasts` |
+| **115→116** | DB-8: BudgetForecast FK CASCADE→RESTRICT | FK constraint change on `budget_forecasts.budgetId` |
+| **116→117** | SourceStatsEvent table for event-based notification stats | New table `source_stats_events` with indices | Callback-triggered index creation for fresh installs |
 
 The full schema now covers:
 
@@ -1469,4 +1481,4 @@ After the initial feature-wave rollout, the codebase underwent 12 structured har
 - 6 lifecycle coordinators introduced
 - 3 normalizer/validator middleware services added (currency, privacy, AI-output)
 - 15+ materialized-key constraints deployed
-- Database version advanced from v68 to v113
+- Database version advanced from v68 to v117

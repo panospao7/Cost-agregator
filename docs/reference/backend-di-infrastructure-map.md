@@ -1,6 +1,6 @@
 # ExpenseTracker Dependency Injection & Infrastructure Map
 
-**Refreshed:** May 1, 2026  
+**Refreshed:** 2026-04-04 (⚠️ Partially stale — see `docs/architecture/hilt-bindings-map.md` for current)  
 **Scope:** Current DI architecture analysis  
 **Framework:** Hilt/Dagger2 with SingletonComponent
 
@@ -1198,6 +1198,6 @@ fun provideEmptyStateRegistry(
 ---
 
 **Document Status:** ✅ COMPLETE  
-**Last Updated:** 2026-04-04  
+**Last Updated:** 2026-04-04 (⚠️ See `docs/architecture/hilt-bindings-map.md` for current 28-module map)  
 **Author:** Scout Agent  
 **Reviewed By:** Primary Agent

@@ -326,6 +326,11 @@ PrivacyAuditLogger                        [domain/privacy/PrivacyAuditLogger.kt]
   ▼
 PrivacyAuditEvent → PrivacyAuditDao       [data/database/entity + dao]
 
+AtRestEncryptionService                   [data/privacy/AtRestEncryptionService.kt]
+  │  (AES-256-GCM via Android Keystore for ML model data at rest)
+  │  (Encrypts sensitive ML data before writing to disk, decrypts on read)
+  │  (Key stored in hardware-backed Android Keystore, not extractable)
+
 RedactionSanitizer                        [domain/privacy/RedactionSanitizer.kt]
   │  (PII redaction before cloud AI calls)
   │
@@ -448,6 +453,12 @@ MainApplication (@HiltAndroidApp)
 
 WorkerSpec defaults                       [domain/workers/WorkerSpec.kt]
   └── DEFAULTS map with specs for all 7 workers (interval, constraints, backoff)
+
+WorkerSpecScheduler                       [domain/workers/WorkerSpecScheduler.kt]
+  └── Centralized scheduling object — all workers use instead of duplicating
+      schedule logic. Reads WorkerSpec.DEFAULTS by worker name, handles
+      version-change detection (force REPLACE when version bumps).
+      Stateless Kotlin object, no DI needed.
 ```
 
 ### Worker → DAO Dependencies
@@ -483,6 +494,7 @@ WorkerSpec defaults                       [domain/workers/WorkerSpec.kt]
 | Module | File | Provided Types | Consumed By |
 |--------|------|---------------|-------------|
 | `AiModule` | `di/AiModule.kt` | AI repositories (6), AI services (10), AI DAOs (3), `RedactionSanitizer`, `AiPolicy`, `AiCapabilityRouter`, `AiWorkScheduler`, semantic detector, priority scorer, notification parser | AI ViewModels, Workers, use cases |
+| *(No module)* | `domain/ai/HybridRouter.kt` | `HybridRouter` (uses `@Inject` constructor, bound via `AiCapabilityRouter` + `AiSettingsRepository`) | AID-4 shared routing across 6 hybrid services |
 | `OcrImprovementsModule` | `di/OcrImprovementsModule.kt` | `EnhancedMerchantExtractor`, `OcrLanguageProcessor`, `OcrPreprocessingPipeline` | Receipt OCR pipeline |
 | `NaturalLanguageModule` | `di/NaturalLanguageModule.kt` | `NaturalLanguageExpenseQueryRepository` → impl | `NaturalLanguageSearchViewModel` |
 
@@ -543,6 +555,7 @@ WorkerSpec defaults                       [domain/workers/WorkerSpec.kt]
 | `AnomalyAlert` | `AnomalyAlertDao` | `AnomalyAlertRepositoryImpl` | Analytics, Dashboard |
 | `BlockedPackage` | `BlockedPackageDao` | `NotificationRepository` | Notification filter |
 | `SourceStats` | `SourceStatsDao` | `NotificationRepository` | Debug |
+| `SourceStatsEvent` | `SourceStatsEventDao` | (via AppDatabase directly, no Hilt module yet) | Source stats event tracking (v117) |
 | `PrivacyAuditEvent` | `PrivacyAuditDao` | `PrivacyAuditLogger` | Privacy audit |
 | `AiArtifactEntity` | `AiArtifactDao` | `AiArtifactRepositoryImpl` | AI follow-through |
 | `AiChatSession` | `AiChatSessionDao` | `AiChatRepositoryImpl` | Assistant |

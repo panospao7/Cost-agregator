@@ -147,10 +147,10 @@ data/
 
 | Aspect | Details |
 |--------|---------|
-| **Version** | 113 (post-compliance hardening; latest migration: MIGRATION_112_113) |
-| **Total Entities** | 56 (RecurringLifecycleEvent, PrivacyAuditEvent added; 4 new columns on planned_expenses + raw_notifications + scanned_receipts) |
-| **Total DAOs** | 54 (RecurringLifecycleEventDao, PrivacyAuditDao added) |
-| **Total Migrations** | 104 (MIGRATION_6_7 → MIGRATION_112_113) |
+| **Version** | 117 (post-hardening; latest migration: MIGRATION_116_117) |
+| **Total Entities** | 57 (SourceStatsEvent added; refundExpenseId on return_windows, rolloverDeficitTracking on budgets) |
+| **Total DAOs** | 55 (SourceStatsEventDao added) |
+| **Total Migrations** | 108 (MIGRATION_6_7 → MIGRATION_116_117) |
 | **Type Converters** | Custom: Enums, Lists, Dates |
 | **Export Schema** | ✓ Enabled (for migrations verification) |
 
@@ -231,10 +231,14 @@ data/
 | **111** | BUD-1: budgets categoryId FK RESTRICT |
 | **112** | Category name uniqueness: COLLATE NOCASE index + lowercase normalization |
 | **113** | FRESH_INSTALL_CALLBACK alignment for NOCASE index |
+| **114** | WRN-6/WRN-13/BUD-12: warranties receiptId index non-unique; `refundExpenseId` on return_windows; `rolloverDeficitTracking` on budgets |
+| **115** | I8: Unique index on `budget_forecasts(budgetId, forecastDate)` to prevent duplicate forecasts |
+| **116** | DB-8: BudgetForecast FK from CASCADE to RESTRICT |
+| **117** | SourceStatsEvent table: `source_stats_events` for event-based notification source stats tracking |
 
 ---
 
-## Entities Registry (46 Total)
+## Entities Registry (47 Total)
 
 ### Core Financial (8)
 | Entity | Table | Purpose | Foreign Keys | Indices |
@@ -328,6 +332,7 @@ data/
 | **ExchangeRate** | `exchange_rates` | Currency pair conversion rates (v42) | None | fromCurrency+toCurrency+validDate (unique), lastUpdated |
 | | | *New column:* `validDate` (Long) — enables historical rate lookups. Unique constraint expanded to include validDate. | | |
 | **SourceStats** | `source_stats` | Notification source statistics (v14) | None | None |
+| **SourceStatsEvent** | `source_stats_events` | Event-based notification source stats tracking (v117) | `expenseId` → expenses (SET NULL), `rawNotificationId` → raw_notifications (SET NULL) | packageName, eventType, timestamp, expenseId, rawNotificationId |
 
 ### Recurring Lifecycle (3)
 
@@ -406,6 +411,7 @@ data/
 | **BudgetForecastDao** | budget_forecasts | insert, getById, getByBudgetId, getActiveForecasts, updateActualSpending, updateAccuracy | getForecastsNeedingRecalc |
 | **HealthScoreHistoryDao** | health_score_history | insert, getAll, getById, getRecentScores | getScoresTrend |
 | **SourceStatsDao** | source_stats | insert, getById, getAll, update, getTopSources, recordNotification, recordAccepted, recordRejected | None |
+| **SourceStatsEventDao** | source_stats_events | insert, getByPackage | (v117, event-based stats) |
 | **AnalyticsRepository** | (aggregation queries) | getDailyTotals, getWeeklyTotals, getMonthlyTotals, getCategoryTotals, getMerchantStats, getLocationClusters | Complex SQL aggregations with date ranges |
 | **DashboardRepository** | (widget aggregations) | getExpenseStats, getCategoryBreakdown, getBudgetStatus, getTopMerchants, getTrendingCategories | Custom queries for dashboard |
 

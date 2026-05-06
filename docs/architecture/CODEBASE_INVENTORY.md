@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
 **Generated:** 2026-04-02 (snapshot)  
-**Database Version:** 92  
+**Database Version:** 117  
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -389,7 +389,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **Special:** MerchantNormalizationDao, BankConnectionDao
 
 ### Migration History
-- Database Version: 92
+- Database Version: 117
 - Migration methods: current chain in `AppDatabase.kt`
 - Export schema: Enabled
 - Type converters: Defined in `converter/Converters.kt`

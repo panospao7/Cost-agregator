@@ -13,9 +13,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
+import timber.log.Timber
 import java.util.ArrayDeque
 
 data class NavigationControllerSnapshot(
@@ -498,8 +501,19 @@ fun ConsumeNavigationEvents(
     val navigation = LocalNavigationController.current
     
     DisposableEffect(navigation) {
-        // Note: In a real implementation, you'd collect from navigation.navigationEvents
-        // For now, this is a placeholder for future analytics integration
-        onDispose { }
+        val job = MainScope().launch {
+            navigation.navigationEvents.collect { event ->
+                when (event) {
+                    is NavigationEvent.NavigateTo -> {
+                        Timber.d("Navigation: screen=%s, timestamp=%d", event.destination.toString(), System.currentTimeMillis())
+                    }
+                    is NavigationEvent.NavigateBack -> {
+                        Timber.d("Navigation: back, timestamp=%d", System.currentTimeMillis())
+                    }
+                }
+                onEvent(event)
+            }
+        }
+        onDispose { job.cancel() }
     }
 }

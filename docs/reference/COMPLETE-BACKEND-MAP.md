@@ -1,6 +1,6 @@
 # Complete Backend & Database Map - ExpenseTracker
 
-**Generated:** 2026-05-04  
+**Generated:** 2026-05-04 (⚠️ Minor additions post-gen: SourceStatsEvent, HybridRouter, WorkerSpecScheduler, AtRestEncryptionService)  
 **Total Files Mapped:** 490+ (255 domain + 208 data + 27 di)  
 **Test Coverage:** 317+ test files in `app/src/test/java`
 
@@ -95,6 +95,23 @@
 | `privacy/BackupPrivacyGate.kt` | BackupPrivacyGate | Guards RAWBACKUP_EXPORT and ENCRYPTED_BACKUP based on encryptedBackupEnabled | Service | PrivacyGate, PrivacySettings | No |
 | `privacy/CompositePrivacyGate.kt` | CompositePrivacyGate | Chains all gates; returns first Denied or Allowed if all pass | Service | List<PrivacyGate> | No |
 | `privacy/RedactionSanitizer.kt` | RedactionSanitizer | PII redaction helper for notification text and OCR content before cloud calls | Utility | — | No |
+| `privacy/DefaultRedactionSanitizer.kt` | DefaultRedactionSanitizer | Implementation of RedactionSanitizer | Utility | — | No |
+
+### At-Rest Encryption (1 file)
+
+**Location:** `com.yourname.expensetracker.data.privacy`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `data/privacy/AtRestEncryptionService.kt` | AtRestEncryptionService | AES-256-GCM via Android Keystore for ML model data at rest. Encrypts sensitive data before writing to disk, decrypts on read. Key stored in hardware-backed Android Keystore (not extractable). | Service | — | No |
+
+### Hybrid AI Router (1 file)
+
+**Location:** `com.yourname.expensetracker.domain.ai`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `domain/ai/HybridRouter.kt` | HybridRouter | Generic cloud/on-device/fallback routing decision engine. Replaces duplicated routing logic in 6 hybrid services (AID-4). | Service | AiSettingsRepository, AiCapabilityRouter | No |
 
 ### Transaction Lifecycle Models (8 files)
 
@@ -584,6 +601,7 @@
 | `dao/SavingsSweepPlanDao.kt` | SavingsSweepPlanDao | Savings sweep plans DAO | DAO | - | No |
 | `dao/ScannedReceiptDao.kt` | ScannedReceiptDao | Scanned receipts DAO | DAO | - | No |
 | `dao/SourceStatsDao.kt` | SourceStatsDao | Source statistics DAO | DAO | - | No |
+| `dao/SourceStatsEventDao.kt` | SourceStatsEventDao | Event-based source stats DAO (v117) | DAO | - | No |
 | `dao/SpendingPersonalityProfileDao.kt` | SpendingPersonalityProfileDao | Spending personality DAO | DAO | - | No |
 | `dao/SplitItemAssignmentDao.kt` | SplitItemAssignmentDao | Split assignments DAO | DAO | - | No |
 | `dao/SplitTemplateDao.kt` | SplitTemplateDao | Split templates DAO | DAO | - | No |
@@ -650,6 +668,7 @@
 | `entity/RecurringLifecycleEvent.kt` | RecurringLifecycleEvent | Recurring lifecycle event entity (table: `recurring_lifecycle_events`) — immutable audit log for recurring occurrence transitions. Event types: OCCURRENCE_GENERATED, OCCURRENCE_PAID, OCCURRENCE_SKIPPED, etc. | Entity | - | No |
 | `entity/PrivacyAuditEvent.kt` | PrivacyAuditEvent | Privacy audit event entity (table: `privacy_audit_events`) — append-only log of every privacy gate check. Fields: capability, decision, reason, context, timestampMs, caller. | Entity | - | No |
 | `entity/SourceStats.kt` | SourceStats | Source statistics entity | Entity | - | No |
+| `entity/SourceStatsEvent.kt` | SourceStatsEvent | Event-based notification source stats (v117) — tracks accepted/duplicate/rejected/pending events per package | Entity | - | No |
 | `entity/SpendingPersonalityProfileEntity.kt` | SpendingPersonalityProfileEntity | Spending profile entity | Entity | - | No |
 | `entity/TransactionEvent.kt` | TransactionEvent | Immutable lifecycle event log (table: `transaction_events`); records every CREATED/UPDATED/DELETED/etc. transition with actor, timestamps, and before/after snapshots | Entity | - | No |
 | `entity/SplitItemAssignment.kt` | SplitItemAssignment | Split item assignment entity | Entity | - | No |
@@ -784,6 +803,15 @@
 |------|-------|---------|------|--------------|-------|
 | `ai/worker/AiWorkSchedulerImpl.kt` | AiWorkSchedulerImpl | Work scheduler implementation | Service | - | No |
 | `ai/worker/DailyBriefingWorker.kt` | DailyBriefingWorker | Daily briefing worker | Worker | DashboardBriefingService | No |
+
+### Worker Scheduling (2 files)
+
+**Location:** `com.yourname.expensetracker.domain.workers`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `domain/workers/WorkerSpec.kt` | WorkerSpec | Data class: name, version, enabled, constraints, repeatIntervalHours, backoffPolicy, backoffDelayMins. `DEFAULTS` map with specs for all 7 workers. | Model | — | No |
+| `domain/workers/WorkerSpecScheduler.kt` | WorkerSpecScheduler | Centralized scheduling object — all workers use instead of duplicating schedule logic. Reads WorkerSpec.DEFAULTS, handles version-change detection (force REPLACE on bump), delegates to WorkManager enqueue methods. Stateless Kotlin object, no DI needed. | Utility | Context, WorkerSpec.DEFAULTS | No |
 
 ### Backup/Restore Data Layer (4 files — Phase 9)
 

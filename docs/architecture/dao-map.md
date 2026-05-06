@@ -37,9 +37,10 @@
 
 | DAO | Entity | Repository Consumers | Ultimate Consumers |
 |-----|--------|---------------------|-------------------|
-| `RawNotificationDao` | `RawNotification` | `NotificationRepository`, `ReviewQueueRepository`, `DataRetentionWorker` | TransactionsVM, ReviewVM, DebugVM |
+| `RawNotificationDao` | `RawNotification` | `NotificationRepository`, `ReviewQueueRepository` | TransactionsVM, ReviewVM, DebugVM |
 | `PendingReviewDao` | `PendingReview` | `NotificationRepository`, `ReviewQueueRepository`, `ExpenseRepository`, `ReceiptRepository` | ReviewVM, TransactionsVM |
 | `BlockedPackageDao` | `BlockedPackage` | `NotificationRepository` | Notification filter |
+| `SourceStatsEventDao` | `SourceStatsEvent` | (none yet — via AppDatabase directly) | Source stats event tracking (new, v117) |
 
 ## Receipt Domain
 

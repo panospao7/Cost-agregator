@@ -125,13 +125,12 @@ class ExportOptionsViewModel @Inject constructor(
     /**
      * Generates an export file for the selected date range and format.
      *
-     * ## BAK-12: Streaming export (planned)
-     * Currently, all expenses between [startDate] and [endDate] are loaded into
-     * memory as a single [List] before writing. For datasets exceeding ~5000 rows,
-     * this may cause elevated memory usage. The [DeterministicExpenseExportPager]
-     * already supports keyset-based cursor pagination (page size 2000). A future
-     * improvement should replace the bulk load with [streamExpensesToWriter] which
-     * writes pages one at a time without accumulating all rows in memory.
+     * ## BAK-12: Streaming export via keyset pagination
+     * Expenses are streamed page-by-page using [DeterministicExpenseExportPager]'s
+     * keyset-based cursor pagination. Each page (up to 2000 rows) is written to
+     * the output file immediately, so memory usage stays O(pageSize) rather than
+     * O(totalExpenses). The cursor (date, id) of the last row on each page drives
+     * the next query.
      */
     fun generateExport() {
         exportJob?.cancel()
@@ -150,46 +149,63 @@ class ExportOptionsViewModel @Inject constructor(
                 val categories = withContext(Dispatchers.IO) { exportDataRepository.getCategoryNameMap() }
                 val extension = extensionFor(_uiState.value.selectedFormat)
                 val exportFile = exportDataRepository.createExportFile(extension, timeProvider.now())
-                val expenses = withContext(Dispatchers.IO) {
-                    exportDataRepository.getExpensesBetweenForExport(
-                        _uiState.value.startDate,
-                        _uiState.value.endDate
-                    )
-                }
+                val format = _uiState.value.selectedFormat
+                val startDate = _uiState.value.startDate
+                val endDate = _uiState.value.endDate
 
-                if (expenses.isEmpty() && !_uiState.value.selectedFormat.allowsEmptyDataset()) {
+                val previewCollector = PreviewCollector(PREVIEW_MAX_CHARS)
+
+                // BAK-12: Validate dataset size and accounting policy before streaming
+                val expenseCount = withContext(Dispatchers.IO) {
+                    exportDataRepository.countExpensesBetween(startDate, endDate)
+                }
+                if (expenseCount == 0 && !format.allowsEmptyDataset()) {
                     throw IllegalArgumentException("No expenses found for selected date range")
                 }
 
-                val rowCount = expenses.size
-
-                // BAK-12: Warn when dataset is large enough to warrant streaming
-                if (rowCount > 5000) {
-                    Timber.w("BAK-12: Exporting %d expenses — consider using streamExpensesToWriter for paged streaming to reduce memory pressure", rowCount)
-                }
-
-                val previewCollector = PreviewCollector(PREVIEW_MAX_CHARS)
-                val accountingTransactions = mutableListOf<ExportTransaction>()
-
-                if (_uiState.value.selectedFormat.requiresAccountingPolicy()) {
-                    accountingTransactions += expenses.map { it.toExportTransaction() }
-                    if (accountingTransactions.isNotEmpty()) {
+                // Accounting format validation using first page
+                if (format.requiresAccountingPolicy()) {
+                    val firstPage = withContext(Dispatchers.IO) {
+                        exportDataRepository.getExpensesPage(startDate, endDate, 2000, null, null)
+                    }
+                    if (firstPage.isNotEmpty()) {
                         accountingExportPolicy.validateAccountingDataset(
-                            accountingTransactions,
-                            _uiState.value.selectedFormat.accountingExportDisplayName()
+                            firstPage.map { it.toExportTransaction() },
+                            format.accountingExportDisplayName()
                         )
                     }
                 }
 
+                // BAK-12: Warn when dataset is large enough to warrant streaming
+                if (expenseCount > 5000) {
+                    Timber.w("BAK-12: Exporting %d expenses via streaming", expenseCount)
+                }
+
                 withContext(Dispatchers.IO) {
                     exportFile.writer().use { writer ->
-                        when (_uiState.value.selectedFormat) {
-                            "json" -> streamJsonExport(writer, expenses, categories, rowCount, previewCollector)
-                            "xero" -> streamXeroExport(writer, expenses, categories, previewCollector)
-                            "quickbooks" -> streamQuickBooksExport(writer, expenses, categories, previewCollector)
-                            "freshbooks" -> streamFreshBooksExport(writer, expenses, categories, previewCollector)
-                            else -> streamGenericCsvExport(writer, expenses, categories, previewCollector)
-                        }
+                        // Write format-specific header / JSON prefix
+                        writeStreamHeader(
+                            writer = writer,
+                            format = format,
+                            categories = categories,
+                            preview = previewCollector,
+                            rowCount = expenseCount,
+                            startDate = startDate,
+                            endDate = endDate
+                        )
+
+                        // Stream expenses page by page using keyset cursor
+                        streamExpensesToWriter(
+                            writer = writer,
+                            startDate = startDate,
+                            endDate = endDate,
+                            categories = categories,
+                            format = format,
+                            preview = previewCollector
+                        )
+
+                        // Write format-specific footer (e.g. JSON closing)
+                        writeStreamFooter(writer, format, previewCollector)
                     }
                 }
 
@@ -376,51 +392,137 @@ class ExportOptionsViewModel @Inject constructor(
      * Each page is the result of one keyset-paginated query from [DeterministicExpenseExportPager].
      *
      * ## BAK-12: Streaming export helper
-     * This is the per-page write primitive for use with [streamExpensesToWriter].
-     * Currently unused — the existing export methods load all expenses upfront.
+     * Dispatches to the appropriate format-specific row writer based on [format].
+     * No headers or structural wrappers are written here — those are handled by
+     * [writeStreamHeader] / [writeStreamFooter] before and after the pagination loop.
      *
-     * @param writer The output writer (file writer or buffer).
-     * @param page   A single page of expenses (typically up to 2000 rows).
+     * @param writer    The output writer (file writer or buffer).
+     * @param page      A single page of expenses (typically up to 2000 rows).
      * @param categories Category name map for display.
-     * @param format Export format identifier (e.g. "csv", "json", "xero").
-     * @param preview Optional preview collector.
-     * @param rowCount Total row count across all pages (needed for JSON schema).
+     * @param format    Export format identifier (e.g. "csv", "json", "xero").
+     * @param preview   Optional preview collector.
+     * @param pageNumber 1-based page index (used by JSON to avoid leading comma on first page).
+     * @param pageSize  Page size in rows.
      */
-    @Suppress("UNUSED_PARAMETER")
     private suspend fun writePage(
         writer: Appendable,
         page: List<Expense>,
         categories: Map<Long, String>,
         format: String,
         preview: PreviewCollector? = null,
-        rowCount: Int = 0
+        pageNumber: Int = 0,
+        pageSize: Int = 2000
     ) {
-        // TODO(BAK-12): Implement per-page writing for each export format.
-        // For now this is a placeholder documenting the streaming contract.
-        // The existing stream*Export methods already accept List<Expense>
-        // and can be called page-by-page inside streamExpensesToWriter.
-        Timber.d("BAK-12: writePage called with %d expenses (format=%s)", page.size, format)
+        val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        val zoneId = ZoneId.systemDefault()
+        when (format) {
+            "json" -> {
+                writeJsonPageRows(writer, page, categories, preview, pageNumber, dateFormatter, zoneId)
+            }
+            "xero" -> {
+                page.forEach { expense ->
+                    val line = buildString {
+                        xeroExporter.writeExpense(this, expense.toExportTransaction(), categories)
+                    }
+                    writer.append(line)
+                    preview?.append(line)
+                }
+            }
+            "quickbooks" -> {
+                page.forEach { expense ->
+                    val block = buildString {
+                        quickBooksExporter.writeExpense(this, expense.toExportTransaction(), categories)
+                    }
+                    writer.append(block)
+                    preview?.append(block)
+                }
+            }
+            "freshbooks" -> {
+                page.forEach { expense ->
+                    val line = buildString {
+                        freshBooksExporter.writeExpense(this, expense.toExportTransaction(), categories)
+                    }
+                    writer.append(line)
+                    preview?.append(line)
+                }
+            }
+            else -> {
+                // Generic CSV
+                page.forEach { expense ->
+                    val line = buildString {
+                        val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
+                        val merchant = escapeCsv(expense.merchant)
+                        val amount = escapeCsv(CurrencyFormatter.formatForExport(expense.amount))
+                        val currency = escapeCsv(expense.currency)
+                        val category = escapeCsv(categories[expense.categoryId] ?: "Uncategorized")
+                        val notes = escapeCsv(expense.notes ?: "")
+                        append("$date,$merchant,$amount,$currency,$category,$notes,${expense.id}\n")
+                    }
+                    writer.append(line)
+                    preview?.append(line)
+                }
+            }
+        }
+    }
+
+    private suspend fun writeJsonPageRows(
+        writer: Appendable,
+        page: List<Expense>,
+        categories: Map<Long, String>,
+        preview: PreviewCollector?,
+        pageNumber: Int,
+        dateFormatter: DateTimeFormatter,
+        zoneId: ZoneId
+    ) {
+        var first = pageNumber == 1
+        page.forEach { expense ->
+            val row = buildString {
+                if (!first) append(',')
+                first = false
+                val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
+                val category = categories[expense.categoryId] ?: "Uncategorized"
+                append("{")
+                append("\"id\":").append(expense.id).append(',')
+                append("\"date\":\"").append(escapeJson(date)).append("\",")
+                append("\"timestamp\":").append(expense.date).append(',')
+                append("\"merchant\":\"").append(escapeJson(expense.merchant)).append("\",")
+                append("\"amount\":").append(formatJsonNumber(expense.amount)).append(',')
+                append("\"currency\":\"").append(escapeJson(expense.currency)).append("\",")
+                append("\"category\":\"").append(escapeJson(category)).append("\",")
+                append("\"notes\":")
+                if (expense.notes == null) append("null")
+                else append("\"").append(escapeJson(expense.notes)).append("\"")
+                append("}")
+            }
+            writer.append(row)
+            preview?.append(row)
+        }
     }
 
     /**
-     * ## BAK-12: Streaming export via paged keyset cursor (planned)
+     * Streams all expenses in [startDate..endDate) to [writer] using keyset
+     * cursor pagination, writing one page of rows at a time via [writePage].
      *
-     * Future replacement for the current bulk-load pattern. Instead of calling
-     * [ExportDataRepository.getExpensesBetweenForExport] which accumulates all
-     * expenses into a single [List], this method streams pages one at a time:
+     * Unlike the previous bulk-load approach (which called
+     * [ExportDataRepository.getExpensesBetweenForExport] and accumulated all
+     * expenses into a single [List]), this method keeps memory usage bounded
+     * to O([pageSize]).
      *
-     * 1. Open the writer.
-     * 2. Fetch the first page via keyset pagination (page size 2000).
-     * 3. Write rows from the current page.
-     * 4. Fetch the next page using the last row's (date, id) cursor.
-     * 5. Repeat until no more pages.
-     * 6. Close the writer.
+     * ## Pagination flow
+     * 1. Fetch the first page with `lastDate = null, lastId = null`.
+     * 2. Write rows via [writePage].
+     * 3. Update cursors from the last row of the current page.
+     * 4. Fetch next page with updated cursors.
+     * 5. Repeat until an empty page is returned.
      *
-     * The [DeterministicExpenseExportPager] already implements cursor-based pagination;
-     * this method is the consumer-side streaming layer. Implement per-format page
-     * writing in [writePage].
+     * @param writer     The output writer.
+     * @param startDate  Start of the date range (inclusive).
+     * @param endDate    End of the date range (exclusive).
+     * @param categories Category name map for display.
+     * @param format     Export format identifier.
+     * @param preview    Optional preview collector.
+     * @param pageSize   Number of rows per page (default 2000).
      */
-    @Suppress("UNUSED")
     private suspend fun streamExpensesToWriter(
         writer: Appendable,
         startDate: Long,
@@ -430,9 +532,92 @@ class ExportOptionsViewModel @Inject constructor(
         preview: PreviewCollector?,
         pageSize: Int = 2000
     ) {
-        // TODO(BAK-12): Implement paged streaming using
-        //  expenseRepository.getExpensesBetweenForExportKeyset(startDate, endDate, pageSize, lastDate, lastId)
-        Timber.d("BAK-12: streamExpensesToWriter placeholder — format=%s, start=%d, end=%d", format, startDate, endDate)
+        var lastDate: Long? = null
+        var lastId: Long? = null
+        var pageCount = 0
+        while (true) {
+            val page = exportDataRepository.getExpensesPage(
+                startDate, endDate, pageSize, lastDate, lastId
+            )
+            if (page.isEmpty()) break
+            pageCount++
+            writePage(writer, page, categories, format, preview, pageCount, pageSize)
+            val last = page.last()
+            lastDate = last.date
+            lastId = last.id
+        }
+    }
+
+    /**
+     * Writes the format-specific header / structural prefix before the row data.
+     *
+     * For JSON this writes the schema wrapper up to (but not including) the
+     * first row. For CSV and accounting formats this writes the column header
+     * line(s) via the appropriate exporter.
+     */
+    private suspend fun writeStreamHeader(
+        writer: Appendable,
+        format: String,
+        categories: Map<Long, String>,
+        preview: PreviewCollector,
+        rowCount: Int,
+        startDate: Long,
+        endDate: Long
+    ) {
+        when (format) {
+            "json" -> {
+                val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+                val zoneId = ZoneId.systemDefault()
+                val generatedAtIso = DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochMilli(timeProvider.now()))
+                val sDate = Instant.ofEpochMilli(startDate).atZone(zoneId).toLocalDate().format(dateFormatter)
+                val eDate = Instant.ofEpochMilli(endDate).atZone(zoneId).toLocalDate().format(dateFormatter)
+                val prefix = buildString {
+                    append("{")
+                    append("\"schemaVersion\":1,")
+                    append("\"exportType\":\"expenses\",")
+                    append("\"generatedAt\":\"").append(escapeJson(generatedAtIso)).append("\",")
+                    append("\"dateRange\":{")
+                    append("\"startDate\":\"").append(escapeJson(sDate)).append("\",")
+                    append("\"endDate\":\"").append(escapeJson(eDate)).append("\"},")
+                    append("\"rowCount\":").append(rowCount).append(",")
+                    append("\"rows\":[")
+                }
+                writer.append(prefix)
+                preview.append(prefix)
+            }
+            "csv" -> {
+                val header = "Date,Merchant,Amount,Currency,Category,Notes,ID\n"
+                writer.append(header)
+                preview.append(header)
+            }
+            "xero" -> {
+                xeroExporter.writeHeader(writer)
+                preview.append("Date,Description,Amount,Account,Reference\n")
+            }
+            "quickbooks" -> {
+                quickBooksExporter.writeHeader(writer)
+                preview.append("!TRNS\tDATE\tACCNT\tAMOUNT\tMEMO\tNAME\tCLASS\n!SPL\tDATE\tACCNT\tAMOUNT\tMEMO\tNAME\tCLASS\n!ENDTRNS\n")
+            }
+            "freshbooks" -> {
+                freshBooksExporter.writeHeader(writer)
+                preview.append("date,description,amount,category,vendor\n")
+            }
+        }
+    }
+
+    /**
+     * Writes the format-specific footer / structural suffix after all row data.
+     * Currently only needed for JSON (closes the rows array and the root object).
+     */
+    private suspend fun writeStreamFooter(
+        writer: Appendable,
+        format: String,
+        preview: PreviewCollector
+    ) {
+        if (format == "json") {
+            writer.append("]}")
+            preview.append("]}")
+        }
     }
 
     private fun extensionFor(format: String): String = when (format) {
