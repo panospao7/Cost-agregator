@@ -213,12 +213,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         dedupeKey = expense.dedupeKey
                     )
                     if (isDuplicate) {
-                        val duplicateId = expenseDao.findDuplicateId(
-                            merchantKey = expense.merchantKey,
+                        val duplicateId = expenseDao.findDuplicateIdCurrencyAware(
                             amount = expense.amount,
+                            merchant = expense.merchant,
                             date = expense.date,
                             currency = expense.currency,
-                            transactionType = expense.transactionType
+                            transactionType = expense.transactionType.name,
+                            merchantKey = expense.merchantKey,
+                            dedupeKey = expense.dedupeKey
                         )
                         // Write duplicate resolution event
                         writeDuplicateEvent(expense, request, now, duplicateId, "Bulk import duplicate")
@@ -245,12 +247,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         dedupeKey = expense.dedupeKey
                     )
                     if (isDuplicate) {
-                        val duplicateId = expenseDao.findDuplicateId(
-                            merchantKey = expense.merchantKey,
+                        val duplicateId = expenseDao.findDuplicateIdCurrencyAware(
                             amount = expense.amount,
+                            merchant = expense.merchant,
                             date = expense.date,
                             currency = expense.currency,
-                            transactionType = expense.transactionType
+                            transactionType = expense.transactionType.name,
+                            merchantKey = expense.merchantKey,
+                            dedupeKey = expense.dedupeKey
                         )
                         // Write duplicate resolution event with metadata
                         writeDuplicateEvent(expense, request, now, duplicateId, "Standard duplicate")
@@ -389,12 +393,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
             )
             if (isDuplicate) {
                 // Verify the duplicate is not the current expense being updated
-                val dupId = expenseDao.findDuplicateId(
-                    merchantKey = expenseWithNewKey.merchantKey,
+                val dupId = expenseDao.findDuplicateIdCurrencyAware(
                     amount = expenseWithNewKey.amount,
+                    merchant = expenseWithNewKey.merchant,
                     date = expenseWithNewKey.date,
                     currency = expenseWithNewKey.currency,
-                    transactionType = expenseWithNewKey.transactionType
+                    transactionType = expenseWithNewKey.transactionType.name,
+                    merchantKey = expenseWithNewKey.merchantKey,
+                    dedupeKey = expenseWithNewKey.dedupeKey
                 )
                 if (dupId != null && dupId != expense.id) {
                     throw DuplicateUpdateException(
@@ -433,7 +439,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 Timber.w(
                     "Cannot convert %s %.2f to %s for expense update (as of %d); " +
                     "baseAmount/baseCurrency/exchangeRateUsed left at defaults",
-                    updatedExpense.currency, updatedExpense.amount, homeCurrency,
+                    updatedExpense.currency, updatedExpense.amount, homeCurrencyUpdate,
                     updatedExpense.date
                 )
                 updatedExpense
@@ -468,6 +474,26 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     reason = reason
                 )
             )
+        }
+
+        // Post-update side effects (best-effort, fire-and-forget)
+        try {
+            sideEffectDispatcher.dispatchOnUpdated(expense.id, source)
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: side effects failed after updating expense %d", expense.id)
+        }
+
+        // Reconcile recurring occurrence link if expense fields changed
+        try {
+            if (existing.amount != expense.amount || existing.date != expense.date ||
+                existing.merchant != expense.merchant || existing.currency != expense.currency ||
+                existing.transactionType != expense.transactionType
+            ) {
+                recurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expense.id)
+                recurringLifecycleCoordinator.linkExpenseToOccurrence(expense.id)
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: recurring reconciliation failed for expense %d", expense.id)
         }
     }
 
@@ -540,6 +566,20 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 )
 
                 expenseDao.delete(expense)
+            }
+
+            // Post-delete side effects (best-effort)
+            try {
+                sideEffectDispatcher.dispatchOnDeleted(expense.id, source)
+            } catch (e: Exception) {
+                Timber.w(e, "Non-critical: side effects failed after deleting expense %d", expense.id)
+            }
+
+            // Unlink any recurring occurrence that was linked to this expense
+            try {
+                recurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expense.id)
+            } catch (e: Exception) {
+                Timber.w(e, "Non-critical: failed to unlink expense %d from recurring occurrence", expense.id)
             }
 
             Result.success(Unit)

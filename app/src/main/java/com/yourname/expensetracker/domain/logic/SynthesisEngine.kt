@@ -623,7 +623,7 @@ class SynthesisEngine @Inject constructor(
         val ruleIdsWithOccurrences = mutableSetOf<Long>()
 
         if (manualIds.isNotEmpty()) {
-            val occurrences = occurrenceDao.getByDateRange(monthStart, monthEnd)
+            val occurrences = kotlinx.coroutines.runBlocking { occurrenceDao.getByDateRange(monthStart, monthEnd) }
             .filter {
                     it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
                         it.sourceId in manualIds &&

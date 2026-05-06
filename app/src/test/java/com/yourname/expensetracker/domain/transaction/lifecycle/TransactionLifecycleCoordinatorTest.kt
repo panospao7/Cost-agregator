@@ -66,7 +66,8 @@ class TransactionLifecycleCoordinatorTest {
             currencyConverter = currencyConverter,
             sideEffectDispatcher = sideEffectDispatcher,
             recurringLifecycleCoordinator = recurringLifecycleCoordinator,
-            restoreMaintenanceMode = restoreMaintenanceMode
+            restoreMaintenanceMode = restoreMaintenanceMode,
+            currencySettingsRepository = mockk(relaxed = true)
         )
     }
 

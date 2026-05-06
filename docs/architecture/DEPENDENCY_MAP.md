@@ -110,6 +110,18 @@ TransactionLifecycleCoordinator          [domain/transaction/lifecycle/Transacti
        ├──► insertAtomic (ExpenseDao) — ACID via withTransaction
        ├──► Event log (TransactionEventDao.insert())
        │
+       │   SideEffectMode parameter (IMMEDIATE | DEFER)
+       │   passed by every caller of createExpense():
+       │     • ManualExpenseRepository     → SideEffectMode.IMMEDIATE
+       │     • ReviewQueueRepository       → SideEffectMode.DEFER
+       │     • ReceiptRepository           → SideEffectMode.IMMEDIATE
+       │     • ExpenseRepository           → SideEffectMode.IMMEDIATE
+       │     • GroupTransactionCoordinator → SideEffectMode.IMMEDIATE
+       │     • EmailReceiptIngestionService→ SideEffectMode.IMMEDIATE
+       │     • BankApiIntegration          → SideEffectMode.IMMEDIATE
+       │   DEFER delays side effects until after the DB transaction commits,
+       │   preventing foreign-key / consistency issues in deferred flows.
+       │
        ▼
 TransactionSideEffectDispatcher          [domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt]
        │
@@ -175,10 +187,23 @@ ReceiptSideEffectDispatcher              [domain/receipt/lifecycle/ReceiptSideEf
        └──► PriceProtectionTracker       [domain/price/PriceProtectionTracker.kt]
 
 ReceiptLinkService                        [domain/receipt/lifecycle/ReceiptLinkService.kt]
+       │   Constructor dependencies (9 total):
+       │   ├──► AppDatabase              — Transactional coordination
+       │   ├──► ReceiptExpenseLinkDao    — Many-to-many link table
+       │   ├──► ReceiptEventDao          — Link/unlink audit events
+       │   ├──► ExpenseDao               — Cross-reference
+       │   ├──► ScannedReceiptDao        — Verify receipt exists
+       │   ├──► ReceiptItemCategorizationDao — RCP-30 category propagation
+       │   ├──► WarrantyDao              — Auto-create warranty on link
+       │   ├──► ReturnWindowDao          — Auto-create return window on link
+       │   └──► TimeProvider             — Timestamps for link events
        │
-       ├──► ReceiptExpenseLinkDao        — Many-to-many link table
-       ├──► ReceiptEventDao              — Link/unlink audit events
-       └──► ExpenseDao                   — Cross-reference
+       │   Behavioral notes:
+       │   1. Validates expense exists before linking (returns failure fast)
+       │   2. Checks insert() return value to detect and report duplicates
+       │   3. Propagates item-majority category to expense via RCP-30
+       │      (reads ReceiptItemCategorization rows, picks majority category,
+       │       writes it back to Expense.categoryId via ExpenseDao.update())
 ```
 
 ### Entity & DAO Flow
@@ -212,27 +237,31 @@ RecurringExpensesScreen
   │
   ▼
 RecurringLifecycleCoordinator             [domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt]
-  │
-  ├──► RecurringOccurrenceExpander        — Expand rule → occurrence candidates
-  ├──► OccurrenceConflictResolver         — Resolve candidates vs actual expenses
-  ├──► RecurringOccurrenceMaterializer    — Persist + create reminders
-  │     │
-  │     ├──► RecurringOccurrenceDao       — INSERT IGNORE / UPDATE
-  │     ├──► RecurringReminderDeliveryDao — Reminder rows
-  │     └──► RecurringLifecycleEventDao   — Audit log
-  │
-  ▼
+   │   Constructor dependencies (10 total):
+   │   ├──► RecurringOccurrenceExpander           — Expand rule → occurrence candidates
+   │   ├──► OccurrenceConflictResolver            — Resolve candidates vs actual expenses
+   │   ├──► RecurringOccurrenceMaterializer       — Persist + create reminders
+   │   │     │
+   │   │     ├──► RecurringOccurrenceDao          — INSERT IGNORE / UPDATE
+   │   │     ├──► RecurringReminderDeliveryDao    — Reminder rows
+   │   │     └──► RecurringLifecycleEventDao      — Audit log
+   │   ├──► ExpenseDao                            — Cross-reference actual expenses
+   │   ├──► TimeProvider                          — Due-date / reminder scheduling
+   │   ├──► ManualRecurringExpenseDao             — Read recurring rule definitions
+   │   ├──► RestoreMaintenanceMode                — Write gate: skip writes during restore
+   │
+   ▼
 RecurringPlanProjectionService            [domain/recurring/RecurringPlanProjectionService.kt]
-  │
-  └──► PlannedExpenseDao                  — Materialise planned expenses
+   │
+   └──► PlannedExpenseDao                  — Materialise planned expenses
 
 TransactionLifecycleCoordinator
-  └──► RecurringLifecycleCoordinator.linkExpenseToOccurrence()  — auto-link hook
+   └──► RecurringLifecycleCoordinator.linkExpenseToOccurrence()  — auto-link hook
 
 SnoozeReminderReceiver / DismissReminderReceiver
-  ├──► RecurringReminderDeliveryDao
-  ├──► TimeProvider
-  └──► RestoreMaintenanceMode (write gate)
+   ├──► RecurringReminderDeliveryDao
+   ├──► TimeProvider
+   └──► RestoreMaintenanceMode (write gate)
 ```
 
 ### Consumer Classes
@@ -469,15 +498,18 @@ WorkerSpecScheduler                       [domain/workers/WorkerSpecScheduler.kt
 
 ### Worker → DAO Dependencies
 
-| Worker | DAO Dependencies |
-|--------|-----------------|
-| `DailyBriefingWorker` | AiArtifactDao |
-| `LocationBackfillWorker` | ExpenseDao |
-| `MerchantKeyBackfillWorker` | ExpenseDao, MerchantNormalizationDao |
-| `WarrantyExpirationWorker` | WarrantyDao |
-| `BillReminderWorker` | RecurringOccurrenceDao, RecurringReminderDeliveryDao |
-| `ReceiptMatchingWorker` | ScannedReceiptDao, ExpenseDao, ReceiptExpenseLinkDao |
-| `DataRetentionWorker` | RawNotificationDao, ScannedReceiptDao, PrivacyAuditDao |
+All 7 workers individually inject and check **`RestoreMaintenanceMode.isWritesAllowed()`**
+before performing write operations, ensuring workers yield during an active restore.
+
+| Worker | DAO Dependencies | Also Injects |
+|--------|-----------------|--------------|
+| `DailyBriefingWorker` | AiArtifactDao | RestoreMaintenanceMode |
+| `LocationBackfillWorker` | ExpenseDao | RestoreMaintenanceMode |
+| `MerchantKeyBackfillWorker` | ExpenseDao, MerchantNormalizationDao | RestoreMaintenanceMode |
+| `WarrantyExpirationWorker` | WarrantyDao | RestoreMaintenanceMode |
+| `BillReminderWorker` | RecurringOccurrenceDao, RecurringReminderDeliveryDao | RestoreMaintenanceMode |
+| `ReceiptMatchingWorker` | ScannedReceiptDao, ExpenseDao, ReceiptExpenseLinkDao | RestoreMaintenanceMode |
+| `DataRetentionWorker` | RawNotificationDao, ScannedReceiptDao, PrivacyAuditDao | RestoreMaintenanceMode |
 
 ---
 
@@ -490,7 +522,7 @@ WorkerSpecScheduler                       [domain/workers/WorkerSpecScheduler.kt
 | Module | File | Provided Types | Consumed By |
 |--------|------|---------------|-------------|
 | `DatabaseModule` | `di/DatabaseModule.kt` | `AppDatabase`, `GroupTransactionCoordinator` | All DAOs, group operations |
-| `DaoModule` | `di/DaoModule.kt` | 39 DAO singletons | All repositories |
+| `DaoModule` | `di/DaoModule.kt` | 54 DAO singletons | All repositories |
 | `DispatchersModule` | `di/DispatchersModule.kt` | `@IoDispatcher`, `@DefaultDispatcher`, `ApplicationScope` | 50+ classes |
 | `TimeModule` | `di/TimeModule.kt` | `TimeProvider` → `SystemTimeProvider` | 50+ classes |
 | `ServiceModule` | `di/ServiceModule.kt` | `Gson`, `NotificationService`, `GeocodingService`, `NearbyPoiService`, `ForegroundLocationProvider`, `NavigationTargetResolver`, `WidgetStyleRepository`, `SpeechInputGateway` | Services, geocoding, navigation |

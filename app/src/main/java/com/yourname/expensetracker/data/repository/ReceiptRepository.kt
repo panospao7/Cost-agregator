@@ -31,8 +31,6 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
-import com.yourname.expensetracker.domain.usecase.warranty.AutoCreateWarrantyFromReceiptUseCase
-import com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult
 import com.yourname.expensetracker.di.IoDispatcher
 import dagger.Lazy
 // import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
@@ -68,7 +66,6 @@ class ReceiptRepository @Inject constructor(
     private val debugIssueDetector: DebugIssueDetector,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
-    private val warrantyUseCase: Lazy<AutoCreateWarrantyFromReceiptUseCase>,
     private val coordinator: TransactionLifecycleCoordinator,
     private val receiptLinkService: ReceiptLinkService,
     private val currencySettingsRepository: CurrencySettingsRepository,
@@ -187,29 +184,6 @@ class ReceiptRepository @Inject constructor(
                     }
 
                     insertedReceiptId
-                }
-
-                // F1: Trigger warranty extraction after receipt is saved
-                try {
-                    val warrantyResult = warrantyUseCase.get().execute(receiptId, ocrResult.fullText)
-                    when (warrantyResult) {
-                        is WarrantyCreationResult.Success -> {
-                            Timber.d("Warranty created for receipt $receiptId with confidence ${warrantyResult.confidence}%")
-                        }
-                        is WarrantyCreationResult.LowConfidence -> {
-                            // Low-confidence extractions are persisted as needsReview drafts in the use case.
-                            Timber.d("Warranty review draft persisted for receipt $receiptId (confidence ${warrantyResult.extractedData.confidence}%)")
-                        }
-                        is WarrantyCreationResult.AlreadyExists -> {
-                            Timber.d("Warranty already exists for receipt $receiptId (id=${warrantyResult.existingWarrantyId})")
-                        }
-                        is WarrantyCreationResult.Failure -> {
-                            Timber.d("Warranty extraction skipped for receipt $receiptId: ${warrantyResult.error}")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Timber.e(e, "Warranty extraction failed for receipt $receiptId")
-                    // Don't fail the whole process if warranty extraction fails
                 }
 
                 return@withContext Pair(receipt.copy(id = receiptId), parsed)
@@ -989,6 +963,15 @@ class ReceiptRepository @Inject constructor(
         return scannedReceiptDao.getProcessableReceipts()
     }
 
+    @Deprecated(
+        "Use ReceiptLinkService.linkReceiptToExpense() instead. " +
+        "This method only updates ScannedReceipt — it does NOT create " +
+        "ReceiptExpenseLink records, warranty/return-window links, item-categorization links, " +
+        "or audit events.",
+        replaceWith = ReplaceWith(
+            "receiptLinkService.linkReceiptToExpense(receiptId, expenseId, linkType = \"AUTO_MATCH\", source = \"SYSTEM\", confidence = confidence.toFloat(), matchStatus = MatchStatus.AUTO_MATCHED)"
+        )
+    )
     suspend fun linkReceiptToExpense(
         receiptId: Long,
         expenseId: Long,
@@ -1024,6 +1007,7 @@ class ReceiptRepository @Inject constructor(
         timber.log.Timber.d("Saved match suggestion for receipt $receiptId: expense $suggestedExpenseId with confidence $confidence")
     }
 
+    @Deprecated("Use ReceiptLinkService.linkReceiptToExpense() instead")
     suspend fun approveMatchSuggestion(receiptId: Long) {
         val receipt = scannedReceiptDao.getById(receiptId) ?: return
         val suggestedId = receipt.suggestedExpenseId ?: return

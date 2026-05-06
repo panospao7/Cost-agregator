@@ -2,14 +2,17 @@ package com.yourname.expensetracker.ui.screens.receiptmatching
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.data.database.entity.MatchStatus
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 
 data class ReceiptMatchingState(
@@ -133,7 +136,35 @@ class ReceiptMatchingViewModel @Inject constructor(
 
     fun approveSuggestion(receiptId: Long) {
         viewModelScope.launch {
-            receiptRepository.approveMatchSuggestion(receiptId)
+            // 1. Load the receipt to get the suggestedExpenseId
+            val receipt = receiptRepository.getReceiptById(receiptId)
+            val suggestedExpenseId = receipt?.suggestedExpenseId
+            if (receipt == null || suggestedExpenseId == null) {
+                Timber.w("Cannot approve suggestion: receipt $receiptId not found or has no suggestion")
+                loadReceipts()
+                return@launch
+            }
+
+            // 2. Create the link via ReceiptLinkService (writes join table, audit event, legacy field)
+            val result = receiptLinkService.linkReceiptToExpense(
+                receiptId = receiptId,
+                expenseId = suggestedExpenseId,
+                linkType = "REVIEW_APPROVAL",
+                source = ExpenseSource.REVIEW_APPROVAL.name,
+                matchStatus = MatchStatus.MANUALLY_MATCHED
+            )
+
+            // 3. Log result
+            result.fold(
+                onSuccess = {
+                    Timber.d("Approved match suggestion for receipt $receiptId -> expense $suggestedExpenseId")
+                },
+                onFailure = { error ->
+                    Timber.e(error, "Failed to approve match suggestion for receipt $receiptId")
+                }
+            )
+
+            // 4. Reload receipts
             loadReceipts()
         }
     }

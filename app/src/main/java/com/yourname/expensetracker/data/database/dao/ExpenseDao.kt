@@ -611,6 +611,46 @@ AND LENGTH(:merchantKey) >= 8
     ): Expense?
 
     /**
+     * Fetch the best duplicate candidate by **merchantKey prefix containment**
+     * within a time/amount range, restricted to the given currency and compatible
+     * transaction type.
+     *
+     * Mirrors [existsByMerchantKeyPrefixInRangeCurrencyAware] but returns the full
+     * [Expense] row instead of a Boolean.  Catches cross-source duplicates where
+     * one source includes the store branch/address and the other has just the
+     * store name.
+     */
+    @Query("""
+        SELECT * FROM expenses
+        WHERE (
+            :merchantKey LIKE merchantKey || '%'
+            OR merchantKey LIKE :merchantKey || '%'
+        )
+        AND LENGTH(merchantKey) >= 8
+        AND LENGTH(:merchantKey) >= 8
+        AND date >= :startDate
+        AND date < :endDate
+        AND amount BETWEEN :minAmount AND :maxAmount
+        AND UPPER(currency) = UPPER(:currency)
+        AND (
+            :transactionType = 'UNKNOWN'
+            OR transactionType = 'UNKNOWN'
+            OR transactionType = :transactionType
+        )
+        ORDER BY date DESC
+        LIMIT 1
+    """)
+    suspend fun getDuplicateCandidateByMerchantKeyPrefixInRangeCurrencyAware(
+        merchantKey: String,
+        startDate: Long,
+        endDate: Long,
+        minAmount: Double,
+        maxAmount: Double,
+        currency: String,
+        transactionType: String
+    ): Expense?
+
+    /**
      * Fetch the best duplicate candidate by raw **merchant** name within a
      * time/amount range, restricted to the given currency and compatible
      * transaction type.
@@ -725,6 +765,80 @@ AND LENGTH(:merchantKey) >= 8
                 currency = normalizedCurrency,
                 transactionType = transactionType
             )
+        }
+    }
+
+    /**
+     * Policy-aware duplicate ID retrieval.
+     *
+     * Mirrors [isDuplicateCurrencyAware] using the SAME three-tier matching
+     * criteria (exact merchantKey → prefix containment → raw merchant), but
+     * returns the existing expense ID instead of a boolean.
+     *
+     * Returns the ID of the first matching expense, or `null` if no duplicate
+     * is found within the configured time/amount window.
+     *
+     * @see isDuplicateCurrencyAware
+     */
+    @Transaction
+    suspend fun findDuplicateIdCurrencyAware(
+        amount: Double,
+        merchant: String,
+        date: Long,
+        currency: String,
+        transactionType: String,
+        windowMs: Long = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS,
+        merchantKey: String? = null,
+        dedupeKey: String? = null
+    ): Long? {
+        val startDate = date - windowMs
+        // Must match DuplicateDetectionPolicy.windowEndExclusive(date, windowMs).
+        // Kept as arithmetic because DAOs cannot call Kotlin utility methods in SQL.
+        val endDate = date + windowMs + 1
+        val tolerance = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
+        val minAmount = amount - tolerance
+        val maxAmount = amount + tolerance
+        val normalizedCurrency = DuplicateDetectionPolicy.normalizeCurrency(currency)
+
+        val normalizedMerchantKey = merchantKey?.takeIf { it.isNotBlank() }
+        return if (normalizedMerchantKey != null) {
+            getDuplicateCandidateByMerchantKeyInRangeCurrencyAware(
+                merchantKey = normalizedMerchantKey,
+                startDate = startDate,
+                endDate = endDate,
+                minAmount = minAmount,
+                maxAmount = maxAmount,
+                currency = normalizedCurrency,
+                transactionType = transactionType
+            )?.id
+                ?: getDuplicateCandidateByMerchantKeyPrefixInRangeCurrencyAware(
+                    merchantKey = normalizedMerchantKey,
+                    startDate = startDate,
+                    endDate = endDate,
+                    minAmount = minAmount,
+                    maxAmount = maxAmount,
+                    currency = normalizedCurrency,
+                    transactionType = transactionType
+                )?.id
+                ?: getDuplicateCandidateByMerchantInRangeCurrencyAware(
+                    merchant = merchant,
+                    startDate = startDate,
+                    endDate = endDate,
+                    minAmount = minAmount,
+                    maxAmount = maxAmount,
+                    currency = normalizedCurrency,
+                    transactionType = transactionType
+                )?.id
+        } else {
+            getDuplicateCandidateByMerchantInRangeCurrencyAware(
+                merchant = merchant,
+                startDate = startDate,
+                endDate = endDate,
+                minAmount = minAmount,
+                maxAmount = maxAmount,
+                currency = normalizedCurrency,
+                transactionType = transactionType
+            )?.id
         }
     }
 

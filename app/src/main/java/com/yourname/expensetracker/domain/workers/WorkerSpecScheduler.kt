@@ -143,7 +143,11 @@ object WorkerSpecScheduler {
             ExistingWorkPolicy.KEEP
         }
 
-        // Compute next midnight in system timezone
+        // Compute next midnight in system timezone.
+        // NOTE: System.currentTimeMillis() is intentionally used here because
+        // WorkManager scheduling inherently operates on real wall-clock time.
+        // Injecting TimeProvider would not make scheduling more testable since
+        // the actual enqueue depends on the real system clock.
         val now = System.currentTimeMillis()
         val cal = java.util.Calendar.getInstance().apply {
             timeInMillis = now

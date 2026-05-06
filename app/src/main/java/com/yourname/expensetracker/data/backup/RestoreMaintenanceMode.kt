@@ -3,7 +3,9 @@ package com.yourname.expensetracker.data.backup
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.work.WorkManager
+import com.yourname.expensetracker.data.ai.worker.DailyBriefingWorker
 import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 import javax.inject.Inject
@@ -146,6 +148,13 @@ class RestoreMaintenanceMode @Inject constructor(
         }
         runCatching {
             com.yourname.expensetracker.service.receiptmatching.ReceiptMatchingWorker.schedule(application)
+        }
+        runCatching {
+            // ai_daily_briefing uses WorkerSpecScheduler.scheduleAtMidnight (not companion schedule())
+            WorkerSpecScheduler.scheduleAtMidnight(
+                context, "ai_daily_briefing",
+                DailyBriefingWorker::class.java
+            )
         }
     }
 

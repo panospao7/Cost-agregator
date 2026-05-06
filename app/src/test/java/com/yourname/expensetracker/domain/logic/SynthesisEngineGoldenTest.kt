@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import io.mockk.every
+import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.Test
 
@@ -72,12 +73,14 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
             spendingPace = pace(averageMonthlyTotal = 1200.0)
         )
 
-        val blockParty = engine.calculateBlockPartyData(
-            forecast = forecast,
-            expenses = emptyList(),
-            dailySpending = List(31) { 0f },
-            budgetLimit = 2000.0
-        )
+        val blockParty = runBlocking {
+            engine.calculateBlockPartyData(
+                forecast = forecast,
+                expenses = emptyList(),
+                dailySpending = List(31) { 0f },
+                budgetLimit = 2000.0
+            )
+        }
 
         val day15 = blockParty.first { it.dayOfMonth == 15 }
         val day17 = blockParty.first { it.dayOfMonth == 17 }
@@ -128,12 +131,14 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
             spendingPace = pace(averageMonthlyTotal = 1200.0)
         )
 
-        val blockParty = engine.calculateBlockPartyData(
-            forecast = forecast,
-            expenses = emptyList(),
-            dailySpending = List(30) { 0f },
-            budgetLimit = 2000.0
-        )
+        val blockParty = runBlocking {
+            engine.calculateBlockPartyData(
+                forecast = forecast,
+                expenses = emptyList(),
+                dailySpending = List(30) { 0f },
+                budgetLimit = 2000.0
+            )
+        }
 
         val day2 = blockParty.first { it.dayOfMonth == 2 }
         val day10 = blockParty.first { it.dayOfMonth == 10 }

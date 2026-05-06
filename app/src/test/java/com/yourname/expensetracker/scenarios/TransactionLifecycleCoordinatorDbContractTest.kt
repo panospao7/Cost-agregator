@@ -75,7 +75,8 @@ class TransactionLifecycleCoordinatorDbContractTest {
             recurringLifecycleCoordinator = mockk(relaxed = true),
             restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true).also {
                 every { it.isWritesAllowed() } returns true
-            }
+            },
+            currencySettingsRepository = mockk(relaxed = true)
         )
     }
 

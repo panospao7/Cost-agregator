@@ -426,7 +426,9 @@ class EmailReceiptIngestionService(
             confidence = processedReceipt.categoryConfidence
         )
         if (linkResult.isFailure) {
-            Timber.w("Email receipt link failed for receipt $receiptId → expense $expenseId: ${linkResult.exceptionOrNull()?.message}")
+            val msg = "Email receipt link failed for receipt $receiptId → expense $expenseId: ${linkResult.exceptionOrNull()?.message}"
+            Timber.w(msg)
+            throw EmailReceiptExpenseCreationException(msg, linkResult.exceptionOrNull())
         }
 
         return listOf(expenseId)

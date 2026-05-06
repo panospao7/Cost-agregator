@@ -238,12 +238,16 @@ class ReviewQueueRepository @Inject constructor(
                     sourceStatsDao.incrementAccepted(review.packageName)
                     sourceStatsDao.decrementPending(review.packageName)
                     review.scannedReceiptId?.let { receiptId ->
-                        receiptLinkService.linkReceiptToExpense(
+                        val linkResult = receiptLinkService.linkReceiptToExpense(
                             receiptId = receiptId,
                             expenseId = id,
                             linkType = "REVIEW_APPROVAL",
                             source = ExpenseSource.REVIEW_APPROVAL.name
                         )
+                        if (linkResult.isFailure) {
+                            Timber.w(linkResult.exceptionOrNull(),
+                                "Review approval receipt link failed for receipt=$receiptId expense=$id")
+                        }
                     }
                     pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED)
 
@@ -630,9 +634,13 @@ class ReviewQueueRepository @Inject constructor(
             action = "source stats cache invalidation after markAsRelevant (notificationId=$id, package=${notification.packageName})"
         ) {
             // AIML-13: Use comprehensive invalidation after user action
+            // Use the parsed merchant (falling back to packageName), not notification.title
+            val merchantForInvalidation = expense?.merchant
+                ?: pendingReview?.suggestedMerchant
+                ?: notification.packageName
             confidenceRouter.invalidateAfterUserAction(
                 notification.packageName,
-                notification.title ?: "Unknown"
+                merchantForInvalidation
             )
         }
 

@@ -1012,12 +1012,14 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
 
         val dailySpending = List(30) { (it + 1) * 50.0f }
 
-        val blockPartyData = engine.calculateBlockPartyData(
-            forecast = forecast,
-            expenses = expenses,
-            dailySpending = dailySpending,
-            budgetLimit = 2000.0
-        )
+        val blockPartyData = runBlocking {
+            engine.calculateBlockPartyData(
+                forecast = forecast,
+                expenses = expenses,
+                dailySpending = dailySpending,
+                budgetLimit = 2000.0
+            )
+        }
 
         assertNotNull(blockPartyData)
         assertTrue(blockPartyData.isNotEmpty())
@@ -1259,12 +1261,14 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             spendingPace = createPace(daysElapsed = 1, daysInMonth = 31)
         )
 
-        val blockParty = engine.calculateBlockPartyData(
-            forecast = forecast,
-            expenses = emptyList(),
-            dailySpending = List(31) { 0f },
-            budgetLimit = 2000.0
-        )
+        val blockParty = runBlocking {
+            engine.calculateBlockPartyData(
+                forecast = forecast,
+                expenses = emptyList(),
+                dailySpending = List(31) { 0f },
+                budgetLimit = 2000.0
+            )
+        }
 
         assertEquals(31, blockParty.size)
         // First day should be TODAY
@@ -1285,12 +1289,14 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             spendingPace = createPace(daysElapsed = 31, daysInMonth = 31)
         )
 
-        val blockParty = engine.calculateBlockPartyData(
-            forecast = forecast,
-            expenses = emptyList(),
-            dailySpending = List(31) { (it + 1) * 50.0f },
-            budgetLimit = 2000.0
-        )
+        val blockParty = runBlocking {
+            engine.calculateBlockPartyData(
+                forecast = forecast,
+                expenses = emptyList(),
+                dailySpending = List(31) { (it + 1) * 50.0f },
+                budgetLimit = 2000.0
+            )
+        }
 
         assertEquals(31, blockParty.size)
     }
@@ -1324,12 +1330,14 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             spendingPace = createPace()
         )
 
-        val blockParty = engine.calculateBlockPartyData(
-            forecast = forecast,
-            expenses = emptyList(),
-            dailySpending = List(30) { 0f },
-            budgetLimit = 1500.0
-        )
+        val blockParty = runBlocking {
+            engine.calculateBlockPartyData(
+                forecast = forecast,
+                expenses = emptyList(),
+                dailySpending = List(30) { 0f },
+                budgetLimit = 1500.0
+            )
+        }
 
         // Day 1 and 15 should show recurring impact
         val day1 = blockParty.find { it.dayOfMonth == 1 }
@@ -1355,12 +1363,14 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             spendingPace = createPace()
         )
 
-        val blockParty = engine.calculateBlockPartyData(
-            forecast = forecast,
-            expenses = emptyList(),
-            dailySpending = emptyList(), // Empty!
-            budgetLimit = 1000.0
-        )
+        val blockParty = runBlocking {
+            engine.calculateBlockPartyData(
+                forecast = forecast,
+                expenses = emptyList(),
+                dailySpending = emptyList(), // Empty!
+                budgetLimit = 1000.0
+            )
+        }
 
         // Future days should remain forecast states (not past NO_DATA).
         val futureDays = blockParty.filter { !it.isToday && it.dayOfMonth > 15 }

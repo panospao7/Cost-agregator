@@ -39,7 +39,7 @@
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
 - Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver`; restore journal checked before any work is scheduled
-- WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `ReceiptMatchingWorker`, `DataRetentionWorker` (all 7 paused during restore via `RestoreMaintenanceMode`). All workers use `WorkerSpecScheduler` for centralized scheduling with version-change detection.
+- WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `ReceiptMatchingWorker`, `DataRetentionWorker` (all 7 paused during restore via `RestoreMaintenanceMode`). Each worker individually injects `RestoreMaintenanceMode` and calls `isWritesAllowed()` at the start of `doWork()` to self-pause during restore. All workers use `WorkerSpecScheduler` for centralized scheduling with version-change detection.
 - `HybridRouter` (`domain/ai/HybridRouter.kt`) replaces duplicated cloud/on-device/fallback routing logic across 6 hybrid AI services (AID-4).
 - `AtRestEncryptionService` (`data/privacy/AtRestEncryptionService.kt`): AES-256-GCM via Android Keystore for ML model data at rest.
 - `SourceStatsEvent` entity + `SourceStatsEventDao`: event-based notification source stats tracking.
@@ -251,6 +251,8 @@ MainApplication
 ### Notification → Expense Flow
 ```
 NotificationCaptureService (Android)
+        ↓
+NotificationTextParts.extract()   ← unified API: resolves text from notification extras in a single pass
         ↓
 AppParserRegistry → Specific Parser (GreekBank, Revolut, etc.)
        ↓
@@ -512,7 +514,7 @@ A 120+ file cross-cutting feature establishing a single, auditable entry point f
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `TransactionLifecycleCoordinator` | `lifecycle/TransactionLifecycleCoordinator.kt` | **Single entry point** for ALL expense creation/update/delete. Pipeline: validate → normalize → dedupe → insert atomic → event logging → side effects. Injected by 10+ consumer classes. |
+| `TransactionLifecycleCoordinator` | `lifecycle/TransactionLifecycleCoordinator.kt` | **Single entry point** for ALL expense creation/update/delete. Pipeline: validate → normalize → dedupe → insert atomic → event logging → side effects. `createExpense()` now accepts a `SideEffectMode` param (`IMMEDIATE` or `DEFER`). When `DEFER` is used, callers invoke `dispatchPostCreationSideEffects()` separately to run side effects outside the DB transaction, fixing the nested-transaction/post-commit bug where side effects previously ran inside the DB transaction. Injected by 10+ consumer classes. |
 | `TransactionSideEffectDispatcher` | `lifecycle/TransactionSideEffectDispatcher.kt` | Consolidates post-creation side effects: budget check, anomaly alert, merchant-category pattern learning. Best-effort / fire-and-forget. |
 
 #### Migration Paths (all now route through coordinator)
@@ -563,7 +565,7 @@ A ~20-file cross-cutting feature establishing a single, auditable entry point fo
 | Component | File | Purpose |
 |-----------|------|---------|
 | `ReceiptLifecycleCoordinator` | `lifecycle/ReceiptLifecycleCoordinator.kt` | **Single entry point** for all receipt processing. Pipeline: validate → persist asset → OCR/parse → dedupe → save → event logging → side effects. Handles camera/gallery, email, bank statement, and manual receipt paths. |
-| `ReceiptLinkService` | `lifecycle/ReceiptLinkService.kt` | Centralized receipt-expense link management via `receipt_expense_links` join table. Supports many-to-many links (BANK_STATEMENT) and single links (all other types). Writes audit events for every link/unlink. |
+| `ReceiptLinkService` | `lifecycle/ReceiptLinkService.kt` | Centralized receipt-expense link management via `receipt_expense_links` join table. Supports many-to-many links (BANK_STATEMENT) and single links (all other types). Writes audit events for every link/unlink. **New behaviors:** validates expense exists (fails fast if not found); checks `ReceiptExpenseLinkDao.insert()` return value to detect duplicate links; **RCP-30:** propagates item-majority category to expense when `categoryId` is null. |
 | `ReceiptAssetStore` | `lifecycle/ReceiptAssetStore.kt` | File persistence layer: copies receipt images to app-local storage, computes SHA-256 hashes, creates camera temp URIs via FileProvider, generates backup manifests. |
 | `ReceiptInputValidator` | `lifecycle/ReceiptInputValidator.kt` | URI/MIME/size validation: checks readability, supported MIME types (JPEG, PNG, WebP, PDF, HEIC), file size limit (50 MB), bitmap decode validity. |
 | `ReceiptDuplicateDetector` | `lifecycle/ReceiptDuplicateDetector.kt` | 3-signal deduplication: EXACT_HASH (SHA-256, 1.0 confidence), TEXT_FINGERPRINT (normalized OCR text, 0.95), SEMANTIC (merchant+amount+date+currency, 0.8), plus EXTERNAL_ID for email dedup. |
@@ -623,7 +625,7 @@ A ~5-file domain expansion establishing an auditable lifecycle for recurring-exp
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `RecurringLifecycleCoordinator` | `lifecycle/RecurringLifecycleCoordinator.kt` | **Primary entry point** for generating and managing recurring occurrences. Orchestrates expand → resolve → materialize pipeline. Provides `generateOccurrences()`, `linkExpenseToOccurrence()` (best-effort post-creation linking), `getOccurrences()`, `updateOccurrenceStatus()`, and `getDueReminders()`. |
+| `RecurringLifecycleCoordinator` | `lifecycle/RecurringLifecycleCoordinator.kt` | **Primary entry point** for generating and managing recurring occurrences. Orchestrates expand → resolve → materialize pipeline. Provides `generateOccurrences()`, `linkExpenseToOccurrence()` (best-effort post-creation linking), `getOccurrences()`, `updateOccurrenceStatus()`, and `getDueReminders()`. **New constructor dependencies:** `RestoreMaintenanceMode`, `ExpenseDao`, `ManualRecurringExpenseDao`, `TimeProvider`. |
 | `RecurringOccurrenceMaterializer` | `lifecycle/RecurringOccurrenceMaterializer.kt` | Persists resolved occurrences and creates reminder deliveries. INSERT with IGNORE for new (occurrenceKey unique constraint), UPDATE for status changes. Creates `RecurringReminderDelivery` rows for PLANNED occurrences (DUE_DAY, N_DAYS_BEFORE, OVERDUE windows). |
 
 #### Cross-Cutting Integration

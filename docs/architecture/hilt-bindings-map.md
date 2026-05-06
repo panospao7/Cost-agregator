@@ -18,7 +18,7 @@ Dependencies:
 
 ### `DaoModule` — `di/DaoModule.kt`
 ```
-Provides (50 DAOs):
+Provides (54 DAOs):
   PlannedExpenseDao, SavingsGoalDao, RawNotificationDao, BlockedPackageDao,
   ExpenseDao, BudgetDao, ScannedReceiptDao, CategoryDao, MerchantCategoryDao,
   PendingReviewDao, UserCorrectionDao, SourceStatsDao, RecurringExpenseDao,
@@ -253,6 +253,7 @@ Provides:
 ```
 Provides:
   DatabaseBackupRepository                    → DatabaseBackupRepositoryImpl
+  RestoreMaintenanceMode                      → @Inject constructor (@Singleton, auto-discovered)
 ```
 
 ### `ParserModule` — `di/ParserModule.kt`

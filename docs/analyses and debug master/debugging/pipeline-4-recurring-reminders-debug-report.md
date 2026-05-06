@@ -1591,7 +1591,7 @@ Second guiding rule:
 - Falls back to generic text if occurrence cannot be loaded.
 
 ## Finding P1-3 — Reminder status changes do not write lifecycle events
-**STATUS: CONFIRMED — NOT FIXED (coordinator method refactor needed)**
+**STATUS: FIXED (2026-05-06):** `markReminderSent()` writes `REMINDER_SENT` event. `SnoozeReminderReceiver` writes `REMINDER_SNOOZED`. `DismissReminderReceiver` writes `REMINDER_DISMISSED`.
 
 ## Finding P1-4 — Snooze/dismiss receivers bypass Hilt, restore mode, and TimeProvider
 **STATUS: CONFIRMED — FIXED**
@@ -1607,7 +1607,7 @@ Second guiding rule:
 **STATUS: CONFIRMED — NOT FIXED (event-writing enhancement needed)**
 
 ## Finding P1-7 — No unlink/reconcile on actual expense update/delete
-**STATUS: CONFIRMED — NOT FIXED (requires TransactionLifecycleCoordinator hooks)**
+**STATUS: FIXED (2026-05-06):** `RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence()` resets linked occurrence to PLANNED on delete. `TransactionLifecycleCoordinator.updateExpense()` reconciles by unlinking + relinking when key fields change.
 
 ## Finding P1-8 — Recurring occurrence/reminder/event entities lack foreign keys
 **STATUS: CONFIRMED — NOT FIXED (Room migration required)**
@@ -1652,8 +1652,8 @@ No additional issues were discovered beyond those documented in the original rep
 
 # 14. Remaining work priority
 
-1. **P1-3**: Route all reminder transitions through coordinator methods that write lifecycle events
-2. **P1-7**: Add expense update/delete hooks to reconcile linked recurring occurrences
+1. ~~**P1-3**: Route all reminder transitions through coordinator methods that write lifecycle events~~ **DONE**
+2. ~~**P1-7**: Add expense update/delete hooks to reconcile linked recurring occurrences~~ **DONE**
 3. **P1-5**: Update materializer to compare mutable fields (amount, merchant, currency, categoryId) on existing occurrences
 4. **P1-6**: Add event logging for status transitions in materializer
 5. **P1-10**: Fix ManualRecurringExpenseViewModel to pass home currency and set createdAt from TimeProvider

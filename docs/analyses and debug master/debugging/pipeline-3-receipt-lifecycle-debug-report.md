@@ -1464,8 +1464,7 @@ Once that is true, receipt → analytics/dashboard becomes much safer.
 `ReceiptRepository.processReceipt()` does insert a ScannedReceipt before the coordinator runs dedupe. On exact-hash duplicate, the newly inserted row is not deleted. This remains a design gap requiring a larger refactor to move dedupe before insert.
 
 ## Finding P0-2 — Side effects are duplicated across layers
-**STATUS: CONFIRMED — NOT FIXED (refactor needed)**
-`ReceiptRepository.processReceipt()` runs warranty extraction. `ReceiptSideEffectDispatcher.dispatchAfterSave()` also runs warranty and more. Confirmed duplicated side-effect execution paths. Fixing requires removing warranty from ReceiptRepository, which is a larger refactor.
+**STATUS: FIXED (2026-05-06):** Warranty extraction removed from `ReceiptRepository.processReceipt()`. `ReceiptSideEffectDispatcher.dispatchAfterSave()` is now the sole automatic side-effect owner.
 
 ## Finding P0-3 — Receipt links can become false-success or orphaned
 **STATUS: CONFIRMED — FIXED**
@@ -1518,20 +1517,25 @@ Once that is true, receipt → analytics/dashboard becomes much safer.
 ## NEW-1 — ReceiptRepository.approveMatchSuggestion bypasses ReceiptLinkService
 `ReceiptMatchingViewModel.approveSuggestion()` calls `ReceiptRepository.approveMatchSuggestion()` which updates `ScannedReceipt.expenseId` and `matchStatus = MANUALLY_MATCHED` directly, but does NOT call `ReceiptLinkService`. This means `receipt_expense_links` join table and receipt audit events are missing for manual match approvals.
 
-**Severity: P1**
-**Recommendation:** Route `approveMatchSuggestion` through `ReceiptLinkService.linkReceiptToExpense()`.
+**FIXED (2026-05-06):** ReceiptMatchingViewModel.approveSuggestion() now calls 
+        ReceiptLinkService.linkReceiptToExpense() instead of ReceiptRepository.approveMatchSuggestion().
+        The deprecated method still exists but the primary flow now creates ReceiptExpenseLink records,
+        audit events, and propagates expenseId to warranties/returns/item-categorizations.
 
 ## NEW-2 — ReceiptRepository.linkReceiptToExpense (legacy) is inconsistent with ReceiptLinkService
 `ReceiptRepository` has its own `linkReceiptToExpense()` that updates `ScannedReceipt` only (matchStatus + expenseId). It does NOT touch the `receipt_expense_links` join table. This creates two parallel linking models — one via ReceiptLinkService (join table + receipt + events) and one via ReceiptRepository (receipt only).
 
-**Severity: P1**
-**Recommendation:** Deprecate `ReceiptRepository.linkReceiptToExpense()` and route all linking through `ReceiptLinkService`.
+**PARTIALLY FIXED (2026-05-06):** Method is now @Deprecated with ReplaceWith 
+        pointing to ReceiptLinkService.linkReceiptToExpense(). Still present for backward 
+        compatibility but new callers should use ReceiptLinkService.
 
 ## NEW-3 — ReceiptRepository.createExpenseFromReceipt double-links item categorizations
 Both `ReceiptRepository.createExpenseFromReceipt()` and `ReceiptLinkService.linkReceiptToExpense()` call `receiptItemCategorizationDao.linkToExpense()`. The call in ReceiptRepository is redundant.
 
 **Severity: P2**
 **Recommendation:** Remove the `linkToExpense` call from `ReceiptRepository.createExpenseFromReceipt()`.
+
+**Acknowledged (2026-05-06):** The concern about `linkToExpense` being called in both places is documented. No behavior change needed since both calls are idempotent.
 
 ## NEW-4 — ReceiptSideEffectDispatcher.dispatchAfterSave discards matcher result
 For RETAIL_RECEIPT, the dispatcher calls `receiptTransactionMatcher.findBestMatch()` but discards the result — no link or suggestion is persisted. This is wasted computation (the worker will later do the actual matching + persist).
@@ -1555,9 +1559,9 @@ For RETAIL_RECEIPT, the dispatcher calls `receiptTransactionMatcher.findBestMatc
 # 14. Remaining work priority
 
 1. **P0-1**: Move duplicate detection before receipt insert (architectural refactor)
-2. **P0-2**: Remove warranty extraction from ReceiptRepository, make ReceiptSideEffectDispatcher sole owner
-3. **NEW-1**: Route approveMatchSuggestion through ReceiptLinkService
-4. **NEW-2**: Deprecate ReceiptRepository.linkReceiptToExpense legacy path
+2. ~~**P0-2**: Remove warranty extraction from ReceiptRepository, make ReceiptSideEffectDispatcher sole owner~~ **DONE**
+3. ~~**NEW-1**: Route approveMatchSuggestion through ReceiptLinkService~~ **DONE**
+4. ~~**NEW-2**: Deprecate ReceiptRepository.linkReceiptToExpense legacy path~~ **DONE**
 5. **P1-1**: Add unique indexes for fingerprint fields on ScannedReceipt (Room migration)
 6. **P0-3 (FK)**: Add foreign key constraints to ReceiptExpenseLink (Room migration)
 7. **P1-4**: Migrate deprecated createExpenseFromReceipt to ReceiptLifecycleCoordinator

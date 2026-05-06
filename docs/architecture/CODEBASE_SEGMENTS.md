@@ -213,6 +213,7 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 - `domain/transaction/CreateExpenseRequest.kt` — Source-neutral creation request (40+ fields)
 - `domain/transaction/CreateExpenseResult.kt` — Sealed result (Created, DuplicateSkipped, etc.)
 - `domain/transaction/ExpenseUpdates.kt` — Patch-style update model
+- `domain/transaction/SideEffectMode.kt` — Enum: IMMEDIATE, DEFER
 - `domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` — **Single entry point for ALL expense CUD**
 - `domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt` — Post-creation side effects
 - `docs/development/DAO_ACCESS_GUARDRAILS.md` — DAO access policy

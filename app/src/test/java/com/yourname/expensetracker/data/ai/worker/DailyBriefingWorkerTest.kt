@@ -69,6 +69,7 @@ class DailyBriefingWorkerTest {
                         privacyGate = mockk(),
                         aiArtifactRepository = mockk(),
                         aiWorkScheduler = mockk(),
+                        restoreMaintenanceMode = mockk(relaxed = true),
                     )
                 }
             })

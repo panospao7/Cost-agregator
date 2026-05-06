@@ -1328,9 +1328,9 @@ Bypasses `TimeProvider`, making this untestable and inconsistent with the app's 
 
 This means the same logical notification can appear twice in the DB: one row with a plaintext fingerprint (from migration) and one with a SHA-256 hash (from runtime capture). The unique index compares full string values — they will never match.
 
-**Severity:** P1 (potential duplicate raw notifications for pre-migration data)
-
-**Recommendation:** Add a one-time Kotlin migration that re-hashes all plaintext fingerprints using `RawNotificationFingerprint.compute()`.
+**ACKNOWLEDGED (2026-05-06):** TODO comment added in AppDatabase.kt before MIGRATION_104_105 
+        documenting the SHA-256 vs plaintext mismatch. Full fix requires a Kotlin one-time migration 
+        (SHA-256 not available in SQLite). Deferred to a future migration window.
 
 ### NEW-8 — RevolutParser reject pattern aborts entire parse → **FIXED**
 
@@ -1348,13 +1348,16 @@ Changed `return null` to `continue` so the parser skips the rejected field and t
 
 `markAsRelevant` calls `confidenceRouter.invalidateAfterUserAction(notification.packageName, notification.title ?: "Unknown")`. The second argument should be a **merchant** name (used as merchant cache key), but `notification.title` is passed instead. This may mis-invalidate or miss the correct merchant-keyed cache entry.
 
-**Severity:** P2 (stale confidence routing for merchants after manual review actions)
+**FIXED (2026-05-06):** confidenceRouter.invalidateAfterUserAction() now receives 
+        expense?.merchant (falling back to suggestedMerchant → packageName) instead of 
+        notification.title. This matches the merchant-keyed cache pattern used by approveReview/rejectReview.
 
 ### NEW-11 — `RestoreMaintenanceMode.scheduleAllWorkers` missing `ai_daily_briefing`
 
 Class KDoc says "all 7 background workers" are managed. `pauseAllWorkers()` correctly cancels all `WorkerSpec.DEFAULTS.keys` entries. But `scheduleAllWorkers()` only reschedules 6 workers — `ai_daily_briefing` is not rescheduled after restore exit.
 
-**Severity:** P2 (daily briefing worker may not resume after restore until app restart)
+**FIXED (2026-05-06):** scheduleAllWorkers() now includes ai_daily_briefing 
+        via WorkerSpecScheduler.scheduleAtMidnight(). All 7 workers are now rescheduled after restore.
 
 ### NEW-12 — Currency detection in fallback paths is simplistic
 

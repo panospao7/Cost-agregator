@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import io.mockk.every
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -219,12 +220,14 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             categoryId = null
         )
 
-        val blockParty = engine.calculateBlockPartyData(
-            forecast = forecast,
-            expenses = listOf(expenseOnDay10),
-            dailySpending = emptyList(),
-            budgetLimit = 1000.0
-        )
+        val blockParty = runBlocking {
+            engine.calculateBlockPartyData(
+                forecast = forecast,
+                expenses = listOf(expenseOnDay10),
+                dailySpending = emptyList(),
+                budgetLimit = 1000.0
+            )
+        }
 
         val day10 = blockParty.first { it.dayOfMonth == 10 }
         assertEquals(42.0, day10.actualSpent, 0.01)
@@ -291,12 +294,14 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             )
         )
 
-        val blockParty = engine.calculateBlockPartyData(
-            forecast = forecast,
-            expenses = emptyList(),
-            dailySpending = List(31) { 0f },
-            budgetLimit = 2000.0
-        )
+        val blockParty = runBlocking {
+            engine.calculateBlockPartyData(
+                forecast = forecast,
+                expenses = emptyList(),
+                dailySpending = List(31) { 0f },
+                budgetLimit = 2000.0
+            )
+        }
 
         val day10 = blockParty.first { it.dayOfMonth == 10 } // +7 from Jan 3
         val day17 = blockParty.first { it.dayOfMonth == 17 } // +14 from Jan 3
@@ -336,12 +341,14 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             )
         )
 
-        val blockParty = engine.calculateBlockPartyData(
-            forecast = forecast,
-            expenses = emptyList(),
-            dailySpending = List(29) { 0f },
-            budgetLimit = 1800.0
-        )
+        val blockParty = runBlocking {
+            engine.calculateBlockPartyData(
+                forecast = forecast,
+                expenses = emptyList(),
+                dailySpending = List(29) { 0f },
+                budgetLimit = 1800.0
+            )
+        }
 
         val day8 = blockParty.first { it.dayOfMonth == 8 } // 14 days after Jan 25
         assertEquals(75.0, day8.recurringImpact, 0.0001)
@@ -376,12 +383,14 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             expense(amount = 40.0, date = day10Ts, merchant = "Valid Purchase", isSharedExpense = false)
         )
 
-        val blockParty = engine.calculateBlockPartyData(
-            forecast = forecast,
-            expenses = mixedTransactions,
-            dailySpending = emptyList(),
-            budgetLimit = 1000.0
-        )
+        val blockParty = runBlocking {
+            engine.calculateBlockPartyData(
+                forecast = forecast,
+                expenses = mixedTransactions,
+                dailySpending = emptyList(),
+                budgetLimit = 1000.0
+            )
+        }
 
         val day10 = blockParty.first { it.dayOfMonth == 10 }
         assertEquals(40.0, day10.actualSpent, 0.01)

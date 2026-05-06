@@ -1199,9 +1199,7 @@ This is a large refactor touching 10+ methods and requires routing them through 
 When `STRICT_EXTERNAL_ID` mode encounters a unique-index conflict, it returns `CreateExpenseResult.InsertConflict(dedupeKey)` instead of looking up the existing expense and returning `DuplicateSkipped(existingId)`. Low-risk but reduces caller clarity. Recommend adding `expenseDao.findIdByDedupeKey()` query.
 
 ### P1-2 — Duplicate lookup does not mirror duplicate detection
-**Status: CONFIRMED, NOT FIXED**
-
-`isDuplicateCurrencyAware()` uses wider criteria (merchant key prefix containment, UNKNOWN type compatibility) than `findDuplicateId()` which uses exact matching. This can produce `DuplicateSkipped(existingExpenseId = -1)`. Recommend aligning the two queries.
+**Status: FIXED (2026-05-06):** Added `findDuplicateIdCurrencyAware()` to ExpenseDao.kt that uses the same 3-tier matching as `isDuplicateCurrencyAware()`. TransactionLifecycleCoordinator now calls this unified method in all 3 call sites instead of `findDuplicateId()`.
 
 ### P1-3 — Duplicate event writing is best-effort
 **Status: CONFIRMED, ACCEPTABLE**
@@ -1226,9 +1224,7 @@ When `STRICT_EXTERNAL_ID` mode encounters a unique-index conflict, it returns `C
 - The `updateExpense` method already regenerates `merchantKey` via `MerchantKeyGenerator.generate()` when `existing.merchant != expense.merchant`.
 
 ### P1-7 — Update/delete do not dispatch lifecycle side effects
-**Status: CONFIRMED, NOT FIXED**
-
-`updateExpense()` and `deleteExpense()` do not dispatch budget monitor recalculation, anomaly state updates, merchant learning, or recurring relink/unlink. Dashboard/analytics may update via Room Flow queries, but side-effect systems remain stale. Recommend adding `dispatchOnUpdated()` and `dispatchOnDeleted()` to the side-effect dispatcher.
+**Status: FIXED (2026-05-06):** `TransactionSideEffectDispatcher` now has `dispatchOnUpdated()` (budget + anomaly + merchant) and `dispatchOnDeleted()` (budget) methods. `TransactionLifecycleCoordinator.updateExpense()` and `deleteExpense()` call them post-commit.
 
 ### P2-1 — Delete source is hardcoded
 **Status: CONFIRMED & FIXED**
@@ -1287,10 +1283,10 @@ The `expenseToSnapshot(e: Expense)` and `expenseToSnapshot(id: Long, e: Expense)
 # 14. Remaining work priority
 
 1. **Route all update paths through lifecycle** (P0-2) — dedicated PR, ~10 methods in `ExpenseRepository` + `ReceiptLinkService`
-2. **Align duplicate detection and ID retrieval** (P1-2) — create `findDuplicateCandidateCurrencyAware()`
+2. ~~**Align duplicate detection and ID retrieval** (P1-2) — create `findDuplicateCandidateCurrencyAware()`~~ **DONE**
 3. **Fix strict external ID conflict semantics** (P1-1) — return `DuplicateSkipped(existingId)` on conflict
 4. **Write failed-create events** (P1-4) — use existing `LifecycleEventType` values
-5. **Add update/delete side-effect dispatch** (P1-7) — `dispatchOnUpdated()`, `dispatchOnDeleted()`
+5. ~~**Add update/delete side-effect dispatch** (P1-7) — `dispatchOnUpdated()`, `dispatchOnDeleted()`~~ **DONE**
 6. **Add audit queries to TransactionEventDao** (P2-2) — `getRecentEvents`, `getEventsByType`, etc.
 
 ---

@@ -1,7 +1,7 @@
 # ExpenseTracker
 
 [![Build Status](https://img.shields.io/badge/build-success-brightgreen)]()
-[![Kotlin](https://img.shields.io/badge/kotlin-1.9-blue.svg)]()
+[![Kotlin](https://img.shields.io/badge/kotlin-2.0-blue.svg)]()
 [![Android](https://img.shields.io/badge/android-API%2026+-green.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-yellow.svg)]()
 
@@ -44,7 +44,7 @@ A comprehensive Android expense tracking application with **22 advanced features
 - Android Studio Arctic Fox or later
 - JDK 17 or later
 - Android SDK 26+ (Android 8.0)
-- Kotlin 1.9+
+- Kotlin 2.2+
 
 ### Installation
 
@@ -178,7 +178,7 @@ See [PERFORMANCE_OPTIMIZATION.md](PERFORMANCE_OPTIMIZATION.md) for details.
 
 ## 🔧 Technologies
 
-- **Language:** Kotlin 1.9
+- **Language:** Kotlin 2.2
 - **UI:** Jetpack Compose
 - **Database:** Room with SQLite
 - **DI:** Hilt

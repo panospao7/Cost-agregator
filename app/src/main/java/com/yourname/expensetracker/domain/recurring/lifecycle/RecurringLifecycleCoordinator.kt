@@ -19,6 +19,7 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
+import timber.log.Timber
 import kotlin.math.abs
 
 /**
@@ -185,6 +186,52 @@ class RecurringLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * Unlinks an expense from its linked occurrence, resetting it back to PLANNED.
+     *
+     * Called when an expense is deleted so that the recurring occurrence is no
+     * longer considered PAID. Looks back up to 1 year and forward 1 week for
+     * an occurrence linked to the given expense ID.
+     *
+     * @param expenseId The ID of the expense being deleted.
+     */
+    suspend fun unlinkExpenseFromOccurrence(expenseId: Long) {
+        val now = timeProvider.now()
+
+        // Find the occurrence that was linked to this expense
+        val occurrences = occurrenceDao.getByDateRange(
+            start = now - 365L * 24 * 60 * 60 * 1000L,  // look back 1 year
+            end = now + 7L * 24 * 60 * 60 * 1000L
+        )
+
+        val linked = occurrences.firstOrNull { it.linkedExpenseId == expenseId }
+            ?: return // No linked occurrence, nothing to do
+
+        // Reset to PLANNED — the recurring bill is not yet paid
+        occurrenceDao.update(
+            linked.copy(
+                status = "PLANNED",
+                linkedExpenseId = null,
+                paidAmount = null,
+                paidCurrency = null,
+                paidAt = null,
+                updatedAt = now
+            )
+        )
+
+        // Write lifecycle event
+        lifecycleEventDao.insert(
+            RecurringLifecycleEvent(
+                occurrenceId = linked.id,
+                eventType = "OCCURRENCE_UNLINKED",
+                occurredAt = now,
+                oldStatus = "PAID",
+                newStatus = "PLANNED",
+                metadata = """{"expenseId":$expenseId,"reason":"expense_deleted"}"""
+            )
+        )
+    }
+
+    /**
      * Gets all occurrences for a given source/rule.
      *
      * @param ruleId The ID of the recurring rule.
@@ -267,6 +314,22 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 lastSentAt = now
             )
         )
+
+        // Write lifecycle event
+        try {
+            lifecycleEventDao.insert(
+                RecurringLifecycleEvent(
+                    occurrenceId = existing.occurrenceId,
+                    eventType = "REMINDER_SENT",
+                    occurredAt = now,
+                    oldStatus = null,
+                    newStatus = null,
+                    metadata = """{"deliveryId":$deliveryId}"""
+                )
+            )
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: failed to write REMINDER_SENT event for delivery %d", deliveryId)
+        }
     }
 
     /**

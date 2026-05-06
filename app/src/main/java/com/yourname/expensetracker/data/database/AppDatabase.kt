@@ -6308,6 +6308,16 @@ val MIGRATION_103_104 = object : androidx.room.migration.Migration(103, 104) {
 //   group_expenses — expenseId unique index
 //   raw_notifications — dedupeFingerprint
 //   planned_expenses — openSourceOccurrenceKey
+//
+// TODO dedupeFingerprint hash mismatch:
+//   The backfill below (line ~6414) uses plaintext concatenation
+//   (packageName|timestamp|title|text|bigText) because SHA-256 is
+//   not available in SQLite.  The runtime code in
+//   RawNotificationFingerprint.compute() produces a SHA-256 hex
+//   digest.  Any rows with a '|' in dedupeFingerprint are
+//   plaintext and will NOT match runtime-computed fingerprints.
+//   A migration or startup task should re-hash them using
+//   RawNotificationFingerprint.compute().
 val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
     override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
         val fkWasEnabled = database.query("PRAGMA foreign_keys").use {

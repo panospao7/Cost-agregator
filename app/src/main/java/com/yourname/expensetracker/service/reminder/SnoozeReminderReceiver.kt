@@ -4,7 +4,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+import com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +27,7 @@ class SnoozeReminderReceiver : BroadcastReceiver() {
     @Inject lateinit var reminderDeliveryDao: RecurringReminderDeliveryDao
     @Inject lateinit var timeProvider: TimeProvider
     @Inject lateinit var restoreMaintenanceMode: RestoreMaintenanceMode
+    @Inject lateinit var lifecycleEventDao: RecurringLifecycleEventDao
 
     override fun onReceive(context: Context, intent: Intent) {
         val deliveryId = intent.getLongExtra("deliveryId", -1L)
@@ -57,6 +60,22 @@ class SnoozeReminderReceiver : BroadcastReceiver() {
                         snoozedUntil = snoozedUntil
                     )
                 )
+
+                // Write lifecycle event
+                try {
+                    lifecycleEventDao.insert(
+                        RecurringLifecycleEvent(
+                            occurrenceId = delivery.occurrenceId,
+                            eventType = "REMINDER_SNOOZED",
+                            occurredAt = now,
+                            oldStatus = null,
+                            newStatus = null,
+                            metadata = """{"deliveryId":$deliveryId,"snoozedUntil":$snoozedUntil}"""
+                        )
+                    )
+                } catch (e: Exception) {
+                    Timber.w(e, "Non-critical: failed to write REMINDER_SNOOZED event")
+                }
 
                 Timber.d("Reminder delivery %d snoozed until %d", deliveryId, snoozedUntil)
             } catch (e: Exception) {

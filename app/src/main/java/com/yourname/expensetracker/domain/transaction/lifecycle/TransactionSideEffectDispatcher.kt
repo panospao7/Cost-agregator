@@ -75,6 +75,66 @@ class TransactionSideEffectDispatcher @Inject constructor(
         }
     }
 
+    /**
+     * Dispatches all standard post-update side effects for the given expense.
+     *
+     * Best-effort: budget re-check, anomaly re-evaluation, and merchant pattern
+     * learning are dispatched after an expense has been updated (amount, date,
+     * category, etc. may have changed).
+     *
+     * @param expenseId The ID of the updated expense.
+     * @param source    The source/origin of the expense update.
+     */
+    suspend fun dispatchOnUpdated(expenseId: Long, source: String) {
+        Timber.d("TransactionSideEffectDispatcher: dispatching post-update side effects for expense $expenseId (source=$source)")
+
+        // Budget re-check — amount/date/category may have changed
+        runSafely("budget check after update for expense $expenseId") {
+            budgetMonitor.get().checkBudgets()
+        }
+
+        // Load expense for anomaly check
+        val expense = expenseDao.getById(expenseId) ?: return
+
+        // Anomaly re-evaluation
+        runSafely("anomaly check after update for expense $expenseId") {
+            val category = expense.categoryId?.let { categoryDao.getById(it) }
+            anomalyAlertOrchestrator.checkAndAlert(
+                ExpenseWithCategory(expense = expense, category = category)
+            )
+        }
+
+        // Merchant pattern learning if category assigned
+        if (expense.categoryId != null) {
+            runSafely("merchant-category pattern update for expense $expenseId") {
+                merchantCategoryRepository.learnPattern(expense.merchant, expense.categoryId)
+            }
+        }
+    }
+
+    /**
+     * Dispatches all standard post-delete side effects for the given expense.
+     *
+     * Best-effort: budget re-check runs so budget usage is recalculated after
+     * removing spending. No merchant pattern learning on delete — the pattern
+     * may still be valid.
+     *
+     * @param expenseId The ID of the deleted expense.
+     * @param source    The source/origin of the expense deletion.
+     */
+    suspend fun dispatchOnDeleted(expenseId: Long, source: String) {
+        Timber.d("TransactionSideEffectDispatcher: dispatching post-delete side effects for expense $expenseId (source=$source)")
+
+        // Budget re-check — removing spending should update budget usage
+        runSafely("budget check after delete for expense $expenseId") {
+            budgetMonitor.get().checkBudgets()
+        }
+
+        // Note: anomalyAlertOrchestrator.clearAlertForExpense() is not available;
+        // if added in the future, insert anomaly clearing here.
+        // No merchant pattern learning on delete — the pattern may still be valid
+    }
+
     private suspend fun runSafely(action: String, block: suspend () -> Unit) {
         try {
             block()

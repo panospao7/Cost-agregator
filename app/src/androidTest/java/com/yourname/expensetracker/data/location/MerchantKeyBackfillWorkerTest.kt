@@ -47,7 +47,8 @@ class MerchantKeyBackfillWorkerTest {
                 ): MerchantKeyBackfillWorker = MerchantKeyBackfillWorker(
                     appContext,
                     workerParameters,
-                    expenseRepository
+                    expenseRepository,
+                    restoreMaintenanceMode = mockk(relaxed = true)
                 )
             })
             .build()
