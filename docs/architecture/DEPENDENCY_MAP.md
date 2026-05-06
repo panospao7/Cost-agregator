@@ -106,6 +106,7 @@ TransactionLifecycleCoordinator          [domain/transaction/lifecycle/Transacti
        ├──► Validate (CreateExpenseRequest)
        ├──► Normalize (MerchantNormalizer, CategoryLookup)
        ├──► Dedupe (DuplicateDetectionPolicy)
+       ├──► CurrencySettingsRepository.homeCurrency()  (home-currency snapshot source)
        ├──► insertAtomic (ExpenseDao) — ACID via withTransaction
        ├──► Event log (TransactionEventDao.insert())
        │
@@ -227,6 +228,11 @@ RecurringPlanProjectionService            [domain/recurring/RecurringPlanProject
 
 TransactionLifecycleCoordinator
   └──► RecurringLifecycleCoordinator.linkExpenseToOccurrence()  — auto-link hook
+
+SnoozeReminderReceiver / DismissReminderReceiver
+  ├──► RecurringReminderDeliveryDao
+  ├──► TimeProvider
+  └──► RestoreMaintenanceMode (write gate)
 ```
 
 ### Consumer Classes

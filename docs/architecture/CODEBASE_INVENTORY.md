@@ -10,6 +10,12 @@
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
 
+### Drift Sync (2026-05-06)
+- `TransactionLifecycleCoordinator` now depends on `CurrencySettingsRepository` to resolve the user's home currency for base snapshot conversion metadata.
+- Reminder action receivers (`SnoozeReminderReceiver`, `DismissReminderReceiver`) are Hilt entry points and no longer construct raw database instances; both enforce `RestoreMaintenanceMode` write gating and use `TimeProvider`.
+- `BackupVerifier` now classifies lifecycle/event tables as exact-restore critical (`TIER_1_EXACT`) rather than validity-only.
+- Generic `CSV`/`JSON` exports use `Expense.effectiveAmount` (not raw `amount`) in `ExportOptionsViewModel`.
+
 ---
 
 ## 1. UI SCREENS - COMPLETE INVENTORY

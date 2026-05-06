@@ -45,6 +45,12 @@
 - `SourceStatsEvent` entity + `SourceStatsEventDao`: event-based notification source stats tracking.
 - AI, location, shared-expense, split, privacy, backup-encryption, and `.costbackup` bundle backup/restore flows are first-class subsystems
 
+### Architecture Drift Updates (2026-05-06)
+- `TransactionLifecycleCoordinator` now resolves home currency from `CurrencySettingsRepository` for conversion snapshots in both create and update paths (EUR constant is fallback only).
+- `SnoozeReminderReceiver` and `DismissReminderReceiver` are now Hilt-enabled entry points (`@AndroidEntryPoint`) and use injected `RecurringReminderDeliveryDao`, `TimeProvider`, and `RestoreMaintenanceMode`.
+- `BackupVerifier` verification strictness was increased: critical lifecycle/event tables (`transaction_events`, `receipt_events`, `receipt_expense_links`, `recurring_occurrences`, `recurring_reminder_deliveries`, `recurring_lifecycle_events`) are now treated as `TIER_1_EXACT`.
+- Generic exports in `ExportOptionsViewModel` now use `effectiveAmount` for CSV/JSON generation (preview + streaming), aligning exports with ownership-adjusted accounting semantics.
+
 ---
 
 ## Architecture Overview

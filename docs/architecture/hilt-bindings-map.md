@@ -55,6 +55,16 @@ Dependencies:
   (none)
 ```
 
+### Entry Points Updated (2026-05-06)
+```
+BroadcastReceivers:
+  SnoozeReminderReceiver                      → @AndroidEntryPoint + injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode
+  DismissReminderReceiver                     → @AndroidEntryPoint + injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode
+
+Lifecycle coordinator wiring:
+  TransactionLifecycleCoordinator             → now consumes CurrencySettingsRepository for home-currency snapshot resolution
+```
+
 ### `ServiceModule` — `di/ServiceModule.kt`
 ```
 Provides:
