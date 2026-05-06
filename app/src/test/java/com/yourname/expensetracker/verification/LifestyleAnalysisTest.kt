@@ -148,7 +148,8 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
         amount = amount,
         merchant = "Employer",
         transactionType = TransactionType.DEPOSIT,
-        date = millis(date)
+        date = millis(date),
+        createdAt = System.currentTimeMillis()
     )
 
     private fun spend(date: String, amount: Double, merchant: String): Expense = Expense(
@@ -156,7 +157,8 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
         amount = amount,
         merchant = merchant,
         transactionType = TransactionType.PURCHASE,
-        date = millis(date)
+        date = millis(date),
+        createdAt = System.currentTimeMillis()
     )
 
     private fun millis(isoDate: String): Long =

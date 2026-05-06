@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 113,
-    "identityHash": "64574f22f3fc82a1d9df4bae45e05ea3",
+    "identityHash": "d68c2ab3e7c1efbff729d9bb2503988a",
     "entities": [
       {
         "tableName": "raw_notifications",
@@ -1577,7 +1577,7 @@
       },
       {
         "tableName": "manual_recurring_expenses",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `merchant` TEXT NOT NULL, `amount` REAL NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `frequency` TEXT NOT NULL, `nextDate` INTEGER NOT NULL, `note` TEXT, `createdAt` INTEGER NOT NULL, `isSubscription` INTEGER NOT NULL DEFAULT 0, `subscriptionCategory` TEXT, `usageTargetPerMonth` INTEGER, `cancellationUrl` TEXT, `isActive` INTEGER NOT NULL DEFAULT 1)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `merchant` TEXT NOT NULL, `amount` REAL NOT NULL, `currency` TEXT NOT NULL DEFAULT 'EUR', `frequency` TEXT NOT NULL, `nextDate` INTEGER NOT NULL, `note` TEXT, `createdAt` INTEGER NOT NULL, `categoryId` INTEGER DEFAULT NULL, `isSubscription` INTEGER NOT NULL DEFAULT 0, `subscriptionCategory` TEXT, `usageTargetPerMonth` INTEGER, `cancellationUrl` TEXT, `isActive` INTEGER NOT NULL DEFAULT 1)",
         "fields": [
           {
             "fieldPath": "id",
@@ -1626,6 +1626,12 @@
             "columnName": "createdAt",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "categoryId",
+            "columnName": "categoryId",
+            "affinity": "INTEGER",
+            "defaultValue": "NULL"
           },
           {
             "fieldPath": "isSubscription",
@@ -7261,7 +7267,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '64574f22f3fc82a1d9df4bae45e05ea3')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd68c2ab3e7c1efbff729d9bb2503988a')"
     ]
   }
 }

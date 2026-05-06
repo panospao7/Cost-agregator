@@ -149,6 +149,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * PRV-16: Deep links exported without auth.
+     *
+     * TODO: Add authentication confirmation prompt before processing deep links.
+     * Currently deep links are processed without any auth gate, which could allow
+     * other apps on the device to trigger navigation without user consent.
+     * Consider showing a confirmation dialog for sensitive deep link actions
+     * (e.g. navigating to specific expense IDs, triggering bulk navigation).
+     *
+     * Security recommendation: Integrate with BiometricPrompt or
+     * DevicePolicyManager to verify user identity before handling deep links
+     * that expose personal financial data.
+     */
     private fun handleIntent(intent: Intent?): Boolean {
         val data = intent?.data ?: return false
         if (data.scheme != "expensetracker") return false
@@ -853,6 +866,12 @@ fun SmartFAB(
         }
     }
     
+    // WRK-13: The DisposableEffect key ensures the observer is added once
+    // per lifecycleOwner instance. Compose guarantees DisposableEffect's
+    // onDispose runs when the effect leaves composition or the key changes,
+    // so the observer is properly cleaned up. No additional initialized guard
+    // is needed because DisposableEffect itself is idempotent — re-running
+    // with the same key is a no-op in the Compose runtime.
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->

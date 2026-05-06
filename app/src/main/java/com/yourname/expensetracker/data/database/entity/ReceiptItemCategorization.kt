@@ -13,7 +13,8 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "receipt_item_categorizations",
     foreignKeys = [
-        // DB-8: CASCADE on receiptId — deleting a receipt removes its item categorizations.
+        // DB-8: CASCADE on ReceiptItemCategorization.receiptId → ScannedReceipt(id)
+        // Safe: Categorizations are child data of a receipt; orphaned categorizations are useless.
         ForeignKey(
             entity = ScannedReceipt::class,
             parentColumns = ["id"],

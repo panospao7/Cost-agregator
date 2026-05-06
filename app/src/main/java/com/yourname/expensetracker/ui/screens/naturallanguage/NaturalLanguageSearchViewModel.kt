@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpense
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchEngine
+import com.yourname.expensetracker.domain.naturallanguage.SearchResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
@@ -62,8 +63,13 @@ class NaturalLanguageSearchViewModel @Inject constructor(
     private val _interpretation = MutableStateFlow<NaturalLanguageSearchEngine.QueryInterpretation?>(null)
     val interpretation: StateFlow<NaturalLanguageSearchEngine.QueryInterpretation?> = _interpretation.asStateFlow()
     
-    private val _results = MutableStateFlow<List<NaturalLanguageExpense>>(emptyList())
-    val results: StateFlow<List<NaturalLanguageExpense>> = _results.asStateFlow()
+    private val _results = MutableStateFlow<List<SearchResult>>(emptyList())
+    val results: StateFlow<List<SearchResult>> = _results.asStateFlow()
+
+    /** Exposed for UI components that only need raw expense data without match-type labels. */
+    val rawExpenses: StateFlow<List<NaturalLanguageExpense>> = _results.map { list ->
+        list.map { it.expense }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _totalInHomeCurrency = MutableStateFlow(0.0)
     val totalInHomeCurrency: StateFlow<Double> = _totalInHomeCurrency.asStateFlow()
@@ -107,15 +113,15 @@ class NaturalLanguageSearchViewModel @Inject constructor(
             val interpretation = searchEngine.interpretQuery(queryText)
             _interpretation.value = interpretation
             
-            // Execute the search
-            val expenses = searchEngine.executeSearch(interpretation)
-            _results.value = expenses
+            // Execute the search — results now include match-type labels (SRH-23)
+            val searchResults = searchEngine.executeSearch(interpretation)
+            _results.value = searchResults
 
             // Compute total in home currency (handles mixed-currency results correctly)
             val home = homeCurrency.first()
-            val amounts = expenses.groupBy { it.currency }.map { (currency, expenseList) ->
+            val amounts = searchResults.groupBy { it.expense.currency }.map { (currency, expenseList) ->
                 // SAFE: grouping by native currency first, then converting at line 93 — correct multi-currency handling
-                expenseList.sumOf { it.effectiveAmount } to currency
+                expenseList.sumOf { it.expense.effectiveAmount } to currency
             }
             _totalInHomeCurrency.value = if (amounts.size == 1) {
                 amounts.first().first
@@ -123,7 +129,7 @@ class NaturalLanguageSearchViewModel @Inject constructor(
                 currencyConverter.convertMultiple(amounts, home).total
             }
 
-            _searchState.value = if (expenses.isEmpty()) {
+            _searchState.value = if (searchResults.isEmpty()) {
                 SearchState.Empty
             } else {
                 SearchState.Results

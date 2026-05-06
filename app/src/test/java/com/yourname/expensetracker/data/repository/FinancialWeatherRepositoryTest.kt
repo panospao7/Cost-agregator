@@ -470,7 +470,8 @@ class FinancialWeatherRepositoryTest {
             amount = amount,
             merchant = "Test",
             date = date,
-            transactionType = type
+            transactionType = type,
+            createdAt = System.currentTimeMillis()
         )
     }
 
@@ -481,7 +482,8 @@ class FinancialWeatherRepositoryTest {
             date = date,
             transactionType = TransactionType.PURCHASE,
             isSharedExpense = true,
-            myShareAmount = myShare
+            myShareAmount = myShare,
+            createdAt = System.currentTimeMillis()
         )
     }
 
@@ -492,7 +494,8 @@ class FinancialWeatherRepositoryTest {
             date = date,
             transactionType = TransactionType.PURCHASE,
             isSharedExpense = true,
-            mySharePercentage = sharePercent
+            mySharePercentage = sharePercent,
+            createdAt = System.currentTimeMillis()
         )
     }
 
@@ -502,7 +505,8 @@ class FinancialWeatherRepositoryTest {
             merchant = "NotMine",
             date = date,
             transactionType = TransactionType.PURCHASE,
-            isNotMine = true
+            isNotMine = true,
+            createdAt = System.currentTimeMillis()
         )
     }
 

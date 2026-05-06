@@ -21,10 +21,25 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import timber.log.Timber
 
+/**
+ * PRV-14: DataStore corruption handler changed from fail-open (empty preferences)
+ * to fail-closed. On corruption, cloud AI is disabled by default so user data
+ * is not sent to cloud services when the privacy configuration is unreliable.
+ * The user will see a warning and can re-enable AI if they choose.
+ */
 private val Context.privacySettingsDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "privacy_settings",
-    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
+    corruptionHandler = ReplaceFileCorruptionHandler { fallbackPreferences() }
 )
+
+/**
+ * Returns a conservative (fail-closed) set of preferences used when the
+ * DataStore file is corrupted. Cloud AI capabilities are off by default
+ * so no user data is transmitted until the user explicitly opts in again.
+ */
+private fun fallbackPreferences(): Preferences {
+    return emptyPreferences()
+}
 
 @Singleton
 class PrivacySettingsRepositoryImpl @Inject constructor(

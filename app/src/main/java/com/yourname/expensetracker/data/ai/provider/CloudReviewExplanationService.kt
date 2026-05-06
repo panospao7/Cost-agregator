@@ -13,6 +13,9 @@ import com.yourname.expensetracker.domain.ai.model.ReviewExplanationInput
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.ReviewExplanationService
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -36,16 +39,33 @@ import timber.log.Timber
 class CloudReviewExplanationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
-    private val aiSettingsRepository: AiSettingsRepository? = null
+    private val aiSettingsRepository: AiSettingsRepository? = null,
+    private val privacyGate: PrivacyGate
 ) : ReviewExplanationService {
 
     private var apiKeyOverride: String? = null
 
     // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), null)
+    constructor(secureKeyStorage: SecureKeyStorage) : this(
+        secureKeyStorage,
+        OkHttpClient(),
+        null,
+        object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.Allowed
+        }
+    )
 
     // Secondary constructor for testing
-    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(secureKeyStorage, OkHttpClient(), null) {
+    constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(
+        secureKeyStorage,
+        OkHttpClient(),
+        null,
+        object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.Allowed
+        }
+    ) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -63,6 +83,13 @@ class CloudReviewExplanationService @Inject constructor(
         if (settings != null && !settings.allowCloudAi) {
             Timber.d("CloudReviewExplanationService: Cloud AI disabled in settings, skipping.")
             return AiServiceResult.Failure(AiServiceError.Disabled("Cloud AI is disabled in settings"))
+        }
+
+        // PRIVACY GATE: Check privacy gate before cloud AI call
+        val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Timber.w("CloudReviewExplanationService: blocked by privacy gate: ${gateCheck.reason}")
+            return AiServiceResult.Failure(AiServiceError.Disabled("Blocked by privacy gate: ${gateCheck.reason}"))
         }
 
         val shouldRedact = settings?.redactBeforeCloud ?: true

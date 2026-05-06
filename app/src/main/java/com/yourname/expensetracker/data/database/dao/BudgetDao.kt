@@ -48,6 +48,9 @@ interface BudgetDao {
     @Query("SELECT COUNT(*) FROM budgets")
     suspend fun getCount(): Int
 
+    @Query("SELECT COUNT(*) FROM budgets WHERE categoryId = :categoryId")
+    suspend fun countBudgetsForCategory(categoryId: Long): Int
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertAll(budgets: List<Budget>)
 

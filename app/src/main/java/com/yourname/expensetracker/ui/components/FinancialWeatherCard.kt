@@ -352,11 +352,15 @@ fun UpcomingRow(item: UpcomingItem, referenceNowMillis: Long, currency: String) 
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
             // Distinction Icon
-            val icon = if (item is UpcomingItem.Recurring) Icons.Default.Repeat else Icons.Default.EventNote
-            val badgeText = if (item is UpcomingItem.Recurring) {
-                item.pattern.frequency.name.lowercase().capitalize()
-            } else {
-                "Planned"
+            val icon = when (item) {
+                is UpcomingItem.Recurring -> Icons.Default.Repeat
+                is UpcomingItem.Occurrence -> Icons.Default.Repeat
+                is UpcomingItem.Planned -> Icons.Default.EventNote
+            }
+            val badgeText = when (item) {
+                is UpcomingItem.Recurring -> item.pattern.frequency.name.lowercase().capitalize()
+                is UpcomingItem.Occurrence -> "Recurring"
+                is UpcomingItem.Planned -> "Planned"
             }
 
             Box(

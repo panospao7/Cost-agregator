@@ -32,6 +32,20 @@ sealed class WarrantyCreationResult {
  * 2. Checks if a warranty already exists for this receipt
  * 3. Creates a new warranty if confidence is high enough
  * 4. Flags for review if confidence is low
+ *
+ * ## WRN-15: HybridWarrantyExtraction pattern (planned)
+ * The current implementation uses local-only extraction via [WarrantyTextExtractor].
+ * When local extraction confidence is below threshold, a cloud-based AI fallback
+ * is planned:
+ *
+ * 1. **Local extraction** (regex patterns on OCR text) — fast, free, always runs.
+ * 2. **Cloud fallback** (Gemini or similar) — attempted when local confidence is
+ *    below [HIGH_CONFIDENCE_THRESHOLD] but >= [MINIMUM_CONFIDENCE_THRESHOLD] AND
+ *    cloud AI is enabled in settings.
+ * 3. **Review draft** — if both local and cloud fail, create a PENDING_REVIEW draft.
+ *
+ * This local-first → cloud-fallback pattern is the standard HybridWarrantyExtraction
+ * approach used across the app's AI features.
  */
 @Singleton
 class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
@@ -98,6 +112,9 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
                 extractionData.confidence >= MINIMUM_CONFIDENCE_THRESHOLD -> {
                     // Medium confidence - flag for review
                     Timber.tag(TAG).d("Low confidence extraction (${extractionData.confidence}%) for receipt $receiptId, creating review draft")
+                    // WRN-15: Future cloud fallback — when local confidence is below threshold
+                    // AND cloud AI is enabled in settings, attempt cloud-based extraction here.
+                    Timber.tag(TAG).d("WRN-15: Local confidence=%.1f%% below threshold=%.1f%% — cloud fallback would be attempted here if enabled", extractionData.confidence, HIGH_CONFIDENCE_THRESHOLD)
                     val persistResult = createReviewDraftWarranty(receiptId, extractionData)
                     when (persistResult) {
                         is WarrantyCreationResult.AlreadyExists,
@@ -232,12 +249,20 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
         val durationMonths = data.warrantyDurationMonths ?: 12
         val warrantyEndDate = data.warrantyEndDate ?: calculateWarrantyEndDate(purchaseDate, durationMonths)
 
+        // WRN-18: Use descriptive fallback instead of "Unknown Product" / "Unknown Merchant"
+        // so low-confidence drafts don't pollute the list with fake defaults.
+        // The user is prompted to fill in actual values during review.
+        val fallbackProduct = data.productName?.takeIf { it.isNotBlank() }
+            ?: "Pending product name — edit in review"
+        val fallbackMerchant = data.merchantName?.takeIf { it.isNotBlank() }
+            ?: "Pending merchant — edit in review"
+
         val draftWarranty = Warranty(
             id = 0,
             receiptId = receiptId,
             expenseId = null,
-            productName = data.productName?.takeIf { it.isNotBlank() } ?: "Unknown Product",
-            merchantName = data.merchantName?.takeIf { it.isNotBlank() } ?: "Unknown Merchant",
+            productName = fallbackProduct,
+            merchantName = fallbackMerchant,
             purchaseDate = purchaseDate,
             warrantyDurationMonths = durationMonths,
             warrantyEndDate = warrantyEndDate,
@@ -330,7 +355,10 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
             .toLocalDate()
             .plusMonths(durationMonths.toLong())
 
-        return endDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
+        // Use half-open end-of-day semantics so the warranty survives
+        // through its entire expiration day (matching WarrantyTrackerRepository).
+        val dayStart = endDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
+        return com.yourname.expensetracker.domain.util.TimePeriodUtils.getEndOfDay(dayStart)
     }
 
     private fun mapWarrantyType(rawType: String?): WarrantyType {

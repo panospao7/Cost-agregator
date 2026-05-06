@@ -424,6 +424,19 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
+     * Get the DEPOSIT total in home currency for the given date range.
+     * Uses the DEPOSIT-filtered DAO variant for currency-aware aggregation.
+     */
+    suspend fun getHomeCurrencyDepositTotal(
+        startDate: Long,
+        endDate: Long
+    ): MoneyAggregate {
+        val homeCurrency = resolveHomeCurrency()
+        val currencyTotals = expenseDao.getDepositTotalsBetweenByCurrency(startDate, endDate)
+        return aggregateToMoneyAggregate(currencyTotals, homeCurrency)
+    }
+
+    /**
      * Get PURCHASE category totals in home currency.
      * Uses the PURCHASE-filtered DAO variant.
      */
@@ -496,7 +509,10 @@ class MultiCurrencyRepository @Inject constructor(
                 amounts.add(Pair(bucket.total, bucket.currency))
                 sourceBuckets.add(MoneyBucket(CurrencyCode(bucket.currency), bucket.total, bucket.txCount))
             }
-                else -> Timber.w("Unexpected bucket type in aggregate: ${bucket?.javaClass?.name}")
+                else -> {
+                    Timber.w("Unexpected bucket type in aggregate: ${bucket?.javaClass?.name}")
+                    return MoneyAggregate.empty(CurrencyCode(homeCurrency))
+                }
             }
         }
         val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)

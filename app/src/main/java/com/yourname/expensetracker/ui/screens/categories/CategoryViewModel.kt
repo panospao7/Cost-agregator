@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.repository.DeleteCategoryResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -32,5 +33,16 @@ class CategoryViewModel @Inject constructor(
         }
     }
 
-    // Future: delete, edit
+    fun deleteCategory(categoryId: Long) {
+        viewModelScope.launch {
+            when (val result = repository.deleteCategory(categoryId)) {
+                is DeleteCategoryResult.NotFound -> { /* update state with error */ }
+                is DeleteCategoryResult.CannotDeleteDefault -> { /* show cannot delete default */ }
+                is DeleteCategoryResult.HasBudgets -> { /* store in state for UI dialog */ }
+                is DeleteCategoryResult.Deleted -> { /* refresh categories */ }
+            }
+        }
+    }
+
+    // Future: edit
 }

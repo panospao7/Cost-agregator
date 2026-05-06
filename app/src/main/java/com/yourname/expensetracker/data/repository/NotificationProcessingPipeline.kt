@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
+import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.ExtractionState
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
@@ -17,6 +18,7 @@ import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.data.database.entity.SourceStats
+import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.ApplicationScope
@@ -49,6 +51,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
 import timber.log.Timber
 import kotlin.math.abs
 import javax.inject.Inject
@@ -83,9 +86,16 @@ import javax.inject.Singleton
  * 2. Provide a mechanism to review and revert auto-accepted expenses
  * 3. Notify the user when an expense is auto-created from AI classification
  *
- * Consider adding an audit table (e.g., `ai_audit_log`) to record every
- * auto-accept decision along with the raw notification payload and the
- * created expense ID.
+ * ### Implementation (AID-9):
+ * - On auto-accept, a [TransactionEvent] with eventType `AI_AUTO_ACCEPT` is
+ *   written to `transaction_events` containing the confidence score, routing
+ *   decision, raw notification ID (in `metadata`), and a sanitised notification
+ *   payload (package, title, amount, merchant) in `reason`.
+ * - The expense source is set to [ExpenseSource.NOTIFICATION_AUTO_ACCEPT] so
+ *   auto-created expenses are identifiable in queries and the debug viewer.
+ * - A `Timber.i` log is emitted at creation time for visibility in the debug log.
+ *
+ * See also [TransactionEvent] KDoc for the proposed `ai_audit_log` table schema.
  */
 
 @Singleton
@@ -111,6 +121,7 @@ class NotificationProcessingPipeline @Inject constructor(
     private val recommendationRepository: RecommendationRepository,
     private val subscriptionDetector: NotificationSubscriptionDetector,
     private val coordinator: TransactionLifecycleCoordinator,
+    private val transactionEventDao: TransactionEventDao,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
     sealed interface ProcessingResult {
@@ -263,7 +274,7 @@ class NotificationProcessingPipeline @Inject constructor(
                         suggestedType = TransactionType.UNKNOWN.name,
                         suggestedCategoryId = null,
                         suggestedDate = notification.timestamp,
-                        confidence = 0.5f,
+                        confidence = 0.0f,
                         explanation = "Oversized amount needs manual confirmation",
                         packageName = notification.packageName,
                         notificationTitle = notification.title,
@@ -329,7 +340,7 @@ class NotificationProcessingPipeline @Inject constructor(
                             suggestedType = TransactionType.UNKNOWN.name,
                             suggestedCategoryId = null,
                             suggestedDate = notification.timestamp,
-                            confidence = 0.5f,
+                            confidence = 0.0f,
                             explanation = "Transaction signal detected but parser failed — needs manual confirmation",
                             packageName = notification.packageName,
                             notificationTitle = notification.title,
@@ -348,6 +359,7 @@ class NotificationProcessingPipeline @Inject constructor(
 
             // Phase 3: Post-commit best-effort actions
             runPostCommitSafely("invalidate source stats cache for ${notification.packageName}") {
+                // AIML-13: Invalidate comprehensively after pipeline processing
                 confidenceRouter.invalidateSourceStatsCache(notification.packageName)
             }
             return
@@ -403,10 +415,11 @@ class NotificationProcessingPipeline @Inject constructor(
 
         // Phase 3: Post-commit best-effort actions
         runPostCommitSafely("invalidate source stats cache for ${notification.packageName}") {
-            confidenceRouter.invalidateSourceStatsCache(notification.packageName)
-        }
-        runPostCommitSafely("invalidate merchant cache for ${preDbContext.correctedMerchant}") {
-            confidenceRouter.invalidateMerchantCache(preDbContext.correctedMerchant)
+            // AIML-13: Invalidate comprehensively after pipeline processing
+            confidenceRouter.invalidateAfterUserAction(
+                notification.packageName,
+                preDbContext.correctedMerchant
+            )
         }
 
         runParsedPostCommitActions(notification, preDbContext, dbOutcome)
@@ -747,8 +760,9 @@ private val AMOUNT_TOKEN_REGEX = Regex(
 
     /**
      * AID-9: Auto-accept creates an Expense directly from AI routing WITHOUT user review.
-     * This path MUST be auditable — see class-level KDoc for audit requirements.
-     * Currently no audit trail is persisted beyond the raw_notification row.
+     * This path is auditable — a [TransactionEvent] with eventType `AI_AUTO_ACCEPT`
+     * is written inside the DB transaction containing the routing decision, confidence
+     * score, and sanitised notification payload. See class-level KDoc for details.
      */
     private suspend fun handleAutoAcceptInTransaction(
         notification: RawNotification,
@@ -824,6 +838,48 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 val expenseId = result.expenseId
                 dao.markRelevance(rawId, true)
                 sourceStatsDao.incrementTotalAndAccepted(notification.packageName, sourceStatsTimestamp)
+
+                // AID-9 Gap 1: Write audit event for AI auto-accept
+                val auditMetadata = JSONObject().apply {
+                    put("confidence", preDb.routingResult.adjustedConfidence)
+                    put("routingDecision", preDb.routingResult.decision.name)
+                    put("rawNotificationId", rawId)
+                }.toString()
+                val auditReason = JSONObject().apply {
+                    put("packageName", notification.packageName)
+                    put("title", notification.title)
+                    put("amount", preDb.parsed.amount)
+                    put("merchant", preDb.correctedMerchant)
+                }.toString()
+                runCatching {
+                    transactionEventDao.insert(
+                        TransactionEvent(
+                            expenseId = expenseId,
+                            eventType = "AI_AUTO_ACCEPT",
+                            source = ExpenseSource.NOTIFICATION_AUTO_ACCEPT.name,
+                            actor = "system:ai_auto_accept",
+                            occurredAt = timeProvider.now(),
+                            dedupeKey = preDb.dedupeKey,
+                            duplicateExpenseId = null,
+                            beforeSnapshot = null,
+                            afterSnapshot = null,
+                            metadata = auditMetadata,
+                            reason = auditReason
+                        )
+                    )
+                }.onFailure { error ->
+                    Timber.w(error, "AID-9: Failed to write AI_AUTO_ACCEPT audit event for expenseId=$expenseId")
+                }
+
+                // AID-9 Gap 3: Notify user via log (visible in debug viewer)
+                Timber.i(
+                    "AID-9: AI auto-created expense id=%d amount=%.2f %s merchant=%s",
+                    expenseId,
+                    preDb.parsed.amount,
+                    preDb.parsed.currency,
+                    preDb.correctedMerchant
+                )
+
                 ParsedDbOutcome.AutoAccepted(
                     expenseId = expenseId,
                     insertedExpense = expense

@@ -18,6 +18,14 @@ import javax.inject.Singleton
  * budgeting pipeline by materialising [PlannedExpense] rows from occurrences
  * produced by [RecurringLifecycleCoordinator.generateOccurrences].
  *
+ * ## REC-25: `isRecurring` determination
+ * A planned expense is considered recurring when its [PlannedExpense.sourceRecurringRuleId]
+ * is non-null — i.e. it was generated from a recurring rule. The `isRecurring`
+ * boolean flag is set to `true` for all such occurrences. Code that checks
+ * whether an expense is recurring should prefer checking `sourceRecurringRuleId != null`
+ * over the `isRecurring` flag alone, because the flag may be `false` for
+ * occurrence-linked patterns that were created before the flag was set.
+ *
  * ## Design rationale
  *
  * The recurring lifecycle coordinator is the single source of truth for

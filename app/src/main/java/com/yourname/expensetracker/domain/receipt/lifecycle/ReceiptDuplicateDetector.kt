@@ -17,6 +17,27 @@ import javax.inject.Singleton
  * 4. **EXTERNAL_ID** — External source identifier match (e.g. email message ID stored
  *    in [ScannedReceipt.sourceFingerprint]).
  *
+ * ## RCP-5: Perceptual image hash for receipt dedup (planned)
+ * Currently only SHA-256 exact matching exists, which misses near-duplicate images
+ * (resized, re-compressed, cropped). The plan is to add pHash/dHash perceptual hashing:
+ *
+ * 1. Decode the receipt bitmap from the image file.
+ * 2. Resize to a small fixed size (8×8 for dHash, 32×32 for pHash).
+ * 3. Convert to grayscale if needed.
+ * 4. Compute the perceptual hash:
+ *    - **dHash (difference hash):** Compare adjacent horizontal pixel pairs;
+ *      set bit = 1 if left pixel > right pixel, else 0. Produces a 64-bit hash.
+ *    - **pHash (perceptual hash):** Apply DCT on the 32×32 grayscale, keep the
+ *      top-left 8×8 low-frequency components, compute the median, and set each
+ *      bit based on whether the component exceeds the median.
+ * 5. Compare hashes using Hamming distance (number of differing bits).
+ *    A distance <= 10 typically indicates a near-duplicate.
+ *
+ * A new match type `PERCEPTUAL_HASH` (confidence ~0.9) would sit between EXACT_HASH
+ * and TEXT_FINGERPRINT in priority. The [checkDuplicate] method would be extended to
+ * accept a [Bitmap] parameter alongside [imageHash] and run perceptual comparison when
+ * exact hash misses but the image is available.
+ *
  * @property scannedReceiptDao DAO for querying existing receipts by fingerprint.
  * @property receiptExpenseLinkDao DAO for checking existing receipt-expense links
  *            (present for future use; not currently queried during duplicate detection).

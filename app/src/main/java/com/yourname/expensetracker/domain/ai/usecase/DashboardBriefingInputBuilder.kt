@@ -86,6 +86,7 @@ class DashboardBriefingInputBuilder @Inject constructor(
 
     private fun com.yourname.expensetracker.domain.model.UpcomingItem.currencyCodeOrNull(): String? = when (this) {
         is com.yourname.expensetracker.domain.model.UpcomingItem.Recurring -> pattern.currency
+        is com.yourname.expensetracker.domain.model.UpcomingItem.Occurrence -> occurrence.expectedCurrency
         is com.yourname.expensetracker.domain.model.UpcomingItem.Planned -> null
     }
 }

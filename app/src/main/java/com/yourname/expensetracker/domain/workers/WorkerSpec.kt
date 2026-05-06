@@ -78,7 +78,7 @@ data class WorkerSpec(
             ),
             "ai_daily_briefing" to WorkerSpec(
                 name = "ai_daily_briefing",
-                repeatIntervalHours = 24,
+                repeatIntervalHours = null, // midnight-aligned one-shot
                 constraints = Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.UNMETERED)
                     .setRequiresBatteryNotLow(true)
@@ -93,6 +93,11 @@ data class WorkerSpec(
                     .build(),
                 backoffDelaySeconds = 600
             ),
+            // WRK-N5: Use REPLACE (not KEEP) for one-shot workers.
+            // KEEP would prevent re-scheduling after completion, meaning if the
+            // worker needs to run again (e.g. after new merchants are added), the
+            // existing completed work policy would block it. REPLACE allows the
+            // one-shot to be re-enqueued each time the spec version bumps.
             "merchant_key_backfill" to WorkerSpec(
                 name = "merchant_key_backfill",
                 repeatIntervalHours = null, // one-shot

@@ -191,6 +191,17 @@ class CashFlowCalculator @Inject constructor(
                 }
             }
             
+            // FCST-12: Deduplicate by merchant/date when both actual and predicted
+            // expenses exist on the same day. If an actual expense has the same merchant
+            // as a predicted recurring pattern, the predicted amount is omitted to
+            // prevent double-counting.
+            val actualMerchants = (incomeList + expenseList).mapTo(mutableSetOf()) {
+                it.merchant.lowercase().trim()
+            }
+            val deduplicatedPredicted = predictedRecurringList.filterNot { pattern ->
+                pattern.merchantName.lowercase().trim() in actualMerchants
+            }
+
             // Calculate ending balance
             // SAFE: Single-day expenses are almost always same-currency, so raw monetary
             // summation via effectiveAmount is valid without cross-currency conversion.
@@ -205,7 +216,7 @@ class CashFlowCalculator @Inject constructor(
             for (exp in expenseList) {
                 dayExpensesTotal += exp.effectiveAmount
             }
-            for (recurring in predictedRecurringList) {
+            for (recurring in deduplicatedPredicted) {
                 dayExpensesTotal += recurring.averageAmount
             }
             

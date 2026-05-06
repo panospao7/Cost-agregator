@@ -14,12 +14,12 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
 import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.util.concurrent.TimeUnit
 
 @HiltWorker
 class ReceiptMatchingWorker @AssistedInject constructor(
@@ -141,35 +141,7 @@ class ReceiptMatchingWorker @AssistedInject constructor(
          * Reads interval and constraints from [WorkerSpec.DEFAULTS] for the canonical config.
          */
         fun schedule(context: Context) {
-            val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return
-            if (!spec.enabled) {
-                Timber.w("Worker $WORK_NAME disabled by spec, skipping schedule")
-                return
-            }
-            val intervalHours = spec.repeatIntervalHours ?: run {
-                Timber.w("Worker $WORK_NAME has no repeat interval, skipping periodic schedule")
-                return
-            }
-
-            val request = PeriodicWorkRequestBuilder<ReceiptMatchingWorker>(
-                repeatInterval = intervalHours,
-                repeatIntervalTimeUnit = TimeUnit.HOURS
-            )
-                .setConstraints(spec.constraints)
-                .setBackoffCriteria(
-                    spec.backoffPolicy,
-                    spec.backoffDelaySeconds,
-                    TimeUnit.SECONDS
-                )
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                WORK_NAME,
-                spec.existingWorkPolicy,
-                request
-            )
-            
-            Timber.d("Scheduled receipt matching worker (interval=${intervalHours}h)")
+            WorkerSpecScheduler.scheduleFromSpec(context, WORK_NAME, ReceiptMatchingWorker::class.java)
         }
 
         fun cancel(context: Context) {

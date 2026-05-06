@@ -11,6 +11,9 @@ import com.yourname.expensetracker.domain.ai.model.AiRuntimeStatusSummary
 import com.yourname.expensetracker.domain.ai.model.AiSettings
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
@@ -49,7 +52,8 @@ class AiSettingsViewModel @Inject constructor(
     private val getAiRuntimeStatusUseCase: GetAiRuntimeStatusUseCase,
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
     private val syncProactiveBriefingWorkUseCase: SyncProactiveBriefingWorkUseCase,
-    private val secureKeyStorage: SecureKeyStorage
+    private val secureKeyStorage: SecureKeyStorage,
+    private val privacyGate: PrivacyGate
 ) : ViewModel() {
 
     private val providerConnectionTestClient by lazy {
@@ -246,6 +250,13 @@ class AiSettingsViewModel @Inject constructor(
     }
 
     private suspend fun probeCloudProviderConnection(apiKey: String): String? = withContext(Dispatchers.IO) {
+        // PRIVACY GATE: Check privacy gate before probing cloud provider
+        val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Timber.w("AiSettingsViewModel: provider probe blocked by privacy gate: ${gateCheck.reason}")
+            return@withContext "Cloud AI is blocked by privacy settings: ${gateCheck.reason}"
+        }
+
         val request = Request.Builder()
             .url("${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models")
             .header("x-goog-api-key", apiKey)

@@ -60,6 +60,17 @@ interface DatabaseBackupRepository {
     
     /**
      * Reset database to empty state.
+     *
+     * ## BAK-10: Reset database has no typed confirmation
+     * Callers MUST obtain explicit typed confirmation from the user (e.g., the
+     * user must type "DELETE") before invoking this method. This is a destructive
+     * operation that permanently removes ALL data. Implementations MUST create a
+     * safety backup before performing the reset.
+     *
+     * Required user confirmation: The user must type the exact word "DELETE"
+     * (case-insensitive) in a confirmation dialog before this method is called.
+     * ViewModels should validate the confirmation string matches "DELETE"
+     * before delegating to this method.
      */
     suspend fun resetDatabase(): Result<Unit>
 }

@@ -20,12 +20,21 @@ import kotlin.math.abs
 /**
  * Tracks price changes for a subscription over time.
  */
+/**
+ * Represents a recorded price change for a subscription.
+ *
+ * REC-8: When a subscription is first created a BASELINE entry is inserted
+ * so the system always has a reference point for calculating price change
+ * percentages, even before any actual price change occurs.
+ */
 data class PriceChange(
     val oldAmount: Double,
     val newAmount: Double,
     val changePercent: Double,
     val recordedAt: Long,
-    val reason: String?
+    val reason: String?,
+    /** REC-8: Distinguishes the initial baseline recording from actual changes. */
+    val priceChangeType: String = "CHANGE" // "BASELINE" or "CHANGE"
 )
 
 /**
@@ -434,14 +443,19 @@ class SubscriptionManagerEngine @Inject constructor(
     
     /**
      * Calculate potential savings from following all cancellation recommendations.
+     *
+     * REC-19: Takes the maximum savings per subscription instead of summing
+     * across recommendation types (e.g. underutilization + cancellation)
+     * to avoid double-counting the same subscription amount.
      */
     suspend fun calculatePotentialSavings(): Double {
         val toReview = getSubscriptionsToReview()
         var potentialSavings = 0.0
         for (analysis in toReview) {
-            for (rec in analysis.recommendations) {
-                potentialSavings += rec.potentialSavings
-            }
+            val maxForSubscription = analysis.recommendations
+                .maxOfOrNull { it.potentialSavings }
+                ?: 0.0
+            potentialSavings += maxForSubscription
         }
         return potentialSavings
     }

@@ -98,9 +98,25 @@ class ConfidenceRouter @Inject constructor(
         packageRejectionCache.remove(packageName)
     }
 
-    fun invalidateMerchantCache(merchant: String) {
+    /**
+     * Event-driven cache invalidation after a user reject or approve action.
+     *
+     * ## AIML-13: ConfidenceRouter cache stale after reject/approve
+     * Clears ALL caches that could be affected by a user correction (source stats,
+     * merchant rejection rate, package rejection rate, and previous approvals)
+     * so that the next [route] call will read fresh data from the database.
+     */
+    fun invalidateAfterUserAction(packageName: String, merchant: String) {
+        invalidateSourceStatsCache(packageName)
+        invalidateMerchantCache(merchant, packageName)
+    }
+
+    fun invalidateMerchantCache(merchant: String, packageName: String) {
         merchantRejectionCache.remove(merchant.lowercase())
-        approvalCache.remove(merchant.lowercase())
+        // AIML-13: The approval cache key is "${merchant.lowercase()}|$packageName",
+        // not just merchant.lowercase(). Use the full composite key to actually
+        // invalidate the correct entry.
+        approvalCache.remove("${merchant.lowercase()}|$packageName")
     }
 
     fun invalidateAllCaches() {

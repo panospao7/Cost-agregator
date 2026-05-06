@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
@@ -12,6 +13,7 @@ import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ReceiptExpenseLink
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.util.TimeProvider
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,10 +27,53 @@ import javax.inject.Singleton
  * - Querying links by receipt or expense
  * - Maintaining backward compatibility with legacy [ScannedReceipt.expenseId]
  * - Writing audit trail events for every link/unlink operation
+ * - Propagating expenseId to receipt item categorizations (RCP-6)
  *
  * All receipt-expense link mutations in the application MUST go through this
  * service to ensure consistency between the join table, legacy fields, and
  * event history.
+ *
+ * ## RCP-30: Item categorization → budget/expense pipeline
+ *
+ * ### Current gap
+ * Receipt item categorizations are siloed in the receipt module. Although
+ * [ReceiptItemCategorization.expenseId] is populated during linking (RCP-6),
+ * the categorized data does **not** propagate to the expense's `categoryId`
+ * or to budget calculations. This means:
+ * - An expense created from a receipt with categorised items still uses
+ *   whatever `categoryId` was set at creation time (often null or generic).
+ * - Budget rollups that sum by `expense.categoryId` miss the item-level
+ *   categorizations.
+ * - The user must manually correct the expense category even after the AI
+ *   has already categorised individual line items.
+ *
+ * ### Integration path
+ * 1. **When receipt items are categorised** (via `CategorizeReceiptItemsUseCase`),
+ *    each [ReceiptItemCategorization] is persisted with a `suggestedCategoryId`.
+ *    The receipt's own `suggestedCategoryId` may be set to the most frequent
+ *    or highest-confidence category across its items.
+ * 2. **When the receipt is linked to an expense** (here, in [linkReceiptToExpense]),
+ *    link-time code should query the receipt's categorisations (via
+ *    [ReceiptItemCategorizationDao.getByReceiptId]) and determine the
+ *    majority / highest-confidence category. The derived category can then
+ *    be propagated:
+ *    - *Option A:* Set `expense.categoryId` to the majority item category.
+ *      This is simplest but loses multi-category granularity.
+ *    - *Option B:* Create sub-allocations (split the expense amount across
+ *      multiple budget categories proportionally to item amounts). This
+ *      requires a new sub-allocation table and budget engine support.
+ * 3. **Budget calculation updates:** The budget engine should aggregate
+ *    item-level categorizations rather than (or in addition to) the top-level
+ *    `expense.categoryId`. This may involve joining
+ *    `receipt_item_categorizations` in budget queries or writing item-level
+ *    budget allocations at link time.
+ *
+ * ### Current status
+ * Step 1 is fully implemented (categorizations persisted with `suggestedCategoryId`).
+ * Step 2 currently only propagates `expenseId` (RCP-6) but does **not** update
+ * `expense.categoryId`. A `Timber.d` log at link time shows what categories
+ * *would* be propagated. Full propagation (Option A or B) is deferred to a
+ * future change.
  */
 @Singleton
 class ReceiptLinkService @Inject constructor(
@@ -39,6 +84,7 @@ class ReceiptLinkService @Inject constructor(
     private val receiptItemCategorizationDao: ReceiptItemCategorizationDao,
     private val warrantyDao: WarrantyDao,
     private val returnWindowDao: ReturnWindowDao,
+    private val expenseDao: ExpenseDao,
     private val timeProvider: TimeProvider
 ) {
 
@@ -145,6 +191,42 @@ class ReceiptLinkService @Inject constructor(
                 expenseId = expenseId,
                 timestamp = now
             )
+
+            // RCP-30: Propagate item majority category to expense if the expense
+            // currently has no categoryId. Failures are logged but do not break linking.
+            runCatching {
+                val categorizations = receiptItemCategorizationDao.getByReceiptId(receiptId)
+                if (categorizations.isNotEmpty()) {
+                    val bestCategoryId = categorizations
+                        .groupBy { it.userCorrectedCategoryId ?: it.suggestedCategoryId }
+                        .maxByOrNull { (_, items) -> items.size }
+                        ?.key
+                    if (bestCategoryId != null) {
+                        val existingExpense = expenseDao.getById(expenseId)
+                        if (existingExpense != null && existingExpense.categoryId == null) {
+                            expenseDao.updateCategory(expenseId, bestCategoryId)
+                            Timber.i(
+                                "RCP-30: Propagated item category %d to expense %d",
+                                bestCategoryId, expenseId
+                            )
+                        }
+                    }
+                    val categoryFrequencies = categorizations
+                        .groupBy { it.userCorrectedCategoryId ?: it.suggestedCategoryId }
+                        .mapValues { (_, items) -> items.size }
+                        .entries
+                        .sortedByDescending { it.value }
+                        .joinToString(", ") { (catId, count) ->
+                            "categoryId=$catId ($count item(s))"
+                        }
+                    Timber.d(
+                        "RCP-30: Receipt %d linked to expense %d. Item categorizations: [%s].",
+                        receiptId, expenseId, categoryFrequencies
+                    )
+                }
+            }.onFailure { error ->
+                Timber.w(error, "RCP-30: Failed to propagate item category for receipt %d", receiptId)
+            }
 
             // 5. Write lifecycle event
             receiptEventDao.insert(

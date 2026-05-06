@@ -166,7 +166,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         mockAnalyticsDaoByRange(expenses)
         every { expenseDao.getAllFlow(any()) } returns flowOf(expenses)
 
-        val overallBudget = Budget(categoryId = null, amount = 800.0, period = BudgetPeriod.MONTHLY, startDate = ms(2026, 3, 1))
+        val overallBudget = Budget(categoryId = null, amount = 800.0, period = BudgetPeriod.MONTHLY, startDate = ms(2026, 3, 1), createdAt = System.currentTimeMillis())
         val budgetStatuses = listOf(
             BudgetStatus(
                 budget = overallBudget,
@@ -500,7 +500,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         )
 
         val forecast = engine.generateForecast(
-            budget = Budget(categoryId = null, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = ms(2026, 3, 1)),
+            budget = Budget(categoryId = null, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = ms(2026, 3, 1), createdAt = System.currentTimeMillis()),
             forecastPeriodDays = 30
         )
 
@@ -602,6 +602,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         transactionType = TransactionType.PURCHASE,
         date = ms(isoDate),
         categoryId = categoryId,
+        createdAt = System.currentTimeMillis(),
         isSharedExpense = isSharedExpense,
         myShareAmount = myShareAmount
     )
@@ -611,7 +612,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         amount = amount,
         merchant = "Employer",
         transactionType = TransactionType.DEPOSIT,
-        date = ms(isoDate)
+        date = ms(isoDate),
+        createdAt = System.currentTimeMillis()
     )
 
     private fun ms(isoDate: String): Long =

@@ -116,6 +116,13 @@ class WarrantyTrackerViewModel @Inject constructor(
         }
     }
 
+    /**
+     * WRN-4: Manual warranties no longer create a placeholder receipt.
+     * Previously we called [WarrantyTrackerRepository.createManualPlaceholderReceipt]
+     * which generated a fake EUR receipt just to satisfy the FK constraint.
+     * Since [Warranty.receiptId] is now nullable, we skip the placeholder entirely
+     * and store a null receiptId, avoiding fake EUR records in the receipt table.
+     */
     fun addManualWarranty(
         productName: String,
         merchantName: String,
@@ -125,14 +132,13 @@ class WarrantyTrackerViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             val purchaseStart = TimePeriodUtils.getStartOfDay(purchaseDate)
-            val endDate = TimePeriodUtils.addMonths(purchaseStart, warrantyDurationMonths)
-            val placeholderReceiptId = warrantyRepository.createManualPlaceholderReceipt(
-                merchantName = merchantName,
-                purchaseDate = purchaseStart,
-                productName = productName
-            )
+            val endDateMidnight = TimePeriodUtils.addMonths(purchaseStart, warrantyDurationMonths)
+            // Use half-open end-of-day semantics so the warranty survives
+            // through its entire expiration day (matches WarrantyTrackerRepository).
+            val endDate = TimePeriodUtils.getEndOfDay(endDateMidnight)
+            // WRN-4: receiptId is null — no placeholder receipt is created.
             val manualWarranty = Warranty(
-                receiptId = placeholderReceiptId,
+                receiptId = null,
                 expenseId = null,
                 productName = productName,
                 merchantName = merchantName,

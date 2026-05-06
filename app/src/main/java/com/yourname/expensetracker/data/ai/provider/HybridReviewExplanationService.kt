@@ -12,6 +12,13 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 
+// AID-4: This service can be simplified by using HybridRouter:
+// val router = HybridRouter(aiSettingsRepository, router, AiCapability.REVIEW_EXPLANATION,
+//     cloudFn = { cloudReviewExplanationService.generate(it) },
+//     onDeviceFn = { onDeviceReviewExplanationService.generate(it) },
+//     fallbackFn = { noOpReviewExplanationService.generate(it) }
+// )
+// override suspend fun generate(input: ReviewExplanationInput): AiServiceResult<ReviewExplanation> = router.execute(input)
 @Singleton
 class HybridReviewExplanationService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,

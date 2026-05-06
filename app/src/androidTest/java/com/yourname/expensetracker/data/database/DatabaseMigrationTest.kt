@@ -45,6 +45,97 @@ class DatabaseMigrationTest {
         db.close()
     }
 
+    /**
+     * Full-chain migration from v33 (lowest exported schema JSON) to v114
+     * (current). Validates that all intermediate migrations produce schemas
+     * matching Room's exported JSONs, catching ANY schema drift between
+     * fresh-install and migrated database paths.
+     */
+    @Test
+    @Throws(IOException::class)
+    fun migrate_all_versions_from_33_to_114() {
+        assumeTrue(hasSchema(33) && hasSchema(114))
+        var db = helper.createDatabase("migration-33-114", 33)
+        db.close()
+
+        db = helper.runMigrationsAndValidate("migration-33-114", 114, true)
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_113_to_114_adds_refundExpenseId_and_rolloverDeficitTracking() {
+        assumeTrue(hasSchema(113) && hasSchema(114))
+        var db = helper.createDatabase("migration-113-114", 113)
+        // Seed prerequisite rows: expense, scanned_receipt (for FK refs), return_window, budget
+        db.execSQL("INSERT INTO expenses (amount, currency, merchant, transactionType, date, createdAt) VALUES (100.0, 'EUR', 'Test', 'PURCHASE', 1700000000000, 1700000000000)")
+        // Seed a scanned_receipt (for FK refs)
+        db.execSQL("INSERT INTO scanned_receipts (rawOcrText, confidence, createdAt) VALUES ('test', 0.9, 1700000000000)")
+        // Seed a return_window
+        db.execSQL("INSERT INTO return_windows (receiptId, expenseId, productName, merchantName, purchaseDate, returnDays, returnDeadline, status, createdAt, updatedAt) VALUES (1, 1, 'Test', 'Test', 1700000000000, 30, 1703000000000, 'RETURNABLE', 1700000000000, 1700000000000)")
+        // Seed a budget
+        db.execSQL("INSERT INTO budgets (amount, currency, startDate, periodMode, period, isActive, createdAt) VALUES (500.0, 'EUR', 1700000000000, 'CALENDAR', 'MONTHLY', 1, 1700000000000)")
+        db.close()
+
+        db = helper.runMigrationsAndValidate("migration-113-114", 114, true)
+
+        // Verify refundExpenseId column exists
+        val cursor = db.query("PRAGMA table_info(return_windows)")
+        var hasRefundExpenseId = false
+        while (cursor.moveToNext()) {
+            if (cursor.getString(cursor.getColumnIndex("name")) == "refundExpenseId") {
+                hasRefundExpenseId = true
+            }
+        }
+        assertTrue("refundExpenseId column missing", hasRefundExpenseId)
+
+        // Verify rolloverDeficitTracking column exists
+        val cursor2 = db.query("PRAGMA table_info(budgets)")
+        var hasRolloverDeficit = false
+        while (cursor2.moveToNext()) {
+            if (cursor2.getString(cursor2.getColumnIndex("name")) == "rolloverDeficitTracking") {
+                hasRolloverDeficit = true
+            }
+        }
+        assertTrue("rolloverDeficitTracking column missing", hasRolloverDeficit)
+
+        // Verify multiple warranties per receipt works (unique constraint removed)
+        db.execSQL("INSERT INTO expenses (amount, currency, merchant, transactionType, date, createdAt) VALUES (50.0, 'EUR', 'Test2', 'PURCHASE', 1700000000000, 1700000000000)")
+        db.execSQL("INSERT INTO warranties (receiptId, productName, merchantName, purchaseDate, warrantyDurationMonths, warrantyEndDate, status, createdAt, updatedAt) VALUES (1, 'Product1', 'Merchant1', 1700000000000, 12, 1731532800000, 'ACTIVE', 1700000000000, 1700000000000)")
+        db.execSQL("INSERT INTO warranties (receiptId, productName, merchantName, purchaseDate, warrantyDurationMonths, warrantyEndDate, status, createdAt, updatedAt) VALUES (1, 'Product2', 'Merchant1', 1700000000000, 24, 1763155200000, 'ACTIVE', 1700000000000, 1700000000000)")
+        // If this doesn't throw, the unique constraint was successfully removed
+
+        db.close()
+    }
+
+    @Test
+    @Throws(IOException::class)
+    fun migrate_92_to_114_chain_passes() {
+        assumeTrue(hasSchema(92) && hasSchema(114))
+        var db = helper.createDatabase("migration-92-114", 92)
+        db.close()
+        db = helper.runMigrationsAndValidate("migration-92-114", 114, true)
+        db.close()
+    }
+
+    /**
+     * Full-chain migration from v92 to v115 (current).
+     *
+     * ## RSP-R3A: Full migration tests v92–v115
+     * Validates that the entire migration chain from version 92 through 115
+     * produces a schema matching Room's exported JSON schema at v115, catching
+     * any schema drift between fresh-install and fully migrated database paths.
+     */
+    @Test
+    @Throws(IOException::class)
+    fun migrate_92_to_115_chain_passes() {
+        assumeTrue(hasSchema(92) && hasSchema(115))
+        var db = helper.createDatabase("migration-92-115", 92)
+        db.close()
+        db = helper.runMigrationsAndValidate("migration-92-115", 115, true)
+        db.close()
+    }
+
     @Test
     @Throws(IOException::class)
     fun migrate_6_to_7_adds_payment_columns() {

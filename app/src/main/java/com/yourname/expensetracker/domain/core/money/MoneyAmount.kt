@@ -17,6 +17,40 @@ package com.yourname.expensetracker.domain.core.money
  *
  * For conversion results that include rate/timestamp metadata, see [ConvertedMoney].
  * For aggregated totals across multiple currencies, see [MoneyAggregate].
+ *
+ * ## CURR-11: Minor-unit migration (Double → Long) — breaking change (planned)
+ * Currently [MoneyAmount.amount] is stored as a `Double`, which causes
+ * precision loss for fractional-cent values (e.g. 0.1 + 0.2 = 0.30000000000000004)
+ * and is incompatible with financial standards that mandate minor-unit arithmetic.
+ *
+ * ### Migration plan
+ * 1. Introduce a new `MoneyAmountMinor` type (or overload) that stores `amount`
+ *    as a `Long` representing the minor unit (cents for EUR/USD, satoshis for BTC,
+ *    etc.) alongside a `CurrencyCode`.
+ * 2. Add a `decimals: Int = currency.defaultDecimals()` parameter so the same
+ *    type works for all currencies regardless of their exponent (EUR=2, JPY=0,
+ *    BTC=8, TND=3).
+ * 3. Provide bidirectional conversion helpers:
+ *    ```kotlin
+ *    fun MoneyAmount.toMinorUnits(): Long = (amount * 10.0.pow(decimals)).roundToLong()
+ *    fun Long.toMajorUnits(currency: CurrencyCode): MoneyAmount = ...
+ *    ```
+ * 4. **Compatibility break**: All Room entities, DAO queries, and domain models
+ *    that currently store/receive `Double` amounts must be migrated in a single
+ *    schema version bump. A Room migration must CAST existing double values to
+ *    the equivalent minor-unit Long, using a per-currency multiplier.
+ * 5. **Transition period**: Keep both `Double` and `Long` accessors on the
+ *    [MoneyAmount] type so that code not yet migrated compiles (deprecated).
+ * 6. Remove the `Double`-backed [MoneyAmount] entirely once all callers are
+ *    converted.
+ *
+ * ### Affected areas
+ * - All `@Entity` classes with monetary fields (Expense, Budget, etc.)
+ * - All DAO `INSERT`/`UPDATE`/`query` methods that read/write amounts
+ * - [MultiCurrencyRepository], [CurrencyConverter], analytics normalisers
+ * - UI formatting (currently uses `String.format("%.2f", amount)`)
+ * - Export/import serialisation
+ * - Backup/restore (schema version must gate the format)
  */
 data class MoneyAmount(
     val amount: Double,

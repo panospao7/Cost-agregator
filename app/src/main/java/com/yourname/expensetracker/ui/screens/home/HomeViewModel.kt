@@ -489,7 +489,7 @@ class HomeViewModel @Inject constructor(
             _totalsDrillDownState.update { it.copy(isLoading = true) }
             try {
                 Timber.d("Loading totals for year $year")
-                val totals = totalsAggregationEngine.getMonthlyTotals(year)
+                val totals = totalsAggregationEngine.getMonthlyTotals(year).first()
                 Timber.d("Got ${totals.size} monthly totals for year $year")
                 val average = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
                 Timber.d("Average for month: $average")
@@ -521,12 +521,12 @@ class HomeViewModel @Inject constructor(
                 @Suppress("UNCHECKED_CAST")
                 val whenResult = when (period.periodType) {
                     PeriodType.YEAR -> {
-                        val totals = totalsAggregationEngine.getMonthlyTotals(parseYear(period.periodKey))
+                        val totals = totalsAggregationEngine.getMonthlyTotals(parseYear(period.periodKey)).first()
                         arrayOf(PeriodType.MONTH, totals, emptyList<CategoryBreakdown>())
                     }
                     PeriodType.MONTH -> {
                         val (year, month) = parseYearMonth(period.periodKey)
-                        val totals = totalsAggregationEngine.getWeeklyTotals(year, month)
+                        val totals = totalsAggregationEngine.getWeeklyTotals(year, month).first()
                         arrayOf(PeriodType.WEEK, totals, emptyList<CategoryBreakdown>())
                     }
                     PeriodType.WEEK -> {
@@ -536,7 +536,7 @@ class HomeViewModel @Inject constructor(
                         val dailyTotals = totalsAggregationEngine.getDailyTotalsForRange(
                             period.startDateMs, 
                             period.endDateMs
-                        )
+                        ).first()
                         Timber.d("Got ${dailyTotals.size} daily totals for range")
                         arrayOf(PeriodType.DAY, dailyTotals, emptyList<CategoryBreakdown>())
                     }
@@ -588,7 +588,7 @@ class HomeViewModel @Inject constructor(
                 // Load data for the new level
                 val (newTotals, newSelectedPeriod, newParentPeriod) = when (newLevel) {
                     PeriodType.YEAR -> {
-                        val years = totalsAggregationEngine.getYearlyTotals()
+                        val years = totalsAggregationEngine.getYearlyTotals().first()
                         val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.YEAR, excludeCurrent = false)
                         val updatedYears = years.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
                         Triple(updatedYears, null, null)
@@ -598,17 +598,17 @@ class HomeViewModel @Inject constructor(
                         val parent = state.parentPeriod
                         if (parent != null) {
                             val year = parseYear(parent.periodKey)
-                            val months = totalsAggregationEngine.getMonthlyTotals(year)
+                            val months = totalsAggregationEngine.getMonthlyTotals(year).first()
                             val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
                             val updatedMonths = months.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
                             // Find grandparent (year) for the month
-                            val years = totalsAggregationEngine.getYearlyTotals()
+                            val years = totalsAggregationEngine.getYearlyTotals().first()
                             val grandparent = years.find { it.periodKey == year.toString() }
                             Triple(updatedMonths, parent, grandparent)
                         } else {
                             // Fallback: show all months of current year
                             val currentYear = TimePeriodUtils.getYear(timeProvider.now())
-                            val months = totalsAggregationEngine.getMonthlyTotals(currentYear)
+                            val months = totalsAggregationEngine.getMonthlyTotals(currentYear).first()
                             val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
                             val updatedMonths = months.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
                             Triple(updatedMonths, null, null)
@@ -619,11 +619,11 @@ class HomeViewModel @Inject constructor(
                         val parent = state.parentPeriod
                         if (parent != null) {
                             val (year, month) = parseYearMonth(parent.periodKey)
-                            val weeks = totalsAggregationEngine.getWeeklyTotals(year, month)
+                            val weeks = totalsAggregationEngine.getWeeklyTotals(year, month).first()
                             val avg = totalsAggregationEngine.getAverageForPeriodType(PeriodType.WEEK, excludeCurrent = false)
                             val updatedWeeks = weeks.map { it.copy(status = totalsAggregationEngine.getPeriodStatus(it.totalAmount, avg)) }
                             // Find grandparent (month) for the week
-                            val months = totalsAggregationEngine.getMonthlyTotals(year)
+                            val months = totalsAggregationEngine.getMonthlyTotals(year).first()
                             val grandparent = months.find { it.periodKey == parent.periodKey }
                             Triple(updatedWeeks, parent, grandparent)
                         } else {
@@ -684,7 +684,7 @@ class HomeViewModel @Inject constructor(
                     period.startDateMs, 
                     period.endDateMs, 
                     period.periodLabel
-                )
+                ).first()
                 
                 _totalsDrillDownState.update { 
                     it.copy(categoryBreakdown = categories)
@@ -733,7 +733,7 @@ class HomeViewModel @Inject constructor(
                     }
                 }
                 
-                val categories = totalsAggregationEngine.getCategoryBreakdown(startMs, endMs, label)
+                val categories = totalsAggregationEngine.getCategoryBreakdown(startMs, endMs, label).first()
                 
                 _totalsDrillDownState.update { 
                     it.copy(categoryBreakdown = categories)

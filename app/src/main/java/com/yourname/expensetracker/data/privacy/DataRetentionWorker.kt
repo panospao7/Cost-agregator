@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.util.concurrent.TimeUnit
@@ -169,29 +170,7 @@ class DataRetentionWorker @AssistedInject constructor(
          * Reads interval and constraints from [WorkerSpec.DEFAULTS] for the canonical config.
          */
         fun schedule(context: Context) {
-            val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return
-            if (!spec.enabled) {
-                Log.d(TAG, "Worker $WORK_NAME disabled by spec, skipping schedule")
-                return
-            }
-            val intervalHours = spec.repeatIntervalHours ?: run {
-                Log.w(TAG, "Worker $WORK_NAME has no repeat interval, skipping periodic schedule")
-                return
-            }
-
-            val request = PeriodicWorkRequestBuilder<DataRetentionWorker>(
-                repeatInterval = intervalHours,
-                repeatIntervalTimeUnit = TimeUnit.HOURS
-            )
-                .setConstraints(spec.constraints)
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                WORK_NAME,
-                spec.existingWorkPolicy,
-                request
-            )
-            Log.d(TAG, "Data retention worker scheduled (interval=${intervalHours}h)")
+            WorkerSpecScheduler.scheduleFromSpec(context, WORK_NAME, DataRetentionWorker::class.java)
         }
     }
 }

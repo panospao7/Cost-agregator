@@ -233,6 +233,7 @@ class EffectiveAmountConsistencyTest {
         merchant = "Test",
         transactionType = TransactionType.PURCHASE,
         date = date,
+        createdAt = System.currentTimeMillis(),
         isNotMine = isNotMine,
         isSharedExpense = isSharedExpense,
         myShareAmount = myShareAmount,

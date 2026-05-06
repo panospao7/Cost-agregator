@@ -39,6 +39,12 @@ value class CurrencyCode(val code: String) : Comparable<CurrencyCode> {
         val HUF = CurrencyCode("HUF")
         val RON = CurrencyCode("RON")
         val BGN = CurrencyCode("BGN")
+        /**
+         * Croatian Kuna — legacy currency replaced by EUR on 2023-01-01.
+         * CURR-13: Marked as legacy/inactive. New expenses should not be
+         * created in HRK. Use [com.yourname.expensetracker.domain.currency.SupportedCurrency.HRK]
+         * which has `isActive = false`.
+         */
         val HRK = CurrencyCode("HRK")
         val ISK = CurrencyCode("ISK")
 

@@ -43,16 +43,44 @@ class BudgetCalculator @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
 
+    /**
+     * BUD-10: Valid periodMode values. Any unrecognized value will throw
+     * an IllegalArgumentException instead of silently defaulting to CALENDAR.
+     */
+    enum class PeriodMode {
+        ROLLING,
+        CALENDAR;
+
+        companion object {
+            /**
+             * Safe parser: returns the matching enum or throws for invalid values.
+             * BUD-10: Previously, any non-ROLLING string silently became CALENDAR,
+             * masking data-integrity issues.
+             */
+            fun fromString(value: String): PeriodMode {
+                return try {
+                    valueOf(value.uppercase())
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalArgumentException(
+                        "Invalid periodMode '$value'. Valid values: ${entries.joinToString(", ")}"
+                    )
+                }
+            }
+        }
+    }
+
     fun calculatePeriodRange(budget: Budget, now: Long = timeProvider.now()): Pair<Long, Long> {
-        return when (budget.periodMode.uppercase()) {
-            "ROLLING" -> {
+        // BUD-10: Validate periodMode explicitly instead of silently defaulting.
+        val mode = PeriodMode.fromString(budget.periodMode)
+        return when (mode) {
+            PeriodMode.ROLLING -> {
                 // Resolve the active anchored cycle containing `now` instead of
                 // pinning start = budget.startDate forever.
                 val window = calculatePeriodWindowForTime(budget.period, budget.startDate, now)
                 window.start to window.end
             }
-            else -> {
-                // CALENDAR mode: use natural calendar boundaries via TimePeriodUtils.
+            PeriodMode.CALENDAR -> {
+                // Use natural calendar boundaries via TimePeriodUtils.
                 // The anchor date is irrelevant for calendar windows.
                 when (budget.period) {
                     BudgetPeriod.DAILY -> TimePeriodUtils.getDayRange(now)

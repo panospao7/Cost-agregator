@@ -262,7 +262,8 @@ class NotificationRepositoryStressTest {
             packageName = "com.revolut.revolut",
             notificationTitle = "Payment",
             notificationText = "€50",
-            status = PendingReviewStatus.PENDING
+            status = PendingReviewStatus.PENDING,
+            createdAt = System.currentTimeMillis()
         )
         coEvery { pendingReviewDao.getByRawId(42) } returns pendingReview
 

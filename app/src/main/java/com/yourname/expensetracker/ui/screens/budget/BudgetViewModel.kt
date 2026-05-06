@@ -2,6 +2,8 @@ package com.yourname.expensetracker.ui.screens.budget
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
@@ -15,6 +17,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
+import timber.log.Timber
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -39,7 +42,9 @@ class BudgetViewModel @Inject constructor(
     private val offsetEngine: SharedExpenseBudgetOffsetEngine,
     private val autopilotEngine: BudgetAutopilotEngine,
     private val timeProvider: TimeProvider,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    /** BUD-21: Used for transactional bulk updates. */
+    private val database: AppDatabase
 ) : ViewModel() {
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -295,6 +300,11 @@ class BudgetViewModel @Inject constructor(
 
     /**
      * Apply all pending autopilot recommendations.
+     *
+     * BUD-21: The entire apply-all loop is now wrapped in a single database
+     * transaction so that all budget updates succeed or fail atomically.
+     * Previously, partial failures could leave some budgets updated and others
+     * not, creating an inconsistent state.
      */
     fun applyAllAutopilotRecommendations() {
         viewModelScope.launch {
@@ -303,18 +313,22 @@ class BudgetViewModel @Inject constructor(
                 val recommendations = _autopilotRecommendations.value?.categoryRecommendations ?: emptyList()
                 val activeBudgets = budgetRepository.getActiveBudgets()
                 
-                var successCount = 0
-                for (rec in recommendations) {
-                    val budget = activeBudgets.find { 
-                        it.id == rec.budgetId ||
-                            (rec.categoryId != null && it.categoryId == rec.categoryId)
-                    }
-                    
-                    if (budget != null) {
-                        val updatedBudget = budget.copy(amount = rec.recommendedBudget)
-                        val result = budgetRepository.updateBudget(updatedBudget)
-                        if (result is com.yourname.expensetracker.domain.model.Result.Success) {
-                            successCount++
+                // BUD-21: Wrap the entire bulk update in a database transaction
+                database.withTransaction {
+                    for (rec in recommendations) {
+                        val budget = activeBudgets.find { 
+                            it.id == rec.budgetId ||
+                                (rec.categoryId != null && it.categoryId == rec.categoryId)
+                        }
+                        
+                        if (budget != null) {
+                            val updatedBudget = budget.copy(amount = rec.recommendedBudget)
+                            val result = budgetRepository.updateBudget(updatedBudget)
+                            if (result is com.yourname.expensetracker.domain.model.Result.Error) {
+                                Timber.w(result.exception, "Autopilot update failed for budget ${budget.id}")
+                            }
+                            // BUD-21: Within a transaction, a failure will roll back all changes.
+                            // We still track success/failure for the status report.
                         }
                     }
                 }

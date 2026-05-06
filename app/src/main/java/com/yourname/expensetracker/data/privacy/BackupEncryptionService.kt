@@ -2,10 +2,13 @@ package com.yourname.expensetracker.data.privacy
 
 import java.io.File
 import java.io.FileInputStream
+import java.io.InputStream
 import java.io.OutputStream
 import java.security.SecureRandom
 import java.security.spec.KeySpec
 import javax.crypto.Cipher
+import javax.crypto.CipherInputStream
+import javax.crypto.CipherOutputStream
 import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
@@ -68,18 +71,66 @@ class BackupEncryptionService @Inject constructor() {
 
     /**
      * Encrypts the contents of [plaintextFile] using AES-256-GCM and writes
-     * the salt + IV + ciphertext to [outputStream].
-     *
-     * The plaintext is read from the temp ZIP file on disk rather than from an
-     * in-memory [ByteArray], avoiding a duplicate heap allocation of the entire
-     * archive while building the ZIP.
+     * the salt + IV + ciphertext to [outputStream] via [CipherOutputStream],
+     * streaming 8 KB chunks from disk without loading the entire file into
+     * memory.
      *
      * The caller is responsible for closing [outputStream].
      */
     fun encrypt(plaintextFile: File, outputStream: OutputStream, password: String) {
-        val plaintext = plaintextFile.readBytes()
-        val encrypted = encrypt(plaintext, password)
-        outputStream.write(encrypted)
+        val salt = ByteArray(SALT_LENGTH_BYTES).also { secureRandom.nextBytes(it) }
+        val iv = ByteArray(IV_LENGTH_BYTES).also { secureRandom.nextBytes(it) }
+        val secretKey = deriveKey(password, salt)
+        val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
+
+        // Write salt + IV, then stream ciphertext through CipherOutputStream
+        outputStream.write(salt)
+        outputStream.write(iv)
+        CipherOutputStream(outputStream, cipher).use { cos ->
+            FileInputStream(plaintextFile).use { fis ->
+                val buffer = ByteArray(8192)
+                var bytesRead: Int
+                while (fis.read(buffer).also { bytesRead = it } != -1) {
+                    cos.write(buffer, 0, bytesRead)
+                }
+            } // cos.close() is called by .use, which triggers Cipher.doFinal() → appends GCM tag
+        }
+    }
+
+    /**
+     * Creates a streaming [CipherInputStream] over [inputStream] that decrypts
+     * AES-256-GCM ciphertext on the fly in 8 KB chunks, avoiding loading the
+     * entire encrypted payload into memory.
+     *
+     * The first [SALT_LENGTH_BYTES] + [IV_LENGTH_BYTES] bytes read from
+     * [inputStream] are the salt and IV — the remaining bytes are the ciphertext
+     * (with embedded GCM authentication tag).
+     *
+     * @return a [CipherInputStream] whose [CipherInputStream.read] calls
+     *         return decrypted plaintext. The caller **must close** the
+     *         returned stream to release cipher resources.
+     * @throws javax.crypto.AEADBadTagException if the password is wrong or
+     *         the ciphertext has been tampered with (detected when the stream
+     *         is fully consumed).
+     */
+    fun decryptStream(inputStream: InputStream, password: String): CipherInputStream {
+        val salt = ByteArray(SALT_LENGTH_BYTES)
+        val iv = ByteArray(IV_LENGTH_BYTES)
+        var offset = 0; while (offset < SALT_LENGTH_BYTES) {
+            val n = inputStream.read(salt, offset, SALT_LENGTH_BYTES - offset)
+            if (n == -1) throw IllegalStateException("Truncated input: missing salt")
+            offset += n
+        }
+        offset = 0; while (offset < IV_LENGTH_BYTES) {
+            val n = inputStream.read(iv, offset, IV_LENGTH_BYTES - offset)
+            if (n == -1) throw IllegalStateException("Truncated input: missing IV")
+            offset += n
+        }
+        val secretKey = deriveKey(password, salt)
+        val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
+        cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
+        return CipherInputStream(inputStream, cipher)
     }
 
     /**

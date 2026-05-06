@@ -289,6 +289,14 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
         )
     }
 
+    /**
+     * RCP-13: Per-item validation beyond simple count checks.
+     * Validates each categorized item for:
+     * - Reasonable confidence range (0.0..1.0)
+     * - Positive amount
+     * - Non-empty description
+     * - Presence of a suggested category (or explicit null if none)
+     */
     private fun validateResult(
         input: ReceiptItemCategorizationInput,
         result: ReceiptItemCategorizationResult
@@ -299,6 +307,46 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
 
         if (result.items.size != input.lineItems.size) {
             return "Service returned invalid item count"
+        }
+
+        // RCP-13: Per-item validation checks
+        for ((index, item) in result.items.withIndex()) {
+            // Confidence must be in valid range
+            if (item.confidence < 0f || item.confidence > 1f || item.confidence.isNaN()) {
+                return "Item $index has invalid confidence: ${item.confidence}"
+            }
+
+            // Amount must be positive and finite
+            if (item.amount <= 0 || !item.amount.isFinite()) {
+                return "Item $index has invalid amount: ${item.amount}"
+            }
+
+            // Description must be non-blank
+            if (item.itemDescription.isBlank()) {
+                return "Item $index has blank description"
+            }
+
+            // If a suggested category is provided, its confidence must be valid
+            item.suggestedCategory?.let { cat ->
+                if (cat.confidence < 0f || cat.confidence > 1f || cat.confidence.isNaN()) {
+                    return "Item $index category '${cat.categoryName}' has invalid confidence: ${cat.confidence}"
+                }
+                if (cat.categoryName.isBlank()) {
+                    return "Item $index has blank category name"
+                }
+            }
+
+            // Alternative categories must also have valid confidence
+            for ((altIndex, alt) in item.alternatives.withIndex()) {
+                if (alt.confidence < 0f || alt.confidence > 1f || alt.confidence.isNaN()) {
+                    return "Item $index alternative $altIndex has invalid confidence: ${alt.confidence}"
+                }
+            }
+        }
+
+        // Total confidence must be in valid range
+        if (result.totalConfidence < 0f || result.totalConfidence > 1f || result.totalConfidence.isNaN()) {
+            return "Total confidence is invalid: ${result.totalConfidence}"
         }
 
         return null

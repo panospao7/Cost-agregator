@@ -67,9 +67,25 @@ interface WarrantyDao {
     @Query("SELECT COUNT(*) FROM warranties WHERE status = 'ACTIVE' AND warrantyEndDate > :currentTime")
     suspend fun getActiveWarrantyCount(currentTime: Long): Int
 
+    /**
+     * WRN-8: Changed from `e.amount` (gross amount) to the ownership-adjusted
+     * amount (effective amount logic inlined in SQL) so that shared/not-mine
+     * expenses are correctly valued at the user's actual liability, not the
+     * full posted amount. For non-shared expenses, this collapses to e.amount.
+     *
+     * Note: effectiveAmount is a computed Kotlin property, not a column, so
+     * the equivalent logic is expressed in SQL as a CASE expression.
+     */
     @Query(
         """
-        SELECT SUM(COALESCE(e.amount, 0))
+        SELECT SUM(COALESCE(
+            CASE
+                WHEN e.isNotMine = 1 THEN 0.0
+                WHEN e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL THEN e.myShareAmount
+                WHEN e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL THEN e.amount * e.mySharePercentage / 100.0
+                ELSE e.amount
+            END,
+        0))
         FROM warranties w
         LEFT JOIN expenses e ON e.id = w.expenseId
         WHERE w.status = 'ACTIVE'

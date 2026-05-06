@@ -30,8 +30,8 @@ class ExchangeRateStoreAdapter @Inject constructor(
         exchangeRateDao.insertOrUpdateAll(rates.map { it.toEntity() })
     }
 
-    override fun getAllRatesForBase(baseCurrency: String): Flow<List<DomainExchangeRate>> {
-        return exchangeRateDao.getAllRatesForBase(baseCurrency).map { list ->
+    override fun getRatesToCurrency(targetCurrency: String): Flow<List<DomainExchangeRate>> {
+        return exchangeRateDao.getRatesToCurrency(targetCurrency).map { list ->
             list.map { it.toDomain() }
         }
     }
@@ -51,7 +51,8 @@ private fun ExchangeRate.toDomain(): DomainExchangeRate {
         toCurrency = toCurrency,
         rate = rate,
         lastUpdated = lastUpdated,
-        source = source
+        source = source,
+        validDate = validDate.takeIf { it != 0L }
     )
 }
 
@@ -61,6 +62,7 @@ private fun DomainExchangeRate.toEntity(): ExchangeRate {
         toCurrency = toCurrency,
         rate = rate,
         lastUpdated = lastUpdated,
-        source = source
+        source = source,
+        validDate = validDate ?: 0L
     )
 }

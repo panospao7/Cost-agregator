@@ -291,7 +291,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
             currentAmount = currentAmount,
             targetDate = null,
             protectionLevel = GoalProtectionLevel.WARNING,
-            createdAt = 0L,
+            createdAt = System.currentTimeMillis(),
         )
     }
 }

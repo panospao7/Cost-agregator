@@ -18,6 +18,26 @@ import javax.inject.Singleton
  * Hybrid Expense Classifier for CATEGORIZATION.
  * Strategy priority: Merchant Dictionary -> ML prediction -> Fallback.
  * Uses CategorizationEngine as single source of truth for merchant->category mapping.
+ *
+ * ## AIML-18: Full feature set for category classifier (planned)
+ * The current feature vector is limited to merchant tokens extracted from the
+ * notification title/text. The following additional features are planned to
+ * improve classification accuracy:
+ * - **Amount ranges**: Bucket the transaction amount into tiers (e.g. <5, 5-20,
+ *   20-50, 50-200, 200+) — different categories have distinct spend profiles.
+ * - **Day-of-week**: Many expenses are category-specific on weekends vs. weekdays
+ *   (e.g. dining/entertainment on weekends, office supplies on weekdays).
+ * - **Time-of-day**: Morning vs. afternoon vs. evening patterns (e.g. coffee in
+ *   the morning, dinner in the evening).
+ * - **Seasonal patterns**: Certain categories spike at predictable times (holiday
+ *   shopping in December, travel in summer, tax payments in April).
+ * - **Merchant-key prefix matching**: Leverage the existing [merchantKey] field
+ *   as a bag-of-words feature alongside raw tokens.
+ *
+ * The [FeatureExtractor] class should be extended to include these dimensions
+ * without increasing the model file size significantly. The NB classifier's
+ * `expense_category_model.json` schema would gain new feature namespaced keys
+ * (e.g. `amount_range:50_200`, `dow:6`) that do not conflict with merchant tokens.
  */
 @Singleton
 class HybridExpenseClassifier @Inject constructor(
@@ -55,12 +75,19 @@ class HybridExpenseClassifier @Inject constructor(
         }
     }
 
+    /**
+     * @param eventTimeMillis Explicit event timestamp in millis since epoch.
+     *   AIML-19: Must be provided from the notification/transaction timestamp,
+     *   NOT from [timeProvider.now()]. Use 0L to signal "unknown" (in which
+     *   case the current time is used as fallback).
+     */
     suspend fun classify(
         merchantName: String,
         amount: Double,
         notificationTitle: String? = null,
         notificationText: String? = null,
-        packageName: String = ""
+        packageName: String = "",
+        eventTimeMillis: Long = 0L
     ): ClassificationResult = withContext(Dispatchers.Default) {
         
         if (!initialized) initialize()
@@ -80,7 +107,7 @@ class HybridExpenseClassifier @Inject constructor(
             packageName = packageName,
             amount = amount,
             merchant = merchantNormalized,
-            eventTimeMillis = timeProvider.now()
+            eventTimeMillis = if (eventTimeMillis > 0L) eventTimeMillis else timeProvider.now()
         )
 
         // 1. Merchant Dictionary (single source of truth)
@@ -93,25 +120,33 @@ class HybridExpenseClassifier @Inject constructor(
         //    enough data (including persisted on-disk state loaded at cold start).
         //    No external isReady() gate: classify() returns an empty list when
         //    the model is not usable, preserving fallback semantics.
+        //
+        //    AIML-17: Validate returned categoryId against active categories before
+        //    using it. If the ML model returns a stale/deleted category ID, skip it
+        //    and fall through to the next classification strategy.
         try {
             val mlResults = nbClassifier.classify(features)
             if (mlResults.isNotEmpty()) {
                 val best = mlResults.first()
                 // Use > for strict boundary; >= ensures exactly-at-threshold is accepted
                 if (best.score >= ML_THRESHOLD) {
+                    // AIML-17: Validate against active categories — skip if stale/deleted
                     val category = categories.find { it.id == best.categoryId }
-                    return@withContext ClassificationResult(
-                        categoryId = best.categoryId,
-                        categoryName = category?.name ?: "Unknown",
-                        confidence = best.score.coerceIn(0.0f, 1.0f),
-                        alternatives = mlResults.take(3).map { res ->
-                            res.copy(
-                                categoryName = categories.find { it.id == res.categoryId }?.name ?: "Unknown",
-                                score = res.score.coerceIn(0.0f, 1.0f)
-                            )
-                        },
-                        matchType = MatchType.ML_PREDICTION
-                    )
+                    if (category != null) {
+                        return@withContext ClassificationResult(
+                            categoryId = best.categoryId,
+                            categoryName = category.name,
+                            confidence = best.score.coerceIn(0.0f, 1.0f),
+                            alternatives = mlResults.take(3).mapNotNull { res ->
+                                val altCat = categories.find { it.id == res.categoryId } ?: return@mapNotNull null
+                                res.copy(
+                                    categoryName = altCat.name,
+                                    score = res.score.coerceIn(0.0f, 1.0f)
+                                )
+                            },
+                            matchType = MatchType.ML_PREDICTION
+                        )
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -163,6 +198,21 @@ class HybridExpenseClassifier @Inject constructor(
         return null // No longer used - replaced by classifyWithMerchantDictionary
     }
 
+    /**
+     * Learn from a user correction.
+     *
+     * ## AIML-20: Single correction triggers global category learning
+     * To prevent a single low-confidence correction from permanently altering the
+     * global merchant->category mapping, this method only calls
+     * [categorizationEngine.learnMerchantCategory] when there is sufficient evidence:
+     * - The merchant already has an existing mapping AND the correction agrees with it
+     *   (reinforcement), OR
+     * - The merchant has NO existing mapping (first-time learning).
+     *
+     * If the merchant already has a different high-confidence mapping, the single
+     * correction is NOT promoted to the global dictionary. The NB classifier still
+     * learns from it for local re-classification.
+     */
     suspend fun learnFromCorrection(
         merchantName: String,
         correctCategoryId: Long,
@@ -179,8 +229,19 @@ class HybridExpenseClassifier @Inject constructor(
         )
         nbClassifier.train(features, correctCategoryId)
         
-        // Also learn in CategorizationEngine for future dictionary lookups
-        categorizationEngine.learnMerchantCategory(merchantName, correctCategoryId)
+        // AIML-20: Confidence-based learning gate — only promote to global dictionary
+        // if the merchant has no existing mapping, or the correction agrees with it.
+        val existingResult = categorizationEngine.categorize(merchantName)
+        val shouldLearnGlobally = when {
+            existingResult.categoryId == null -> true  // No existing mapping — safe to learn
+            existingResult.categoryId == correctCategoryId -> true  // Reinforcement
+            existingResult.confidence < 0.5 -> true  // Existing mapping is weak — override allowed
+            else -> false  // Existing mapping is confident and disagrees — do NOT override
+        }
+        
+        if (shouldLearnGlobally) {
+            categorizationEngine.learnMerchantCategory(merchantName, correctCategoryId)
+        }
         invalidateCategorySnapshot()
     }
 

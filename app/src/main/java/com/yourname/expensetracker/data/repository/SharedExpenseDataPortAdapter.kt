@@ -131,17 +131,8 @@ class SharedExpenseDataPortAdapter @Inject constructor(
         groupDao.restoreGroup(groupId)
     }
 
-    /**
-     * J4: This currently bypasses [GroupTransactionCoordinator] and calls
-     * [ExpenseGroupDao.delete] directly (a hard delete). To preserve referential
-     * integrity for linked system expenses, this should route through the
-     * coordinator's soft-delete ([GroupTransactionCoordinator.deleteGroup]) or,
-     * if hard-delete is truly intended, through
-     * [GroupTransactionCoordinator.permanentlyDeleteGroup]. Consider refactoring
-     * to delegate to the coordinator rather than calling the DAO directly.
-     */
     override suspend fun deleteGroup(group: SharedExpenseGroup) {
-        groupDao.delete(group.toEntity())
+        transactionCoordinator.permanentlyDeleteGroup(group.id)
     }
 
     private fun ExpenseGroup.toDomain(): SharedExpenseGroup = SharedExpenseGroup(

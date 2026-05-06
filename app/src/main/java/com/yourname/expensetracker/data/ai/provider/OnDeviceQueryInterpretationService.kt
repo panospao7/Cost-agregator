@@ -159,6 +159,12 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
         // --- Period resolution ---
         val resolvedPeriod = resolvePeriod(intent, input.currentTimeMs)
 
+        // Validate and clamp AI-returned amount bounds
+        val rawMinAmount = intent.optDoubleOrNull("minAmount")
+        val rawMaxAmount = intent.optDoubleOrNull("maxAmount")
+        val validatedMinAmount = validateAmountBound(rawMinAmount, "minAmount")
+        val validatedMaxAmount = validateAmountBound(rawMaxAmount, "maxAmount")
+
         return FinancialQueryInterpretationResult.Structured(
             intent = FinancialQueryIntent(
                 rawQuery = input.rawQuery,
@@ -169,8 +175,8 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
                     categoryIds = resolvedCategoryIds,
                     transactionTypes = resolvedTypes,
                     ownership = intent.optString("ownership").toEnumOrDefault(QueryOwnershipScope.ALL),
-                    minAmount = intent.optDoubleOrNull("minAmount"),
-                    maxAmount = intent.optDoubleOrNull("maxAmount")
+                    minAmount = validatedMinAmount,
+                    maxAmount = validatedMaxAmount
                 ),
                 metric = intent.optString("metric").toEnumOrDefault(QueryMetric.TOTAL),
                 grouping = intent.optString("grouping").toEnumOrDefault(QueryGrouping.NONE),
@@ -294,6 +300,29 @@ class OnDeviceQueryInterpretationService @Inject constructor() : QueryInterpreta
             }
             else -> null
         }
+    }
+
+    /**
+     * Validates and clamps an amount bound returned by the AI provider.
+     * Rejects negative values, absurdly large values (> 1 billion), and
+     * NaN/Infinity to prevent downstream errors.
+     */
+    private fun validateAmountBound(value: Double?, fieldName: String): Double? {
+        if (value == null) return null
+        if (value.isNaN() || value.isInfinite()) {
+            Timber.w("OnDeviceQueryInterpretationService: AI returned invalid %s=%s — rejecting", fieldName, value)
+            return null
+        }
+        if (value < 0.0) {
+            Timber.w("OnDeviceQueryInterpretationService: AI returned negative %s=%.2f — clamping to 0", fieldName, value)
+            return 0.0
+        }
+        val MAX_AMOUNT = 1_000_000_000.0
+        if (value > MAX_AMOUNT) {
+            Timber.w("OnDeviceQueryInterpretationService: AI returned excessive %s=%.2f — clamping to %.0f", fieldName, value, MAX_AMOUNT)
+            return MAX_AMOUNT
+        }
+        return value
     }
 
     private fun parseClarification(clarification: JSONObject): FinancialQueryInterpretationResult.Clarification {

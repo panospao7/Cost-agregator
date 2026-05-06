@@ -95,21 +95,40 @@ class HistoricalSpendingDistribution @Inject constructor(
         // Filter: only weeks with >= MIN_TRANSACTION_DAYS_PER_WEEK distinct transaction-days
         val qualifyingWeeks = weeklyData.filter { it.distinctDays >= MIN_TRANSACTION_DAYS_PER_WEEK }
 
-        if (qualifyingWeeks.size < 4) {
-            Timber.w("Only ${qualifyingWeeks.size} qualifying weeks — need at least 4 for distribution fit")
+        // FCST-16: Include zero-spend weeks in the distribution.
+        // Weeks with zero total spending (and >= MIN_TRANSACTION_DAYS_PER_WEEK
+        // distinct days, meaning the user was active but spent nothing) are
+        // legitimate data points. Previously these were excluded because they
+        // had no transactions; now they are included as 0.0 totals.
+        val allWeeksIncludingZero = weeklyData.map { week ->
+            if (week.distinctDays == 0 && week.total == 0.0) {
+                // Genuinely quiet week — set a small positive value to keep
+                // log-normal fit numerically stable (ln(0) = -inf).
+                // Use 0.01 as a nominal minimum.
+                week.copy(total = 0.01)
+            } else {
+                week
+            }
+        }
+        // Rebuild qualifying weeks list that includes quiet weeks as valid data points
+        val expandedQualifying = allWeeksIncludingZero.filter { it.distinctDays >= MIN_TRANSACTION_DAYS_PER_WEEK || it.distinctDays == 0 } // include qualifying weeks + quiet zero-spend weeks
+        val qualifyingForFit = if (expandedQualifying.size >= 4) expandedQualifying else qualifyingWeeks
+
+        if (qualifyingForFit.size < 4) {
+            Timber.w("Only ${qualifyingForFit.size} qualifying weeks — need at least 4 for distribution fit")
             return DistributionFit(
                 mu = 0.0,
                 sigma = 0.0,
-                qualifyingWeekCount = qualifyingWeeks.size,
+                qualifyingWeekCount = qualifyingForFit.size,
                 totalWeeksExamined = totalWeeksExamined,
-                trimmedWeeklyTotals = qualifyingWeeks.map { it.total },
+                trimmedWeeklyTotals = qualifyingForFit.map { it.total },
                 allWeeklyTotals = weeklyData.map { it.total },
                 displayCurrency = resolvedHomeCurrency
             )
         }
 
         // Sort and trim outliers (middle 80%)
-        val sortedTotals = qualifyingWeeks.map { it.total }.sorted()
+        val sortedTotals = qualifyingForFit.map { it.total }.sorted()
         val trimCount = (sortedTotals.size * TRIM_PERCENTILE).toInt().coerceAtLeast(0)
         val trimmed = if (trimCount > 0 && sortedTotals.size > 2 * trimCount) {
             sortedTotals.subList(trimCount, sortedTotals.size - trimCount)
@@ -121,10 +140,10 @@ class HistoricalSpendingDistribution @Inject constructor(
             Timber.w("Trimmed data is empty or contains non-positive values; falling back to untrimmed")
             val fallback = sortedTotals.filter { it > 0.0 }
             if (fallback.size < 2) return null
-            return fitLogNormal(fallback, qualifyingWeeks.size, totalWeeksExamined, weeklyData.map { it.total }, resolvedHomeCurrency)
+            return fitLogNormal(fallback, qualifyingForFit.size, totalWeeksExamined, weeklyData.map { it.total }, resolvedHomeCurrency)
         }
 
-        return fitLogNormal(trimmed, qualifyingWeeks.size, totalWeeksExamined, weeklyData.map { it.total }, resolvedHomeCurrency)
+        return fitLogNormal(trimmed, qualifyingForFit.size, totalWeeksExamined, weeklyData.map { it.total }, resolvedHomeCurrency)
     }
 
     /**

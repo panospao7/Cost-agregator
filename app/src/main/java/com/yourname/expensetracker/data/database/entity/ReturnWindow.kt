@@ -10,6 +10,12 @@ import androidx.room.PrimaryKey
  * WRN-5-FIXED: The `receiptId` FK now uses SET_NULL (was CASCADE before migration 108→109).
  * Deleting a receipt preserves return window records. receiptId is nullable to allow
  * orphaned return windows to exist without a source receipt.
+ *
+ * ## WRN-13-FIXED: refundExpenseId FK added
+ *
+ * The `refundExpenseId` column (added in MIGRATION_113_114) links a completed return
+ * to its refund expense transaction. The FK uses ON DELETE SET NULL — deleting the
+ * refund expense preserves the return window record.
  */
 @Entity(
     tableName = "return_windows",
@@ -25,6 +31,12 @@ import androidx.room.PrimaryKey
             parentColumns = ["id"],
             childColumns = ["expenseId"],
             onDelete = ForeignKey.SET_NULL
+        ),
+        ForeignKey(
+            entity = Expense::class,
+            parentColumns = ["id"],
+            childColumns = ["refundExpenseId"],
+            onDelete = ForeignKey.SET_NULL
         )
     ],
     indices = [
@@ -32,9 +44,17 @@ import androidx.room.PrimaryKey
         // per receipt. SQLite UNIQUE allows multiple NULL rows, so orphaned
         // windows (receiptId set to NULL on receipt deletion) are preserved.
         Index(value = ["receiptId"], unique = true),
+        // WRN-7: The UNIQUE index on expenseId prevents multiple return windows
+        // from referencing the same expense (which is correct), but the DAO
+        // query [ReturnWindowDao.getReturnWindowByReceiptId] returns a single
+        // result (ReturnWindow?) while the schema allows multiple NULL receiptId
+        // rows. If the DAO is ever changed to return List<ReturnWindow>, this
+        // UNIQUE constraint must be reviewed to avoid conflicts.
         Index(value = ["expenseId"], unique = true),
         Index(value = ["returnDeadline"]),
-        Index(value = ["status"])
+        Index(value = ["status"]),
+        // WRN-13: Index for refund expense lookup
+        Index(value = ["refundExpenseId"])
     ]
 )
 data class ReturnWindow(
@@ -60,6 +80,11 @@ data class ReturnWindow(
      * When null, the currency should be inferred from the purchase context.
      */
     val refundCurrency: String? = null,
+    /**
+     * WRN-13-FIXED: Links a completed return to its refund expense transaction.
+     * Set when the return is marked as RETURNED. FK references Expense(id) ON DELETE SET NULL.
+     */
+    val refundExpenseId: Long? = null,
     val createdAt: Long,
     val updatedAt: Long
 )

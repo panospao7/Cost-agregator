@@ -44,6 +44,20 @@ class NominatimGeocodingService @Inject constructor(
     private val timeProvider: TimeProvider,
     private val privacyGate: PrivacyGate
 ) : GeocodingService {
+    /**
+     * Home country code for geocoding bias (e.g., "gr" for Greece, "us" for USA).
+     * LOC-10: Made configurable instead of hardcoded to Greece. Defaults to "gr"
+     * for backward compatibility. Callers can change this at runtime.
+     */
+    @Volatile
+    var homeCountryCode: String = AppConfig.Location.GREECE_COUNTRY_CODE
+
+    /**
+     * Home viewbox for geocoding bias when no GPS coordinates are available.
+     * LOC-10: Made configurable instead of hardcoded to Greece.
+     */
+    @Volatile
+    var homeViewbox: String = AppConfig.Location.GREECE_VIEWBOX
 
     // B13 fix: rate-limit all Nominatim requests at the service level.
     // Ensures max 1 request per 1.1s regardless of caller.
@@ -273,7 +287,11 @@ class NominatimGeocodingService @Inject constructor(
                 if (response.code >= 500 || response.code == 429) {
                     if (attempt < maxAttempts - 1) {
                         response.close()
-                        delay(currentDelay)
+                        // LOC-11: Ensure retry delay respects Nominatim's 1 req/sec policy.
+                        // The minimum gap between consecutive requests to the same server
+                        // must be at least NOMINATIM_MIN_INTERVAL_MS (1100ms).
+                        val rateLimitedDelay = currentDelay.coerceAtLeast(AppConfig.Location.NOMINATIM_MIN_INTERVAL_MS)
+                        delay(rateLimitedDelay)
                         currentDelay = (currentDelay * 2).coerceAtMost(2000)
                         return@repeat
                     }
@@ -283,7 +301,9 @@ class NominatimGeocodingService @Inject constructor(
             } catch (e: IOException) {
                 lastError = e
                 if (attempt < maxAttempts - 1) {
-                    delay(currentDelay)
+                    // LOC-11: Same rate-limit gating for IO errors during retry
+                    val rateLimitedDelay = currentDelay.coerceAtLeast(AppConfig.Location.NOMINATIM_MIN_INTERVAL_MS)
+                    delay(rateLimitedDelay)
                     currentDelay = (currentDelay * 2).coerceAtMost(2000)
                 }
             }
@@ -309,12 +329,13 @@ class NominatimGeocodingService @Inject constructor(
         sb.append("&limit=${AppConfig.Location.NOMINATIM_MAX_RESULTS}")
         sb.append("&addressdetails=1")
         // Country filter: only applied for background resolution, not the interactive picker
+        // LOC-10: Use configurable homeCountryCode instead of hardcoded Greece.
         if (useCountryFilter) {
-            sb.append("&countrycodes=${AppConfig.Location.GREECE_COUNTRY_CODE}")
+            sb.append("&countrycodes=$homeCountryCode")
         }
 
         if (biasLat != null && biasLon != null) {
-            val delta = 0.09  // ~10 km at Greek latitudes
+            val delta = 0.09  // ~10 km at typical latitudes
             val minLon = (biasLon - delta).coerceAtLeast(-180.0)
             val maxLon = (biasLon + delta).coerceAtMost(180.0)
             val minLat = (biasLat - delta).coerceAtLeast(-90.0)
@@ -322,7 +343,8 @@ class NominatimGeocodingService @Inject constructor(
             sb.append("&viewbox=$minLon,$maxLat,$maxLon,$minLat")
             sb.append(if (bounded) "&bounded=1" else "&bounded=0")
         } else {
-            sb.append("&viewbox=${AppConfig.Location.GREECE_VIEWBOX}")
+            // LOC-10: Use configurable homeViewbox instead of hardcoded Greece.
+            sb.append("&viewbox=$homeViewbox")
             sb.append(if (bounded) "&bounded=1" else "&bounded=0")
         }
 
@@ -344,7 +366,7 @@ class NominatimGeocodingService @Inject constructor(
             "viewbox=<greece-default>&bounded=${if (bounded) 1 else 0}"
         }
         val country = if (useCountryFilter) {
-            "&countrycodes=${AppConfig.Location.GREECE_COUNTRY_CODE}"
+            "&countrycodes=$homeCountryCode"
         } else {
             ""
         }

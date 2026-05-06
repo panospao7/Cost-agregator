@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
+import com.yourname.expensetracker.domain.analytics.SpendingThresholdCalculator
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
@@ -52,7 +53,9 @@ class SmartSavingsEngine @Inject constructor(
     private val timeProvider: TimeProvider,
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
     /** AI-4: CashFlowCalculator provides the canonical list of upcoming recurring obligations. */
-    private val cashFlowCalculator: CashFlowCalculator
+    private val cashFlowCalculator: CashFlowCalculator,
+    /** AIML-30: SpendingThresholdCalculator for adaptive caps instead of hardcoded values. */
+    private val spendingThresholdCalculator: SpendingThresholdCalculator
 ) {
     companion object {
         private const val DAY_IN_MILLIS = 24 * 60 * 60 * 1000L
@@ -66,14 +69,6 @@ class SmartSavingsEngine @Inject constructor(
          * units (e.g., EUR, USD) and should be tuned per-market. Future iterations
          * may expose these as user-editable settings via [CurrencySettingsRepository].
          */
-        private const val DEFAULT_CAP_WEEK = 75.0
-
-        /** @see DEFAULT_CAP_WEEK */
-        private const val DEFAULT_CAP_MONTH = 200.0
-
-        /** @see DEFAULT_CAP_WEEK */
-        private const val DEFAULT_CAP_QUARTER = 500.0
-
         /**
          * Fallback monthly discretionary spending used when historical data is
          * insufficient to compute a user-specific baseline. Denominated in home
@@ -163,7 +158,8 @@ class SmartSavingsEngine @Inject constructor(
             budgetSurplus = budgetSurplus,
             spendingPace = spendingPace,
             monteCarloResult = monteCarloResult,
-            timeHorizon = timeHorizon
+            timeHorizon = timeHorizon,
+            homeCurrency = homeCurrency
         )
 
         return SavingsRecommendation(
@@ -350,12 +346,20 @@ class SmartSavingsEngine @Inject constructor(
         // AI-4: Calculate known upcoming obligations from CashFlowCalculator using
         // occurrence-driven recurring rules + planned expenses (deduplicated).
         val daysRemainingInMonth = TimePeriodUtils.daysBetween(now, TimePeriodUtils.getEndOfMonth(now))
-        val upcomingPatterns = cashFlowCalculator.getUpcomingBills(daysAhead = daysRemainingInMonth.coerceAtLeast(1))
+        val daysRemaining = daysRemainingInMonth.coerceAtLeast(1)
+        val upcomingPatterns = cashFlowCalculator.getUpcomingBills(daysAhead = daysRemaining)
         val knownUpcoming = upcomingPatterns.sumOf { it.averageAmount }
+        // FCST-4: Compute an estimated weekly recurring amount from the upcoming patterns
+        // so the Monte Carlo simulator can subtract recurring spend from its stochastic
+        // sampling and avoid double-counting with knownUpcoming.
+        val estimatedWeeklyRecurring = if (daysRemaining > 0) {
+            knownUpcoming / (daysRemaining / 7.0)
+        } else 0.0
         val monthlyResult = monteCarloSimulator.simulate(
             spentToDate = monthSpentToDate,
             knownUpcoming = knownUpcoming,
-            budgetAmount = null // No budget constraint
+            budgetAmount = null, // No budget constraint
+            estimatedWeeklyRecurring = estimatedWeeklyRecurring
         )
 
         val projectedHorizonSpending = when (timeHorizon) {
@@ -392,18 +396,31 @@ class SmartSavingsEngine @Inject constructor(
         return if (remaining > 0.0) remaining * simulationConfig.safeToSaveRatio else 0.0
     }
     
-    private fun calculateWeightedSafeAmount(
+    private suspend fun computeDynamicCap(timeHorizon: TimeHorizon, homeCurrency: String): Double {
+        // AIML-30: Use SpendingThresholdCalculator for adaptive caps based on user's
+        // actual spending distribution (P90 percentile) instead of hardcoded currencyless values.
+        val p90 = spendingThresholdCalculator.getThreshold()
+        return when (timeHorizon) {
+            TimeHorizon.WEEK -> (p90 * 0.15).coerceAtLeast(10.0)   // ~15% of P90 single-txn cap
+            TimeHorizon.MONTH -> (p90 * 0.40).coerceAtLeast(25.0)  // ~40% of P90
+            TimeHorizon.QUARTER -> (p90 * 1.00).coerceAtLeast(75.0) // ~100% of P90
+        }
+    }
+
+    private suspend fun calculateWeightedSafeAmount(
         budgetSurplus: Double,
         spendingPace: Double,
         monteCarloResult: Double,
-        timeHorizon: TimeHorizon
+        timeHorizon: TimeHorizon,
+        homeCurrency: String = "EUR"
     ): Double {
         // Weighted combination adjusted by time horizon
-        // Caps are in home currency (see DEFAULT_CAP_WEEK / _MONTH / _QUARTER)
-        val (budgetWeight, paceWeight, monteCarloWeight, cap) = when (timeHorizon) {
-            TimeHorizon.WEEK -> HorizonWeights(0.30, 0.45, 0.25, DEFAULT_CAP_WEEK)
-            TimeHorizon.MONTH -> HorizonWeights(0.40, 0.30, 0.30, DEFAULT_CAP_MONTH)
-            TimeHorizon.QUARTER -> HorizonWeights(0.35, 0.20, 0.45, DEFAULT_CAP_QUARTER)
+        // AIML-30: Use SpendingThresholdCalculator for adaptive caps instead of hardcoded values.
+        val cap = computeDynamicCap(timeHorizon, homeCurrency)
+        val (budgetWeight, paceWeight, monteCarloWeight) = when (timeHorizon) {
+            TimeHorizon.WEEK -> Triple(0.30, 0.45, 0.25)
+            TimeHorizon.MONTH -> Triple(0.40, 0.30, 0.30)
+            TimeHorizon.QUARTER -> Triple(0.35, 0.20, 0.45)
         }
 
         val weighted =
@@ -505,16 +522,12 @@ class SmartSavingsEngine @Inject constructor(
             ?.trim()
             ?.lowercase()
 
-        // Treat uncategorized entries as discretionary by default.
-        return categoryName == null || categoryName !in essentialCategories
+        // AIML-31: Uncategorized transactions are treated as "unknown" (not
+        // discretionary) so they don't inflate the discretionary spending pool
+        // and distort savings recommendations.
+        if (categoryName == null) return false
+        return categoryName !in essentialCategories
     }
-
-    private data class HorizonWeights(
-        val budgetWeight: Double,
-        val paceWeight: Double,
-        val monteCarloWeight: Double,
-        val cap: Double
-    )
 
     private data class HorizonSimulationConfig(
         val lookbackDays: Long,

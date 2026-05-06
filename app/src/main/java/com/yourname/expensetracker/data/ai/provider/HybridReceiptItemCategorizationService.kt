@@ -11,6 +11,13 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 
+// AID-4: This service can be simplified by using HybridRouter:
+// val router = HybridRouter(aiSettingsRepository, aiCapabilityRouter, AiCapability.RECEIPT_ITEM_CATEGORIZATION,
+//     cloudFn = { cloudService.categorizeItems(it) },
+//     onDeviceFn = { onDeviceService.categorizeItems(it) },
+//     fallbackFn = { null }
+// )
+// override suspend fun categorizeItems(input: ReceiptItemCategorizationInput): ReceiptItemCategorizationResult? = router.execute(input)
 @Singleton
 class HybridReceiptItemCategorizationService @Inject constructor(
     private val onDeviceService: OnDeviceReceiptItemCategorizationService,

@@ -134,11 +134,17 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             intent.comparison
         }
 
+        // --- Validate and clamp min/max amounts for AI robustness ---
+        val validatedMinAmount = validateAmountBound(filters.minAmount, "minAmount")
+        val validatedMaxAmount = validateAmountBound(filters.maxAmount, "maxAmount")
+
         val enrichedFilters = filters.copy(
             period = enrichedPeriod,
             categoryIds = enrichedCategoryIds,
             transactionTypes = enrichedTypes,
-            ownership = enrichedOwnership
+            ownership = enrichedOwnership,
+            minAmount = validatedMinAmount,
+            maxAmount = validatedMaxAmount
         )
 
         return result.copy(
@@ -297,6 +303,29 @@ class InterpretFinancialQueryUseCase @Inject constructor(
             else -> TimePeriodUtils.getMonthRange(now, 0)
         }
         return PeriodRange(start = pair.first, end = pair.second)
+    }
+
+    /**
+     * Validates and clamps an amount bound returned by the AI provider.
+     * Rejects negative values, absurdly large values (> 1 billion), and
+     * NaN/Infinity to prevent downstream errors.
+     */
+    private fun validateAmountBound(value: Double?, fieldName: String): Double? {
+        if (value == null) return null
+        if (value.isNaN() || value.isInfinite()) {
+            Timber.w("InterpretFinancialQueryUseCase: AI returned invalid %s=%s — rejecting", fieldName, value)
+            return null
+        }
+        if (value < 0.0) {
+            Timber.w("InterpretFinancialQueryUseCase: AI returned negative %s=%.2f — clamping to 0", fieldName, value)
+            return 0.0
+        }
+        val MAX_AMOUNT = 1_000_000_000.0
+        if (value > MAX_AMOUNT) {
+            Timber.w("InterpretFinancialQueryUseCase: AI returned excessive %s=%.2f — clamping to %.0f", fieldName, value, MAX_AMOUNT)
+            return MAX_AMOUNT
+        }
+        return value
     }
 
     private fun isBarePeriodOnlyQuery(query: String, vararg periodPhrases: String): Boolean {

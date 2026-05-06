@@ -7,12 +7,12 @@ import androidx.work.*
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.concurrent.TimeUnit
 
 /**
  * One-shot WorkManager worker that backfills [Expense.merchantKey] for every
@@ -49,9 +49,12 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
         }
 
         var totalUpdated = 0
+        var batchesProcessed = 0
+        val maxBatches = 25 // WRK-11: Per-run budget — max 25 batches (5000 rows)
         val failedExpenseIdsThisRun = mutableSetOf<Long>()
 
-        while (!isStopped) {
+        while (!isStopped && batchesProcessed < maxBatches) {
+            batchesProcessed++
             val batch = try {
                 expenseRepository.getExpensesWithNullMerchantKey(limit = BATCH_SIZE)
             } catch (e: CancellationException) {
@@ -108,24 +111,14 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
 
         /**
          * Enqueue a one-time backfill job.
-         * Uses [ExistingWorkPolicy.KEEP] so the job is only scheduled once; if the
-         * work has already completed (or is queued/running) nothing changes.
+         * WRK-N5: Uses [ExistingWorkPolicy.REPLACE] instead of KEEP so the worker
+         * CAN be re-scheduled when needed (e.g., after new merchants are imported).
+         * KEEP would silently ignore subsequent scheduling requests after the first
+         * completion, making it impossible to trigger re-backfill without an app
+         * restart or version bump.
          */
         fun schedule(context: Context) {
-            val request = OneTimeWorkRequestBuilder<MerchantKeyBackfillWorker>()
-                .setBackoffCriteria(
-                    BackoffPolicy.EXPONENTIAL,
-                    WorkRequest.MIN_BACKOFF_MILLIS,
-                    TimeUnit.MILLISECONDS
-                )
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                WORK_NAME,
-                ExistingWorkPolicy.KEEP,
-                request
-            )
-            Log.d(TAG, "Merchant-key backfill scheduled")
+            WorkerSpecScheduler.scheduleFromSpec(context, WORK_NAME, MerchantKeyBackfillWorker::class.java)
         }
     }
 }

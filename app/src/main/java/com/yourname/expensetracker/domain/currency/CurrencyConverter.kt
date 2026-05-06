@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.currency
 
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -73,14 +74,24 @@ class CurrencyConverter @Inject constructor(
     }
 
     /**
-     * Convert an amount from one currency to another at the **current** exchange rate.
+     * Convert an amount from one currency to another at the **current** (latest) exchange rate.
      *
-     * ## Historical rates
+     * ## Historical rates (CURR-2)
      * This method does **not** accept a date parameter. All lookups use the
-     * latest available rate stored for the currency pair. This is a known
-     * limitation — see [ExchangeRate] unique-index KDoc for details.
+     * **latest available rate** stored for the currency pair. For reports and
+     * snapshots that require historically accurate conversion (e.g. converting
+     * an expense at its purchase-date rate), use [convertAsOf] instead.
+     *
+     * > **When to use which:**
+     * > - Use `convert()` for real-time display, latest-rate aggregates, or
+     * >   any context where "what is the value right now" is the right answer.
+     * > - Use `convertAsOf(amount, from, to, atMillis)` when you need the
+     * >   rate that was valid on a specific past date (e.g. `expense.date`).
      *
      * Returns null if no exchange rate is available.
+     *
+     * CURR-15: Prefer [convert(amount, fromCurrency, toCurrency)] with
+     * CurrencyCode parameters where possible.
      */
     suspend fun convert(
         amount: Double,
@@ -152,6 +163,9 @@ class CurrencyConverter @Inject constructor(
      *
      * Falls back through direct rate → via EUR intermediate, matching the
      * same strategy as [convert]. Returns null if no historical rate is found.
+     *
+     * CURR-15: Prefer [convertAsOf(amount, fromCurrency, toCurrency, atMillis)]
+     * with CurrencyCode parameters where possible.
      */
     suspend fun convertAsOf(
         amount: Double,
@@ -314,10 +328,12 @@ class CurrencyConverter @Inject constructor(
     }
 
     /**
-     * Get all available rates for a base currency.
+     * Get all available rates for a target currency.
+     * CURR-10: Renamed from getAllRatesForBase — the underlying query filters on
+     * `toCurrency`, so this returns rates that *target* the given currency.
      */
-    fun getAllRatesForBase(baseCurrency: String) =
-        exchangeRateStore.getAllRatesForBase(baseCurrency.uppercase())
+    fun getRatesToCurrency(targetCurrency: String) =
+        exchangeRateStore.getRatesToCurrency(targetCurrency.uppercase())
 
     /**
      * Delete old exchange rates (older than specified time).
@@ -326,9 +342,58 @@ class CurrencyConverter @Inject constructor(
         exchangeRateStore.deleteOldRates(olderThan)
     }
 
+    // ── CurrencyCode-typed overloads (CURR-15) ─────────────────────────
+
+    /**
+     * Convert amount using [CurrencyCode] typed parameters.
+     * @see [convert]
+     */
+    @JvmName("convertWithCurrencyCode")
+    suspend fun convert(amount: Double, fromCurrency: CurrencyCode, toCurrency: CurrencyCode): ConversionResult? =
+        convert(amount, fromCurrency.code, toCurrency.code)
+
+    /**
+     * Convert amount as of a date using [CurrencyCode] typed parameters.
+     * @see [convertAsOf]
+     */
+    @JvmName("convertAsOfWithCurrencyCode")
+    suspend fun convertAsOf(amount: Double, fromCurrency: CurrencyCode, toCurrency: CurrencyCode, atMillis: Long): ConversionResult? =
+        convertAsOf(amount, fromCurrency.code, toCurrency.code, atMillis)
+
+    /**
+     * Store a rate using [CurrencyCode] typed parameters.
+     * @see [storeRate]
+     */
+    @JvmName("storeRateWithCurrencyCode")
+    suspend fun storeRate(fromCurrency: CurrencyCode, toCurrency: CurrencyCode, rate: Double, source: String = "manual") {
+        storeRate(fromCurrency.code, toCurrency.code, rate, source)
+    }
+
+    /**
+     * Check for rate existence using [CurrencyCode] typed parameters.
+     * @see [hasRate]
+     */
+    @JvmName("hasRateWithCurrencyCode")
+    suspend fun hasRate(fromCurrency: CurrencyCode, toCurrency: CurrencyCode): Boolean =
+        hasRate(fromCurrency.code, toCurrency.code)
+
+    // ── Formatter ──────────────────────────────────────────────────────
+
     /**
      * Get a formatted string for an amount with currency symbol.
+     *
+     * @deprecated Use [com.yourname.expensetracker.domain.util.CurrencyFormatter.formatMoney]
+     * instead, which uses `java.util.Currency.getDefaultFractionDigits` and properly
+     * handles locale-specific formatting (e.g. JPY with 0 decimal places, BHD with 3).
      */
+    @Deprecated(
+        message = "Use CurrencyFormatter.formatMoney() which respects locale and fraction digits",
+        replaceWith = ReplaceWith(
+            "CurrencyFormatter.formatMoney(amount, currencyCode)",
+            "com.yourname.expensetracker.domain.util.CurrencyFormatter"
+        ),
+        level = DeprecationLevel.WARNING
+    )
     fun formatAmount(amount: Double, currencyCode: String): String {
         val currency = SupportedCurrency.fromCode(currencyCode)
         val symbol = currency?.symbol ?: currencyCode

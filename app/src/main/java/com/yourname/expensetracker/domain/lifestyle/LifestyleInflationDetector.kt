@@ -14,6 +14,22 @@ import javax.inject.Singleton
 import kotlin.math.abs
 import kotlin.math.pow
 
+/**
+ * ## AIML-32: Lifestyle inflation with category metadata (planned)
+ * Currently [isDiscretionaryExpense] relies on English keyword matching against
+ * the merchant name and notes fields (e.g. "dining", "entertainment", "shopping").
+ * This is brittle — it misses non-English merchants, miscategorises generic
+ * merchants, and ignores actual category assignments.
+ *
+ * The plan is to replace the keyword heuristic with category-based detection:
+ * - Use [Expense.categoryId] to look up the category name from the [Category] table.
+ * - Maintain a small set of "discretionary category IDs" (configurable by the user
+ *   or seeded from sensible defaults like "Dining", "Entertainment", "Shopping").
+ * - Fall back to the keyword heuristic only when the expense has no categoryId or
+ *   the category is not found (legacy data).
+ * - This makes the detector locale-independent, respects user corrections, and
+ *   aligns with the category taxonomy the user already sees everywhere in the app.
+ */
 @Singleton
 class LifestyleInflationDetector @Inject constructor(
     private val expenseDao: ExpenseDao,

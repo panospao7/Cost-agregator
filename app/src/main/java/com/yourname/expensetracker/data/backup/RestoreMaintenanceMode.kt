@@ -83,8 +83,11 @@ class RestoreMaintenanceMode @Inject constructor(
         Timber.w("Maintenance mode: exiting to %s", targetMode.label)
         writeMode(targetMode)
         if (targetMode == Mode.NORMAL) {
-            // Workers are re-enabled; they'll be rescheduled on next app start
-            Timber.d("Maintenance mode: workers will resume on next app start")
+            // BAK-NE: Reschedule background workers immediately instead of
+            // waiting for next app start, so that critical jobs (data retention,
+            // receipt matching, etc.) resume without delay after restore.
+            scheduleAllWorkers()
+            Timber.d("Maintenance mode: workers rescheduled")
         } else {
             Timber.d("Maintenance mode: writes remain blocked until app restart")
         }
@@ -112,6 +115,37 @@ class RestoreMaintenanceMode @Inject constructor(
         for (name in workerNames) {
             workManager.cancelUniqueWork(name)
             Timber.d("Cancelled unique worker: %s", name)
+        }
+    }
+
+    /**
+     * Reschedules all background workers after exiting maintenance mode.
+     *
+     * BAK-NE: This ensures critical jobs resume without waiting for the next
+     * app start. Each worker's schedule() companion method reads its interval
+     * and constraints from [WorkerSpec.DEFAULTS].
+     */
+    private fun scheduleAllWorkers() {
+        // Workers that provide a companion schedule() method are called here.
+        // Each schedule() is wrapped in runCatching to isolate failures.
+        val application = context
+        runCatching {
+            com.yourname.expensetracker.data.location.LocationBackfillWorker.schedule(application)
+        }
+        runCatching {
+            com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker.schedule(application)
+        }
+        runCatching {
+            com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker.schedule(application)
+        }
+        runCatching {
+            com.yourname.expensetracker.data.privacy.DataRetentionWorker.schedule(application)
+        }
+        runCatching {
+            com.yourname.expensetracker.service.reminder.BillReminderWorker.schedule(application)
+        }
+        runCatching {
+            com.yourname.expensetracker.service.receiptmatching.ReceiptMatchingWorker.schedule(application)
         }
     }
 

@@ -24,6 +24,22 @@ import androidx.room.PrimaryKey
  * - [isRelevant] — quick filtering for the review queue.
  * - Multi-column covering index on [packageName], [timestamp], [title], [text], [bigText]
  *   for batch dedup scans.
+ *
+ * ## DB-1: Stale partial indexes (CLEANED UP in MIGRATION_73_74 — VERIFIED)
+ * Older migrations created several partial unique indexes to close SQLite's
+ * NULL!=NULL dedup loophole:
+ *   - `index_raw_notifications_dedup_nonnull` (when all 4 columns non-null)
+ *   - `index_raw_notifications_dedup_both_null` (when title+text both null)
+ *   - `index_raw_notifications_dedup_title_null` (when only title is null)
+ *   - `index_raw_notifications_dedup_text_null` (when only text is null)
+ *
+ * These were **dropped** in migration 73→74 (lines 4372-4375 of AppDatabase.kt)
+ * via `DROP INDEX IF EXISTS`. The cleanup is complete and confirmed. If any of
+ * these indexes are detected on an existing database (e.g., long-hop migration
+ * from a very old schema that skipped migration 73), they are safe to drop
+ * manually — they serve no purpose alongside the materialized [dedupeFingerprint]
+ * column (added in migration 64→65) which provides deterministic dedup without
+ * partial indexes.
  */
 @Entity(
     tableName = "raw_notifications",

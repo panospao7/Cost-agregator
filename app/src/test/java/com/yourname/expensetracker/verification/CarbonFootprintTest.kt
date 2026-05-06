@@ -128,6 +128,7 @@ class CarbonFootprintTest : AnalyticsEngineTestBase() {
         merchant = merchant,
         transactionType = TransactionType.PURCHASE,
         date = 1_700_000_000_000,
+        createdAt = System.currentTimeMillis(),
         isSharedExpense = isSharedExpense,
         myShareAmount = myShareAmount
     )

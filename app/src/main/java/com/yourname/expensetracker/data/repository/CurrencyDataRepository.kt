@@ -10,6 +10,10 @@ import javax.inject.Singleton
 class CurrencyDataRepository @Inject constructor(
     private val exchangeRateDao: ExchangeRateDao
 ) {
-    fun getAllRatesForBase(baseCurrency: String): Flow<List<ExchangeRate>> =
-        exchangeRateDao.getAllRatesForBase(baseCurrency)
+    /**
+     * CURR-10: Renamed from getAllRatesForBase for clarity.
+     * Returns all exchange rates targeting the given [targetCurrency].
+     */
+    fun getRatesToCurrency(targetCurrency: String): Flow<List<ExchangeRate>> =
+        exchangeRateDao.getRatesToCurrency(targetCurrency)
 }

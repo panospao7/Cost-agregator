@@ -113,6 +113,35 @@ class ReceiptAssetStore @Inject constructor(
     }
 
     /**
+     * Computes the SHA-256 hash of the content at [uri] without persisting it
+     * to disk. Reads the input stream in 8 KB chunks into the digest.
+     *
+     * This is used for pre-OCR duplicate detection: if the hash matches an
+     * already-processed receipt we can skip the expensive OCR step entirely.
+     *
+     * @return [Result.success] with the hex-encoded hash string on success,
+     *         [Result.failure] if the URI cannot be opened or read.
+     */
+    suspend fun computeUriHash(uri: Uri): Result<String> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(8192)
+
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    digest.update(buffer, 0, bytesRead)
+                }
+            } ?: throw IllegalStateException("Cannot open input stream for URI: $uri")
+
+            val hashBytes = digest.digest()
+            hashBytes.joinToString("") { "%02x".format(it) }
+        }.onFailure { error ->
+            Timber.e(error, "Failed to compute SHA-256 hash for URI: %s", uri)
+        }
+    }
+
+    /**
      * Deletes the receipt asset file at [filePath].
      *
      * @return `true` if the file was successfully deleted, `false` otherwise

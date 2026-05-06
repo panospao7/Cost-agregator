@@ -143,8 +143,16 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // can reconstruct the original home-currency value without re-converting.
         val homeCurrency = CurrencyConverter.DEFAULT_BASE_CURRENCY
         if (expense.currency != homeCurrency) {
+            // CURR-2: Use convertAsOf with the expense date to capture the
+            // historical exchange rate valid at the purchase time, rather than
+            // the latest rate which may differ from the rate on the purchase date.
             val conversion = runCatching {
-                currencyConverter.convert(expense.amount, expense.currency, homeCurrency)
+                currencyConverter.convertAsOf(
+                    amount = expense.amount,
+                    fromCurrency = expense.currency,
+                    toCurrency = homeCurrency,
+                    atMillis = expense.date
+                )
             }.getOrNull()
             if (conversion != null) {
                 expense = expense.copy(
@@ -154,9 +162,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 )
             } else {
                 Timber.w(
-                    "Cannot convert %s %.2f to %s for expense creation; " +
+                    "Cannot convert %s %.2f to %s for expense creation (as of %d); " +
                     "baseAmount/baseCurrency/exchangeRateUsed left at defaults",
-                    expense.currency, expense.amount, homeCurrency
+                    expense.currency, expense.amount, homeCurrency, expense.date
                 )
             }
         }
@@ -363,12 +371,44 @@ class TransactionLifecycleCoordinator @Inject constructor(
             expense
         }
 
+        // ── Currency conversion snapshot ──────────────────────────────────
+        // If the expense currency differs from the home currency (EUR),
+        // populate baseAmount/baseCurrency/exchangeRateUsed so that reports
+        // can reconstruct the original home-currency value without re-converting.
+        val homeCurrency = CurrencyConverter.DEFAULT_BASE_CURRENCY
+        val finalExpense = if (updatedExpense.currency != homeCurrency) {
+            val conversion = runCatching {
+                currencyConverter.convert(updatedExpense.amount, updatedExpense.currency, homeCurrency)
+            }.getOrNull()
+            if (conversion != null) {
+                updatedExpense.copy(
+                    baseAmount = conversion.convertedAmount,
+                    baseCurrency = homeCurrency,
+                    exchangeRateUsed = conversion.rateUsed
+                )
+            } else {
+                Timber.w(
+                    "Cannot convert %s %.2f to %s for expense update; " +
+                    "baseAmount/baseCurrency/exchangeRateUsed left at defaults",
+                    updatedExpense.currency, updatedExpense.amount, homeCurrency
+                )
+                updatedExpense
+            }
+        } else {
+            // Identity values when expense currency matches home currency
+            updatedExpense.copy(
+                baseAmount = updatedExpense.amount,
+                baseCurrency = updatedExpense.currency,
+                exchangeRateUsed = 1.0
+            )
+        }
+
         // 3. Persist the updated row + write event inside a single transaction
         database.withTransaction {
-            expenseDao.update(updatedExpense)
+            expenseDao.update(finalExpense)
 
             // 4. Write lifecycle event with before/after snapshots
-            val afterSnapshot = expenseToSnapshot(updatedExpense)
+            val afterSnapshot = expenseToSnapshot(finalExpense)
             transactionEventDao.insert(
                 TransactionEvent(
                     expenseId = expense.id,
@@ -376,7 +416,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     source = source,
                     actor = null,
                     occurredAt = now,
-                    dedupeKey = updatedExpense.dedupeKey,
+                    dedupeKey = finalExpense.dedupeKey,
                     duplicateExpenseId = null,
                     beforeSnapshot = beforeSnapshot,
                     afterSnapshot = afterSnapshot,

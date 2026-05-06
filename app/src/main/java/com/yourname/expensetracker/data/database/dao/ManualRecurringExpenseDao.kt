@@ -38,6 +38,16 @@ interface ManualRecurringExpenseDao {
     @Query("SELECT * FROM manual_recurring_expenses WHERE id = :id")
     suspend fun getById(id: Long): ManualRecurringExpense?
     
+    /**
+     * REC-15: Exact merchant name lookup (legacy).
+     *
+     * Performs a case-sensitive exact match on the raw merchant display name.
+     * Prefer [RecurringExpenseRepository.getByMerchantFuzzy] which normalizes
+     * both the query and stored names via [MerchantKeyGenerator] for fuzzy
+     * matching (handles minor variations like "McDonald's" vs "Mc Donalds").
+     *
+     * @see com.yourname.expensetracker.data.repository.RecurringExpenseRepository.getByMerchantFuzzy
+     */
     @Query("SELECT * FROM manual_recurring_expenses WHERE merchant = :merchant LIMIT 1")
     suspend fun getByMerchant(merchant: String): ManualRecurringExpense?
     

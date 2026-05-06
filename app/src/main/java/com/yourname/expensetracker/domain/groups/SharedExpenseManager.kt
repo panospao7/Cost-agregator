@@ -27,6 +27,43 @@ import javax.inject.Singleton
  * Data-layer details (Room DAOs/entities/transactions) are delegated to adapter implementations.
  * 
  * CRITICAL-2: Multi-table operations are executed atomically in the data layer.
+ *
+ * ## SHR-10: Subset splits (planned)
+ * Currently, custom splits (CUSTOM_AMOUNT / CUSTOM_PERCENT / UNEQUAL) require ALL
+ * group members to be assigned a split value via [customSplits]. If a member is
+ * omitted, validation fails.
+ *
+ * ### Planned change — allow subset splits
+ * The goal is to allow splitting an expense among a SUBSET of members, with the
+ * remaining members implicitly receiving 0 (they are not part of this expense).
+ * For example, if a group has 4 members but only 2 shared a meal, the split
+ * should only involve those 2.
+ *
+ * ### Required validation changes
+ * 1. **`addExpense()` (line 127)** — Remove the implicit requirement that all
+ *    members must be in [customSplits]. Instead:
+ *    - For EQUAL splits: keep dividing by ALL members (equal split inherently
+ *      involves everyone).
+ *    - For CUSTOM_AMOUNT / CUSTOM_PERCENT: only validate members present in
+ *      [customSplits]. The sum of assigned amounts must equal [totalAmount].
+ *    - Members NOT in [customSplits] get a share of 0.
+ * 2. **`CustomSplitParser.parseAndValidate()`** — Update to accept a subset of
+ *    member IDs. Validation should check:
+ *    - All keys in the parsed splits exist in the subset.
+ *    - Sum of amounts equals [totalAmount] (within a small epsilon for rounding).
+ *    - No duplicate member IDs.
+ * 3. **`computeMyShareAmount()` (line 312)** — Update to handle missing current
+ *    user (if current user is not in the subset, their share is 0).
+ * 4. **`calculateBalances()` (line 247)** — Ensure balance calculation handles
+ *    members with 0 assigned amount correctly (they owe nothing and are owed nothing).
+ * 5. **UI** — Expose a member selector per expense so the user can choose which
+ *    members to include in the split.
+ *
+ * ### Backward compatibility
+ * Existing expense records with all-member splits remain valid. The change is
+ * additive — the new subset behavior replaces the old "all members required"
+ * validation. Old serialized customSplitsJson (with all member entries) continues
+ * to parse correctly.
  */
 @Singleton
 class SharedExpenseManager @Inject constructor(
@@ -141,13 +178,25 @@ class SharedExpenseManager @Inject constructor(
             throw IllegalArgumentException("Amount must be a positive finite number")
         }
 
-        val groupMemberIds = sharedExpenseDataPort.getGroupMembersOnce(groupId).map { it.id }.toSet()
+        val groupMembers = sharedExpenseDataPort.getGroupMembersOnce(groupId)
+        val groupMemberIds = groupMembers.map { it.id }.toSet()
         if (paidById !in groupMemberIds) {
             throw IllegalArgumentException("Payer is not a member of this group")
         }
 
+        // SHR-12: Identify the current user from the member list to compute their share correctly.
+        val currentUserId = groupMembers.firstOrNull { it.isCurrentUser }?.id
+
+        // SHR-10: Subset splits not yet supported
+        // Currently custom splits require ALL members to be assigned (sum must equal total).
+        // Future: allow splitting among a subset — unassigned members get 0 share.
+        // Required: validate only assigned members' sum equals total.
+        // SHR-17: Validate that non-EQUAL split types have customSplits provided.
         if (splitType != GroupSplitType.EQUAL) {
-            customSplits?.forEach { (memberId, splitValue) ->
+            require(customSplits != null) {
+                "customSplits must be provided for non-EQUAL split types (was $splitType)"
+            }
+            customSplits.forEach { (memberId, splitValue) ->
                 if (!splitValue.isFinite()) {
                     throw IllegalArgumentException(
                         "Invalid custom splits: split values must be finite (memberId=$memberId)"
@@ -175,6 +224,19 @@ class SharedExpenseManager @Inject constructor(
             }
         }
 
+        // SHR-12: Recompute myShareAmount based on the split configuration.
+        // This ensures the value stays in sync with the group split even when
+        // the split type or custom splits change. The recompute happens at
+        // add-expense time so the initially stored value is always correct.
+        val myShareAmount = computeMyShareAmount(
+            totalAmount = totalAmount,
+            splitType = splitType,
+            customSplits = customSplits,
+            paidById = paidById,
+            groupMemberIds = groupMemberIds,
+            currentUserId = currentUserId
+        )
+
         val resolvedCurrency = sharedExpenseDataPort.getGroupOnce(groupId)?.defaultCurrency ?: currency
 
         val groupExpense = SharedGroupExpense(
@@ -186,7 +248,8 @@ class SharedExpenseManager @Inject constructor(
             totalAmount = totalAmount,
             currency = resolvedCurrency,
             splitType = splitType,
-            customSplitsSerialized = customSplitsSerialized
+            customSplitsSerialized = customSplitsSerialized,
+            myShareAmount = myShareAmount
         )
 
         sharedExpenseDataPort.addExpense(groupExpense)
@@ -278,6 +341,37 @@ class SharedExpenseManager @Inject constructor(
 
             result
         }
+
+    /**
+     * Compute the current user's share amount based on total, split type, and custom splits.
+     * For EQUAL splits, divides total among all members.
+     * For non-EQUAL splits, looks up the current user's entry in custom splits.
+     * Returns null if the share cannot be determined (e.g., current user not in splits).
+     *
+     * SHR-12: Centralized recompute trigger so myShareAmount never drifts from the split.
+     */
+    private fun computeMyShareAmount(
+        totalAmount: Double,
+        splitType: GroupSplitType,
+        customSplits: Map<Long, Double>?,
+        paidById: Long,
+        groupMemberIds: Set<Long>,
+        currentUserId: Long? = null
+    ): Double? {
+        if (splitType == GroupSplitType.EQUAL && groupMemberIds.isNotEmpty()) {
+            return totalAmount / groupMemberIds.size
+        }
+        if (splitType != GroupSplitType.EQUAL && customSplits != null) {
+            // SHR-12: Use the current user's split value instead of an arbitrary member's.
+            return if (currentUserId != null && customSplits.containsKey(currentUserId)) {
+                customSplits[currentUserId]
+            } else {
+                // Fallback: if current user is not in splits or unknown, return null
+                null
+            }
+        }
+        return null
+    }
 
     /**
      * Synchronously retrieve the user's home currency.

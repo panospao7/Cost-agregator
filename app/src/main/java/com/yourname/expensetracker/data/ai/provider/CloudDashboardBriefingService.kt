@@ -12,6 +12,9 @@ import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -36,7 +39,8 @@ class CloudDashboardBriefingService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val promptFormatter: DashboardBriefingPromptFormatter,
-    private val aiSettingsRepository: AiSettingsRepository? = null
+    private val aiSettingsRepository: AiSettingsRepository? = null,
+    private val privacyGate: PrivacyGate
 ) : DashboardBriefingService {
 
     private var apiKeyOverride: String? = null
@@ -45,21 +49,33 @@ class CloudDashboardBriefingService @Inject constructor(
         secureKeyStorage = secureKeyStorage,
         client = OkHttpClient(),
         promptFormatter = DashboardBriefingPromptFormatter(),
-        aiSettingsRepository = null
+        aiSettingsRepository = null,
+        privacyGate = object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.Allowed
+        }
     )
 
     constructor(secureKeyStorage: SecureKeyStorage, client: OkHttpClient) : this(
         secureKeyStorage = secureKeyStorage,
         client = client,
         promptFormatter = DashboardBriefingPromptFormatter(),
-        aiSettingsRepository = null
+        aiSettingsRepository = null,
+        privacyGate = object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.Allowed
+        }
     )
 
     constructor(secureKeyStorage: SecureKeyStorage, apiKeyOverride: String) : this(
         secureKeyStorage = secureKeyStorage,
         client = OkHttpClient(),
         promptFormatter = DashboardBriefingPromptFormatter(),
-        aiSettingsRepository = null
+        aiSettingsRepository = null,
+        privacyGate = object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.Allowed
+        }
     ) {
         this.apiKeyOverride = apiKeyOverride
     }
@@ -85,6 +101,13 @@ class CloudDashboardBriefingService @Inject constructor(
         if (settings != null && !settings.allowCloudAi) {
             Timber.d("CloudDashboardBriefingService: Cloud AI disabled in settings, skipping.")
             return AiServiceResult.Failure(AiServiceError.Disabled("Cloud AI is disabled in settings"))
+        }
+
+        // PRIVACY GATE: Check privacy gate before cloud AI call
+        val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Timber.w("CloudDashboardBriefingService: blocked by privacy gate: ${gateCheck.reason}")
+            return AiServiceResult.Failure(AiServiceError.Disabled("Blocked by privacy gate: ${gateCheck.reason}"))
         }
 
         val shouldRedact = settings?.redactBeforeCloud ?: true

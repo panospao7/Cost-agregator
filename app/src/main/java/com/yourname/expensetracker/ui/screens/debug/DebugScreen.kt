@@ -1347,25 +1347,45 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
         )
     }
     
-    // Reset Confirmation Dialog
+    // Reset Confirmation Dialog (BAK-10: typed confirmation required)
     if (showResetDialog) {
         val resetSuccessMessage = stringResource(R.string.debug_toast_reset_success)
+        var typedConfirmation by remember { mutableStateOf("") }
+        val isConfirmed = typedConfirmation.equals("DELETE", ignoreCase = true)
         AlertDialog(
             onDismissRequest = { showResetDialog = false },
         title = { Text(stringResource(R.string.debug_dialog_reset_database_title)) },
         text = { 
-            Text(stringResource(R.string.debug_dialog_reset_database_message))
+            Column {
+                Text(stringResource(R.string.debug_dialog_reset_database_message))
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = typedConfirmation,
+                    onValueChange = { typedConfirmation = it },
+                    label = { Text("Type DELETE to confirm") },
+                    singleLine = true,
+                    isError = typedConfirmation.isNotEmpty() && !isConfirmed,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = if (isConfirmed) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+                        cursorColor = MaterialTheme.colorScheme.onSurface
+                    )
+                )
+            }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    viewModel.resetDatabase()
-                    showResetDialog = false
-                    android.widget.Toast.makeText(context, resetSuccessMessage, android.widget.Toast.LENGTH_LONG).show()
+                    if (viewModel.resetDatabase(typedConfirmation)) {
+                        showResetDialog = false
+                        android.widget.Toast.makeText(context, resetSuccessMessage, android.widget.Toast.LENGTH_LONG).show()
+                    } else {
+                        android.widget.Toast.makeText(context, "Reset cancelled: type DELETE to confirm", android.widget.Toast.LENGTH_LONG).show()
+                    }
                 },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error
-                )
+                ),
+                enabled = isConfirmed
             ) {
                 Text(stringResource(R.string.debug_reset))
             }

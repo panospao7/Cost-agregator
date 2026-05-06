@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.reminder
 
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
@@ -127,16 +128,33 @@ class BillReminderManager @Inject constructor(
     
     /**
      * Mark a bill as paid and update next due date.
+     *
+     * ## REC-3: Pay-through-today for overdue bills
+     * If the computed next due date is still in the past (overdue), the date is
+     * advanced one interval at a time until it reaches today. This mirrors the
+     * `rollNextExpectedDateForward()` pattern in [RecurringExpenseEngine].
+     * IRREGULAR frequency is skipped because it has no predictable interval.
      */
     suspend fun markBillPaid(recurringExpenseId: Long) = withContext(Dispatchers.IO) {
         val expense = recurringExpenseRepository.getById(recurringExpenseId) ?: return@withContext
 
-        val nextDate = RecurrenceCalculator.calculateNextDate(expense.nextDate, expense.frequency)
-        
-        val updated = expense.copy(nextDate = nextDate)
+        var newNextDate = RecurrenceCalculator.calculateNextDate(expense.nextDate, expense.frequency)
+
+        // REC-3: Advance overdue dates until they reach today
+        val todayStart = TimePeriodUtils.getStartOfDay(timeProvider.now())
+        var advanceCount = 0
+        while (newNextDate < todayStart && expense.frequency != RecurrenceFrequency.IRREGULAR) {
+            newNextDate = RecurrenceCalculator.calculateNextDate(newNextDate, expense.frequency)
+            advanceCount++
+        }
+        if (advanceCount > 0) {
+            Timber.d("REC-3: Advanced next due date for %s by %d interval(s) to catch up to today", expense.merchant, advanceCount)
+        }
+
+        val updated = expense.copy(nextDate = newNextDate)
         recurringExpenseRepository.update(updated)
-        
-        Timber.d("Marked bill paid for ${expense.merchant}, next due: $nextDate")
+
+        Timber.d("Marked bill paid for ${expense.merchant}, next due: $newNextDate")
     }
     
     /**

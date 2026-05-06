@@ -12,6 +12,9 @@ import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -32,14 +35,31 @@ import timber.log.Timber
 class CloudCategorizationAssistService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
-    private val aiSettingsRepository: AiSettingsRepository? = null
+    private val aiSettingsRepository: AiSettingsRepository? = null,
+    private val privacyGate: PrivacyGate
 ) : CategorizationAssistService {
 
     // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), null)
+    constructor(secureKeyStorage: SecureKeyStorage) : this(
+        secureKeyStorage,
+        OkHttpClient(),
+        null,
+        object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.Allowed
+        }
+    )
 
     // Secondary constructor for tests with client override
-    constructor(secureKeyStorage: SecureKeyStorage, client: OkHttpClient) : this(secureKeyStorage, client, null)
+    constructor(secureKeyStorage: SecureKeyStorage, client: OkHttpClient) : this(
+        secureKeyStorage,
+        client,
+        null,
+        object : PrivacyGate {
+            override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
+                PrivacyDecision.Allowed
+        }
+    )
 
     private val apiKey: String
         get() = secureKeyStorage.getGeminiKey() ?: ""
@@ -56,6 +76,13 @@ class CloudCategorizationAssistService @Inject constructor(
         val settings = aiSettingsRepository?.settings()?.first()
         if (settings != null && !settings.allowCloudAi) {
             Timber.d("CloudCategorizationAssistService: Cloud AI disabled in settings, skipping.")
+            return null
+        }
+
+        // PRIVACY GATE: Check privacy gate before cloud AI call
+        val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Timber.w("CloudCategorizationAssistService: blocked by privacy gate: ${gateCheck.reason}")
             return null
         }
 

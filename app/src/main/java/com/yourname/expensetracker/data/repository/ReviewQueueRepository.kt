@@ -168,7 +168,7 @@ class ReviewQueueRepository @Inject constructor(
             locationSource = when {
                 finalLatitude != null && finalLongitude != null -> AppConfig.Location.SOURCE_USER_MANUAL
                 review.suggestedLatitude != null && review.suggestedLongitude != null -> AppConfig.Location.SOURCE_DEVICE_GPS
-                else -> null
+                else -> AppConfig.Location.SOURCE_UNKNOWN
             },
             placeId = finalPlaceId,
             resolvedAddress = finalAddress
@@ -311,7 +311,8 @@ class ReviewQueueRepository @Inject constructor(
             runPostCommitSafely(
                 action = "source stats cache invalidation after duplicate review approval (reviewId=$reviewId, package=${review.packageName})"
             ) {
-                confidenceRouter.invalidateSourceStatsCache(review.packageName)
+                // AIML-13: Use comprehensive invalidation after user action
+                confidenceRouter.invalidateAfterUserAction(review.packageName, review.suggestedMerchant)
             }
             return Result.Duplicate
         }
@@ -334,7 +335,8 @@ class ReviewQueueRepository @Inject constructor(
         runPostCommitSafely(
             action = "source stats cache invalidation after review approval (reviewId=$reviewId, package=${review.packageName})"
         ) {
-            confidenceRouter.invalidateSourceStatsCache(review.packageName)
+            // AIML-13: Use comprehensive invalidation after user action
+            confidenceRouter.invalidateAfterUserAction(review.packageName, review.suggestedMerchant)
         }
         return Result.Success(txnResult)
     }
@@ -386,7 +388,8 @@ class ReviewQueueRepository @Inject constructor(
         runPostCommitSafely(
             action = "source stats cache invalidation after review rejection (reviewId=$reviewId, package=${review.packageName})"
         ) {
-            confidenceRouter.invalidateSourceStatsCache(review.packageName)
+            // AIML-13: Use comprehensive invalidation after user action
+            confidenceRouter.invalidateAfterUserAction(review.packageName, review.suggestedMerchant)
         }
     }
 
@@ -602,7 +605,11 @@ class ReviewQueueRepository @Inject constructor(
         runPostCommitSafely(
             action = "source stats cache invalidation after markAsRelevant (notificationId=$id, package=${notification.packageName})"
         ) {
-            confidenceRouter.invalidateSourceStatsCache(notification.packageName)
+            // AIML-13: Use comprehensive invalidation after user action
+            confidenceRouter.invalidateAfterUserAction(
+                notification.packageName,
+                notification.title ?: "Unknown"
+            )
         }
 
         runPostCommitSafely(

@@ -29,6 +29,31 @@ import kotlin.math.abs
  * This class operates purely on the in-memory expense list — no DB calls.
  * It complements [InsightsEngine]'s merchant-level DB-backed detection.
  *
+ * ## AIML-6: Historical baselines for anomaly detection (planned)
+ * Currently all [detect] methods compare expenses only within the current month
+ * ([monthPeriod]). This misses seasonal patterns (e.g. higher heating bills in
+ * winter, holiday shopping spikes) and treats every month as independent.
+ *
+ * The plan is to compute historical period baselines:
+ *
+ * 1. **Same-month-last-year comparison**: For each category, pull expenses from
+ *    the same calendar month in the prior year and compute the median and MAD.
+ *    Flag expenses that exceed the historical median by > 3×MAD of the historical
+ *    distribution, not just the current month's distribution.
+ * 2. **Rolling multi-month baseline**: Compute a moving average of the past 3
+ *    months' per-category spending. Use this as the expected range. An expense
+ *    is anomalous if it exceeds the rolling mean by > 2 standard deviations
+ *    (computed across the rolling window).
+ * 3. **Year-over-year trend deviation**: For recurring seasonal expenses, compute
+ *    the ratio of current-month-total to same-month-last-year-total. If the ratio
+ *    deviates from 1.0 by more than a configurable threshold (e.g. 40%), flag all
+ *    expenses in the category as a "seasonal anomaly" rather than individual outliers.
+ *
+ * To support this, [detect] would need an additional parameter (e.g. a
+ * [HistoricalContext] data class) providing pre-aggregated historical stats.
+ * The caller ([InsightsEngine.findAnomalies]) would be responsible for computing
+ * these from the expense DAO and passing them in.
+ *
  * ## AI-2: Recurring-expense suppression (RESOLVED)
  * Recurring/scheduled expenses (rent, subscriptions, insurance premiums) are
  * now suppressed via the [suppressRecurringMerchantKeys] parameter on [detect].

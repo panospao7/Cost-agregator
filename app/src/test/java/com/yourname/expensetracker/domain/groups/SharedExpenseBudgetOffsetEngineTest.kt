@@ -322,6 +322,7 @@ class SharedExpenseBudgetOffsetEngineTest {
         transactionType = TransactionType.PURCHASE,
         date = FIXED_NOW - DAY_MS,
         categoryId = categoryId,
+        createdAt = System.currentTimeMillis(),
         isSharedExpense = isShared,
         isNotMine = false
     )

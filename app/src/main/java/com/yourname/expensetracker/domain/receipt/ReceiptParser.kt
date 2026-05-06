@@ -7,6 +7,7 @@ import java.util.regex.Pattern
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.format.ResolverStyle
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -73,6 +74,24 @@ class ReceiptParser @Inject constructor(
         }
     }
 
+    /**
+     * Source of the receipt total amount — tracks provenance so downstream
+     * consumers can assess reliability.
+     *
+     * RCP-18: Added to provide source tracking for the receipt total,
+     * enabling the UI and validation logic to distinguish between totals
+     * derived from line-item sums, directly OCR-extracted values, and
+     * user-entered manual values.
+     */
+    enum class TotalSource {
+        /** Total was computed by summing parsed line item prices. */
+        LINE_ITEMS,
+        /** Total was directly extracted from OCR text (e.g. "TOTAL: €12.50"). */
+        OCR_TOTAL,
+        /** Total was manually entered by the user. */
+        MANUAL
+    }
+
     data class ParsedReceipt(
         val merchantName: String?,
         val total: Double?,
@@ -102,7 +121,14 @@ class ReceiptParser @Inject constructor(
          * - Line items likely do not include tax either.
          * - `subtotal = total - tax` is the correct tax-exclusive amount.
          */
-        val taxInclusive: Boolean = false
+        val taxInclusive: Boolean = false,
+        /**
+         * RCP-18: Indicates how the [total] was derived. `null` means the
+         * provenance was not tracked (legacy parsing path). Set appropriately
+         * in [parse] based on whether an OCR-extracted total was found or the
+         * total was computed from line-item sums.
+         */
+        val totalSource: TotalSource? = null
     )
 
     /**
@@ -147,6 +173,10 @@ class ReceiptParser @Inject constructor(
     )
 
     // Line item pattern: "description  price" with at least 2 spaces or tab
+    // RCP-17: Removed unused @-based patterns [2] and [3]. These patterns
+    // matched "Description @ UnitPrice   Sum" and "Qty x Desc @ UnitPrice   Sum"
+    // formats but were never referenced in extractLineItems. The two active
+    // patterns below cover the common receipt formats seen in OCR output.
     private val lineItemPatterns = listOf(
         // "Item description    12.50" (fuzzy spaces in amount)
         Pattern.compile(
@@ -156,16 +186,6 @@ class ReceiptParser @Inject constructor(
         // "Quantity x Description   Sum"
         Pattern.compile(
             """^(\d+)\s*[xX*]\s*(.{3,40}?)\s{2,}(\d+[\s.,]\s*\d{2})\s*€?\s*$""",
-            Pattern.MULTILINE
-        ),
-        // "Description @ UnitPrice   Sum"
-        Pattern.compile(
-            """^(.{3,40}?)\s*@\s*(\d+[\s.,]\d{2})\s{2,}(\d+[\s.,]\d{2})\s*$""",
-            Pattern.MULTILINE
-        ),
-        // "Qty x Desc @ UnitPrice   Sum"
-        Pattern.compile(
-            """^(\d+)\s*[xX*]\s*(.{3,40}?)\s*@\s*(\d+[\s.,]\d{2})\s{2,}(\d+[\s.,]\d{2})\s*$""",
             Pattern.MULTILINE
         )
     )
@@ -212,6 +232,14 @@ class ReceiptParser @Inject constructor(
         // 8. Cross-validate
         val finalTotal = total ?: lineItems.sumOf { it.totalPrice }.takeIf { it > 0 }
 
+        // RCP-18: Track how the total was derived — from OCR extraction,
+        // from line-item summation, or not available.
+        val resolvedTotalSource = when {
+            total != null -> TotalSource.OCR_TOTAL
+            finalTotal != null && lineItems.isNotEmpty() -> TotalSource.LINE_ITEMS
+            else -> TotalSource.MANUAL
+        }
+
         // 9. Detect tax-inclusive: if tax was found separately AND line items
         //    sum is close to the total (within 5%), the tax is already embedded
         //    in both the line items and the receipt total. Mark as inclusive so
@@ -254,7 +282,8 @@ class ReceiptParser @Inject constructor(
             currency = detectCurrency(cleanedText) ?: homeCurrency,
             lineItems = lineItems,
             confidence = confidence,
-            taxInclusive = taxInclusive
+            taxInclusive = taxInclusive,
+            totalSource = resolvedTotalSource
         )
     }
 
@@ -671,24 +700,41 @@ class ReceiptParser @Inject constructor(
             Regex("""(\d{1,2})\s?[/.-]\s?(\d{1,2})\s?[/.-]\s?(\d{2})\b""")
         )
 
-        val dateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.US)
+        // SRH-17: Locale-aware date disambiguation.
+        // Determine whether to try DD/MM or MM/DD first based on the device locale.
+        // Countries using DD/MM (most of world): Greece, UK, Australia, etc.
+        // Countries using MM/DD: US, Philippines, etc.
+        val locale = Locale.getDefault()
+        val isMonthFirst = locale.country == "US" || locale.country == "PH"
+        val firstFormat = if (isMonthFirst) "MM/dd/yyyy" else "dd/MM/yyyy"
+        val secondFormat = if (isMonthFirst) "dd/MM/yyyy" else "MM/dd/yyyy"
+
+        val firstFormatter = DateTimeFormatter.ofPattern(firstFormat, Locale.US)
+            .withResolverStyle(ResolverStyle.STRICT)
+        val secondFormatter = DateTimeFormatter.ofPattern(secondFormat, Locale.US)
+            .withResolverStyle(ResolverStyle.STRICT)
 
         for (pattern in datePatterns) {
             pattern.find(text)?.let { match ->
-                val (d, m, y) = match.destructured
+                val (group1, group2, y) = match.destructured
                 val year = if (y.length == 2) "20$y" else y
-                
+
                 // SANITY CHECK: Year must be reasonable (Dynamic range)
                 val yearInt = year.toIntOrNull() ?: 0
                 val now = timeProvider.now()
                 val currentYear = TimePeriodUtils.getYear(now)
-                if (yearInt in (currentYear - 10)..(currentYear + 1)) { 
-                    try {
-                        val parsed = LocalDate.parse("${d.padStart(2, '0')}/${m.padStart(2, '0')}/$year", dateFormatter)
-                        return parsed.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                    } catch (e: Exception) {
-                        Timber.d("Failed to parse date: $d/$m/$year")
+                if (yearInt in (currentYear - 10)..(currentYear + 1)) {
+                    // Try locale-preferred order first, then fall back to alternate order
+                    for (formatter in listOf(firstFormatter, secondFormatter)) {
+                        try {
+                            val dateStr = "${group1.padStart(2, '0')}/${group2.padStart(2, '0')}/$year"
+                            val parsed = LocalDate.parse(dateStr, formatter)
+                            return parsed.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        } catch (_: Exception) {
+                            // Try next order
+                        }
                     }
+                    Timber.d("Failed to parse date in any order: $group1/$group2/$year")
                 }
             }
         }

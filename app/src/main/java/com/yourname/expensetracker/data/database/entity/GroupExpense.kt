@@ -33,6 +33,36 @@ import com.yourname.expensetracker.domain.core.money.MoneyAmount
  * END;
  * ```
  * This trigger is verified to exist in MIGRATION_108_109 (lines 6856–6866).
+ *
+ * ## DB-8: CASCADE audit — GroupExpense
+ *
+ * ### CASCADE on groupId (line 47)
+ * **What gets cascade-deleted:** Deleting an `ExpenseGroup` removes all its
+ * `group_expenses`. This can silently erase shared-expense financial history
+ * (who paid what, when, split configurations). If the group was archived rather
+ * than hard-deleted, cascade is not triggered — only permanent delete is risky.
+ *
+ * **Appropriateness assessment:** CASCADE is acceptable here because:
+ * 1. A group deletion is an intentional user/admin action (groups are archived
+ *    first, deleted explicitly later).
+ * 2. Group expenses have no meaning without their parent group.
+ * 3. The paidById FK uses RESTRICT, so a group cannot be deleted if any member
+ *    has outstanding paid expenses.
+ *
+ * ### CASCADE on expenseId (line 55)
+ * **What gets cascade-deleted:** Deleting an `Expense` removes its linkage row
+ * in `group_expenses`. The expense row itself is preserved, but the group
+ * association (and all split assignments) is lost.
+ *
+ * **Appropriateness assessment:** CASCADE is appropriate because:
+ * 1. The expense exists independently; only the group association is removed.
+ * 2. If an expense is deleted entirely, its group links should also be cleaned up.
+ * 3. SET_NULL would leave orphaned group_expense rows with null expenseId,
+ *    causing confusion in balance calculations.
+ *
+ * **Migration path if change is needed:** Use SET_NULL on expenseId and filter
+ * out rows with null expenseId in all queries. Add a periodic cleanup job for
+ * truly orphaned rows (where both expenseId IS NULL and the group is deleted).
  */
 @Entity(
     tableName = "group_expenses",

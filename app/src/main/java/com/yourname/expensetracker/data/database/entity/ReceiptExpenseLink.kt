@@ -11,6 +11,14 @@ import androidx.room.PrimaryKey
  * tracking the confidence of the match, whether it is the primary link, and the
  * source that created the link.
  *
+ * ## DB-8: CASCADE audit — ReceiptExpenseLink
+ * This entity has **no foreign key declarations** and therefore no cascade-delete risk.
+ * Referential integrity between [receiptId] / [expenseId] and their parent tables
+ * is enforced at the application layer. If FKs are added in the future, they
+ * should use `onDelete = ForeignKey.CASCADE` for this join table (since links
+ * are meaningless without both parent rows) or `onDelete = ForeignKey.SET_NULL`
+ * if soft-disconnection semantics are desired.
+ *
  * @property id Auto-generated primary key.
  * @property receiptId The receipt being linked.
  * @property expenseId The expense being linked.

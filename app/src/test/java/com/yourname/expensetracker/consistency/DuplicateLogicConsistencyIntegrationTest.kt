@@ -443,7 +443,8 @@ class DuplicateLogicConsistencyIntegrationTest {
             amount = amount,
             merchant = merchant,
             transactionType = TransactionType.PURCHASE,
-            date = date
+            date = date,
+            createdAt = System.currentTimeMillis()
         )
     }
 

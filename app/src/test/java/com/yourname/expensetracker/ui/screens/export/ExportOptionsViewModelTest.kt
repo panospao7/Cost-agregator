@@ -205,7 +205,8 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
             transactionType = transactionType,
             date = 1_700_000_000_000L,
             categoryId = 1L,
-            notes = notes
+            notes = notes,
+            createdAt = System.currentTimeMillis()
         )
     }
 }

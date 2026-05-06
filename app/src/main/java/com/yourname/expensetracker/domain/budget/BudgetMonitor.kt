@@ -40,7 +40,11 @@ class BudgetMonitor @Inject constructor(
     private var lastCheckTime = 0L
     private var cachedStatuses: List<BudgetStatus>? = null
     private var cacheTimestamp: Long = 0L
-    private val cacheValidityMs = 30_000L // 30 seconds cache
+    /** BUD-16: Reduced from 30s to near-zero to minimize stale-alert risk.
+     *  The monitor now re-fetches on every call, but still holds the cache
+     *  briefly within the same clock-tick to avoid redundant DB queries
+     *  from rapid successive calls in the same frame. */
+    private val cacheValidityMs = 100L // 100ms — effectively forces re-fetch each check
 
     /**
      * Non-destructive lifecycle callback for routine app backgrounding.
@@ -74,6 +78,19 @@ class BudgetMonitor @Inject constructor(
     )
     fun cleanup() {
         destroy()
+    }
+
+    /**
+     * BUD-16: Change-driven cache invalidation. Call this from the repository
+     * whenever a budget is created, updated, or deleted so the next checkBudgets()
+     * call fetches fresh data instead of serving stale cached statuses.
+     */
+    fun invalidateCache() {
+        synchronized(stateLock) {
+            cachedStatuses = null
+            cacheTimestamp = 0L
+            Timber.d("BudgetMonitor: cache invalidated by external change")
+        }
     }
 
     companion object {

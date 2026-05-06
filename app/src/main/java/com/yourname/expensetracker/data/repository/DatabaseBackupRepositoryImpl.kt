@@ -30,6 +30,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
+import java.io.FileOutputStream
 import java.security.SecureRandom
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -358,7 +359,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
             if (encryptionEnabled) {
                 // --- Encrypted export flow ---
-                // 1. Copy DB to a temp file
+                // 1. Copy DB to a temp file and sanitise
                 val tempCopy = File(exportDir, "temp_export_${timestamp}.db")
                 try {
                     dbFile.inputStream().use { input ->
@@ -370,14 +371,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     // 2. Sanitize the temp copy (strip raw OCR / notification content)
                     exportAnonymizer.sanitizeExport(tempCopy)
 
-                    // 3. Read sanitized bytes and encrypt
-                    val plainBytes = tempCopy.readBytes()
+                    // 3. Stream-encrypt: read sanitised file + write ciphertext in 8KB chunks
                     val backupPassword = getOrCreateBackupPassword()
-                    val encryptedBytes = backupEncryptionService.encrypt(plainBytes, backupPassword)
-
-                    // 4. Write encrypted output
                     val backupFile = File(exportDir, encryptedFileName)
-                    backupFile.writeBytes(encryptedBytes)
+                    FileOutputStream(backupFile).use { fos ->
+                        backupEncryptionService.encrypt(tempCopy, fos, backupPassword)
+                    }
 
                     Timber.d("Database encrypted and exported successfully to: ${backupFile.absolutePath}")
                     Result.success(backupFile)
@@ -907,6 +906,59 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         )
     }
 
+    /**
+     * Imports a legacy `.db` database file, replacing the current live database.
+     *
+     * ## BAK-N1: Legacy import lacks journal + maintenance mode (planned)
+     * Unlike [restoreCostBackup] which uses [RestoreJournal] for crash-safe
+     * tracking and [RestoreMaintenanceMode] to block writes during restore,
+     * this legacy import path does neither:
+     *
+     * - **No restore journal**: There is no [RestoreJournal] entry created before
+     *   the swap. If the process crashes during file replacement (between
+     *   [closeLiveDatabaseForFileSwap] and the final [liveImportVerifier]), the
+     *   database ends up in an indeterminate state with no audit trail.
+     * - **No maintenance mode**: Writes from other coroutines (auto-categorization,
+     *   recurring generation, notification processing) can race with the file swap,
+     *   potentially corrupting the live database or leaving WAL/SHM sidecars in an
+     *   inconsistent state.
+     *
+     * ### Backport plan:
+     * 1. **Wrap in [RestoreMaintenanceMode]**: Call `enter(RESTORE_PREPARING)`
+     *    before the safety backup and `exit()` after verification (or on failure).
+     * 2. **Create a [RestoreJournal] entry**: Journal the source path, staged path,
+     *    and live DB path. Transition through states (PREPARING → STAGED →
+     *    SAFETY_BACKUP_CREATED → SWAPPING → VERIFYING → COMMITTED/FAILED) just
+     *    like [restoreCostBackup].
+     * 3. **Leverage existing safety backup**: The safety backup is already created
+     *    below; the journal just needs to track its path for crash-recovery.
+     *
+     * Once these two pieces are added, `importDatabase()` becomes as crash-safe
+     * as [restoreCostBackup] and the two code paths can potentially share more
+     * infrastructure.
+     */
+    /**
+     * ## RSP-R5A: LegacyDatabaseImporter for pre-v6 schemas (planned)
+     * Currently [importDatabase] requires a source database at schema version
+     * >= [MIN_SUPPORTED_SCHEMA_VERSION] (v6). Databases created by very old app
+     * versions (v1–v5) are rejected because the migration chain does not cover
+     * those versions (see RSP-R2A).
+     *
+     * A future `LegacyDatabaseImporter` component should:
+     * 1. Open the legacy `.db` file with `SQLiteDatabase.openDatabase()` (bypassing
+     *    Room's schema validation).
+     * 2. Query the legacy table names and column definitions via `PRAGMA table_info`.
+     * 3. Map legacy columns to current [Expense], [Category], etc. fields using a
+     *    best-effort mapping (with sensible defaults for columns that did not exist).
+     * 4. Insert the mapped data into a freshly-migrated (v115) staging database via
+     *    the DAOs (not raw SQL), so all entity validations, defaults, and FK checks
+     *    are applied.
+     * 5. Log warnings for any data that could not be mapped (e.g. dropped columns).
+     *
+     * Until this importer is built, the [validateSourceDatabase] step will reject
+     * pre-v6 files with a descriptive error message directing the user to export
+     * their data first.
+     */
     override suspend fun importDatabase(sourceFile: File): Result<DatabaseImportSummary> = withContext(ioDispatcher) {
         try {
             // Validate source file exists and is readable

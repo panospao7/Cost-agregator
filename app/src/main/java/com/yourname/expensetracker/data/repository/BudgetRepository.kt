@@ -77,16 +77,22 @@ class BudgetRepository @Inject constructor(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     fun getBudgetStatuses(): Flow<List<BudgetStatus>> {
-        // Recalculate the expense query window on every day boundary so the flow
-        // stays current after midnight rollovers without requiring re-subscription.
+        // Reactive trigger from ExpenseDao: re-emits whenever the expenses table
+        // is invalidated by Room (any INSERT/UPDATE/DELETE on expenses). The value
+        // (Double?) is discarded — it is used only for invalidation so that budget
+        // statuses recompute when expenses change, not just at midnight or on
+        // budget/category table changes.
+        //
+        // Without this trigger, getBudgetStatuses() only recomputed on:
+        //   1. Day boundary rollovers (timeBoundaryTicker.dayBoundaryTicks())
+        //   2. Budget or category table changes (activeBudgetsFlow / getAllFlow())
+        // Expense changes were invisible until the next day boundary.
+        val expenseInvalidationTrigger: Flow<*> = expenseDao.getTotalSpentFlow().map { }
         return timeBoundaryTicker.dayBoundaryTicks().flatMapLatest { _ ->
-            // Use a lightweight invalidation trigger instead of fetching all expense rows.
-            // getTotalSpentFlow() emits whenever the expenses table changes (Room invalidation),
-            // so the combine block re-runs and executes fresh aggregate queries.
             combine(
                 budgetDao.getActiveBudgetsFlow(),
                 categoryDao.getAllFlow(),
-                expenseDao.getTotalSpentFlow().map { it ?: 0.0 }
+                expenseInvalidationTrigger
             ) { budgets, categories, _ ->
                 deriveBudgetStatuses(
                     budgets = budgets,
@@ -120,6 +126,15 @@ class BudgetRepository @Inject constructor(
         }
     }
 
+    /**
+     * Computes the current [BudgetStatus] for a budget, including compounding rollover.
+     *
+     * Spent amounts used in both the current period and rollover calculations come
+     * from aggregate SQL queries that filter by `transactionType = 'PURCHASE'` and
+     * `isNotMine = 0` and use **effective amounts** (ownership-adjusted amounts that
+     * correctly handle shared/not-mine splits). This ensures rollover surplus is
+     * computed against the user's true spending, not raw transaction amounts.
+     */
     private suspend fun createBudgetStatus(
         budget: Budget,
         categoryMap: Map<Long, Category>,
@@ -147,12 +162,32 @@ class BudgetRepository @Inject constructor(
 
         // LOG-002: Implement Compounding Rollover - BUG-2 FIX
         //
-        // BUD-2: This loop calls getAggregateSpent() once per completed period,
+        // BUD-2 / BUD-11: This loop calls getAggregateSpent() once per completed period,
         // resulting in N+1 queries for N past periods. For budgets with many
         // rollover periods (e.g. a daily budget with years of history) this is
-        // a performance gap. A future optimization should batch-fetch all period
-        // spendings with a single multi-period range query, or compute rollover
-        // incrementally and persist the accumulated surplus.
+        // a performance gap.
+        //
+        // ## BUD-11: Materialized rollover ledger (planned)
+        // The `BudgetPeriodLedger` approach eliminates the N+1 entirely:
+        //
+        // 1. Create a new table `budget_period_ledger` with columns:
+        //    `(budgetId, periodStart, periodEnd, surplus, spent, limit, updatedAt)`.
+        // 2. On every expense INSERT/UPDATE/DELETE that affects a budget's category,
+        //    atomically recompute and upsert the ledger row for the affected period.
+        //    This can be done via a Room `@Transaction` in `BudgetDao` or via a
+        //    SQL trigger on the `expenses` table.
+        // 3. During `createBudgetStatus`, replace the per-period loop with a single
+        //    `SELECT surplus FROM budget_period_ledger WHERE budgetId = ? AND periodEnd <= ?`
+        //    query — O(1) instead of O(N).
+        // 4. The ledger is always consistent because updates happen synchronously
+        //    with expense mutations. No background sync or staleness concerns.
+        // 5. Migration: backfill the ledger for existing budgets by iterating past
+        //    periods once during the schema migration or on first access.
+        //
+        // BUD-12-FIXED: rolloverDeficitTracking now implemented.
+        // When `rolloverDeficitTracking` is true, deficits (negative surplus)
+        // are carried forward to reduce the next period's effective limit.
+        // When false (default), only surplus is carried forward (surplus-only mode).
         if (budget.rollover) {
             val budgetFirstStart = budget.startDate
             val periods = mutableListOf<PeriodRange>()
@@ -170,8 +205,10 @@ class BudgetRepository @Inject constructor(
             var runningEffectiveLimit = baseLimit
             for (period in periods) {
                 val spentInPeriod = getAggregateSpent(budget.categoryId, period.start, period.end).displayAmount
-                val surplus = (runningEffectiveLimit - spentInPeriod).coerceAtLeast(0.0)
-                runningEffectiveLimit = baseLimit + surplus
+                // BUD-12-FIXED: Use rolloverDeficitTracking flag to control whether deficits carry forward.
+                val carryover = runningEffectiveLimit - spentInPeriod
+                val effectiveCarryover = if (budget.rolloverDeficitTracking) carryover else carryover.coerceAtLeast(0.0)
+                runningEffectiveLimit = baseLimit + effectiveCarryover
             }
             effectiveLimit = runningEffectiveLimit
         }

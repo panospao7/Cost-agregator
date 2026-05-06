@@ -24,6 +24,27 @@ import javax.inject.Singleton
  * where sharedLiability = sum(myShareOfSharedExpenses)
  *
  * Note: reimbursements are cash-flow events and are intentionally excluded from budget spend.
+ *
+ * ## SHR-3: Archived groups excluded from budget offsets (planned)
+ * Currently [calculateEffectiveBudgetSpend] calls
+ * [GroupsRepository.getActiveGroupsWithDetails] which only returns groups
+ * where `isActive = true`. Archived groups' shared expenses are thus completely
+ * excluded from budget offset calculations.
+ *
+ * This is problematic because a shared expense doesn't stop being a liability
+ * just because the group was archived. The user still has an accrual obligation
+ * for their share of past purchases even if the group is no longer active.
+ *
+ * The plan is to include archived groups' expenses in the budget offset:
+ * 1. Replace `getActiveGroupsWithDetails()` with `getAllGroupsWithDetails()`
+ *    that also fetches groups where `isActive = false`.
+ * 2. Add an `isArchived` flag to [BudgetSpendBreakdown] so downstream consumers
+ *    can distinguish active-group offsets from archived-group offsets.
+ * 3. In the UI (budget status cards), consider showing a footnote when
+ *    archived-group expenses contribute to the effective spend.
+ * 4. Be mindful of data volume: if a user has many archived groups with
+ *    hundreds of past expenses, consider a time-bounded query (e.g. only
+ *    include archived expenses within the current budget period).
  */
 @Singleton
 class SharedExpenseBudgetOffsetEngine @Inject constructor(

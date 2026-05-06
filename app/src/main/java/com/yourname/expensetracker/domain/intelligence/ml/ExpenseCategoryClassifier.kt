@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.intelligence.ml
 
 import android.content.Context
+import com.yourname.expensetracker.data.privacy.AtRestEncryptionService
 import timber.log.Timber
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -25,7 +26,8 @@ import javax.inject.Singleton
 @Singleton
 class ExpenseCategoryClassifier @Inject constructor(
     @ApplicationContext private val context: Context,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val atRestEncryptionService: AtRestEncryptionService
 ) {
     companion object {
         private const val TAG = "ExpenseCategoryNB"
@@ -165,15 +167,17 @@ class ExpenseCategoryClassifier @Inject constructor(
                 }
                 put("wordCounts", wordCountsJson)
             }
+            // AIML-16: At-rest encryption for ML model
+            val encrypted = atRestEncryptionService.encrypt(json.toString().toByteArray(Charsets.UTF_8))
             // Await disk write on the I/O dispatcher — no fire-and-forget.
             withContext(ioDispatcher) {
                 val target = File(context.filesDir, MODEL_FILE)
                 val tmp = File(context.filesDir, "$MODEL_FILE.tmp")
-                tmp.writeText(json.toString())
+                tmp.writeBytes(encrypted)
                 if (!tmp.renameTo(target)) {
                     // Fallback: direct overwrite (preserves backward compat on
                     // filesystems where atomic rename fails).
-                    target.writeText(json.toString())
+                    target.writeBytes(encrypted)
                     tmp.delete()
                 }
             }
@@ -190,8 +194,17 @@ class ExpenseCategoryClassifier @Inject constructor(
                     isLoaded = true
                     return@withContext
                 }
-                
-                val json = JSONObject(file.readText())
+
+                // AIML-16: Try to read as encrypted; fall back to legacy plaintext
+                val fileBytes = file.readBytes()
+                val jsonText = try {
+                    String(atRestEncryptionService.decrypt(fileBytes), Charsets.UTF_8)
+                } catch (e: Exception) {
+                    Timber.d("Could not decrypt category model file, trying legacy plaintext")
+                    String(fileBytes, Charsets.UTF_8)
+                }
+
+                val json = JSONObject(jsonText)
                 totalSamples = json.getInt("totalSamples")
                 
                 categoryCounts.clear()
@@ -216,6 +229,17 @@ class ExpenseCategoryClassifier @Inject constructor(
                 
                 isLoaded = true
                 unsavedChanges = 0
+
+                // AIML-16: Auto-migrate legacy plaintext file to encrypted
+                // We hold the mutex here, and saveModelInternal does not re-acquire it.
+                // Read the raw bytes again to check if they differ from encrypted form.
+                val reReadBytes = file.readBytes()
+                try {
+                    atRestEncryptionService.decrypt(reReadBytes)
+                } catch (e: Exception) {
+                    // Still plaintext on disk — re-save encrypted
+                    saveModelInternal()
+                }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to load model")
                 isLoaded = true

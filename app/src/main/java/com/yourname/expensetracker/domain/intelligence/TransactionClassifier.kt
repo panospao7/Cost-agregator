@@ -2,6 +2,7 @@
 package com.yourname.expensetracker.domain.intelligence
 
 import android.content.Context
+import com.yourname.expensetracker.data.privacy.AtRestEncryptionService
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
@@ -25,7 +26,8 @@ import timber.log.Timber
 @Singleton
 open class TransactionClassifier @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val userCorrectionRepository: UserCorrectionRepository
+    private val userCorrectionRepository: UserCorrectionRepository,
+    private val atRestEncryptionService: AtRestEncryptionService
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -44,6 +46,10 @@ open class TransactionClassifier @Inject constructor(
      * still launch new coroutines in the same process.
      */
     fun onBackground() {
+        // AIML-15: Call saveToDisk() before cancellation for model persistence durability.
+        // This ensures the in-memory model state is persisted to disk even if a pending
+        // save job is cancelled, preventing data loss when the app goes to background.
+        kotlinx.coroutines.runBlocking { saveToDisk() }
         synchronized(jobLock) {
             saveJob?.cancel()
             saveJob = null
@@ -117,6 +123,9 @@ open class TransactionClassifier @Inject constructor(
     private val isLoaded = AtomicBoolean(false)
     private var lastTrainingCount = 0
 
+    /** Set to true when a legacy plaintext model file was loaded and needs re-saving (encrypted). */
+    private var legacyFileMigrated = false
+
     suspend fun initialize() {
         if (isLoaded.get()) return
         mutex.withLock {
@@ -135,6 +144,11 @@ open class TransactionClassifier @Inject constructor(
 
                 isLoaded.set(true)
             }
+        }
+        // AIML-16: Re-save legacy plaintext model file as encrypted
+        if (legacyFileMigrated) {
+            legacyFileMigrated = false
+            saveToDisk()
         }
     }
 
@@ -390,7 +404,9 @@ open class TransactionClassifier @Inject constructor(
                     }
                 }
 
-                File(context.filesDir, MODEL_FILE).writeText(json.toString())
+                // AIML-16: At-rest encryption for ML model
+                val encrypted = atRestEncryptionService.encrypt(json.toString().toByteArray(Charsets.UTF_8))
+                File(context.filesDir, MODEL_FILE).writeBytes(encrypted)
             } catch (e: Exception) {
                 Timber.e("Failed to save ML model")
             }
@@ -402,7 +418,17 @@ open class TransactionClassifier @Inject constructor(
             val file = File(context.filesDir, MODEL_FILE)
             if (!file.exists()) return false
 
-            val json = JSONObject(file.readText())
+            // AIML-16: Try to read as encrypted; fall back to legacy plaintext
+            val fileBytes = file.readBytes()
+            val jsonText = try {
+                String(atRestEncryptionService.decrypt(fileBytes), Charsets.UTF_8)
+            } catch (e: Exception) {
+                Timber.d("Could not decrypt model file, trying legacy plaintext")
+                legacyFileMigrated = true
+                String(fileBytes, Charsets.UTF_8)
+            }
+
+            val json = JSONObject(jsonText)
             val version = json.optInt("version", 0)
             if (version != MODEL_VERSION) {
                 Timber.w("ML model version mismatch")

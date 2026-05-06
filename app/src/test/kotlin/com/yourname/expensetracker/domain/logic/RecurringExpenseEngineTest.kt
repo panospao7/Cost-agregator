@@ -265,6 +265,7 @@ class RecurringExpenseEngineTest {
             merchant = merchant,
             transactionType = TransactionType.PURCHASE,
             date = calendar.timeInMillis,
+            createdAt = System.currentTimeMillis(),
             isNotMine = isNotMine
         )
     }

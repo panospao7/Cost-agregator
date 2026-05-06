@@ -438,12 +438,38 @@ class FinancialHealthScoreV2 @Inject constructor(
      * 
      * Uses recurring-pattern cadence only as a weak proxy for timing consistency.
      * It does not treat pattern-detection confidence as payment reliability.
+     *
+     * ## AIML-26: Bill reliability from actual payment data
+     * Callers can supply [occurrenceReliability] computed from actual occurrence
+     * history (e.g. [RecurringOccurrenceDao] PAID/MISSED counts). When provided,
+     * this value is used directly, bypassing the cadence-based proxy below.
+     *
+     * Reliability from occurrence history should be computed as:
+     * `paidCount / (paidCount + missedCount) * 100`.
+     * - Query `recurring_occurrences` where `sourceType = 'RECURRING_RULE'` and
+     *   `sourceId = ruleId` for PAID/MISSED status.
+     * - Fall back to 75 (default) when no history exists.
+     *
+     * If [occurrenceReliability] is null (default), the method falls back to
+     * interval-regularity heuristics, returning a hardcoded 75 when no recurring
+     * patterns are detected.
+     *
+     * @param occurrenceReliability Optional externally-computed reliability score
+     *                              (0-100) from actual PAID/MISSED occurrence data.
+     *                              Null means fall back to cadence-based heuristic.
      */
     private suspend fun calculateBillReliabilityScore(
         expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
         periodStart: Long,
-        periodEnd: Long
+        periodEnd: Long,
+        occurrenceReliability: Double? = null
     ): Int {
+        // AIML-26: Use externally-provided occurrence reliability if available.
+        // This bypasses cadence-based heuristics and uses actual PAID/MISSED data.
+        if (occurrenceReliability != null) {
+            return occurrenceReliability.toInt().coerceIn(0, 100)
+        }
+
         // Get recurring patterns
         val patterns = recurringExpenseEngine.getPatterns(expenses)
 

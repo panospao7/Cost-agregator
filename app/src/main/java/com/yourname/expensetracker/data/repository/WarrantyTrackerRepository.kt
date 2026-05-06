@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.room.withTransaction
 import com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
 import com.yourname.expensetracker.data.database.entity.*
@@ -15,6 +17,7 @@ import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.Lazy
+import org.json.JSONObject
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.delay
@@ -37,6 +40,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class WarrantyTrackerRepository @Inject constructor(
+    private val database: AppDatabase,
     private val warrantyDao: WarrantyDao,
     private val returnWindowDao: ReturnWindowDao,
     private val receiptRepository: Lazy<ReceiptRepository>,
@@ -48,6 +52,8 @@ class WarrantyTrackerRepository @Inject constructor(
 ) {
     private companion object {
         private const val ACTIVE_ITEMS_REFRESH_INTERVAL_MS = 60 * 60 * 1000L // 1 hour
+        /** WRN-16: Minimum confidence threshold for cloud-extracted warranties (0.0 - 1.0). */
+        private const val MIN_CLOUD_CONFIDENCE = 0.5f
     }
 
     private fun activeItemsTickerFlow(intervalMs: Long = ACTIVE_ITEMS_REFRESH_INTERVAL_MS): Flow<Unit> = flow {
@@ -80,9 +86,50 @@ class WarrantyTrackerRepository @Inject constructor(
     suspend fun getWarrantyByReceiptId(receiptId: Long): Warranty? = 
         warrantyDao.getWarrantyByReceiptId(receiptId)
     
-    suspend fun addWarranty(warranty: Warranty): Long = warrantyDao.insertWarranty(warranty)
+    /**
+     * WRN-20: Manual warranty path is now transactional.
+     * The insert is wrapped in [database.withTransaction] to ensure ACID semantics
+     * when this method is part of a larger multi-table write (future-proofing).
+     */
+    suspend fun addWarranty(warranty: Warranty): Long = database.withTransaction {
+        warrantyDao.insertWarranty(warranty)
+    }
 
-    suspend fun addWarrantyIgnoreConflicts(warranty: Warranty): Long = warrantyDao.insertWarrantyIgnore(warranty)
+    suspend fun addWarrantyIgnoreConflicts(warranty: Warranty): Long = database.withTransaction {
+        val id = warrantyDao.insertWarrantyIgnore(warranty)
+        // AID-9 Gap 2: Audit trail for AI-driven warranty creation
+        if (id > 0L && warranty.autoDetected) {
+            val auditMessage = JSONObject().apply {
+                put("confidence", warranty.extractionConfidence)
+                put("extractionSource", warranty.extractionSource)
+            }.toString()
+            val auditMetadata = JSONObject().apply {
+                put("productName", warranty.productName)
+                put("warrantyDurationMonths", warranty.warrantyDurationMonths)
+                put("warrantyType", warranty.warrantyType.name)
+            }.toString()
+            runCatching {
+                database.receiptEventDao().insert(
+                    ReceiptEvent(
+                        receiptId = warranty.receiptId,
+                        sourceType = warranty.extractionSource,
+                        documentType = "WARRANTY_EXTRACTION",
+                        eventType = "AI_WARRANTY_CREATED",
+                        occurredAt = timeProvider.now(),
+                        oldStatus = null,
+                        newStatus = null,
+                        actor = "system:ai_warranty_extraction",
+                        message = auditMessage,
+                        metadata = auditMetadata,
+                        errorDetails = null
+                    )
+                )
+            }.onFailure { error ->
+                Timber.w(error, "AID-9: Failed to write AI_WARRANTY_CREATED audit event for warrantyId=$id")
+            }
+        }
+        id
+    }
     
     suspend fun updateWarranty(warranty: Warranty) = warrantyDao.updateWarranty(warranty)
     
@@ -239,7 +286,23 @@ class WarrantyTrackerRepository @Inject constructor(
         return cloudExtractionService.extractWarranty(input, shouldRedact)
     }
 
+    /**
+     * WRN-16: Cloud extraction confidence threshold enforcement.
+     * If confidence is below MIN_CLOUD_CONFIDENCE (0.5), the extraction
+     * result is discarded entirely (returns null) rather than creating
+     * a low-confidence warranty or a needs-review draft. This prevents
+     * unreliable cloud predictions from polluting the warranty list.
+     */
     private fun WarrantyExtractionResult.toWarrantyEntityOrNull(receipt: ScannedReceipt): Warranty? {
+        // WRN-16: Block extraction below confidence threshold
+        if (confidence < MIN_CLOUD_CONFIDENCE) {
+            Timber.w(
+                "WRN-16: Cloud extraction confidence %.2f below threshold %.2f for receipt %d, discarding",
+                confidence, MIN_CLOUD_CONFIDENCE, receipt.id
+            )
+            return null
+        }
+
         val durationMonths = warrantyMonths ?: return null
         val purchaseDate = receipt.parsedDate ?: receipt.createdAt
         val warrantyEndDate = purchaseDate.toCalendarMonthEndDate(durationMonths)
@@ -252,7 +315,8 @@ class WarrantyTrackerRepository @Inject constructor(
             receiptId = receipt.id,
             expenseId = receipt.expenseId,
             productName = productName,
-            merchantName = receipt.parsedMerchant ?: "Unknown",
+            // WRN-18: Use actual merchant from receipt; fallback includes context.
+            merchantName = receipt.parsedMerchant ?: receipt.sourceType?.let { "Receipt ($it)" } ?: "Unknown merchant",
             purchaseDate = purchaseDate,
             warrantyDurationMonths = durationMonths,
             warrantyEndDate = warrantyEndDate,
@@ -284,14 +348,21 @@ class WarrantyTrackerRepository @Inject constructor(
         
         val purchaseDate = receipt.parsedDate ?: receipt.createdAt
         val purchaseStart = TimePeriodUtils.getStartOfDay(purchaseDate)
-        val returnDeadline = TimePeriodUtils.addDays(purchaseStart, returnDays)
+        // Use half-open end-of-day semantics so the return window survives
+        // through its entire deadline day (matches warranty end-date fix).
+        val deadlineMidnight = TimePeriodUtils.addDays(purchaseStart, returnDays)
+        val returnDeadline = TimePeriodUtils.getEndOfDay(deadlineMidnight)
         val timestamps = createReturnWindowTimestamps()
         
+        // WRN-18: Use descriptive fallback for unknown merchant/product in return window.
+        val resolvedMerchant = receipt.parsedMerchant
+            ?: receipt.sourceType?.let { "Receipt ($it)" }
+            ?: "Unknown merchant"
         return ReturnWindow(
             receiptId = receipt.id,
             expenseId = receipt.expenseId,
-            productName = warranty?.productName ?: "Purchase from ${receipt.parsedMerchant ?: "Unknown"}",
-            merchantName = receipt.parsedMerchant ?: "Unknown",
+            productName = warranty?.productName ?: "Purchase from $resolvedMerchant",
+            merchantName = resolvedMerchant,
             purchaseDate = purchaseDate,
             returnDays = returnDays,
             returnDeadline = returnDeadline,
@@ -319,6 +390,21 @@ class WarrantyTrackerRepository @Inject constructor(
         }
     }
 
+    /**
+     * Returns the exclusive end-boundary of the calendar date [durationMonths]
+     * after the date represented by this timestamp.
+     *
+     * The result is the **start of the next day** after the last valid day,
+     * maintaining half-open interval semantics throughout the system.
+     *
+     * Before this fix, `atStartOfDay` was used, which caused warranties to
+     * be marked expired at 00:00:00 of their last valid day — losing a full
+     * day of coverage. The half-open fix means:
+     *   - A warranty expiring May 5 has endDate = May 6 00:00:00
+     *   - `warrantyEndDate < now()` is false all day on May 5, true on May 6
+     *
+     * See also: `createReturnWindowDeadline` which uses the same half-open pattern.
+     */
     private fun Long.toCalendarMonthEndDate(durationMonths: Int): Long {
         val zoneId = ZoneId.systemDefault()
         val endDate = Instant.ofEpochMilli(this)
@@ -326,7 +412,9 @@ class WarrantyTrackerRepository @Inject constructor(
             .toLocalDate()
             .plusMonths(durationMonths.toLong())
 
-        return endDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
+        // Use end-of-day (exclusive next-day start) for half-open correctness
+        val dayStart = endDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
+        return TimePeriodUtils.getEndOfDay(dayStart)
     }
 
     data class ExpiryReconciliationResult(
@@ -349,6 +437,15 @@ class WarrantyTrackerRepository @Inject constructor(
         )
     }
 
+    /**
+     * Creates a synthetic placeholder receipt for manual warranty/return window entries.
+     *
+     * NOTE: This bypasses [ReceiptLifecycleCoordinator] intentionally — this is NOT a
+     * real receipt scan. It creates a lightweight [ScannedReceipt] record solely to
+     * satisfy the foreign-key constraint on [Warranty.receiptId] / [ReturnWindow.receiptId].
+     * No OCR, deduplication, or warranty side effects are needed since the user is
+     * manually entering warranty data.
+     */
     suspend fun createManualPlaceholderReceipt(
         merchantName: String,
         purchaseDate: Long,

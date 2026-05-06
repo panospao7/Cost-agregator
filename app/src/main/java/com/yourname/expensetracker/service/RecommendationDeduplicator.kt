@@ -58,17 +58,21 @@ class RecommendationDeduplicator @Inject constructor(
     }
 
     /**
-     * Compute a unique signature for a recommendation.
+     * Compute a unique semantic signature for a recommendation.
+     *
+     * ## AIML-21: Recommendation dedupe includes raw timestamps
+     * Raw timestamps in the dateRange cause the same logical recommendation
+     * (e.g. "review this week's spending") to have different signatures when
+     * generated at different times. We now map raw timestamps to semantic labels:
+     *   - 0-1 day span  → "today"
+     *   - 2-7 day span  → "this_week"
+     *   - 8-31 day span → "this_month"
+     *   - 32-93 day span → "this_quarter"
+     *   - otherwise     → "custom"
      *
      * **Signature Components**:
      * - Navigation target (e.g., "TRANSACTION_LIST", "CATEGORY_DETAIL")
-      * - Filter criteria hash (categoryId, merchantName, dateRange from JSON)
-     *
-     * **Examples**:
-      * - High-Amount: `TRANSACTION_LIST:cat=5,minAmount=100.0`
-      * - Category: `CATEGORY_DETAIL:cat=5,dateRange=1234567890-1234567899`
-      * - Merchant: `TRANSACTION_LIST:merchant=Amazon`
-      * - Recent: `TRANSACTION_LIST:dateRange=1234567890-1234567899`
+     * - Filter criteria hash (categoryId, merchantName, semantic dateRange)
      *
      * @param rec Recommendation to compute signature for
      * @return String signature uniquely identifying the recommendation target
@@ -89,8 +93,17 @@ class RecommendationDeduplicator @Inject constructor(
             filter.ownership?.let { filterParts.add("ownership=${it.name}") }
             filter.minAmount?.let { filterParts.add("minAmount=$it") }
             filter.maxAmount?.let { filterParts.add("maxAmount=$it") }
-            filter.dateRange?.let { (start, end) -> 
-                filterParts.add("dateRange=$start-$end") 
+            // AIML-21: Use semantic date range labels instead of raw timestamps
+            filter.dateRange?.let { (start, end) ->
+                val spanDays = ((end - start) / 86_400_000L).coerceAtLeast(0)
+                val label = when {
+                    spanDays <= 1 -> "today"
+                    spanDays <= 7 -> "this_week"
+                    spanDays <= 31 -> "this_month"
+                    spanDays <= 93 -> "this_quarter"
+                    else -> "custom"
+                }
+                filterParts.add("dateRange=$label")
             }
             filter.transactionType?.let { filterParts.add("type=${it.name}") }
             

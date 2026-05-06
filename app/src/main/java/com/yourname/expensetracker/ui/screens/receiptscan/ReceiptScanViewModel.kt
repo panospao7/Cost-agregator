@@ -6,8 +6,14 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.repository.CategoryRepository
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.dto.ReceiptItemCategorizationSnapshot
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
@@ -30,6 +36,8 @@ import com.yourname.expensetracker.domain.parser.ParsedTransaction
 import com.yourname.expensetracker.domain.parser.ParsedTransactionType
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
+import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -153,7 +161,11 @@ class ReceiptScanViewModel @Inject constructor(
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
     private val receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
-    private val receiptParser: ReceiptParser
+    private val receiptParser: ReceiptParser,
+    private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
+    private val receiptLinkService: ReceiptLinkService,
+    private val merchantNormalizer: MerchantNormalizer,
+    private val hybridClassifier: HybridExpenseClassifier
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ReceiptScanState(
@@ -1045,19 +1057,77 @@ class ReceiptScanViewModel @Inject constructor(
                         ?.takeIf { it.isNotBlank() }
                         ?: defaultCurrency
 
-                val result = receiptRepository.createExpenseFromReceipt(
-                    receiptId = request.receiptId,
-                    merchant = request.merchant,
-                    amount = request.amount,
+                // ── Fix 1 (CRITICAL): Tax-inclusive amount override (RCP-14) ──────
+                // Use in-memory parsedReceipt state (taxInclusive is @Ignore /
+                // transient in ScannedReceipt, so loading from DB always returns
+                // false).
+                val taxInclusive = _state.value.parsedReceipt?.taxInclusive == true
+                val parsedTotal = _state.value.parsedReceipt?.total
+                val effectiveAmount = if (taxInclusive && parsedTotal != null) {
+                    Timber.d(
+                        "RCP-14: Overriding amount from %.2f to %.2f for tax-inclusive receipt %d",
+                        request.amount, parsedTotal, request.receiptId
+                    )
+                    parsedTotal
+                } else {
+                    request.amount
+                }
+
+                // ── Fix 2 (CRITICAL): Merchant normalization ──────────────────────
+                val normalizedMerchant = merchantNormalizer.normalize(
+                    rawName = request.merchant,
+                    autoCreate = true
+                ).canonical.normalizedName
+
+                // ── Fix 3 (CRITICAL): Auto-categorization when no category chosen ──
+                val finalCategoryId = request.categoryId ?: hybridClassifier.classify(
+                    merchantName = normalizedMerchant,
+                    amount = effectiveAmount
+                ).categoryId.takeIf { it > 0 }
+
+                // ── Fix 4 (MAJOR): Notes fallback ────────────────────────────────
+                val notes = request.notes ?: "Scanned from receipt"
+
+                // Build the expense creation request
+                val createRequest = CreateExpenseRequest(
+                    merchant = normalizedMerchant,
+                    amount = effectiveAmount,
                     currency = resolvedCurrency,
-                    categoryId = request.categoryId,
                     date = request.date,
+                    transactionType = TransactionType.PURCHASE,
+                    source = ExpenseSource.RECEIPT_SCAN,
+                    categoryId = finalCategoryId,
+                    notes = notes,
                     paymentMethod = request.paymentMethod,
-                    notes = request.notes
+                    isManualEntry = true,
+                    scannedReceiptId = request.receiptId
                 )
 
+                val result = transactionLifecycleCoordinator.createExpense(createRequest)
+
                 when (result) {
-                    is Result.Success -> {
+                    is CreateExpenseResult.Created -> {
+                        // Link receipt to the newly created expense
+                        receiptLinkService.linkReceiptToExpense(
+                            receiptId = request.receiptId,
+                            expenseId = result.expenseId,
+                            linkType = "DIRECT_SAVE",
+                            source = ExpenseSource.RECEIPT_SCAN.name
+                        )
+
+                        // ── Fix 5 (MAJOR): Classifier learning (best-effort) ──────
+                        if (finalCategoryId != null) {
+                            try {
+                                hybridClassifier.learnFromCorrection(
+                                    merchantName = normalizedMerchant,
+                                    correctCategoryId = finalCategoryId,
+                                    amount = effectiveAmount
+                                )
+                            } catch (e: Exception) {
+                                Timber.w(e, "Classifier learning failed after receipt save")
+                            }
+                        }
+
                         _state.update {
                             it.copy(
                                 isSaving = false,
@@ -1066,7 +1136,7 @@ class ReceiptScanViewModel @Inject constructor(
                             )
                         }
                     }
-                    is Result.Duplicate -> {
+                    is CreateExpenseResult.DuplicateSkipped -> {
                         _state.update {
                             it.copy(
                                 isSaving = false,
@@ -1074,16 +1144,35 @@ class ReceiptScanViewModel @Inject constructor(
                             )
                         }
                     }
-                    is Result.Error -> {
+                    is CreateExpenseResult.ValidationFailed -> {
                         _state.update {
                             it.copy(
                                 isSaving = false,
-                                saveResult = SaveReceiptResult.Error(result.message ?: "Unknown error")
+                                saveResult = SaveReceiptResult.Error(
+                                    result.errors.joinToString(", ")
+                                )
                             )
                         }
                     }
-                    Result.Loading -> {
-                        _state.update { it.copy(isSaving = true) }
+                    is CreateExpenseResult.InsertConflict -> {
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                saveResult = SaveReceiptResult.Error(
+                                    "Insert conflict: ${result.dedupeKey}"
+                                )
+                            )
+                        }
+                    }
+                    is CreateExpenseResult.Error -> {
+                        _state.update {
+                            it.copy(
+                                isSaving = false,
+                                saveResult = SaveReceiptResult.Error(
+                                    result.exception.message ?: "Unknown error"
+                                )
+                            )
+                        }
                     }
                 }
             } catch (e: Exception) {

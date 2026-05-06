@@ -65,6 +65,11 @@ object AppConfig {
          *  250 m covers the 95th-percentile scatter without returning too many POIs. */
         const val OVERPASS_SEARCH_RADIUS_M = 250
 
+        /** Max distance in metres for auto-accepting a single Overpass POI result.
+         *  If the single POI is beyond this distance from device location, the user
+         *  is prompted to confirm instead of auto-accepting. 0 = no distance limit. */
+        const val OVERPASS_AUTO_ACCEPT_MAX_DISTANCE_M = 200
+
         /** Haversine radius (km) within which a user correction is considered area-local. */
         const val CORRECTION_AREA_RADIUS_KM = 5.0f
 
@@ -87,6 +92,7 @@ object AppConfig {
         const val SOURCE_USER_MANUAL = "USER_MANUAL"
         const val SOURCE_USER_CONFIRMED_POI = "USER_CONFIRMED_POI"
         const val SOURCE_DEVICE_GPS = "DEVICE_GPS"
+        const val SOURCE_UNKNOWN = "UNKNOWN"
         const val SOURCE_PHOTON = "PHOTON"
         const val SOURCE_GEOAPIFY = "GEOAPIFY"
         const val SOURCE_GOOGLE_PLACES = "GOOGLE_PLACES"

@@ -112,7 +112,7 @@ class AccountingExportRepository @Inject constructor(
                 ExportFormat.ACCOUNTANT_REPORT_PDF -> "accountant_report_$timestamp.pdf"
             }
 
-            val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+            val exportDir = File(context.filesDir, "exports").apply { mkdirs() }
             // SR-2: Atomic export via temp file + rename
             // Write to a temporary file first, then atomically rename to the
             // final path. This prevents partial/corrupted export files when

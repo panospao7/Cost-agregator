@@ -14,9 +14,9 @@ import com.yourname.expensetracker.R
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
-import java.util.concurrent.TimeUnit
 
 /**
  * Periodic WorkManager worker that checks for due reminder deliveries
@@ -169,38 +169,7 @@ class BillReminderWorker @AssistedInject constructor(
          * Uses [ExistingPeriodicWorkPolicy.KEEP] so only one schedule is active.
          */
         fun schedule(context: Context) {
-            val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return
-            if (!spec.enabled) {
-                Log.w(TAG, "Worker $WORK_NAME disabled by spec, skipping schedule")
-                return
-            }
-            val intervalHours = spec.repeatIntervalHours ?: run {
-                Log.w(TAG, "Worker $WORK_NAME has no repeat interval, skipping periodic schedule")
-                return
-            }
-            val flexMinutes = spec.flexMinutes
-
-            val builder = if (flexMinutes != null) {
-                PeriodicWorkRequestBuilder<BillReminderWorker>(
-                    intervalHours, TimeUnit.HOURS,
-                    flexMinutes, TimeUnit.MINUTES
-                )
-            } else {
-                PeriodicWorkRequestBuilder<BillReminderWorker>(
-                    intervalHours, TimeUnit.HOURS
-                )
-            }
-
-            val request = builder
-                .setConstraints(spec.constraints)
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                WORK_NAME,
-                spec.existingWorkPolicy,
-                request
-            )
-            Log.d(TAG, "BillReminderWorker scheduled (interval=${intervalHours}h, flex=${flexMinutes}min)")
+            WorkerSpecScheduler.scheduleFromSpec(context, WORK_NAME, BillReminderWorker::class.java)
         }
     }
 }

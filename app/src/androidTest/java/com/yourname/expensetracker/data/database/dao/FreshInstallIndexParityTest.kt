@@ -29,6 +29,30 @@ import org.junit.runner.RunWith
  * The test inspects `sqlite_master` for the expected index names **and**
  * verifies the subscription-candidate SQLite uniqueness is no longer present,
  * while budget-forecast behavior still relies on app-layer handling.
+ *
+ * ## RSP-R6A: Fresh-vs-migrated parity test plan (full)
+ * The current test only validates fresh-install (in-memory) databases. A full
+ * parity test suite should compare `sqlite_master` output between:
+ * 1. A fresh install via [AppDatabase.inMemoryBuilder] (this test).
+ * 2. A fully migrated database created by running the entire migration chain
+ *    from v6 (or the lowest exported schema) to [APP_DATABASE_SCHEMA_VERSION]
+ *    via [MigrationTestHelper.runMigrationsAndValidate].
+ *
+ * ### Parity assertions (planned)
+ * - Both paths must produce an identical set of table names, column definitions,
+ *   column types, default values, NOT NULL constraints, and FK declarations
+ *   (compare `PRAGMA table_info` for every table).
+ * - Both paths must produce an identical set of index names, indexed columns,
+ *   and UNIQUE predicates (compare `PRAGMA index_list` + `PRAGMA index_info`
+ *   for every index).
+ * - Both paths must produce the same set of triggers (if any) and views.
+ * - The comparison should be automated in a single parameterised test that
+ *   iterates over all table names obtained from `sqlite_master`.
+ *
+ * A schema drift (divergence between fresh and migrated) indicates that a
+ * Room migration produced a table/index shape different from what the Room
+ * annotation processor generated for a fresh schema at the same version.
+ * This test class is the first step toward that full parity coverage.
  */
 @RunWith(AndroidJUnit4::class)
 class FreshInstallIndexParityTest {

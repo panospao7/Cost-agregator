@@ -263,6 +263,7 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
         amount = amount,
         merchant = "Test Merchant",
         transactionType = TransactionType.PURCHASE,
-        date = date
+        date = date,
+        createdAt = System.currentTimeMillis()
     )
 }

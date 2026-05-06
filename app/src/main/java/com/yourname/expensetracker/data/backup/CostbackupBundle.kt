@@ -4,9 +4,12 @@ import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import org.json.JSONObject
 import timber.log.Timber
 import java.io.BufferedOutputStream
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.SequenceInputStream
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.zip.ZipEntry
@@ -164,6 +167,24 @@ object CostbackupBundle {
     }
 
     /**
+     * Reads and validates the .costbackup header from [inputStream], consuming
+     * exactly [HEADER_SIZE] bytes. Throws on invalid magic or version.
+     *
+     * After this call returns, [inputStream] is positioned at the start of the
+     * ciphertext (salt + IV + encrypted ZIP).
+     */
+    fun readHeaderFromStream(inputStream: InputStream) {
+        val headerBytes = ByteArray(HEADER_SIZE)
+        var offset = 0
+        while (offset < HEADER_SIZE) {
+            val n = inputStream.read(headerBytes, offset, HEADER_SIZE - offset)
+            if (n == -1) throw InvalidBackupFormatException("File too short: missing header")
+            offset += n
+        }
+        readHeader(headerBytes)
+    }
+
+    /**
      * Reads and validates the .costbackup header from [bytes].
      * Returns the remaining ciphertext (which includes salt + IV embedded by
      * [BackupEncryptionService]).
@@ -261,32 +282,48 @@ object CostbackupBundle {
         password: String,
         encryptionService: BackupEncryptionService = BackupEncryptionService()
     ): Result<ExtractionResult> = runCatching {
-        val bundleBytes = bundleFile.readBytes()
+        // 1. Open bundle and read/validate header via streaming
+        val fis = FileInputStream(bundleFile)
+        readHeaderFromStream(fis)
+        // fis is now positioned at start of ciphertext (salt + IV + encrypted ZIP)
 
-        // 1. Read and validate header (salt + IV are inside ciphertext, managed by BackupEncryptionService)
-        val ciphertext = readHeader(bundleBytes)
-
-        // 2. Decrypt
-        val zipBytes = try {
-            encryptionService.decrypt(ciphertext, password)
+        // 2. Streaming decrypt (CipherInputStream wraps the remaining stream)
+        // The GCM tag is only verified when the stream is fully consumed, so
+        // AEADBadTagException may be thrown from any read() call or close().
+        val cipherStream = try {
+            encryptionService.decryptStream(fis, password)
         } catch (e: javax.crypto.AEADBadTagException) {
+            fis.close()
             throw WrongBackupPasswordException("Incorrect password or corrupted data")
         }
 
-        // 3. Verify ZIP magic
-        if (zipBytes.size < 4 ||
-            zipBytes[0] != 0x50.toByte() ||
-            zipBytes[1] != 0x4B.toByte() ||
-            zipBytes[2] != 0x03.toByte() ||
-            zipBytes[3] != 0x04.toByte()
-        ) {
-            throw InvalidBackupFormatException("Decrypted data is not a valid ZIP archive")
-        }
+        // 3. Verify ZIP magic + extract ZIP (wrapped for late GCM tag failures)
+        val extractedFiles = mutableMapOf<String, File>()
+        try {
+            // Verify ZIP magic by peeking at first 4 bytes, then re-assemble
+            val magicBytes = ByteArray(4)
+            var magicOffset = 0
+            while (magicOffset < 4) {
+                val n = cipherStream.read(magicBytes, magicOffset, 4 - magicOffset)
+                if (n == -1) {
+                    cipherStream.close()
+                    throw InvalidBackupFormatException("Decrypted data too short for ZIP magic")
+                }
+                magicOffset += n
+            }
+            if (magicBytes[0] != 0x50.toByte() || magicBytes[1] != 0x4B.toByte() ||
+                magicBytes[2] != 0x03.toByte() || magicBytes[3] != 0x04.toByte()
+            ) {
+                cipherStream.close()
+                throw InvalidBackupFormatException("Decrypted data is not a valid ZIP archive")
+            }
 
             // 4. Extract ZIP (with ZIP Slip protection)
+            // Reassemble: magic bytes (already read) + remaining cipher stream
             outputDir.mkdirs()
-            val extractedFiles = mutableMapOf<String, File>()
-            val zis = ZipInputStream(zipBytes.inputStream())
+            val magicInput = ByteArrayInputStream(magicBytes)
+            val fullStream = SequenceInputStream(magicInput, cipherStream)
+            val zis = ZipInputStream(fullStream)
             try {
                 var entry = zis.nextEntry
                 while (entry != null) {
@@ -325,6 +362,9 @@ object CostbackupBundle {
             } finally {
                 zis.close()
             }
+        } catch (e: javax.crypto.AEADBadTagException) {
+            throw WrongBackupPasswordException("Incorrect password or corrupted data")
+        }
 
         // 5. Read manifest
         val manifestFile = extractedFiles["manifest.json"]

@@ -280,11 +280,11 @@ class SubscriptionManagementViewModel @Inject constructor(
                 
                 val id = repository.insertSubscription(subscription)
                 
-                // Record initial price
+                // REC-8: Record initial baseline price entry
                 val priceHistory = SubscriptionPriceHistory(
                     subscriptionId = id,
                     amount = amount,
-                    changeReason = "Initial subscription"
+                    changeReason = "BASELINE: Initial subscription"
                 )
                 repository.insertPriceHistory(priceHistory)
                 
@@ -356,11 +356,11 @@ class SubscriptionManagementViewModel @Inject constructor(
                 
                 val subscriptionId = repository.insertSubscription(subscription)
                 
-                // Record initial price
+                // REC-8: Record initial baseline price entry
                 val priceHistory = SubscriptionPriceHistory(
                     subscriptionId = subscriptionId,
                     amount = candidate.averageAmount,
-                    changeReason = "Auto-detected from notifications"
+                    changeReason = "BASELINE: Auto-detected from notifications"
                 )
                 repository.insertPriceHistory(priceHistory)
                 

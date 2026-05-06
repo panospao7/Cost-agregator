@@ -7,12 +7,14 @@ import com.yourname.expensetracker.domain.currency.ConversionResult
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import java.util.Currency
 import javax.inject.Inject
 
@@ -51,7 +53,8 @@ class CurrencyManagementViewModel @Inject constructor(
     private val currencyDataRepository: CurrencyDataRepository,
     private val currencyConverter: CurrencyConverter,
     private val currencyRatesRepository: CurrencyRatesRepository,
-    private val settingsRepository: CurrencySettingsRepository
+    private val settingsRepository: CurrencySettingsRepository,
+    private val hybridClassifier: HybridExpenseClassifier
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(CurrencyManagementUiState())
@@ -95,7 +98,7 @@ class CurrencyManagementViewModel @Inject constructor(
                 
                 // Load exchange rates
                 val homeCurrency = _uiState.value.homeCurrency
-                val rates = currencyDataRepository.getAllRatesForBase(homeCurrency).first()
+                val rates = currencyDataRepository.getRatesToCurrency(homeCurrency).first()
                     .map { rate ->
                         ExchangeRateInfo(
                             fromCurrency = rate.fromCurrency,
@@ -142,12 +145,34 @@ class CurrencyManagementViewModel @Inject constructor(
     
     /**
      * Set the home currency.
+     *
+     * ## CURR-6: Trigger re-normalization after home currency change
+     * After saving the new home currency, the following re-normalization steps
+     * are performed:
+     *
+     * 1. Invalidate the hybrid classifier's category snapshot so cached amounts
+     *    are refreshed.
+     * 2. (Future) Clear currency converter rate cache — no-op for now because
+     *    [CurrencyConverter] does not maintain a mutable rate cache that needs
+     *    invalidation.
+     * 3. Signal the UI to refresh via the existing [loadCurrencyData] flow
+     *    (triggered by the settings flow collector in [init]).
+     *
+     * Full amount re-normalization (converting stored expense amounts, budget
+     * limits, and recurring obligations to the new home currency) is tracked as
+     * a future step. Until then, existing amounts remain in their original
+     * currency and only newly entered transactions will use the new setting.
      */
     fun setHomeCurrency(currencyCode: String) {
         viewModelScope.launch {
             // Persist to settings
             settingsRepository.setHomeCurrency(currencyCode)
-            
+
+            // CURR-6: Invalidate caches so re-classification uses fresh data
+            hybridClassifier.invalidateCategorySnapshot()
+            // CurrencyConverter does not have a clearRateCache() method;
+            // full amount re-normalization is a future step.
+
             // State will be updated by the flow collector in init
             _uiState.value = _uiState.value.copy(
                 isLoading = true

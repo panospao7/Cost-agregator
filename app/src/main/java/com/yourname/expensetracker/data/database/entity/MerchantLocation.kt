@@ -11,6 +11,13 @@ import androidx.room.PrimaryKey
  * many raw notification strings all share one cache entry.
  *
  * Added in DB v28.
+ *
+ * ## DB-8: CASCADE audit — MerchantLocation
+ * This entity has **no foreign key declarations**. No cascade-delete risk exists.
+ * Cleanup is handled by application-level cache eviction (staleness checks on
+ * [lastResolvedAt]). If a future FK is added to link to a merchant or receipt,
+ * it should use `onDelete = ForeignKey.SET_NULL` to avoid silently erasing
+ * geolocation history.
  */
 @Entity(
     tableName = "merchant_locations",

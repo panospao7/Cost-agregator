@@ -49,6 +49,28 @@ class SpendingHeatmapEngine @Inject constructor() {
      *
      * @param expenses located expenses already filtered to spending types only
      *                 (see class-level contract). Returns an empty list if empty.
+     *
+     * ## LOC-9: MultiCurrencyRepository in location analytics (limitation)
+     * The input [LocatedExpense.amount] values are raw amounts as stored in the
+     * database (in the expense's original currency). When the user has multi-currency
+     * expenses, summing these raw amounts across currencies produces misleading
+     * heatmap intensities (e.g. 100 JPY ≈ 0.60 EUR, not 100 EUR).
+     *
+     * A currency-aware normalisation method (`normalizeAmounts`) was planned but
+     * could not be implemented because:
+     * 1. [LocatedExpense] does **not** carry a `currency` field — the engine has
+     *    no way to know which currency each amount is denominated in.
+     * 2. The `compute()` method is a synchronous (non-suspend) function, while
+     *    [CurrencyConverter.convert] is a suspend function that requires a
+     *    coroutine context.
+     *
+     * Callers SHOULD normalise amounts to the user's home currency **before**
+     * constructing [LocatedExpense] instances and passing them to [compute].
+     * The [MultiCurrencyRepository.getExpensesWithConversion] method can be used
+     * to obtain per-expense home-currency amounts from the data layer.
+     * Once caller-side normalisation is in place, this engine will treat all
+     * amounts as home-currency-equivalent and the log-normalisation step will
+     * produce correct relative intensities regardless of source currency mix.
      */
     fun compute(expenses: List<LocatedExpense>): List<HeatmapPoint> {
         if (expenses.isEmpty()) return emptyList()

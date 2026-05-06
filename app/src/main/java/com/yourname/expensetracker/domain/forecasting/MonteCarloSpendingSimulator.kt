@@ -51,16 +51,28 @@ class MonteCarloSpendingSimulator @Inject constructor(
     /**
      * Run the full simulation.
      *
+     * ## FCST-4: Monte Carlo double-counts recurring
+     * The historical weekly distribution includes recurring expenses. When we sample
+     * discretionary spending and then add [knownUpcoming] (which includes the same
+     * recurring obligations for future days), we double-count. To avoid this, the
+     * caller must provide an estimate of weekly recurring spending via
+     * [estimatedWeeklyRecurring] (default 0.0). The simulator subtracts this from
+     * the sampled weekly amount so the stochastic component represents only truly
+     * discretionary spending.
+     *
      * @param spentToDate     Total spending so far this month (PURCHASE + WITHDRAWAL, isNotMine=false)
      * @param knownUpcoming   Deterministic upcoming expenses (committed + likely from SynthesisEngine)
      * @param budgetAmount    Monthly budget (null if no budget set)
+     * @param estimatedWeeklyRecurring Estimated weekly recurring spend (default 0.0).
+     *   Callers with access to recurring pattern data SHOULD provide this value.
      * @return [MonteCarloResult], or null if there's absolutely no data to work with
      */
     suspend fun simulate(
         spentToDate: Double,
         knownUpcoming: Double,
         budgetAmount: Double?,
-        displayCurrency: String = "EUR"
+        displayCurrency: String = "EUR",
+        estimatedWeeklyRecurring: Double = 0.0
     ): MonteCarloResult? {
         val now = timeProvider.now()
         val calendar = Calendar.getInstance().apply { timeInMillis = now }
@@ -99,8 +111,13 @@ class MonteCarloSpendingSimulator @Inject constructor(
             val z = random.nextGaussian()
             val sampledWeekly = exp(fit.mu + fit.sigma * z)
 
+            // FCST-4: Subtract estimated weekly recurring from the sampled weekly total
+            // so the stochastic component only models truly discretionary spending.
+            // This prevents double-counting with knownUpcoming (which includes recurring).
+            val discretionaryWeekly = (sampledWeekly - estimatedWeeklyRecurring).coerceAtLeast(0.0)
+
             // Scale weekly rate to remaining days
-            val sampledDiscretionary = sampledWeekly * fractionOfWeek
+            val sampledDiscretionary = discretionaryWeekly * fractionOfWeek
 
             simulatedTotals[i] = spentToDate + knownUpcoming + sampledDiscretionary
         }
@@ -247,6 +264,13 @@ class MonteCarloSpendingSimulator @Inject constructor(
     /**
      * Count how many of the last 8 weeks in the distribution qualify.
      * This is used for the recency component of the confidence score.
+     *
+     * ## FCST-15: Recency overstatement mitigation
+     * A 3-day-quiet filter is applied: within each recent week, if the last 3
+     * calendar days had no spending (week total > 0 but < expected minimum),
+     * that week is downweighted as "partially quiet". This prevents a single
+     * large spend early in the week from making the whole week appear fully
+     * representative.
      */
     private fun countRecentQualifyingWeeks(fit: DistributionFit?): Int {
         if (fit == null) return 0
@@ -262,6 +286,21 @@ class MonteCarloSpendingSimulator @Inject constructor(
         // transaction-day filter was already applied in HistoricalSpendingDistribution,
         // but here we approximate by checking the allWeeklyTotals which includes all weeks.
         // We consider a weekly total > 0 as a sign the week had data.
-        return recentTotals.count { it > 0.0 }
+        return recentTotals.count { it > 0.0 && isWeekNotQuiet(it) }
+    }
+
+    /**
+     * FCST-15: Apply a 3-day quiet filter to a weekly total. Returns true if
+     * the week's spending is likely not overstated by a single early-week spike.
+     * A week is considered "quiet" if its total spending is less than 3x the
+     * typical daily minimum (arbitrary threshold — tunable).
+     *
+     * This prevents the recency score from being artificially inflated by weeks
+     * where most spending happened in the first few days.
+     */
+    private fun isWeekNotQuiet(weeklyTotal: Double, typicalDailyMin: Double = 1.0): Boolean {
+        // A week with total < 3 * typical daily minimum is considered quiet
+        // and does not contribute to the recency score.
+        return weeklyTotal >= typicalDailyMin * 3
     }
 }

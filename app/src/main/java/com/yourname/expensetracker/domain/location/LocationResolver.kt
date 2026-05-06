@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlin.math.pow
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -277,18 +278,32 @@ class LocationResolver @Inject constructor(
                 // HIGH-14 FIX: Anonymize merchant names in logs
                 Log.d(TAG, "Overpass found ${pois.size} candidates for merchant hash: ${cacheKey.anonymizeForLog()}")
                 return if (pois.size == 1) {
-                    // Single match — auto-resolve
                     val poi = pois.first()
-                    val resolved = LocationResolutionResult.Resolved(
-                        latitude = poi.latitude,
-                        longitude = poi.longitude,
-                        source = AppConfig.Location.SOURCE_OVERPASS_POI,
-                        osmId = poi.osmId,
-                        displayAddress = poi.displayAddress,
-                        confidence = 0.7f
+                    // LOC-3: Apply name-similarity and distance gates before auto-accepting.
+                    // If the single POI's name is too dissimilar from the merchant name
+                    // or it's too far from the device location, reject auto-resolution.
+                    val nameSimilar = isNameSimilar(cleanedName, poi.name)
+                    val withinDistance = isWithinRadius(
+                        poi.latitude, poi.longitude,
+                        overpassLocation.first, overpassLocation.second,
+                        AppConfig.Location.OVERPASS_AUTO_ACCEPT_MAX_DISTANCE_M
                     )
-                    locationCachePort.saveLocation(cacheKey, resolved)
-                    resolved
+                    if (nameSimilar && withinDistance) {
+                        Log.d(TAG, "Overpass single POI passed gates (nameSimilar=$nameSimilar, withinDistance=$withinDistance) — auto-resolving")
+                        val resolved = LocationResolutionResult.Resolved(
+                            latitude = poi.latitude,
+                            longitude = poi.longitude,
+                            source = AppConfig.Location.SOURCE_OVERPASS_POI,
+                            osmId = poi.osmId,
+                            displayAddress = poi.displayAddress,
+                            confidence = 0.7f
+                        )
+                        locationCachePort.saveLocation(cacheKey, resolved)
+                        resolved
+                    } else {
+                        Log.d(TAG, "Overpass single POI rejected by gates (nameSimilar=$nameSimilar, withinDistance=$withinDistance)")
+                        LocationResolutionResult.NeedsUserSelection(pois)
+                    }
                 } else {
                     LocationResolutionResult.NeedsUserSelection(pois)
                 }
@@ -368,6 +383,50 @@ class LocationResolver @Inject constructor(
             fallbackLat to fallbackLon
         }
         return locationCachePort.getMostLikelyArea(merchantName, areaLat, areaLon)
+    }
+
+    /**
+     * Checks whether the POI name is similar enough to the original merchant name
+     * to justify auto-resolution. Uses a simple overlap heuristic: the longer name
+     * must contain at least one word from the shorter name (case-insensitive).
+     * Returns true if names are similar enough, false otherwise.
+     */
+    private fun isNameSimilar(merchantName: String, poiName: String?): Boolean {
+        if (poiName.isNullOrBlank()) return false
+        val merchantWords = merchantName.lowercase().split(Regex("\\s+")).filter { it.length > 2 }
+        val poiWords = poiName.lowercase().split(Regex("\\s+")).filter { it.length > 2 }
+        if (merchantWords.isEmpty() || poiWords.isEmpty()) return false
+        // At least one significant word from the merchant appears in the POI name (or vice versa)
+        return merchantWords.any { mw -> poiWords.any { pw -> pw.contains(mw) || mw.contains(pw) } }
+    }
+
+    /**
+     * Checks whether the POI is within the maximum allowed distance from the
+     * device location for auto-resolution. Uses the Haversine approximation.
+     */
+    private fun isWithinRadius(
+        poiLat: Double, poiLon: Double,
+        deviceLat: Double, deviceLon: Double,
+        maxMetres: Number
+    ): Boolean {
+        val limit = maxMetres.toDouble()
+        if (limit <= 0) return true // No limit configured
+        val distance = haversineDistance(poiLat, poiLon, deviceLat, deviceLon)
+        return distance <= limit
+    }
+
+    /**
+     * Haversine distance in metres between two lat/lon points.
+     */
+    private fun haversineDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val R = 6_371_000.0 // Earth radius in metres
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = (Math.sin(dLat / 2).pow(2.0)) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                (Math.sin(dLon / 2).pow(2.0))
+        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        return R * c
     }
 
     /**

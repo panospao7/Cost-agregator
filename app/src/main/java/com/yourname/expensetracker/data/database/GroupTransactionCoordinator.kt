@@ -621,6 +621,9 @@ class GroupTransactionCoordinator @Inject constructor(
      * to preserve referential integrity.
      */
     suspend fun deleteGroupAtomic(groupId: Long) {
+        // Collect linked expense IDs before deleting
+        val linkedExpenseIds = groupExpenseDao.getExpensesForGroupOnce(groupId).mapNotNull { it.expenseId }
+
         database.withTransaction {
             // Delete expenses first (child table)
             groupExpenseDao.deleteAllForGroup(groupId)
@@ -631,6 +634,11 @@ class GroupTransactionCoordinator @Inject constructor(
             // Delete group last (parent table)
             val group = groupDao.getGroupById(groupId)
             group?.let { groupDao.delete(it) }
+        }
+
+        // Clear orphaned shared-expense flags
+        linkedExpenseIds.forEach { expenseId ->
+            expenseDao.clearSharedExpenseFlags(expenseId)
         }
     }
 

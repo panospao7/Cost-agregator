@@ -8,6 +8,7 @@ import java.time.format.DateTimeFormatterBuilder
 import java.time.format.DateTimeParseException
 import java.util.*
 import java.util.regex.Pattern
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 
 /**
  * Data class representing extracted warranty information from OCR text.
@@ -267,7 +268,10 @@ class WarrantyTextExtractor {
             .toLocalDate()
             .plusMonths(durationMonths.toLong())
 
-        return endDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
+        // Use half-open end-of-day semantics so the warranty survives
+        // through its entire expiration day (matching WarrantyTrackerRepository).
+        val dayStart = endDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
+        return TimePeriodUtils.getEndOfDay(dayStart)
     }
     
     /**
@@ -342,9 +346,34 @@ class WarrantyTextExtractor {
     
     /**
      * Extracts merchant/store name from receipt text.
+     *
+     * ## SRH-1: Legacy single-word cap-only heuristic (BROKEN — DEPRECATED)
+     *
+     * This method uses a weak uppercase-first heuristic as a fallback and
+     * should NOT be used for new code. Use [MerchantNormalizer] or the
+     * structured [ReceiptParser.parse] merchant extraction instead.
+     *
+     * The structured patterns (MERCHANT/STORE/FROM) above are more reliable
+     * and should be preferred.
+     *
+     * @deprecated Replaced by [MerchantNormalizer.normalize] for proper
+     *   merchant name extraction with canonical alias resolution.
      */
+    @Deprecated(
+        message = "Use MerchantNormalizer.normalize() or ReceiptParser.parse() " +
+            "for reliable merchant extraction. The uppercase-first heuristic " +
+            "is unreliable and will be removed.",
+        replaceWith = ReplaceWith(
+            expression = "MerchantNormalizer().normalize(text, autoCreate = false)?.canonical?.normalizedName " +
+                "?: ReceiptParser().parse(text).merchantName",
+            imports = [
+                "com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer",
+                "com.yourname.expensetracker.domain.receipt.ReceiptParser"
+            ]
+        )
+    )
     private fun extractMerchantName(text: String): String? {
-        // Look for merchant patterns
+        // Look for merchant patterns — these are the structured, preferred path
         val merchantPatterns = listOf(
             // "Merchant: Amazon" or "Store: Walmart"
             Pattern.compile("(?:MERCHANT|STORE|SHOP|SELLER|VENDOR)[:\\s]+([^\\n]{2,30})", Pattern.CASE_INSENSITIVE),
@@ -359,7 +388,8 @@ class WarrantyTextExtractor {
             }
         }
         
-        // Try to get the first substantial line (often the store name)
+        // SRH-1: Legacy fallback — first substantial line starting with uppercase.
+        // This is fragile but kept for OCR receipts where no structured pattern matches.
         val lines = text.split("\n")
         for (line in lines.take(5)) { // Usually in first few lines
             val trimmed = line.trim()

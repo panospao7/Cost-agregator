@@ -296,6 +296,7 @@ class DashboardWidgetConsistencyTest {
         merchant = "Test",
         transactionType = TransactionType.PURCHASE,
         date = date,
+        createdAt = System.currentTimeMillis(),
         isSharedExpense = isSharedExpense,
         myShareAmount = myShareAmount
     )

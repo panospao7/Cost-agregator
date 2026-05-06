@@ -14,6 +14,33 @@ import timber.log.Timber
 /**
  * Natural language search engine for expense queries.
  *
+ * ## SRH-20: Hybrid query cascading fallback (planned)
+ * Currently only one interpretation path works at a time (on-device model).
+ * The plan is to implement a cascading try-fallback pattern:
+ *
+ * 1. **On-device interpretation** (try first):
+ *    Use [OnDeviceQueryInterpretationService] for fast, offline-capable parsing.
+ *    Typically handles simple queries like "how much did I spend on food last month"
+ *    with high accuracy and sub-100ms latency.
+ * 2. **Cloud interpretation** (fallback 1):
+ *    If on-device confidence < threshold (e.g. < 0.6) or the query contains
+ *    ambiguous entities, delegate to a cloud NLU service (e.g. Google Dialogflow,
+ *    OpenAI function calling) via [CloudQueryInterpretationService]. This handles
+ *    complex multi-filter queries and learns from new patterns.
+ * 3. **Legacy regex** (final fallback):
+ *    If cloud is unavailable (offline/timeout) or also returns low confidence,
+ *    fall back to the existing [interpretQuery] regex-based extraction. This
+ *    guarantees basic functionality even without network connectivity.
+ *
+ * The cascading pattern ensures graceful degradation:
+ * ```
+ * val interpretation = onDeviceService.interpret(input)
+ *     ?: cloudService.interpret(input)
+ *     ?: interpretQuery(input)  // legacy regex
+ * ```
+ * Each stage should set [QueryInterpretation.confidence] appropriately so the
+ * caller can decide whether to display results or ask for clarification.
+ *
  * ## Known Limitations
  *
  * ### M1: Amount filters not currency-aware
@@ -246,70 +273,161 @@ class NaturalLanguageSearchEngine @Inject constructor(
      * when multiple filters are active. Filters should ideally be pushed down
      * to the DAO layer for efficient querying.
      */
-    suspend fun executeSearch(interpretation: QueryInterpretation): List<NaturalLanguageExpense> {
+    /**
+     * Executes a search and returns results labeled with match quality.
+     *
+     * Each result is wrapped in a [SearchResult] indicating whether the expense
+     * matched all query criteria (EXACT) or only some (PARTIAL). This allows
+     * downstream consumers to display match quality alongside results.
+     */
+    suspend fun executeSearch(interpretation: QueryInterpretation): List<SearchResult> {
         val (startMs, endMs) = resolveDateRangeMillis(interpretation.dateRange)
         val homeCurrency = currencySettingsRepository.homeCurrency().first()
 
+        // Extract simple filters from interpretation to push down
+        val merchants = interpretation.merchants
+        val minAmount = interpretation.extractedAmounts
+            ?.firstOrNull { it.comparison == AmountComparison.OVER || it.comparison == AmountComparison.EXACTLY }
+            ?.let {
+                if (it.comparison == AmountComparison.OVER) it.value
+                else if (it.comparison == AmountComparison.EXACTLY) it.value
+                else null
+            }
+        val maxAmount = interpretation.extractedAmounts
+            ?.firstOrNull { it.comparison == AmountComparison.UNDER }
+            ?.value
+
         return when (interpretation.queryType) {
             QueryType.TOTAL_AMOUNT -> {
-                expenseQueryRepository.getExpensesBetween(startMs, endMs)
+                expenseQueryRepository.getExpensesBetweenFiltered(
+                    startMs, endMs,
+                    merchants = merchants,
+                    minAmount = minAmount,
+                    maxAmount = maxAmount
+                ).map { SearchResult(it, MatchType.EXACT) }
             }
             QueryType.FIND_TRANSACTIONS -> {
-                expenseQueryRepository
-                    .getExpensesBetween(startMs, endMs)
-                    .filter { expense ->
-                        interpretation.merchants?.let { merchants ->
-                            merchants.any { expense.merchant.contains(it, ignoreCase = true) }
-                        } ?: true
-                    }
-                    .filter { expense ->
-                        interpretation.extractedAmounts?.let { amounts ->
-                            // Normalize expense amount to home currency for fair comparison
-                            val normalizedAmount = if (expense.currency != homeCurrency) {
-                                currencyConverter.convert(
-                                    amount = expense.amount,
-                                    fromCurrency = expense.currency,
-                                    toCurrency = homeCurrency
-                                )?.convertedAmount ?: expense.amount.also {
-                                    // Log fallback when conversion fails
-                                    Timber.w(
-                                        "Currency conversion failed for %s from %s to %s — using raw amount %.2f",
-                                        expense.merchant, expense.currency, homeCurrency, expense.amount
-                                    )
-                                }
-                            } else {
-                                expense.amount
-                            }
+                val preFiltered = expenseQueryRepository.getExpensesBetweenFiltered(
+                    startMs, endMs,
+                    merchants = merchants,
+                    minAmount = minAmount,
+                    maxAmount = maxAmount
+                )
+                val hasAmountFilter = interpretation.extractedAmounts != null
+                val hasMerchantFilter = interpretation.merchants != null
+                val totalFilters = listOfNotNull(hasAmountFilter to hasAmountFilter, hasMerchantFilter to hasMerchantFilter).size
 
-                            amounts.any { amount ->
-                                when (amount.comparison) {
-                                    AmountComparison.EXACTLY -> normalizedAmount == amount.value
-                                    AmountComparison.OVER -> normalizedAmount > amount.value
-                                    AmountComparison.UNDER -> normalizedAmount < amount.value
-                                    AmountComparison.BETWEEN -> {
-                                        val other = amounts.find { it != amount }
-                                        other?.let { normalizedAmount in amount.value..it.value } ?: true
-                                    }
+                // Apply currency-aware amount matching on the pre-filtered results
+                val matched = if (hasAmountFilter) {
+                    preFiltered.filter { expense ->
+                        val normalizedAmount = if (expense.currency != homeCurrency) {
+                            currencyConverter.convert(
+                                amount = expense.amount,
+                                fromCurrency = expense.currency,
+                                toCurrency = homeCurrency
+                            )?.convertedAmount ?: expense.amount.also {
+                                Timber.w(
+                                    "Currency conversion failed for %s from %s to %s — using raw amount %.2f",
+                                    expense.merchant, expense.currency, homeCurrency, expense.amount
+                                )
+                            }
+                        } else {
+                            expense.amount
+                        }
+
+                        interpretation.extractedAmounts.any { amount ->
+                            when (amount.comparison) {
+                                AmountComparison.EXACTLY -> normalizedAmount == amount.value
+                                AmountComparison.OVER -> normalizedAmount > amount.value
+                                AmountComparison.UNDER -> normalizedAmount < amount.value
+                                AmountComparison.BETWEEN -> {
+                                    val other = interpretation.extractedAmounts.find { it != amount }
+                                    other?.let { normalizedAmount in amount.value..it.value } ?: true
                                 }
                             }
-                        } ?: true
+                        }
                     }
+                } else {
+                    preFiltered
+                }
+
+                // Label each result with match quality
+                matched.map { expense ->
+                    val matchedAmount = hasAmountFilter && interpretation.extractedAmounts.any { amount ->
+                        val normalizedAmount = if (expense.currency != homeCurrency) {
+                            currencyConverter.convert(
+                                amount = expense.amount,
+                                fromCurrency = expense.currency,
+                                toCurrency = homeCurrency
+                            )?.convertedAmount ?: expense.amount
+                        } else {
+                            expense.amount
+                        }
+                        when (amount.comparison) {
+                            AmountComparison.EXACTLY -> normalizedAmount == amount.value
+                            AmountComparison.OVER -> normalizedAmount > amount.value
+                            AmountComparison.UNDER -> normalizedAmount < amount.value
+                            AmountComparison.BETWEEN -> normalizedAmount in amount.value..(amount.value + 1_000_000)
+                        }
+                    }
+                    val matchedMerchant = hasMerchantFilter && interpretation.merchants.any {
+                        expense.merchant.contains(it, ignoreCase = true)
+                    }
+                    val isExact = (!hasAmountFilter || matchedAmount) && (!hasMerchantFilter || matchedMerchant)
+                    SearchResult(expense, if (isExact) MatchType.EXACT else MatchType.PARTIAL)
+                }
             }
             QueryType.SPENDING_BY_CATEGORY -> {
-                expenseQueryRepository.getExpensesBetween(startMs, endMs)
+                expenseQueryRepository.getExpensesBetweenFiltered(
+                    startMs, endMs,
+                    merchants = merchants,
+                    minAmount = minAmount,
+                    maxAmount = maxAmount
+                ).map { SearchResult(it, MatchType.EXACT) }
             }
             else -> emptyList()
         }
     }
 
+    /** Backward-compatible convenience accessor for callers that don't need match-type labeling. */
+    @Deprecated("Use executeSearch() which returns List<SearchResult> with match-type labels",
+        ReplaceWith("executeSearch(interpretation).map { it.expense }"))
+    suspend fun executeSearchLegacy(interpretation: QueryInterpretation): List<NaturalLanguageExpense> {
+        return executeSearch(interpretation).map { it.expense }
+    }
+
+    /**
+     * SRH-19-FIXED: Legacy search now defaults to last 3 months instead of 0→now.
+     *
+     * Previously, when no date range was specified in a query, the start was set
+     * to 0L (epoch start, Jan 1 1970), which meant searching the ENTIRE history.
+     * This was both slow and confusing for users who would get results from years ago.
+     *
+     * The new default is 3 months back from now, which covers most "recent spending"
+     * queries while remaining performant. Callers that need a wider range should
+     * explicitly specify dates in their query (e.g. "last year", "since 2023").
+     */
     private fun resolveDateRangeMillis(dateRange: DateRange?): Pair<Long, Long> {
+        val now = timeProvider.now()
         val startMs = dateRange?.start?.let {
             it.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-        } ?: 0L
+        } ?: DEFAULT_SEARCH_WINDOW_START_MS(now)
         val endMs = dateRange?.end?.let {
             it.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-        } ?: timeProvider.now()
+        } ?: now
         return startMs to endMs
+    }
+
+    companion object {
+        /**
+         * Default search window: 3 months before [now].
+         * Used when no explicit date range is specified in the query.
+         */
+        private fun DEFAULT_SEARCH_WINDOW_START_MS(now: Long): Long {
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = now }
+            cal.add(java.util.Calendar.MONTH, -3)
+            return cal.timeInMillis
+        }
     }
     
     private fun extractAmounts(query: String): List<ExtractedAmount>? {

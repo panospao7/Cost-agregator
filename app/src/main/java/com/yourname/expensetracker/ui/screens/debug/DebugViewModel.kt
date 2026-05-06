@@ -356,6 +356,10 @@ class DebugViewModel @Inject constructor(
     
     private val _databaseStats = MutableStateFlow<com.yourname.expensetracker.domain.backup.DatabaseStats?>(null)
     val databaseStats: StateFlow<com.yourname.expensetracker.domain.backup.DatabaseStats?> = _databaseStats
+
+    // BAK-10: Operation result messages for debug screen feedback
+    private val _databaseOperationResult = MutableStateFlow<String?>(null)
+    val databaseOperationResult: StateFlow<String?> = _databaseOperationResult.asStateFlow()
     
     fun loadDatabaseStats() {
         viewModelScope.launch {
@@ -481,10 +485,29 @@ class DebugViewModel @Inject constructor(
         }
     }
     
-    fun resetDatabase() {
+    /**
+     * Reset database to empty state.
+     *
+     * ## BAK-10: Reset database requires typed confirmation
+     * Callers MUST obtain explicit typed confirmation from the user before
+     * invoking this method. The user must type the exact word "DELETE"
+     * (case-insensitive). This ViewModel validates the confirmation before
+     * delegating to the repository.
+     *
+     * @param confirmationString The string typed by the user to confirm deletion.
+     *   Must equal "DELETE" (case-insensitive) or the reset is rejected.
+     * @return true if the reset was initiated, false if confirmation failed.
+     */
+    fun resetDatabase(confirmationString: String = ""): Boolean {
+        // BAK-10: Require typed "DELETE" confirmation before proceeding
+        if (!confirmationString.equals("DELETE", ignoreCase = true)) {
+            _databaseOperationResult.value = "Reset cancelled: you must type DELETE to confirm."
+            return false
+        }
         viewModelScope.launch {
             databaseBackupRepository.resetDatabase()
         }
+        return true
     }
     
     fun clearExportResult() {

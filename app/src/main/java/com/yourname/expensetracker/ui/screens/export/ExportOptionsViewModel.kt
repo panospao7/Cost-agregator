@@ -15,9 +15,11 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -68,6 +70,8 @@ class ExportOptionsViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(ExportOptionsUiState())
     val uiState: StateFlow<ExportOptionsUiState> = _uiState.asStateFlow()
+    private var exportJob: Job? = null
+    private var exportGeneration: Long = 0L
 
     init {
         val now = timeProvider.now()
@@ -99,12 +103,40 @@ class ExportOptionsViewModel @Inject constructor(
     }
 
     fun setDateRange(startDate: Long, endDate: Long) {
-        _uiState.value = _uiState.value.copy(startDate = startDate, endDate = endDate)
+        // BAK-15: Validate date range — start must be before end, and range
+        // must not exceed 5 years (1825 days) to prevent unbounded exports.
+        if (startDate >= endDate) {
+            _uiState.value = _uiState.value.copy(
+                error = "Start date must be before end date"
+            )
+            return
+        }
+        val maxRangeMs = 1825L * 24L * 60L * 60L * 1000L // 5 years in millis
+        if (endDate - startDate > maxRangeMs) {
+            _uiState.value = _uiState.value.copy(
+                error = "Date range must not exceed 5 years"
+            )
+            return
+        }
+        _uiState.value = _uiState.value.copy(startDate = startDate, endDate = endDate, error = null)
         loadExpenseCount()
     }
 
+    /**
+     * Generates an export file for the selected date range and format.
+     *
+     * ## BAK-12: Streaming export (planned)
+     * Currently, all expenses between [startDate] and [endDate] are loaded into
+     * memory as a single [List] before writing. For datasets exceeding ~5000 rows,
+     * this may cause elevated memory usage. The [DeterministicExpenseExportPager]
+     * already supports keyset-based cursor pagination (page size 2000). A future
+     * improvement should replace the bulk load with [streamExpensesToWriter] which
+     * writes pages one at a time without accumulating all rows in memory.
+     */
     fun generateExport() {
-        viewModelScope.launch {
+        exportJob?.cancel()
+        val generation = ++exportGeneration
+        exportJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isLoading = true,
                 exportPreview = null,
@@ -131,6 +163,11 @@ class ExportOptionsViewModel @Inject constructor(
 
                 val rowCount = expenses.size
 
+                // BAK-12: Warn when dataset is large enough to warrant streaming
+                if (rowCount > 5000) {
+                    Timber.w("BAK-12: Exporting %d expenses — consider using streamExpensesToWriter for paged streaming to reduce memory pressure", rowCount)
+                }
+
                 val previewCollector = PreviewCollector(PREVIEW_MAX_CHARS)
                 val accountingTransactions = mutableListOf<ExportTransaction>()
 
@@ -156,6 +193,7 @@ class ExportOptionsViewModel @Inject constructor(
                     }
                 }
 
+                if (exportGeneration != generation) return@launch
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     exportPreview = previewCollector.value,
@@ -164,7 +202,14 @@ class ExportOptionsViewModel @Inject constructor(
                     exportSuccess = true,
                     error = null
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                if (exportGeneration != generation) return@launch
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = "Export cancelled"
+                )
             } catch (e: Exception) {
+                if (exportGeneration != generation) return@launch
                 Timber.e(e, "Failed generating export")
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -172,6 +217,15 @@ class ExportOptionsViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    /**
+     * Cancels the currently running export, if any.
+     * Safe to call when no export is in progress.
+     */
+    fun cancelExport() {
+        exportJob?.cancel()
+        exportJob = null
     }
 
     private suspend fun streamGenericCsvExport(
@@ -315,6 +369,70 @@ class ExportOptionsViewModel @Inject constructor(
             writer.append(line)
             preview.append(line)
         }
+    }
+
+    /**
+     * Writes a single page of expenses to [writer] without holding all rows in memory.
+     * Each page is the result of one keyset-paginated query from [DeterministicExpenseExportPager].
+     *
+     * ## BAK-12: Streaming export helper
+     * This is the per-page write primitive for use with [streamExpensesToWriter].
+     * Currently unused — the existing export methods load all expenses upfront.
+     *
+     * @param writer The output writer (file writer or buffer).
+     * @param page   A single page of expenses (typically up to 2000 rows).
+     * @param categories Category name map for display.
+     * @param format Export format identifier (e.g. "csv", "json", "xero").
+     * @param preview Optional preview collector.
+     * @param rowCount Total row count across all pages (needed for JSON schema).
+     */
+    @Suppress("UNUSED_PARAMETER")
+    private suspend fun writePage(
+        writer: Appendable,
+        page: List<Expense>,
+        categories: Map<Long, String>,
+        format: String,
+        preview: PreviewCollector? = null,
+        rowCount: Int = 0
+    ) {
+        // TODO(BAK-12): Implement per-page writing for each export format.
+        // For now this is a placeholder documenting the streaming contract.
+        // The existing stream*Export methods already accept List<Expense>
+        // and can be called page-by-page inside streamExpensesToWriter.
+        Timber.d("BAK-12: writePage called with %d expenses (format=%s)", page.size, format)
+    }
+
+    /**
+     * ## BAK-12: Streaming export via paged keyset cursor (planned)
+     *
+     * Future replacement for the current bulk-load pattern. Instead of calling
+     * [ExportDataRepository.getExpensesBetweenForExport] which accumulates all
+     * expenses into a single [List], this method streams pages one at a time:
+     *
+     * 1. Open the writer.
+     * 2. Fetch the first page via keyset pagination (page size 2000).
+     * 3. Write rows from the current page.
+     * 4. Fetch the next page using the last row's (date, id) cursor.
+     * 5. Repeat until no more pages.
+     * 6. Close the writer.
+     *
+     * The [DeterministicExpenseExportPager] already implements cursor-based pagination;
+     * this method is the consumer-side streaming layer. Implement per-format page
+     * writing in [writePage].
+     */
+    @Suppress("UNUSED")
+    private suspend fun streamExpensesToWriter(
+        writer: Appendable,
+        startDate: Long,
+        endDate: Long,
+        categories: Map<Long, String>,
+        format: String,
+        preview: PreviewCollector?,
+        pageSize: Int = 2000
+    ) {
+        // TODO(BAK-12): Implement paged streaming using
+        //  expenseRepository.getExpensesBetweenForExportKeyset(startDate, endDate, pageSize, lastDate, lastId)
+        Timber.d("BAK-12: streamExpensesToWriter placeholder — format=%s, start=%d, end=%d", format, startDate, endDate)
     }
 
     private fun extensionFor(format: String): String = when (format) {

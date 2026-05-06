@@ -81,6 +81,22 @@ data class Expense(
     /** Source of this expense. Nullable for legacy rows; backfilled by migration. */
     val source: String? = null,
 
+    /**
+     * Payment method used for this expense (CARD, CASH, BANK_TRANSFER, or UNKNOWN).
+     *
+     * ## WRN-27: Credit-card benefits tied to payment method
+     * Credit-card benefits (cashback, extended warranty, price protection, purchase
+     * protection, etc.) should be determined by the [paymentMethod] field rather than
+     * by merchant-name heuristics. When [paymentMethod] is [PaymentMethod.CARD],
+     * downstream features like [PriceProtectionTracker.getCreditCardBenefits] should
+     * use the card type (or a card-account lookup via the bank-integration layer) to
+     * offer accurate benefit estimates instead of relying on English keyword matching
+     * against the merchant name.
+     *
+     * A future `CardAccount` entity mapping card type → reward program would enable
+     * precise benefit computation. Until then, CARD-marked expenses are eligible for
+     * generic extended-warranty / price-protection awareness in the UI.
+     */
     @ColumnInfo(defaultValue = "'UNKNOWN'") val paymentMethod: PaymentMethod = PaymentMethod.UNKNOWN,
     @ColumnInfo(defaultValue = "0") val isManualEntry: Boolean = false,
     val notes: String? = null,
@@ -126,7 +142,7 @@ data class Expense(
     val splitTemplateId: Long? = null,  // Reference to SplitTemplate used
     val splitVisualization: String? = null,  // JSON with visual split data (pie chart segments, colors, etc.)
 
-    // Historical conversion snapshot fields (D.19) — schema only, not populated yet
+    // Historical conversion snapshot fields (D.19) — Populated at creation and update time by TransactionLifecycleCoordinator when expense currency differs from home currency. Identity values (amount, currency, 1.0) are set when expense currency matches home currency.
     @ColumnInfo(defaultValue = "0.0") val baseAmount: Double = 0.0,
     @ColumnInfo(defaultValue = "'EUR'") val baseCurrency: String = "EUR",
     @ColumnInfo(defaultValue = "0.0") val exchangeRateUsed: Double = 0.0

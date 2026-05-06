@@ -21,10 +21,22 @@ interface CurrencySettingsRepository {
     /**
      * Get the timestamp of last successful rate update.
      */
+    /**
+     * CURR-9: Currently reads from DataStore. Should be migrated to Room so that
+     * the last-update timestamp lives alongside exchange rates in a single
+     * transaction, eliminating the risk of reading stale timestamps after a DB restore.
+     */
     fun lastRateUpdate(): Flow<Long>
     
     /**
      * Set the timestamp of last successful rate update.
+     */
+    /**
+     * CURR-9: Currently stored in DataStore. Should be migrated to Room so that
+     * the last-update timestamp lives alongside exchange rates in a single
+     * transaction, eliminating the risk of a stale DataStore after a DB restore.
+     *
+     * @see CurrencyRatesRepositoryImpl
      */
     suspend fun setLastRateUpdate(timestamp: Long)
     

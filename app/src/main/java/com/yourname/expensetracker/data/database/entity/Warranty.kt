@@ -10,6 +10,15 @@ import androidx.room.PrimaryKey
  * WRN-5-FIXED: The `receiptId` FK now uses SET_NULL (was CASCADE before migration 108→109).
  * Deleting a receipt preserves warranty records. receiptId is nullable to allow orphaned
  * warranties to exist without a source receipt.
+ *
+ * WRN-6-FIXED: The UNIQUE constraint on `receiptId` was removed in MIGRATION_113_114.
+ * Multiple warranties per receipt is now supported (e.g. different products on the same
+ * receipt each have their own warranty). The non-unique index on receiptId remains for
+ * efficient lookup queries.
+ *
+ * NOTE: [WarrantyDao.getWarrantyByReceiptId] still returns `Warranty?` for backward
+ * compatibility. A future change should update it to return `List<Warranty>` and update
+ * all callers.
  */
 @Entity(
     tableName = "warranties",
@@ -28,7 +37,8 @@ import androidx.room.PrimaryKey
         )
     ],
     indices = [
-        Index(value = ["receiptId"], unique = true),
+        // WRN-6-FIXED: Non-unique index on receiptId — multiple warranties per receipt allowed.
+        Index(value = ["receiptId"]),
         Index(value = ["expenseId"]),
         Index(value = ["warrantyEndDate"]),
         Index(value = ["status"])

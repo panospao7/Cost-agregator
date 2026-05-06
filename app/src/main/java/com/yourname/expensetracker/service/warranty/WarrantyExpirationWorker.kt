@@ -11,11 +11,11 @@ import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
 import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
 import timber.log.Timber
-import java.util.concurrent.TimeUnit
 
 /**
  * Periodic WorkManager worker that checks for expiring warranties and sends
@@ -174,35 +174,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
          * cleaned up at the end of each run.
          */
         fun schedule(context: Context) {
-            val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return
-            if (!spec.enabled) {
-                Timber.w("Worker $WORK_NAME disabled by spec, skipping schedule")
-                return
-            }
-            val intervalHours = spec.repeatIntervalHours ?: run {
-                Timber.w("Worker $WORK_NAME has no repeat interval, skipping periodic schedule")
-                return
-            }
-
-            val request = PeriodicWorkRequestBuilder<WarrantyExpirationWorker>(
-                repeatInterval = intervalHours,
-                repeatIntervalTimeUnit = TimeUnit.HOURS
-            )
-                .setConstraints(spec.constraints)
-                .setBackoffCriteria(
-                    spec.backoffPolicy,
-                    spec.backoffDelaySeconds,
-                    TimeUnit.SECONDS
-                )
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                WORK_NAME,
-                spec.existingWorkPolicy,
-                request
-            )
-
-            Timber.d("Scheduled warranty expiration worker (interval=${intervalHours}h)")
+            WorkerSpecScheduler.scheduleFromSpec(context, WORK_NAME, WarrantyExpirationWorker::class.java)
         }
 
         fun cancel(context: Context) {

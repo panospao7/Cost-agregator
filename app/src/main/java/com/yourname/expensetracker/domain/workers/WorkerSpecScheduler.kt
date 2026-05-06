@@ -1,0 +1,172 @@
+package com.yourname.expensetracker.domain.workers
+
+import android.content.Context
+import androidx.work.*
+import java.util.concurrent.TimeUnit
+
+/**
+ * Centralized scheduler that all workers use instead of duplicating schedule logic.
+ *
+ * Reads [WorkerSpec.DEFAULTS] by worker name, handles version-change detection
+ * (forcing REPLACE when the spec version bumps), and delegates to either
+ * [WorkManager.enqueueUniquePeriodicWork] or [WorkManager.enqueueUniqueWork]
+ * depending on whether [WorkerSpec.repeatIntervalHours] is set.
+ *
+ * This is a stateless Kotlin `object` – no dependency injection needed.
+ */
+object WorkerSpecScheduler {
+
+    private const val PREFS_NAME = "worker_spec_versions"
+
+    /**
+     * Enqueue (or re-enqueue) a worker based on its spec from [WorkerSpec.DEFAULTS].
+     *
+     * @param context  Application or activity context.
+     * @param workerName  Key into [WorkerSpec.DEFAULTS] (also used as the unique work name).
+     * @param workerClass  The exact [ListenableWorker] subclass to schedule.
+     * @param customConstraints  Optional constraints that override [WorkerSpec.constraints].
+     */
+    fun scheduleFromSpec(
+        context: Context,
+        workerName: String,
+        workerClass: Class<out ListenableWorker>,
+        customConstraints: Constraints? = null
+    ) {
+        val spec = WorkerSpec.DEFAULTS[workerName] ?: run {
+            android.util.Log.w("WorkerSpecScheduler", "No WorkerSpec found for: $workerName")
+            return
+        }
+
+        if (!spec.enabled) {
+            android.util.Log.d("WorkerSpecScheduler", "Worker '$workerName' is disabled, skipping")
+            return
+        }
+
+        val constraints = customConstraints ?: spec.constraints
+
+        // Version check: force REPLACE if version changed since last enqueue
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val lastVersion = prefs.getInt(workerName, 0)
+        val versionChanged = spec.version > lastVersion
+
+        @Suppress("UNCHECKED_CAST")
+        val typedClass = workerClass as Class<ListenableWorker>
+
+        if (spec.repeatIntervalHours != null) {
+            // ── Periodic worker ───────────────────────────────────────────
+            val policy = if (versionChanged) {
+                android.util.Log.i(
+                    "WorkerSpecScheduler",
+                    "Worker '$workerName' version changed (${lastVersion} → ${spec.version}), forcing REPLACE"
+                )
+                ExistingPeriodicWorkPolicy.REPLACE
+            } else {
+                spec.existingWorkPolicy
+            }
+
+            val request = PeriodicWorkRequest
+                .Builder(
+                    typedClass,
+                    spec.repeatIntervalHours, TimeUnit.HOURS,
+                    spec.flexMinutes ?: 15, TimeUnit.MINUTES
+                )
+                .setConstraints(constraints)
+                .setBackoffCriteria(spec.backoffPolicy, spec.backoffDelaySeconds, TimeUnit.SECONDS)
+                .build()
+
+            WorkManager.getInstance(context)
+                .enqueueUniquePeriodicWork(workerName, policy, request)
+        } else {
+            // ── One-shot worker ───────────────────────────────────────────
+            val policy = if (versionChanged) {
+                android.util.Log.i(
+                    "WorkerSpecScheduler",
+                    "Worker '$workerName' version changed (${lastVersion} → ${spec.version}), forcing REPLACE"
+                )
+                ExistingWorkPolicy.REPLACE
+            } else {
+                when (spec.existingWorkPolicy) {
+                    ExistingPeriodicWorkPolicy.KEEP -> ExistingWorkPolicy.KEEP
+                    else -> ExistingWorkPolicy.REPLACE
+                }
+            }
+
+            val request = OneTimeWorkRequest
+                .Builder(typedClass)
+                .setConstraints(constraints)
+                .setBackoffCriteria(spec.backoffPolicy, spec.backoffDelaySeconds, TimeUnit.SECONDS)
+                .build()
+
+            WorkManager.getInstance(context)
+                .enqueueUniqueWork(workerName, policy, request)
+        }
+
+        // Persist version after successful enqueue
+        prefs.edit().putInt(workerName, spec.version).apply()
+    }
+
+    /**
+     * Schedule a one-shot worker at the next midnight boundary (calendar-day-aligned).
+     *
+     * Reads [WorkerSpec.DEFAULTS] by [workerName], checks [WorkerSpec.enabled] and version
+     * (same logic as [scheduleFromSpec]), computes the delay until the next midnight in the
+     * system timezone, and enqueues a [OneTimeWorkRequest] with that delay.
+     *
+     * @param context  Application or activity context.
+     * @param workerName  Key into [WorkerSpec.DEFAULTS] (also used as the unique work name).
+     * @param workerClass  The exact [ListenableWorker] subclass to schedule.
+     */
+    fun scheduleAtMidnight(
+        context: Context,
+        workerName: String,
+        workerClass: Class<out ListenableWorker>
+    ) {
+        val spec = WorkerSpec.DEFAULTS[workerName] ?: run {
+            android.util.Log.w("WorkerSpecScheduler", "No WorkerSpec found for: $workerName")
+            return
+        }
+        if (!spec.enabled) {
+            android.util.Log.d("WorkerSpecScheduler", "Worker '$workerName' is disabled, skipping")
+            return
+        }
+
+        // Version check: force REPLACE if version changed since last enqueue
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val lastVersion = prefs.getInt(workerName, 0)
+        val effectivePolicy = if (spec.version > lastVersion) {
+            android.util.Log.i(
+                "WorkerSpecScheduler",
+                "Worker '$workerName' version changed (${lastVersion} → ${spec.version}), forcing REPLACE"
+            )
+            ExistingWorkPolicy.REPLACE
+        } else {
+            ExistingWorkPolicy.KEEP
+        }
+
+        // Compute next midnight in system timezone
+        val now = System.currentTimeMillis()
+        val cal = java.util.Calendar.getInstance().apply {
+            timeInMillis = now
+            add(java.util.Calendar.DAY_OF_MONTH, 1)
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val delayMs = cal.timeInMillis - now
+
+        @Suppress("UNCHECKED_CAST")
+        val typedClass = workerClass as Class<ListenableWorker>
+
+        val request = OneTimeWorkRequestBuilder<ListenableWorker>()
+            .setInitialDelay(delayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .setConstraints(spec.constraints)
+            .setBackoffCriteria(spec.backoffPolicy, spec.backoffDelaySeconds, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+
+        WorkManager.getInstance(context).enqueueUniqueWork(workerName, effectivePolicy, request)
+
+        prefs.edit().putInt(workerName, spec.version).apply()
+        android.util.Log.d("WorkerSpecScheduler", "Worker '$workerName' scheduled at midnight in ${delayMs}ms")
+    }
+}

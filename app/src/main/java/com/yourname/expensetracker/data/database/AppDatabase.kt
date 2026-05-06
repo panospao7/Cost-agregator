@@ -10,7 +10,35 @@ import com.yourname.expensetracker.data.database.entity.StressForecastSnapshot
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.security.BankTokenCipher
 
-const val APP_DATABASE_SCHEMA_VERSION = 113
+/**
+ * ## RSP-R2A: Migration path for v1–v5 (pre-migration-chain)
+ * Users upgrading from a database created by the very first app releases
+ * (schema versions 1 through 5) will encounter a gap: the current migration
+ * chain starts at version 6 (the lowest schema for which we export Room JSON
+ * schemas and provide a [Migration] object).
+ *
+ * ### What happens on v1–v5 databases
+ * Room's [fallbackToDestructiveMigration] will DROP all tables and recreate
+ * them from scratch, losing all user data. This is the **only** automated
+ * path for pre-v6 databases because:
+ * - No Room `@Database(version = N)` annotation ever existed for v1–v5 in the
+ *   current codebase — those schemas were from the very first prototype builds.
+ * - We do not export or test JSON schema files for versions 1–5 (they predate
+ *   `exportSchema = true`).
+ * - Creating individual [Migration] objects for 1→6, 2→6, etc. would require
+ *   reverse-engineering the table shapes from ancient git history.
+ *
+ * ### Recommendation
+ * Users on v1–v5 should be directed to export their data before upgrading,
+ * then perform a fresh install. Alternatively, a [LegacyDatabaseImporter]
+ * (see RSP-R5A) can be used to import data from a legacy `.db` file into
+ * the current schema after a destructive migration.
+ *
+ * The test [DatabaseMigrationTest.fallback_to_destructive_migration_works]
+ * specifically validates that a v5 database is correctly handled by
+ * [fallbackToDestructiveMigration].
+ */
+const val APP_DATABASE_SCHEMA_VERSION = 117
 
 @Database(
     entities = [
@@ -69,7 +97,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 113
         RecurringReminderDelivery::class,
         RecurringLifecycleEvent::class,
         PrivacyAuditEvent::class,
-        BackgroundJobRun::class
+        BackgroundJobRun::class,
+        SourceStatsEvent::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -131,6 +160,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recurringLifecycleEventDao(): RecurringLifecycleEventDao
     abstract fun privacyAuditDao(): PrivacyAuditDao
     abstract fun backgroundJobRunDao(): BackgroundJobRunDao
+    abstract fun sourceStatsEventDao(): SourceStatsEventDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -1781,8 +1811,38 @@ abstract class AppDatabase : RoomDatabase() {
                         )
                     """.trimIndent())
                     
+                    // DB-4: Use explicit column list instead of SELECT *
+                    // Ensure column list matches expenses_new CREATE TABLE exactly.
+                    // Columns removed: effectiveAmount, originalAmount, originalCurrency,
+                    // exchangeRate, receiptId, suggestedMerchantKey (not in CREATE TABLE).
+                    // Columns added: createdAt, paymentMethod, isManualEntry,
+                    // transferAccountName, ownerName, isSharedExpense, sharedWithName,
+                    // mySharePercentage, myShareAmount, placeId, resolvedAddress,
+                    // businessPurpose, businessCategory, businessProject, requiresReceipt,
+                    // splitVisualization.
                     database.execSQL("""
-                        INSERT INTO expenses_new SELECT * FROM expenses
+                        INSERT INTO expenses_new (
+                            id, rawNotificationId, merchant, merchantKey, amount, currency,
+                            date, transactionType, categoryId, latitude,
+                            longitude, locationSource, placeId, notes, isNotMine, isBusinessExpense,
+                            transferDirection, transferAccountName, ownerName,
+                            isSharedExpense, sharedWithName, mySharePercentage, myShareAmount,
+                            resolvedAddress, dedupeKey, backfillAttempts,
+                            createdAt, paymentMethod, isManualEntry,
+                            businessPurpose, businessCategory, businessProject,
+                            requiresReceipt, splitTemplateId, splitVisualization
+                        )
+                        SELECT
+                            id, rawNotificationId, merchant, merchantKey, amount, currency,
+                            date, transactionType, categoryId, latitude,
+                            longitude, locationSource, placeId, notes, isNotMine, isBusinessExpense,
+                            transferDirection, transferAccountName, ownerName,
+                            isSharedExpense, sharedWithName, mySharePercentage, myShareAmount,
+                            resolvedAddress, dedupeKey, backfillAttempts,
+                            createdAt, paymentMethod, isManualEntry,
+                            businessPurpose, businessCategory, businessProject,
+                            requiresReceipt, splitTemplateId, splitVisualization
+                        FROM expenses
                     """.trimIndent())
                     
                     database.execSQL("DROP TABLE expenses")
@@ -3469,9 +3529,9 @@ abstract class AppDatabase : RoomDatabase() {
              * one canonical column is missing (e.g. the old table was from a prior
              * schema), all data is silently dropped — only the new empty table survives.
              *
-             * A future improvement should implement **partial salvage**: copy rows
-             * for which all required columns exist, inserting NULL/defaults for
-             * missing columns, and log the count of salvaged vs dropped rows.
+             * Implements **partial salvage**: copies rows for which common columns
+             * exist, inserting NULL/defaults for missing columns, and logs the
+             * count of salvaged vs dropped rows.
              */
             private fun repairTable(
                 database: androidx.sqlite.db.SupportSQLiteDatabase,
@@ -3492,12 +3552,34 @@ abstract class AppDatabase : RoomDatabase() {
 
                 database.execSQL(createTableSql)
 
-                if (exists && oldColumns.containsAll(canonicalColumns.toSet())) {
-                    val columnList = canonicalColumns.joinToString(", ") { "`$it`" }
-                    database.execSQL(
-                        "INSERT INTO `$tableName` ($columnList) " +
-                            "SELECT $columnList FROM `$tempName`"
-                    )
+                if (exists) {
+                    val commonColumns = canonicalColumns.filter { it in oldColumns }
+                    if (commonColumns.isNotEmpty()) {
+                        val columnList = commonColumns.joinToString(", ") { "`$it`" }
+                        database.execSQL(
+                            "INSERT OR IGNORE INTO `$tableName` ($columnList) " +
+                                "SELECT $columnList FROM `$tempName`"
+                        )
+                        // Count salvaged rows
+                        val totalRows = run {
+                            var count = 0L
+                            database.query("SELECT COUNT(*) FROM `$tempName`").use { c ->
+                                if (c.moveToFirst()) count = c.getLong(0)
+                            }
+                            count
+                        }
+                        val missingCols = canonicalColumns.filter { it !in oldColumns }
+                        android.util.Log.w("DB-REPAIR",
+                            "Table '$tableName': partial salvage — ${commonColumns.size}/${canonicalColumns.size} columns matched. " +
+                                "Missing: ${missingCols.joinToString()}. Rows in old table: $totalRows."
+                        )
+                    } else {
+                        android.util.Log.e("DB-REPAIR",
+                            "Table '$tableName': NO columns in common — ALL data lost! " +
+                                "Canonical columns: ${canonicalColumns.joinToString()}. " +
+                                "Old columns: ${oldColumns.joinToString()}."
+                        )
+                    }
                 }
 
                 if (exists) {
@@ -4788,9 +4870,31 @@ abstract class AppDatabase : RoomDatabase() {
                             )
                             """.trimIndent()
                         )
+                        // DB-4: Use explicit column list instead of SELECT *
                         database.execSQL(
                             """
-                            INSERT INTO expenses_new SELECT * FROM expenses
+                            INSERT INTO expenses_new (
+                                id, amount, currency, merchant, transactionType, date,
+                                rawNotificationId, categoryId, createdAt, paymentMethod,
+                                isManualEntry, notes, dedupeKey, transferDirection,
+                                transferAccountName, isNotMine, ownerName, isSharedExpense,
+                                sharedWithName, mySharePercentage, myShareAmount, latitude,
+                                longitude, locationSource, placeId, backfillAttempts,
+                                resolvedAddress, merchantKey, isBusinessExpense,
+                                businessPurpose, businessCategory, businessProject,
+                                requiresReceipt, splitTemplateId, splitVisualization
+                            )
+                            SELECT
+                                id, amount, currency, merchant, transactionType, date,
+                                rawNotificationId, categoryId, createdAt, paymentMethod,
+                                isManualEntry, notes, dedupeKey, transferDirection,
+                                transferAccountName, isNotMine, ownerName, isSharedExpense,
+                                sharedWithName, mySharePercentage, myShareAmount, latitude,
+                                longitude, locationSource, placeId, backfillAttempts,
+                                resolvedAddress, merchantKey, isBusinessExpense,
+                                businessPurpose, businessCategory, businessProject,
+                                requiresReceipt, splitTemplateId, splitVisualization
+                            FROM expenses
                             """.trimIndent()
                         )
                         database.execSQL("DROP TABLE expenses")
@@ -5202,7 +5306,7 @@ abstract class AppDatabase : RoomDatabase() {
                         CHECK(
                             (isCurrentUser = 0 AND currentUserGroupKey IS NULL)
                             OR
-                            (isCurrentUser = 1 AND currentUserGroupKey = groupId)
+                            (isCurrentUser = 1 AND currentUserGroupKey IS NOT NULL AND currentUserGroupKey = groupId)
                         ),
                         FOREIGN KEY (groupId) REFERENCES expense_groups(id) ON DELETE CASCADE
                     )
@@ -6506,7 +6610,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                                 CHECK(
                                     (isCurrentUser = 0 AND currentUserGroupKey IS NULL)
                                     OR
-                                    (isCurrentUser = 1 AND currentUserGroupKey = groupId)
+                                    (isCurrentUser = 1 AND currentUserGroupKey IS NOT NULL AND currentUserGroupKey = groupId)
                                 ),
                                 FOREIGN KEY (groupId) REFERENCES expense_groups(id) ON DELETE CASCADE
                             )
@@ -6853,7 +6957,7 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                                 CHECK(
                                     (isCurrentUser = 0 AND currentUserGroupKey IS NULL)
                                     OR
-                                    (isCurrentUser = 1 AND currentUserGroupKey = groupId)
+                                    (isCurrentUser = 1 AND currentUserGroupKey IS NOT NULL AND currentUserGroupKey = groupId)
                                 ),
                                 FOREIGN KEY (groupId) REFERENCES expense_groups(id) ON DELETE CASCADE
                             )
@@ -7279,9 +7383,166 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // MIGRATION_113_114 — WRN-6, WRN-13, BUD-12
+        // ═══════════════════════════════════════════════════════════════════════
+        //
+        // WRN-6:  Drop UNIQUE index on warranties(receiptId), recreate as non-unique
+        //         so multiple warranties per receipt are allowed.
+        // WRN-13: Add refundExpenseId column to return_windows (FK to expenses,
+        //         ON DELETE SET NULL) for linking returns to refund transactions.
+        // BUD-12: Add rolloverDeficitTracking column to budgets (default 0 / false)
+        //         for carrying deficits forward in rollover calculation.
+        val MIGRATION_113_114 = object : androidx.room.migration.Migration(113, 114) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // WRN-6: Drop unique index and recreate as non-unique
+                database.execSQL("DROP INDEX IF EXISTS index_warranties_receiptId")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_warranties_receiptId ON warranties (receiptId)")
+
+                // WRN-13: Add refundExpenseId column to return_windows
+                // FK constraint is not added via ALTER because SQLite does not
+                // support ALTER TABLE ADD CONSTRAINT. The FK is enforced at the
+                // Room entity level via the @Entity(foreignKeys = [...]) annotation.
+                database.execSQL("ALTER TABLE return_windows ADD COLUMN refundExpenseId INTEGER DEFAULT NULL")
+
+                // BUD-12: Add rolloverDeficitTracking column to budgets
+                database.execSQL("ALTER TABLE budgets ADD COLUMN rolloverDeficitTracking INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // MIGRATION_114_115 — I8: DB invariants for BudgetForecast
+        // ═══════════════════════════════════════════════════════════════════════
+        //
+        // I8: Add unique index on budget_forecasts(budgetId, forecastDate) to
+        //     prevent duplicate forecasts for the same budget at the same moment.
+        val MIGRATION_114_115 = object : androidx.room.migration.Migration(114, 115) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_budget_forecasts_budgetId_forecastDate " +
+                    "ON budget_forecasts(budgetId, forecastDate)"
+                )
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // MIGRATION_115_116 — DB-8: BudgetForecast FK from CASCADE to RESTRICT
+        // ═══════════════════════════════════════════════════════════════════════
+        //
+        // DB-8: Change budget_forecasts.budgetId FK from ON DELETE CASCADE to
+        // ON DELETE RESTRICT to preserve historical forecasts for analytical
+        // value (accuracy tracking, trend analysis).
+        //
+        // Since SQLite does not support ALTER TABLE to change a foreign key
+        // constraint, we use the table-rebuild pattern: CREATE, COPY, DROP, RENAME.
+        val MIGRATION_115_116 = object : androidx.room.migration.Migration(115, 116) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Preserve FK state, disable temporarily for the rebuild
+                val fkWasEnabled = database.query("PRAGMA foreign_keys").use {
+                    it.moveToFirst(); it.getInt(0) == 1
+                }
+                if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=OFF")
+
+                try {
+                    database.beginTransaction()
+                    try {
+                        // Create new table with RESTRICT FK
+                        database.execSQL("""
+                            CREATE TABLE budget_forecasts_new (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                                budgetId INTEGER NOT NULL,
+                                forecastDate INTEGER NOT NULL,
+                                targetPeriodStart INTEGER NOT NULL,
+                                targetPeriodEnd INTEGER NOT NULL,
+                                predictedSpending REAL NOT NULL,
+                                predictedRemaining REAL NOT NULL,
+                                confidenceScore REAL NOT NULL,
+                                riskLevel TEXT NOT NULL,
+                                overspendProbability REAL NOT NULL,
+                                recommendationsJson TEXT,
+                                actualSpending REAL,
+                                forecastAccuracy REAL,
+                                currency TEXT NOT NULL DEFAULT 'EUR',
+                                isActive INTEGER NOT NULL DEFAULT 1,
+                                createdAt INTEGER NOT NULL,
+                                FOREIGN KEY(budgetId) REFERENCES budgets(id) ON DELETE RESTRICT
+                            )
+                        """.trimIndent())
+
+                        // Copy all data
+                        database.execSQL("""
+                            INSERT INTO budget_forecasts_new (
+                                id, budgetId, forecastDate, targetPeriodStart, targetPeriodEnd,
+                                predictedSpending, predictedRemaining, confidenceScore, riskLevel,
+                                overspendProbability, recommendationsJson, actualSpending,
+                                forecastAccuracy, currency, isActive, createdAt
+                            )
+                            SELECT
+                                id, budgetId, forecastDate, targetPeriodStart, targetPeriodEnd,
+                                predictedSpending, predictedRemaining, confidenceScore, riskLevel,
+                                overspendProbability, recommendationsJson, actualSpending,
+                                forecastAccuracy, currency, isActive, createdAt
+                            FROM budget_forecasts
+                        """.trimIndent())
+
+                        // Swap tables
+                        database.execSQL("DROP TABLE budget_forecasts")
+                        database.execSQL("ALTER TABLE budget_forecasts_new RENAME TO budget_forecasts")
+
+                        // Recreate indices
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_budgetId ON budget_forecasts (budgetId)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_forecastDate ON budget_forecasts (forecastDate)")
+                        database.execSQL("CREATE INDEX IF NOT EXISTS index_budget_forecasts_isActive ON budget_forecasts (isActive)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budget_forecasts_budgetId_targetPeriodStart ON budget_forecasts (budgetId, targetPeriodStart)")
+                        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_budget_forecasts_budgetId_forecastDate ON budget_forecasts (budgetId, forecastDate)")
+
+                        // Verify no FK violations
+                        if (fkWasEnabled) {
+                            database.query("PRAGMA foreign_key_check").use { violations ->
+                                if (violations.moveToFirst()) {
+                                    throw IllegalStateException(
+                                        "MIGRATION_115_116 produced FK violations"
+                                    )
+                                }
+                            }
+                        }
+
+                        database.setTransactionSuccessful()
+                    } finally {
+                        database.endTransaction()
+                    }
+                } finally {
+                    if (fkWasEnabled) database.execSQL("PRAGMA foreign_keys=ON")
+                }
+            }
+        }
+
+        val MIGRATION_116_117 = object : androidx.room.migration.Migration(116, 117) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS source_stats_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        packageName TEXT NOT NULL,
+                        eventType TEXT NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        expenseId INTEGER,
+                        rawNotificationId INTEGER,
+                        metadata TEXT,
+                        FOREIGN KEY(expenseId) REFERENCES expenses(id) ON DELETE SET NULL,
+                        FOREIGN KEY(rawNotificationId) REFERENCES raw_notifications(id) ON DELETE SET NULL
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_source_stats_events_packageName ON source_stats_events (packageName)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_source_stats_events_eventType ON source_stats_events (eventType)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_source_stats_events_timestamp ON source_stats_events (timestamp)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_source_stats_events_expenseId ON source_stats_events (expenseId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_source_stats_events_rawNotificationId ON source_stats_events (rawNotificationId)")
+            }
+        }
+
         /**
-        * Creates an in-memory [RoomDatabase.Builder] pre-configured with
-            * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
+         * Creates an in-memory [RoomDatabase.Builder] pre-configured with
+         * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
           *
           * Every test that needs a fresh `AppDatabase` **must** go through this
           * factory so that supplementary indexes (Batch 3 through Batch 8) are
@@ -7427,7 +7688,11 @@ MIGRATION_91_92,
         MIGRATION_109_110,
         MIGRATION_110_111,
         MIGRATION_111_112,
-        MIGRATION_112_113
+        MIGRATION_112_113,
+        MIGRATION_113_114,
+        MIGRATION_114_115,
+        MIGRATION_115_116,
+        MIGRATION_116_117
     )
-    }
+}
 }

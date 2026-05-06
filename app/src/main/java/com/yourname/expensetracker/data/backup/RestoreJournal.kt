@@ -168,21 +168,29 @@ class RestoreJournal @Inject constructor(
     }
 
     /**
-     * Marks the journal as COMPLETE and deletes the journal file.
+     * BAK-ND-FIXED: Skip terminal-state write before deletion.
+     *
+     * Writing a terminal state (COMPLETE/FAILED) and then immediately deleting
+     * the journal file is redundant — the delete makes the write invisible.
+     * Since no crash recovery path reads these terminal states (COMPLETE is
+     * handled by [checkAndRecover] via `deleteJournal()` and FAILED is treated
+     * the same as PREPARING/STAGED), we skip the write entirely and go straight
+     * to deletion. This eliminates a pointless I/O cycle.
+     *
+     * The terminal-state copy is still returned for API consistency (callers may
+     * use it for in-memory logging).
      */
     fun commitJournal(entry: JournalEntry): JournalEntry {
         val updated = entry.copy(state = JournalState.COMPLETE)
-        writeJournal(updated)
         deleteJournal()
         return updated
     }
 
     /**
-     * Marks the journal as FAILED with an error message and deletes the journal file.
+     * BAK-ND-FIXED: Skip terminal-state write before deletion (see [commitJournal]).
      */
     fun failJournal(entry: JournalEntry, errorMessage: String): JournalEntry {
         val updated = entry.copy(state = JournalState.FAILED, error = errorMessage)
-        writeJournal(updated)
         deleteJournal()
         return updated
     }

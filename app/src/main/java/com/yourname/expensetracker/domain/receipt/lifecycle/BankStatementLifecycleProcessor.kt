@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
-import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
@@ -9,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.toDbTransactionType
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
@@ -48,13 +48,15 @@ data class BankStatementResult(
  * Lifecycle-aware processor for bank statement images / PDFs.
  *
  * Handles the complete lifecycle:
- *   1. Save statement receipt with BANK_STATEMENT document type.
- *   2. Parse transactions via [BankStatementParser].
- *   3. For each parsed transaction: create a [PendingReview].
- *   4. Do NOT trigger warranty, return window, price protection, or item
- *      categorization — these are inapplicable for statement-level imports.
+ *   1. Pre-OCR duplicate detection via SHA-256 file hash (skip OCR if known).
+ *   2. Run OCR on the bank statement image/PDF.
+ *   3. Parse transactions via [BankStatementParser].
+ *   4. Save statement receipt with BANK_STATEMENT document type.
  *   5. Write statement-level lifecycle events.
- *   6. Return a structured [BankStatementResult].
+ *   6. For each parsed transaction: create a [PendingReview].
+ *   7. Do NOT trigger warranty, return window, price protection, or item
+ *      categorization — these are inapplicable for statement-level imports.
+ *   8. Return a structured [BankStatementResult].
  */
 @Singleton
 class BankStatementLifecycleProcessor @Inject constructor(
@@ -70,38 +72,37 @@ class BankStatementLifecycleProcessor @Inject constructor(
     private val duplicateDetector: ReceiptDuplicateDetector,
     private val assetStore: ReceiptAssetStore,
     private val transactionValidator: ValidateBankStatementTransactionsUseCase,
-    private val recurringExpenseDao: ManualRecurringExpenseDao
+    private val recurringExpenseRepository: RecurringExpenseRepository
 ) {
 
     /**
      * Processes a bank statement image/PDF at [uri] through the lifecycle.
      *
-     * 1. Validates the input, persists the asset, and runs OCR.
-     * 2. Parses transactions from the OCR output.
-     * 3. Creates a BANK_STATEMENT receipt record with lifecycle metadata.
-     * 4. Creates a [PendingReview] for each non-duplicate transaction.
-     * 5. Writes lifecycle events and returns the result.
+     * 1. Checks for an existing receipt by SHA-256 file hash (pre-OCR dedup).
+     * 2. Runs OCR on the bank statement image/PDF.
+     * 3. Parses transactions from the OCR output.
+     * 4. Creates a BANK_STATEMENT receipt record with lifecycle metadata.
+     * 5. Creates a [PendingReview] for each non-duplicate transaction.
+     * 6. Writes lifecycle events and returns the result.
      */
     suspend fun processBankStatement(uri: Uri): Result<BankStatementResult> {
         val startTime = timeProvider.now()
         val parsingLogs = mutableListOf<String>()
 
         return try {
-            // ── Step 1: Run OCR via ReceiptRepository ──────────────────────────
-            val ocrResult = receiptRepository.runStatementOcr(uri)
-
-            // ── Step 1b: Duplicate detection via file hash ─────────────────────
-            val fileHash = ocrResult.savedImagePath.let { path ->
-                try {
-                    assetStore.computeFileHash(path).getOrNull()
-                } catch (_: Exception) {
-                    null
-                }
+            // ── Step 1: Pre-OCR duplicate detection via file hash ──────────────
+            // Compute the SHA-256 hash of the URI content BEFORE running OCR.
+            // If this file was already processed we can skip the expensive OCR
+            // and parsing steps entirely.
+            val preOcrHash = try {
+                assetStore.computeUriHash(uri).getOrNull()
+            } catch (_: Exception) {
+                null
             }
 
-            if (fileHash != null) {
+            if (preOcrHash != null) {
                 val dupResult = duplicateDetector.checkDuplicate(
-                    imageHash = fileHash,
+                    imageHash = preOcrHash,
                     textFingerprint = null,
                     semanticFingerprint = null,
                     externalSourceId = null
@@ -109,13 +110,16 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 if (dupResult.isDuplicate && dupResult.matchType == "EXACT_HASH") {
                     val existingReceipt = scannedReceiptDao.getById(dupResult.existingReceiptId!!)
                     if (existingReceipt != null) {
-                        Timber.i("Duplicate bank statement detected by exact hash: existingId=${existingReceipt.id}")
+                        Timber.i("Duplicate bank statement detected by exact hash (pre-OCR): existingId=${existingReceipt.id}")
                         return Result.failure(IllegalStateException("Duplicate bank statement: already processed (receiptId=${existingReceipt.id})"))
                     }
                 }
             }
 
-            // ── Step 2: Parse transactions ─────────────────────────────────────
+            // ── Step 2: Run OCR via ReceiptRepository ──────────────────────────
+            val ocrResult = receiptRepository.runStatementOcr(uri)
+
+            // ── Step 3: Parse transactions ─────────────────────────────────────
             val homeCurrency = bankStatementParser.resolveHomeCurrencySuspend()
             val parsedTransactions = bankStatementParser.parse(ocrResult.blocks, homeCurrency)
 
@@ -129,7 +133,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 )
             }
 
-            // ── Step 2b: AI validation ─────────────────────────────────────────
+            // ── Step 3b: AI validation ─────────────────────────────────────────
             // Use ValidateBankStatementTransactionsUseCase to validate/correct
             // parser candidates with on-device (or cloud) AI.
             val debugTransactions = parsedTransactions.map { DebugTransaction.fromParsedTransaction(it) }
@@ -183,7 +187,16 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 }
             }
 
-            // ── Step 3: Save statement receipt with lifecycle metadata ─────────
+            // ── Step 4: Save statement receipt with lifecycle metadata ─────────
+            // Compute the image hash from the saved file path as a fallback
+            // (the pre-OCR hash from computeUriHash is stored when available;
+            // this fallback ensures the hash is ALWAYS stored so future re-imports
+            // can be deduplicated).
+            val fallbackHash = try {
+                assetStore.computeFileHash(ocrResult.savedImagePath).getOrNull()
+            } catch (_: Exception) { null }
+            val storedHash = preOcrHash ?: fallbackHash
+
             val statementReceipt = ScannedReceipt(
                 imagePath = ocrResult.savedImagePath,
                 rawOcrText = ocrResult.fullText,
@@ -197,10 +210,16 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 sourceType = ReceiptSourceType.BANK_STATEMENT.name,
                 documentType = ReceiptDocumentType.BANK_STATEMENT.name,
                 processingStatus = ReceiptProcessingStatus.PARSED.name,
+                imageHash = storedHash,
                 createdAt = timeProvider.now(),
                 updatedAt = timeProvider.now()
             )
 
+            // NOTE: Directly inserting via receiptRepository.insertReceipt() instead of
+            // going through ReceiptLifecycleCoordinator because this processor already
+            // writes its own lifecycle events (RECEIPT_SAVED, PROCESSING_COMPLETE) and
+            // bank statements don't need OCR/dedup/warranty side effects that the
+            // coordinator provides.
             val receiptId = receiptRepository.insertReceipt(statementReceipt)
             if (receiptId <= 0) {
                 return Result.failure(
@@ -208,7 +227,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 )
             }
 
-            // ── Step 4: Write RECEIPT_SAVED lifecycle event ────────────────────
+            // ── Step 5: Write RECEIPT_SAVED lifecycle event ────────────────────
             receiptEventDao.insert(
                 ReceiptEvent(
                     receiptId = receiptId,
@@ -225,7 +244,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 )
             )
 
-            // ── Step 5: Create a PendingReview for each transaction ────────────
+            // ── Step 6: Create a PendingReview for each transaction ────────────
             var reviewsCreated = 0
             var duplicatesSkipped = 0
 
@@ -248,7 +267,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     // Log whether an active recurring rule exists for this merchant
                     // so users can decide whether to merge with existing subscriptions.
                     val existingRecurring = runCatching {
-                        recurringExpenseDao.getByMerchant(normalizedMerchant)
+                        recurringExpenseRepository.getByMerchantFuzzy(normalizedMerchant)
                     }.getOrNull()
                     if (existingRecurring != null) {
                         if (existingRecurring.isActive) {
@@ -302,7 +321,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 }
             }
 
-            // ── Step 6: Write PROCESSING_COMPLETE lifecycle event ──────────────
+            // ── Step 7: Write PROCESSING_COMPLETE lifecycle event ──────────────
             val totalEvents = 1 + 1 // RECEIPT_SAVED + PROCESSING_COMPLETE
             receiptEventDao.insert(
                 ReceiptEvent(

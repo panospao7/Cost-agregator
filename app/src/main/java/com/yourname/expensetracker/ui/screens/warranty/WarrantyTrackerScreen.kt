@@ -38,6 +38,30 @@ import java.time.format.DateTimeFormatter
 import java.util.*
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 
+/**
+ * Warranty tracker screen — currently read-only display of warranties with
+ * manual-add dialog and auto-detected warranty review.
+ *
+ * ## WRN-19: Warranty edit form UI (planned)
+ * Currently warranties are displayed read-only. There is no edit form to update
+ * an existing warranty's fields. The plan is to add a dedicated edit dialog or
+ * navigation target with the following fields:
+ *
+ * - **Product name** (pre-filled, editable)
+ * - **Merchant name** (pre-filled, editable)
+ * - **Purchase date** (date picker)
+ * - **Warranty duration** (months spinner)
+ * - **Support phone** (editable text, optional)
+ * - **Warranty type** (dropdown: manufacturer, extended, store, third-party)
+ *
+ * The edit entry point would be from the [WarrantyCard] (e.g. a long-press or
+ * edit icon button). On save, [WarrantyTrackerViewModel] should update the
+ * warranty via [WarrantyTrackerRepository.update].
+ *
+ * TODO: Add edit button to WarrantyCard that opens WarrantyEditDialog.
+ *       The dialog should reuse ManualWarrantyDialog's field layout but
+ *       pre-populate from the existing [Warranty] entity.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WarrantyTrackerScreen(

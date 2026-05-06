@@ -90,6 +90,29 @@ class ReceiptInputValidator @Inject constructor(
             errors.add(
                 "File too large: ${fileSizeBytes / 1024 / 1024}MB exceeds limit of ${maxSizeBytes / 1024 / 1024}MB"
             )
+        } else if (fileSizeBytes == null) {
+            // Content length unknown (-1 from statSize): fall back to streaming
+            // copy with hard byte limit to prevent oversized uploads.
+            val exceeded = try {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    val buffer = ByteArray(DEFAULT_CHUNK_SIZE)
+                    var totalBytes = 0L
+                    var bytesRead: Int
+                    while (input.read(buffer).also { bytesRead = it } != -1) {
+                        totalBytes += bytesRead
+                        if (totalBytes > maxSizeBytes) {
+                            return@use true // exceeded
+                        }
+                    }
+                    false
+                } ?: false
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to stream-check file size for %s", uri)
+                false
+            }
+            if (exceeded) {
+                errors.add("File exceeds size limit of ${maxSizeBytes / 1024 / 1024}MB")
+            }
         }
 
         // 5. For image MIME types: try decoding to confirm valid image
@@ -121,6 +144,7 @@ class ReceiptInputValidator @Inject constructor(
 
     private companion object {
         private const val DEFAULT_MAX_SIZE_BYTES = 50 * 1024 * 1024L // 50 MB
+        private const val DEFAULT_CHUNK_SIZE = 8192
 
         private val SUPPORTED_MIME_TYPES = setOf(
             "image/jpeg",

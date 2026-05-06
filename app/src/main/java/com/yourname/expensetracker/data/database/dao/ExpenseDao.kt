@@ -49,6 +49,9 @@ interface ExpenseDao {
         /** Same predicate with `e.` table-alias prefix, for queries that alias expenses as `e`. */
         const val SPENDING_TYPE_E_SQL: String = "e.transactionType = '$SPENDING_TYPE'"
 
+        /** DEPOSIT transaction type for income aggregation queries. */
+        const val DEPOSIT_TYPE_SQL: String = "transactionType = 'DEPOSIT'"
+
         /**
          * Single source-of-truth SQL fragment for the user's effective (ownership-adjusted) amount.
          *
@@ -256,7 +259,10 @@ interface ExpenseDao {
     """)
     suspend fun getRecentExpensesWithCategoryForMerchant(merchant: String, since: Long): List<ExpenseWithCategory>
     
-    @Deprecated("Returns raw Double without currency conversion. Use MultiCurrencyRepository for currency-aware aggregation.")
+    @Deprecated(
+        "Returns raw Double without currency conversion. Use MultiCurrencyRepository for currency-aware aggregation.",
+        ReplaceWith("MultiCurrencyRepository", "com.yourname.expensetracker.data.repository.MultiCurrencyRepository")
+    )
     @Query("SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND isNotMine = 0")
     fun getTotalSpentFlow(): Flow<Double?>
 
@@ -310,6 +316,9 @@ suspend fun updateDedupeKey(expenseId: Long, dedupeKey: String)
 
     @Query("UPDATE expenses SET myShareAmount = :amount WHERE id = :expenseId")
     suspend fun updateMyShareAmount(expenseId: Long, amount: Double?)
+
+    @Query("UPDATE expenses SET isSharedExpense = 0, myShareAmount = NULL, mySharePercentage = NULL, sharedWithName = NULL WHERE id = :expenseId")
+    suspend fun clearSharedExpenseFlags(expenseId: Long)
 
     @Query("""
         SELECT EXISTS(
@@ -943,6 +952,32 @@ AND LENGTH(:merchantKey) >= 8
     @Query("SELECT * FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0 ORDER BY date ASC, id ASC, merchant COLLATE NOCASE ASC LIMIT :limit OFFSET :offset")
     suspend fun getExpensesBetweenForExport(startDate: Long, endDate: Long, limit: Int, offset: Int = 0): List<Expense>
 
+    /**
+     * Keyset-paginated (cursor-based) export query. Uses the last row's date+id
+     * as the cursor instead of OFFSET, providing a consistent snapshot that is
+     * immune to insertions/deletions on earlier pages.
+     *
+     * @param startDate  Start of the date range (inclusive).
+     * @param endDate    End of the date range (exclusive).
+     * @param limit      Maximum number of rows to return.
+     * @param lastDate   Date of the last row from the previous page (null for first page).
+     * @param lastId     Id of the last row from the previous page (null for first page).
+     */
+    @Query("""
+        SELECT * FROM expenses
+        WHERE date >= :startDate AND date < :endDate AND isNotMine = 0
+        AND (:lastDate IS NULL OR (date, id) > (:lastDate, :lastId))
+        ORDER BY date ASC, id ASC, merchant COLLATE NOCASE ASC
+        LIMIT :limit
+    """)
+    suspend fun getExpensesBetweenForExportKeyset(
+        startDate: Long,
+        endDate: Long,
+        limit: Int,
+        lastDate: Long? = null,
+        lastId: Long? = null
+    ): List<Expense>
+
     @Query("SELECT COUNT(*) FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0")
     suspend fun countExpensesBetween(startDate: Long, endDate: Long): Int
 
@@ -1025,6 +1060,24 @@ AND LENGTH(:merchantKey) >= 8
         ORDER BY total DESC
     """)
     suspend fun getTotalSpentBetweenByCurrency(startDate: Long, endDate: Long): List<CurrencyTotal>
+
+    /**
+     * Returns deposit totals grouped by currency for the given date range.
+     * Used by [MultiCurrencyRepository.getHomeCurrencyDepositTotal] for
+     * currency-aware income aggregation.
+     */
+    @Query("""
+        SELECT UPPER(COALESCE(currency, 'EUR')) AS currency,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE ${DEPOSIT_TYPE_SQL}
+          AND date >= :startDate AND date < :endDate
+          AND isNotMine = 0
+        GROUP BY UPPER(currency)
+        ORDER BY total DESC
+    """)
+    suspend fun getDepositTotalsBetweenByCurrency(startDate: Long, endDate: Long): List<CurrencyTotal>
 
     // ── A.9 Batch 5 — Grouped multi-currency aggregate helpers ────────────
     // These queries group by (dimension + UPPER(currency)) so that

@@ -3,6 +3,9 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencyRatesRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
@@ -15,13 +18,15 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
+import timber.log.Timber
 
 @Singleton
 class CurrencyRatesRepositoryImpl @Inject constructor(
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val timeProvider: TimeProvider,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
+    private val privacyGate: PrivacyGate
 ) : CurrencyRatesRepository {
 
     companion object {
@@ -36,6 +41,13 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
     }
 
     override suspend fun refresh(homeCurrency: String): Int = withContext(ioDispatcher) {
+        // PRIVACY GATE: Check privacy gate before external HTTP call
+        val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
+        if (gateCheck is PrivacyDecision.Denied) {
+            Timber.w("CurrencyRatesRepository: blocked by privacy gate: ${gateCheck.reason}")
+            return@withContext 0
+        }
+
         val connection = (URL(ECB_DAILY_RATES_URL).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = TIMEOUT_MS

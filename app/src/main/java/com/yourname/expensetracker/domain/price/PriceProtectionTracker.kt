@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import javax.inject.Inject
@@ -20,6 +21,37 @@ import javax.inject.Singleton
  * Database access to receipt data goes through [ReceiptRepository] — NOT through
  * [com.yourname.expensetracker.data.database.dao.ScannedReceiptDao] directly.
  * This ensures all receipt lifecycle invariants are respected.
+ *
+ * ## WRN-25: Stable price-protection fingerprint (planned)
+ * Currently, price-protected items are identified by their position in the receipt
+ * items list (no stable cross-session identity). This is fragile — if a receipt
+ * is re-parsed or items are reordered, the same physical product may appear as
+ * a "new" item, causing duplicate tracking, lost price-drop alerts, and confusion.
+ *
+ * ### Planned stable fingerprint approach
+ * Replace position-based identity with a deterministic content hash:
+ * 1. **Input fields:** Concatenate `itemName + merchant + normalizedFeatures`
+ *    where `normalizedFeatures` is a sorted, lowercased, whitespace-trimmed
+ *    concatenation of all item metadata fields (category, brand, SKU if available).
+ * 2. **Hashing:** Feed the concatenated string through SHA-256.
+ * 3. **Storage:** Store the hex-encoded SHA-256 digest as a `fingerprint` field on
+ *    [PriceProtectedItem]. Use this fingerprint as the identity key instead of
+ *    `receiptId + index`.
+ * 4. **Lookup:** When new items arrive (from a fresh parse or new receipt), hash
+ *    them and compare fingerprints. If a fingerprint matches an existing tracked
+ *    item, merge price history instead of creating a duplicate entry.
+ *
+ * ### Benefits
+ * - Persistent identity across re-parses, re-orders, and even different receipts
+ *   from the same merchant (for the same product).
+ * - Enables accurate price-drop tracking across sessions.
+ * - Eliminates duplicate entries in the UI when a receipt is re-processed.
+ *
+ * ### Migration
+ * Add a `fingerprint` column to the local tracking storage. Backfill existing
+ * items by computing fingerprints from their current fields. Fall back to
+ * `receiptId + itemName` for items where the fingerprint cannot be computed
+ * (e.g., missing merchant name).
  */
 @Singleton
 class PriceProtectionTracker @Inject constructor(
@@ -64,6 +96,7 @@ class PriceProtectionTracker @Inject constructor(
                         merchant = receipt.parsedMerchant ?: "Unknown",
                         purchasePrice = item.price,
                         purchaseCurrency = receiptCurrency,
+                        currency = receiptCurrency, // WRN-26: explicit currency safety field
                         purchaseDate = purchaseDate,
                         category = item.category,
                         priceProtectionEligible = isEligibleForPriceProtection(receipt),
@@ -177,6 +210,29 @@ class PriceProtectionTracker @Inject constructor(
         return null
     }
     
+    /**
+     * Returns the return window in days for a given merchant.
+     *
+     * ## WRN-22: Price protection should use ReturnWindowDao (planned)
+     * Currently this method uses a hardcoded map of known merchants (Amazon, Costco,
+     * Walmart, etc.) with estimated return windows. This is brittle — it misses
+     * many merchants, ignores merchant-specific policy variations, and doesn't
+     * reflect the actual return window stored in the database for each receipt.
+     *
+     * The plan is to replace this hardcoded lookup with a DAO-driven approach:
+     * 1. Inject [com.yourname.expensetracker.data.database.dao.ReturnWindowDao]
+     *    into this class.
+     * 2. For each [PriceProtectedItem], look up the return window by receipt ID
+     *    via `ReturnWindowDao.getReturnWindowByReceiptId(receiptId)`.
+     * 3. Use the receipt-specific `ReturnWindow.durationDays` if available;
+     *    fall back to the merchant-level policy via
+     *    `ReturnWindowDao.getReturnWindowByMerchant(merchantName)`.
+     * 4. Keep the hardcoded map as a last-resort fallback for merchants without
+     *    any DB record (log a warning so the gap can be filled).
+     *
+     * This ensures price protection accurately reflects each receipt's actual
+     * return policy rather than using generic estimates.
+     */
     private fun getReturnWindow(merchantName: String?): Int {
         return when {
             merchantName == null -> 14
@@ -419,20 +475,77 @@ class PriceProtectionTracker @Inject constructor(
         )
     }
     
+    /**
+     * Represents a single item eligible for price protection tracking.
+      *
+      * ## WRN-25: Stable fingerprint for persistent identity across sessions
+      * The [fingerprint] field is a deterministic content hash that provides a stable
+      * identity across re-parses, re-orders, and restarts. It replaces the fragile
+      * position-based identity (receiptId + index).
+      *
+      * ### Fingerprint computation (planned)
+      * Combine: productName + merchantName + normalizedFeatures → SHA-256.
+      * See [computeFingerprint] for the reference implementation.
+      *
+      * ## WRN-26: Currency safety for price protection
+      * **CURR-1 dependency:** Price comparisons must account for currency.
+      * The [purchasePrice] is denominated in [purchaseCurrency] (and [currency]
+      * is an alias for the same value). When checking current best prices from
+      * external APIs, the [currentBestPrice] must be converted to [currency]
+      * using an exchange rate snapshot captured at purchase time.
+      *
+      * ### Exchange rate snapshot requirement
+      * 1. At the moment a [PriceProtectedItem] is created (receipt scan), capture
+      *    the exchange rate from [purchaseCurrency] to the user's home currency
+      *    via the currency module (see CURR-1).
+      * 2. Store the rate and its timestamp alongside the item.
+      * 3. When comparing [currentBestPrice] (which may be in a different currency),
+      *    convert using the stored rate — NOT a live rate — to ensure consistent
+      *    comparisons over the protection window.
+      * 4. If the stored rate is older than 24 hours, refresh it and log the change
+      *    for audit purposes.
+      *
+      * This prevents false positives/negatives when exchange rates fluctuate during
+      * the price protection period.
+      */
     data class PriceProtectedItem(
         val receiptId: Long,
         val itemName: String,
         val merchant: String,
         val purchasePrice: Double,
         val purchaseCurrency: String = "EUR",
+        /** Alias for [purchaseCurrency] — WRN-26: currency safety field. */
+        val currency: String = purchaseCurrency,
         val purchaseDate: Long,
         val category: String?,
         val priceProtectionEligible: Boolean,
         val returnWindowDays: Int,
         val currentBestPrice: Double?,
         val currentBestPriceCurrency: String? = null,
-        val priceHistory: List<PricePoint>
-    )
+        val priceHistory: List<PricePoint>,
+        /**
+         * WRN-25: Stable fingerprint for persistent identity across sessions.
+         * Combine: productName + merchantName + normalizedFeatures → SHA-256.
+         * This replaces position-based identity (fragile across restarts).
+         */
+        val fingerprint: String? = null
+    ) {
+        /**
+         * Compute a SHA-256 fingerprint for this item.
+         * Combines itemName, merchant, and any available features for a stable
+         * identity across sessions.
+         */
+        fun computeFingerprint(): String {
+            val input = listOfNotNull(
+                itemName.lowercase().trim(),
+                merchant.lowercase().trim(),
+                category?.lowercase()?.trim()
+            ).joinToString("|")
+            val digest = MessageDigest.getInstance("SHA-256")
+            return digest.digest(input.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+        }
+    }
     
     data class PricePoint(
         val price: Double,

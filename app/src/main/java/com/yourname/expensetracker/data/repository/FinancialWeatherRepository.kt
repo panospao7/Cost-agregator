@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.logic.NarrativeGenerator
 import com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler
 import com.yourname.expensetracker.domain.model.*
+import com.yourname.expensetracker.domain.model.ConfirmedOccurrence
 import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.text.DomainTextKeys
@@ -45,13 +46,19 @@ class FinancialWeatherRepository @Inject constructor(
         savingsGoalRepository.observeSavingsGoals().catch { emit(emptyList()) }
     ) { expenses, budgetStatuses, recurringEntities, plannedEntities, savingsGoals ->
         val expenseSnapshots = forecastInputAssembler.mapExpenseSnapshots(expenses)
-        val confirmedRecurringPatterns = mergedRecurringPatternsProvider.getConfirmedPatterns(
-            manualRecurring = recurringEntities
+        // FCST-N1: Pass actual manualRecurringEntities so the assembler can
+        // (a) generate concrete occurrences for manual recurring rules and
+        // (b) properly deduplicate detected patterns against manual ones.
+        // Previously we passed emptyList() and depended on getAllRecurringPatternsSync
+        // doing the merging externally, which meant occurrence generation was skipped.
+        val detectedPatterns = mergedRecurringPatternsProvider.getPatternsFromSnapshots(
+            expenseSnapshots = expenseSnapshots,
+            manualRecurring = emptyList() // detected-only; manual passed separately below
         )
         val assembledInput = forecastInputAssembler.assemble(
             expenses = expenseSnapshots,
-            manualRecurringEntities = emptyList(),
-            detectedRecurringPatterns = confirmedRecurringPatterns,
+            manualRecurringEntities = recurringEntities,
+            detectedRecurringPatterns = detectedPatterns,
             plannedExpenses = forecastInputAssembler.mapPlannedExpenses(plannedEntities),
             savingsGoals = forecastInputAssembler.mapSavingsGoals(savingsGoals),
             budgetStatuses = forecastInputAssembler.mapBudgetSnapshots(budgetStatuses)
@@ -84,7 +91,8 @@ class FinancialWeatherRepository @Inject constructor(
             projectedSpendingPoints = forecast.components.projectedSpendingPoints,
             upcomingItems = buildUpcomingItems(
                 forecast.components.recurringExpenses,
-                forecast.components.plannedExpenses
+                forecast.components.plannedExpenses,
+                forecast.components.confirmedOccurrences
             ),
             totalRecurringCount = assembledInput.recurringPatterns.size,
             details = narrative.details
@@ -106,20 +114,33 @@ class FinancialWeatherRepository @Inject constructor(
 
     private fun buildUpcomingItems(
         recurring: List<RecurringPattern>,
-        planned: List<PlannedExpense>
+        planned: List<PlannedExpense>,
+        confirmedOccurrences: List<ConfirmedOccurrence> = emptyList()
     ): List<UpcomingItem> {
         val now = timeProvider.now()
         val startOfToday = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(now)
         val horizon = TimePeriodUtils.addDays(startOfToday, 31) // Exclusive
-        
+
         val items = mutableListOf<com.yourname.expensetracker.domain.model.UpcomingItem>()
-        
-        recurring.filter { it.nextExpectedDate >= startOfToday && it.nextExpectedDate < horizon }
+
+        // I1: Use materialised occurrences for manual rules (captures all WEEKLY/BIWEEKLY
+        // repetitions instead of just the first nextExpectedDate).
+        confirmedOccurrences
+            .filter { it.dueDate >= startOfToday && it.dueDate < horizon }
+            .forEach { items.add(UpcomingItem.Occurrence(it)) }
+
+        // Detected-only patterns (id == null) have no occurrences — use single-date fallback.
+        // Manual patterns are already represented via confirmedOccurrences, so skip them
+        // to avoid double-counting.
+        val manualPatternIds = recurring.filter { it.id != null }.mapNotNull { it.id }.toSet()
+        recurring
+            .filter { it.id == null }
+            .filter { it.nextExpectedDate >= startOfToday && it.nextExpectedDate < horizon }
             .forEach { items.add(UpcomingItem.Recurring(it)) }
-            
+
         planned.filter { it.date >= startOfToday && it.date < horizon }
             .forEach { items.add(UpcomingItem.Planned(it)) }
-            
+
         return items.sortedBy { it.date }
     }
 
@@ -128,12 +149,24 @@ class FinancialWeatherRepository @Inject constructor(
             expenseRepository.getAllExpenses(),
             recurringExpenseRepository.getAllFlow()
         ) { expenses, recurringEntities ->
-            val expenseSnapshots = forecastInputAssembler.mapExpenseSnapshots(expenses)
-            mergedRecurringPatternsProvider.getPatternsFromSnapshots(
-                expenseSnapshots = expenseSnapshots,
-                manualRecurring = recurringEntities
-            )
+            getAllRecurringPatternsSync(expenses, recurringEntities)
         }
+
+    /**
+     * Synchronous helper that merges manually-entered recurring rules with
+     * detected-from-history patterns. This is the non-Flow version used by
+     * [getFinancialWeather] to include all pattern types in the forecast.
+     */
+    private suspend fun getAllRecurringPatternsSync(
+        expenses: List<com.yourname.expensetracker.data.database.entity.Expense>,
+        recurringEntities: List<com.yourname.expensetracker.data.database.entity.ManualRecurringExpense>
+    ): List<RecurringPattern> {
+        val expenseSnapshots = forecastInputAssembler.mapExpenseSnapshots(expenses)
+        return mergedRecurringPatternsProvider.getPatternsFromSnapshots(
+            expenseSnapshots = expenseSnapshots,
+            manualRecurring = recurringEntities
+        )
+    }
 
     fun getConfirmedRecurringPatterns(): Flow<List<RecurringPattern>> =
         recurringExpenseRepository.getAllFlow().map { recurringEntities ->

@@ -73,6 +73,20 @@ enum class ForecastHorizon(
         )
 }
 
+/**
+ * A materialised occurrence from a recurring rule within the forecast window.
+ * Carries enough information for downstream consumers (SynthesisEngine,
+ * FinancialWeatherRepository) to avoid re-estimating WEEKLY/BIWEEKLY occurrence counts
+ * from a single [RecurringPattern.nextExpectedDate].
+ */
+data class ConfirmedOccurrence(
+    val dueDate: Long,
+    val expectedAmount: Double,
+    val expectedCurrency: String,
+    val merchant: String?,
+    val categoryId: Long?
+)
+
 data class ForecastComponents(
     val recurringExpenses: List<RecurringPattern>,
     val plannedExpenses: List<PlannedExpense> = emptyList(), // Manual intentions
@@ -88,6 +102,15 @@ data class ForecastComponents(
     val predictedDiscretionary: Double, // Habit-based predicted spending
     val discretionaryBudget: Double,   // "Safe-to-Spend"
     val riskLevel: RiskLevel,
+
+    /**
+     * Materialised occurrences from manual recurring rules within the forecast window.
+     * Prefer this over [recurringExpenses] for computing committed/likely spend,
+     * because it contains ALL generated occurrences (not just the next expected date).
+     * Empty when no manual recurring rules exist or occurrence generation failed.
+     */
+    val confirmedOccurrences: List<ConfirmedOccurrence> = emptyList(),
+
     /** @suppress Currency code these components are denominated in (e.g. "EUR", "USD"). */
     val displayCurrency: String = ""
 ) {

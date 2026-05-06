@@ -139,14 +139,40 @@ class AssistantViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(input = value, errorMessage = null)
     }
 
+    /**
+     * AID-10: Per-request diagnostics tracking.
+     * Captures phase-level timing, routing info, and error details for each query.
+     */
+    private data class QueryDiagnostics(
+        val query: String,
+        val totalDurationMs: Long,
+        val interpretationDurationMs: Long? = null,
+        val executionDurationMs: Long? = null,
+        val resultType: String? = null,
+        val route: String? = null,
+        val error: String? = null
+    ) {
+        fun toDisplayString(): String = buildString {
+            appendLine("Query: ${query.take(50)}")
+            appendLine("Total: ${totalDurationMs}ms")
+            interpretationDurationMs?.let { appendLine("Interpret: ${it}ms") }
+            executionDurationMs?.let { appendLine("Execute: ${it}ms") }
+            resultType?.let { appendLine("Result: $it") }
+            route?.let { appendLine("Route: $it") }
+            error?.let { appendLine("Error: $it") }
+        }
+    }
+
     fun submitQuery(rawQuery: String = _uiState.value.input) {
         val query = rawQuery.trim()
         if (query.isBlank()) return
         if (!_isSubmitting.compareAndSet(false, true)) return
 
         _currentQueryJob?.cancel()
+        val queryStartedAt = System.currentTimeMillis()
 
         _currentQueryJob = viewModelScope.launch {
+            var lastDiagnostics: QueryDiagnostics? = null
             try {
                 val settings = aiSettingsRepository.settings().first()
                 if (!settings.aiEnabled || !settings.assistantEnabled || !settings.queryInterpretationEnabled) {
@@ -181,15 +207,35 @@ class AssistantViewModel @Inject constructor(
                     emptyList()
                 }
 
-                when (val interpretation = interpretFinancialQueryUseCase(query, historyMessages)) {
+                // AID-10: Capture interpretation timing
+                val interpretationStart = System.currentTimeMillis()
+                val interpretation = interpretFinancialQueryUseCase(query, historyMessages)
+                val interpretationDuration = System.currentTimeMillis() - interpretationStart
+
+                val diagnosticsBuilder = QueryDiagnostics(
+                    query = query,
+                    totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                    interpretationDurationMs = interpretationDuration,
+                    route = _uiState.value.runtimeDiagnostics
+                )
+
+                when (interpretation) {
                     is FinancialQueryInterpretationResult.Structured -> {
+                        // AID-10: Capture execution timing
+                        val execStart = System.currentTimeMillis()
                         val result = executeFinancialQueryUseCase(interpretation.intent)
+                        val executionDuration = System.currentTimeMillis() - execStart
                         val navigationFilter = mapFinancialQueryToNavigationUseCase(interpretation.intent)?.toUi()
                         val resultItem = AssistantConversationItem.Result(
                             id = "result-${System.nanoTime()}",
                             queryText = query,
                             result = result,
                             drilldownFilter = navigationFilter
+                        )
+                        lastDiagnostics = diagnosticsBuilder.copy(
+                            totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                            executionDurationMs = executionDuration,
+                            resultType = result::class.simpleName
                         )
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
@@ -208,6 +254,10 @@ class AssistantViewModel @Inject constructor(
                             queryText = query,
                             result = result
                         )
+                        lastDiagnostics = diagnosticsBuilder.copy(
+                            totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                            resultType = "Clarification"
+                        )
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
                             messages = _uiState.value.messages + resultItem
@@ -222,6 +272,10 @@ class AssistantViewModel @Inject constructor(
                             queryText = query,
                             result = result
                         )
+                        lastDiagnostics = diagnosticsBuilder.copy(
+                            totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                            resultType = "Unsupported"
+                        )
                         _uiState.value = _uiState.value.copy(
                             isLoading = false,
                             messages = _uiState.value.messages + resultItem
@@ -234,6 +288,11 @@ class AssistantViewModel @Inject constructor(
             } catch (e: Exception) {
                 Timber.e(e, "Assistant query pipeline failed")
                 val friendlyMessage = mapAssistantExceptionToUserMessage(e)
+                lastDiagnostics = QueryDiagnostics(
+                    query = query,
+                    totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                    error = "${e::class.simpleName}: ${e.message}"
+                )
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     errorMessage = friendlyMessage,
@@ -244,6 +303,12 @@ class AssistantViewModel @Inject constructor(
                     input = if (_uiState.value.input.isBlank()) query else _uiState.value.input
                 )
             } finally {
+                // AID-10: Update runtime diagnostics with per-request details
+                if (lastDiagnostics != null) {
+                    _uiState.value = _uiState.value.copy(
+                        runtimeDiagnostics = lastDiagnostics.toDisplayString()
+                    )
+                }
                 if (_uiState.value.isLoading) {
                     _uiState.value = _uiState.value.copy(isLoading = false)
                 }

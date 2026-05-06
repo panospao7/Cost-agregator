@@ -7,11 +7,13 @@ import com.yourname.expensetracker.domain.model.dashboard.FinancialWeather
 import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.PlannedExpense
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -35,7 +37,9 @@ class DashboardDataProvider @Inject constructor(
     private val savingsGoalRepository: DashboardSavingsGoalRepository,
     private val insightsEngine: InsightsEngine,
     private val synthesisEngine: SynthesisEngine,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    /** FCST-N2: Normalize all forecast/expense amounts to the user's home currency. */
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
 ) {
     private val timePeriodUtils = TimePeriodUtils
 

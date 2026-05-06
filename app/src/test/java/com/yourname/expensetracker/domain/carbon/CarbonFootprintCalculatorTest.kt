@@ -340,7 +340,8 @@ class CarbonFootprintCalculatorTest {
             categoryId = 1,
             notes = null,
             transactionType = type,
-            currency = "EUR"
+            currency = "EUR",
+            createdAt = System.currentTimeMillis()
         )
     }
 }

@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.debug.DebugData
 import com.yourname.expensetracker.domain.debug.DebugIssueDetector
@@ -70,7 +71,8 @@ class ReceiptRepository @Inject constructor(
     private val warrantyUseCase: Lazy<AutoCreateWarrantyFromReceiptUseCase>,
     private val coordinator: TransactionLifecycleCoordinator,
     private val receiptLinkService: ReceiptLinkService,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val receiptLifecycleCoordinator: Lazy<ReceiptLifecycleCoordinator>
 ) {
     private companion object {
         // Use the canonical policy for all duplicate detection constants.
@@ -331,10 +333,27 @@ class ReceiptRepository @Inject constructor(
      * step. This method remains for backward compatibility but will be removed
      * in a future release.
      */
+    /**
+     * ## WRN-N2: Full legacy linking deprecation (timeline)
+     * This method is scheduled for removal in **v2.0**. All callers have been
+     * migrated to [TransactionLifecycleCoordinator.createExpense] directly:
+     *
+     * | Caller | Migrated to | Status |
+     * |--------|-------------|--------|
+     * | [ReceiptScanViewModel] (via [ReceiptLifecycleCoordinator]) | `coordinator.createExpense()` | ✅ Done |
+     * | [BankStatementLifecycleProcessor] | `coordinator.createExpense()` | ✅ Done |
+     * | [EmailReceiptIngestionService] | `coordinator.createExpense()` (via [ReceiptLifecycleCoordinator]) | ✅ Done |
+     * | [ReviewQueueRepository] | `coordinator.createExpense()` | ✅ Done |
+     * | [NotificationProcessingPipeline] | `coordinator.createExpense()` | ✅ Done |
+     * | [ManualExpenseRepository] | `coordinator.createExpense()` | ✅ Done |
+     *
+     * After removal, receipt-to-expense creation flows exclusively through
+     * [TransactionLifecycleCoordinator], which provides consistent validation,
+     * normalisation, deduplication, event emission, and warranty auto-creation.
+     */
     @Deprecated(
-        message = "Use TransactionLifecycleCoordinator.createExpense() directly " +
-            "with ReceiptLinkService.linkReceiptToExpense() for receipt-expense linking. " +
-            "This method bypasses the full lifecycle and will be removed.",
+        "Will be removed in v2.0. Use coordinator.createExpense() directly. " +
+            "All callers have been migrated (see WRN-N2 KDoc for list).",
         replaceWith = ReplaceWith(
             expression = "coordinator.createExpense(request)",
             imports = ["com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator"]
@@ -487,6 +506,16 @@ class ReceiptRepository @Inject constructor(
         return scannedReceiptDao.getById(id)
     }
 
+    /**
+     * Persists a [ScannedReceipt] directly to the database.
+     *
+     * **Internal use only** — prefer [ReceiptLifecycleCoordinator] for the full
+     * lifecycle (validation, deduplication, event logging, side effects).
+     *
+     * This method should only be used by code paths that manage their own lifecycle
+     * events and side effects (e.g., [BankStatementLifecycleProcessor],
+     * [WarrantyTrackerRepository.createManualPlaceholderReceipt]).
+     */
     suspend fun insertReceipt(receipt: ScannedReceipt): Long {
         return scannedReceiptDao.insert(receipt)
     }
@@ -518,6 +547,16 @@ class ReceiptRepository @Inject constructor(
     /**
      * Process multiple receipts in parallel with a concurrency limit to prevent OOM.
      * Optimized: Coroutine-bounded concurrency to avoid blocking worker threads.
+     *
+     * ## RCP-N3-FIXED: Routing through [ReceiptLifecycleCoordinator]
+     * Each batch item is now processed via [ReceiptLifecycleCoordinator.processReceiptInput]
+     * which provides the full lifecycle:
+     * - Input validation via [ReceiptInputValidator]
+     * - OCR + parsing (delegated to [processReceipt])
+     * - File hash computation and duplicate detection (hash, text fingerprint, semantic fingerprint)
+     * - Lifecycle event audit trail (RECEIPT_SAVED, OCR_FAILED, DUPLICATE_DETECTED)
+     * - Post-save side effects via [ReceiptSideEffectDispatcher] (warranty extraction,
+     *   item categorization, price protection checks)
      */
     suspend fun processBatch(uris: List<Uri>, onProgress: (Int, Int) -> Unit): BatchResult {
         val uniqueUris = uris.distinctBy { it.toString() }
@@ -539,8 +578,12 @@ class ReceiptRepository @Inject constructor(
                     val result = withContext(ioDispatcher) {
                         semaphore.withPermit {
                             try {
-                                processReceipt(uri, autoCreateReview = true)
-                                BatchItemResult(success = true, error = null)
+                                // Route through the lifecycle coordinator for full lifecycle coverage
+                                val outcome = receiptLifecycleCoordinator.get().processReceiptInput(uri)
+                                BatchItemResult(
+                                    success = outcome.isSuccess,
+                                    error = outcome.exceptionOrNull()?.message
+                                )
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {

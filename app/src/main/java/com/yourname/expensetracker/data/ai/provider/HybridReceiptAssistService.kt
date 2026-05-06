@@ -12,6 +12,13 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 
+// AID-4: This service can be simplified by using HybridRouter:
+// val router = HybridRouter(aiSettingsRepository, router, AiCapability.RECEIPT_EXTRACTION,
+//     cloudFn = { cloudReceiptAssistService.suggest(it) },
+//     onDeviceFn = { onDeviceReceiptAssistService.suggest(it) },
+//     fallbackFn = { noOpReceiptAssistService.suggest(it) }
+// )
+// override suspend fun suggest(input: ReceiptAssistInput): AiServiceResult<ReceiptAssistSuggestion> = router.execute(input)
 @Singleton
 class HybridReceiptAssistService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,

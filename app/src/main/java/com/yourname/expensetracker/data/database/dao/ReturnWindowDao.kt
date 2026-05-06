@@ -50,12 +50,13 @@ interface ReturnWindowDao {
         updatedAt: Long
     )
 
-    @Query("UPDATE return_windows SET status = :status, returnedAt = :returnedAt, refundAmount = :refundAmount, updatedAt = :updatedAt WHERE id = :returnWindowId")
+    @Query("UPDATE return_windows SET status = :status, returnedAt = :returnedAt, refundAmount = :refundAmount, refundExpenseId = :refundExpenseId, updatedAt = :updatedAt WHERE id = :returnWindowId")
     suspend fun markAsReturned(
         returnWindowId: Long,
         status: ReturnStatus = ReturnStatus.RETURNED,
         returnedAt: Long,
         refundAmount: Double? = null,
+        refundExpenseId: Long? = null,
         updatedAt: Long
     )
 

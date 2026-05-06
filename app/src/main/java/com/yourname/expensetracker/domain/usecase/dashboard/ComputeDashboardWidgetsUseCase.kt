@@ -528,8 +528,13 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     private fun computeSpendingTrend(ctx: ComputeContext): DashboardWidget.SpendingTrend {
         val trendSeriesCal = java.util.Calendar.getInstance()
         val trendSeries = mutableListOf<SpendingTrendSeries>()
+        // DSH-N2: Deduplicate by expense ID to prevent shared/duplicate expenses
+        // from being counted twice in the spending trend. Shared expenses that
+        // appear in both the payer's and participant's records have the same
+        // expense ID — the distinctBy ensures each unique expense is counted once.
         val purchasesByMonth = ctx.data.data.expenses
             .filter { it.transactionType == DashboardTransactionType.PURCHASE && !it.isNotMine }
+            .distinctBy { it.id }
             .groupBy { expense ->
                 trendSeriesCal.timeInMillis = expense.date
                 Pair(trendSeriesCal.get(java.util.Calendar.YEAR), trendSeriesCal.get(java.util.Calendar.MONTH))
@@ -545,7 +550,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val monthLabels = arrayOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
         monthKeys.forEach { (yr, mo) ->
             val monthExpenses = purchasesByMonth[Pair(yr, mo)] ?: emptyList()
-            if (monthExpenses.isEmpty()) return@forEach
 
             val tempCal = java.util.Calendar.getInstance()
             tempCal.set(yr, mo, 1, 0, 0, 0)
@@ -553,6 +557,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             val mStart = tempCal.timeInMillis
             val daysInThisMonth = tempCal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
 
+            // DSH-N1: Emit zero-filled series for empty months instead of
+            // skipping them, so the spending trend chart shows continuous data.
             val daily = DoubleArray(daysInThisMonth)
             monthExpenses.forEach { exp ->
                 val dayIdx = TimePeriodUtils.daysBetween(mStart, exp.date).coerceIn(0, daysInThisMonth - 1)

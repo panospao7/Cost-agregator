@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.recurring
 
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import timber.log.Timber
 import javax.inject.Inject
 
 /**
@@ -9,6 +10,17 @@ import javax.inject.Inject
  * candidates within a half-open date range [startDate, endDate).
  *
  * No DI needed — instantiable as a plain class or used as a singleton.
+ *
+ * ## REC-4: Irregular recurring manual confirmation (planned)
+ * Currently, [RecurrenceFrequency.IRREGULAR] frequency returns [emptyList] because
+ * irregular items cannot be predicted algorithmically. The planned future flow is:
+ *
+ * 1. User confirms an irregular item via the UI.
+ * 2. The confirmation date and user-specified interval are recorded.
+ * 3. After 2–3 confirmations, the system promotes the item to a detected frequency
+ *    (e.g. WEEKLY or MONTHLY) using pattern-matching logic.
+ *
+ * Until this flow is implemented, IRREGULAR items are treated as non-repeating.
  */
 class RecurringOccurrenceExpander @Inject constructor() {
 
@@ -81,7 +93,10 @@ class RecurringOccurrenceExpander @Inject constructor() {
      */
     fun expand(request: ExpandRequest): List<OccurrenceCandidate> {
         // IRREGULAR frequency cannot be predicted
-        if (request.frequency == RecurrenceFrequency.IRREGULAR) return emptyList()
+        if (request.frequency == RecurrenceFrequency.IRREGULAR) {
+            Timber.d("REC-4: IRREGULAR frequency for merchant='%s' — manual confirmation flow needed (planned future feature)", request.merchant)
+            return emptyList()
+        }
 
         // No valid range
         if (request.startDate >= request.endDate) return emptyList()

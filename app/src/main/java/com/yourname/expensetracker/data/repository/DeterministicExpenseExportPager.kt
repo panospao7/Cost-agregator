@@ -1,31 +1,24 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.entity.Expense
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Exhaustive expense pager that uses offset-based pagination to fetch all
- * expenses in a date range for export.
+ * Exhaustive expense pager that uses **keyset-based (cursor) pagination** to fetch
+ * all expenses in a date range for export.
  *
- * ## BAK-13: Offset-based paging (not streaming)
- * This pager uses `LIMIT ? OFFSET ?` (offset-based pagination), which loads
- * the **entire result set into memory** before returning. For very large
- * datasets (>10k expenses) this can cause:
- * - High memory pressure (OOM risk)
- * - Performance degradation as offset grows (SQLite must scan past earlier rows)
- *
- * A streaming / cursor-based (keyset) approach would be more efficient:
- * - Use `WHERE (date, id) > (:lastDate, :lastId) ORDER BY date ASC, id ASC`
- * - Each page fetches only the next N rows without re-scanning skipped rows.
- *
- * For the current use-case (accounting export) this is acceptable because:
- * - Accounting exports typically cover bounded time ranges (quarterly).
- * - The page size (2000) keeps individual queries fast.
- * - Exports are infrequent and user-triggered.
- *
- * If performance becomes an issue, migrate to keyset pagination via a new
- * DAO method that accepts a cursor pair `(lastDate, lastId)`.
+ * ## SRH-24: ID-based snapshot instead of offset-based
+ * Converted from offset-based (`LIMIT ? OFFSET ?`) to keyset-based pagination that
+ * uses `WHERE (date, id) > (:lastDate, :lastId)`. This provides:
+ * - An **atomic snapshot** — the watermark is defined by (date, id) of the last
+ *   row, so insertions/deletions on *already-paged* rows do not cause missed or
+ *   duplicated rows.
+ * - **Consistent ordering** — the `ORDER BY date ASC, id ASC` across pages ensures
+ *   every expense is visited exactly once.
+ * - **No offset scan penalty** — SQLite does not need to skip past previously-returned
+ *   rows on each page, making large exports O(n) instead of O(n²).
  */
 @Singleton
 class DeterministicExpenseExportPager @Inject constructor(
@@ -36,6 +29,15 @@ class DeterministicExpenseExportPager @Inject constructor(
         const val EXPORT_PAGE_SIZE = 2000
     }
 
+    /**
+     * Fetches all expenses between [startDate] and [endDate] using keyset-based
+     * cursor pagination.
+     *
+     * @param startDate Start of the date range (inclusive).
+     * @param endDate   End of the date range (exclusive).
+     * @param pageSize  Number of rows per page (default [EXPORT_PAGE_SIZE]).
+     * @return A complete list of matching expenses in deterministic order.
+     */
     suspend fun fetchAllBetween(
         startDate: Long,
         endDate: Long,
@@ -44,22 +46,37 @@ class DeterministicExpenseExportPager @Inject constructor(
         require(pageSize > 0) { "pageSize must be greater than 0" }
 
         val expenses = mutableListOf<Expense>()
-        var offset = 0
+        var lastDate: Long? = null
+        var lastId: Long? = null
 
         while (true) {
-            val page = expenseRepository.getExpensesBetweenPagedForDeterministicExport(
+            val page = expenseRepository.getExpensesBetweenForExportKeyset(
                 startDate = startDate,
                 endDate = endDate,
                 limit = pageSize,
-                offset = offset
+                lastDate = lastDate,
+                lastId = lastId
             )
             if (page.isEmpty()) break
 
             expenses += page
+
             if (page.size < pageSize) break
-            offset += pageSize
+
+            // Update cursor to the last row of this page
+            val lastRow = page.last()
+            lastDate = lastRow.date
+            lastId = lastRow.id
         }
 
+        Timber.d("fetchAllBetween: exported %d expenses using keyset pagination", expenses.size)
         return expenses
     }
+
+    /**
+     * Count expenses between dates using the same consistent snapshot.
+     * Uses the repository's counting method which is consistent with the paged fetch.
+     */
+    suspend fun countBetween(startDate: Long, endDate: Long): Int =
+        expenseRepository.countExpensesBetween(startDate, endDate)
 }

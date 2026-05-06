@@ -12,13 +12,20 @@ import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.model.Result as DomainResult
+import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.EmailReceiptData
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
+import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
@@ -75,7 +82,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val sideEffectDispatcher: ReceiptSideEffectDispatcher,
     private val duplicateDetector: ReceiptDuplicateDetector,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
+    private val merchantNormalizer: MerchantNormalizer,
+    private val hybridClassifier: HybridExpenseClassifier
 ) {
 
     companion object {
@@ -596,24 +606,36 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Creates an expense from a scanned receipt, respecting the tax-inclusive flag.
+     * Creates an expense from a scanned receipt and links the receipt to the expense.
      *
-     * RCP-14: When the receipt was parsed as tax-inclusive (i.e. [ScannedReceipt.parsedTotal]
-     * already contains the tax amount), this method uses the receipt's own parsed total
-     * as the expense amount — avoiding double-counting. The [ReceiptRepository.createExpenseFromReceipt]
-     * method handles the actual lookup and amount resolution; this coordinator method is
-     * a convenience that ensures the receipt-level `taxInclusive` flag is considered.
+     * This is a convenience wrapper around [TransactionLifecycleCoordinator.createExpense]
+     * and [ReceiptLinkService.linkReceiptToExpense].
      *
-     * @param receiptId The ID of the scanned receipt.
-     * @param merchant Override merchant name (falls back to receipt's parsed merchant if blank).
-     * @param amount Override amount (overridden by receipt's parsedTotal if tax-inclusive).
+     * @param receiptId The scanned receipt ID.
+     * @param merchant Merchant/display name.
+     * @param amount Transaction amount.
      * @param currency Currency code.
      * @param categoryId Optional category ID.
      * @param date Transaction date.
      * @param paymentMethod Payment method.
      * @param notes Optional notes.
-     * @return [Result] with the created expense ID on success.
+     * @return [DomainResult] with the created expense ID on success.
+     * @Deprecated Use [TransactionLifecycleCoordinator.createExpense] directly with
+     *   [ReceiptLinkService.linkReceiptToExpense] for the linking step.
      */
+    @Deprecated(
+        message = "Migrate to explicit pipeline: 1) load receipt for tax-inclusive check, " +
+            "2) MerchantNormalizer.normalize(merchant, autoCreate=true) for canonical name, " +
+            "3) HybridExpenseClassifier.classify() when categoryId is null, " +
+            "4) TransactionLifecycleCoordinator.createExpense() with all resolved fields, " +
+            "5) ReceiptLinkService.linkReceiptToExpense() for receipt-expense linking, " +
+            "6) HybridExpenseClassifier.learnFromCorrection() as best-effort side effect. " +
+            "This method will be removed in a future release.",
+        replaceWith = ReplaceWith(
+            expression = "transactionLifecycleCoordinator.createExpense(request) /* see migration steps above */",
+            imports = ["com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator"]
+        )
+    )
     suspend fun createExpenseFromReceipt(
         receiptId: Long,
         merchant: String,
@@ -624,20 +646,115 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         paymentMethod: PaymentMethod = PaymentMethod.CARD,
         notes: String? = null
     ): DomainResult<Long> {
-        // NOTE: The transient taxInclusive flag on ScannedReceipt is @Ignore
-        // and always returns false from the database. Tax-inclusive detection
-        // is handled upstream in ReceiptRepository.createExpenseFromReceipt
-        // via ReceiptParser.isTaxInclusive, so we pass the caller-supplied
-        // amount directly.
-        return receiptRepository.createExpenseFromReceipt(
-            receiptId = receiptId,
-            merchant = merchant,
-            amount = amount,
+        // ── Fix 1 (CRITICAL): Tax-inclusive amount override (RCP-14) ──────────
+        // Load the receipt entity. taxInclusive is @Ignore (transient), so it
+        // is always false when loaded from DB. Fall back to detecting
+        // tax-inclusive from the persisted fields.
+        val receiptRecord = scannedReceiptDao.getById(receiptId)
+        val effectiveAmount = if (receiptRecord != null) {
+            // RCP-14: taxInclusive is @Ignore (transient), recompute from persisted fields
+            val parsedItems = receiptRecord.parsedItems
+            val isTaxInclusive = receiptRecord.taxInclusive ||
+                (receiptRecord.parsedTotal != null && receiptRecord.parsedTaxAmount != null && parsedItems != null && run {
+                    try {
+                        val items = org.json.JSONArray(parsedItems)
+                        if (items.length() == 0) false
+                        else {
+                            var sum = 0.0
+                            for (i in 0 until items.length()) {
+                                sum += items.getJSONObject(i).getDouble("totalPrice")
+                            }
+                            kotlin.math.abs(sum - receiptRecord.parsedTotal) < receiptRecord.parsedTotal * 0.05
+                        }
+                    } catch (_: Exception) { false }
+                })
+            if (isTaxInclusive && receiptRecord.parsedTotal != null) {
+                Timber.d(
+                    "RCP-14: Overriding amount from %.2f to %.2f for tax-inclusive receipt %d",
+                    amount, receiptRecord.parsedTotal, receiptId
+                )
+                receiptRecord.parsedTotal
+            } else {
+                amount
+            }
+        } else {
+            amount
+        }
+
+        // ── Fix 2 (CRITICAL): Merchant normalization ──────────────────────────
+        val normalizedMerchant = merchantNormalizer.normalize(
+            rawName = merchant,
+            autoCreate = true
+        ).canonical.normalizedName
+
+        // ── Fix 3 (CRITICAL): Auto-categorization when no category provided ───
+        val finalCategoryId = categoryId ?: hybridClassifier.classify(
+            merchantName = normalizedMerchant,
+            amount = effectiveAmount
+        ).categoryId.takeIf { it > 0 }
+
+        // ── Fix 4 (MAJOR): Notes fallback ─────────────────────────────────────
+        val notesValue = notes ?: "Scanned from receipt"
+
+        val request = CreateExpenseRequest(
+            merchant = normalizedMerchant,
+            amount = effectiveAmount,
             currency = currency,
-            categoryId = categoryId,
             date = date,
+            transactionType = TransactionType.PURCHASE,
+            source = ExpenseSource.RECEIPT_SCAN,
+            categoryId = finalCategoryId,
+            notes = notesValue,
             paymentMethod = paymentMethod,
-            notes = notes
+            isManualEntry = true,
+            scannedReceiptId = receiptId
         )
+
+        return when (val result = transactionLifecycleCoordinator.createExpense(request)) {
+            is CreateExpenseResult.Created -> {
+                val expenseId = result.expenseId
+                // Link receipt to the newly created expense
+                receiptLinkService.linkReceiptToExpense(
+                    receiptId = receiptId,
+                    expenseId = expenseId,
+                    linkType = "DIRECT_SAVE",
+                    source = ExpenseSource.RECEIPT_SCAN.name
+                )
+
+                // ── Fix 5 (MAJOR): Classifier learning (best-effort side effect) ──
+                if (finalCategoryId != null) {
+                    try {
+                        hybridClassifier.learnFromCorrection(
+                            merchantName = normalizedMerchant,
+                            correctCategoryId = finalCategoryId,
+                            amount = effectiveAmount
+                        )
+                    } catch (e: Exception) {
+                        Timber.w(e, "Classifier learning failed after expense creation from receipt %d", receiptId)
+                    }
+                }
+
+                DomainResult.Success(expenseId)
+            }
+            is CreateExpenseResult.DuplicateSkipped -> {
+                DomainResult.Duplicate
+            }
+            is CreateExpenseResult.ValidationFailed -> {
+                DomainResult.Error(
+                    message = "Validation failed: ${result.errors.joinToString(", ")}"
+                )
+            }
+            is CreateExpenseResult.InsertConflict -> {
+                DomainResult.Error(
+                    message = "Insert conflict: ${result.dedupeKey}"
+                )
+            }
+            is CreateExpenseResult.Error -> {
+                DomainResult.Error(
+                    exception = result.exception,
+                    message = result.exception.message ?: "Unknown error"
+                )
+            }
+        }
     }
 }

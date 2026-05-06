@@ -11,6 +11,13 @@ import androidx.room.PrimaryKey
  * together with the actor, timestamps, and status transitions so that the full
  * history of a receipt can be reconstructed for auditing or debugging.
  *
+ * ## DB-8: CASCADE audit — ReceiptEvent
+ * This entity has **no foreign key declarations** — [receiptId] is nullable and
+ * unconstrained at the DB level. No cascade-delete risk exists. This is intentional:
+ * events must survive receipt deletion so the audit trail is never lost. If an FK
+ * were added, it should use `onDelete = ForeignKey.SET_NULL` to preserve the event
+ * when the parent receipt is deleted.
+ *
  * @property id Auto-generated primary key.
  * @property receiptId The receipt this event relates to (nullable for events before receipt creation).
  * @property sourceType The source type of the receipt at the time of the event.

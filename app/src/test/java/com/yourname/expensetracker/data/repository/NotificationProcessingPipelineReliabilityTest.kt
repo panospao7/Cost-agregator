@@ -244,7 +244,8 @@ class NotificationProcessingPipelineReliabilityTest {
                 confidence = 0.72f,
                 packageName = "com.test.app",
                 notificationTitle = "Paid 22.35",
-                notificationText = "Paid at coffee island"
+                notificationText = "Paid at coffee island",
+                createdAt = System.currentTimeMillis()
             )
         )
 
@@ -270,7 +271,8 @@ class NotificationProcessingPipelineReliabilityTest {
                 packageName = "com.test.app",
                 notificationTitle = "Paid 22.35",
                 notificationText = "Paid at coffee island",
-                status = PendingReviewStatus.APPROVED
+                status = PendingReviewStatus.APPROVED,
+                createdAt = System.currentTimeMillis()
             )
         )
 
@@ -856,7 +858,8 @@ class NotificationProcessingPipelineReliabilityTest {
                     currency = "EUR",
                     merchant = merchant,
                     transactionType = TransactionType.PURCHASE,
-                    date = date
+                    date = date,
+                    createdAt = System.currentTimeMillis()
                 ),
                 category = null
             )

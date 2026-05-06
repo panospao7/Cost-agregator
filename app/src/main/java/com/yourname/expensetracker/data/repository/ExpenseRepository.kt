@@ -396,29 +396,39 @@ class ExpenseRepository @Inject constructor(
         }
     }
 
+    /**
+     * BUD-33: Wrapped the Mutex-protected category update in a database
+     * transaction so that the expense update, merchant learning, and user
+     * correction are committed atomically. Previously, only a Kotlin Mutex
+     * was used, which prevents concurrent coroutine access but does NOT
+     * provide transactional atomicity — a crash after the DAO update but
+     * before the correction insert could leave inconsistent state.
+     */
     suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long) {
         categoryUpdateMutex.withLock {
-            val merchantKey = MerchantKeyGenerator.generate(merchant)
-            expenseDao.updateCategoryForMerchant(merchantKey, newCategoryId)
-            merchantCategoryRepository.learnPattern(merchant, newCategoryId)
+            database.withTransaction {
+                val merchantKey = MerchantKeyGenerator.generate(merchant)
+                expenseDao.updateCategoryForMerchant(merchantKey, newCategoryId)
+                merchantCategoryRepository.learnPattern(merchant, newCategoryId)
 
-            // Record as a bulk correction for learning
-            val correction = UserCorrection(
-                packageName = "bulk_edit",
-                originalMerchant = merchant,
-                correctedMerchant = null,
-                originalAmount = 0.0,
-                correctedAmount = null,
-                originalCategoryId = null,
-                correctedCategoryId = newCategoryId,
-                originalType = null,
-                correctedType = null,
-                wasRejected = false,
-                wasApproved = true,
-                notificationTitle = "Bulk category update",
-                notificationText = "Applied to all transactions for $merchant"
-            )
-            userCorrectionDao.insert(correction)
+                // Record as a bulk correction for learning
+                val correction = UserCorrection(
+                    packageName = "bulk_edit",
+                    originalMerchant = merchant,
+                    correctedMerchant = null,
+                    originalAmount = 0.0,
+                    correctedAmount = null,
+                    originalCategoryId = null,
+                    correctedCategoryId = newCategoryId,
+                    originalType = null,
+                    correctedType = null,
+                    wasRejected = false,
+                    wasApproved = true,
+                    notificationTitle = "Bulk category update",
+                    notificationText = "Applied to all transactions for $merchant"
+                )
+                userCorrectionDao.insert(correction)
+            }
         }
     }
 
@@ -633,6 +643,14 @@ class ExpenseRepository @Inject constructor(
         offset: Int
     ): List<Expense> = expenseDao.getExpensesBetweenForExport(startDate, endDate, limit, offset)
 
+    suspend fun getExpensesBetweenForExportKeyset(
+        startDate: Long,
+        endDate: Long,
+        limit: Int,
+        lastDate: Long? = null,
+        lastId: Long? = null
+    ): List<Expense> = expenseDao.getExpensesBetweenForExportKeyset(startDate, endDate, limit, lastDate, lastId)
+
     suspend fun countExpensesBetween(startDate: Long, endDate: Long): Int =
         expenseDao.countExpensesBetween(startDate, endDate)
 
@@ -739,6 +757,11 @@ class ExpenseRepository @Inject constructor(
 
     suspend fun countUnlocatedExpenses() = expenseDao.countUnlocated()
 
+    /**
+     * LOC-16: Validates coordinate ranges before writing to the database.
+     * Latitude must be in [-90, 90] and longitude in [-180, 180].
+     * Throws [IllegalArgumentException] for invalid coordinates.
+     */
     suspend fun updateExpenseLocation(
         expenseId: Long,
         latitude: Double,
@@ -746,7 +769,16 @@ class ExpenseRepository @Inject constructor(
         source: String,
         placeId: String?,
         address: String? = null
-    ) = expenseDao.updateLocation(expenseId, latitude, longitude, source, placeId, address)
+    ): Unit {
+        // LOC-16: Coordinate validation
+        require(latitude in -90.0..90.0) {
+            "Latitude $latitude is out of range [-90, 90]"
+        }
+        require(longitude in -180.0..180.0) {
+            "Longitude $longitude is out of range [-180, 180]"
+        }
+        expenseDao.updateLocation(expenseId, latitude, longitude, source, placeId, address)
+    }
 
     /**
      * Conditionally set location — only updates if latitude and longitude are
@@ -763,7 +795,10 @@ class ExpenseRepository @Inject constructor(
         source: String,
         placeId: String?,
         address: String? = null
-    ): Int = expenseDao.conditionallySetLocation(
+    ): Int {
+        require(latitude in -90.0..90.0) { "Latitude out of range: $latitude" }
+        require(longitude in -180.0..180.0) { "Longitude out of range: $longitude" }
+        return expenseDao.conditionallySetLocation(
         expenseId = expenseId,
         latitude = latitude,
         longitude = longitude,
@@ -771,6 +806,7 @@ class ExpenseRepository @Inject constructor(
         placeId = placeId,
         resolvedAddress = address
     )
+    }
 
     suspend fun clearExpenseLocation(expenseId: Long) = expenseDao.clearLocation(expenseId)
 

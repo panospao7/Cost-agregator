@@ -63,7 +63,8 @@ class TotalsAggregationEngineValidationTest {
             merchant = "Test Merchant",
             transactionType = transactionType,
             date = date,
-            categoryId = categoryId
+            categoryId = categoryId,
+            createdAt = System.currentTimeMillis()
         )
     }
 

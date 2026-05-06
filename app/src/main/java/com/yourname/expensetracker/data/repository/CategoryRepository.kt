@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
@@ -20,6 +21,7 @@ class CategoryRepository @Inject constructor(
     private val database: AppDatabase,
     private val categoryDao: CategoryDao,
     private val merchantCategoryDao: MerchantCategoryDao,
+    private val budgetDao: BudgetDao,
     private val categorizationEngine: CategorizationEngine,
     private val hybridExpenseClassifier: dagger.Lazy<HybridExpenseClassifier>
 ) {
@@ -125,4 +127,60 @@ class CategoryRepository @Inject constructor(
     suspend fun getCategoryByName(name: String): Category? = withContext(Dispatchers.IO) {
         categoryDao.getByName(name)
     }
+
+    /**
+     * Merges [sourceCategoryId] into [targetCategoryId], reassigning all
+     * expenses, budgets, merchant mappings, planned expenses, recurring
+     * occurrences, pending reviews, receipt categorizations, spending
+     * challenges, and budget adjustment recommendations from the source
+     * to the target.
+     *
+     * After all references are moved, the source category is deleted.
+     *
+     * **Budget conflict resolution:** if both source and target have an
+     * active budget for the same category scope, the source's budget is
+     * deactivated to avoid unique constraint violations.
+     *
+     * The classifier snapshot is invalidated after the merge so future
+     * categorization queries use the updated category set.
+     *
+     * @param sourceCategoryId The category to merge FROM (will be deleted).
+     * @param targetCategoryId The category to merge INTO (preserved).
+     * @return The number of expenses that were reassigned.
+     * @throws IllegalArgumentException if either ID is invalid or identical.
+     */
+    suspend fun mergeCategories(sourceCategoryId: Long, targetCategoryId: Long): Int = withContext(Dispatchers.IO) {
+        val expensesMoved = categoryDao.mergeCategories(sourceCategoryId, targetCategoryId)
+        hybridExpenseClassifier.get().invalidateCategorySnapshot()
+        Timber.i("Merged category %d into %d: %d expenses reassigned", sourceCategoryId, targetCategoryId, expensesMoved)
+        expensesMoved
+    }
+
+    suspend fun deleteCategory(categoryId: Long): DeleteCategoryResult = withContext(Dispatchers.IO) {
+        val category = categoryDao.getById(categoryId)
+            ?: return@withContext DeleteCategoryResult.NotFound
+
+        if (category.isDefault) {
+            return@withContext DeleteCategoryResult.CannotDeleteDefault
+        }
+
+        // Check for ANY budgets (active or inactive) referencing this category,
+        // because the FK RESTRICT on budgets.categoryId will block deletion
+        // even if all referencing budgets are inactive.
+        val budgetCount = budgetDao.countBudgetsForCategory(categoryId)
+        if (budgetCount > 0) {
+            return@withContext DeleteCategoryResult.HasBudgets(budgetCount)
+        }
+
+        categoryDao.delete(category)
+        hybridExpenseClassifier.get().invalidateCategorySnapshot()
+        DeleteCategoryResult.Deleted
+    }
+}
+
+sealed class DeleteCategoryResult {
+    data object NotFound : DeleteCategoryResult()
+    data object CannotDeleteDefault : DeleteCategoryResult()
+    data class HasBudgets(val budgetCount: Int) : DeleteCategoryResult()
+    data object Deleted : DeleteCategoryResult()
 }

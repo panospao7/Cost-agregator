@@ -232,15 +232,18 @@ class NotificationSubscriptionDetector @Inject constructor(
         val mode = modeEntry.key
         val modeCount = modeEntry.value
 
-        // Map mode to interval type
+        // REC-10: Calendar-aware year boundary detection.
+        // Annual patterns can span 315..400 days due to month-boundary alignment
+        // (e.g. Jan 15 → Jan 15 of next year = 365 days, but Jan 31 → Feb 28 = 334 days
+        // or Dec 1 → Dec 1 = 365 days). Similarly semiannual spans 155..200 days.
         val intervalType = when (mode) {
             in 5..11 -> "weekly"          // ~7 days
             in 12..18 -> "biweekly"      // ~14 days
             in 23..45 -> "monthly"       // ~30 days
             in 46..75 -> "bimonthly"     // ~60 days
             in 76..105 -> "quarterly"    // ~90 days
-            in 136..200 -> "semiannual"  // ~180 days
-            in 270..400 -> "annual"      // ~365 days
+            in 136..220 -> "semiannual"  // ~180 days (widened for calendar year-boundary alignment)
+            in 315..425 -> "annual"      // ~365 days (widened for year-boundary + leap year)
             else -> return null // Irregular interval, not a subscription
         }
 

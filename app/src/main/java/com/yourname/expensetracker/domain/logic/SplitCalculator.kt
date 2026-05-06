@@ -351,10 +351,22 @@ object SplitCalculator {
     /**
      * Simplify balances by minimizing the number of transactions needed.
      * Returns a list of suggested payments to settle all debts.
-     * 
+     *
+     * ## SHR-15: This method is a legacy greedy implementation.
+     * All new settlement computation should use [SettlementCalculator.calculateSettlements]
+     * which uses an optimal DFS/backtracking solver with greedy fallback.
+     *
      * @param balances Map of memberId -> current balance
      * @return List of (fromMemberId, toMemberId, amount) transactions
      */
+    @Deprecated("Use SettlementCalculator.calculateSettlements() for optimal settlement plans",
+        ReplaceWith(
+            "SettlementCalculator().calculateSettlements(balances.map { MemberBalance(it.key, \"\", it.value, \"EUR\") }.associateBy { it.memberId })" +
+            ".map { Triple(it.fromMemberId, it.toMemberId, it.amount) }",
+            "com.yourname.expensetracker.domain.groups.SettlementCalculator",
+            "com.yourname.expensetracker.domain.groups.MemberBalance"
+        )
+    )
     fun simplifyBalances(
         balances: Map<Long, Double>
     ): List<Triple<Long, Long, Double>> {
@@ -371,7 +383,7 @@ object SplitCalculator {
             .sortedByDescending { it.second }
             .toMutableList()
         
-        // Match debtors with creditors
+        // Match debtors with creditors (legacy greedy algorithm)
         while (debtors.isNotEmpty() && creditors.isNotEmpty()) {
             val (debtorId, debtorAmount) = debtors.first()
             val (creditorId, creditorAmount) = creditors.first()

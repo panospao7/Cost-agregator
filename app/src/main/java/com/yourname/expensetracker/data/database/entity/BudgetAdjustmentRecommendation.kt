@@ -25,7 +25,9 @@ enum class BudgetTrend {
 @Entity(
     tableName = "budget_adjustment_recommendations",
     foreignKeys = [
-        // DB-8: CASCADE on budgetId — deleting a budget removes its adjustment recommendations.
+        // DB-8: CASCADE on BudgetAdjustmentRecommendation.budgetId → Budget(id)
+        // Safe but note: These recommendations could be kept as historical audit data.
+        // Consider SET_NULL if preserving adjustment history is desired.
         ForeignKey(
             entity = Budget::class,
             parentColumns = ["id"],

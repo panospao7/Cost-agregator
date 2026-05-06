@@ -31,8 +31,15 @@ interface ExchangeRateDao {
     @Query("SELECT * FROM exchange_rates WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency LIMIT 1")
     fun getRateFlow(fromCurrency: String, toCurrency: String): Flow<ExchangeRate?>
     
-    @Query("SELECT * FROM exchange_rates WHERE toCurrency = :baseCurrency ORDER BY fromCurrency")
-    fun getAllRatesForBase(baseCurrency: String): Flow<List<ExchangeRate>>
+    /**
+     * Returns all exchange rates where the target/to currency matches [targetCurrency].
+     * CURR-10: Renamed from getAllRatesForBase for clarity — the query filters on
+     * `toCurrency`, not `fromCurrency`, so "getRatesToCurrency" is more accurate.
+     *
+     * @param targetCurrency The currency code (e.g. "EUR") to filter rates by target.
+     */
+    @Query("SELECT * FROM exchange_rates WHERE toCurrency = :targetCurrency ORDER BY fromCurrency")
+    fun getRatesToCurrency(targetCurrency: String): Flow<List<ExchangeRate>>
     
     @Query("SELECT * FROM exchange_rates ORDER BY lastUpdated DESC LIMIT 1")
     suspend fun getLatestRate(): ExchangeRate?

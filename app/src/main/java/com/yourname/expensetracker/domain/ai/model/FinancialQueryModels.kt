@@ -41,6 +41,36 @@ enum class QueryOwnershipScope {
     TRANSFER
 }
 
+/**
+ * Filter parameters for financial queries.
+ *
+ * ## SRH-7: Currency-aware search filters (planned)
+ * Currently [minAmount] and [maxAmount] compare against the raw
+ * [effectiveAmount] regardless of the expense's currency. This means a filter
+ * like "over $50" will match a ¥5000 expense (≈$33) because the raw numeric
+ * comparison uses 5000 > 50, which is incorrect.
+ *
+ * The plan is to make amount filters currency-aware via
+ * [com.yourname.expensetracker.domain.currency.MultiCurrencyRepository]:
+ *
+ * 1. When applying filters in the query execution layer
+ *    ([InterpretFinancialQueryUseCase] or [NaturalLanguageSearchEngine]),
+ *    first resolve the filter's currency from the query context (default to
+ *    home currency if unspecified).
+ * 2. Normalize each expense's [effectiveAmount] to the filter's currency
+ *    using [MultiCurrencyRepository] before applying the comparison.
+ * 3. For batch efficiency, use a bulk conversion API:
+ *    ```
+ *    val normalized = multiCurrencyRepository.convertAll(
+ *        expenses, fromCurrency = null, toCurrency = filterCurrency
+ *    )
+ *    ```
+ * 4. If conversion fails (missing rate), log a warning and fall back to raw
+ *    comparison with a `isPartial` flag so the caller can display a disclaimer.
+ *
+ * This ensures that "over $50" correctly matches only expenses whose
+ * home-currency-equivalent exceeds $50, not all expenses with raw amount > 50.
+ */
 data class ExpenseQueryFilters(
     val period: PeriodRange? = null,
     val merchants: Set<String> = emptySet(),
@@ -50,7 +80,13 @@ data class ExpenseQueryFilters(
     /** Raw amount floor filter. Not currency-aware — compares against effectiveAmount regardless of currency. */
     val minAmount: Double? = null,
     /** Raw amount ceiling filter. Not currency-aware — compares against effectiveAmount regardless of currency. */
-    val maxAmount: Double? = null
+    val maxAmount: Double? = null,
+    /** Filter by ISO-4217 currency code (e.g. "EUR", "USD", "JPY"). */
+    val currency: String? = null,
+    /** Filter by source type (e.g. "manual", "import", "receipt_scan", "email"). */
+    val sourceType: String? = null,
+    /** Filter by expense status (e.g. "active", "archived", "flagged"). */
+    val status: String? = null
 )
 
 data class FinancialQueryIntent(

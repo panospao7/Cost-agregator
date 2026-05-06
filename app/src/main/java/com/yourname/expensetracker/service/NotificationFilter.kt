@@ -70,7 +70,31 @@ object NotificationFilter {
     )
 
     /**
+     * Deny-keyword list — notifications whose content (title, text, or bigText)
+     * contains any of these words/phrases will be skipped even if they otherwise
+     * match financial heuristics. Customizable by the user at runtime.
+     *
+     * PRV-2: Added to prevent accidental capture of sensitive non-financial
+     * notifications (e.g. two-factor auth codes, password resets, promotional
+     * messages) that happen to contain currency amounts or financial keywords.
+     */
+    private val DENY_KEYWORDS: Set<String> = setOf(
+        // Security / authentication
+        "2fa", "two-factor", "verification code", "auth code",
+        "password reset", "login attempt", "security code", "one-time",
+        // Promotional / non-transactional
+        "offer", "promo", "discount", "cashback offer",
+        // English
+        "refund processed", "you received", "on hold",
+        // Greek
+        "κωδικ", "συνδεση", "προσφορα", "επιστροφ"
+    )
+
+    /**
      * Returns true if the notification should be captured for expense tracking.
+     *
+     * PRV-2: Added deny-keyword check before heuristic matching. Any keyword
+     * match in title/text/bigText causes the notification to be skipped.
      *
      * @param packageName App package that posted the notification
      * @param title Notification title
@@ -80,15 +104,18 @@ object NotificationFilter {
     fun shouldCapture(packageName: String, title: String?, text: String?, bigText: String?): Boolean {
         if (IGNORED_PACKAGES.contains(packageName)) return false
 
+        // PRV-2: Deny-keyword check — skip if content contains any deny keyword
+        val content = listOf(title, text, bigText)
+            .joinToString(separator = " ") { it.orEmpty() }
+            .lowercase()
+
+        if (DENY_KEYWORDS.any { content.contains(it) }) return false
+
         // Finance apps bypass heuristics — every notification is financial
         if (FINANCE_PACKAGES.contains(packageName)) return true
 
         // Communication apps (Gmail, Viber, SMS) and unknown packages both go
         // through the same heuristic gate: require amount + financial keyword.
-        val content = listOf(title, text, bigText)
-            .joinToString(separator = " ") { it.orEmpty() }
-            .lowercase()
-
         val hasAmount = REGEX_CURRENCY.containsMatchIn(content) || REGEX_AMOUNT.containsMatchIn(content)
         if (!hasAmount) return false
 

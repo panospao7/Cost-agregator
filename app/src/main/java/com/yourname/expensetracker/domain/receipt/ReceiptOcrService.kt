@@ -288,6 +288,16 @@ class ReceiptOcrService @Inject constructor(
             
             // Limit to first 5 pages for performance
             val pageLimit = minOf(document.numberOfPages, 5)
+
+            // RCP-27: Warn user when PDF has more pages than we're processing
+            if (document.numberOfPages > 5) {
+                Timber.w(
+                    "PDF has %d pages — only processing the first %d. " +
+                    "Remaining pages will be skipped.",
+                    document.numberOfPages, 5
+                )
+            }
+
             stripper.startPage = 1
             stripper.endPage = pageLimit
             
@@ -418,7 +428,17 @@ class ReceiptOcrService @Inject constructor(
             var savedThumbnailPath = ""
             
             // Limit to first 3-5 pages for performance (Rich functionality requirement)
-            val pageLimit = 5 
+            val pageLimit = 5
+
+            // RCP-27: Warn user when PDF has more pages than we're processing
+            if (renderer.pageCount > pageLimit) {
+                Timber.w(
+                    "OCR PDF has %d pages — only processing the first %d. " +
+                    "Remaining pages will be skipped.",
+                    renderer.pageCount, pageLimit
+                )
+            }
+
             val pagesToProcess = minOf(renderer.pageCount, pageLimit)
             
             var verticalOffset = 0
@@ -442,9 +462,11 @@ class ReceiptOcrService @Inject constructor(
                             savedThumbnailPath = saveReceiptImage(bitmap)
                         }
                         
-                        // Run OCR on this page
+                        // Run OCR on this page with retry (matching processImage path)
                         val inputImage = InputImage.fromBitmap(bitmap, 0)
-                        val visionText = recognizeText(inputImage)
+                        val visionText = runWithRetry(maxAttempts = 3) {
+                            recognizeText(inputImage)
+                        }
                         
                         // Add full text
                         allFullText.append(visionText.text).append("\n\n")

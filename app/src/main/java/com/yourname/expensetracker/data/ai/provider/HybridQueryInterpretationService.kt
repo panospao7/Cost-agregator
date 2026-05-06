@@ -11,6 +11,13 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 
+// AID-4: This service can be simplified by using HybridRouter:
+// val router = HybridRouter(aiSettingsRepository, router, AiCapability.QUERY_INTERPRETATION,
+//     cloudFn = { cloudQueryInterpretationService.interpret(it) },
+//     onDeviceFn = { onDeviceQueryInterpretationService.interpret(it) },
+//     fallbackFn = { noOpQueryInterpretationService.interpret(it) }
+// )
+// override suspend fun interpret(input: FinancialQueryInterpretationInput): FinancialQueryInterpretationResult = router.execute(input)
 @Singleton
 class HybridQueryInterpretationService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,

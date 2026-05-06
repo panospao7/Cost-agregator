@@ -14,11 +14,11 @@ import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.concurrent.TimeUnit
 
 /**
  * WorkManager worker that geocodes existing expenses that have no latitude/longitude.
@@ -177,34 +177,7 @@ class LocationBackfillWorker @AssistedInject constructor(
          * Reads interval and constraints from [WorkerSpec.DEFAULTS] for the canonical config.
          */
         fun schedule(context: Context) {
-            val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return
-            if (!spec.enabled) {
-                Log.w(TAG, "Worker $WORK_NAME disabled by spec, skipping schedule")
-                return
-            }
-            val intervalHours = spec.repeatIntervalHours ?: run {
-                Log.w(TAG, "Worker $WORK_NAME has no repeat interval, skipping periodic schedule")
-                return
-            }
-
-            val request = PeriodicWorkRequestBuilder<LocationBackfillWorker>(
-                repeatInterval = intervalHours,
-                repeatIntervalTimeUnit = TimeUnit.HOURS
-            )
-                .setConstraints(spec.constraints)
-                .setBackoffCriteria(
-                    spec.backoffPolicy,
-                    spec.backoffDelaySeconds,
-                    TimeUnit.SECONDS
-                )
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                WORK_NAME,
-                spec.existingWorkPolicy,
-                request
-            )
-            Log.d(TAG, "Backfill worker scheduled (interval=${intervalHours}h)")
+            WorkerSpecScheduler.scheduleFromSpec(context, WORK_NAME, LocationBackfillWorker::class.java)
         }
     }
 }

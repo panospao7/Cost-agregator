@@ -1,10 +1,12 @@
 package com.yourname.expensetracker.ui.screens.price
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.price.PriceProtectionTracker
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,12 +24,19 @@ import javax.inject.Inject
 @HiltViewModel
 class PriceProtectionViewModel @Inject constructor(
     private val priceTracker: PriceProtectionTracker,
-    currencySettingsRepository: CurrencySettingsRepository
+    currencySettingsRepository: CurrencySettingsRepository,
+    /** WRN-24: Used to persist excluded tracking keys across app restarts. */
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
 
     private val refreshSignals = MutableSharedFlow<Unit>(replay = 1)
+
+    /** WRN-24: SharedPreferences-backed persistence for excluded tracking keys. */
+    private val excludedKeysPrefs = context.getSharedPreferences(
+        "price_protection_excluded_keys", Context.MODE_PRIVATE
+    )
 
     val priceDrops: StateFlow<List<PriceProtectionTracker.PriceDropAlert>> = refreshSignals
         .onStart { emit(Unit) }
@@ -47,7 +56,14 @@ class PriceProtectionViewModel @Inject constructor(
     private val _protectedItems = MutableStateFlow<List<PriceProtectionTracker.PriceProtectedItem>>(emptyList())
     val protectedItems: StateFlow<List<PriceProtectionTracker.PriceProtectedItem>> = _protectedItems.asStateFlow()
 
-    private val _excludedTrackingKeys = MutableStateFlow<Set<String>>(emptySet())
+    /**
+     * WRN-24: Excluded tracking keys are now persisted in SharedPreferences.
+     * On init, previously excluded keys are restored so the exclusion survives
+     * app restarts.
+     */
+    private val _excludedTrackingKeys = MutableStateFlow<Set<String>>(
+        excludedKeysPrefs.all.keys.toSet()
+    )
     val excludedTrackingKeys: StateFlow<Set<String>> = _excludedTrackingKeys.asStateFlow()
     
     private val _deals = MutableStateFlow<List<PriceProtectionTracker.DealAlternative>>(emptyList())
@@ -107,12 +123,24 @@ class PriceProtectionViewModel @Inject constructor(
         _creditCardBenefits.value = payload.benefits
     }
 
+    /**
+     * WRN-24: Persists the exclusion to SharedPreferences so the setting
+     * survives app restarts.
+     */
     fun removeFromTracking(item: PriceProtectionTracker.PriceProtectedItem) {
-        _excludedTrackingKeys.value = _excludedTrackingKeys.value + trackingKey(item)
+        val key = trackingKey(item)
+        _excludedTrackingKeys.value = _excludedTrackingKeys.value + key
+        excludedKeysPrefs.edit().putBoolean(key, true).apply()
     }
 
+    /**
+     * WRN-24: Removes the exclusion from SharedPreferences so the item
+     * reappears in tracking on next app launch.
+     */
     fun trackItem(item: PriceProtectionTracker.PriceProtectedItem) {
-        _excludedTrackingKeys.value = _excludedTrackingKeys.value - trackingKey(item)
+        val key = trackingKey(item)
+        _excludedTrackingKeys.value = _excludedTrackingKeys.value - key
+        excludedKeysPrefs.edit().remove(key).apply()
     }
 
     fun isTracked(item: PriceProtectionTracker.PriceProtectedItem): Boolean {

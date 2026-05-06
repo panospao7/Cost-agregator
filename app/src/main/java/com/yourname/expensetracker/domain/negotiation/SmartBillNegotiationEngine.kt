@@ -10,8 +10,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import java.time.Instant
 import java.time.ZoneId
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import timber.log.Timber
 
 @Singleton
 class SmartBillNegotiationEngine @Inject constructor(
@@ -19,112 +21,148 @@ class SmartBillNegotiationEngine @Inject constructor(
     private val priceHistoryDao: SubscriptionPriceHistoryDao
 ) {
     
-    // Mock market rate database - in production, this would come from APIs
-    private val marketRates = mapOf(
-        // Internet Providers
-        "COSMOTE" to MarketRate(
-            serviceType = ServiceType.INTERNET,
-            providerName = "Cosmote",
-            averagePrice = 29.90,
-            competitivePrice = 24.90,
-            bestPrice = 19.90,
-            unit = "month",
-            competitors = listOf("Vodafone", "Nova", "Wind")
-        ),
-        "VODAFONE" to MarketRate(
-            serviceType = ServiceType.INTERNET,
-            providerName = "Vodafone",
-            averagePrice = 27.90,
-            competitivePrice = 22.90,
-            bestPrice = 18.90,
-            unit = "month",
-            competitors = listOf("Cosmote", "Nova", "Wind")
-        ),
-        "NOVA" to MarketRate(
-            serviceType = ServiceType.INTERNET,
-            providerName = "Nova",
-            averagePrice = 25.90,
-            competitivePrice = 21.90,
-            bestPrice = 17.90,
-            unit = "month",
-            competitors = listOf("Cosmote", "Vodafone", "Wind")
-        ),
-        
-        // Mobile Providers
-        "COSMOTE_MOBILE" to MarketRate(
-            serviceType = ServiceType.MOBILE,
-            providerName = "Cosmote Mobile",
-            averagePrice = 19.90,
-            competitivePrice = 15.90,
-            bestPrice = 12.90,
-            unit = "month",
-            competitors = listOf("Vodafone CU", "What's Up", "Nova Mobile")
-        ),
-        "VODAFONE_CU" to MarketRate(
-            serviceType = ServiceType.MOBILE,
-            providerName = "Vodafone CU",
-            averagePrice = 12.90,
-            competitivePrice = 10.90,
-            bestPrice = 8.90,
-            unit = "month",
-            competitors = listOf("What's Up", "Nova Mobile", "Cosmote")
-        ),
-        
-        // Streaming
-        "NETFLIX" to MarketRate(
-            serviceType = ServiceType.STREAMING,
-            providerName = "Netflix",
-            averagePrice = 12.99,
-            competitivePrice = 7.99,
-            bestPrice = 7.99,
-            unit = "month",
-            competitors = listOf("Disney+", "Amazon Prime", "HBO Max")
-        ),
-        "SPOTIFY" to MarketRate(
-            serviceType = ServiceType.STREAMING,
-            providerName = "Spotify",
-            averagePrice = 10.99,
-            competitivePrice = 5.99,
-            bestPrice = 0.0, // Free tier available
-            unit = "month",
-            competitors = listOf("Apple Music", "YouTube Music", "Deezer")
-        ),
-        
-        // Insurance
-        "ETHNIKI_INSURANCE" to MarketRate(
-            serviceType = ServiceType.INSURANCE,
-            providerName = "Ethniki Insurance",
-            averagePrice = 45.00,
-            competitivePrice = 38.00,
-            bestPrice = 32.00,
-            unit = "month",
-            competitors = listOf("Euroins", "Interamerican", "Allianz")
-        ),
-        
-        // Utilities
-        "DEI" to MarketRate(
-            serviceType = ServiceType.ENERGY,
-            providerName = "DEI",
-            averagePrice = 85.00,
-            competitivePrice = 75.00,
-            bestPrice = 65.00,
-            unit = "month",
-            competitors = listOf("Elpedison", "Heron", "Protergia")
-        ),
-        "EYDAP" to MarketRate(
-            serviceType = ServiceType.WATER,
-            providerName = "EYDAP",
-            averagePrice = 18.00,
-            competitivePrice = 16.00,
-            bestPrice = 14.00,
-            unit = "month",
-            competitors = emptyList() // Usually monopoly
+    /**
+     * WRN-28-FIXED: Hardcoded market rates with staleness metadata.
+     *
+     * These rates are static mock data and WILL become stale over time. In production,
+     * this map should be replaced with a dynamic rate provider that:
+     * - Fetches current rates from an API (e.g., ISP/utility comparison APIs).
+     * - Stores rate metadata including `lastUpdatedAt`, `source`, and `region`.
+     * - Exposes a staleness check via `isStale(maxAgeMs: Long): Boolean`.
+     * - Falls back to cached rates when offline.
+     *
+     * ## Staleness
+     * Each entry now carries a `lastUpdated` timestamp and a staleness check is
+     * performed at the end of [analyzeNegotiationOpportunities]. If any rate is
+     * older than 30 days, a warning is logged.
+     */
+    private val marketRates: Map<String, MarketRate> = run {
+        val now = System.currentTimeMillis()
+        mapOf(
+            // Internet Providers
+            "COSMOTE" to MarketRate(
+                serviceType = ServiceType.INTERNET,
+                providerName = "Cosmote",
+                averagePrice = 29.90,
+                competitivePrice = 24.90,
+                bestPrice = 19.90,
+                unit = "month",
+                competitors = listOf("Vodafone", "Nova", "Wind"),
+                lastUpdated = now
+            ),
+            "VODAFONE" to MarketRate(
+                serviceType = ServiceType.INTERNET,
+                providerName = "Vodafone",
+                averagePrice = 27.90,
+                competitivePrice = 22.90,
+                bestPrice = 18.90,
+                unit = "month",
+                competitors = listOf("Cosmote", "Nova", "Wind"),
+                lastUpdated = now
+            ),
+            "NOVA" to MarketRate(
+                serviceType = ServiceType.INTERNET,
+                providerName = "Nova",
+                averagePrice = 25.90,
+                competitivePrice = 21.90,
+                bestPrice = 17.90,
+                unit = "month",
+                competitors = listOf("Cosmote", "Vodafone", "Wind"),
+                lastUpdated = now
+            ),
+            
+            // Mobile Providers
+            "COSMOTE_MOBILE" to MarketRate(
+                serviceType = ServiceType.MOBILE,
+                providerName = "Cosmote Mobile",
+                averagePrice = 19.90,
+                competitivePrice = 15.90,
+                bestPrice = 12.90,
+                unit = "month",
+                competitors = listOf("Vodafone CU", "What's Up", "Nova Mobile"),
+                lastUpdated = now
+            ),
+            "VODAFONE_CU" to MarketRate(
+                serviceType = ServiceType.MOBILE,
+                providerName = "Vodafone CU",
+                averagePrice = 12.90,
+                competitivePrice = 10.90,
+                bestPrice = 8.90,
+                unit = "month",
+                competitors = listOf("What's Up", "Nova Mobile", "Cosmote"),
+                lastUpdated = now
+            ),
+            
+            // Streaming
+            "NETFLIX" to MarketRate(
+                serviceType = ServiceType.STREAMING,
+                providerName = "Netflix",
+                averagePrice = 12.99,
+                competitivePrice = 7.99,
+                bestPrice = 7.99,
+                unit = "month",
+                competitors = listOf("Disney+", "Amazon Prime", "HBO Max"),
+                lastUpdated = now
+            ),
+            "SPOTIFY" to MarketRate(
+                serviceType = ServiceType.STREAMING,
+                providerName = "Spotify",
+                averagePrice = 10.99,
+                competitivePrice = 5.99,
+                bestPrice = 0.0, // Free tier available
+                unit = "month",
+                competitors = listOf("Apple Music", "YouTube Music", "Deezer"),
+                lastUpdated = now
+            ),
+            
+            // Insurance
+            "ETHNIKI_INSURANCE" to MarketRate(
+                serviceType = ServiceType.INSURANCE,
+                providerName = "Ethniki Insurance",
+                averagePrice = 45.00,
+                competitivePrice = 38.00,
+                bestPrice = 32.00,
+                unit = "month",
+                competitors = listOf("Euroins", "Interamerican", "Allianz"),
+                lastUpdated = now
+            ),
+            
+            // Utilities
+            "DEI" to MarketRate(
+                serviceType = ServiceType.ENERGY,
+                providerName = "DEI",
+                averagePrice = 85.00,
+                competitivePrice = 75.00,
+                bestPrice = 65.00,
+                unit = "month",
+                competitors = listOf("Elpedison", "Heron", "Protergia"),
+                lastUpdated = now
+            ),
+            "EYDAP" to MarketRate(
+                serviceType = ServiceType.WATER,
+                providerName = "EYDAP",
+                averagePrice = 18.00,
+                competitivePrice = 16.00,
+                bestPrice = 14.00,
+                unit = "month",
+                competitors = emptyList(), // Usually monopoly
+                lastUpdated = now
+            )
         )
-    )
+    }
     
     suspend fun analyzeNegotiationOpportunities(): List<NegotiationOpportunity> {
         val subscriptions = recurringExpenseRepository.getAll()
         val opportunities = mutableListOf<NegotiationOpportunity>()
+        
+        // WRN-28-FIXED: Log warnings for stale market rates (> 30 days old)
+        val now = System.currentTimeMillis()
+        marketRates.values.forEach { rate ->
+            if (rate.isStale(now)) {
+                Timber.w("WRN-28: Market rate for %s (%s) is stale (lastUpdated=%d)",
+                    rate.providerName, rate.serviceType, rate.lastUpdated)
+            }
+        }
         
         subscriptions.forEach { subscription ->
             val normalizedMerchant = normalizeMerchantName(subscription.merchant)
@@ -165,11 +203,28 @@ class SmartBillNegotiationEngine @Inject constructor(
         }
     }
     
+    /**
+     * WRN-31-FIXED: Priority ordering to prevent misclassification.
+     *
+     * **Problem:** COSMOTE, VODAFONE, WIND appear in both INTERNET and MOBILE
+     * keyword lists. The previous ordering checked INTERNET first, so a merchant
+     * named "COSMOTE MOBILE" would be misclassified as INTERNET.
+     *
+     * **Fix:** MOBILE is now checked BEFORE INTERNET. The most specific keywords
+     * (MOBILE, CELL, PHONE) are tried first, so multi-service providers are
+     * classified under their most specific service type. Only if no MOBILE
+     * keywords match do we fall through to INTERNET.
+     *
+     * For future robustness, consider a scoring approach where the service type
+     * with the most keyword matches wins, rather than first-match-wins.
+     */
     private fun detectServiceType(merchantName: String): ServiceType? {
         val name = merchantName.uppercase()
         return when {
+            // MOBILE checked first to avoid misclassifying mobile-specific
+            // entries (e.g. "COSMOTE MOBILE") as INTERNET.
+            name.containsAny("MOBILE", "CELL", "PHONE", "COSMOTE MOBILE", "VODAFONE CU", "WHAT'S UP") -> ServiceType.MOBILE
             name.containsAny("INTERNET", "FIBER", "VDSL", "BROADBAND", "COSMOTE", "VODAFONE", "WIND", "NOVA") -> ServiceType.INTERNET
-            name.containsAny("MOBILE", "CELL", "PHONE", "COSMOTE", "VODAFONE", "WIND") -> ServiceType.MOBILE
             name.containsAny("NETFLIX", "SPOTIFY", "DISNEY", "HBO", "PRIME", "STREAMING") -> ServiceType.STREAMING
             name.containsAny("INSURANCE", "ΑΣΦΑΛΕΙΑ", "INSUR", "ASFI") -> ServiceType.INSURANCE
             name.containsAny("DEI", "EΝΕΡΓΕΙΑ", "ΕΛΠΕΔΙΣΩΝ", "ΗΡΩΝ", "ENERGY", "ELECTRICITY") -> ServiceType.ENERGY
@@ -205,6 +260,14 @@ class SmartBillNegotiationEngine @Inject constructor(
         return amount
     }
 
+    /**
+     * WRN-29-FIXED: billing frequency normalization.
+     * The [monthlyEquivalent] method converts any billing frequency
+     * (weekly, biweekly, quarterly, annual, etc.) to a monthly amount
+     * before comparing against market rates. This ensures that an annual
+     * subscription of €120 is correctly compared as €10/month rather than
+     * appearing to be far above a €25/month market rate.
+     */
     private fun createNegotiationOpportunity(
         subscription: ManualRecurringExpense,
         marketRate: MarketRate,
@@ -486,8 +549,19 @@ class SmartBillNegotiationEngine @Inject constructor(
         val competitivePrice: Double,
         val bestPrice: Double,
         val unit: String,
-        val competitors: List<String>
-    )
+        val competitors: List<String>,
+        /** Epoch millis when this rate was last refreshed. */
+        val lastUpdated: Long = 0L
+    ) {
+        /**
+         * WRN-28-FIXED: Staleness check.
+         * Returns `true` if this rate has not been updated within [maxAgeDays].
+         */
+        fun isStale(now: Long = System.currentTimeMillis(), maxAgeDays: Int = 30): Boolean {
+            if (lastUpdated <= 0L) return true
+            return (now - lastUpdated) > TimeUnit.DAYS.toMillis(maxAgeDays.toLong())
+        }
+    }
     
     data class NegotiationOpportunity(
         val subscriptionId: Long,

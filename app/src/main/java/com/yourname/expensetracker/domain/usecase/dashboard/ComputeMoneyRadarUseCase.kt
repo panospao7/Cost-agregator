@@ -381,6 +381,15 @@ class ComputeMoneyRadarUseCase @Inject constructor(
     
     /**
      * Get monthly income (deposits) for large bill threshold calculation.
+     *
+     * ## I4 Migration plan
+     * Currently uses [ExpenseRepository.getTotalDepositsForPeriod] which returns a raw
+     * Double without currency conversion. `MultiCurrencyRepository` has no deposit-specific
+     * equivalent yet. Once `getHomeCurrencyDepositTotal(start, end)` is added to MCR,
+     * inject it and replace the call above with:
+     * ```
+     * multiCurrencyRepository.getHomeCurrencyDepositTotal(monthStart, now).displayAmount
+     * ```
      */
     private suspend fun getMonthlyIncome(now: Long): Double {
         return try {

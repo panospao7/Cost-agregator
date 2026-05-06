@@ -420,7 +420,8 @@ class DashboardFollowThroughEngineTest {
             merchant = merchant,
             transactionType = transactionType,
             categoryId = categoryId,
-            date = date
+            date = date,
+            createdAt = System.currentTimeMillis()
         )
     }
 

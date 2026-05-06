@@ -26,6 +26,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpense
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchEngine
+import com.yourname.expensetracker.domain.naturallanguage.MatchType
+import com.yourname.expensetracker.domain.naturallanguage.SearchResult
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -188,10 +190,11 @@ fun InterpretingState() {
 @Composable
 fun SearchResultsContent(
     interpretation: NaturalLanguageSearchEngine.QueryInterpretation?,
-    results: List<NaturalLanguageExpense>,
-    onViewTransaction: (Long) -> Unit,
+    results: List<SearchResult>,
+    onViewTransaction: (Long) -> Unit = {},
     homeCurrency: String,
-    totalInHomeCurrency: Double
+    totalInHomeCurrency: Double,
+    modifier: Modifier = Modifier
 ) {
     
     LazyColumn(
@@ -254,12 +257,13 @@ fun SearchResultsContent(
             }
         }
         
-        // Transaction list
-        items(results) { expense ->
+        // Transaction list (with match-type labels from SearchResult)
+        items(results) { searchResult ->
             TransactionResultCard(
-                expense = expense,
-                onClick = { onViewTransaction(expense.id) },
-                homeCurrency = homeCurrency
+                expense = searchResult.expense,
+                onClick = { onViewTransaction(searchResult.expense.id) },
+                homeCurrency = homeCurrency,
+                matchType = searchResult.matchType
             )
         }
     }
@@ -388,7 +392,8 @@ fun ExtractedChip(icon: androidx.compose.ui.graphics.vector.ImageVector, label: 
 fun TransactionResultCard(
     expense: NaturalLanguageExpense,
     onClick: () -> Unit,
-    homeCurrency: String
+    homeCurrency: String,
+    matchType: MatchType? = null
 ) {
     val dateFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.getDefault())
     val date = java.time.Instant.ofEpochMilli(expense.date)

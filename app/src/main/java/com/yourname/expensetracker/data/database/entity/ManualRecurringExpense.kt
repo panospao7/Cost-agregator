@@ -29,6 +29,11 @@ data class ManualRecurringExpense(
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     val createdAt: Long = 0L,
     
+    // REC-14: Optional category association for recurring expenses.
+    // Allows grouping recurring expenses into spending categories for
+    // better budget tracking and analytics.
+    @ColumnInfo(defaultValue = "NULL") val categoryId: Long? = null,
+    
     // Subscription-specific fields (added in migration 39→40)
     @ColumnInfo(defaultValue = "0") val isSubscription: Boolean = false, // B4: default false; only true when explicitly a subscription
     val subscriptionCategory: String? = null, // e.g., "Streaming", "Software", "Fitness", "News"

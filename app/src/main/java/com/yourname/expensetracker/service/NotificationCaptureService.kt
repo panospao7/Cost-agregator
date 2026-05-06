@@ -90,6 +90,19 @@ internal class NotificationServiceWorkTracker {
  * Foreground service that listens for system notifications and captures
  * financial-transaction-related alerts for processing.
  *
+ * ## PRV-3: Onboarding / first-run behaviour
+ * This service is started automatically on device boot via [BootReceiver]
+ * and after a fresh install when the app is first launched. There is no
+ * separate one-time onboarding flow for notification capture — the user
+ * is prompted for [android.Manifest.permission.POST_NOTIFICATIONS] via
+ * [com.yourname.expensetracker.ui.components.NotificationPermissionDialog]
+ * (see [com.yourname.expensetracker.ui.MainActivity]). Until the user grants
+ * this permission, the service runs in the background but cannot capture
+ * notification data from other apps. The [PrivacyGate] also checks
+ * [com.yourname.expensetracker.domain.privacy.PrivacyCapability.NOTIFICATION_CAPTURE]
+ * before persisting any notification data, providing a second layer of
+ * opt-in control.
+ *
  * ## Privacy gate coverage
  * Every code path that persists notification data checks the
  * [PrivacyCapability.NOTIFICATION_CAPTURE] gate before processing:

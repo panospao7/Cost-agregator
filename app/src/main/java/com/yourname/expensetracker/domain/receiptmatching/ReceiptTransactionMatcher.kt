@@ -71,6 +71,12 @@ class ReceiptTransactionMatcher @Inject constructor(
         receipt: ScannedReceipt,
         lookbackDays: Int = 7
     ): MatchResult = withContext(Dispatchers.Default) {
+        // RCP-21: Skip matching for bank-statement receipts — their individual
+        // transactions are already linked during statement processing.
+        if (receipt.documentType == "BANK_STATEMENT") {
+            return@withContext MatchResult.NoMatch
+        }
+
         // Get candidate transactions from last N days
         val now = timeProvider.now()
         val startDate = receipt.parsedDate?.let { it - (lookbackDays * 86400000) } 

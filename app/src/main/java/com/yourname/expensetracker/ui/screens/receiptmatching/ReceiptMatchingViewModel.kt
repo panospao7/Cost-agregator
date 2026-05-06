@@ -76,7 +76,7 @@ class ReceiptMatchingViewModel @Inject constructor(
                     suggestedExpenseId = suggestedId,
                     confidence = receipt.matchConfidence?.toDouble() ?: 0.0,
                     expenseMerchant = expense?.merchant,
-                    expenseAmount = expense?.amount
+                    expenseAmount = expense?.effectiveAmount
                 )
             }
             

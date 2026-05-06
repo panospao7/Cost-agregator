@@ -6,10 +6,29 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+/**
+ * ## DB-8: CASCADE audit — MerchantAlias
+ *
+ * ### CASCADE on canonicalId (line 17)
+ * **What gets cascade-deleted:** Deleting a row from `merchant_canonicals` removes
+ * ALL `merchant_aliases` rows that reference it. This silently erases the complete
+ * alias history (raw names, normalization mappings, occurrence counts) for that
+ * canonical merchant.
+ *
+ * **Appropriateness assessment:** CASCADE is appropriate because:
+ * 1. Merchant canonical entries are the authoritative identity record; if a
+ *    canonical entry is removed, its aliases have no logical meaning.
+ * 2. Aliases are derived/resolved data, not primary financial history.
+ * 3. The alternative (RESTRICT) would prevent cleanup of orphaned canonical entries.
+ *
+ * **Migration path if change is needed:** Change to `onDelete = ForeignKey.RESTRICT`
+ * and require explicit alias deletion before canonical removal. Add a repository
+ * method `deleteCanonicalWithAliases(canonicalId)` that atomically deletes aliases
+ * first, then the canonical row.
+ */
 @Entity(
     tableName = "merchant_aliases",
     foreignKeys = [
-        // DB-8: CASCADE on canonicalId — deleting a canonical merchant removes all its aliases.
         ForeignKey(
             entity = MerchantCanonical::class,
             parentColumns = ["id"],

@@ -12,6 +12,13 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 
+// AID-4: This service can be simplified by using HybridRouter:
+// val router = HybridRouter(aiSettingsRepository, router, AiCapability.DASHBOARD_BRIEFING,
+//     cloudFn = { cloudDashboardBriefingService.generate(it) },
+//     onDeviceFn = { onDeviceDashboardBriefingService.generate(it) },
+//     fallbackFn = { noOpDashboardBriefingService.generate(it) }
+// )
+// override suspend fun generate(input: DashboardBriefingInput): AiServiceResult<DashboardBriefing> = router.execute(input)
 @Singleton
 class HybridDashboardBriefingService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,

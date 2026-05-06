@@ -12,7 +12,8 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "subscription_usage",
     foreignKeys = [
-        // DB-8: CASCADE on subscriptionId — deleting a subscription erases usage history.
+        // DB-8: CASCADE on SubscriptionUsage.subscriptionId → ManualRecurringExpense(id)
+        // Safe: Usage records are child data of a subscription; no value in orphaned usage entries.
         ForeignKey(
             entity = ManualRecurringExpense::class,
             parentColumns = ["id"],

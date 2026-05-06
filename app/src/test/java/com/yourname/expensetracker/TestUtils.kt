@@ -65,6 +65,7 @@ fun createExpense(
         date = epochMillis,
         categoryId = category?.let { resolveCategoryId(it) },
         paymentMethod = PaymentMethod.CARD,
+        createdAt = System.currentTimeMillis(),
         isNotMine = isNotMine,
         isSharedExpense = isSharedExpense,
         myShareAmount = myShareAmount,
