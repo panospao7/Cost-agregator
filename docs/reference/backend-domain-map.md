@@ -33,7 +33,7 @@
 | `receipt/lifecycle/` | **Receipt lifecycle coordinator + services**: `ReceiptLifecycleCoordinator` (single entry point for receipt processing), `ReceiptLinkService` (centralized receipt-expense linking), `ReceiptAssetStore` (file persistence), `ReceiptInputValidator` (URI/MIME validation), `ReceiptDuplicateDetector` (3-signal dedup), `ReceiptSideEffectDispatcher` (document-type-gated effects), `BankStatementLifecycleProcessor` (statement processing) |
 | `recurring/` | **NEW — Recurring occurrence expansion & resolution**: `RecurringOccurrenceExpander` (expand recurrence rule → occurrence candidates), `OccurrenceConflictResolver` (resolve candidates vs actual expenses), `RecurringPlanProjectionService` (materialise PlannedExpense rows from occurrences) |
 | `recurring/lifecycle/` | **NEW — Recurring lifecycle coordinator + materializer**: `RecurringLifecycleCoordinator` (primary entry point for occurrence generation + `reconcilePlannedVsActual()`), `RecurringOccurrenceMaterializer` (persist occurrences + create reminder deliveries) |
-| `privacy/` | **NEW — Privacy capability gates, audit logging, and PII redaction (Phase 6)**: `PrivacyCapability` (21-value enum), `PrivacyGate` (interface), `PrivacyDecision` (sealed result), `PrivacySettings` (10 toggles + 2 retention settings), `PrivacySettingsRepository`, `PrivacyAuditLogger`, `NotificationPrivacyGate`, `LocationPrivacyGate`, `CloudAiPrivacyGate`, `BackupPrivacyGate`, `CompositePrivacyGate`, `RedactionSanitizer` |
+| `privacy/` | **NEW — Privacy capability gates, audit logging, and PII redaction (Phase 6)**: `PrivacyCapability` (20-value enum), `PrivacyGate` (interface), `PrivacyDecision` (sealed result), `PrivacySettings` (10 toggles + 2 retention settings), `PrivacySettingsRepository`, `PrivacyAuditLogger`, `NotificationPrivacyGate`, `LocationPrivacyGate`, `CloudAiPrivacyGate`, `BackupPrivacyGate`, `CompositePrivacyGate`, `RedactionSanitizer` |
 | `dto/` | Cross-layer transfer objects for AI, review, and category references |
 | `ai/` | AI capability routing, policy, and model-backed services |
 | `bank/` | Bank API integration and connection orchestration |
@@ -88,7 +88,7 @@ Domain Layer (This Document)
 
 **Key outputs:** budget trends, remaining runway, scenario-based forecast results, and series data for UI widgets.
 
-**Phase 10 currency normalization:** `BudgettingForecastingEngine.getSpentAmount()` now routes through `AnalyticsCurrencyNormalizer` instead of raw DAO SQL sums — all multi-currency expenses are converted to home currency before aggregation. Conversion warnings are logged but do not block the computation.
+**Phase 10 currency normalization:** `BudgetForecastingEngine.getSpentAmount()` now routes through `AnalyticsCurrencyNormalizer` instead of raw DAO SQL sums — all multi-currency expenses are converted to home currency before aggregation. Conversion warnings are logged but do not block the computation.
 
 ---
 
@@ -113,7 +113,7 @@ Domain Layer (This Document)
 
 ---
 
-### 6. Intelligence Engines
+### 5. Intelligence Engines
 
 #### Transaction Classifier
 **File:** `intelligence/TransactionClassifier.kt`
@@ -132,7 +132,7 @@ Domain Layer (This Document)
 
 ---
 
-### 7. Location Analytics Engines
+### 6. Location Analytics Engines
 
 #### Spending Heatmap Engine
 **File:** `location/SpendingHeatmapEngine.kt`
@@ -156,7 +156,7 @@ Domain Layer (This Document)
 
 ---
 
-### 8. AI Service Engines
+### 7. AI Service Engines
 
 #### DashboardBriefingService
 **File:** `ai/service/DashboardBriefingService.kt`
@@ -192,7 +192,7 @@ Domain Layer (This Document)
 
 | File | Purpose | Input | Output |
 |------|---------|-------|--------|
-| `CalculateBudgetStatusUseCase.kt` | Compute budget vs actual spending | Budget, period | Status (under/over) |
+| `CalculateBudgetStatusUseCase.kt` | Compute budget vs actual spending | — (no params) | `List<BudgetStatus>` |
 | `GetMonteCarloBudgetImpactUseCase.kt` | Forecast budget impact | Budget, scenarios | MonteCarloResult |
 
 ---
@@ -203,7 +203,7 @@ Domain Layer (This Document)
 | File | Purpose | Input | Output |
 |------|---------|-------|--------|
 | `ComputeDashboardWidgetsUseCase.kt` | Aggregate all dashboard widgets | Period, filters | Widget data |
-| `ComputeMoneyRadarUseCase.kt` | Generate money radar visualization | - | RadarData |
+| `ComputeMoneyRadarUseCase.kt` | Generate money radar visualization | - | MoneyRadarData |
 | `DashboardDataProvider.kt` | Interface for dashboard data sources | - | Various |
 
 ---
@@ -213,8 +213,8 @@ Domain Layer (This Document)
 
 | File | Purpose | Input | Output |
 |------|---------|-------|--------|
-| `CategorizeExpenseUseCase.kt` | Classify expense to category | Expense | Category |
-| `DetectDuplicateExpenseUseCase.kt` | Find duplicate transaction | Amount, merchant, date | DuplicateCheckResult |
+| `CategorizeExpenseUseCase.kt` | Classify expense to category | merchantName: String | CategoryResult (categoryId, confidence, matchType, explanation) |
+| `DetectDuplicateExpenseUseCase.kt` | Find duplicate transaction | amount, merchant, date, currency, transactionType, windowMs, source | DuplicateCheckResult |
 | `ExpenseUseCases.kt` | Facade for all expense operations | - | Various |
 
 ---
@@ -224,7 +224,7 @@ Domain Layer (This Document)
 
 | File | Purpose | Input | Output |
 |------|---------|-------|--------|
-| `CalculateFinancialForecastUseCase.kt` | Generate financial forecast | Historical data, period | FinancialForecast |
+| `CalculateFinancialForecastUseCase.kt` | Generate financial forecast | — (no params) | `Flow<FinancialForecast>` |
 
 ### Forecast Assembler (Phase 5b — domain/forecasting/)
 
@@ -239,7 +239,7 @@ Domain Layer (This Document)
 
 | File | Purpose | Input | Output |
 |------|---------|-------|--------|
-| `ProcessReceiptUseCase.kt` | End-to-end receipt processing | Image, OCR settings | Extracted items |
+| `ProcessReceiptUseCase.kt` | End-to-end receipt processing | ReceiptSource | `Result<ProcessedReceipt>` |
 
 ---
 
@@ -248,8 +248,8 @@ Domain Layer (This Document)
 
 | File | Purpose | Input | Output |
 |------|---------|-------|--------|
-| `LifestyleSavingsPromptUseCase.kt` | Generate savings recommendations | Spending patterns | SavingsGoal |
-| `MonthlySavingsSweepUseCase.kt` | Compute end-of-month savings sweep recommendation. Analyzes budget underspend, MC risk buffer, safe sweep amount. **Phase 10 double-count fix:** Occurrence-key dedup in `calculateKnownUpcomingObligations()` — MUST-priority planned expenses with matching `sourceOccurrenceKey` in materialized occurrences are excluded. Returns `SavingsSweepRecommendation` or null. | Account, amount | Result |
+| `LifestyleSavingsPromptUseCase.kt` | Generate savings recommendations | Spending patterns | LifestyleSavingsRecommendation? |
+| `MonthlySavingsSweepUseCase.kt` | Compute end-of-month savings sweep recommendation. Analyzes budget underspend, MC risk buffer, safe sweep amount. **Phase 10 double-count fix:** Occurrence-key dedup in `calculateKnownUpcomingObligations()` — MUST-priority planned expenses with matching `sourceOccurrenceKey` in materialized occurrences are excluded. Returns `SavingsSweepRecommendation` or null. | — (no params) | SavingsSweepRecommendation? |
 
 ---
 
@@ -336,7 +336,7 @@ Domain Layer (This Document)
 | File | Purpose | Key Details |
 |------|---------|-------------|
 | `ExpenseSource.kt` | Enum of 14 expense origin sources | MANUAL_ENTRY, NOTIFICATION_AUTO_ACCEPT, REVIEW_APPROVAL, RECEIPT_SCAN, RECEIPT_BATCH_REVIEW, BANK_STATEMENT_REVIEW, CSV_IMPORT, EMAIL_RECEIPT, GROUP_EXPENSE, BANK_API_SYNC, RECURRING_GENERATED, DEBUG_TOOL, MIGRATION, UNKNOWN |
-| `LifecycleEventType.kt` | Enum of 14 lifecycle transition types | CREATED, UPDATED, DELETED, CREATE_ATTEMPTED, CREATE_VALIDATION_FAILED, CREATE_DUPLICATE_SKIPPED, CREATE_INSERT_CONFLICT, BULK_UPDATED, RESTORED_FROM_DEBUG_SNAPSHOT, SOURCE_LINKED, SIDE_EFFECT_FAILED |
+| `LifecycleEventType.kt` | Enum of 11 lifecycle event types | CREATED, UPDATED, DELETED, CREATE_ATTEMPTED, CREATE_VALIDATION_FAILED, CREATE_DUPLICATE_SKIPPED, CREATE_INSERT_CONFLICT, BULK_UPDATED, RESTORED_FROM_DEBUG_SNAPSHOT, SOURCE_LINKED, SIDE_EFFECT_FAILED |
 | `DeduplicationMode.kt` | Deduplication strategy enum | STANDARD (default), STRICT_EXTERNAL_ID, BULK_IMPORT, SKIP_FOR_DEBUG_RESTORE |
 | `CreateExpenseRequest.kt` | Source-neutral creation request | 40+ fields: required (merchant, amount, currency, date, transactionType, source), optionals (categoryId, notes, paymentMethod, location, business flags, split fields, source link fields), policy fields (deduplicationMode, skipDeduplication, idempotencyKey) |
 | `CreateExpenseResult.kt` | Sealed result type | Created(expenseId), DuplicateSkipped(existingExpenseId, reason), ValidationFailed(errors), InsertConflict(dedupeKey), Error(exception) |
@@ -602,7 +602,7 @@ interface AiCapabilityRouter {
 | `BackupPrivacyGate` | `BackupPrivacyGate.kt` | Guards RAWBACKUP_EXPORT and ENCRYPTED_BACKUP. |
 | `PrivacySettingsRepository` | `PrivacySettingsRepository.kt` | Interface for reading/writing 10 privacy toggles + 2 retention settings. |
 | `PrivacyAuditLogger` | `PrivacyAuditLogger.kt` | Records every gate check to `privacy_audit_events` table. |
-| `RedactionSanitizer` | `RedactionSanitizer.kt` | PII redaction for notification text and OCR content before cloud AI calls. |
+| `RedactionSanitizer` | `RedactionSanitizer.kt` | Merchant name hashing/sanitization before cloud AI calls (only `sanitizeMerchant()` method). |
 
 ### Budget Services
 **Directory:** `budget/`
@@ -709,6 +709,10 @@ interface AiCapabilityRouter {
 | `CommonPatterns.kt` | Regex patterns | Email, phone, IBAN, etc. |
 | `BKTree.kt` | String distance index | Fast fuzzy search |
 | `AppConstants.kt` | Application constants | Magic numbers, thresholds |
+
+---
+
+> **Note:** This document does not yet cover `HybridRouter` (AID-4, `domain/ai/HybridRouter.kt`) and `WorkerSpecScheduler` (`domain/workers/WorkerSpecScheduler.kt`). See `docs/architecture/DEPENDENCY_MAP.md` for current dependency chains.
 
 ---
 

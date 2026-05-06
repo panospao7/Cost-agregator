@@ -238,12 +238,12 @@ data/
 
 ---
 
-## Entities Registry (47 Total)
+## Entities Registry (57 Total)
 
 ### Core Financial (8)
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
-| **Expense** | `expenses` | Core transaction record with location, business, share fields, multi-currency snapshot, and source tracking | `rawNotificationId` → raw_notifications, `categoryId` → categories | 12: rawNotificationId, transactionType+date, categoryId+date, merchant+date, dedupeKey (unique), latitude+longitude, merchantKey, isBusinessExpense |
+| **Expense** | `expenses` | Core transaction record with location, business, share fields, multi-currency snapshot, and source tracking | `rawNotificationId` → RawNotification (SET_NULL), `categoryId` → Category (SET_NULL), `splitTemplateId` → SplitTemplate (SET_NULL) | 15: rawNotificationId (UNIQUE), date, transactionType+date, transactionType+categoryId+date, categoryId+date, amount+merchant+date, merchant+date, transactionType+merchant+date, dedupeKey (unique), latitude+longitude, latitude+backfillAttempts+date, merchantKey, merchantKey+date+amount, isBusinessExpense, splitTemplateId |
 | | | *New columns (Phase 7):* `baseAmount` (Double), `baseCurrency` (String), `exchangeRateUsed` (Double) — stable historical conversion snapshot | | |
 | | | *New columns (Phase 3):* `source` (String, nullable) — origin tracking (ExpenseSource enum name). Nullable for legacy rows; backfilled by migration 94→95. | | |
 | **TransactionEvent** | `transaction_events` | Immutable lifecycle audit log. Records every CREATED/UPDATED/DELETED transition with actor, timestamps, before/after snapshots, metadata. Append-only. | None | expenseId, source, occurredAt, eventType |
@@ -252,7 +252,7 @@ data/
 | | | *New columns:* `currency` (String), `currencyAssumption` (String) — explicit budget currency with LEGACY_DEFAULT assumption | | |
 | **PlannedExpense** | `planned_expenses` | Future planned transactions | `categoryId` → categories | date, categoryId |
 | | | *New columns:* `currency` (String), `currencyAssumption` (String) | | |
-| **RecurringExpense** | `manual_recurring_expenses` | Subscriptions & repeating expenses (v12) | None | None (added v40: isActive, isSubscription) |
+| **RecurringExpense** | `manual_recurring_expenses` | Subscriptions & repeating expenses (v12) | None | (isActive, nextDate), (isSubscription, isActive, nextDate), merchant |
 | **SavingsGoal** | `savings_goals` | Savings targets with progress | None | None |
 | | | *New columns:* `currency` (String), `currencyAssumption` (String) | | |
 | **Investment** | `investments` | Portfolio holdings with price tracking (v45) | None | type, symbol, isActive |
@@ -302,8 +302,9 @@ data/
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
 | **BudgetForecast** | `budget_forecasts` | AI-predicted budget outcomes (v44) | `budgetId` → budgets | budgetId, forecastDate, isActive |
-| **BudgetAdjustmentRecommendation** | `budget_adjustments` | Suggested budget changes | None | None |
+| **BudgetAdjustmentRecommendation** | `budget_adjustment_recommendations` | Suggested budget changes | `budgetId` → Budget (CASCADE), `categoryId` → Category (SET_NULL) | budgetId, categoryId, (status, generatedAt), generatedAt |
 | | | *New column:* `currency` (String) | | |
+| **BudgetAdjustmentEvent** | `budget_adjustment_events` | Audit log for budget adjustment events (shared file with BudgetAdjustmentRecommendation) | `budgetId` → Budget | budgetId, createdAt |
 | **StressForecastSnapshot** | `stress_forecast_snapshots` | Financial stress scoring snapshots | None | None |
 | | | *New column:* `currency` (String) — all monetary fields in the snapshot use this currency | | |
 | **HealthScoreHistory** | `health_score_history` | Financial health metric evolution | None | None |
@@ -313,8 +314,8 @@ data/
 ### Shared Expenses (4)
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
-| **ExpenseGroup** | `expense_groups` | Shared expense pool header (v43) | None | isActive, createdAt |
-| **GroupMember** | `group_members` | Pool participant definition (v43) | `groupId` → expense_groups | groupId, groupId+name (unique) |
+| **ExpenseGroup** | `expense_groups` | Shared expense pool header (v43) | None | (isActive, createdAt) |
+| **GroupMember** | `group_members` | Pool participant definition (v43) | `groupId` → expense_groups | groupId, (groupId, isCurrentUser), groupId+name (unique), currentUserGroupKey (unique) |
 | **GroupExpense** | `group_expenses` | Expense linked to a pool with split (v43) | `groupId` → expense_groups, `expenseId` → expenses, `paidById` → group_members | groupId, expenseId, paidById, groupId+date |
 | **SplitTemplate** | `split_templates` | Saved split patterns for reuse (v47) | None | isDefault |
 
@@ -328,8 +329,8 @@ data/
 ### Bank & Multi-Currency (3)
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
-| **BankConnection** | `bank_connections` | Open Banking API credentials (v46) | `defaultCategoryId` → categories | bankId, isActive, lastSync |
-| **ExchangeRate** | `exchange_rates` | Currency pair conversion rates (v42) | None | fromCurrency+toCurrency+validDate (unique), lastUpdated |
+| **BankConnection** | `bank_connections` | Open Banking API credentials (v46) | `defaultCategoryId` → Category (SET_NULL) | bankId (unique), isActive, lastSync, defaultCategoryId |
+| **ExchangeRate** | `exchange_rates` | Currency pair conversion rates (v42) | None | fromCurrency+toCurrency+validDate (unique), lastUpdated, toCurrency |
 | | | *New column:* `validDate` (Long) — enables historical rate lookups. Unique constraint expanded to include validDate. | | |
 | **SourceStats** | `source_stats` | Notification source statistics (v14) | None | None |
 | **SourceStatsEvent** | `source_stats_events` | Event-based notification source stats tracking (v117) | `expenseId` → expenses (SET NULL), `rawNotificationId` → raw_notifications (SET NULL) | packageName, eventType, timestamp, expenseId, rawNotificationId |
@@ -348,17 +349,18 @@ data/
 |--------|-------|---------|--------------|---------|
 | **PrivacyAuditEvent** | `privacy_audit_events` | Append-only log of every privacy gate decision. Fields: id, capability, decision (ALLOWED/DENIED), reason, context (JSON), timestampMs, caller. | None | timestampMs, capability, caller |
 
-### Misc. Business (3)
+### Misc. Business (4)
 | Entity | Table | Purpose | Foreign Keys | Indices |
 |--------|-------|---------|--------------|---------|
 | **MileageTracking** | `mileage_tracking` | Business trip mileage deductions (v41) | `linkedExpenseId` → expenses | linkedExpenseId, date, isBusinessTrip |
-| **AnomalyAlert** | `anomaly_alerts` | Fraud/unusual transaction flags | None | None |
+| **AnomalyAlert** | `anomaly_alerts` | Fraud/unusual transaction flags | `expenseId` → Expense (CASCADE) | None |
 | | | *New columns:* `currency` (String), `baseAmount` (Double?), `baseCurrency` (String?) | | |
 | **BlockedPackage** | `blocked_packages` | Notification sources to ignore | None | None |
+| **BackgroundJobRun** | `background_job_runs` | Persistent record of worker executions (Phase 8) | None | workerName+startedAt, status |
 
 ---
 
-## DAOs Registry (45 Total)
+## DAOs Registry (55 Total)
 
 ### Core CRUD DAOs (9)
 
@@ -367,7 +369,7 @@ data/
 | **ExpenseDao** | expenses | getById, insert, insertAll, delete, getPage, getAllFlow, getAllWithCategoryFlow | getExpensesDynamic (RawQuery), getExpensesWithCategoryFiltered, getExpensesWithCategoryInPeriod, getExpensesSince, getRecentExpensesForMerchant, getTotalSpentFlow, updateCategory, updateMerchant, updateTransactionType, checkDuplicate |
 | **TransactionEventDao** | transaction_events | insert, getEventsForExpense | None (append-only log) |
 | **CategoryDao** | categories | getAll, getById, insert, insertAll, update, delete, getDefaultCategories | None |
-| **BudgetDao** | budgets | getById, getAll, insert, update, delete, insert(List), updateAmount, updateNotifyAtWarning, updateNotifyAtCritical, resetNotifyDates | getActiveBudgetForCategory, getTotalBudgetedAmount, getBudgetUtilization |
+| **BudgetDao** | budgets | getById, getAll, insert, update, delete, insertAll, setActive, setActiveAndEnforceScope, updateWarningNotification, updateCriticalNotification, updateExceededNotification, getByCategory, getOverallBudget, getActiveBudgets | insertAndActivateOverall, insertAndActivateCategory, updateAndEnforceActiveScope, replaceAllAndEnforceActiveScopes |
 | **RecurringExpenseDao** | manual_recurring_expenses | getAll, getById, insert, update, delete, getActive, getUpcoming, getTotalRecurringExpense | getRecurringExpensesForMerchant |
 | **PlannedExpenseDao** | planned_expenses | getAll, getById, insert, update, delete, getPlannedExpensesBetween | None |
 | **SavingsGoalDao** | savings_goals | getAll, getById, insert, update, delete, updateCurrentAmount, updateProgress | None |
@@ -385,15 +387,13 @@ data/
 | **WarrantyDao** | warranties | insert, getAll, getById, getByReceiptId, getByExpenseId, getActiveWarranties, getExpiringWarranties | getWarrantiesByStatus |
 | **ReturnWindowDao** | return_windows | insert, getAll, getById, getByReceiptId, getByExpenseId, getReturnableItems, getExpiredReturns | getReturnsByStatus |
 
-### Merchant Management (5)
+### Merchant Management (3)
 
 | DAO | Table | Key Methods |
 |-----|-------|-------------|
 | **MerchantNormalizationDao** | merchant_canonicals, merchant_aliases | getCanonicalByNormalizedName, getCanonicalBySearchKey, getAliasesByCanonicalId, createCanonical, createAlias, updateCanonicalStats | getMostUsedMerchants, getFuzzyMatches |
 | **MerchantLocationDao** | merchant_locations | getByMerchantName, getCachedLocation, upsertLocation, deleteOldCaches, getAllCaches | getLocationsByAreaKey, getLocationsNeedingBackfill |
 | **MerchantCategoryDao** | merchant_categories | insert, getAll, getById, getByMerchantName, getByNormalizedName, updateCategory, deleteByMerchantName | None |
-| **MerchantCategoryRepository** | (cross-table logic) | getMerchantCategorySuggestions, autoAssignCategories, recordMerchantCategoryAssociation | None |
-| **LocationBackfillWorker** | (worker service) | backfillMissingLocations, prioritizeUnresolvedExpenses | None |
 
 ### AI & Chat (4)
 
@@ -404,16 +404,14 @@ data/
 | **AiChatMessageDao** | ai_chat_messages | insert, getById, getBySessionId, deleteBySessionId, getMessagesSince | getSessionMessages |
 | **RecommendationDao** | recommendations | insert, getAll, getById, getActiveRecommendations, markDismissed, deleteExpired | getUserRecommendations, getByStatus |
 
-### Budgeting & Analytics (5)
+### Budgeting & Analytics (3)
 
 | DAO | Table | Key Methods |
 |-----|-------|-------------|
 | **BudgetForecastDao** | budget_forecasts | insert, getById, getByBudgetId, getActiveForecasts, updateActualSpending, updateAccuracy | getForecastsNeedingRecalc |
 | **HealthScoreHistoryDao** | health_score_history | insert, getAll, getById, getRecentScores | getScoresTrend |
-| **SourceStatsDao** | source_stats | insert, getById, getAll, update, getTopSources, recordNotification, recordAccepted, recordRejected | None |
+| **SourceStatsDao** | source_stats | insertIfNotExists, getByPackage, getAll, incrementTotal, incrementAccepted, incrementRejected, incrementAutoRejected, incrementPending, incrementDuplicate, decrementPending, resetAllPendingCounts, deleteAll | incrementTotalAndAccepted, incrementTotalAndDuplicate, incrementTotalAndPending, incrementTotalAndAutoRejected |
 | **SourceStatsEventDao** | source_stats_events | insert, getByPackage | (v117, event-based stats) |
-| **AnalyticsRepository** | (aggregation queries) | getDailyTotals, getWeeklyTotals, getMonthlyTotals, getCategoryTotals, getMerchantStats, getLocationClusters | Complex SQL aggregations with date ranges |
-| **DashboardRepository** | (widget aggregations) | getExpenseStats, getCategoryBreakdown, getBudgetStatus, getTopMerchants, getTrendingCategories | Custom queries for dashboard |
 
 ### Shared Expenses (4)
 

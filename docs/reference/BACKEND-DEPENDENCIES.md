@@ -1,12 +1,15 @@
 # Backend Map - Test Coverage & Cross-References
 
+> **⚠️ STALE DOCUMENT** — Generated 2026-04-06. This document has NOT been updated for ~30 days of active development. The following are missing entirely: 3 lifecycle coordinators (Transaction/Receipt/Recurring), 7 background workers, the Hybrid* AI service layer (7 files), 15+ Hilt modules, HybridRouter, WorkerSpecScheduler, AtRestEncryptionService, and the privacy gate system.  
+> **See `docs/architecture/DEPENDENCY_MAP.md` and `docs/architecture/hilt-bindings-map.md` for current, verified dependency chains.**
+
 **Generated:** 2026-04-06
 
 ---
 
 ## Test Coverage Summary
 
-**Total Test Files:** 317
+**Total Test Files:** 392+
 
 ### Test Categories
 
@@ -87,10 +90,13 @@ CategorizationEngine.categorize()
     ↓
 CategoryResult (with confidence)
     ↓
-ConfidenceRouter (if low confidence → AI)
-    ├─→ OnDeviceCategorizationAssistService
-    ├─→ CloudCategorizationAssistService
-    └─→ NoOpCategorizationAssistService
+ConfidenceRouter (routes confidence-adjusted ParsedTransaction)
+    ├─ sourceStatsRepository: SourceStatsRepository
+    ├─ userCorrectionRepository: UserCorrectionRepository
+    ├─ classifier: TransactionClassifier
+    └─ timeProvider: TimeProvider
+    ↓
+RoutingResult (AUTO_ACCEPT | NEEDS_REVIEW | AUTO_REJECT)
     ↓
 MerchantCategoryRepository.save()
     ↓
@@ -225,6 +231,8 @@ UI Navigation
 
 **Files:** `naturallanguage/*`, `usecase/expense/*`, `ai/usecase/*QueryUseCase.kt`
 
+> **⚠️ MISSING: Lifecycle Coordinators** — This document has zero mention of TransactionLifecycleCoordinator, ReceiptLifecycleCoordinator, or RecurringLifecycleCoordinator. These three coordinators manage the end-to-end lifecycle of expenses, receipts, and recurring transactions respectively, and are critical to the current architecture.
+
 ---
 
 ## Repository → DAO → Entity Dependencies
@@ -308,13 +316,13 @@ CategorizationEngine (main logic)
     ├─ MerchantCanonicalizer (normalization)
     └─ SemanticKeywordMatcher (matching)
     ↓
-ConfidenceRouter (routes to AI if needed)
-    ├─ Domain: ConfidenceRouter
-    └─ Uses:
-        ├→ CategorizationAssistService (domain interface)
-        ├→ OnDeviceCategorizationAssistService (impl)
-        ├→ CloudCategorizationAssistService (impl)
-        └→ NoOpCategorizationAssistService (impl)
+ConfidenceRouter (routes based on confidence scoring)
+    ├─ Constructor:
+    │  ├→ sourceStatsRepository: SourceStatsRepository
+    │  ├→ userCorrectionRepository: UserCorrectionRepository
+    │  ├→ classifier: TransactionClassifier
+    │  └→ timeProvider: TimeProvider
+    └─ Produces: RoutingResult(AUTO_ACCEPT | NEEDS_REVIEW | AUTO_REJECT)
     ↓
 MerchantNormalizer (text processing)
     └─ Uses: MerchantCleaner, GreeklishNormalizer
@@ -512,6 +520,14 @@ TimeModule
 | Consistency tests | Validates dedup logic | `consistency/*Test.kt` |
 
 ---
+
+## Missing Components Not Covered
+- **Lifecycle Coordinators**: TransactionLifecycleCoordinator, ReceiptLifecycleCoordinator, RecurringLifecycleCoordinator
+- **Workers**: DailyBriefingWorker, LocationBackfillWorker, MerchantKeyBackfillWorker, WarrantyExpirationWorker, BillReminderWorker, ReceiptMatchingWorker, DataRetentionWorker
+- **Worker Scheduling**: WorkerSpec, WorkerSpecScheduler
+- **AI**: HybridRouter (AID-4), SmartReceiptAssistService, 7 Hybrid*Service wrappers
+- **Privacy**: AtRestEncryptionService, SourceStatsEvent, SourceStatsEventDao
+- **15+ Hilt modules**: See docs/architecture/hilt-bindings-map.md for the full list
 
 **End of Test Coverage & Cross-References**
 
