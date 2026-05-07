@@ -205,21 +205,21 @@ class BudgetMonitor @Inject constructor(
         when {
             percent >= 1.0f -> {
                 if (shouldNotify(budget.lastExceededNotifiedAt, now, periodStart, budget.period)) {
-                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Exceeded!", categoryName)) {
+                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Exceeded!", categoryName, status.percentUsed)) {
                         budgetRepository.updateExceededNotification(budget.id, now)
                     }
                 }
             }
             percent >= budget.notifyAtCritical && percent < 1.0f -> {
                 if (shouldNotify(budget.lastCriticalNotifiedAt, now, periodStart, budget.period)) {
-                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Critical Budget Warning", categoryName)) {
+                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Critical Budget Warning", categoryName, status.percentUsed)) {
                         budgetRepository.updateCriticalNotification(budget.id, now)
                     }
                 }
             }
             percent >= budget.notifyAtWarning && percent < budget.notifyAtCritical -> {
                 if (shouldNotify(budget.lastWarningNotifiedAt, now, periodStart, budget.period)) {
-                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Warning", categoryName)) {
+                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Warning", categoryName, status.percentUsed)) {
                         budgetRepository.updateWarningNotification(budget.id, now)
                     }
                 }
@@ -245,10 +245,16 @@ class BudgetMonitor @Inject constructor(
         spent: Double,
         effectiveLimit: Double,
         title: String,
-        categoryName: String
+        categoryName: String,
+        percentUsed: Float
     ): Boolean {
-        val limit = if (effectiveLimit > 0) effectiveLimit else budget.amount
-        val percent = if (limit > 0) (spent / limit * 100).toInt() else 0
+        // Always use effectiveLimit (rollover-aware) — never fall back
+        // to budget.amount which omits rollover adjustments.
+        val limit = effectiveLimit.coerceAtLeast(0.0)
+        // Use the pre-computed percentUsed from BudgetStatus, which correctly
+        // accounts for rollover via effectiveLimit, rather than recomputing from
+        // raw spent/limit which could diverge.
+        val percent = (percentUsed * 100).toInt().coerceAtLeast(0)  // allow overspend >100%
         val currencySymbol = com.yourname.expensetracker.domain.currency.SupportedCurrency
             .fromCode(budget.currency)?.symbol ?: budget.currency
         val content = String.format(

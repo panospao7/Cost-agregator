@@ -192,14 +192,53 @@ object BackupVerifier {
         // 3. Per-table verification
         for ((tableName, tier) in TABLE_TIERS) {
             val expected = expectedCounts[tableName]
+
+            // [P1-4] Explicit table-existence check for Tier 1 and Tier 2 tables.
+            // A missing required table must be reported as CRITICAL, not silently
+            // treated as "0 rows" (which could happen when countRows returns -1).
+            if (tier == VerificationTier.TIER_1_EXACT || tier == VerificationTier.TIER_2_VALIDITY) {
+                if (!tableExists(db, tableName)) {
+                    val message = "CRITICAL: Required table '$tableName' is missing from database"
+                    tableResults.add(
+                        TableResult(
+                            tableName = tableName,
+                            tier = tier,
+                            expectedCount = expected,
+                            actualCount = 0,
+                            passed = false,
+                            message = message
+                        )
+                    )
+                    errors.add(message)
+                    continue
+                }
+            }
+
             val actual = countRows(db, tableName)
+
+            // [P1-6] If countRows returns -1 despite the table existing (confirmed above),
+            // the count query itself failed (SQL exception, etc.). For Tier 1/2 this
+            // must fail verification — not silently pass as "0 rows".
+            if (actual == -1 && (tier == VerificationTier.TIER_1_EXACT || tier == VerificationTier.TIER_2_VALIDITY)) {
+                val message = "CRITICAL: Count query failed for required table '$tableName'"
+                tableResults.add(
+                    TableResult(
+                        tableName = tableName,
+                        tier = tier,
+                        expectedCount = expected,
+                        actualCount = 0,
+                        passed = false,
+                        message = message
+                    )
+                )
+                errors.add(message)
+                continue
+            }
 
             val (passed, message) = when (tier) {
                 VerificationTier.TIER_1_EXACT -> {
                     if (expected == null) {
                         false to "Table '$tableName' not found in manifest counts"
-                    } else if (actual == -1) {
-                        false to "Required table '$tableName' is missing from database"
                     } else if (actual != expected) {
                         false to "Count mismatch: expected $expected, actual $actual"
                     } else {

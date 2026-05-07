@@ -78,6 +78,7 @@ class WarrantyExpirationWorker @AssistedInject constructor(
             val prefs: SharedPreferences = applicationContext.getSharedPreferences(
                 PREFS_NAME, Context.MODE_PRIVATE
             )
+            // TODO: Use TimeProvider instead of System.currentTimeMillis()
             val now = System.currentTimeMillis()
             // DAY_IN_MILLIS constant for notification cooldown — acceptable TTL usage (not calendar math)
             val oneDayMs = 86_400_000L

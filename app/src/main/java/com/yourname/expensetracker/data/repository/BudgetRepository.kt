@@ -213,10 +213,24 @@ class BudgetRepository @Inject constructor(
             effectiveLimit = runningEffectiveLimit
         }
 
-        val percent = if (effectiveLimit > 0) (spent / effectiveLimit).toFloat() else 0f
+        // BUD-P5-P1-1: Guard against mixed-currency percent computation.
+        // When the budget limit could not be converted to home currency,
+        // initialLimitAggregate.isPartial is true and baseLimit/effectiveLimit
+        // is in the budget's source currency, while spent is always in home
+        // currency.  Computing spent / effectiveLimit would mix currencies.
+        val budgetConversionFailed = initialLimitAggregate.isPartial
+        val percent = if (effectiveLimit > 0 && !budgetConversionFailed) {
+            (spent / effectiveLimit).toFloat()
+        } else {
+            0f
+        }
         val remaining = (effectiveLimit - spent).coerceAtLeast(0.0)
 
         val health = when {
+            // When conversion failed, percent is forced to 0 so health falls
+            // through to ON_TRACK.  The conversionWarning and isPartial flags
+            // on BudgetStatus tell the UI that the status is unreliable.
+            budgetConversionFailed -> BudgetHealthStatus.ON_TRACK
             percent >= 1.0f -> BudgetHealthStatus.EXCEEDED
             percent >= budget.notifyAtCritical -> BudgetHealthStatus.CRITICAL
             percent >= budget.notifyAtWarning -> BudgetHealthStatus.WARNING
