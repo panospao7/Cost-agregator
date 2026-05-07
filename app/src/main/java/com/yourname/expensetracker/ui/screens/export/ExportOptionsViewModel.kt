@@ -335,65 +335,6 @@ class ExportOptionsViewModel @Inject constructor(
         preview.append("]}")
     }
 
-    private suspend fun streamXeroExport(
-        writer: Appendable,
-        expenses: List<Expense>,
-        categories: Map<Long, String>,
-        preview: PreviewCollector
-    ) {
-        val header = "Date,Description,Amount,Account,Reference\n"
-        xeroExporter.writeHeader(writer)
-        preview.append(header)
-
-        expenses.forEach { expense ->
-            val line = buildString {
-                xeroExporter.writeExpense(this, expense.toExportTransaction(), categories)
-            }
-            writer.append(line)
-            preview.append(line)
-        }
-    }
-
-    private suspend fun streamQuickBooksExport(
-        writer: Appendable,
-        expenses: List<Expense>,
-        categories: Map<Long, String>,
-        preview: PreviewCollector
-    ) {
-        val header = "!TRNS\tDATE\tACCNT\tAMOUNT\tMEMO\tNAME\tCLASS\n" +
-            "!SPL\tDATE\tACCNT\tAMOUNT\tMEMO\tNAME\tCLASS\n" +
-            "!ENDTRNS\n"
-        quickBooksExporter.writeHeader(writer)
-        preview.append(header)
-
-        expenses.forEach { expense ->
-            val block = buildString {
-                quickBooksExporter.writeExpense(this, expense.toExportTransaction(), categories)
-            }
-            writer.append(block)
-            preview.append(block)
-        }
-    }
-
-    private suspend fun streamFreshBooksExport(
-        writer: Appendable,
-        expenses: List<Expense>,
-        categories: Map<Long, String>,
-        preview: PreviewCollector
-    ) {
-        val header = "date,description,amount,category,vendor\n"
-        freshBooksExporter.writeHeader(writer)
-        preview.append(header)
-
-        expenses.forEach { expense ->
-            val line = buildString {
-                freshBooksExporter.writeExpense(this, expense.toExportTransaction(), categories)
-            }
-            writer.append(line)
-            preview.append(line)
-        }
-    }
-
     /**
      * Writes a single page of expenses to [writer] without holding all rows in memory.
      * Each page is the result of one keyset-paginated query from [DeterministicExpenseExportPager].

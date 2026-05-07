@@ -519,15 +519,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         val existing = expenseDao.getById(expenseId) ?: return
-        val resolvedCategoryId = newCategoryId ?: return // DAO requires non-null
-        if (existing.categoryId == resolvedCategoryId) return  // nothing to change
+        if (existing.categoryId == newCategoryId) return  // handles null==null correctly
 
         val now = timeProvider.now()
         val beforeSnapshot = expenseToSnapshot(existing)
-        val updated = existing.copy(categoryId = resolvedCategoryId)
+        val updated = existing.copy(categoryId = newCategoryId)
 
         database.withTransaction {
-            expenseDao.updateCategory(expenseId, resolvedCategoryId)
+            expenseDao.updateCategoryNullable(expenseId, newCategoryId)
             transactionEventDao.insert(
                 TransactionEvent(
                     expenseId = expenseId,
@@ -638,6 +637,23 @@ class TransactionLifecycleCoordinator @Inject constructor(
         val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
             existing.amount, newMerchant, existing.date, existing.currency, existing.transactionType
         )
+
+        // Pre-check: ensure the new dedupeKey doesn't collide with another expense
+        val collidingId = expenseDao.findDuplicateIdCurrencyAware(
+            amount = existing.amount,
+            merchant = newMerchant,
+            date = existing.date,
+            currency = existing.currency,
+            transactionType = existing.transactionType.name,
+            merchantKey = newMerchantKey,
+            dedupeKey = newDedupeKey
+        )
+        if (collidingId != null && collidingId != expenseId) {
+            throw DuplicateUpdateException(
+                "Cannot update merchant: would create duplicate of expense $collidingId"
+            )
+        }
+
         val updated = existing.copy(
             merchant = newMerchant,
             merchantKey = newMerchantKey,
@@ -707,6 +723,23 @@ class TransactionLifecycleCoordinator @Inject constructor(
         val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
             existing.amount, existing.merchant, existing.date, existing.currency, newType
         )
+
+        // Pre-check: ensure the new dedupeKey doesn't collide with another expense
+        val collidingId = expenseDao.findDuplicateIdCurrencyAware(
+            amount = existing.amount,
+            merchant = existing.merchant,
+            date = existing.date,
+            currency = existing.currency,
+            transactionType = newType.name,
+            merchantKey = existing.merchantKey,
+            dedupeKey = newDedupeKey
+        )
+        if (collidingId != null && collidingId != expenseId) {
+            throw DuplicateUpdateException(
+                "Cannot update type: would create duplicate of expense $collidingId"
+            )
+        }
+
         val updated = existing.copy(
             transactionType = newType,
             dedupeKey = newDedupeKey

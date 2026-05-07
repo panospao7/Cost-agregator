@@ -275,6 +275,9 @@ interface ExpenseDao {
     @Query("UPDATE expenses SET categoryId = :categoryId WHERE id = :expenseId")
     suspend fun updateCategory(expenseId: Long, categoryId: Long)
 
+    @Query("UPDATE expenses SET categoryId = :categoryId WHERE id = :expenseId")
+    suspend fun updateCategoryNullable(expenseId: Long, categoryId: Long?)
+
     @Query("UPDATE expenses SET categoryId = :categoryId WHERE merchantKey = :merchantKey")
     suspend fun updateCategoryForMerchant(merchantKey: String, categoryId: Long)
 
