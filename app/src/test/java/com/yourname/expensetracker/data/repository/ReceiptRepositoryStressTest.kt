@@ -103,9 +103,9 @@ class ReceiptRepositoryStressTest {
             debugIssueDetector = debugIssueDetector,
             ioDispatcher = Dispatchers.Unconfined,
             timeProvider = timeProvider,
-            warrantyUseCase = object : Lazy<AutoCreateWarrantyFromReceiptUseCase> { override fun get() = warrantyUseCase },
-            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
             receiptLinkService = mockk<ReceiptLinkService>(relaxed = true),
+            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
+            assetStore = mockk(relaxed = true),
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
             receiptLifecycleCoordinator = mockk(relaxed = true),
         )

@@ -1180,13 +1180,14 @@ Files changed:
 **Status: PARTIALLY FIXED (2026-05-06) — C1 migration started, NOT complete**
 
 **FIXED:**
-- `updateExpenseCategory()` — both overloads now route through `TransactionLifecycleCoordinator.updateCategory()`, which writes `TransactionEvent.UPDATED` with before/after snapshots in an atomic DB transaction
+- `updateExpenseCategory()` — both overloads → `coordinator.updateCategory()` (C1-PR1)
+- `updateExpenseMerchant()` single path → `coordinator.updateMerchant()` (C1-PR2)
+- `updateExpenseType()` → `coordinator.updateType()` (C1-PR2)
 - `ExpenseRepository.kt` now has a comprehensive `## C1 LIFECYCLE MIGRATION — PARTIALLY COMPLETE` KDoc block documenting all remaining bypasses
 
-**STILL BYPASSING (16 methods across 3 files):**
+**STILL BYPASSING (14 methods across 3 files):**
 - `updateExpenseCategoryBulk()` — calls `expenseDao.updateCategoryForMerchant()` directly
-- `updateExpenseMerchant()` / `updateExpenseMerchantBulk()` — direct DAO
-- `updateExpenseType()` — direct DAO
+- `updateExpenseMerchantBulk()` — direct DAO (single path fixed in C1-PR2)
 - `updateTransferDetails()` — direct DAO
 - `updateNotMineDetails()` / `updateSharedExpenseDetails()` / `updateOwnership()` — direct DAO
 - `updateExpenseLocation()` / `conditionallySetLocation()` / `clearExpenseLocation()` — direct DAO
@@ -1194,8 +1195,8 @@ Files changed:
 - `GroupTransactionCoordinator.kt` — shared-expense flags clearing + ownership normalization
 
 The remaining bypasses are deprecated with `@Deprecated` annotations and documented in the code.
-Full migration requires adding `updateMerchant()`, `updateType()`, `updateTransferDetails()`, `updateOwnership()`,
-`updateLocation()`, `bulkUpdateCategory()`, and `bulkUpdateMerchant()` to the coordinator (staged PRs 2-5).
+Full migration still requires adding `updateTransferDetails()`, `updateOwnership()`,
+`updateLocation()`, `bulkUpdateCategory()`, and `bulkUpdateMerchant()` to the coordinator (staged PRs 3-5).
 
 ### P1-1 — Strict external ID idempotency returns InsertConflict
 **Status: CONFIRMED, NOT FIXED**

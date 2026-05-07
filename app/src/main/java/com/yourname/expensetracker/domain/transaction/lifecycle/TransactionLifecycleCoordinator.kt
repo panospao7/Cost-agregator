@@ -547,6 +547,114 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * Updates only the merchant on an expense, with full lifecycle tracking.
+     * Recomputes [merchantKey] and [dedupeKey] since the merchant changed.
+     * Writes a UPDATED TransactionEvent with before/after snapshots.
+     *
+     * @param expenseId   The ID of the expense to update.
+     * @param newMerchant The new merchant name.
+     * @param reason      Optional human-readable explanation for the update.
+     * @param source      The source system/component that triggered the update.
+     */
+    suspend fun updateMerchant(
+        expenseId: Long,
+        newMerchant: String,
+        reason: String? = null,
+        source: String = "USER_EDIT"
+    ) {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+
+        val existing = expenseDao.getById(expenseId) ?: return
+        if (existing.merchant == newMerchant) return
+
+        val now = timeProvider.now()
+        val beforeSnapshot = expenseToSnapshot(existing)
+        val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
+        val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+            existing.amount, newMerchant, existing.date, existing.currency, existing.transactionType
+        )
+        val updated = existing.copy(
+            merchant = newMerchant,
+            merchantKey = newMerchantKey,
+            dedupeKey = newDedupeKey
+        )
+
+        database.withTransaction {
+            expenseDao.updateMerchantAndKey(expenseId, newMerchant, newMerchantKey, newDedupeKey)
+            transactionEventDao.insert(
+                TransactionEvent(
+                    expenseId = expenseId,
+                    eventType = LifecycleEventType.UPDATED.name,
+                    source = source,
+                    actor = null,
+                    occurredAt = now,
+                    dedupeKey = newDedupeKey,
+                    duplicateExpenseId = null,
+                    beforeSnapshot = beforeSnapshot,
+                    afterSnapshot = expenseToSnapshot(expenseId, updated),
+                    metadata = null,
+                    reason = reason
+                )
+            )
+        }
+    }
+
+    /**
+     * Updates only the transaction type on an expense, with full lifecycle tracking.
+     * Recomputes [dedupeKey] since the type is a key field used for deduplication.
+     * Writes a UPDATED TransactionEvent with before/after snapshots.
+     *
+     * @param expenseId The ID of the expense to update.
+     * @param newType   The new [TransactionType].
+     * @param reason    Optional human-readable explanation for the update.
+     * @param source    The source system/component that triggered the update.
+     */
+    suspend fun updateType(
+        expenseId: Long,
+        newType: TransactionType,
+        reason: String? = null,
+        source: String = "USER_EDIT"
+    ) {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+
+        val existing = expenseDao.getById(expenseId) ?: return
+        if (existing.transactionType == newType) return
+
+        val now = timeProvider.now()
+        val beforeSnapshot = expenseToSnapshot(existing)
+        val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+            existing.amount, existing.merchant, existing.date, existing.currency, newType
+        )
+        val updated = existing.copy(
+            transactionType = newType,
+            dedupeKey = newDedupeKey
+        )
+
+        database.withTransaction {
+            expenseDao.updateTransactionType(expenseId, newType.name, newDedupeKey)
+            transactionEventDao.insert(
+                TransactionEvent(
+                    expenseId = expenseId,
+                    eventType = LifecycleEventType.UPDATED.name,
+                    source = source,
+                    actor = null,
+                    occurredAt = now,
+                    dedupeKey = newDedupeKey,
+                    duplicateExpenseId = null,
+                    beforeSnapshot = beforeSnapshot,
+                    afterSnapshot = expenseToSnapshot(expenseId, updated),
+                    metadata = null,
+                    reason = reason
+                )
+            )
+        }
+    }
+
+    /**
      * Deletes an expense by its ID with full lifecycle handling:
      * load → write DELETED event → delete.
      *

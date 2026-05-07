@@ -65,11 +65,12 @@ enum class OwnershipFilter {
  * ### DONE (routed through coordinator, writes TransactionEvent.UPDATED):
  * - updateExpenseCategory() — both overloads → coordinator.updateCategory()
  * - updateExpense() (full-row) — already routed through coordinator
+ * - updateExpenseMerchant (single path) → coordinator.updateMerchant()
+ * - updateExpenseType → coordinator.updateType()
  *
  * ### STILL BYPASSING (direct ExpenseDao calls, no lifecycle events):
  * - updateExpenseCategoryBulk (categoryId)
- * - updateExpenseMerchant, updateExpenseMerchantBulk (merchant, merchantKey, dedupeKey)
- * - updateExpenseType (transactionType, dedupeKey)
+ * - updateExpenseMerchantBulk (merchant, merchantKey, dedupeKey) — bulk path still bypasses
  * - updateTransferDetails (transferDirection, transferAccountName)
  * - updateNotMineDetails, updateSharedExpenseDetails, updateOwnership (ownership fields)
  * - updateExpenseLocation, conditionallySetLocation, clearExpenseLocation (location fields)
@@ -457,34 +458,27 @@ class ExpenseRepository @Inject constructor(
     @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.UPDATED. Use TransactionLifecycleCoordinator.updateExpense() instead for proper lifecycle tracking.")
     suspend fun updateExpenseMerchant(expense: Expense, newMerchant: String, applyToAll: Boolean = false) {
         if (expense.merchant == newMerchant) return
-
         val oldMerchant = expense.merchant
 
         if (applyToAll) {
-            // Update all approved expenses with this name.
-            // Bulk dedupeKey recomputation is not feasible in SQL, so we null out
-            // dedupeKey for affected rows — the range-based isDuplicateCurrencyAware
-            // check will still correctly detect duplicates.
+            // Bulk path: keep existing logic (coordinator doesn't have bulk updateMerchant yet)
             val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
             val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
             database.withTransaction {
                 expenseDao.updateMerchantForMerchant(oldMerchantKey, newMerchant, newMerchantKey)
-                // Also update any pending reviews with this name
                 pendingReviewDao.bulkRenameMerchant(oldMerchantKey, oldMerchant, newMerchant, newMerchantKey)
             }
         } else {
-            // Just update this single record — recompute dedupeKey so it stays in sync
-            val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
-            val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                expense.amount, newMerchant, expense.date, expense.currency, expense.transactionType
+            // Single: route through lifecycle coordinator
+            transactionLifecycleCoordinator.updateMerchant(
+                expenseId = expense.id,
+                newMerchant = newMerchant,
+                source = "USER_EDIT"
             )
-            expenseDao.updateMerchantAndKey(expense.id, newMerchant, newMerchantKey, newDedupeKey)
         }
 
-        // Catch the rename for future auto-correction
+        // Side effects (non-lifecycle, best-effort)
         merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant)
-
-        // Also learn the category for this brand name
         expense.categoryId?.let {
             merchantCategoryRepository.learnPattern(newMerchant, it)
         }
@@ -492,11 +486,11 @@ class ExpenseRepository @Inject constructor(
 
     @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.UPDATED. Use TransactionLifecycleCoordinator.updateExpense() instead for proper lifecycle tracking.")
     suspend fun updateExpenseType(expense: Expense, newType: TransactionType) {
-        if (expense.transactionType == newType) return
-        val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-            expense.amount, expense.merchant, expense.date, expense.currency, newType
+        transactionLifecycleCoordinator.updateType(
+            expenseId = expense.id,
+            newType = newType,
+            source = "USER_EDIT"
         )
-        expenseDao.updateTransactionType(expense.id, newType.name, newDedupeKey)
     }
 
     suspend fun updateTransferDetails(

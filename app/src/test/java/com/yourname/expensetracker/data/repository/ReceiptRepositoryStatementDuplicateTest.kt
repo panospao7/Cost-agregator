@@ -110,9 +110,9 @@ class ReceiptRepositoryStatementDuplicateTest {
             debugIssueDetector = debugIssueDetector,
             ioDispatcher = Dispatchers.Unconfined,
             timeProvider = timeProvider,
-            warrantyUseCase = dagger.Lazy { warrantyUseCase },
-            coordinator = mockk(relaxed = true),
             receiptLinkService = mockk(relaxed = true),
+            coordinator = mockk(relaxed = true),
+            assetStore = mockk(relaxed = true),
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
             receiptLifecycleCoordinator = mockk(relaxed = true),
         )
