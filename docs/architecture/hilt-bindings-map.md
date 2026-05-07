@@ -78,7 +78,8 @@ Provides:
   SpeechInputGateway                          → AndroidSpeechInputGateway
   StringDistanceUtils                         → StringDistanceUtils
 Dependencies:
-  Various geocoding services, Android system services
+  PrivacyGate (for CompositeGeocodingService EXTERNAL_GEOCODING check),
+  various geocoding services, Android system services
 ```
 
 ---

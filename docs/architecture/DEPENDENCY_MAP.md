@@ -174,6 +174,17 @@ each writing TransactionEvent.UPDATED or BULK_UPDATED with before/after snapshot
 | bulkUpdateCategory(merchant, newCategoryId) | categoryId (all matching rows) | BULK_UPDATED |
 | bulkUpdateMerchant(oldMerchant, newMerchant) | merchant, merchantKey, dedupeKey (all matching rows) | BULK_UPDATED |
 
+### Side-Effect Dispatchers (Phase C extension)
+TransactionSideEffectDispatcher now provides three dispatch methods:
+
+| Method | Called by | Systems |
+|--------|-----------|---------|
+| dispatchOnCreated(expenseId, source) | createExpense() | budget, anomaly, merchant learning |
+| dispatchOnUpdated(expenseId, source) | updateCategory, updateMerchant, updateType, updateTransferDetails, updateOwnership | budget, anomaly, merchant learning |
+| dispatchOnDeleted(expenseId, source) | deleteExpense() | budget |
+
+All three are best-effort (fire-and-forget, wrapped in try-catch).
+
 All methods: restore-mode guard, atomic DB transaction, lifecycle event logging.
 See ExpenseRepository KNOWN BYPASS NOTE for migration status (11 routed, 7 intentional).
 
@@ -221,8 +232,12 @@ ReceiptLinkService                        [domain/receipt/lifecycle/ReceiptLinkS
        │   1. Validates expense exists before linking (returns failure fast)
        │   2. Checks insert() return value to detect and report duplicates
        │   3. Propagates item-majority category to expense via RCP-30
-       │      (reads ReceiptItemCategorization rows, picks majority category,
-       │       writes it back to Expense.categoryId via ExpenseDao.update())
+        │      (reads ReceiptItemCategorization rows, picks majority category,
+        │       writes it back to Expense.categoryId via ExpenseDao.update())
+
+Pre-OCR exact-hash dedup: ReceiptRepository.processReceipt() now computes
+ReceiptAssetStore.computeUriHash() BEFORE OCR. If an exact-hash match exists,
+OCR/parse/insert are skipped entirely.
 ```
 
 ### Entity & DAO Flow
@@ -276,6 +291,8 @@ RecurringPlanProjectionService            [domain/recurring/RecurringPlanProject
 
 TransactionLifecycleCoordinator
    └──► RecurringLifecycleCoordinator.linkExpenseToOccurrence()  — auto-link hook
+   └──► RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expenseId) — direct
+         linkedExpenseId lookup via getByLinkedExpenseId(), resets occurrence to PLANNED.
 
 SnoozeReminderReceiver / DismissReminderReceiver
    ├──► RecurringReminderDeliveryDao
@@ -672,3 +689,30 @@ before performing write operations, ensuring workers yield during an active rest
 > **Generated:** Manual analysis of 620+ Kotlin files across 3 layers (UI/Domain/Data),  
 > 30 Hilt modules, 39 ViewModels, 51 repositories, 54 DAOs, 56 entities.  
 > **Next update:** Regenerate when significant architectural changes occur (new module, major refactor).
+
+---
+---
+
+## 13. Stage 1 Architecture Foundations
+
+### BackupPrivacyMode (Segment 18)
+Enum with 4 values controlling backup privacy:
+FULL_ENCRYPTED, REDACT_RAW_TEXT, REDACT_RAW_TEXT_EXCLUDE_IMAGES, ANONYMIZED_EXPORT.
+Added as nullable field on BackupManifest.
+
+### CloudPayloadRedactor (Segment 28)
+Unified redaction interface for cloud AI payloads. Single contract for
+redacting text and merchant fields before cloud transmission.
+7 CloudPayloadPurpose values: RECEIPT_ASSIST, ITEM_CATEGORIZATION, etc.
+
+### ForecastDataQuality (Segment 1)
+Additive data class (no consumer break) with fields: isPartial,
+excludedActualCount, excludedPlannedCount, excludedRecurringCount,
+conversionWarnings, confidencePenalty.
+
+### CI Guard (Segment 9)
+scripts/guards/check_lifecycle_bypasses.kts — scans for 14 forbidden
+direct ExpenseDao calls, with documented allowlist.
+
+### Rate Staleness
+CurrencyConverter.convert() checks rate.lastUpdated against 24h threshold.

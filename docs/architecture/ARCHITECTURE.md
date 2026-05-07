@@ -521,6 +521,11 @@ A 120+ file cross-cutting feature establishing a single, auditable entry point f
 transfer, ownership, location, bulk). All expense mutations now route through
 the coordinator with full lifecycle event tracking.
 
+- TransactionSideEffectDispatcher now has dispatchOnUpdated() and dispatchOnDeleted()
+  for post-update/post-delete budget/anomaly/merchant side effects.
+- Rate staleness: CurrencyConverter.convert() checks rates against 24h threshold;
+  stale rates fall through to EUR cross-rate fallback paths.
+
 #### Migration Paths (all now route through coordinator)
 
 | Path | PR | Status |
@@ -575,6 +580,9 @@ A ~20-file cross-cutting feature establishing a single, auditable entry point fo
 | `ReceiptDuplicateDetector` | `lifecycle/ReceiptDuplicateDetector.kt` | 3-signal deduplication: EXACT_HASH (SHA-256, 1.0 confidence), TEXT_FINGERPRINT (normalized OCR text, 0.95), SEMANTIC (merchant+amount+date+currency, 0.8), plus EXTERNAL_ID for email dedup. |
 | `ReceiptSideEffectDispatcher` | `lifecycle/ReceiptSideEffectDispatcher.kt` | Document-type-gated post-save effects: RETAIL_RECEIPT → warranty extraction, item categorization, transaction matching, price protection. EMAIL_RECEIPT → item categorization only. BANK_STATEMENT/MANUAL_PLACEHOLDER → no effects. |
 | `BankStatementLifecycleProcessor` | `lifecycle/BankStatementLifecycleProcessor.kt` | Statement-specific processing: OCR → parse transactions → create PendingReview entries → lifecycle events. Returns structured `BankStatementResult`. |
+
+- Pre-OCR exact-hash dedupe: ReceiptAssetStore.computeUriHash() called before OCR.
+  Exact-hash duplicates skip OCR/parse/insert entirely, eliminating orphan rows.
 
 #### Migration Paths (all now route through coordinator)
 
@@ -637,6 +645,8 @@ A ~5-file domain expansion establishing an auditable lifecycle for recurring-exp
 - **TransactionLifecycleCoordinator auto-link hook (Phase 3 ↔ Phase 5):** After every `createExpense()`, a best-effort call to `recurringLifecycleCoordinator.linkExpenseToOccurrence()` attempts to match the new expense to a PLANNED occurrence on the same calendar day. Failures are silently caught (non-blocking).
 - **ForecastInputAssembler** updated to inject `RecurringLifecycleCoordinator` for future dedup integration (replacing ad-hoc recurrence expansion with coordinator-driven generation).
 - **Subscription math normalization** fixed across subscription detection and recurring engines.
+- RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expenseId) — direct
+  linkedExpenseId lookup resets occurrence to PLANNED on expense deletion/change.
 
 #### New DB Layer
 
@@ -1261,6 +1271,13 @@ Cross-cutting fixes applied after architecture review tightened correctness, con
   - `forecasting/` - Monte Carlo simulation
   - `model/dashboard/` - Domain models for dashboard
   - `model/navigation/` - Domain models for navigation
+
+### Stage 1 Architecture Foundations (2026-05-06)
+- BackupPrivacyMode enum (4 backup privacy levels)
+- CloudPayloadRedactor interface (unified cloud AI redaction contract)
+- ForecastDataQuality data class (additive field for partial-currency forecasting)
+- CI guard: scripts/guards/check_lifecycle_bypasses.kts
+- WorkerContractTest verifying all 7 default workers
 
 ## Quick Reference
 

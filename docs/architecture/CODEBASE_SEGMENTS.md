@@ -68,6 +68,7 @@ Owns the core spending forecast engine and month-end runway views.
 - `data/repository/FinancialWeatherRepository.kt`
 - `ui/components/FinancialRunwayCard.kt`
 - `ui/components/FinancialWeatherCard.kt`
+- `domain/forecasting/ForecastDataQuality.kt` — additive quality metadata for forecast inputs
 
 **Boundary note:** forecast inputs may come from budgets and recurring expenses, but budget ownership stays in Segment 2.
 
@@ -118,6 +119,7 @@ Owns receipt capture, OCR extraction, receipt parsing, scanned-receipt review fl
 - `domain/receipt/lifecycle/ReceiptAssetStore.kt` — File persistence, hashing, backup manifest
 - `domain/receipt/lifecycle/ReceiptInputValidator.kt` — URI / MIME / size validation
 - `domain/receipt/lifecycle/ReceiptDuplicateDetector.kt` — 3-signal dedup (hash, text, semantic)
+- `domain/receipt/lifecycle/ReceiptAssetStore.computeUriHash()` — pre-OCR exact-hash dedup (2026-05-06)
 - `domain/receipt/lifecycle/ReceiptSideEffectDispatcher.kt` — Document-type-gated downstream effects
 - `domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt` — Statement-specific processing
 - `data/database/entity/ReceiptEvent.kt` — Immutable receipt lifecycle event log (table: `receipt_events`)
@@ -182,6 +184,8 @@ Owns recurring pattern detection, future recurring item planning, and the **recu
 
 **Boundary note:** The `recurring_occurrences` and `recurring_reminder_deliveries` tables are owned by this segment. The `TransactionLifecycleCoordinator` (Segment 9) auto-links new expenses to PLANNED occurrences via `RecurringLifecycleCoordinator.linkExpenseToOccurrence()` as a best-effort post-creation hook.
 
+**Boundary note:** `RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence()` resets to PLANNED (2026-05-06).
+
 ## SEGMENT 8: Analytics & Insights
 
 Owns statistical analysis, anomaly detection, category insights, and merchant insights.
@@ -218,6 +222,7 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 - `domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt` — Post-creation side effects
 - `docs/development/DAO_ACCESS_GUARDRAILS.md` — DAO access policy
 - `scripts/guardrails/dao-access-check.kts` — Guardrail enforcement
+- `scripts/guards/check_lifecycle_bypasses.kts` — CI guard for direct DAO bypasses
 
 **Boundary note:** All expense creation paths now route through `TransactionLifecycleCoordinator`. Direct `insertAtomic` calls are forbidden outside grandfathered files listed in `DAO_ACCESS_GUARDRAILS.md`.
 
@@ -323,6 +328,8 @@ Owns currency normalization, exchange-rate handling, multi-currency calculations
 
 **Boundary note:** AnalyticsCurrencyNormalizer lives in domain/analytics/ but is logically part of the currency infrastructure. MultiCurrencyRepository is the canonical entry point for all currency-aware aggregation; raw DAO aggregation methods are deprecated.
 
+**Note:** Rate staleness: CurrencyConverter checks rates against 24h threshold (2026-05-06)
+
 ## SEGMENT 17: Tax Calculation & Reporting
 
 Owns tax allocation and tax-aware reporting logic.
@@ -345,6 +352,7 @@ Owns export pipelines, backup/restore flows, and file packaging.
 - `domain/export/AccountingExporters.kt`
 - `ui/screens/export/ExportOptionsScreen.kt`
 - `di/BackupRepositoryModule.kt`
+- `domain/backup/BackupPrivacyMode.kt` — enum defining 4 backup privacy levels
 
 ## SEGMENT 19: Location Enrichment
 
@@ -454,6 +462,7 @@ Owns encrypted key storage and security/network bindings.
 - `di/SecurityModule.kt`
 - `di/NetworkModule.kt`
 - `di/NetworkQualifiers.kt`
+- `domain/privacy/CloudPayloadRedactor.kt` — unified cloud AI payload redaction interface
 
 ## SEGMENT 29: Debug & Diagnostics
 
