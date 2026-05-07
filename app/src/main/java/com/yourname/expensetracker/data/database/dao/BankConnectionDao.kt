@@ -9,6 +9,9 @@ import com.yourname.expensetracker.data.database.entity.BankConnection
 import com.yourname.expensetracker.data.database.entity.SyncStatus
 import kotlinx.coroutines.flow.Flow
 
+// TODO (P2-3): Add updateLastError(id, errorMessage, errorCode) and
+// updateSyncStatus(id, status, lastSyncTime) for detailed connection state.
+
 @Dao
 interface BankConnectionDao {
     

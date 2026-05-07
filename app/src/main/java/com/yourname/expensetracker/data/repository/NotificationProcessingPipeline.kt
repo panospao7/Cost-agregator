@@ -99,6 +99,9 @@ import javax.inject.Singleton
  * See also [TransactionEvent] KDoc for the proposed `ai_audit_log` table schema.
  */
 
+// TODO (P2-1): Return sealed ProcessingOutcome from processInternal() instead of
+// flattening everything to Success/Error. See pipeline-1 debug report.
+
 @Singleton
 class NotificationProcessingPipeline @Inject constructor(
     private val database: AppDatabase,
@@ -193,6 +196,7 @@ class NotificationProcessingPipeline @Inject constructor(
             )
         ) {
             Timber.d("TRN-8: Duplicate notification detected before parse, skipping: ${notification.packageName}")
+            Timber.d("Pipeline outcome: DUPLICATE for package=%s", notification.packageName)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             return
         }
@@ -207,6 +211,7 @@ class NotificationProcessingPipeline @Inject constructor(
         )
 
         if (parsed == null) {
+            Timber.d("Pipeline outcome: PARSER_FAILED for package=%s", notification.packageName)
             val oversizedCandidate = detectOversizedAmountCandidate(
                 title = notification.title,
                 text = notification.text,
@@ -282,7 +287,8 @@ class NotificationProcessingPipeline @Inject constructor(
                         notificationText = notification.text ?: notification.bigText,
                         extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
                     )
-                    pendingReviewDao.upsertByRawNotificationId(review)
+                    val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
+                    Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
                     sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
                     dao.markRelevance(rawId, true)
                 } else {
@@ -348,10 +354,12 @@ class NotificationProcessingPipeline @Inject constructor(
                             notificationText = notification.text ?: notification.bigText,
                             extractionState = ExtractionState.SYNTHETIC_PLACEHOLDER
                         )
-                        pendingReviewDao.upsertByRawNotificationId(review)
+                        val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
+                        Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
                         sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
                         dao.markRelevance(rawId, true)
                     } else {
+                        Timber.d("Pipeline outcome: AUTO_REJECTED reason=%s", "Unparseable notification with no transaction signal")
                         sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, sourceStatsTimestamp)
                         dao.markRelevance(rawId, false)
                     }
@@ -410,6 +418,15 @@ class NotificationProcessingPipeline @Inject constructor(
                     }
                 }
             }
+        }
+
+        // Log detailed pipeline outcome for parsed notifications
+        when (dbOutcome) {
+            is ParsedDbOutcome.AutoAccepted -> Timber.d("Pipeline outcome: AUTO_ACCEPTED expenseId=%d", dbOutcome.expenseId)
+            ParsedDbOutcome.NeedsReviewCreated -> Timber.d("Pipeline outcome: NEEDS_REVIEW for package=%s", notification.packageName)
+            ParsedDbOutcome.AutoRejected -> Timber.d("Pipeline outcome: AUTO_REJECTED reason=%s", "Routing decision rejected")
+            ParsedDbOutcome.RawDuplicate -> Timber.d("Pipeline outcome: DUPLICATE for package=%s", notification.packageName)
+            ParsedDbOutcome.Duplicate -> Timber.d("Pipeline outcome: DUPLICATE for package=%s", notification.packageName)
         }
 
         if (dbOutcome == ParsedDbOutcome.RawDuplicate) return
@@ -962,7 +979,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             suggestedLatitude = preDb.deviceGps?.first,
             suggestedLongitude = preDb.deviceGps?.second
         )
-        pendingReviewDao.upsertByRawNotificationId(review)
+        val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
+        Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
         sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
         return ParsedDbOutcome.NeedsReviewCreated
     }

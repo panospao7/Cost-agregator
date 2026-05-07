@@ -17,6 +17,9 @@ import javax.inject.Singleton
  * 3. File size is within the specified limit.
  * 4. For image MIME types, the bitmap can be decoded successfully.
  */
+// TODO (P2-1): Add MIME fallback detection (file extension, header sniff) when
+// ContentResolver.getType() returns null for some providers.
+
 @Singleton
 class ReceiptInputValidator @Inject constructor(
     @ApplicationContext private val context: Context

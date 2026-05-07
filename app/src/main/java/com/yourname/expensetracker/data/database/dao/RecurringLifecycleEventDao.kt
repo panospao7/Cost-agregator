@@ -13,4 +13,10 @@ interface RecurringLifecycleEventDao {
 
     @Query("SELECT * FROM recurring_lifecycle_events WHERE occurrenceId = :id ORDER BY occurredAt DESC")
     suspend fun getEventsForOccurrence(id: Long): List<RecurringLifecycleEvent>
+
+    @Query("SELECT * FROM recurring_lifecycle_events ORDER BY occurredAt DESC LIMIT :limit")
+    suspend fun getRecentEvents(limit: Int = 50): List<RecurringLifecycleEvent>
+
+    @Query("SELECT * FROM recurring_lifecycle_events WHERE eventType = :type ORDER BY occurredAt DESC LIMIT :limit")
+    suspend fun getEventsByType(type: String, limit: Int = 50): List<RecurringLifecycleEvent>
 }

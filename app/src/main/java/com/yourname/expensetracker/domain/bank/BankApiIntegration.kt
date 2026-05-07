@@ -51,6 +51,9 @@ data class SyncResult(
     val errors: List<String>
 )
 
+// TODO (P2-1): Demo bank sync is intentionally non-deterministic.
+// When real bank providers are added, ensure sync is idempotent and repeatable.
+
 @Singleton
 class BankApiIntegration @Inject constructor(
     private val timeProvider: TimeProvider,

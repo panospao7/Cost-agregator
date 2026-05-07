@@ -160,6 +160,9 @@ class BudgetRepository @Inject constructor(
         // budget.amount stays as the original base limit (no mutation).
         var effectiveLimit = baseLimit
 
+        // TODO (P2-2): Budget rollover currently queries each budget individually (N+1).
+        // Batch-fetch all budgets with a single query and process in-memory.
+
         // LOG-002: Implement Compounding Rollover - BUG-2 FIX
         //
         // BUD-2 / BUD-11: This loop calls getAggregateSpent() once per completed period,

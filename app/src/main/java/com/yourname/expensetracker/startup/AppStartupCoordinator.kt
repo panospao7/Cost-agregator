@@ -43,7 +43,7 @@ class AppStartupCoordinator @Inject constructor(
         registerLifecycleObserver()
 
         if (!restoreMaintenanceMode.isWritesAllowed()) {
-            Timber.w("Startup: skipping worker scheduling — maintenance mode blocks writes")
+            Timber.w("Startup: maintenance mode active, skipping worker scheduling")
         } else {
             scheduleStartupWork(application)
             syncProactiveBriefingWork()
@@ -62,6 +62,7 @@ class AppStartupCoordinator @Inject constructor(
      * safety backup to recover the live database rather than just logging.
      */
     private fun checkRestoreJournal() {
+        Timber.i("Startup: checking restore journal")
         when (val recovery = restoreJournal.checkAndRecover()) {
             is RestoreJournal.RecoveryResult.NoAction -> {
                 // Normal startup — no journal found
@@ -203,6 +204,7 @@ class AppStartupCoordinator @Inject constructor(
      * scheduling without updating individual worker code.
      */
     private fun scheduleStartupWork(application: Application) {
+        Timber.i("Startup: scheduling workers")
         // WRK-8: Wrap each schedule() call individually so one failure
         // does not prevent other workers from being scheduled.
         runCatching { LocationBackfillWorker.schedule(application) }
