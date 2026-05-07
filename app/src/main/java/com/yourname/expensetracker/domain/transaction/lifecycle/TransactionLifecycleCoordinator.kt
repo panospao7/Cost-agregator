@@ -544,6 +544,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 )
             )
         }
+
+        // Post-update side effects (best-effort)
+        try {
+            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: side effects failed after updating category for expense %d", expenseId)
+        }
     }
 
     /**
@@ -597,6 +604,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 metadata = null, reason = reason
             ))
         }
+
+        // Side effects intentionally skipped for location-only updates — location
+        // does not affect budget/anomaly/merchant/recurring matching logic.
     }
 
     /**
@@ -652,6 +662,21 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 )
             )
         }
+
+        // Post-update side effects (best-effort)
+        try {
+            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: side effects failed after updating merchant for expense %d", expenseId)
+        }
+
+        // Reconcile recurring link — merchant changed
+        try {
+            recurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expenseId)
+            recurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId)
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: recurring reconciliation failed for expense %d", expenseId)
+        }
     }
 
     /**
@@ -705,6 +730,21 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 )
             )
         }
+
+        // Post-update side effects (best-effort)
+        try {
+            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: side effects failed after updating type for expense %d", expenseId)
+        }
+
+        // Reconcile recurring link — transaction type changed
+        try {
+            recurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expenseId)
+            recurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId)
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: recurring reconciliation failed for expense %d", expenseId)
+        }
     }
 
     /**
@@ -757,6 +797,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     reason = reason
                 )
             )
+        }
+
+        // Post-update side effects (best-effort)
+        try {
+            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: side effects failed after updating transfer details for expense %d", expenseId)
         }
     }
 
@@ -838,6 +885,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 )
             )
         }
+
+        // Post-update side effects (best-effort)
+        try {
+            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: side effects failed after updating ownership for expense %d", expenseId)
+        }
     }
 
     /**
@@ -874,6 +928,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 reason = reason
             ))
         }
+
+        // Side effects intentionally skipped for bulk update — touching many rows
+        // would flood the system. Budget/anomaly/merchant state should be
+        // re-evaluated holistically, not per-row.
     }
 
     /**
@@ -912,6 +970,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 reason = reason
             ))
         }
+
+        // Side effects intentionally skipped for bulk update — touching many rows
+        // would flood the system. Budget/anomaly/merchant state should be
+        // re-evaluated holistically, not per-row.
     }
 
     /**
