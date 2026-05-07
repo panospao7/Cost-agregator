@@ -1612,10 +1612,15 @@ Second guiding rule:
 - Bank APIs typically represent debits as negative amounts, but `TransactionLifecycleCoordinator` requires positive amounts. The transaction type (PURCHASE/DEPOSIT/etc.) already carries the debit/credit semantics.
 
 ## Finding P0-4 — Bank transfers fail validation for missing transferAccountName
-**STATUS: CONFIRMED — NOT FIXED (requires CreateExpenseRequest or validator update)**
+**STATUS: PARTIALLY FIXED (2026-05-06)**: Added TODO for BankTransaction.transferAccountName
+field. As fallback, transaction.description is passed as transferAccountName since bank
+descriptions often contain the target account name for transfers.
+Full fix requires BankTransaction data model extension.
 
 ## Finding P0-5 — Bank transaction IDs not used as idempotency keys
-**STATUS: CONFIRMED — NOT FIXED (requires external ID dedup support)**
+**STATUS: FIXED (2026-05-06)**: BankApiIntegration.mapTransactionToExpense() now passes
+transaction.id as idempotencyKey in CreateExpenseRequest. Bank transaction external IDs
+now prevent duplicates on re-sync via STRICT_EXTERNAL_ID dedup mode.
 
 ## Finding P1-1 through P1-5
 **STATUS: CONFIRMED — NOT FIXED (stub-mode features, not production-ready)**
@@ -1642,7 +1647,7 @@ Second guiding rule:
 # 14. Remaining work priority
 
 1. **P0-4**: Support transferAccountName in bank transfer mapping
-2. **P0-5**: Use bank transaction external IDs as dedup keys
+2. ~~**P0-5**: Use bank transaction external IDs as dedup keys~~ ✅ DONE
 3. All remaining P1+ issues deferred until bank API exits stub mode
 
 ---

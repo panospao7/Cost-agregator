@@ -270,6 +270,12 @@ class BankApiIntegration @Inject constructor(
             source = ExpenseSource.BANK_API_SYNC,
             categoryId = connection.defaultCategoryId,
             transferDirection = transaction.transferDirection.takeIf { transactionType == TransactionType.TRANSFER },
+            // TODO (P0-4): BankTransaction needs transferAccountName field.
+            // Once the bank provider returns account names for transfers, pass:
+            //   transferAccountName = transaction.transferAccountName
+            transferAccountName = transaction.description.takeIf { it.isNotBlank() }, // fallback: description often contains account name for transfers
+            // P0-5: Use bank transaction external ID for dedup on re-sync
+            idempotencyKey = transaction.id,
             notes = transaction.description + (transaction.reference?.let { " (Ref: $it)" } ?: "")
         )
     }
