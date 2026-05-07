@@ -1,7 +1,7 @@
 # 📋 COMPLETE BACKEND & DATABASE MAP INDEX
 
 **Generated:** 2026-05-07  
-**Total Files Documented:** 790 backend files + 462 test files  
+**Total Files Documented:** 790 source files (337 domain + 246 data + 30 DI + 177 other) + 462 test files  
 **Scope:** ExpenseTracker domain, data, and DI packages
 
 ---
@@ -47,7 +47,7 @@
 
 ### By Package Type
 
-#### Domain Package (~450 files)
+#### Domain Package (337 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/domain/`
 
 - **AI Subsystem** (58 files)
@@ -73,9 +73,11 @@
 - **Use Cases** (13 files)
   - Budget, dashboard, expense, forecast, receipt, savings, warranty
 
-- **Utilities** (24 files)
+- **Utilities** (26 files)
   - Amount, currency, date/time, merchant, statistics
-  - String matching, geography
+  - String matching, geography, hashing
+  - `domain/common/Hashing.kt` — SHA-256 hash prefix utility
+  - `domain/notification/RawNotificationFingerprint.kt` — SHA-256 notification fingerprinting
 
 - **Alerts** (2 files)
   - AnomalyAlertRepository, AnomalyAlertOrchestrator
@@ -134,8 +136,10 @@
 - **Other Subsystems**
   - Forecasting, location, parsing, receipt
   - Health, savings, subscriptions, tax
+  - Notification fingerprinting — `domain/notification/RawNotificationFingerprint`
+  - Shared hashing — `domain/common/Hashing.kt`
 
-#### Data Package (~280 files)
+#### Data Package (246 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/data/`
 
 - **Database** (89 files)
@@ -144,8 +148,8 @@
   - 59 Entities (Room-managed tables, 57 registered in AppDatabase)
   - 6 composite models
 
-- **Repositories** (70 files)
-  - 53 data-layer implementations + 17 domain-layer interfaces
+- **Repositories** (64 files)
+  - 51 data-layer implementations + 13 domain-layer interfaces
   - Expense, budget, analytics, currency
   - Merchant, location, notification
   - Savings, subscription, warranty
@@ -180,18 +184,58 @@
   - `data/service/` — AndroidNotificationService
   - `data/speech/` — AndroidSpeechInputGateway
 
+- **CSV Import** (1 file)
+  - `util/CsvExpenseImporter.kt` — Bulk CSV expense import via TransactionLifecycleCoordinator
+  - Supports date, amount, merchant, category, description columns
+  - Routes every row through full lifecycle: validate → normalize → dedupe → insert
+
 - **Backup** (4 files)
   - `data/backup/` — BackupVerifier, CostbackupBundle, RestoreJournal, RestoreMaintenanceMode
 
-#### DI Package (31 modules)
+#### DI Package (28 Hilt @Module files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/di/`
 
-- 29 Hilt @Module files in `di/`
-- 2 additional @InstallIn classes
+- 28 Hilt @Module files (27 in `di/` + `EmptyStatePresentationModule` in `ui/`)
+- 1 `@EntryPoint` (`AppStartupDelegate`)
 - Database, DAO, Repository bindings
 - AI, services, location provider modules
 - Network, time, currency, parsing modules
 - Email ingestion, export, security modules
+
+#### App Services Package (16 files)
+**Location:** `app/src/main/java/com/yourname/expensetracker/service/`
+
+- **Notification Capture** (2 files)
+  - `NotificationCaptureService` — Android NotificationListenerService, captures notifications
+  - `NotificationFilter` — Filters captured notifications by package/type
+
+- **Recommendation System** (7 files)
+  - `RecommendationCacheService` — In-memory LRU cache with TTL for dashboard recommendations
+  - `RecommendationDeduplicator` — Signature-based deduplication per merchant/category/target
+  - `RecommendationDismissalHandler` — Handles user dismissal of recommendation cards
+  - `RecommendationInvalidator` — Invalidates stale/expired recommendations on transaction changes
+  - `RecommendationLifecycleManager` — Manages recommendation lifecycle: expiration, cleanup, threshold refresh
+  - `RecommendationStateManager` — Reactive StateFlow for UI observation, max 5 limit, user-specific
+  - `RecommendationCacheService` — LRU cache with 7-day TTL
+
+- **Workers** (3 files)
+  - `BillReminderWorker` — Periodic bill reminder delivery
+  - `ReceiptMatchingWorker` — Background receipt-to-transaction matching
+  - `WarrantyExpirationWorker` — Warranty expiry notification worker
+
+- **Receivers** (2 files)
+  - `SnoozeReminderReceiver` — Hilt @AndroidEntryPoint broadcast receiver for reminder snooze
+  - `DismissReminderReceiver` — Hilt @AndroidEntryPoint broadcast receiver for reminder dismiss
+
+- **Utilities** (2 files)
+  - `NavigationTargetResolver` — Resolves navigation targets from recommendations
+  - `TransactionFilterSerializer` — Serializes transaction filters for deduplication signatures
+
+- **Legacy** (1 file)
+  - `LegacyDataMigrationService` — One-time data migration from older app versions
+
+- **Root Utilities** (1 file)
+  - `util/CsvExpenseImporter.kt` — Bulk CSV expense import via TransactionLifecycleCoordinator
 
 ---
 
@@ -205,19 +249,19 @@
 - **Coordinator:** `GroupTransactionCoordinator.kt`
 
 ### Repository Layer
-- **70 repositories** providing business logic (53 data + 17 domain interfaces)
+- **64 repositories** providing business logic (51 data + 13 domain interfaces)
 - Handle data transformation and aggregation
 - Implement domain interfaces
 - Manage database transactions
 
 ### Domain/Business Logic Layer
-- **~450 files** implementing business rules
+- **337 files** implementing business rules
 - Engines, services, use cases, value objects
 - No database dependencies
 - Clean separation from infrastructure
 
 ### DI/Infrastructure Layer
-- **31 modules** managing dependencies
+- **28 Hilt @Module files + 1 @EntryPoint** managing dependencies
 - Database, network, geocoding setup
 - AI capability routing
 - Service configuration
@@ -230,8 +274,8 @@
 - DAOs (55), Entities (59), Models (6), Converters (1), Coordinator (1), Database (1)
 - **Key files:** `ExpenseDao.kt`, `Expense.kt`, `AppDatabase.kt`
 
-### Repository-Related (71 files)
-- Data-layer repositories (53), Domain interfaces (17), Adapters (1)
+### Repository-Related (64 files)
+- Data-layer repositories (51), Domain interfaces (13)
 - **Key files:** `ExpenseRepository.kt`, `BudgetRepository.kt`, `CategoryRepository.kt`
 
 ### AI-Related (78+ files)
@@ -260,13 +304,14 @@
 
 | Metric | Count |
 |--------|-------|
-| **Total Backend Files** | 790 |
-| Domain files | ~450 |
-| Data files | ~280 |
-| DI modules | 31 |
+| **Total Source Files** | 790 |
+| Domain files | 337 |
+| Data files | 246 |
+| DI files | 30 |
+| Hilt @Module files | 28 |
 | **Database Entities** | 59 |
 | **DAOs** | 55 |
-| **Repositories** | 70 |
+| **Repositories** | 64 (51 data + 13 domain interfaces) |
 | **Use Cases** | 41 |
 | **ViewModels** | 39 |
 | **Workers** | 7 |
@@ -452,9 +497,9 @@ Query Text → AI Interpretation → Query Execution → Transaction Results →
 
 ## ✅ Completeness Checklist
 
-- ✅ ALL ~450 domain files listed
-- ✅ ALL ~280 data files listed
-- ✅ ALL 31 DI modules listed
+- ✅ ALL 337 domain files listed
+- ✅ ALL 246 data files listed
+- ✅ ALL 28 Hilt @Module files + @EntryPoint listed
 - ✅ File-by-file breakdown with:
   - ✅ File path
   - ✅ Class name

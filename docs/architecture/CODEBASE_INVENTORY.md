@@ -286,6 +286,8 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - GeoUtils, MerchantCleaner, MerchantKeyGenerator
 - Money, NotificationIdGenerator, StatisticsUtils
 - StringDistanceUtils, SystemTimeProvider, TimePeriodUtils, TimeProvider
+- Hashing (`domain/common/Hashing.kt` — SHA-256 prefix utility)
+- RawNotificationFingerprint (`domain/notification/RawNotificationFingerprint.kt` — notification dedup fingerprinting)
 
 ### Other Features
 - BusinessExpenseReportGenerator, CarbonFootprintCalculator, CashFlowCalculator
@@ -307,6 +309,9 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - **recurring/** - Recurring expense lifecycle
 - **alerts/** - Anomaly & alert domain models
 - **bank/** - Bank connection domain
+- **notification/** - Raw notification fingerprinting & dedup
+- **common/** - Shared utilities (hashing)
+- **workers/** - Worker specification and scheduling
 - **business/** - Business expense reporting
 - **carbon/** - Carbon footprint calculation
 - **cashflow/** - Cash flow analysis
@@ -485,6 +490,8 @@ One DAO per entity (mostly 1-to-1 mapping)
 ### Receivers
 - **BootReceiver** - BOOT_COMPLETED, MY_PACKAGE_REPLACED
 - **ServiceRestartReceiver** - Service keep-alive
+- **SnoozeReminderReceiver** - Hilt @AndroidEntryPoint for reminder snooze (injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode)
+- **DismissReminderReceiver** - Hilt @AndroidEntryPoint for reminder dismiss (injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode)
 
 ### Permissions (13)
 - Foreground service (3): FOREGROUND_SERVICE, DATA_SYNC, LOCATION
@@ -536,36 +543,37 @@ One DAO per entity (mostly 1-to-1 mapping)
 ## 10. STARTUP / BACKGROUND / SERVICES / WORKERS
 
 ### Startup / Background
-1. **MainApplication** - App entry, Hilt + WorkManager bootstrap
-2. **AppStartupDelegate** - Startup entry-point bootstrap
-3. **AppStartupCoordinator** - Startup orchestration + lifecycle hooks
-4. **AppBackgroundLifecycleObserver** - Background lifecycle observer
+ 1. **MainApplication** - App entry, Hilt + WorkManager bootstrap
+ 2. **AppStartupDelegate** - Startup entry-point bootstrap
+ 3. **AppStartupCoordinator** - Startup orchestration + lifecycle hooks
+ 4. **AppBackgroundLifecycleObserver** - Background lifecycle observer
 
 ### Main Services
-5. **NotificationCaptureService** - Notification listener
-6. **AndroidNotificationService** - Notification management
+ 5. **NotificationCaptureService** - Notification listener
+ 6. **NotificationFilter** - Notification filter
+ 7. **AndroidNotificationService** - Notification management
 
-### Recommendation System
-7. RecommendationCacheService
-8. RecommendationDeduplicator
-9. RecommendationDismissalHandler
-10. RecommendationInvalidator
-11. RecommendationLifecycleManager
-12. RecommendationStateManager
+### Recommendation System (7 services)
+ 8. **RecommendationCacheService** - In-memory LRU cache with 7-day TTL
+ 9. **RecommendationDeduplicator** - Signature-based dedup per merchant/category/target
+ 10. **RecommendationDismissalHandler** - User dismissal handling
+ 11. **RecommendationInvalidator** - Invalidation on transaction changes
+ 12. **RecommendationLifecycleManager** - Lifecycle: expiration, cleanup, threshold refresh
+ 13. **RecommendationStateManager** - Reactive StateFlow, max 5 limit, user-specific
 
-### Workers
-13. **DailyBriefingWorker** - Proactive briefing delivery
-14. **LocationBackfillWorker** - Location enrichment backfill
-15. **MerchantKeyBackfillWorker** - Merchant key backfill
-16. **WarrantyExpirationWorker** - Warranty expiry tracking
-17. **ReceiptMatchingWorker** - Receipt matching background work
-18. **BillReminderWorker** - Bill reminder background processing
-19. **DataRetentionWorker** - Data retention policy enforcement
-> **Note:** All 7 workers are paused during restore via `RestoreMaintenanceMode`.
+### Workers (all 7 paused during restore via RestoreMaintenanceMode)
+ 14. **DailyBriefingWorker** - Proactive briefing delivery
+ 15. **LocationBackfillWorker** - Location enrichment backfill
+ 16. **MerchantKeyBackfillWorker** - Merchant key backfill
+ 17. **WarrantyExpirationWorker** - Warranty expiry tracking
+ 18. **ReceiptMatchingWorker** - Receipt matching background work
+ 19. **BillReminderWorker** - Bill reminder delivery
+ 20. **DataRetentionWorker** - Privacy data purging
 
 ### Utilities
-18. TransactionFilterSerializer
-19. NavigationTargetResolver
+ 21. TransactionFilterSerializer - Serializes filters for dedup signatures
+ 22. NavigationTargetResolver - Resolves navigation targets from recommendations
+ 23. **CsvExpenseImporter** (`util/CsvExpenseImporter.kt`) - Bulk CSV import via TransactionLifecycleCoordinator
 
 ---
 

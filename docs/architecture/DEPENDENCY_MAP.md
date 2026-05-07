@@ -778,7 +778,7 @@ All Hybrid services use:
 ---
 
 > **Generated:** Manual analysis of 790+ source files across 3 layers (UI/Domain/Data),  
-> 31 Hilt modules, 39 ViewModels, 70 repositories (53 data + 17 domain interfaces), 55 DAOs, 59 entities.  
+> 28 Hilt @Module files, 39 ViewModels, 64 repositories (51 data + 13 domain interfaces), 55 DAOs, 59 entities.  
 > **Next update:** Regenerate when significant architectural changes occur (new module, major refactor).
 
 ---

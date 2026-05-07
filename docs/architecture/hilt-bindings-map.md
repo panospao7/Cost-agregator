@@ -1,6 +1,6 @@
 # Hilt Module Bindings Map
 
-> Complete interface → implementation binding map for all 31 Hilt modules.
+> Complete interface → implementation binding map for all 28 Hilt @Module files (+ 1 @EntryPoint).
 
 ---
 
@@ -339,4 +339,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 31 Hilt modules · 70 repositories · 55 DAOs · 59 entities
+**Stats:** 28 Hilt @Module files · 64 repositories (51 data + 13 domain) · 55 DAOs · 59 entities

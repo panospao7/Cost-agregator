@@ -1,14 +1,14 @@
 # Complete Backend & Database Map - ExpenseTracker
 
 **Generated:** 2026-05-07  
-**Total Files Mapped:** 790 (450 domain + 280 data + 31 di)  
-**Test Coverage:** 462 test files in `app/src/test/java`
+**Total Files Mapped:** 790 (337 domain + 246 data + 30 di + 177 other)  
+**Test Coverage:** 462 test files (436 test + 26 androidTest)
 
 ---
 
 ## Table of Contents
 
-1. [Domain Package (~450 files)](#domain-package)
+1. [Domain Package (337 files)](#domain-package)
    - [AI/ML Subsystem](#ai-subsystem)
    - [Alerts & Anomalies](#alerts--anomalies)
    - [Analytics & Insights](#analytics--insights)
@@ -49,7 +49,7 @@
    - [Utilities](#utilities)
    - [Widget](#widget)
    - [Workers](#workers)
-2. [Data Package (~280 files)](#data-package)
+2. [Data Package (246 files)](#data-package)
    - [Database Layer](#database-layer)
    - [Repositories](#repositories)
    - [AI Providers](#ai-providers)
@@ -60,8 +60,9 @@
    - [Security Services](#security-services)
    - [Speech Services](#speech-services)
    - [Other Services](#other-services)
-3. [DI/Modules Package (31 files)](#dimodules-package)
-4. [Dependency Graph & Data Flow](#dependency-graph--data-flow)
+ 3. [DI/Modules Package (30 files)](#dimodules-package)
+ 4. [App Services Package (16 files)](#app-services-package)
+ 5. [Dependency Graph & Data Flow](#dependency-graph--data-flow)
 
 ---
 
@@ -663,6 +664,22 @@
 | `util/TimePeriodUtils.kt` | TimePeriodUtils | Time period utilities | Utility | - | No |
 | `util/TimeProvider.kt` | TimeProvider | Time provider interface | Service | - | No |
 
+### Common Utilities — `domain/common/` (1 file)
+
+**Location:** `com.yourname.expensetracker.domain.common`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `common/Hashing.kt` | *(extension)* | SHA-256 hash prefix utility (`String.sha256Prefix()`) | Utility | - | No |
+
+### Notification Utilities — `domain/notification/` (1 file)
+
+**Location:** `com.yourname.expensetracker.domain.notification`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `notification/RawNotificationFingerprint.kt` | RawNotificationFingerprint | SHA-256 fingerprinting for notification deduplication | Utility | MessageDigest | No |
+
 ### Widget (2 files)
 
 **Location:** `com.yourname.expensetracker.domain.widget`
@@ -1087,6 +1104,56 @@
 
 ---
 
+## APP SERVICES PACKAGE
+
+**Location:** `com.yourname.expensetracker.service`
+
+### Recommendation System (7 files)
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `RecommendationCacheService.kt` | RecommendationCacheService | In-memory LRU cache with 7-day TTL for dashboard recommendations | Service | RecommendationRepository, TimeProvider | No |
+| `RecommendationDeduplicator.kt` | RecommendationDeduplicator | Signature-based dedup per merchant/category/target | Service | TransactionFilterSerializer | No |
+| `RecommendationDismissalHandler.kt` | RecommendationDismissalHandler | Handles user dismissal of recommendation cards | Service | RecommendationRepository, RecommendationStateManager | No |
+| `RecommendationInvalidator.kt` | RecommendationInvalidator | Invalidates stale/expired recommendations on transaction changes | Service | RecommendationRepository, RecommendationStateManager, RecommendationCacheService | No |
+| `RecommendationLifecycleManager.kt` | RecommendationLifecycleManager | Manages lifecycle: expiration, cleanup, threshold refresh | Service | RecommendationRepository, RecommendationStateManager, RecommendationCacheService, SpendingThresholdCalculator | No |
+| `RecommendationStateManager.kt` | RecommendationStateManager | Reactive StateFlow for UI, max 5 limit, user-specific | Service | RecommendationRepository, TimeProvider | No |
+
+### Notification Capture (2 files)
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `NotificationCaptureService.kt` | NotificationCaptureService | Android NotificationListenerService | Service | PrivacyGate, NotificationFilter | No |
+| `NotificationFilter.kt` | NotificationFilter | Filters notifications by package/type | Service | - | No |
+
+### Utilities (2 files)
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `NavigationTargetResolver.kt` | NavigationTargetResolver | Resolves navigation targets from recommendations | Service | - | No |
+| `TransactionFilterSerializer.kt` | TransactionFilterSerializer | Serializes transaction filters for dedup signatures | Service | - | No |
+
+### Receivers (2 files — `receiver/` package)
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `receiver/BootReceiver.kt` | BootReceiver | BOOT_COMPLETED / MY_PACKAGE_REPLACED receiver | Receiver | - | No |
+| `receiver/ServiceRestartReceiver.kt` | ServiceRestartReceiver | Service keep-alive receiver | Receiver | - | No |
+
+### Root Utilities (1 file)
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `util/CsvExpenseImporter.kt` | CsvExpenseImporter | Bulk CSV expense import through TransactionLifecycleCoordinator | Utility | CategoryDao, TransactionLifecycleCoordinator, CurrencySettingsRepository | No |
+
+### Legacy (1 file)
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `service/LegacyDataMigrationService.kt` | LegacyDataMigrationService | One-time data migration from older app versions | Service | - | No |
+
+---
+
 ## Dependency Graph & Data Flow
 
 ### Core Data Flow Architecture
@@ -1303,14 +1370,14 @@ Engine (integration with other domain logic)
 
 | Metric | Count |
 |--------|-------|
-| **Domain Files** | ~450 |
-| **Data Files** | ~280 |
-| **DI Modules** | 31 |
+| **Domain Files** | 337 |
+| **Data Files** | 246 |
+| **DI / @Module Files** | 28 |
 | **Total Backend Files** | 790 |
 | **Test Files** | 462 |
 | **Database Entities** | 59 |
 | **DAOs** | 55 |
-| **Repositories** | 62 |
+| **Repositories** | 64 (51 data + 13 domain interfaces) |
 | **Use Cases** | 41 |
 | **Engines** | ~70 |
 | **AI Providers** | 44 |
