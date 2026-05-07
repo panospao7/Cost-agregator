@@ -1358,7 +1358,10 @@ Second guiding rule:
 **STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-01 Stage 1)**
 
 ## Finding P1-6 — Analytics data quality exists but is not necessarily surfaced
-**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-02 Stage 1)**
+**PARTIALLY FIXED — P1-6 (ARCH-02 Stage 2)**: ForecastInputAssembler now populates
+ForecastDataQuality from actual expense normalization results (excluded count,
+missing rate count, penalty). FinancialWeather confidence reduction deferred.
+Planned/recurring quality deferred to Stage 3.
 
 ---
 

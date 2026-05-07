@@ -701,9 +701,9 @@ FULL_ENCRYPTED, REDACT_RAW_TEXT, REDACT_RAW_TEXT_EXCLUDE_IMAGES, ANONYMIZED_EXPO
 Added as nullable field on BackupManifest.
 
 ### CloudPayloadRedactor (Segment 28)
-Unified redaction interface for cloud AI payloads. Single contract for
-redacting text and merchant fields before cloud transmission.
-7 CloudPayloadPurpose values: RECEIPT_ASSIST, ITEM_CATEGORIZATION, etc.
+DefaultCloudPayloadRedactor wraps CloudPiiSanitizer. First provider migrated:
+CloudQueryInterpretationService redacts query text before API call.
+Remaining 6 providers deferred.
 
 ### ForecastDataQuality (Segment 1)
 Additive data class (no consumer break) with fields: isPartial,

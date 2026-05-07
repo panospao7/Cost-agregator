@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
@@ -8,6 +9,8 @@ import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationI
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryInterpretationResult
 import com.yourname.expensetracker.domain.ai.service.QueryInterpretationService
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
+import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
@@ -31,7 +34,8 @@ import kotlinx.coroutines.withContext
 class CloudQueryInterpretationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
-    private val privacyGate: PrivacyGate
+    private val privacyGate: PrivacyGate,
+    private val redactor: CloudPayloadRedactor = DefaultCloudPayloadRedactor()
 ) : QueryInterpretationService {
 
     private var apiKeyOverride: String? = null
@@ -131,13 +135,15 @@ class CloudQueryInterpretationService @Inject constructor(
 
     private fun buildRequestBody(input: FinancialQueryInterpretationInput): String {
         val prompt = promptHelper.buildPrompt(input.toCloudPromptInput())
+        // ARCH-04: Redact PII from prompt before sending to cloud AI
+        val redacted = redactor.redactText(prompt, CloudPayloadPurpose.QUERY_INTERPRETATION)
         return JSONObject().apply {
             put(
                 "contents",
                 JSONArray().put(
                     JSONObject().put(
                         "parts",
-                        JSONArray().put(JSONObject().put("text", prompt))
+                        JSONArray().put(JSONObject().put("text", redacted.text))
                     )
                 )
             )

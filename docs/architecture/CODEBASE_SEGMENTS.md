@@ -463,6 +463,7 @@ Owns encrypted key storage and security/network bindings.
 - `di/NetworkModule.kt`
 - `di/NetworkQualifiers.kt`
 - `domain/privacy/CloudPayloadRedactor.kt` — unified cloud AI payload redaction interface
+- `data/privacy/DefaultCloudPayloadRedactor.kt` — wraps CloudPiiSanitizer (ARCH-04 Stage 1)
 
 ## SEGMENT 29: Debug & Diagnostics
 

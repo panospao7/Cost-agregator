@@ -1315,9 +1315,10 @@ Second guiding rule:
 **STATUS: CONFIRMED — NOT FIXED (requires per-provider audit wrapper)**
 
 ## Finding P1-1 — RedactionSanitizer vs CloudPiiSanitizer — no single redaction contract
-**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-04 Stage 1)**
-- CloudPayloadRedactor interface created as the unified domain-level redaction contract.
-- Implementation per capability (receipt, review, dedupe, dashboard, query, categorization) deferred to Stage 2.
+**PARTIALLY FIXED — P1-1 (ARCH-04 Stage 1)**: DefaultCloudPayloadRedactor implemented
+wrapping CloudPiiSanitizer. CloudQueryInterpretationService migrated — query text
+now redacted before cloud API call. PrivacyModule DI binding added.
+Remaining 6 providers deferred to Stage 2.
 
 ## Finding P1-2 — Audit events are too shallow for cloud AI debugging
 **STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-05 Stage 1)**

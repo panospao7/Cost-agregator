@@ -1,6 +1,5 @@
-// TODO (P8-P1-1): Unify into a single CloudPayloadRedactor interface covering all
-// provider types (receipt, query, briefing, dedupe). Currently RedactionSanitizer
-// and CloudPiiSanitizer have overlapping but separate responsibilities.
+// TODO (ARCH-04 Stage 2): Migrate remaining providers (receipt, review, briefing, dedupe, warranty)
+// CloudQueryInterpretationService already migrated in Stage 1.
 
 package com.yourname.expensetracker.domain.privacy
 

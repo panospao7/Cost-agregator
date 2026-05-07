@@ -1,9 +1,11 @@
 package com.yourname.expensetracker.di
 
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl
 import com.yourname.expensetracker.data.privacy.PrivacySettingsRepositoryImpl
 import com.yourname.expensetracker.domain.privacy.BackupPrivacyGate
 import com.yourname.expensetracker.domain.privacy.CloudAiPrivacyGate
+import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.LocationPrivacyGate
 import com.yourname.expensetracker.domain.privacy.NotificationPrivacyGate
@@ -26,6 +28,12 @@ abstract class PrivacyModule {
     abstract fun bindPrivacySettingsRepository(
         impl: PrivacySettingsRepositoryImpl
     ): PrivacySettingsRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindCloudPayloadRedactor(
+        impl: DefaultCloudPayloadRedactor
+    ): CloudPayloadRedactor
 
     companion object {
 
