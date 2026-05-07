@@ -197,13 +197,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
     suspend fun unlinkExpenseFromOccurrence(expenseId: Long) {
         val now = timeProvider.now()
 
-        // Find the occurrence that was linked to this expense
-        val occurrences = occurrenceDao.getByDateRange(
-            start = now - 365L * 24 * 60 * 60 * 1000L,  // look back 1 year
-            end = now + 7L * 24 * 60 * 60 * 1000L
-        )
-
-        val linked = occurrences.firstOrNull { it.linkedExpenseId == expenseId }
+        // Direct lookup by linkedExpenseId — handles any date range (historical, backdated, restored)
+        val linked = occurrenceDao.getByLinkedExpenseId(expenseId)
             ?: return // No linked occurrence, nothing to do
 
         // Reset to PLANNED — the recurring bill is not yet paid

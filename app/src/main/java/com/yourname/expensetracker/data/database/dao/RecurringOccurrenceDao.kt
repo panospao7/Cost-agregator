@@ -26,6 +26,9 @@ interface RecurringOccurrenceDao {
     @Query("SELECT * FROM recurring_occurrences WHERE dueDate >= :start AND dueDate < :end ORDER BY dueDate")
     suspend fun getByDateRange(start: Long, end: Long): List<RecurringOccurrence>
 
+    @Query("SELECT * FROM recurring_occurrences WHERE linkedExpenseId = :expenseId LIMIT 1")
+    suspend fun getByLinkedExpenseId(expenseId: Long): RecurringOccurrence?
+
     @Query("SELECT * FROM recurring_occurrences WHERE status = :status ORDER BY dueDate")
     suspend fun getByStatus(status: String): List<RecurringOccurrence>
 
