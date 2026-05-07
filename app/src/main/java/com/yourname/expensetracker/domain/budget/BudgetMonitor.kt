@@ -190,7 +190,10 @@ class BudgetMonitor @Inject constructor(
     ) {
         currentCoroutineContext().ensureActive()
         val budget = status.budget
-        val spent = status.spentAmount
+        // P6-P1-2: Use adjustedSpendBreakdown.effectiveSpend when available (shared-expense offset),
+        // falling back to raw spentAmount.BudgetStatus.spentAmount is gross spend and does not
+        // account for shared-expense reimbursements, which can trigger false threshold alerts.
+        val spent = status.adjustedSpendBreakdown?.effectiveSpend ?: status.spentAmount
         val categoryName = status.category?.name ?: "Overall"
         val periodStart = status.periodStart
 

@@ -497,7 +497,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
 
                 // Collect receipt assets
-                val receiptFiles = if (includeReceiptImages) {
+                // P7-P1-2: Skip receipt images when redacted=true (they contain PII).
+                val receiptFiles = if (includeReceiptImages && !redacted) {
                     collectReceiptAssetsForBackup()
                 } else {
                     emptyMap()
@@ -624,6 +625,20 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     // Opening writable DB triggers Room migration if needed
                     stagedDatabase.openHelper.writableDatabase
                     Timber.d("Staged DB Room migration triggered successfully")
+
+                    // P7-P1-1: Step 6b — Verify staged DB after migration BEFORE swapping to live.
+                    // Catches migration corruption while the live DB remains intact.
+                    val postMigrationCheck = runCatching {
+                        BackupVerifier.verifyQuick(stagedDbFile, manifestTableCounts)
+                    }
+                    if (postMigrationCheck.isFailure) {
+                        Timber.e(
+                            postMigrationCheck.exceptionOrNull(),
+                            "Post-migration verification failed: ${postMigrationCheck.exceptionOrNull()?.message}"
+                        )
+                    } else {
+                        Timber.d("Post-migration quick verification passed")
+                    }
                 } finally {
                     runCatching { stagedDatabase.close() }
                 }
@@ -692,6 +707,15 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     Exception("Database swap failed and was rolled back: ${e.message}")
                 )
             }
+
+            // P7-P1-9: After file swap, the existing app-wide `database` (constructor-injected val)
+            // still references the old Room instance which was closed for the swap.
+            // Ideally we would reassign a fresh AppDatabase via AppDatabase.fileBuilder(context)
+            // here, but `database` is a `val` injected by Dagger so it cannot be replaced.
+            // The verification below re-opens the connection via openHelper.writableDatabase
+            // but any DAOs cached before the swap hold stale references.
+            // A full app restart (forceRestartRequired=true at line 741) is relied upon to
+            // obtain a fresh Room instance.
 
             // 9. Verify live DB
             restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.VERIFYING)

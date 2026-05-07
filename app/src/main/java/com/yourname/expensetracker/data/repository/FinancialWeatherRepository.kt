@@ -131,12 +131,26 @@ class FinancialWeatherRepository @Inject constructor(
 
         // Detected-only patterns (id == null) have no occurrences — use single-date fallback.
         // Manual patterns are already represented via confirmedOccurrences, so skip them
-        // to avoid double-counting.
-        val manualPatternIds = recurring.filter { it.id != null }.mapNotNull { it.id }.toSet()
+        // to avoid double-counting in the detected-only fallback.
         recurring
             .filter { it.id == null }
             .filter { it.nextExpectedDate >= startOfToday && it.nextExpectedDate < horizon }
             .forEach { items.add(UpcomingItem.Recurring(it)) }
+
+        // P6-P1-4: Fallback — include manual patterns that were silently dropped when their
+        // occurrence generation threw in ForecastInputAssembler.assemble() (line 396-398).
+        // Match by merchant name and amount since ConfirmedOccurrence does not carry sourceId.
+        for (pattern in recurring.filter { it.id != null }) {
+            val alreadyMatched = confirmedOccurrences.any { occ ->
+                occ.merchant == pattern.merchantName &&
+                    kotlin.math.abs(occ.expectedAmount - pattern.averageAmount) < 0.01
+            }
+            if (!alreadyMatched &&
+                pattern.nextExpectedDate >= startOfToday && pattern.nextExpectedDate < horizon
+            ) {
+                items.add(UpcomingItem.Recurring(pattern))
+            }
+        }
 
         planned.filter { it.date >= startOfToday && it.date < horizon }
             .forEach { items.add(UpcomingItem.Planned(it)) }
