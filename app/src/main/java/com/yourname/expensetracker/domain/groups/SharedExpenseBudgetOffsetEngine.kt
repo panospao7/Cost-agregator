@@ -105,16 +105,24 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                 (categoryId == null || expense.categoryId == categoryId)
         }
 
-        // TODO (G07): Use convertAsOf(amount, from, to, atMillis=expense.date) instead of convert()
-        // which fetches the latest rate. Historical reports need historical rates.
-        val personalPairs = personalExpenses.map { Pair(it.effectiveAmount, it.currency) }
-        val personalResult = currencyConverter.convertMultiple(personalPairs, homeCurrency)
-        val totalPersonalSpend = personalResult.total
-        if (personalResult.failedConversions.isNotEmpty()) {
-            android.util.Log.w("BudgetOffset", "Personal spend conversion failures: ${personalResult.failedConversions.size} transactions dropped")
+        // G07: Use convertAsOf per expense for historical accuracy instead of latest rate.
+        var totalPersonalSpend = 0.0
+        for (expense in personalExpenses) {
+            val conversion = currencyConverter.convertAsOf(
+                amount = expense.effectiveAmount,
+                fromCurrency = expense.currency,
+                toCurrency = homeCurrency,
+                atMillis = expense.date
+            )
+            if (conversion != null) {
+                totalPersonalSpend += conversion.convertedAmount
+            } else {
+                android.util.Log.w("BudgetOffset", "Personal spend conversion failed for ${expense.merchant}: ${expense.effectiveAmount} ${expense.currency} -> $homeCurrency at ${expense.date}")
+            }
         }
-        val sharedSpendPairs = mutableListOf<Pair<Double, String>>()
-        val reimbursedPairs = mutableListOf<Pair<Double, String>>()
+        // G07: Use convertAsOf per expense for historical accuracy instead of latest rate.
+        var totalSharedSpend = 0.0
+        var totalReimbursed = 0.0
 
         for (scope in inScopeGroupExpenses) {
             for (groupExpense in scope.expenses) {
@@ -128,30 +136,34 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                         members = scope.members,
                         memberId = scope.currentUserMember.id
                     )
-                    sharedSpendPairs.add(Pair(share, groupExpense.currency))
+                    val conversion = currencyConverter.convertAsOf(
+                        amount = share,
+                        fromCurrency = groupExpense.currency,
+                        toCurrency = homeCurrency,
+                        atMillis = groupExpense.date
+                    )
+                    if (conversion != null) {
+                        totalSharedSpend += conversion.convertedAmount
+                    } else {
+                        android.util.Log.w("BudgetOffset", "Shared spend conversion failed: $share ${groupExpense.currency} -> $homeCurrency at ${groupExpense.date}")
+                    }
                 }
 
                 if (groupExpense.isReimbursable && groupExpense.paidById == scope.currentUserMember.id) {
                     val reimb = groupExpense.reimbursedAmount.coerceAtLeast(0.0)
-                    reimbursedPairs.add(Pair(reimb, groupExpense.currency))
+                    val conversion = currencyConverter.convertAsOf(
+                        amount = reimb,
+                        fromCurrency = groupExpense.currency,
+                        toCurrency = homeCurrency,
+                        atMillis = groupExpense.date
+                    )
+                    if (conversion != null) {
+                        totalReimbursed += conversion.convertedAmount
+                    } else {
+                        android.util.Log.w("BudgetOffset", "Reimbursed conversion failed: $reimb ${groupExpense.currency} -> $homeCurrency at ${groupExpense.date}")
+                    }
                 }
             }
-        }
-
-        val sharedResult = if (sharedSpendPairs.isNotEmpty()) {
-            currencyConverter.convertMultiple(sharedSpendPairs, homeCurrency)
-        } else null
-        val totalSharedSpend = sharedResult?.total ?: 0.0
-        if (sharedResult != null && sharedResult.failedConversions.isNotEmpty()) {
-            android.util.Log.w("BudgetOffset", "Shared spend conversion failures: ${sharedResult.failedConversions.size} transactions dropped")
-        }
-
-        val reimbursedResult = if (reimbursedPairs.isNotEmpty()) {
-            currencyConverter.convertMultiple(reimbursedPairs, homeCurrency)
-        } else null
-        val totalReimbursed = reimbursedResult?.total ?: 0.0
-        if (reimbursedResult != null && reimbursedResult.failedConversions.isNotEmpty()) {
-            android.util.Log.w("BudgetOffset", "Reimbursed conversion failures: ${reimbursedResult.failedConversions.size} transactions dropped")
         }
 
         val netSharedLiability = totalSharedSpend

@@ -19,6 +19,8 @@ import com.yourname.expensetracker.domain.core.money.FailureReason
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -54,7 +56,9 @@ class WarrantyTrackerRepository @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiPolicy: AiPolicy,
     private val aiCapabilityRouter: AiCapabilityRouter,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val currencyConverter: CurrencyConverter,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     private companion object {
         private const val ACTIVE_ITEMS_REFRESH_INTERVAL_MS = 60 * 60 * 1000L // 1 hour
@@ -165,11 +169,8 @@ class WarrantyTrackerRepository @Inject constructor(
     /**
      * Returns protected value aggregated by currency with conversion awareness.
      * W01: Replaces raw Double sum with MoneyAggregate for multi-currency safety.
-     *
-     * TODO (W01): Inject CurrencyConverter and CurrencySettingsRepository to
-     * properly convert multi-currency totals to the user's home currency.
-     * Currently returns the total in the first-encountered currency when
-     * multiple currencies are present (all others recorded as failures).
+     * Now uses CurrencyConverter + CurrencySettingsRepository to convert each
+     * bucket to the user's home currency.
      */
     suspend fun getTotalProtectedValueAggregate(): MoneyAggregate {
         val currencyTotals = warrantyDao.getTotalProtectedValueByCurrency(timeProvider.now())
@@ -188,20 +189,35 @@ class WarrantyTrackerRepository @Inject constructor(
             )
         }
 
-        // Mixed currencies: need CurrencyConverter + CurrencySettingsRepository
-        // TODO (W01): Convert each bucket to home currency. Currently falls back
-        // to the first bucket's currency with all others recorded as failures.
-        val displayCurrency = sourceBuckets.first().currency
-        val failures = sourceBuckets.drop(1).map { bucket ->
+        // Mixed currencies: convert each bucket to home currency
+        val homeCurrencyCode = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        val homeCurrency = CurrencyCode(homeCurrencyCode)
+
+        val pairs = sourceBuckets.map { bucket ->
+            Pair(bucket.amount, bucket.currency.code)
+        }
+        val conversionResult = currencyConverter.convertMultiple(pairs, homeCurrencyCode)
+
+        val failures = conversionResult.failedConversions.map { failed ->
             ConversionFailure(
-                originalAmount = MoneyAmount(bucket.amount, bucket.currency),
-                targetCurrency = displayCurrency,
+                originalAmount = MoneyAmount(failed.originalAmount, CurrencyCode(failed.originalCurrency)),
+                targetCurrency = homeCurrency,
                 reason = FailureReason.MISSING_RATE
             )
         }
+
+        if (failures.isEmpty()) {
+            return MoneyAggregate.singleCurrency(
+                amount = conversionResult.total,
+                currency = homeCurrency,
+                transactionCount = sourceBuckets.sumOf { it.transactionCount }
+            )
+        }
+
         return MoneyAggregate.partial(
-            displayAmount = sourceBuckets.first().amount,
-            displayCurrency = displayCurrency,
+            displayAmount = conversionResult.total,
+            displayCurrency = homeCurrency,
             sourceBuckets = sourceBuckets,
             failures = failures
         )

@@ -158,10 +158,36 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         period: PeriodRange
     ): FinancialQueryResult {
         val matching = assistantFilteredExpenses(intent, period)
-        // TODO (W32): Normalize amounts to home currency before maxByOrNull.
-        // Currently compares raw mixed-currency amounts.
-        val largest = matching.expenses.maxByOrNull { it.expense.effectiveAmount }
-            ?: return FinancialQueryResult.Unsupported("No matching transactions found")
+        if (matching.expenses.isEmpty()) {
+            return FinancialQueryResult.Unsupported("No matching transactions found")
+        }
+
+        // W32: Normalize amounts to home currency before maxByOrNull to avoid
+        // comparing raw mixed-currency amounts (e.g. 100 JPY vs 50 USD).
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+
+        // Determine if we have mixed currencies
+        val distinctCurrencies = matching.expenses.map { it.expense.currency }.distinct()
+        val largest = if (distinctCurrencies.size <= 1) {
+            // Single currency — safe to compare directly
+            matching.expenses.maxByOrNull { it.expense.effectiveAmount }
+        } else {
+            // Mixed currencies — convert each to home currency for comparison
+            val withNormalized = matching.expenses.map { expenseWithCategory ->
+                val normalizedAmount = if (expenseWithCategory.expense.currency.equals(homeCurrency, ignoreCase = true)) {
+                    expenseWithCategory.expense.effectiveAmount
+                } else {
+                    currencyConverter.convert(
+                        amount = expenseWithCategory.expense.effectiveAmount,
+                        fromCurrency = expenseWithCategory.expense.currency,
+                        toCurrency = homeCurrency
+                    )?.convertedAmount ?: expenseWithCategory.expense.effectiveAmount
+                }
+                expenseWithCategory to normalizedAmount
+            }
+            withNormalized.maxByOrNull { it.second }?.first
+        } ?: return FinancialQueryResult.Unsupported("No matching transactions found")
 
         return FinancialQueryResult.Summary(
             title = UiText.fromKey("domain_ai_largest_purchase"),

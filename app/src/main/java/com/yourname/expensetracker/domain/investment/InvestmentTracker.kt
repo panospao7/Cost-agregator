@@ -5,11 +5,17 @@ import com.yourname.expensetracker.data.database.dao.InvestmentValueDao
 import com.yourname.expensetracker.data.database.entity.Investment
 import com.yourname.expensetracker.data.database.entity.InvestmentType
 import com.yourname.expensetracker.data.database.entity.InvestmentValue
+import com.yourname.expensetracker.domain.core.money.ConversionFailure
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.FailureReason
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -40,7 +46,10 @@ data class InvestmentPerformance(
 class InvestmentTracker @Inject constructor(
     private val investmentDao: InvestmentDao,
     private val investmentValueDao: InvestmentValueDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val currencyConverter: CurrencyConverter,
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     
     @Deprecated(
@@ -50,7 +59,7 @@ class InvestmentTracker @Inject constructor(
     /**
      * Get complete portfolio summary.
      */
-    suspend fun getPortfolioSummary(): PortfolioSummary = withContext(Dispatchers.IO) {
+    suspend fun getPortfolioSummary(): PortfolioSummary = withContext(ioDispatcher) {
         val investments = investmentDao.getAllActiveInvestments().first()
         
         var totalValue = 0.0
@@ -88,8 +97,10 @@ class InvestmentTracker @Inject constructor(
      * Computes the same [PortfolioSummary] as [getPortfolioSummary] but also
      * returns a [MoneyAggregate] with per-currency buckets, so callers can
      * display multi-currency totals safely without raw-summing across currencies.
+     *
+     * I01: Now converts all currencies to home currency using CurrencyConverter.
      */
-    fun getPortfolioSummaryAggregate(holdings: List<Investment>): Pair<PortfolioSummary, MoneyAggregate> {
+    suspend fun getPortfolioSummaryAggregate(holdings: List<Investment>): Pair<PortfolioSummary, MoneyAggregate> {
         var totalValue = 0.0
         var totalInvested = 0.0
         
@@ -125,16 +136,40 @@ class InvestmentTracker @Inject constructor(
         val sourceBuckets = byCurrency.map { (ccy, value) ->
             MoneyBucket(CurrencyCode(ccy), value, 0)
         }
-        val aggregate = if (sourceBuckets.size == 1) {
-            MoneyAggregate.singleCurrency(sourceBuckets[0].amount, sourceBuckets[0].currency, holdings.size)
+
+        if (sourceBuckets.size == 1) {
+            return Pair(summary, MoneyAggregate.singleCurrency(sourceBuckets[0].amount, sourceBuckets[0].currency, holdings.size))
+        }
+
+        val homeCurrencyCode = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        val homeCurrency = CurrencyCode(homeCurrencyCode)
+
+        val pairs = sourceBuckets.map { bucket ->
+            Pair(bucket.amount, bucket.currency.code)
+        }
+        val conversionResult = currencyConverter.convertMultiple(pairs, homeCurrencyCode)
+
+        val failures = conversionResult.failedConversions.map { failed ->
+            ConversionFailure(
+                originalAmount = MoneyAmount(failed.originalAmount, CurrencyCode(failed.originalCurrency)),
+                targetCurrency = homeCurrency,
+                reason = FailureReason.MISSING_RATE
+            )
+        }
+
+        val aggregate = if (failures.isEmpty()) {
+            MoneyAggregate.singleCurrency(
+                amount = conversionResult.total,
+                currency = homeCurrency,
+                transactionCount = holdings.size
+            )
         } else {
-            MoneyAggregate(
-                displayAmount = sourceBuckets.sumOf { it.amount },
-                displayCurrency = CurrencyCode.EUR,
+            MoneyAggregate.partial(
+                displayAmount = conversionResult.total,
+                displayCurrency = homeCurrency,
                 sourceBuckets = sourceBuckets,
-                conversionFailures = emptyList(),
-                isPartial = true,
-                warningMessage = "Mixed currencies in portfolio. Inject CurrencyConverter for proper conversion."
+                failures = failures
             )
         }
         return Pair(summary, aggregate)
@@ -144,7 +179,7 @@ class InvestmentTracker @Inject constructor(
      * Get detailed performance for a single investment.
      */
     suspend fun getInvestmentPerformance(investmentId: Long): InvestmentPerformance? = 
-        withContext(Dispatchers.IO) {
+        withContext(ioDispatcher) {
             val investment = investmentDao.getById(investmentId) ?: return@withContext null
             
             val currentValue = investment.currentPrice * investment.quantity
@@ -178,7 +213,7 @@ class InvestmentTracker @Inject constructor(
     /**
      * Update price for an investment and record value history.
      */
-    suspend fun updatePrice(investmentId: Long, newPrice: Double) = withContext(Dispatchers.IO) {
+    suspend fun updatePrice(investmentId: Long, newPrice: Double) = withContext(ioDispatcher) {
         val investment = investmentDao.getById(investmentId) ?: return@withContext
         val timestamp = timeProvider.now()
         
@@ -209,7 +244,7 @@ class InvestmentTracker @Inject constructor(
     /**
      * Get investments that have reached target price (for alerts).
      */
-    suspend fun getTargetPriceHits(): List<Investment> = withContext(Dispatchers.IO) {
+    suspend fun getTargetPriceHits(): List<Investment> = withContext(ioDispatcher) {
         val investments = investmentDao.getAllInvestments()
         investments.filter { investment ->
             investment.targetPrice != null && 
@@ -220,7 +255,7 @@ class InvestmentTracker @Inject constructor(
     /**
      * Get investments that hit stop loss.
      */
-    suspend fun getStopLossHits(): List<Investment> = withContext(Dispatchers.IO) {
+    suspend fun getStopLossHits(): List<Investment> = withContext(ioDispatcher) {
         val investments = investmentDao.getAllInvestments()
         investments.filter { investment ->
             investment.stopLossPrice != null && 
@@ -231,7 +266,7 @@ class InvestmentTracker @Inject constructor(
     /**
      * Calculate portfolio allocation percentages.
      */
-    suspend fun getPortfolioAllocation(): Map<InvestmentType, Double> = withContext(Dispatchers.IO) {
+    suspend fun getPortfolioAllocation(): Map<InvestmentType, Double> = withContext(ioDispatcher) {
         val summary = getPortfolioSummary()
         val totalValue = summary.totalValue
         
@@ -244,7 +279,7 @@ class InvestmentTracker @Inject constructor(
      * Get best and worst performing investments.
      */
     suspend fun getTopPerformers(count: Int = 5): Pair<List<InvestmentPerformance>, List<InvestmentPerformance>> = 
-        withContext(Dispatchers.IO) {
+        withContext(ioDispatcher) {
             val investments = investmentDao.getAllActiveInvestments().first()
             val performances = investments.mapNotNull { getInvestmentPerformance(it.id) }
             
@@ -260,7 +295,7 @@ class InvestmentTracker @Inject constructor(
      * Get portfolio value history over time.
      */
     suspend fun getPortfolioValueHistory(days: Int = 30): List<DailyPortfolioValue> = 
-        withContext(Dispatchers.IO) {
+        withContext(ioDispatcher) {
             val endDate = timeProvider.now()
             val startDate = endDate - (days * 24 * 60 * 60 * 1000L)
             

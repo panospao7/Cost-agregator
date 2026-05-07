@@ -66,9 +66,14 @@ class FinancialWeatherRepository @Inject constructor(
 
         // 3. Synthesize Forecast
         val forecast = synthesisEngine.synthesize(assembledInput)
-        // TODO (ARCH-02 Stage 2): Reduce forecast confidence by input.dataQuality.confidencePenalty
+        // TODO (ARCH-02 Stage 2 / A11): Reduce forecast confidence by input.dataQuality.confidencePenalty.
+        // When conversion warnings exist (isPartial or excludedCount > 0), apply a confidence
+        // penalty proportional to the loss percentage from AnalyticsDataQuality.
 
         // 4. Generate Narrative
+        // TODO (A03/Dashboard): Forecast conversions in SynthesisEngine should use
+        // convertAsOf(atMillis=expense.date) for historical accuracy instead of current
+        // rates. Currently forecast inputs use the latest available rates.
         val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (_: Exception) { "EUR" }
         val narrative = narrativeGenerator.generate(forecast, assembledInput.budgetStatuses, homeCurrency)
 

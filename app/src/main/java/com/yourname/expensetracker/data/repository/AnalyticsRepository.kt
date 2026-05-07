@@ -147,6 +147,11 @@ class AnalyticsRepository @Inject constructor(
      * Uncategorized expenses (where categoryId is null) are included as an
      * "Uncategorized" pseudo-category so that the sum of all breakdown entries
      * equals the parent total for the period.
+     *
+     * TODO (A10): Budget snapshots from BudgetRepository.getActiveBudgetSnapshots()
+     * use convert() (current exchange rate) which may differ from the historical
+     * conversion used by MultiCurrencyRepository. Normalize budget snapshots using
+     * the same period-appropriate conversion as the spend data before comparison.
      */
     fun getCategoryBreakdown(start: Long, end: Long): Flow<List<AnalyticsCategoryBreakdown>> {
         return flow {
@@ -205,6 +210,11 @@ class AnalyticsRepository @Inject constructor(
      *
      * Consumers (UI, forecast engines, health score) can use this to assess
      * how reliable analytics outputs are for the period.
+     *
+     * TODO (A11): Apply confidencePenalty based on conversionWarnings/lossPercentage
+     * from AnalyticsDataQuality to downstream analytics confidence scores.
+     * Currently DataQualityReport.conversionConfidence is computed but not
+     * propagated to affect spending insights, anomaly detection, or forecast certainty.
      */
     suspend fun getDataQualityReport(start: Long, end: Long): DataQualityReport {
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }

@@ -298,6 +298,9 @@ class BudgetRepository @Inject constructor(
             )
         }
 
+        // TODO (A03/Budget): Use convertAsOf(amount, from, to, atMillis=periodEnd) for
+        // period-specific reports so budget limits are converted at historical rates
+        // consistent with how expenses are converted. Currently uses current rates.
         val conversion = currencyConverter.convert(amount, sourceCurrency, homeCurrency)
         if (conversion != null) {
             return com.yourname.expensetracker.domain.core.money.MoneyAggregate.singleCurrency(

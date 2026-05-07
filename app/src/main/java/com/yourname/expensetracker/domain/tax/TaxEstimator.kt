@@ -4,9 +4,16 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.ConversionFailure
+import com.yourname.expensetracker.domain.core.money.FailureReason
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.util.TimeProvider
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.util.Calendar
 import javax.inject.Inject
@@ -18,14 +25,17 @@ import javax.inject.Singleton
  * Replaces hardcoded tax rates with TaxConfiguration for country-specific rates.
  * Supports multiple tax systems and can be extended for per-user configuration.
  *
- * TODO (T01/T06): Deductible expenses now use MoneyAggregate via buildDeductibleAggregate().
- * Income and VAT computation still raw-sums — extend MoneyAggregate pattern to those paths.
+ * T01: Deductible expenses use MoneyAggregate via buildDeductibleAggregate().
+ * Income aggregates via buildIncomeAggregate(). Both use CurrencyConverter.
  */
 @Singleton
 class TaxEstimator @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val businessExpenseRepository: BusinessExpenseRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val currencyConverter: CurrencyConverter,
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     /**
      * Estimate taxes for a period using configured tax rates.
@@ -41,7 +51,7 @@ class TaxEstimator @Inject constructor(
         endDate: Long,
         estimatedAnnualIncome: Double,
         taxConfig: TaxConfiguration = TaxConfigurationFactory.getCurrentConfiguration()
-    ): TaxEstimate = withContext(Dispatchers.IO) {
+    ): TaxEstimate = withContext(ioDispatcher) {
         // A.9: Aggregate SQL replaces capped row scan for deductible total.
         // getTotalBusinessExpenses uses SUM(effectiveAmount) via
         // ExpenseDao.getTotalBusinessExpensesBetween, eliminating hidden
@@ -152,6 +162,8 @@ class TaxEstimator @Inject constructor(
      * T01: Replaces the raw-Double [BusinessExpenseRepository.getTotalBusinessExpenses]
      * with a per-currency aggregate so mixed-currency deductible expenses are
      * correctly represented without silently raw-summing across currencies.
+     *
+     * Now converts all currencies to home currency using CurrencyConverter.
      */
     private suspend fun buildDeductibleAggregate(startMs: Long, endMs: Long): MoneyAggregate {
         val currencyTotals = expenseDao.getBusinessExpensesBetweenByCurrency(startMs, endMs)
@@ -160,16 +172,59 @@ class TaxEstimator @Inject constructor(
             return MoneyAggregate.singleCurrency(currencyTotals[0].total, CurrencyCode(currencyTotals[0].currency), currencyTotals[0].txCount)
         }
         val sourceBuckets = currencyTotals.map { MoneyBucket(CurrencyCode(it.currency), it.total, it.txCount) }
-        return MoneyAggregate(
-            displayAmount = sourceBuckets.sumOf { it.amount },
-            displayCurrency = CurrencyCode.EUR,
+        return convertBucketsToHomeCurrency(sourceBuckets)
+    }
+
+    /**
+     * Build a MoneyAggregate for income (deposits) grouped by currency.
+     *
+     * T01: Extends the MoneyAggregate pattern to income totals so that
+     * mixed-currency income is correctly represented without raw-summing.
+     */
+    private suspend fun buildIncomeAggregate(startMs: Long, endMs: Long): MoneyAggregate {
+        val currencyTotals = expenseDao.getDepositTotalsBetweenByCurrency(startMs, endMs)
+        if (currencyTotals.isEmpty()) return MoneyAggregate.empty(CurrencyCode.EUR)
+        if (currencyTotals.size == 1) {
+            return MoneyAggregate.singleCurrency(currencyTotals[0].total, CurrencyCode(currencyTotals[0].currency), currencyTotals[0].txCount)
+        }
+        val sourceBuckets = currencyTotals.map { MoneyBucket(CurrencyCode(it.currency), it.total, it.txCount) }
+        return convertBucketsToHomeCurrency(sourceBuckets)
+    }
+
+    private suspend fun convertBucketsToHomeCurrency(sourceBuckets: List<MoneyBucket>): MoneyAggregate {
+        val homeCurrencyCode = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        val homeCurrency = CurrencyCode(homeCurrencyCode)
+
+        val pairs = sourceBuckets.map { bucket ->
+            Pair(bucket.amount, bucket.currency.code)
+        }
+        val conversionResult = currencyConverter.convertMultiple(pairs, homeCurrencyCode)
+
+        val failures = conversionResult.failedConversions.map { failed ->
+            ConversionFailure(
+                originalAmount = MoneyAmount(failed.originalAmount, CurrencyCode(failed.originalCurrency)),
+                targetCurrency = homeCurrency,
+                reason = FailureReason.MISSING_RATE
+            )
+        }
+
+        if (failures.isEmpty()) {
+            return MoneyAggregate.singleCurrency(
+                amount = conversionResult.total,
+                currency = homeCurrency,
+                transactionCount = sourceBuckets.sumOf { it.transactionCount }
+            )
+        }
+
+        return MoneyAggregate.partial(
+            displayAmount = conversionResult.total,
+            displayCurrency = homeCurrency,
             sourceBuckets = sourceBuckets,
-            conversionFailures = emptyList(),
-            isPartial = true,
-            warningMessage = "Mixed currencies in deductible expenses. Inject CurrencyConverter for proper conversion."
+            failures = failures
         )
     }
-    
+
     /**
      * Get tax year summary for annual filing.
      * 
@@ -178,10 +233,11 @@ class TaxEstimator @Inject constructor(
     suspend fun getTaxYearSummary(
         year: Int,
         taxConfig: TaxConfiguration = TaxConfigurationFactory.getCurrentConfiguration()
-    ): TaxYearSummary = withContext(Dispatchers.IO) {
+    ): TaxYearSummary = withContext(ioDispatcher) {
         val yearStart = startOfYear(year)
         val yearEnd = startOfYear(year + 1)
-        val totalIncome = expenseDao.getTotalDepositsForPeriod(yearStart, yearEnd)
+        val incomeAggregate = buildIncomeAggregate(yearStart, yearEnd)
+        val totalIncome = incomeAggregate.displayAmount
 
         val estimate = estimateTaxes(yearStart, yearEnd, totalIncome, taxConfig)
         

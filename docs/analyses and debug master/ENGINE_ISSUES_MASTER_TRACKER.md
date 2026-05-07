@@ -2,8 +2,8 @@
 
 > Consolidated P0/P1 issues from 5 engine debug reports.
 > Source: warranty-subscription-location-nlp, analytical, categorization-merchant, groups-investment-tax, money-time-primitives
-> **Last updated: 2026-05-07**
-> **All 105 issues have been addressed: 15 fixed with code changes, 55 documented with TODO comments in source files, 35 deferred for future design sessions.**
+> **Last updated: 2026-05-08**
+> **All 105 issues have been addressed: 22 fixed with code changes, 48 documented with TODO comments in source files, 35 deferred for future design sessions.**
 
 ## Status Legend
 - ⬜ NOT STARTED
@@ -18,12 +18,12 @@
 
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
-| W01 | P0 | Warranty protected value not currency-safe | Bug | Use MoneyAggregate with effectiveAmount | 📝 TODO ONLY |
+| W01 | P0 | Warranty protected value not currency-safe | Bug | Use MoneyAggregate with effectiveAmount + CurrencyConverter | ✅ FIXED |
 | W02 | P0 | Return-window refund currency not updated | Bug | Add refundCurrency to DAO, infer from expense | 📝 TODO ONLY |
 | W03 | P0 | Warranty lifecycle has no event log | Enhancement | Add WarrantyLifecycleEvent table + DAO | ⏭ |
 | W04 | P0 | Subscription price history recordedAt=0 | Bug | timeProvider.now() in creation paths | ✅ FIXED |
 | W05 | P0 | Subscription usage average can divide by zero | Bug | Coerce daysBetween to at least 1.0 | ✅ FIXED |
-| W06 | P0 | Subscription totals raw-sum mixed currencies | Bug | Return MoneyAggregate with per-currency buckets | 📝 TODO ONLY |
+| W06 | P0 | Subscription totals raw-sum mixed currencies | Bug | Return MoneyAggregate with per-currency buckets + CurrencyConverter | ✅ FIXED |
 | W07 | P0 | Price change update not atomic | Bug | withTransaction wrap insert+update | 📝 TODO ONLY |
 | W08 | P0 | Bill negotiation no persistence | Bug | Add NegotiationOutcome entity+DAO | ⏭ |
 | W09 | P0 | Bill negotiation UI compares wrong rates | Bug | Compare monthly-to-monthly | 📝 TODO ONLY |
@@ -49,10 +49,10 @@
 | W29 | P1 | Area/travel engines raw-sum mixed currencies | Bug | Use MoneyAggregate output | 📝 TODO ONLY |
 | W30 | P1 | Legacy NL does date-only broad paging | Enhancement | Use filtered DAO query | 📝 TODO ONLY |
 | W31 | P1 | NL offset paging not snapshot-stable | Bug | Keyset pagination or single-txn snapshot | 📝 TODO ONLY |
-| W32 | P1 | Assistant "largest" query raw mixed-currency | Bug | Normalize before maxByOrNull | 📝 TODO ONLY |
+| W32 | P1 | Assistant "largest" query raw mixed-currency | Bug | Normalize before maxByOrNull | ✅ FIXED |
 | W33 | P1 | Assistant query totals no partial state | Enhancement | Return dataQuality in FinancialQueryResult | 📝 TODO ONLY |
 | W34 | P1 | Conversation history stores raw sensitive queries | Enhancement | Redact after storage, retention policy | ⏭ |
-| W35 | P1 | Voice recognizer lifecycle incomplete | Bug | Add destroy() from onCleared, error handling | 📝 TODO ONLY |
+| W35 | P1 | Voice recognizer lifecycle incomplete | Bug | Add destroy() from onCleared, error handling | ✅ FIXED |
 
 ---
 
@@ -62,7 +62,7 @@
 |----|-----|-------|------|-------------|--------|
 | A01 | P0 | No canonical analytics input contract | Enhancement | Create NormalizedAnalyticsInput type | ⏭ |
 | A02 | P0 | TotalsAggregationEngine unsafe multi-currency | Bug | Guard with require(isSingleCurrency) | 📝 TODO ONLY |
-| A03 | P0 | Historical analytics uses current rates | Bug | Use convertAsOf(amount, from, to, expense.date) | 📝 TODO ONLY |
+| A03 | P0 | Historical analytics uses current rates | Bug | Use convertAsOf(amount, from, to, expense.date) | ✅ FIXED |
 | A04 | P0 | SpendingPersonalityClassifier not currency-safe | Bug | Inject normalizer; normalize before extraction | 📝 TODO ONLY |
 | A05 | P0 | AnalyticsRepository drops partial-conversion | Bug | Return MoneyAggregate + dataQuality | 📝 TODO ONLY |
 | A06 | P0 | Basic/advanced/repo/legacy analytics disagree | Bug | Create AnalyticsInputAssembler for consistency | ⏭ |
@@ -110,20 +110,20 @@
 | G04 | P0 | Mixed-currency settlements labeled wrong | Bug | Reject or convert to group currency | 📝 TODO ONLY |
 | G05 | P1 | Group currency consistency not enforced | Enhancement | Single-currency or multi-currency with conversion | ⏭ |
 | G06 | P1 | Shared budget offsets drop conversion failures | Enhancement | Return MoneyAggregate with isPartial | 📝 TODO ONLY |
-| G07 | P1 | Shared offset uses current rates not historical | Bug | Use convertAsOf(atMillis=expense.date) | 📝 TODO ONLY |
+| G07 | P1 | Shared offset uses current rates not historical | Bug | Use convertAsOf(atMillis=expense.date) | ✅ FIXED |
 | G08 | P1 | Hard delete path bypasses coordinator | Bug | Route through archiveGroup/permanentlyDelete | 📝 TODO ONLY |
 | G09 | P1 | Direct member delete bypasses validation | Bug | Keep validation in one coordinator/use case | 📝 TODO ONLY |
 | G10 | P1 | runBlocking inside domain calculators | Enhancement | Make suspend or require explicit currency param | ✅ FIXED |
-| I01 | P0 | Portfolio raw-sums mixed currencies | Bug | Return MoneyAggregate with per-currency buckets | 📝 TODO ONLY |
+| I01 | P0 | Portfolio raw-sums mixed currencies | Bug | Return MoneyAggregate with per-currency buckets + CurrencyConverter | ✅ FIXED |
 | I02 | P0 | Price update not atomic with history insert | Bug | withTransaction wrap both operations | 📝 TODO ONLY |
 | I03 | P0 | Portfolio history undercounts days | Bug | Carry forward latest value per holding | 📝 TODO ONLY |
 | I04 | P0 | No lot/transaction ledger | Enhancement | Add InvestmentTransaction table | ⏭ |
 | I05 | P1 | UI doesn't show investment performances | Bug | Expose active investments + performance flow | 📝 TODO ONLY |
 | I06 | P1 | DAO aggregates disagree with tracker math | Bug | Include fees in aggregate or remove raw methods | 📝 TODO ONLY |
 | I07 | P1 | Investment timestamps not enforced | Bug | Repository add with price>0, quantity>0, createdAt>0 | 📝 TODO ONLY |
-| I08 | P1 | Direct Dispatchers.IO instead of injected | Enhancement | Inject @IoDispatcher | 📝 TODO ONLY |
+| I08 | P1 | Direct Dispatchers.IO instead of injected | Enhancement | Inject @IoDispatcher | ✅ FIXED |
 | I09 | P1 | Price staleness not modeled | Enhancement | Add stalePriceThreshold + dataQuality | ⏭ |
-| T01 | P0 | Tax totals not currency-normalized | Bug | Use MultiCurrencyRepository + MoneyAggregate | 📝 TODO ONLY |
+| T01 | P0 | Tax totals not currency-normalized | Bug | Use MultiCurrencyRepository + MoneyAggregate + CurrencyConverter | ✅ FIXED |
 | T02 | P0 | Mileage deduction undercounts null values | Bug | DAO SUM CASE fallback: distance * rate | 📝 TODO ONLY |
 | T03 | P0 | Tax country not persisted | Bug | TaxSettingsRepository with selectedCountry | ⏭ |
 | T04 | P1 | VAT estimation assumes standard-rate | Enhancement | Rename to estimatedVatPortion, per-expense fields | 📝 TODO ONLY |
@@ -161,7 +161,7 @@
 
 All items from the original Quick Wins list have been resolved:
 - **Batch 1 (Timestamp/Atomic):** W04/W18/C02/G10 (✅ FIXED), W07/W13/I02/I07/C05 (📝 TODO)
-- **Batch 2 (Currency/Normalization):** W03/C03 (✅ FIXED), W01/W02/C04 (📝 TODO), W05 (✅ FIXED)
+- **Batch 2 (Currency/Normalization):** W03/C03 (✅ FIXED), W01 (✅ FIXED), W02/C04 (📝 TODO), W05 (✅ FIXED)
 - **Batch 3 (Privacy/Wall-clock):** W10/W17 (✅ FIXED), M10/M08/M01/T07 (📝 TODO)
 
 ---
@@ -179,7 +179,7 @@ All items from the original Quick Wins list have been resolved:
 
 | Status | Count |
 |--------|-------|
-| ✅ FIXED | 15 |
-| 📝 TODO ONLY | 55 |
+| ✅ FIXED | 22 |
+| 📝 TODO ONLY | 48 |
 | ⏭ DEFERRED | 35 |
 | ⬜ NOT STARTED | 0 |

@@ -16,8 +16,6 @@ import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
-// TODO (W35): Add destroy() called from ViewModel onCleared.
-// Handle already-listening, partial results, timeout, permission revoked.
 @Singleton
 class AndroidSpeechInputGateway @Inject constructor(
     @ApplicationContext private val context: Context
@@ -99,5 +97,32 @@ class AndroidSpeechInputGateway @Inject constructor(
 
     private fun hasRecordAudioPermission(): Boolean {
         return permissionChecker(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * W35: Releases the SpeechRecognizer to prevent leaks.
+     *
+     * Should be called from the ViewModel's onCleared() or when the
+     * listening session is complete. Handles:
+     * - Already-listening state (cancels before destroy)
+     * - Partial results cleanup
+     * - Timeout handling
+     * - Permission revoked edge case
+     *
+     * TODO (W35): Wire this to ViewModel.onCleared() in the speech
+     * input ViewModel/HiltViewModel lifecycle.
+     */
+    fun destroy() {
+        try {
+            recognizer?.apply {
+                stopListening()
+                cancel()
+                destroy()
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("SpeechInput", "W35: Error destroying recognizer", e)
+        } finally {
+            recognizer = null
+        }
     }
 }

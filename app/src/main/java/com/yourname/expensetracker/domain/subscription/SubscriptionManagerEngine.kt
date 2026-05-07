@@ -7,9 +7,14 @@ import com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
+import com.yourname.expensetracker.domain.core.money.ConversionFailure
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.FailureReason
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -109,7 +114,9 @@ class SubscriptionManagerEngine @Inject constructor(
     private val recurringExpenseRepository: RecurringExpenseRepository,
     private val priceHistoryDao: SubscriptionPriceHistoryDao,
     private val usageDao: SubscriptionUsageDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val currencyConverter: CurrencyConverter,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     
     /**
@@ -444,6 +451,8 @@ class SubscriptionManagerEngine @Inject constructor(
      * [RecurrenceCalculator.toMonthlyAmount], then groups by currency so that
      * multi-currency subscriptions are correctly represented without silent
      * raw-summing across different currencies.
+     *
+     * W06: Now converts all currencies to home currency using CurrencyConverter.
      */
     suspend fun getTotalMonthlySubscriptionCostAggregate(): MoneyAggregate {
         val subscriptions = getAllSubscriptions()
@@ -467,13 +476,37 @@ class SubscriptionManagerEngine @Inject constructor(
         val sourceBuckets = byCurrency.map { (ccy, pair) ->
             MoneyBucket(CurrencyCode(ccy), pair.first, pair.second)
         }
-        return MoneyAggregate(
-            displayAmount = sourceBuckets.sumOf { it.amount },
-            displayCurrency = CurrencyCode.EUR,
+
+        val homeCurrencyCode = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        val homeCurrency = CurrencyCode(homeCurrencyCode)
+
+        val pairs = sourceBuckets.map { bucket ->
+            Pair(bucket.amount, bucket.currency.code)
+        }
+        val conversionResult = currencyConverter.convertMultiple(pairs, homeCurrencyCode)
+
+        val failures = conversionResult.failedConversions.map { failed ->
+            ConversionFailure(
+                originalAmount = MoneyAmount(failed.originalAmount, CurrencyCode(failed.originalCurrency)),
+                targetCurrency = homeCurrency,
+                reason = FailureReason.MISSING_RATE
+            )
+        }
+
+        if (failures.isEmpty()) {
+            return MoneyAggregate.singleCurrency(
+                amount = conversionResult.total,
+                currency = homeCurrency,
+                transactionCount = sourceBuckets.sumOf { it.transactionCount }
+            )
+        }
+
+        return MoneyAggregate.partial(
+            displayAmount = conversionResult.total,
+            displayCurrency = homeCurrency,
             sourceBuckets = sourceBuckets,
-            conversionFailures = emptyList(),
-            isPartial = true,
-            warningMessage = "Contains ${byCurrency.size} currencies without conversion. Inject CurrencyConverter for proper conversion."
+            failures = failures
         )
     }
     
