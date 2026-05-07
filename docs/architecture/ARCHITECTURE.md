@@ -517,6 +517,10 @@ A 120+ file cross-cutting feature establishing a single, auditable entry point f
 | `TransactionLifecycleCoordinator` | `lifecycle/TransactionLifecycleCoordinator.kt` | **Single entry point** for ALL expense creation/update/delete. Pipeline: validate → normalize → dedupe → insert atomic → event logging → side effects. `createExpense()` now accepts a `SideEffectMode` param (`IMMEDIATE` or `DEFER`). When `DEFER` is used, callers invoke `dispatchPostCreationSideEffects()` separately to run side effects outside the DB transaction, fixing the nested-transaction/post-commit bug where side effects previously ran inside the DB transaction. Injected by 10+ consumer classes. |
 | `TransactionSideEffectDispatcher` | `lifecycle/TransactionSideEffectDispatcher.kt` | Consolidates post-creation side effects: budget check, anomaly alert, merchant-category pattern learning. Best-effort / fire-and-forget. |
 
+**C1 Migration complete:** 8 targeted update methods added (category, merchant, type,
+transfer, ownership, location, bulk). All expense mutations now route through
+the coordinator with full lifecycle event tracking.
+
 #### Migration Paths (all now route through coordinator)
 
 | Path | PR | Status |

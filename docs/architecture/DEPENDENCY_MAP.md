@@ -158,6 +158,25 @@ ViewModel
 | `EmailReceiptIngestionService` | `data/email/EmailReceiptIngestionService.kt` | Email receipts |
 | `BankApiIntegration` | `domain/bank/BankApiIntegration.kt` | Bank sync |
 
+### Targeted Update Methods (Phase C migration)
+
+TransactionLifecycleCoordinator now provides 8 targeted single-field/bulk update methods,
+each writing TransactionEvent.UPDATED or BULK_UPDATED with before/after snapshots:
+
+| Method | Updates | Event |
+|--------|---------|-------|
+| updateCategory(expenseId, newCategoryId) | categoryId | UPDATED |
+| updateMerchant(expenseId, newMerchant) | merchant, merchantKey, dedupeKey | UPDATED |
+| updateType(expenseId, newType) | transactionType, dedupeKey | UPDATED |
+| updateTransferDetails(expenseId, direction, accountName) | transferDirection, transferAccountName | UPDATED |
+| updateOwnership(expenseId, ...) | isNotMine, ownerName, isSharedExpense, sharedWithName, mySharePercentage, myShareAmount | UPDATED |
+| updateLocation(expenseId, lat, lng, ...) | latitude, longitude, locationSource, placeId, resolvedAddress | UPDATED |
+| bulkUpdateCategory(merchant, newCategoryId) | categoryId (all matching rows) | BULK_UPDATED |
+| bulkUpdateMerchant(oldMerchant, newMerchant) | merchant, merchantKey, dedupeKey (all matching rows) | BULK_UPDATED |
+
+All methods: restore-mode guard, atomic DB transaction, lifecycle event logging.
+See ExpenseRepository KNOWN BYPASS NOTE for migration status (11 routed, 7 intentional).
+
 ---
 
 ## 3. Receipt Lifecycle Dependency Map
