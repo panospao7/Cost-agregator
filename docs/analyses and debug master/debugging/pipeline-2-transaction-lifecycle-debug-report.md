@@ -1197,6 +1197,15 @@ Files changed:
 The remaining bypasses are deprecated with `@Deprecated` annotations and documented in the code.
 Full migration still requires adding remaining update methods to the coordinator (staged PR 5).
 
+### Post-update side effects (evaluation follow-up, 2026-05-06):
+- **FIXED — PR A**: Targeted update methods (updateCategory, updateMerchant, updateType,
+  updateTransferDetails, updateOwnership) now dispatch post-update side effects via
+  sideEffectDispatcher.dispatchOnUpdated() (budget + anomaly + merchant learning).
+  updateMerchant and updateType also reconcile recurring links (unlink + relink).
+  updateLocation and bulk methods intentionally skip side effects.
+- **FIXED — PR B**: bulkUpdateMerchant() no longer NULLs dedupeKey. Now fetches affected
+  rows, recomputes individual dedupeKey per row, and updates with updateMerchantAndKey().
+
 ### P1-1 — Strict external ID idempotency returns InsertConflict
 **Status: CONFIRMED, NOT FIXED**
 

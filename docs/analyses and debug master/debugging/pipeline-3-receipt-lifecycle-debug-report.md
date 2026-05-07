@@ -1543,6 +1543,12 @@ For RETAIL_RECEIPT, the dispatcher calls `receiptTransactionMatcher.findBestMatc
 **Severity: P2**
 **Recommendation:** Remove the matcher call from the dispatcher, or use it to write a suggestion.
 
+### Post-evaluation fixes (2026-05-06):
+- **FIXED — PR C**: ReviewQueueRepository.approveReview() now throws IllegalStateException
+  if receiptLinkService.linkReceiptToExpense() fails when scannedReceiptId is present.
+  This rolls back the entire approval transaction (expense creation + stats + review status),
+  preventing the "expense created but receipt not linked" inconsistency.
+
 ---
 
 # 13. Applied fixes summary

@@ -1609,6 +1609,12 @@ Second guiding rule:
 ## Finding P1-7 — No unlink/reconcile on actual expense update/delete
 **STATUS: FIXED (2026-05-06):** `RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence()` resets linked occurrence to PLANNED on delete. `TransactionLifecycleCoordinator.updateExpense()` reconciles by unlinking + relinking when key fields change.
 
+### Post-evaluation fix (2026-05-06):
+- **FIXED — PR D**: unlinkExpenseFromOccurrence() now uses direct linkedExpenseId lookup
+  via new RecurringOccurrenceDao.getByLinkedExpenseId() query instead of time-range search.
+  Handles historical, backdated, restored, and imported expenses that were missed by the
+  date-range window.
+
 ## Finding P1-8 — Recurring occurrence/reminder/event entities lack foreign keys
 **STATUS: CONFIRMED — NOT FIXED (Room migration required)**
 

@@ -1,4 +1,4 @@
-# Pipeline 12 Debugging Report — Import / Export / Accounting Roundtrip
+﻿# Pipeline 12 Debugging Report — Import / Export / Accounting Roundtrip
 
 Target commit: `53c915f09cbc92137b5b84d5839bdbf1cd321c16`  
 Review type: static GitHub code review, not local execution.
@@ -306,6 +306,16 @@ Source:
 ---
 
 # 4. Major findings
+
+### Post-evaluation fixes (2026-05-06):
+- **FIXED — PR E-1**: Accounting policy now validates ALL pages during export streaming,
+  not just the first 2000 rows. Per-page validation added inside streamExpensesToWriter().
+- **FIXED — PR E-2**: Export preview headers no longer use hardcoded stale strings.
+  Headers are now captured from the actual exporter via writeHeader(StringBuilder)
+  and that same output is used for both file and preview.
+- **FIXED — PR E-3**: DeterministicExpenseExportPager KDoc corrected — removed false
+  'atomic snapshot' claim. Now accurately describes keyset pagination limitations
+  (rows behind cursor missed, count not snapshot-anchored).
 
 ## Finding P0-1 — The app’s CSV export cannot be imported by its CSV importer
 
