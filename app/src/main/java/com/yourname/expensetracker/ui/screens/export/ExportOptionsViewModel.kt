@@ -547,6 +547,15 @@ class ExportOptionsViewModel @Inject constructor(
                 startDate, endDate, pageSize, lastDate, lastId
             )
             if (page.isEmpty()) break
+
+            // BAK-12: Per-page accounting validation (pages 2+ were not validated in the initial check)
+            if (page.isNotEmpty() && format.requiresAccountingPolicy() && pageCount > 0) {
+                accountingExportPolicy.validateAccountingDataset(
+                    page.map { it.toExportTransaction() },
+                    format.accountingExportDisplayName()
+                )
+            }
+
             pageCount++
             writePage(writer, page, categories, format, preview, pageCount, pageSize)
             val last = page.last()
@@ -599,15 +608,24 @@ class ExportOptionsViewModel @Inject constructor(
             }
             "xero" -> {
                 xeroExporter.writeHeader(writer)
-                preview.append("Date,Description,Amount,Account,Reference\n")
+                // Capture actual header for preview parity
+                val headerBuffer = StringBuilder()
+                xeroExporter.writeHeader(headerBuffer)
+                preview.append(headerBuffer.toString())
             }
             "quickbooks" -> {
                 quickBooksExporter.writeHeader(writer)
-                preview.append("!TRNS\tDATE\tACCNT\tAMOUNT\tMEMO\tNAME\tCLASS\n!SPL\tDATE\tACCNT\tAMOUNT\tMEMO\tNAME\tCLASS\n!ENDTRNS\n")
+                // Capture actual header for preview parity
+                val headerBuffer = StringBuilder()
+                quickBooksExporter.writeHeader(headerBuffer)
+                preview.append(headerBuffer.toString())
             }
             "freshbooks" -> {
                 freshBooksExporter.writeHeader(writer)
-                preview.append("date,description,amount,category,vendor\n")
+                // Capture actual header for preview parity
+                val headerBuffer = StringBuilder()
+                freshBooksExporter.writeHeader(headerBuffer)
+                preview.append(headerBuffer.toString())
             }
         }
     }

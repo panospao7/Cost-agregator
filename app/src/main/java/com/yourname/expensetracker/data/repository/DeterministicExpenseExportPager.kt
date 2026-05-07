@@ -9,12 +9,13 @@ import javax.inject.Singleton
  * Exhaustive expense pager that uses **keyset-based (cursor) pagination** to fetch
  * all expenses in a date range for export.
  *
- * ## SRH-24: ID-based snapshot instead of offset-based
+ * ## SRH-24: Keyset-based pagination
  * Converted from offset-based (`LIMIT ? OFFSET ?`) to keyset-based pagination that
- * uses `WHERE (date, id) > (:lastDate, :lastId)`. This provides:
- * - An **atomic snapshot** — the watermark is defined by (date, id) of the last
- *   row, so insertions/deletions on *already-paged* rows do not cause missed or
- *   duplicated rows.
+ * uses `WHERE (date, id) > (:lastDate, :lastId)`.
+ * - **Keyset-based pagination** — the watermark is defined by (date, id) of the last
+ *   row. Rows inserted with (date, id) higher than the current cursor will be seen;
+ *   rows inserted behind the cursor will be missed (this is NOT a true atomic snapshot).
+ *   Deletions of already-paged rows do not cause duplicates.
  * - **Consistent ordering** — the `ORDER BY date ASC, id ASC` across pages ensures
  *   every expense is visited exactly once.
  * - **No offset scan penalty** — SQLite does not need to skip past previously-returned
@@ -105,8 +106,11 @@ class DeterministicExpenseExportPager @Inject constructor(
     }
 
     /**
-     * Count expenses between dates using the same consistent snapshot.
+     * Count expenses between dates.
      * Uses the repository's counting method which is consistent with the paged fetch.
+     *
+     * NOTE: This count is NOT snapshot-anchored. If rows are inserted between when
+     * the count is taken and when paging begins, the count and exported rows may disagree.
      */
     suspend fun countBetween(startDate: Long, endDate: Long): Int =
         expenseRepository.countExpensesBetween(startDate, endDate)
