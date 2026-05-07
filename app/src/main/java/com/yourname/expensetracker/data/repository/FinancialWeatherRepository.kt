@@ -66,7 +66,8 @@ class FinancialWeatherRepository @Inject constructor(
 
         // 3. Synthesize Forecast
         val forecast = synthesisEngine.synthesize(assembledInput)
-        
+        // TODO (ARCH-02 Stage 2): Reduce forecast confidence by input.dataQuality.confidencePenalty
+
         // 4. Generate Narrative
         val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (_: Exception) { "EUR" }
         val narrative = narrativeGenerator.generate(forecast, assembledInput.budgetStatuses, homeCurrency)

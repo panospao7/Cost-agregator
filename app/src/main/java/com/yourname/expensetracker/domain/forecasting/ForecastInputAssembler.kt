@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.PlannedExpensePriority as EntityPlannedExpensePriority
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarningType
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
@@ -427,6 +428,18 @@ class ForecastInputAssembler @Inject constructor(
                 planned.sourceOccurrenceKey in materializedOccurrenceKeys
         }
 
+        // ── Populate ForecastDataQuality from normalization result ──
+        val inputCount = normalized.totalInputCount
+        val excludedCount = normalized.excludedCount
+        val missingRateWarnings = normalized.warnings.filter {
+            it.type == AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE
+        }
+        val confidencePenalty = if (inputCount > 0) {
+            val excludedRatio = excludedCount.toDouble() / inputCount
+            val missingRatio = missingRateWarnings.size.toDouble() / inputCount
+            (excludedRatio * 0.35 + missingRatio * 0.10).coerceIn(0.0, 0.50)
+        } else 0.0
+
         return ForecastInput(
             pastSumDaily = buildPastSumDaily(normalizedExpenses),
             recurringPatterns = mergeRecurringPatterns(
@@ -438,7 +451,17 @@ class ForecastInputAssembler @Inject constructor(
             budgetStatuses = budgetStatuses,
             spendingPace = buildSpendingPace(normalizedExpenses, resolvedHomeCurrency),
             confirmedOccurrences = confirmedOccurrences,
-            displayCurrency = resolvedHomeCurrency
+            displayCurrency = resolvedHomeCurrency,
+            dataQuality = ForecastDataQuality(
+                isPartial = excludedCount > 0,
+                confidencePenalty = confidencePenalty,
+                excludedActualCount = excludedCount,
+                excludedPlannedCount = 0,
+                excludedRecurringCount = 0,
+                conversionWarnings = normalized.warnings.map { warning ->
+                    "${warning.type.name}: ${warning.message}"
+                }
+            )
         )
     }
 
