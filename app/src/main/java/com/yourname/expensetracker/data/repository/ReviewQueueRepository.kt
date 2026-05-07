@@ -245,8 +245,10 @@ class ReviewQueueRepository @Inject constructor(
                             source = ExpenseSource.REVIEW_APPROVAL.name
                         )
                         if (linkResult.isFailure) {
-                            Timber.w(linkResult.exceptionOrNull(),
-                                "Review approval receipt link failed for receipt=$receiptId expense=$id")
+                            throw IllegalStateException(
+                                "Failed to link receipt $receiptId to expense $id during review approval",
+                                linkResult.exceptionOrNull()
+                            )
                         }
                     }
                     pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED)
