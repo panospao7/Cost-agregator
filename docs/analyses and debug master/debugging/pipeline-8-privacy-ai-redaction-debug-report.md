@@ -1315,7 +1315,13 @@ Second guiding rule:
 **STATUS: CONFIRMED — NOT FIXED (requires per-provider audit wrapper)**
 
 ## Finding P1-1 — RedactionSanitizer vs CloudPiiSanitizer — no single redaction contract
-**STATUS: CONFIRMED — NOT FIXED (requires unification into a single RedactionService)**
+**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-04 Stage 1)**
+- CloudPayloadRedactor interface created as the unified domain-level redaction contract.
+- Implementation per capability (receipt, review, dedupe, dashboard, query, categorization) deferred to Stage 2.
+
+## Finding P1-2 — Audit events are too shallow for cloud AI debugging
+**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-05 Stage 1)**
+- CloudAiAuditLogger design scoped; provider-level audit event expansion (route, redaction, payload hash) deferred to Stage 2.
 
 ## Finding P1-2 — Data retention worker does not check RestoreMaintenanceMode
 **STATUS: CONFIRMED — FIXED (see Pipeline 9)**
@@ -1325,7 +1331,18 @@ Second guiding rule:
 - `PrivacyAuditLoggerImpl` now injects `TimeProvider` and uses `timeProvider.now()` instead of `System.currentTimeMillis()`.
 
 ## Finding P1-4 — Privacy UI toggles may require restart
-**STATUS: CONFIRMED — NOT FIXED (by design — some settings need process restart)**
+**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-06 Stage 1)**
+- Restartless toggle design explored; full runtime cancellation on setting change deferred to Stage 2.
+
+## Finding P1-5 — Data retention may not cover all raw/sensitive copies
+**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-07/08 Stage 1)**
+- Raw-data inventory design sketched; expansion to AI artifacts, chat messages, debug diagnostics, receipt images deferred to Stage 2.
+
+## Finding P1-6 — Redacted backup does not mean fully private backup
+**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-03 Stage 1)**
+- BackupPrivacyMode enum created (FULL_ENCRYPTED, DB_TEXT_REDACTED, DB_REDACTED_NO_IMAGES, ANONYMIZED_EXPORT).
+- Manifest field added to record backup privacy mode.
+- Full enforcement of mode constraints in CostbackupBundle deferred to Stage 2.
 
 ---
 

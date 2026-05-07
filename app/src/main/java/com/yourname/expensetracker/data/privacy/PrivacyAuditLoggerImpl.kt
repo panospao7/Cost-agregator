@@ -22,6 +22,9 @@ class PrivacyAuditLoggerImpl @Inject constructor(
         context: Map<String, String>
     ) {
         val now = timeProvider.now()
+        // TODO (P8-P1-2): Extend audit records with provider name, model ID, routing decision,
+        // redactionApplied flag, payloadHash, rawImageUploaded, and rawTextIncluded fields
+        // for cloud AI debugging and compliance.
         dao.insert(
             PrivacyAuditEvent(
                 capability = capability.name,

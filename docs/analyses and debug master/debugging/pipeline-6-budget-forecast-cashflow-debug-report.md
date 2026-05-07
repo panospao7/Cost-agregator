@@ -1419,7 +1419,8 @@ Second guiding rule:
 **STATUS: CONFIRMED — NOT FIXED (requires currency normalization)**
 
 ## Finding P0-8 — Forecast confidence ignores currency conversion failures
-**STATUS: CONFIRMED — NOT FIXED (requires SynthesisEngine + AnalyticsCurrencyNormalizer integration)**
+**STATUS: CONFIRMED — PARTIALLY FIXED — P1-3 (ARCH-02 Stage 1)**
+- ForecastDataQuality data class created and added as additive field to ForecastInput. Assembler population + consumer confidence degradation deferred to Stage 2.
 
 ## Finding P0-9 — FinancialWeatherRepository may bypass manual recurring occurrence generation
 **STATUS: CONFIRMED — NOT FIXED (requires investigation of assembler interaction)**
@@ -1435,6 +1436,10 @@ Second guiding rule:
 **STATUS: CONFIRMED — PARTIALLY FIXED**
 - `BudgetRepository.addBudget()` now sets `createdAt = timeProvider.now()` when the budget's `createdAt` is the sentinel value `0L`.
 - Budget currency default (`EUR`) remains as a schema default; the UI should set the proper currency at creation time.
+
+## Finding P1-6 — Stress forecast is not true cash-balance forecast
+**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH Stage 1)**
+- StressForecastMode enum design sketched; full mode separation and UI narrative deferred to Stage 2.
 
 ---
 

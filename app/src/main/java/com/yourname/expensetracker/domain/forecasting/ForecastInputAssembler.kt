@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.domain.forecasting
 
+// TODO (P6-P1-3): Extend ForecastInput with conversionQuality field so forecast
+// confidence can be reduced when currency normalization is partial.
+
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
@@ -115,7 +118,8 @@ class ForecastInputAssembler @Inject constructor(
          * WEEKLY/BIWEEKLY counts from a single [RecurringPattern.nextExpectedDate].
          */
         val confirmedOccurrences: List<ConfirmedOccurrence> = emptyList(),
-        val displayCurrency: String = ""
+        val displayCurrency: String = "",
+        val dataQuality: ForecastDataQuality = ForecastDataQuality()
     )
 
     fun mapExpenseSnapshots(

@@ -68,8 +68,9 @@ android {
                 showCauses = true
                 showStackTraces = true
                 exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-            }
-        }
+    }
+}
+
     }
 }
 
@@ -381,3 +382,6 @@ tasks.register("verifyNoIgnoredGrowth") {
         }
     }
 }
+
+// TODO: Add CI guard that fails if production code calls deprecated raw aggregation
+// methods (e.g., getTotalSpentBetween, getTotalSpent) via grep/lint rule.

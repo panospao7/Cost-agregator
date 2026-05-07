@@ -50,7 +50,8 @@ object CostbackupBundle {
         val includes: BackupIncludes = BackupIncludes(),
         val tableCounts: Map<String, Int> = emptyMap(),
         val receiptAssetCount: Int = 0,
-        val options: BackupOptionsManifest = BackupOptionsManifest()
+        val options: BackupOptionsManifest = BackupOptionsManifest(),
+        val privacyMode: String? = null
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
             put("backupFormatVersion", backupFormatVersion)
@@ -60,6 +61,7 @@ object CostbackupBundle {
             put("tableCounts", JSONObject(tableCounts))
             put("receiptAssetCount", receiptAssetCount)
             put("options", options.toJson())
+            put("privacyMode", privacyMode)
         }
 
         companion object {
@@ -78,7 +80,8 @@ object CostbackupBundle {
                 } ?: emptyMap(),
                 receiptAssetCount = json.optInt("receiptAssetCount", 0),
                 options = json.optJSONObject("options")?.let { BackupOptionsManifest.fromJson(it) }
-                    ?: BackupOptionsManifest()
+                    ?: BackupOptionsManifest(),
+                privacyMode = json.optString("privacyMode", null)
             )
         }
     }

@@ -1,3 +1,7 @@
+// TODO (P8-P1-5): Expand retention scope to cover AI artifacts (AiArtifactDao),
+// chat messages (AiChatMessageDao), debug diagnostics (ServiceDiagnostics),
+// and email receipt sources (EmailReceiptDao) beyond just raw OCR text.
+
 package com.yourname.expensetracker.data.privacy
 
 import android.content.Context

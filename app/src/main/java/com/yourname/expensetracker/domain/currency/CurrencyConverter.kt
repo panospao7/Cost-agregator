@@ -71,6 +71,7 @@ class CurrencyConverter @Inject constructor(
 ) {
     companion object {
         const val DEFAULT_BASE_CURRENCY = "EUR"
+        const val MAX_RATE_AGE_MS = 24 * 60 * 60 * 1000L  // 24 hours
     }
 
     /**
@@ -116,14 +117,20 @@ class CurrencyConverter @Inject constructor(
         )
 
         if (directRate != null) {
-            return@withContext ConversionResult(
-                originalAmount = amount,
-                originalCurrency = fromCurrency,
-                convertedAmount = amount * directRate.rate,
-                targetCurrency = toCurrency,
-                rateUsed = directRate.rate,
-                timestamp = directRate.lastUpdated
-            )
+            // Check staleness — if the rate is older than the threshold, treat as unavailable
+            val now = timeProvider.now()
+            if ((now - directRate.lastUpdated) > MAX_RATE_AGE_MS) {
+                Timber.d("Rate from %s to %s is stale (last updated %d ms ago)", fromCurrency, toCurrency, now - directRate.lastUpdated)
+            } else {
+                return@withContext ConversionResult(
+                    originalAmount = amount,
+                    originalCurrency = fromCurrency,
+                    convertedAmount = amount * directRate.rate,
+                    targetCurrency = toCurrency,
+                    rateUsed = directRate.rate,
+                    timestamp = directRate.lastUpdated
+                )
+            }
         }
 
         // Try via EUR as intermediate
@@ -137,15 +144,21 @@ class CurrencyConverter @Inject constructor(
         )
 
         if (toEurRate != null && fromEurRate != null) {
-            val combinedRate = toEurRate.rate * fromEurRate.rate
-            return@withContext ConversionResult(
-                originalAmount = amount,
-                originalCurrency = fromCurrency,
-                convertedAmount = amount * combinedRate,
-                targetCurrency = toCurrency,
-                rateUsed = combinedRate,
-                timestamp = maxOf(toEurRate.lastUpdated, fromEurRate.lastUpdated)
-            )
+            // Check staleness — if either leg is stale, treat the composite as unavailable
+            val now = timeProvider.now()
+            if ((now - toEurRate.lastUpdated) > MAX_RATE_AGE_MS || (now - fromEurRate.lastUpdated) > MAX_RATE_AGE_MS) {
+                Timber.d("Composite rate via EUR is stale for %s -> %s", fromCurrency, toCurrency)
+            } else {
+                val combinedRate = toEurRate.rate * fromEurRate.rate
+                return@withContext ConversionResult(
+                    originalAmount = amount,
+                    originalCurrency = fromCurrency,
+                    convertedAmount = amount * combinedRate,
+                    targetCurrency = toCurrency,
+                    rateUsed = combinedRate,
+                    timestamp = maxOf(toEurRate.lastUpdated, fromEurRate.lastUpdated)
+                )
+            }
         }
 
         Timber.w("No exchange rate available for $fromCurrency to $toCurrency")

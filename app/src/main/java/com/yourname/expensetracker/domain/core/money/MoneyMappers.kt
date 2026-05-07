@@ -75,6 +75,9 @@ fun MultiConversionAggregate.toMoneyAggregate(
 
 // ── FailedConversion (old) → ConversionFailure (new) ───────────────────
 
+// TODO: When CurrencyConverter returns a richer result type (e.g. sealed class
+//       with Stale/Missing variants), map stale vs missing here.
+//       For now, stale rates are treated as missing (convert() returns null for both).
 /** Map an old FailedConversion to the new ConversionFailure type. */
 fun FailedConversion.toConversionFailure(): ConversionFailure =
     ConversionFailure(

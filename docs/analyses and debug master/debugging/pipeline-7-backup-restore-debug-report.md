@@ -1540,7 +1540,9 @@ Second guiding rule:
 **STATUS: CONFIRMED — NOT FIXED (requires staged verification enhancement)**
 
 ## Finding P0-7 — Redacted backup may include raw receipt images
-**STATUS: CONFIRMED — NOT FIXED (requires privacy audit of image handling in CostbackupBundle)**
+**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-03 Stage 1)**
+- BackupPrivacyMode enum created (FULL_ENCRYPTED, DB_TEXT_REDACTED, DB_REDACTED_NO_IMAGES, ANONYMIZED_EXPORT) and added as manifest field.
+- Full enforcement of mode constraints (stripping images when mode < FULL_ENCRYPTED) in CostbackupBundle deferred to Stage 2.
 
 ## Finding P0-8 — Bundle encryption reads large files into memory
 **STATUS: CONFIRMED — NOT FIXED (requires streaming encryption implementation)**

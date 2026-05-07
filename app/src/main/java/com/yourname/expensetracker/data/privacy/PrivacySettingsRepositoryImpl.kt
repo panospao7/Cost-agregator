@@ -94,6 +94,9 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
             prefs[Keys.RAW_OCR_RETENTION_DAYS] = updated.rawOcrRetentionDays
             prefs[Keys.DEBUG_DATA_PERSISTENCE_ENABLED] = updated.debugDataPersistenceEnabled
         }
+        // TODO (P8-P1-4): When privacy settings change, immediately cancel active workers
+        // and stop capture services at runtime instead of waiting for app restart.
+        // See: WorkerSpecScheduler.cancelUniqueWork(), NotificationCaptureService lifecycle.
     }
 
     private fun Preferences.toPrivacySettings(): PrivacySettings = PrivacySettings(

@@ -434,6 +434,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      * @param redacted Whether to sanitize sensitive data (default: true)
      * @return Result containing the .costbackup File
      */
+    // TODO (P8-P1-6): Define explicit backup privacy modes:
+    // - Full encrypted backup (all data + images)
+    // - Redacted DB only (no raw text, but images still included if requested)
+    // - Redacted DB + no images
+    // - Public anonymized export
+    // Do not call a backup "redacted" if receipt images are still included.
     override suspend fun createCostBackup(
         password: String,
         includeReceiptImages: Boolean,

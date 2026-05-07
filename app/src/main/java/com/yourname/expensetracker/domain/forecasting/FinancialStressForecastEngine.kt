@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.domain.forecasting
 
+// TODO (P6-P1-6): Expose StressForecastMode (NEUTRAL_BASELINE / USER_BALANCE)
+// and label output as "stress index", not "cash balance forecast".
+
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.repository.BudgetRepository

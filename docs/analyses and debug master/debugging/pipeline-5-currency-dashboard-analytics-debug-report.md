@@ -1346,6 +1346,20 @@ Second guiding rule:
 **STATUS: CONFIRMED — FIXED (see Pipeline 2 P1-5)**
 - `TransactionLifecycleCoordinator` now reads home currency from `CurrencySettingsRepository`.
 
+## Finding P1-3 — Exchange-rate staleness is not part of conversion failure contract
+
+### Post-evaluation fix (2026-05-06):
+- **FIXED — P1-3 (Stage 1)**: CurrencyConverter.convert() now checks rate.lastUpdated
+  against 24h staleness threshold before using a rate. Stale rates fall through to
+  fallback paths (EUR cross-rate). Historical convertAsOf() is exempt.
+  Full ConversionPolicy with configurable thresholds deferred to Stage 2.
+
+## Finding P1-5 — Deprecated raw DAO totals still exist and can be accidentally reused
+**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-01 Stage 1)**
+
+## Finding P1-6 — Analytics data quality exists but is not necessarily surfaced
+**STATUS: CONFIRMED — PARTIALLY FIXED (ARCH-02 Stage 1)**
+
 ---
 
 # 12. New issues discovered
