@@ -16,6 +16,9 @@ import javax.inject.Singleton
 /**
  * Summary of spending for a given time period, used by the analytics screen
  * and the dashboard to display trends and comparisons.
+ *
+ * TODO (A05): Add dataQuality: DataQualityReport? and isPartial: Boolean to SpendingSummary.
+ * Populate from currentAggregate.conversionFailures.
  */
 data class SpendingSummary(
     val totalSpent: Double,
@@ -38,6 +41,9 @@ data class LocationSpendSummary(
     val unlocatedCount: Int
 )
 
+// TODO (W12): Add MoneyAggregate field alongside raw Double.
+// Current totalSpend: Double can mix currencies.
+// Add totalSpendAggregate: MoneyAggregate? field.
 data class LocationMerchantStat(
     val merchant: String,
     val totalSpend: Double,
@@ -219,6 +225,8 @@ class AnalyticsRepository @Inject constructor(
 
     // ── Location-aware analytics (v28) ────────────────────────────────────────
 
+    // TODO (A14): Use MoneyAggregate for multi-currency safety.
+    // Currently raw-sums merchant totals from DAO across potentially mixed currencies.
     /**
      * Returns a summary of spending grouped by located vs un-located expenses,
      * and the top merchants that have been geocoded.

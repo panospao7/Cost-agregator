@@ -16,6 +16,8 @@ import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
+// TODO (W35): Add destroy() called from ViewModel onCleared.
+// Handle already-listening, partial results, timeout, permission revoked.
 @Singleton
 class AndroidSpeechInputGateway @Inject constructor(
     @ApplicationContext private val context: Context

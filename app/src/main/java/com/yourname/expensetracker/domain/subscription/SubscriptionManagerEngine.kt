@@ -418,6 +418,9 @@ class SubscriptionManagerEngine @Inject constructor(
      * SEMI_ANNUALLY and ANNUALLY frequencies are correctly represented as a
      * monthly cost rather than using the raw per-period amount.
      */
+    // TODO (W06): Return MoneyAggregate with per-currency buckets.
+    // Currently raw-sums amounts from potentially multiple currencies.
+    // Group by currency, wrap in MoneyAggregate.
     suspend fun getTotalMonthlySubscriptionCost(): Double {
         val subscriptions = getAllSubscriptions()
         var total = 0.0

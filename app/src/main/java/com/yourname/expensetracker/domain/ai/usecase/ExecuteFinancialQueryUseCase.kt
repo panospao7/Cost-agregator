@@ -158,6 +158,8 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         period: PeriodRange
     ): FinancialQueryResult {
         val matching = assistantFilteredExpenses(intent, period)
+        // TODO (W32): Normalize amounts to home currency before maxByOrNull.
+        // Currently compares raw mixed-currency amounts.
         val largest = matching.expenses.maxByOrNull { it.expense.effectiveAmount }
             ?: return FinancialQueryResult.Unsupported("No matching transactions found")
 

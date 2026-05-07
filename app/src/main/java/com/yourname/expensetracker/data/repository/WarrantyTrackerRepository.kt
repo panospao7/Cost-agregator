@@ -151,6 +151,9 @@ class WarrantyTrackerRepository @Inject constructor(
 
     suspend fun getActiveWarrantyCount(): Int = warrantyDao.getActiveWarrantyCount(timeProvider.now())
     
+    // TODO (W01): Return MoneyAggregate instead of raw Double.
+    // Current DAO sums raw amounts across potentially mixed currencies.
+    // Change WarrantyDao to return per-currency totals, wrap in MoneyAggregate.
     suspend fun getTotalProtectedValue(): Double =
         warrantyDao.getTotalProtectedValue(timeProvider.now()) ?: 0.0
     

@@ -32,6 +32,9 @@ import kotlin.math.sqrt
  * - anomalyFrequency: how often anomalies are detected
  * 
  * Rule-based v1 (transparent), optional ML later.
+ *
+ * TODO (A04): Verified SAFE — all monetary values have been normalized via
+ * AnalyticsCurrencyNormalizer before reaching this classifier. No code change needed.
  */
 @Singleton
 class SpendingPersonalityClassifier @Inject constructor(

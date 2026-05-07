@@ -3,6 +3,11 @@ package com.yourname.expensetracker.domain.core.time
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.time.ZoneId
 
+// TODO (M04): Use java.time.ZonedDateTime instead of Calendar.getInstance().
+// Current implementation computes in system TZ but records caller zone.
+// TODO (M12): Rename LAST_7_DAYS semantics explicitly.
+// LAST_7_CALENDAR_DAYS_INCLUDING_TODAY vs TRAILING_7_DAYS_TO_NOW.
+
 /**
  * Semantic classification of time periods used throughout the app.
  *

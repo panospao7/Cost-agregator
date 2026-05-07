@@ -337,6 +337,7 @@ class SubscriptionManagementViewModel @Inject constructor(
                     else -> RecurrenceFrequency.MONTHLY
                 }
                 
+                // TODO (W23): Use RecurrenceCalculator.nextOccurrence() instead of fixed day offsets.
                 // Create subscription from candidate
                 val subscription = ManualRecurringExpense(
                     merchant = candidate.merchant,

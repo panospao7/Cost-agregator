@@ -14,6 +14,10 @@ import javax.inject.Singleton
  * 
  * Replaces hardcoded tax rates with TaxConfiguration for country-specific rates.
  * Supports multiple tax systems and can be extended for per-user configuration.
+ *
+ * TODO (T01/T06): Use MoneyAggregate for multi-currency safety.
+ * Currently raw-sums deductible expenses, income, and VAT across potentially
+ * mixed currencies. Wrap per-currency totals in MoneyAggregate.
  */
 @Singleton
 class TaxEstimator @Inject constructor(

@@ -100,6 +100,8 @@ class SpendingHeatmapEngine @Inject constructor() {
             val lonBucket = floor(expense.longitude / CLUSTER_RADIUS_DEG).toLong()
             val cell = GridCell(latBucket, lonBucket)
             val acc = cells.getOrPut(cell) { Accumulator() }
+            // TODO (W29): Normalize amounts to home currency before summing.
+            // Current raw-sum can mix currencies. Use MoneyAggregate or pre-normalized amounts.
             acc.totalSpend += expense.amount
             acc.count += 1
             acc.latSum += expense.latitude

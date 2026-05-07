@@ -6,6 +6,10 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+// TODO (W03): Add WarrantyLifecycleEvent entity for audit trail.
+// Schema: id, warrantyId, eventType (CREATED/CLAIMED/EXPIRED/EXTENDED), occurredAt, description, metadata
+// Migration: new table + index on (warrantyId, occurredAt)
+
 /**
  * WRN-5-FIXED: The `receiptId` FK now uses SET_NULL (was CASCADE before migration 108→109).
  * Deleting a receipt preserves warranty records. receiptId is nullable to allow orphaned

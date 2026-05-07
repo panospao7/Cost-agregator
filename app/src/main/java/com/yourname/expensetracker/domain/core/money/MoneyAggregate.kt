@@ -18,6 +18,9 @@ package com.yourname.expensetracker.domain.core.money
  * 2. If [isPartial], show a warning like "Total excludes N transactions due to missing rates"
  * 3. Optionally show [sourceBuckets] for per-currency detail
  *
+ * TODO (M07): Include transactionCount in ConversionFailure.
+ * Expose failedBucketCount and failedTransactionCount for accurate diagnostics.
+ *
  * @see MoneyAmount The single-currency counterpart for non-aggregated values.
  */
 data class MoneyAggregate(

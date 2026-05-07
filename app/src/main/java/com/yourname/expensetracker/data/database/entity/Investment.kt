@@ -8,6 +8,10 @@ import androidx.room.PrimaryKey
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
 
+// TODO (I04): Add InvestmentTransaction table for multi-lot support.
+// Schema: id, holdingId, type (BUY/SELL/DIVIDEND), quantity, pricePerUnit, totalAmount, currency, fee, date
+// Migration: new table + index on (holdingId, date)
+
 /**
  * Represents an investment (stock, crypto, bond, etc.).
  */

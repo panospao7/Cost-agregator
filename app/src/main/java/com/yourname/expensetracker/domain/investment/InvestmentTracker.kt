@@ -40,6 +40,8 @@ class InvestmentTracker @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
     
+    // TODO (I01): Return MoneyAggregate with per-currency buckets.
+    // Currently raw-sums portfolio totals across currencies.
     /**
      * Get complete portfolio summary.
      */

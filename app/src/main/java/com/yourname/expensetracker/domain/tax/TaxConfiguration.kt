@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.domain.tax
 
+// TODO (T03): Add TaxSettings entity with selectedCountry, filingCurrency, fiscalYearStart.
+// Currently tax configuration is hardcoded/not persisted.
+
 /**
  * HIGH FIX (HIGH-6): Tax rate configuration to replace hardcoded values.
  * 

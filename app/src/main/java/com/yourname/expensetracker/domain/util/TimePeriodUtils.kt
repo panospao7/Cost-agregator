@@ -9,6 +9,9 @@ import java.util.Calendar
 import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.core.time.PeriodRange
 
+// TODO (M11): Create separate getIsoWeekNumber() and getAppCalendarWeekNumber() methods.
+// Currently mixes ISO and non-ISO week rules.
+
 /**
  * Canonical owner of all shared calendar boundary math for the ExpenseTracker app.
  *
