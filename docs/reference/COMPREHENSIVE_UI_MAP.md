@@ -2,7 +2,7 @@
 
 **Refreshed**: May 7, 2026  
 **Scope**: Current frontend inventory including screens, components, navigation, integration, and theming
-**Total Files**: 154 UI source files (38 ViewModels, 59 components)
+**Total Files**: 154 UI source files (39 ViewModels, 58 components)
 
 ---
 
@@ -1131,10 +1131,10 @@ All screens are currently navigated to via NavigationDestination. No orphaned sc
 | **Overlay Screens** | 6 |
 | **Management Screens** | 4 |
 | **Debug Screens** | 5 |
-| **Total Screen Files** | 35 packages, ~90 files |
-| **Component Files** | 59 |
+| **Total Screen Files** | 35 packages, 81 files |
+| **Component Files** | 58 |
 | **Total UI Files** | 154 |
-| **ViewModels** | 38 |
+| **ViewModels** | 39 (incl. MainViewModel) |
 | **Dialog/Sheet Variants** | 20+ |
 | **Deep Link Hosts** | 8 |
 | **UI Mapper Files** | 3 |

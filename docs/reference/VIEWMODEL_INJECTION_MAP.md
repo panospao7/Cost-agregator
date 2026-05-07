@@ -1,7 +1,7 @@
 # ExpenseTracker ViewModel Injection Reference
 
 **Generated:** May 7, 2026  
-**Total ViewModels:** 38  
+**Total ViewModels:** 39 (38 screen ViewModels + MainViewModel)  
 **Architecture:** Hilt @HiltViewModel with constructor injection
 
 ---
@@ -245,7 +245,7 @@
 |-----------|-------|------------|
 | 🔴 High (10+) | 4 | HomeViewModel, ReviewViewModel, AnalyticsViewModel, ReceiptScanViewModel |
 | 🟡 Medium (3-9) | 12 | TransactionsViewModel, BudgetViewModel, SavingsGoalsViewModel, CashFlowCalendarViewModel, CurrencyManagementViewModel, ExportOptionsViewModel, SharedExpenseGroupsViewModel, BudgetForecastingViewModel, NaturalLanguageSearchViewModel, SpendingChallengesViewModel, DebugViewModel, BillNegotiationViewModel |
-| 🟢 Low (1-2) | 22 | AddExpenseViewModel, SpendingMapViewModel, AssistantViewModel, ManualRecurringExpenseViewModel, RecurringExpensesViewModel, CarbonFootprintViewModel, WarrantyTrackerViewModel, etc. |
+| 🟢 Low (1-2) | 23 | AddExpenseViewModel, SpendingMapViewModel, AssistantViewModel, ManualRecurringExpenseViewModel, RecurringExpensesViewModel, CarbonFootprintViewModel, WarrantyTrackerViewModel, MainViewModel, etc. |
 
 ### Most-Injected Dependencies
 

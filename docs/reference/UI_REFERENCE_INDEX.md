@@ -164,7 +164,7 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 
 ---
 
-## 📊 COMPONENT INVENTORY (59 Components)
+## 📊 COMPONENT INVENTORY (58 Components)
 
 ### Dashboard Widgets (Home Screen)
 - TotalsDashboardCard
@@ -231,7 +231,7 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 - PulseDot (status indicator)
 - BentoCard
 
-**Total**: 59 component files
+**Total**: 58 component files
 
 ---
 
@@ -353,9 +353,9 @@ Scaffold(
 | Metric | Count |
 |--------|-------|
 | Screen Packages | 35 |
-| Screen Files | ~90 |
-| Component Files | 59 |
-| ViewModels | 38 |
+| Screen Files | 81 |
+| Component Files | 58 |
+| ViewModels | 39 (incl. MainViewModel) |
 | Dialog/Sheet Variants | 20+ |
 | Feature Destinations | 23 |
 | Management Screens | 4 |
@@ -534,7 +534,7 @@ Column {
 
 ## 📝 SUMMARY
 
-**Total UI Files**: 154  
+**Total UI Files**: 154 (81 screen files, 58 components, 3 mappers, 4 utils, 5 nav/theme, 3 integration)  
 **Architecture**: Pure Compose with type-safe navigation  
 **Color Scheme**: Midnight Navy with semantic tokens  
 **Features**: 23 config-driven features + 4 management screens  

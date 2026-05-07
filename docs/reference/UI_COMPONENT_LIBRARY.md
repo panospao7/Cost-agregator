@@ -1,7 +1,7 @@
 # ExpenseTracker UI Component Library
 
 **Generated:** May 7, 2026  
-**Total Components:** 59 across 7 categories + root level  
+**Total Components:** 58 across 7 categories + root level  
 **Framework:** Jetpack Compose with Material 3
 
 ---
