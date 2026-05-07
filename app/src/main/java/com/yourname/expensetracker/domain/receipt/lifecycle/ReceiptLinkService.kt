@@ -226,6 +226,13 @@ class ReceiptLinkService @Inject constructor(
                     if (bestCategoryId != null) {
                         val existingExpense = expenseDao.getById(expenseId)
                         if (existingExpense != null && existingExpense.categoryId == null) {
+                            // C1 LIFECYCLE NOTE: This direct DAO call intentionally bypasses
+                            // TransactionLifecycleCoordinator.updateCategory().
+                            // Cannot inject the coordinator due to circular dependency:
+                            //   TransactionLifecycleCoordinator → ReceiptLinkService (via side effects)
+                            //   ReceiptLinkService → TransactionLifecycleCoordinator (would create cycle)
+                            // This is best-effort, inside runCatching, and only runs when
+                            // categoryId is null (first-time category assignment from receipt items).
                             expenseDao.updateCategory(expenseId, bestCategoryId)
                             Timber.i(
                                 "RCP-30: Propagated item category %d to expense %d",

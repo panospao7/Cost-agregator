@@ -75,16 +75,25 @@ enum class OwnershipFilter {
  * - updateExpenseCategoryBulk → coordinator.bulkUpdateCategory()
  * - updateExpenseMerchantBulk → coordinator.bulkUpdateMerchant()
  *
- * ### STILL BYPASSING (direct ExpenseDao calls, no lifecycle events):
- * - conditionallySetLocation, clearExpenseLocation (backfill worker — intentionally not routed)
- * - incrementBackfillAttempts (counter — backfill worker)
- * - updateMerchantKey (backfill worker — intentionally not routed)
+ * ### STILL BYPASSING (intentional — all backfill-worker methods):
+ * - conditionallySetLocation, clearExpenseLocation — called by LocationBackfillWorker
+ * - incrementBackfillAttempts — dead-letter counter for backfill retries
+ * - updateMerchantKey — called by MerchantKeyBackfillWorker
+ *   Each touches 1-2 columns; writing UPDATED events per row from background
+ *   workers would flood transaction_events with low-value noise.
  *
- * ### ALSO BYPASSING IN OTHER FILES:
- * - ReceiptLinkService.linkReceiptToExpense() — RCP-30 category propagation (runCatching)
- * - GroupTransactionCoordinator — shared-expense flags clearing + ownership normalization
+ * ### INTENTIONALLY NOT ROUTED (design constraints, not bugs):
+ * - ReceiptLinkService.linkReceiptToExpense() RCP-30 — best-effort category
+ *   propagation inside runCatching. Cannot use coordinator.updateCategory()
+ *   due to circular dependency (TransactionLifecycleCoordinator → ReceiptLinkService
+ *   via side effects, so ReceiptLinkService → Coordinator would create a cycle).
+ * - GroupTransactionCoordinator.clearSharedExpenseFlags — post-commit cleanup
+ *   after group deletion; not a user-initiated edit.
+ * - GroupTransactionCoordinator.normalizeLinkedSystemExpense — atomic part of
+ *   group expense creation transaction; lifecycle event is written by the
+ *   createExpense() call in the same flow.
  *
- * Total: 7 remaining bypass sites across 3 files.
+ * Total: 7 remaining (all intentional/backfill).
  * See docs/analyses and debug master/debugging/pipeline-2-transaction-lifecycle-debug-report.md
  * for the full inventory and migration plan.
  */
