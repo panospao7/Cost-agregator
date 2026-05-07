@@ -45,9 +45,7 @@ data class LocationSpendSummary(
     val unlocatedCount: Int
 )
 
-// TODO (W12): Add MoneyAggregate field alongside raw Double.
-// Current totalSpend: Double can mix currencies.
-// Add totalSpendAggregate: MoneyAggregate? field.
+// A14: aggregate + currency fields added below on LocationMerchantStat.
 data class LocationMerchantStat(
     val merchant: String,
     val totalSpend: Double,

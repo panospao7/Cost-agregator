@@ -39,8 +39,15 @@ data class MoneyAggregate(
     val totalTransactionCount: Int
         get() = sourceBuckets.sumOf { it.transactionCount }
 
-    /** Number of transactions that failed conversion. */
+    /**
+     * Number of conversion failures (not failed transactions — one failure may affect multiple transactions).
+     * For accurate per-transaction diagnostics, use [ConversionFailure.transactionCount].
+     */
     val failedTransactionCount: Int
+        get() = conversionFailures.size
+
+    /** Number of source buckets that failed conversion (same as [conversionFailures].size). */
+    val failedBucketCount: Int
         get() = conversionFailures.size
 
     /** Whether all source buckets are in the same currency (no conversion needed). */

@@ -126,7 +126,7 @@ class InvestmentTracker @Inject constructor(
             MoneyBucket(CurrencyCode(ccy), value, 0)
         }
         val aggregate = if (sourceBuckets.size == 1) {
-            MoneyAggregate.singleCurrency(sourceBuckets[0].amount, sourceBuckets[0].currency, byCurrency.values.sumOf { 1 }.toInt())
+            MoneyAggregate.singleCurrency(sourceBuckets[0].amount, sourceBuckets[0].currency, holdings.size)
         } else {
             MoneyAggregate(
                 displayAmount = sourceBuckets.sumOf { it.amount },

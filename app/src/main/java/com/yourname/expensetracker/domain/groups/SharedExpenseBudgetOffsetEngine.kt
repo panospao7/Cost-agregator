@@ -105,9 +105,8 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                 (categoryId == null || expense.categoryId == categoryId)
         }
 
-        // G07: convertMultiple uses convert() (current rates) internally.
-        // Use per-expense convertAsOf(amount, from, to, atMillis=expense.date)
-        // for historical accuracy when the budget period is in the past.
+        // TODO (G07): Use convertAsOf(amount, from, to, atMillis=expense.date) instead of convert()
+        // which fetches the latest rate. Historical reports need historical rates.
         val personalPairs = personalExpenses.map { Pair(it.effectiveAmount, it.currency) }
         val personalResult = currencyConverter.convertMultiple(personalPairs, homeCurrency)
         val totalPersonalSpend = personalResult.total

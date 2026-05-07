@@ -55,7 +55,10 @@ enum class PeriodKind {
     /** Monday-start previous calendar week. */
     LAST_WEEK,
 
-    /** Last 7 calendar days including today. */
+    /**
+     * Last 7 calendar days including today (e.g., if today is Wednesday, shows data through today).
+     * For trailing 7 complete days ending at midnight, use a custom CUSTOM period instead.
+     */
     LAST_7_DAYS,
 
     /** Current calendar month (1st to 1st of next month). */

@@ -35,9 +35,28 @@ interface MileageTrackingDao {
     @Query("SELECT SUM(distanceKm) FROM mileage_tracking WHERE isBusinessTrip = 1 AND date >= :startDate AND date < :endDate")
     suspend fun getTotalBusinessDistanceBetween(startDate: Long, endDate: Long): Double?
     
-    // T02: Use CASE fallback: SUM(CASE WHEN calculatedDeduction IS NULL THEN distanceKm * :rate ELSE calculatedDeduction END).
+    /** @deprecated Use [getTotalDeductionWithFallback] which handles NULL calculatedDeduction via CASE. */
+    @Deprecated(
+        message = "Use getTotalDeductionWithFallback which accounts for NULL calculatedDeduction values",
+        replaceWith = ReplaceWith(
+            "getTotalDeductionWithFallback(startDate, endDate, ratePerKm)",
+            "com.yourname.expensetracker.data.database.dao.MileageTrackingDao.getTotalDeductionWithFallback"
+        )
+    )
     @Query("SELECT SUM(calculatedDeduction) FROM mileage_tracking WHERE isBusinessTrip = 1 AND date >= :startDate AND date < :endDate")
     suspend fun getTotalDeductionBetween(startDate: Long, endDate: Long): Double?
+
+    @Query("""
+        SELECT COALESCE(SUM(
+            CASE 
+                WHEN calculatedDeduction IS NOT NULL THEN calculatedDeduction 
+                ELSE distanceKm * :ratePerKm 
+            END
+        ), 0.0) 
+        FROM mileage_tracking 
+        WHERE isBusinessTrip = 1 AND date >= :startDate AND date < :endDate
+    """)
+    suspend fun getTotalDeductionWithFallback(startDate: Long, endDate: Long, ratePerKm: Double): Double
     
     @Query("SELECT * FROM mileage_tracking WHERE linkedExpenseId = :expenseId")
     suspend fun getMileageForExpense(expenseId: Long): List<MileageTracking>

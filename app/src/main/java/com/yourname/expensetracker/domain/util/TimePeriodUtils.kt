@@ -10,7 +10,7 @@ import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.core.time.PeriodRange
 
 // TODO (M11): Create separate getIsoWeekNumber() and getAppCalendarWeekNumber() methods.
-// Currently mixes ISO and non-ISO week rules.
+// Currently returns ISO week numbers which may disagree with calendar-app week displays.
 
 /**
  * Canonical owner of all shared calendar boundary math for the ExpenseTracker app.

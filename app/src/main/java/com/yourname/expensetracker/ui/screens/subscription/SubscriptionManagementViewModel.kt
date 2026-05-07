@@ -337,7 +337,8 @@ class SubscriptionManagementViewModel @Inject constructor(
                     else -> RecurrenceFrequency.MONTHLY
                 }
                 
-                // TODO (W23): Use RecurrenceCalculator.nextOccurrence() instead of fixed day offsets.
+                // TODO (W23): Use RecurrenceCalculator.nextOccurrence() instead of adding fixed day offsets.
+                // Fixed offsets (30 days, 90 days, 365 days) don't account for variable month lengths.
                 // Create subscription from candidate
                 val subscription = ManualRecurringExpense(
                     merchant = candidate.merchant,
