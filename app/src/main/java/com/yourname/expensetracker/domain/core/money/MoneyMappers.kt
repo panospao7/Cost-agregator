@@ -54,10 +54,14 @@ fun MultiConversionAggregate.toMoneyAggregate(
     sourceBuckets: List<MoneyBucket> = emptyList()
 ): MoneyAggregate {
     val failures = failedConversions.map { oldFailure ->
+        val reason = when (oldFailure.failureType) {
+            FailedConversion.STALE_RATE -> FailureReason.RATE_STALE
+            else -> FailureReason.MISSING_RATE
+        }
         ConversionFailure(
             originalAmount = MoneyAmount(oldFailure.originalAmount, CurrencyCode(oldFailure.originalCurrency)),
             targetCurrency = CurrencyCode(targetCurrency),
-            reason = FailureReason.MISSING_RATE
+            reason = reason
         )
     }
 
@@ -75,13 +79,15 @@ fun MultiConversionAggregate.toMoneyAggregate(
 
 // ── FailedConversion (old) → ConversionFailure (new) ───────────────────
 
-// TODO: When CurrencyConverter returns a richer result type (e.g. sealed class
-//       with Stale/Missing variants), map stale vs missing here.
-//       For now, stale rates are treated as missing (convert() returns null for both).
 /** Map an old FailedConversion to the new ConversionFailure type. */
-fun FailedConversion.toConversionFailure(): ConversionFailure =
-    ConversionFailure(
+fun FailedConversion.toConversionFailure(): ConversionFailure {
+    val reason = when (failureType) {
+        FailedConversion.STALE_RATE -> FailureReason.RATE_STALE
+        else -> FailureReason.MISSING_RATE
+    }
+    return ConversionFailure(
         originalAmount = MoneyAmount(originalAmount, CurrencyCode(originalCurrency)),
         targetCurrency = CurrencyCode(targetCurrency),
-        reason = FailureReason.MISSING_RATE
+        reason = reason
     )
+}

@@ -53,8 +53,14 @@ data class FailedConversion(
     val originalAmount: Double,
     val originalCurrency: String,
     val targetCurrency: String,
-    val reason: String
-)
+    val reason: String,
+    val failureType: String = "MISSING_RATE"
+) {
+    companion object {
+        const val MISSING_RATE = "MISSING_RATE"
+        const val STALE_RATE = "STALE_RATE"
+    }
+}
 
 data class MultiConversionAggregate(
     val total: Double,
@@ -120,7 +126,7 @@ class CurrencyConverter @Inject constructor(
             // Check staleness — if the rate is older than the threshold, treat as unavailable
             val now = timeProvider.now()
             if ((now - directRate.lastUpdated) > MAX_RATE_AGE_MS) {
-                Timber.d("Rate from %s to %s is stale (last updated %d ms ago)", fromCurrency, toCurrency, now - directRate.lastUpdated)
+                Timber.d("Rate from %s to %s is %s (last updated %d ms ago)", fromCurrency, toCurrency, FailedConversion.STALE_RATE, now - directRate.lastUpdated)
             } else {
                 return@withContext ConversionResult(
                     originalAmount = amount,
@@ -147,7 +153,7 @@ class CurrencyConverter @Inject constructor(
             // Check staleness — if either leg is stale, treat the composite as unavailable
             val now = timeProvider.now()
             if ((now - toEurRate.lastUpdated) > MAX_RATE_AGE_MS || (now - fromEurRate.lastUpdated) > MAX_RATE_AGE_MS) {
-                Timber.d("Composite rate via EUR is stale for %s -> %s", fromCurrency, toCurrency)
+                Timber.d("Composite rate via EUR is %s for %s -> %s", FailedConversion.STALE_RATE, fromCurrency, toCurrency)
             } else {
                 val combinedRate = toEurRate.rate * fromEurRate.rate
                 return@withContext ConversionResult(
@@ -161,7 +167,7 @@ class CurrencyConverter @Inject constructor(
             }
         }
 
-        Timber.w("No exchange rate available for $fromCurrency to $toCurrency")
+        Timber.w("No exchange rate available for $fromCurrency to $toCurrency (%s)", FailedConversion.MISSING_RATE)
         null
     }
 
@@ -261,13 +267,32 @@ class CurrencyConverter @Inject constructor(
             if (converted != null) {
                 total += converted.convertedAmount
             } else {
+                // Determine whether failure was due to stale rate or missing rate
+                val now = timeProvider.now()
+                val directRate = exchangeRateStore.getRate(currency.uppercase(), targetCurrency.uppercase())
+                val isStale = if (directRate != null) {
+                    (now - directRate.lastUpdated) > MAX_RATE_AGE_MS
+                } else {
+                    // Check EUR-composite legs for staleness when direct rate absent
+                    val toEur = exchangeRateStore.getRate(currency.uppercase(), DEFAULT_BASE_CURRENCY)
+                    val fromEur = exchangeRateStore.getRate(DEFAULT_BASE_CURRENCY, targetCurrency.uppercase())
+                    toEur != null && fromEur != null &&
+                        ((now - toEur.lastUpdated) > MAX_RATE_AGE_MS || (now - fromEur.lastUpdated) > MAX_RATE_AGE_MS)
+                }
+                val failureType = if (isStale) FailedConversion.STALE_RATE else FailedConversion.MISSING_RATE
+                val reason = if (isStale) {
+                    "Stale exchange rate from ${currency.uppercase()} to ${targetCurrency.uppercase()}"
+                } else {
+                    "Missing exchange rate from ${currency.uppercase()} to ${targetCurrency.uppercase()}"
+                }
                 failures += FailedConversion(
                     originalAmount = amount,
                     originalCurrency = currency,
                     targetCurrency = targetCurrency,
-                    reason = "Missing exchange rate from ${currency.uppercase()} to ${targetCurrency.uppercase()}"
+                    reason = reason,
+                    failureType = failureType
                 )
-                Timber.w("Could not convert $amount $currency to $targetCurrency")
+                Timber.w("Could not convert $amount $currency to $targetCurrency ($failureType)")
             }
         }
 

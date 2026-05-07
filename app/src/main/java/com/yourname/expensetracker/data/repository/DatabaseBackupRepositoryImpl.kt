@@ -15,6 +15,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.backup.BackupPrivacyMode
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
 import com.yourname.expensetracker.domain.backup.DatabaseImportSummary
@@ -434,18 +435,17 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      * @param redacted Whether to sanitize sensitive data (default: true)
      * @return Result containing the .costbackup File
      */
-    // TODO (P8-P1-6): Define explicit backup privacy modes:
-    // - Full encrypted backup (all data + images)
-    // - Redacted DB only (no raw text, but images still included if requested)
-    // - Redacted DB + no images
-    // - Public anonymized export
-    // Do not call a backup "redacted" if receipt images are still included.
     override suspend fun createCostBackup(
         password: String,
         includeReceiptImages: Boolean,
-        redacted: Boolean
+        redacted: Boolean,
+        privacyMode: BackupPrivacyMode?
     ): Result<File> = withContext(ioDispatcher) {
         try {
+            // If privacyMode is provided, derive booleans from it
+            val resolvedIncludeReceiptImages = privacyMode?.includesReceiptImages ?: includeReceiptImages
+            val resolvedRedacted = privacyMode?.redactsRawText ?: redacted
+
             // Privacy gate check
             val encryptedDecision = privacyGate.check(
                 PrivacyCapability.ENCRYPTED_BACKUP,
@@ -481,7 +481,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
 
                 // Sanitize if redacted
-                if (redacted) {
+                if (resolvedRedacted) {
                     exportAnonymizer.sanitizeExport(tempDb)
                 }
 
@@ -504,7 +504,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                 // Collect receipt assets
                 // P7-P1-2: Skip receipt images when redacted=true (they contain PII).
-                val receiptFiles = if (includeReceiptImages && !redacted) {
+                val receiptFiles = if (resolvedIncludeReceiptImages && !resolvedRedacted) {
                     collectReceiptAssetsForBackup()
                 } else {
                     emptyMap()
@@ -523,9 +523,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     password = password,
                     tableCounts = tableCounts,
                     databaseVersion = APP_DATABASE_SCHEMA_VERSION,
-                    redacted = redacted,
-                    includeReceiptImages = includeReceiptImages,
-                    encryptionService = backupEncryptionService
+                    redacted = resolvedRedacted,
+                    includeReceiptImages = resolvedIncludeReceiptImages,
+                    encryptionService = backupEncryptionService,
+                    privacyModeName = privacyMode?.name
                 )
 
                 if (result.isFailure) {

@@ -59,7 +59,7 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     @Test
     fun `createBackup sets isBackingUp and shows success on completion`() = runTest(testDispatcher) {
         val backupFile = File("/tmp/test_backup.costbackup")
-        coEvery { databaseBackupRepository.createCostBackup(any(), any(), any()) } returns Result.success(backupFile)
+        coEvery { databaseBackupRepository.createCostBackup(any(), any(), any(), any()) } returns Result.success(backupFile)
 
         val vm = createViewModel()
         advanceUntilIdle()
@@ -75,7 +75,7 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `createBackup shows error when repository fails`() = runTest(testDispatcher) {
-        coEvery { databaseBackupRepository.createCostBackup(any(), any(), any()) } returns
+        coEvery { databaseBackupRepository.createCostBackup(any(), any(), any(), any()) } returns
             Result.failure(RuntimeException("Storage full"))
 
         val vm = createViewModel()
@@ -136,7 +136,7 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `clearError resets error message`() = runTest(testDispatcher) {
-        coEvery { databaseBackupRepository.createCostBackup(any(), any(), any()) } returns
+        coEvery { databaseBackupRepository.createCostBackup(any(), any(), any(), any()) } returns
             Result.failure(RuntimeException("Error"))
 
         val vm = createViewModel()

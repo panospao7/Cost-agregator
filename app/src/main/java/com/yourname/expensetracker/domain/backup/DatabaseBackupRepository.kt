@@ -32,12 +32,14 @@ interface DatabaseBackupRepository {
      * @param password The user-provided encryption password
      * @param includeReceiptImages Whether to include receipt image assets (default: true)
      * @param redacted Whether to sanitize sensitive data (default: true)
+     * @param privacyMode Explicit privacy mode (overrides includeReceiptImages/redacted when set)
      * @return Result containing the .costbackup File
      */
     suspend fun createCostBackup(
         password: String,
         includeReceiptImages: Boolean = true,
-        redacted: Boolean = true
+        redacted: Boolean = true,
+        privacyMode: BackupPrivacyMode? = null
     ): Result<File>
 
     /**

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.workers
 
 import android.content.Context
 import androidx.work.*
+import timber.log.Timber
 import java.util.concurrent.TimeUnit
 
 /**
@@ -38,7 +39,12 @@ object WorkerSpecScheduler {
         }
 
         if (!spec.enabled) {
-            android.util.Log.d("WorkerSpecScheduler", "Worker '$workerName' is disabled, skipping")
+            Timber.d("Worker '$workerName' is disabled — cancelling any existing scheduled work")
+            try {
+                WorkManager.getInstance(context).cancelUniqueWork(workerName)
+            } catch (e: Exception) {
+                Timber.w(e, "Failed to cancel disabled worker '$workerName'")
+            }
             return
         }
 

@@ -245,7 +245,8 @@ object CostbackupBundle {
         databaseVersion: Int,
         redacted: Boolean = true,
         includeReceiptImages: Boolean = true,
-        encryptionService: BackupEncryptionService = BackupEncryptionService()
+        encryptionService: BackupEncryptionService = BackupEncryptionService(),
+        privacyModeName: String? = null
     ): Result<File> = runCatching {
         // 1. Create a temp file alongside the output for streaming ZIP construction
         val parentDir = outputFile.parentFile ?: File(".")
@@ -254,7 +255,7 @@ object CostbackupBundle {
 
         try {
             // 2. Build ZIP streaming to temp file (avoids OOM from ByteArrayOutputStream)
-            buildZip(tempZip, databaseFile, receiptFiles, tableCounts, databaseVersion, redacted, includeReceiptImages)
+            buildZip(tempZip, databaseFile, receiptFiles, tableCounts, databaseVersion, redacted, includeReceiptImages, privacyModeName)
 
             // 3. Encrypt from temp file + write header + ciphertext to output file
             FileOutputStream(outputFile).use { fos ->
@@ -426,7 +427,8 @@ object CostbackupBundle {
         tableCounts: Map<String, Int>,
         databaseVersion: Int,
         redacted: Boolean,
-        includeReceiptImages: Boolean
+        includeReceiptImages: Boolean,
+        privacyModeName: String? = null
     ) {
         ZipOutputStream(BufferedOutputStream(FileOutputStream(tempZip))).use { zos ->
 
@@ -441,7 +443,8 @@ object CostbackupBundle {
                 ),
                 includes = BackupIncludes(
                     receiptImages = includeReceiptImages && receiptFiles.isNotEmpty()
-                )
+                ),
+                privacyMode = privacyModeName
             )
             zos.putNextEntry(ZipEntry("manifest.json"))
             zos.write(manifest.toJson().toString(2).toByteArray(Charsets.UTF_8))
