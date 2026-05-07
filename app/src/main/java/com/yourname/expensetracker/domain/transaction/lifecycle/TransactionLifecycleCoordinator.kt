@@ -547,6 +547,59 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * Updates only the location on an expense, with full lifecycle tracking.
+     * Writes a UPDATED TransactionEvent with before/after snapshots.
+     * This is for USER edits (not backfill worker).
+     *
+     * @param expenseId       The ID of the expense to update.
+     * @param latitude        The new latitude value.
+     * @param longitude       The new longitude value.
+     * @param source          The source system/component that triggered the update.
+     * @param placeId         The place ID (nullable).
+     * @param resolvedAddress The resolved address string (nullable).
+     * @param reason          Optional human-readable explanation for the update.
+     */
+    suspend fun updateLocation(
+        expenseId: Long,
+        latitude: Double,
+        longitude: Double,
+        source: String = "USER_EDIT",
+        placeId: String? = null,
+        resolvedAddress: String? = null,
+        reason: String? = null
+    ) {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+        require(latitude in -90.0..90.0) { "Latitude out of range" }
+        require(longitude in -180.0..180.0) { "Longitude out of range" }
+
+        val existing = expenseDao.getById(expenseId) ?: return
+        if (existing.latitude == latitude && existing.longitude == longitude &&
+            existing.placeId == placeId && existing.resolvedAddress == resolvedAddress) return
+
+        val now = timeProvider.now()
+        val beforeSnapshot = expenseToSnapshot(existing)
+        val updated = existing.copy(
+            latitude = latitude, longitude = longitude,
+            locationSource = source, placeId = placeId, resolvedAddress = resolvedAddress,
+            backfillAttempts = 0
+        )
+        database.withTransaction {
+            expenseDao.updateLocation(expenseId, latitude, longitude, source, placeId, resolvedAddress)
+            transactionEventDao.insert(TransactionEvent(
+                expenseId = expenseId,
+                eventType = LifecycleEventType.UPDATED.name,
+                source = source, actor = null, occurredAt = now,
+                dedupeKey = existing.dedupeKey, duplicateExpenseId = null,
+                beforeSnapshot = beforeSnapshot,
+                afterSnapshot = expenseToSnapshot(expenseId, updated),
+                metadata = null, reason = reason
+            ))
+        }
+    }
+
+    /**
      * Updates only the merchant on an expense, with full lifecycle tracking.
      * Recomputes [merchantKey] and [dedupeKey] since the merchant changed.
      * Writes a UPDATED TransactionEvent with before/after snapshots.
@@ -784,6 +837,80 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     reason = reason
                 )
             )
+        }
+    }
+
+    /**
+     * Bulk-updates the category for all expenses matching a merchant key.
+     * Writes a single BULK_UPDATED TransactionEvent (not per-row) with
+     * JSON metadata describing the operation.
+     *
+     * @param merchant      The merchant name to derive the merchant key from.
+     * @param newCategoryId The new category ID to apply.
+     * @param source        The source system/component that triggered the update.
+     * @param reason        Optional human-readable explanation for the update.
+     */
+    suspend fun bulkUpdateCategory(
+        merchant: String,
+        newCategoryId: Long,
+        source: String = "USER_EDIT",
+        reason: String? = null
+    ) {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+        val merchantKey = MerchantKeyGenerator.generate(merchant)
+        val now = timeProvider.now()
+
+        database.withTransaction {
+            expenseDao.updateCategoryForMerchant(merchantKey, newCategoryId)
+            transactionEventDao.insert(TransactionEvent(
+                expenseId = null,
+                eventType = LifecycleEventType.BULK_UPDATED.name,
+                source = source, actor = null, occurredAt = now,
+                dedupeKey = null, duplicateExpenseId = null,
+                beforeSnapshot = null, afterSnapshot = null,
+                metadata = """{"merchant":"$merchant","merchantKey":"$merchantKey","newCategoryId":$newCategoryId}""",
+                reason = reason
+            ))
+        }
+    }
+
+    /**
+     * Bulk-updates the merchant for all expenses matching the old merchant key.
+     * Writes a single BULK_UPDATED TransactionEvent (not per-row) with
+     * JSON metadata describing the operation.
+     *
+     * @param oldMerchant The current merchant name (used to derive old merchant key).
+     * @param newMerchant The new merchant name to apply.
+     * @param source      The source system/component that triggered the update.
+     * @param reason      Optional human-readable explanation for the update.
+     */
+    suspend fun bulkUpdateMerchant(
+        oldMerchant: String,
+        newMerchant: String,
+        source: String = "USER_EDIT",
+        reason: String? = null
+    ) {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+        if (oldMerchant == newMerchant) return
+        val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
+        val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
+        val now = timeProvider.now()
+
+        database.withTransaction {
+            expenseDao.updateMerchantForMerchant(oldMerchantKey, newMerchant, newMerchantKey)
+            transactionEventDao.insert(TransactionEvent(
+                expenseId = null,
+                eventType = LifecycleEventType.BULK_UPDATED.name,
+                source = source, actor = null, occurredAt = now,
+                dedupeKey = null, duplicateExpenseId = null,
+                beforeSnapshot = null, afterSnapshot = null,
+                metadata = """{"oldMerchant":"$oldMerchant","newMerchant":"$newMerchant","oldMerchantKey":"$oldMerchantKey","newMerchantKey":"$newMerchantKey"}""",
+                reason = reason
+            ))
         }
     }
 

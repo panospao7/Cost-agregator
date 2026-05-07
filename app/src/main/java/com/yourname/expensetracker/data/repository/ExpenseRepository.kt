@@ -71,19 +71,20 @@ enum class OwnershipFilter {
  * - updateNotMineDetails → coordinator.updateOwnership()
  * - updateSharedExpenseDetails → coordinator.updateOwnership()
  * - updateOwnership → coordinator.updateOwnership()
+ * - updateExpenseLocation → coordinator.updateLocation()
+ * - updateExpenseCategoryBulk → coordinator.bulkUpdateCategory()
+ * - updateExpenseMerchantBulk → coordinator.bulkUpdateMerchant()
  *
  * ### STILL BYPASSING (direct ExpenseDao calls, no lifecycle events):
- * - updateExpenseCategoryBulk (categoryId)
- * - updateExpenseMerchantBulk (merchant, merchantKey, dedupeKey) — bulk path still bypasses
- * - updateExpenseLocation, conditionallySetLocation, clearExpenseLocation (location fields)
- * - incrementBackfillAttempts (counter)
- * - updateMerchantKey (backfill)
+ * - conditionallySetLocation, clearExpenseLocation (backfill worker — intentionally not routed)
+ * - incrementBackfillAttempts (counter — backfill worker)
+ * - updateMerchantKey (backfill worker — intentionally not routed)
  *
  * ### ALSO BYPASSING IN OTHER FILES:
  * - ReceiptLinkService.linkReceiptToExpense() — RCP-30 category propagation (runCatching)
  * - GroupTransactionCoordinator — shared-expense flags clearing + ownership normalization
  *
- * Total: 10 remaining bypass sites across 3 files.
+ * Total: 7 remaining bypass sites across 3 files.
  * See docs/analyses and debug master/debugging/pipeline-2-transaction-lifecycle-debug-report.md
  * for the full inventory and migration plan.
  */
@@ -422,38 +423,37 @@ class ExpenseRepository @Inject constructor(
     @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.BULK_UPDATED. Use TransactionLifecycleCoordinator.updateExpense() for each affected expense instead.")
     suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long) {
         categoryUpdateMutex.withLock {
-            database.withTransaction {
-                val merchantKey = MerchantKeyGenerator.generate(merchant)
-                expenseDao.updateCategoryForMerchant(merchantKey, newCategoryId)
-                merchantCategoryRepository.learnPattern(merchant, newCategoryId)
+            transactionLifecycleCoordinator.bulkUpdateCategory(
+                merchant = merchant, newCategoryId = newCategoryId, source = "USER_EDIT"
+            )
+            // Side effects (non-lifecycle)
+            merchantCategoryRepository.learnPattern(merchant, newCategoryId)
 
-                // Record as a bulk correction for learning
-                val correction = UserCorrection(
-                    packageName = "bulk_edit",
-                    originalMerchant = merchant,
-                    correctedMerchant = null,
-                    originalAmount = 0.0,
-                    correctedAmount = null,
-                    originalCategoryId = null,
-                    correctedCategoryId = newCategoryId,
-                    originalType = null,
-                    correctedType = null,
-                    wasRejected = false,
-                    wasApproved = true,
-                    notificationTitle = "Bulk category update",
-                    notificationText = "Applied to all transactions for $merchant"
-                )
-                userCorrectionDao.insert(correction)
-            }
+            // Record as a bulk correction for learning
+            val correction = UserCorrection(
+                packageName = "bulk_edit",
+                originalMerchant = merchant,
+                correctedMerchant = null,
+                originalAmount = 0.0,
+                correctedAmount = null,
+                originalCategoryId = null,
+                correctedCategoryId = newCategoryId,
+                originalType = null,
+                correctedType = null,
+                wasRejected = false,
+                wasApproved = true,
+                notificationTitle = "Bulk category update",
+                notificationText = "Applied to all transactions for $merchant"
+            )
+            userCorrectionDao.insert(correction)
         }
     }
 
+    @Deprecated("Use TransactionLifecycleCoordinator.bulkUpdateMerchant() instead for proper lifecycle tracking.")
     suspend fun updateExpenseMerchantBulk(oldMerchant: String, newMerchant: String) {
-        if (oldMerchant == newMerchant) return
-
-        val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
-        val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
-        expenseDao.updateMerchantForMerchant(oldMerchantKey, newMerchant, newMerchantKey)
+        transactionLifecycleCoordinator.bulkUpdateMerchant(
+            oldMerchant = oldMerchant, newMerchant = newMerchant, source = "USER_EDIT"
+        )
         merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant)
     }
 
@@ -463,13 +463,12 @@ class ExpenseRepository @Inject constructor(
         val oldMerchant = expense.merchant
 
         if (applyToAll) {
-            // Bulk path: keep existing logic (coordinator doesn't have bulk updateMerchant yet)
+            // Bulk path: use coordinator.bulkUpdateMerchant() but keep pendingReview
+            // bulk rename here (coordinator doesn't handle cross-table pending review updates)
+            transactionLifecycleCoordinator.bulkUpdateMerchant(oldMerchant, newMerchant)
             val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
             val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
-            database.withTransaction {
-                expenseDao.updateMerchantForMerchant(oldMerchantKey, newMerchant, newMerchantKey)
-                pendingReviewDao.bulkRenameMerchant(oldMerchantKey, oldMerchant, newMerchant, newMerchantKey)
-            }
+            pendingReviewDao.bulkRenameMerchant(oldMerchantKey, oldMerchant, newMerchant, newMerchantKey)
         } else {
             // Single: route through lifecycle coordinator
             transactionLifecycleCoordinator.updateMerchant(
@@ -768,6 +767,7 @@ class ExpenseRepository @Inject constructor(
      * Latitude must be in [-90, 90] and longitude in [-180, 180].
      * Throws [IllegalArgumentException] for invalid coordinates.
      */
+    @Deprecated("Use TransactionLifecycleCoordinator.updateLocation() instead for proper lifecycle tracking.")
     suspend fun updateExpenseLocation(
         expenseId: Long,
         latitude: Double,
@@ -775,15 +775,11 @@ class ExpenseRepository @Inject constructor(
         source: String,
         placeId: String?,
         address: String? = null
-    ): Unit {
-        // LOC-16: Coordinate validation
-        require(latitude in -90.0..90.0) {
-            "Latitude $latitude is out of range [-90, 90]"
-        }
-        require(longitude in -180.0..180.0) {
-            "Longitude $longitude is out of range [-180, 180]"
-        }
-        expenseDao.updateLocation(expenseId, latitude, longitude, source, placeId, address)
+    ) {
+        transactionLifecycleCoordinator.updateLocation(
+            expenseId = expenseId, latitude = latitude, longitude = longitude,
+            source = source, placeId = placeId, resolvedAddress = address
+        )
     }
 
     /**
