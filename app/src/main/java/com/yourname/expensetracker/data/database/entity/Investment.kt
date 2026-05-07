@@ -50,6 +50,9 @@ data class Investment(
     
     /** Must be set to timeProvider.now() at creation. 0L = unset (sentinel). */
     val createdAt: Long = 0L
+
+    // TODO (I07): Add updatedAt field and enforce both createdAt and updatedAt
+    // are set to timeProvider.now() in all creation paths.
 ) {
     @get:Ignore
     val purchasePriceMoneyAmount: MoneyAmount get() = MoneyAmount(purchasePrice, CurrencyCode(currency))

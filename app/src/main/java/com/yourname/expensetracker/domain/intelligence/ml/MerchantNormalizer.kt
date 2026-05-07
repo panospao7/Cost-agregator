@@ -204,12 +204,16 @@ class MerchantNormalizer @Inject constructor(
         // Double-check existence inside the lock to prevent redundant insertion attempts
         repository.getCanonicalBySearchKey(key)?.let { return it }
 
+        // C02: Set createdAt and updatedAt on new merchant canonical entities
+        val now = timeProvider.now()
         val canonical = MerchantCanonical(
             normalizedName = formatDisplayName(cleaned),
             searchKey = key,
             categoryId = catId,
             totalOccurrences = 1,
-            isVerified = false
+            isVerified = false,
+            createdAt = now,
+            updatedAt = now
         )
         
         val id = repository.insertCanonical(canonical)

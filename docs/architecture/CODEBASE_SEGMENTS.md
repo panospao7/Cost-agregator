@@ -96,7 +96,9 @@ Owns notification capture, parser routing, structured transaction extraction, an
 - `domain/parser/parsers/*.kt`
 - `domain/intelligence/ConfidenceRouter.kt`
 - `domain/intelligence/TransactionClassifier.kt`
+- `domain/intelligence/CrossSourceDeduplication.kt`
 - `data/repository/NotificationRepository.kt`
+- `data/repository/NotificationProcessingPipeline.kt`
 - `data/repository/ReviewQueueRepository.kt`
 - `ui/screens/review/ReviewScreen.kt`
 
@@ -179,12 +181,14 @@ Owns recurring pattern detection, future recurring item planning, and the **recu
 - `data/database/dao/RecurringOccurrenceDao.kt` — DAO for recurring occurrences
 - `data/database/entity/RecurringReminderDelivery.kt` — Reminder delivery entity (table: `recurring_reminder_deliveries`)
 - `data/database/dao/RecurringReminderDeliveryDao.kt` — DAO for reminder deliveries
+- `data/database/entity/RecurringLifecycleEvent.kt` — Lifecycle event log (table: `recurring_lifecycle_events`)
+- `data/database/dao/RecurringLifecycleEventDao.kt` — DAO for recurring lifecycle events
 - `data/repository/RecurringExpenseRepository.kt`
 - `data/repository/PlannedExpenseRepository.kt`
 
-**Boundary note:** The `recurring_occurrences` and `recurring_reminder_deliveries` tables are owned by this segment. The `TransactionLifecycleCoordinator` (Segment 9) auto-links new expenses to PLANNED occurrences via `RecurringLifecycleCoordinator.linkExpenseToOccurrence()` as a best-effort post-creation hook.
+**Boundary note:** The `recurring_occurrences`, `recurring_reminder_deliveries`, and `recurring_lifecycle_events` tables are owned by this segment. The `TransactionLifecycleCoordinator` (Segment 9) auto-links new expenses to PLANNED occurrences via `RecurringLifecycleCoordinator.linkExpenseToOccurrence()` as a best-effort post-creation hook.
 
-**Boundary note:** `RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence()` resets to PLANNED (2026-05-06).
+**Boundary note:** `RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence()` is the direct unlink path triggered when an expense linked to a PLANNED occurrence is deleted. It resets the occurrence back to PLANNED (2026-05-06).
 
 ## SEGMENT 8: Analytics & Insights
 
@@ -264,6 +268,11 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `data/ai/worker/DailyBriefingWorker.kt`
 - `data/location/LocationBackfillWorker.kt`
 - `data/location/MerchantKeyBackfillWorker.kt`
+- `data/privacy/DataRetentionWorker.kt`
+- `domain/workers/WorkerSpec.kt`
+- `domain/workers/WorkerSpecScheduler.kt`
+- `service/reminder/BillReminderWorker.kt`
+- `service/receiptmatching/ReceiptMatchingWorker.kt`
 - `service/warranty/WarrantyExpirationWorker.kt`
 
 ## SEGMENT 13: Cash Flow Planning
@@ -348,11 +357,15 @@ Owns export pipelines, backup/restore flows, and file packaging.
 **Representative files**
 - `data/repository/AccountingExportRepository.kt`
 - `data/repository/DatabaseBackupRepositoryImpl.kt`
+- `data/backup/BackupVerifier.kt`
+- `data/backup/CostbackupBundle.kt`
+- `data/backup/RestoreJournal.kt`
+- `data/backup/RestoreMaintenanceMode.kt`
+- `domain/backup/BackupPrivacyMode.kt` — enum defining 4 backup privacy levels
 - `domain/backup/DatabaseBackupRepository.kt`
 - `domain/export/AccountingExporters.kt`
 - `ui/screens/export/ExportOptionsScreen.kt`
 - `di/BackupRepositoryModule.kt`
-- `domain/backup/BackupPrivacyMode.kt` — enum defining 4 backup privacy levels
 
 ## SEGMENT 19: Location Enrichment
 
@@ -373,18 +386,24 @@ Owns the app-wide AI platform surface: policy, assistant sheet, AI settings, pro
 **Representative files**
 - `di/AiModule.kt`
 - `domain/ai/policy/AiPolicy.kt`
+- `domain/ai/HybridRouter.kt` — Consolidates routing logic previously duplicated across provider services
 - `ui/screens/assistant/AssistantSheet.kt`
 - `ui/screens/aisettings/AiSettingsScreen.kt`
 - `data/ai/provider/DefaultAiEnvironmentMonitor.kt`
 - `data/ai/provider/StrictAiJsonParsing.kt`
 - `data/ai/provider/DashboardBriefingPromptFormatter.kt`
+- `data/ai/provider/DashboardBriefingResponseParser.kt`
 - `data/ai/provider/CloudDashboardBriefingService.kt`
 - `data/ai/provider/OnDeviceDashboardBriefingService.kt`
 - `data/ai/provider/HybridDashboardBriefingService.kt`
 - `data/ai/provider/NoOpDashboardBriefingService.kt`
+- `data/ai/provider/SmartReceiptAssistService.kt`
+- `data/ai/provider/internal/CloudPiiSanitizer.kt`
 - `domain/engine/DashboardFollowThroughEngine.kt`
 - `data/repository/RecommendationRepository.kt`
 - `ui/components/RecommendationCard.kt`
+
+**Boundary note:** `HybridRouter` (`domain/ai/`) replaces duplicated routing logic that was previously spread across individual provider implementations. `data/ai/provider/internal/CloudPiiSanitizer` is consumed by `DefaultCloudPayloadRedactor` in Segment 28.
 
 ## SEGMENT 21: Enhanced Split Transactions
 
@@ -458,6 +477,7 @@ Owns emissions calculation and sustainability-facing reporting.
 Owns encrypted key storage and security/network bindings.
 
 **Representative files**
+- `data/security/BankTokenCipher.kt`
 - `data/security/SecureKeyStorage.kt`
 - `di/SecurityModule.kt`
 - `di/NetworkModule.kt`
@@ -481,12 +501,17 @@ Owns debug surfaces, issue detectors, and test data helpers.
 Owns Hilt module wiring and app-wide providers.
 
 **Representative files**
+- `di/ApplicationScope.kt`
+- `di/BackupRepositoryModule.kt`
 - `di/DatabaseModule.kt`
 - `di/DaoModule.kt`
+- `di/DispatchersModule.kt`
+- `di/PrivacyModule.kt`
 - `di/ServiceModule.kt`
 - `di/TimeModule.kt`
-- `di/DispatchersModule.kt`
 - `MainApplication.kt`
+
+**Boundary note:** `BackupRepositoryModule.kt` is also listed under Segment 18 (Export & Backup) as it cross-cuts DI wiring with backup infrastructure. `PrivacyModule.kt` cross-cuts with Segment 28 (Security & API Key Management).
 
 ## SEGMENT 31: Use Cases
 
@@ -547,7 +572,10 @@ Owns warranty tracking, subscription management, bill negotiation, and price pro
 Owns smart savings optimization and financial health score computation.
 
 **Representative files**
+- `domain/savings/AutomatedSavingsRuleEngine.kt`
+- `domain/savings/SavingsGamificationEngine.kt`
 - `domain/savings/SmartSavingsEngine.kt`
+- `domain/health/FinancialHealthCalculator.kt`
 - `domain/health/FinancialHealthScoreV2.kt`
 
 **Boundary note:** savings prompt persistence and nudges stay in Segment 23.
@@ -582,15 +610,65 @@ Owns receipt-to-transaction matching and reconciliation UI. Link persistence goe
 
 ---
 
-## Quick checks
+## Segment Quick Reference
+
+File-to-segment mapping for all 38 segments:
+
+| # | Segment | Key pattern / issue |
+|---|---|---|
+| 1 | Forecasting & Runway | `domain/forecasting/`, `FinancialWeather` |
+| 2 | Budget Management | `domain/budget/`, `BudgetScreen` |
+| 3 | Notification Capture, Parsing & Review | `domain/parser/`, `NotificationRepository`, `ReviewQueueRepository` |
+| 4 | Receipt Scanning (OCR) & Lifecycle | `domain/receipt/`, `receipt_events`, `receipt_expense_links`, OCR lifecycle |
+| 5 | AI Receipt Item Categorization | `domain/ai/usecase/CategorizeReceiptItems`, `ReceiptItemCategorization` |
+| 6 | Merchant Categorization | `domain/categorization/`, `MerchantCanonicalizer`, `HybridExpenseClassifier` |
+| 7 | Recurring Expenses | `domain/recurring/`, `recurring_occurrences`, recurring lifecycle |
+| 8 | Analytics & Insights | `domain/analytics/`, `InsightsEngine`, `AnomalyDetector` |
+| 9 | Core Expense Management | `domain/transaction/`, `TransactionLifecycleCoordinator`, `transaction_events`, expense CRUD |
+| 10 | Dashboard Totals & Widgets | `TotalsAggregationEngine`, `DashboardRepository`, totals UI |
+| 11 | Notifications & Alerts | `NotificationService` |
+| 12 | Startup & Background Runtime | `startup/`, workers, `AppStartupCoordinator` |
+| 13 | Cash Flow Planning | `domain/cashflow/`, `CashFlowCalculator` |
+| 14 | Bank Integration | `domain/bank/`, `BankConnection` |
+| 15 | Investment Tracking | `domain/investment/`, `Investment` entities |
+| 16 | Currency & Exchange | `domain/core/money/`, `CurrencyConverter`, `MultiCurrencyRepository` |
+| 17 | Tax Calculation & Reporting | `domain/tax/`, `TaxEstimator` |
+| 18 | Export & Backup | `domain/backup/`, `data/backup/`, `AccountingExport` |
+| 19 | Location Enrichment | `domain/location/`, `CompositeGeocodingService` |
+| 20 | AI Platform, Assistant & Follow-Through | `domain/ai/policy/`, `AiModule`, assistant, briefing |
+| 21 | Enhanced Split Transactions | `domain/split/`, `VisualSplitEditor`, `SplitTemplate` |
+| 22 | Lifestyle Inflation Detector | `domain/lifestyle/`, `LifestyleInflationDetector` |
+| 23 | Savings Prompts & Nudges | `domain/usecase/savings/`, `PromptState` |
+| 24 | Shared Expense Groups | `domain/groups/`, `GroupsRepository` |
+| 25 | Shared Expense Budget Offset | `SharedExpenseBudgetOffsetEngine` |
+| 26 | Natural Language Search | `domain/naturallanguage/` |
+| 27 | Carbon Footprint Tracking | `domain/carbon/` |
+| 28 | Security & API Key Management | `data/security/`, `SecurityModule`, `CloudPayloadRedactor` |
+| 29 | Debug & Diagnostics | `DebugScreen`, `ServiceDiagnostics` |
+| 30 | Dependency Injection | `di/` modules, `MainApplication.kt` |
+| 31 | Use Cases | `domain/usecase/` |
+| 32 | Utilities & Shared Helpers | `domain/util/`, `domain/core/time/` |
+| 33 | Configuration, Performance & Accessibility | `domain/config/`, accessibility components |
+| 34 | Warranty, Subscription & Offers | `WarrantyTracker`, `SubscriptionManagement`, `PriceProtection` |
+| 35 | Savings Optimization & Health | `domain/savings/`, `FinancialHealthScore` |
+| 36 | Bill Reminders | `domain/reminder/`, `BillReminderManager` |
+| 37 | Spending Challenges | `domain/challenge/`, `SpendingChallengeManager` |
+| 38 | Receipt Matching | `domain/receiptmatching/`, `ReceiptTransactionMatcher` |
+
+### Quick checks
 - Forecast issues → Segment 1
 - Budget rollover issues → Segment 2
 - Notification parsing issues → Segment 3
-- OCR receipt issues → Segment 4
+- OCR / receipt lifecycle issues → Segment 4
 - AI receipt item issues → Segment 5
+- Merchant categorization issues → Segment 6
+- Recurring lifecycle issues → Segment 7
+- Analytics & insight issues → Segment 8
+- Transaction lifecycle issues → Segment 9
 - Totals dashboard issues → Segment 10
-- Shared expense offset issues → Segment 25
-- Lifestyle detection issues → Segment 22
+- Startup / background worker issues → Segment 12
+- Multi-currency issues → Segment 16
+- Privacy settings issues → Segment 28 / Segment 6 (merchant cat.)
 - Smart savings / health score issues → Segment 35
 - Bill reminder issues → Segment 36
 - Spending challenge issues → Segment 37

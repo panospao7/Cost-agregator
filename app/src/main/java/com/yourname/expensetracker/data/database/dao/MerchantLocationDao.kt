@@ -117,6 +117,8 @@ interface MerchantLocationDao {
      */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun upsertCorrection(correction: MerchantLocationCorrection)
+    // TODO (W13): Change return type from Unit to Long so callers can detect
+    // silent failures (0 = skipped due to conflict).
 
     @Delete
     suspend fun deleteCorrection(correction: MerchantLocationCorrection)

@@ -27,6 +27,8 @@ data class ConvertedMoney(
         get() = conversionStatus == ConversionStatus.SUCCESS
 
     /** Whether the conversion failed. */
+    // TODO (M01): Fix isFailed to not treat SAME_CURRENCY (identity) as a failure.
+    // Add isExactSuccess/isUsable flags. Identity conversion is not a failure.
     val isFailed: Boolean
         get() = conversionStatus != ConversionStatus.SUCCESS
 
@@ -48,6 +50,8 @@ data class ConvertedMoney(
         )
 
         /** Create a failed conversion result (no rate available). */
+        // TODO (M08): Add failureReason and failureMessage fields to ConvertedMoney.
+        // Preserve the `reason` parameter in the result instead of discarding it.
         fun failed(
             original: MoneyAmount,
             targetCurrency: CurrencyCode,

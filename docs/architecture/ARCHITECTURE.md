@@ -30,7 +30,9 @@
 
 ## Current Project Metrics
 - Database version: v117
-- 620+ Kotlin files (~120 modified in Phases 2-3, ~20 new in Phase 4, ~5 new in Phase 5, ~16 new in Phase 5b, ~20 new in Phase 6, ~8 modified in Phase 7, ~12 new in Phase 8, ~4 new in Phase 9, ~6 new/modified in Phase 10)
+- 790+ Kotlin files (~170 net new since last Phase)
+- 55 DAOs, 59 entities (57 registered in AppDatabase)
+- 39 ViewModels
 - SimpleDateFormat → DateTimeFormatter: **100% complete** (38 replacements across 21 files, 0 remaining in production code)
 - REPLACE → IGNORE: **14 of 14 DAOs converted** (3 kept with KDoc: ExchangeRateDao ×2, AiArtifactDao ×1)
 - Bank statement AI parsing: **complete** (on-device→cloud→parser 3-tier validation with per-transaction source tracking)
@@ -124,9 +126,14 @@ ui/
 ```
 domain/
 ├── ai/                          # AI capabilities, policies, models, use cases
+├── alerts/                      # Anomaly alert orchestration
 ├── analytics/                   # Insights, totals, advanced analytics
+├── bank/                        # Bank API integration
 ├── budget/                      # Budget management
+├── business/                    # Business expense reporting
 ├── categorization/               # Merchant categorization pipeline
+├── carbon/                      # Carbon footprint
+├── cashflow/                    # Cash flow calculator
 ├── forecasting/                 # Monte Carlo + stress forecast engines
 ├── groups/                      # Shared expense and settlement flows
 ├── location/                    # Location enrichment and POI lookup
@@ -181,12 +188,16 @@ domain/
 │   └── lifecycle/               # **NEW — Recurring lifecycle coordinator + materializer**
 │       ├── RecurringLifecycleCoordinator.kt      # Primary entry point for occurrence generation
 │       └── RecurringOccurrenceMaterializer.kt    # Persists occurrences + creates reminders
+├── reminder/                    # Bill reminder manager
 ├── subscription/                # Subscription detection / management
 ├── tax/                         # Tax configuration and estimation
 ├── export/                      # Export flows
 ├── performance/                 # Performance helpers
 ├── debug/                       # Debug-only diagnostics
-└── util/                        # Shared utilities
+├── diagnostics/                 # Database integrity
+├── dto/                         # Data transfer objects
+├── util/                        # Shared utilities
+└── workers/                     # Worker specifications
 ```
 
 ### Data Layer (`data/`)
@@ -199,8 +210,17 @@ data/
 │   ├── RestoreJournal.kt        # Crash-safe 8-state restore journal (PREPARING → COMPLETE/FAILED)
 │   └── BackupVerifier.kt        # Full 56-entity 3-tier verification (EXACT / VALIDITY / OPTIONAL)
 ├── ai/provider/                 # Cloud + on-device AI providers
-├── location/                    # Geocoding services
+├── email/provider/              # Email receipt parsers (Amazon, Uber, Apple, etc.)
+├── location/                    # Location services and geocoding implementations
+│   ├── CompositeGeocodingService.kt    # Multi-provider fallback chain
+│   ├── NominatimGeocodingService.kt    # OpenStreetMap geocoding
+│   ├── GeoapifyGeocodingService.kt     # Geoapify API geocoding
+│   ├── GooglePlacesGeocodingService.kt # Google Places API geocoding
+│   ├── PhotonGeocodingService.kt       # Photon API geocoding
+│   ├── LocationBackfillWorker.kt       # Periodic location backfill worker
+│   └── MerchantKeyBackfillWorker.kt    # One-shot merchant key backfill
 ├── security/                    # Secure storage / crypto helpers
+├── speech/                      # Speech input services
 ├── privacy/                     # **NEW — Privacy data layer**
 │   ├── PrivacySettingsRepositoryImpl.kt  # DataStore-backed settings
 │   ├── BackupEncryptionService.kt        # AES-256-GCM encrypt/decrypt
@@ -323,6 +343,7 @@ FinancialWeatherRepository
 | Startup coordinator | `startup/AppStartupCoordinator.kt` | Lifecycle observer + startup jobs |
 | Main Activity | `ui/MainActivity.kt` | Navigation host + deep links |
 | Database | `data/database/AppDatabase.kt` | Room DB v117 |
+| NotificationCaptureService | `service/NotificationCaptureService.kt` | Android notification listener service |
 
 ### Core Engines
 | Engine | File | Purpose |
@@ -344,6 +365,9 @@ FinancialWeatherRepository
 | Dashboard Widgets | `domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt` | Dashboard widget computation |
 | Dashboard Data | `domain/usecase/dashboard/DashboardDataProvider.kt` | Dashboard data provider |
 | AI Follow-Through | `domain/ai/...` | Recommendation, assistant, and receipt intelligence flows |
+| Transaction Lifecycle | `domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` | Single entry point for ALL expense CUD |
+| Receipt Lifecycle | `domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt` | Single entry point for ALL receipt processing |
+| Privacy Gate | `domain/privacy/CompositePrivacyGate.kt` | Chains 4 privacy sub-gates |
 
 ### New Categorization Components (Feb 2026)
 | Component | File | Purpose |
@@ -391,13 +415,14 @@ FinancialWeatherRepository
 
 ## Dependency Injection
 
-### Hilt Modules
-- Core: `DatabaseModule`, `DaoModule`, `DispatchersModule`, `TimeModule`, `ServiceModule`
-- AI: `AiModule`, `OcrImprovementsModule`, `NaturalLanguageModule`, `DashboardContractsModule`, `DashboardAnomalyModule`
-- Location / network: `LocationResolverPortsModule`, `NetworkModule`, `NetworkQualifiers`
-- Finance features: `CashFlowModule`, `SavingsModule`, `SavingsRepositoryBindingsModule`, `CurrencyModule`, `TaxModule`, `SubscriptionModule`, `ExportModule`
-- Shared expense / groups: `GroupsModule`, `BackupRepositoryModule`
-- Security and support: `SecurityModule`, `EmptyStateModule`, `ReceiptParsingModule`, `EmailIngestionModule`
+### Hilt Modules (31 total)
+- **Core:** `DatabaseModule`, `DaoModule`, `DispatchersModule`, `ApplicationScope`, `TimeModule`, `ServiceModule`
+- **AI:** `AiModule`, `OcrImprovementsModule`, `NaturalLanguageModule`
+- **Dashboard:** `DashboardContractsModule`, `DashboardAnomalyModule`
+- **Finance:** `CashFlowModule`, `SavingsModule`, `SavingsRepositoryBindingsModule`, `CurrencyModule`, `TaxModule`, `SubscriptionModule`, `ExportModule`
+- **Shared expense / groups:** `GroupsModule`, `BackupRepositoryModule`
+- **Location / network:** `LocationResolverPortsModule`, `NetworkModule`
+- **Security & privacy:** `SecurityModule`, `PrivacyModule`, `ParserModule`, `ReceiptParsingModule`, `EmptyStateModule`, `EmptyStatePresentationModule`, `EmailIngestionModule`
 
 ### Key Bindings
 - `AppDatabase` from `DatabaseModule`

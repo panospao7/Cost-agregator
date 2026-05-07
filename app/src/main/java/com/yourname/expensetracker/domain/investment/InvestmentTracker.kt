@@ -136,6 +136,9 @@ class InvestmentTracker @Inject constructor(
             dayChangePercent = dayChangePercent
         )
         investmentValueDao.insert(value)
+
+        // TODO (I02): Wrap updatePrice + insert in database.withTransaction for atomicity.
+        // Requires injecting AppDatabase.
     }
     
     /**

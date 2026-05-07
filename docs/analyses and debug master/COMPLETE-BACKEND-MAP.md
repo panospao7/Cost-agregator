@@ -1,34 +1,73 @@
 # Complete Backend & Database Map - ExpenseTracker
 
-**Generated:** 2026-04-06  
-**Total Files Mapped:** 477 (244 domain + 206 data + 27 di)  
-**Test Coverage:** 317 test files in `app/src/test/java`
+**Generated:** 2026-05-07  
+**Total Files Mapped:** 790 (450 domain + 280 data + 31 di)  
+**Test Coverage:** 462 test files in `app/src/test/java`
 
 ---
 
 ## Table of Contents
 
-1. [Domain Package (244 files)](#domain-package)
+1. [Domain Package (~450 files)](#domain-package)
    - [AI/ML Subsystem](#ai-subsystem)
+   - [Alerts & Anomalies](#alerts--anomalies)
    - [Analytics & Insights](#analytics--insights)
+   - [Backup & Export](#backup--export)
+   - [Bank API Integration](#bank-api-integration)
    - [Budget Management](#budget-management)
+   - [Business Expense Reporting](#business-expense-reporting)
+   - [Carbon Footprint](#carbon-footprint)
+   - [Cash Flow](#cash-flow)
    - [Categorization Engine](#categorization-engine)
+   - [Challenge, Config, Currency](#challenge-config-currency)
+   - [Core Money Types](#core-money-types)
+   - [Core Time Types](#core-time-types)
+   - [Dashboard & Engine](#dashboard--engine)
    - [Data Models](#data-models)
+   - [Debug Utilities](#debug-utilities)
+   - [Diagnostics](#diagnostics)
+   - [DTOs](#dtos)
+   - [Forecasting & Financial](#forecasting--financial)
+   - [Groups & Shared Expenses](#groups--shared-expenses)
+   - [Health & Income](#health--income)
+   - [Intelligence/ML](#intelligenceml)
+   - [Investment & Lifestyle](#investment--lifestyle)
+   - [Location Services](#location-services)
+   - [Logic & Business Rules](#logic--business-rules)
+   - [Natural Language](#natural-language)
+   - [Other Domain Services](#other-domain-services)
+   - [Parsing & Receipt](#parsing--receipt)
+   - [Privacy & Data Protection](#privacy--data-protection)
+   - [Receipt Lifecycle](#receipt-lifecycle)
+   - [Recurring Expenses](#recurring-expenses)
+   - [Reminder Management](#reminder-management)
+   - [Savings](#savings)
+   - [Tax](#tax)
+   - [Text & UI Keys](#text--ui-keys)
+   - [Transaction Lifecycle](#transaction-lifecycle)
    - [Use Cases](#use-cases)
    - [Utilities](#utilities)
-2. [Data Package (206 files)](#data-package)
+   - [Widget](#widget)
+   - [Workers](#workers)
+2. [Data Package (~280 files)](#data-package)
    - [Database Layer](#database-layer)
    - [Repositories](#repositories)
    - [AI Providers](#ai-providers)
-   - [Services](#services)
-3. [DI/Modules Package (27 files)](#dimodules-package)
+   - [Backup Services](#backup-services)
+   - [Email Ingestion](#email-ingestion)
+   - [Location Services](#location-services-1)
+   - [Privacy Services](#privacy-services)
+   - [Security Services](#security-services)
+   - [Speech Services](#speech-services)
+   - [Other Services](#other-services)
+3. [DI/Modules Package (31 files)](#dimodules-package)
 4. [Dependency Graph & Data Flow](#dependency-graph--data-flow)
 
 ---
 
 ## DOMAIN PACKAGE
 
-### AI Subsystem (58 files)
+### AI Subsystem (62 files)
 
 **Location:** `com.yourname.expensetracker.domain.ai`
 
@@ -66,6 +105,7 @@
 | `ai/service/ReviewExplanationService.kt` | ReviewExplanationService | Explains why items need review | Service | - | No |
 | `ai/service/ReviewPriorityScorer.kt` | ReviewPriorityScorer | Scores review priority | Service | - | No |
 | `ai/service/SemanticDuplicateDetector.kt` | SemanticDuplicateDetector | Detects semantic duplicates | Service | - | No |
+| `ai/usecase/AiArtifactFreshness.kt` | AiArtifactFreshness | AI artifact freshness checks | UseCase | AiArtifactRepository | No |
 | `ai/usecase/CategorizationAssistInputBuilder.kt` | CategorizationAssistInputBuilder | Builds categorization assist inputs | UseCase | - | No |
 | `ai/usecase/CategorizeReceiptItemsUseCase.kt` | CategorizeReceiptItemsUseCase | Categorizes receipt items | UseCase | ReceiptItemCategorizationService | No |
 | `ai/usecase/DashboardBriefingInputBuilder.kt` | DashboardBriefingInputBuilder | Builds briefing inputs | UseCase | - | No |
@@ -88,6 +128,17 @@
 | `ai/usecase/SuggestCategoryFallbackUseCase.kt` | SuggestCategoryFallbackUseCase | Fallback category suggestion | UseCase | - | No |
 | `ai/usecase/SuggestReceiptExtractionUseCase.kt` | SuggestReceiptExtractionUseCase | Suggests receipt extraction | UseCase | ReceiptAssistService | No |
 | `ai/usecase/SyncProactiveBriefingWorkUseCase.kt` | SyncProactiveBriefingWorkUseCase | Syncs briefing work schedules | UseCase | AiWorkScheduler | No |
+| `ai/usecase/TransactionInsightInputBuilder.kt` | TransactionInsightInputBuilder | Builds transaction insight inputs | UseCase | - | No |
+| `ai/usecase/ValidateBankStatementTransactionsUseCase.kt` | ValidateBankStatementTransactionsUseCase | Validates bank statement transactions | UseCase | - | No |
+
+### Alerts & Anomalies (2 files)
+
+**Location:** `com.yourname.expensetracker.domain.alerts`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `alerts/AnomalyAlertRepository.kt` | AnomalyAlertRepository | Anomaly alert domain interface | Repository | - | No |
+| `alerts/AnomalyAlertOrchestrator.kt` | AnomalyAlertOrchestrator | Coordinates anomaly alerting | Engine | AnomalyAlertRepository | No |
 
 ### Analytics & Insights (16 files)
 
@@ -122,6 +173,15 @@
 | `export/AccountingExporters.kt` | AccountingExporters | Accounting system exporters | Service | - | No |
 | `export/ExportTransaction.kt` | ExportTransaction | Transaction export models | Model | - | No |
 
+### Bank API Integration (2 files)
+
+**Location:** `com.yourname.expensetracker.domain.bank`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `bank/BankApiConfig.kt` | BankApiConfig | Bank API configuration | Config | - | No |
+| `bank/BankApiIntegration.kt` | BankApiIntegration | Bank API integration logic | Service | BankApiConfig | No |
+
 ### Budget Management (9 files)
 
 **Location:** `com.yourname.expensetracker.domain.budget`
@@ -137,6 +197,30 @@
 | `budget/BudgetRecommendationInputs.kt` | BudgetRecommendationInputs | Budget recommendation inputs | Model | - | No |
 | `budget/SharedBudgetManager.kt` | SharedBudgetManager | Manages shared budgets | Engine | - | No |
 
+### Business Expense Reporting (1 file)
+
+**Location:** `com.yourname.expensetracker.domain.business`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `business/BusinessExpenseReportGenerator.kt` | BusinessExpenseReportGenerator | Business expense reporting | Engine | - | No |
+
+### Carbon Footprint (1 file)
+
+**Location:** `com.yourname.expensetracker.domain.carbon`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `carbon/CarbonFootprintCalculator.kt` | CarbonFootprintCalculator | Calculates carbon footprint | Engine | - | No |
+
+### Cash Flow (1 file)
+
+**Location:** `com.yourname.expensetracker.domain.cashflow`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `cashflow/CashFlowCalculator.kt` | CashFlowCalculator | Cash flow calculations | Engine | - | No |
+
 ### Categorization Engine (7 files)
 
 **Location:** `com.yourname.expensetracker.domain.categorization`
@@ -150,7 +234,7 @@
 | `categorization/MerchantCanonicalizer.kt` | MerchantCanonicalizer | Standardizes merchant names | Engine | - | No |
 | `categorization/SemanticKeywordMatcher.kt` | SemanticKeywordMatcher | Semantic keyword matching | Engine | - | No |
 
-### Challenge, Config, Currency (9 files)
+### Challenge, Config, Currency (10 files)
 
 **Location:** Various domain subsystems
 
@@ -162,6 +246,72 @@
 | `currency/CurrencyRatesRepository.kt` | CurrencyRatesRepository | Exchange rates interface | Repository | - | No |
 | `currency/CurrencySettingsRepository.kt` | CurrencySettingsRepository | Currency settings interface | Repository | - | No |
 | `currency/ExchangeRateContracts.kt` | ExchangeRateContracts | Exchange rate interfaces | Service | - | No |
+
+### Core Money Types (9 files)
+
+**Location:** `com.yourname.expensetracker.domain.core.money`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `core/money/CurrencyCode.kt` | CurrencyCode | Type-safe ISO 4217 wrapper | Model | - | No |
+| `core/money/MoneyAmount.kt` | MoneyAmount | Amount + currency pair with safe arithmetic | Model | CurrencyCode | No |
+| `core/money/ConvertedMoney.kt` | ConvertedMoney | Conversion trace with rate metadata | Model | MoneyAmount | No |
+| `core/money/MoneyBucket.kt` | MoneyBucket | Per-currency subtotal bucket | Model | CurrencyCode | No |
+| `core/money/MoneyAggregate.kt` | MoneyAggregate | Primary aggregation return type | Model | MoneyBucket | No |
+| `core/money/ConversionFailure.kt` | ConversionFailure | Failed conversion record | Model | CurrencyCode | No |
+| `core/money/CurrencyAssumption.kt` | CurrencyAssumption | Why a currency was assigned | Enum | - | No |
+| `core/money/MoneyMappers.kt` | MoneyMappers | Bridge legacy to new money types | Utility | MoneyAmount | No |
+| `core/money/MoneyFormatUtils.kt` | MoneyFormatUtils | Money formatting extensions | Utility | CurrencyCode | No |
+
+### Core Time Types (2 files)
+
+**Location:** `com.yourname.expensetracker.domain.core.time`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `core/time/PeriodRange.kt` | PeriodRange | Typed half-open period | Model | - | No |
+| `core/time/PeriodKind.kt` | PeriodKind | Semantic period enum | Enum | - | No |
+
+### Dashboard & Engine (3 files)
+
+**Location:** `com.yourname.expensetracker.domain.engine`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `engine/DashboardFollowThroughEngine.kt` | DashboardFollowThroughEngine | Generates dashboard recommendations | Engine | - | No |
+
+### Data Models (24 files)
+
+**Location:** `com.yourname.expensetracker.domain.model`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `model/BlockPartyDay.kt` | BlockPartyDay | Block party day models | Model | - | No |
+| `model/CategoryBreakdown.kt` | CategoryBreakdown | Category spending breakdown | Model | - | No |
+| `model/CategoryInfo.kt` | CategoryInfo | Category information models | Model | - | No |
+| `model/FinancialForecast.kt` | FinancialForecast | Financial forecast models | Model | - | No |
+| `model/PeriodDrillDownState.kt` | PeriodDrillDownState | Period drill-down state | Model | - | No |
+| `model/PeriodRange.kt` | PeriodRange | Time period range | Model | - | No |
+| `model/PeriodTotal.kt` | PeriodTotal | Period total models | Model | - | No |
+| `model/PlannedExpense.kt` | PlannedExpense | Planned expense models | Model | - | No |
+| `model/RecurringPattern.kt` | RecurringPattern | Recurring transaction pattern | Model | - | No |
+| `model/Result.kt` | Result | Generic result wrapper | Model | - | No |
+| `model/SavingsGoal.kt` | SavingsGoal | Savings goal models | Model | - | No |
+| `model/UiText.kt` | UiText | UI text localization | Model | - | No |
+| `model/UpcomingItem.kt` | UpcomingItem | Upcoming transaction models | Model | - | No |
+| `model/budget/MonteCarloBudgetImpact.kt` | MonteCarloBudgetImpact | Budget impact models | Model | - | No |
+| `model/dashboard/BudgetStatusSnapshot.kt` | BudgetStatusSnapshot | Budget status snapshot | Model | - | No |
+| `model/dashboard/DashboardCategoryBreakdown.kt` | DashboardCategoryBreakdown | Dashboard category data | Model | - | No |
+| `model/dashboard/DashboardExpenseMapper.kt` | DashboardExpenseMapper | Maps expenses for dashboard | Mapper | - | No |
+| `model/dashboard/DashboardPrimitives.kt` | DashboardPrimitives | Dashboard UI primitives | Model | - | No |
+| `model/dashboard/DomainBlockStatus.kt` | DomainBlockStatus | Block status models | Model | - | No |
+| `model/dashboard/DomainDayBudgetStatus.kt` | DomainDayBudgetStatus | Daily budget status | Model | - | No |
+| `model/dashboard/FinancialWeather.kt` | FinancialWeather | Financial weather metaphors | Model | - | No |
+| `model/dashboard/SpendingSummary.kt` | SpendingSummary | Spending summary models | Model | - | No |
+| `model/navigation/DomainTransactionFilter.kt` | DomainTransactionFilter | Transaction filter models | Model | - | No |
+| `model/recommendation/DashboardFollowThroughRecommendation.kt` | DashboardFollowThroughRecommendation | Dashboard recommendations | Model | - | No |
+| `model/recommendation/RecommendationPriority.kt` | RecommendationPriority | Recommendation priority enum | Enum | - | No |
+| `model/recommendation/RecommendationStatus.kt` | RecommendationStatus | Recommendation status enum | Enum | - | No |
 
 ### Debug Utilities (6 files)
 
@@ -176,13 +326,24 @@
 | `debug/NotificationSeeder.kt` | NotificationSeeder | Seeds test notifications | Utility | - | No |
 | `debug/ServiceDiagnostics.kt` | ServiceDiagnostics | Service diagnostics | Utility | - | No |
 
-### Dashboard & Engine (3 files)
+### Diagnostics (1 file)
 
-**Location:** `com.yourname.expensetracker.domain.engine`
+**Location:** `com.yourname.expensetracker.domain.diagnostics`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `engine/DashboardFollowThroughEngine.kt` | DashboardFollowThroughEngine | Generates dashboard recommendations | Engine | - | No |
+| `diagnostics/DatabaseIntegrityScanner.kt` | DatabaseIntegrityScanner | Scans DB integrity | Engine | - | No |
+
+### DTOs (4 files)
+
+**Location:** `com.yourname.expensetracker.domain.dto`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `dto/AiArtifactRecord.kt` | AiArtifactRecord | AI artifact record DTO | Model | - | No |
+| `dto/CategoryRef.kt` | CategoryRef | Category reference DTO | Model | - | No |
+| `dto/ReceiptItemCategorizationSnapshot.kt` | ReceiptItemCategorizationSnapshot | Categorization snapshot DTO | Model | - | No |
+| `dto/ReviewPriorityInput.kt` | ReviewPriorityInput | Review priority input DTO | Model | - | No |
 
 ### Forecasting & Financial (8 files)
 
@@ -196,7 +357,7 @@
 | `forecasting/MonteCarloResult.kt` | MonteCarloResult | Monte Carlo simulation results | Model | - | No |
 | `forecasting/MonteCarloSpendingSimulator.kt` | MonteCarloSpendingSimulator | Simulates spending scenarios | Engine | - | No |
 
-### Groups & Shared Expenses (8 files)
+### Groups & Shared Expenses (9 files)
 
 **Location:** `com.yourname.expensetracker.domain.groups`
 
@@ -208,6 +369,7 @@
 | `groups/SharedExpenseManager.kt` | SharedExpenseManager | Manages shared expenses | Engine | - | No |
 | `groups/SharedExpensePort.kt` | SharedExpensePort | Port for shared expenses | Service | - | No |
 | `groups/usecase/AddGroupExpenseUseCase.kt` | AddGroupExpenseUseCase | Adds group expenses | UseCase | - | No |
+| `groups/usecase/AddGroupMemberUseCase.kt` | AddGroupMemberUseCase | Adds group members | UseCase | - | No |
 | `groups/usecase/DeleteGroupMemberUseCase.kt` | DeleteGroupMemberUseCase | Deletes group members | UseCase | - | No |
 | `groups/usecase/DeleteGroupUseCase.kt` | DeleteGroupUseCase | Deletes groups | UseCase | - | No |
 
@@ -221,7 +383,7 @@
 | `health/FinancialHealthScoreV2.kt` | FinancialHealthScoreV2 | Health score models v2 | Model | - | No |
 | `income/RecurringIncomeTracker.kt` | RecurringIncomeTracker | Tracks recurring income | Engine | - | No |
 
-### Intelligence/ML (5 files)
+### Intelligence/ML (8 files)
 
 **Location:** `com.yourname.expensetracker.domain.intelligence`
 
@@ -275,39 +437,6 @@
 | `logic/SplitCalculator.kt` | SplitCalculator | Calculates expense splits | Engine | - | No |
 | `logic/SynthesisEngine.kt` | SynthesisEngine | Synthesizes expense data | Engine | - | No |
 
-### Data Models (24 files)
-
-**Location:** `com.yourname.expensetracker.domain.model`
-
-| File | Class | Purpose | Type | Dependencies | Tests |
-|------|-------|---------|------|--------------|-------|
-| `model/BlockPartyDay.kt` | BlockPartyDay | Block party day models | Model | - | No |
-| `model/CategoryBreakdown.kt` | CategoryBreakdown | Category spending breakdown | Model | - | No |
-| `model/CategoryInfo.kt` | CategoryInfo | Category information models | Model | - | No |
-| `model/FinancialForecast.kt` | FinancialForecast | Financial forecast models | Model | - | No |
-| `model/PeriodDrillDownState.kt` | PeriodDrillDownState | Period drill-down state | Model | - | No |
-| `model/PeriodRange.kt` | PeriodRange | Time period range | Model | - | No |
-| `model/PeriodTotal.kt` | PeriodTotal | Period total models | Model | - | No |
-| `model/PlannedExpense.kt` | PlannedExpense | Planned expense models | Model | - | No |
-| `model/RecurringPattern.kt` | RecurringPattern | Recurring transaction pattern | Model | - | No |
-| `model/Result.kt` | Result | Generic result wrapper | Model | - | No |
-| `model/SavingsGoal.kt` | SavingsGoal | Savings goal models | Model | - | No |
-| `model/UiText.kt` | UiText | UI text localization | Model | - | No |
-| `model/UpcomingItem.kt` | UpcomingItem | Upcoming transaction models | Model | - | No |
-| `model/budget/MonteCarloBudgetImpact.kt` | MonteCarloBudgetImpact | Budget impact models | Model | - | No |
-| `model/dashboard/BudgetStatusSnapshot.kt` | BudgetStatusSnapshot | Budget status snapshot | Model | - | No |
-| `model/dashboard/DashboardCategoryBreakdown.kt` | DashboardCategoryBreakdown | Dashboard category data | Model | - | No |
-| `model/dashboard/DashboardExpenseMapper.kt` | DashboardExpenseMapper | Maps expenses for dashboard | Mapper | - | No |
-| `model/dashboard/DashboardPrimitives.kt` | DashboardPrimitives | Dashboard UI primitives | Model | - | No |
-| `model/dashboard/DomainBlockStatus.kt` | DomainBlockStatus | Block status models | Model | - | No |
-| `model/dashboard/DomainDayBudgetStatus.kt` | DomainDayBudgetStatus | Daily budget status | Model | - | No |
-| `model/dashboard/FinancialWeather.kt` | FinancialWeather | Financial weather metaphors | Model | - | No |
-| `model/dashboard/SpendingSummary.kt` | SpendingSummary | Spending summary models | Model | - | No |
-| `model/navigation/DomainTransactionFilter.kt` | DomainTransactionFilter | Transaction filter models | Model | - | No |
-| `model/recommendation/DashboardFollowThroughRecommendation.kt` | DashboardFollowThroughRecommendation | Dashboard recommendations | Model | - | No |
-| `model/recommendation/RecommendationPriority.kt` | RecommendationPriority | Recommendation priority enum | Enum | - | No |
-| `model/recommendation/RecommendationStatus.kt` | RecommendationStatus | Recommendation status enum | Enum | - | No |
-
 ### Natural Language (3 files)
 
 **Location:** `com.yourname.expensetracker.domain.naturallanguage`
@@ -318,7 +447,7 @@
 | `naturallanguage/NaturalLanguageSearchEngine.kt` | NaturalLanguageSearchEngine | NL search logic | Engine | - | No |
 | `naturallanguage/SpeechInputGateway.kt` | SpeechInputGateway | Speech input interface | Service | - | No |
 
-### Other Domains (10 files)
+### Other Domain Services (8 files)
 
 **Location:** Various domain subsystems
 
@@ -326,17 +455,12 @@
 |------|-------|---------|------|--------------|-------|
 | `negotiation/SmartBillNegotiationEngine.kt` | SmartBillNegotiationEngine | Bill negotiation logic | Engine | - | No |
 | `price/PriceProtectionTracker.kt` | PriceProtectionTracker | Tracks price protection | Engine | - | No |
-| `reminder/BillReminderManager.kt` | BillReminderManager | Bill reminder management | Engine | - | No |
-| `savings/AutomatedSavingsRuleEngine.kt` | AutomatedSavingsRuleEngine | Automated savings rules | Engine | - | No |
-| `savings/SavingsGamificationEngine.kt` | SavingsGamificationEngine | Gamification for savings | Engine | - | No |
-| `savings/SavingsGoalRepository.kt` | SavingsGoalRepository | Savings goal interface | Repository | - | No |
-| `savings/SmartSavingsEngine.kt` | SmartSavingsEngine | Smart savings logic | Engine | - | No |
 | `service/NotificationService.kt` | NotificationService | Notification interface | Service | - | No |
 | `split/EnhancedSplitManager.kt` | EnhancedSplitManager | Enhanced split management | Engine | - | No |
 | `subscription/NotificationSubscriptionDetector.kt` | NotificationSubscriptionDetector | Detects subscriptions | Engine | - | No |
 | `subscription/SubscriptionManagerEngine.kt` | SubscriptionManagerEngine | Subscription management | Engine | - | No |
 
-### Parsing & Receipt (13 files)
+### Parsing & Receipt (18 files)
 
 **Location:** `com.yourname.expensetracker.domain.parser`, `receipt`
 
@@ -361,6 +485,70 @@
 | `receipt/WarrantyTextExtractor.kt` | WarrantyTextExtractor | Extracts warranty text | Engine | - | No |
 | `receiptmatching/ReceiptTransactionMatcher.kt` | ReceiptTransactionMatcher | Matches receipts to transactions | Engine | - | No |
 
+### Privacy & Data Protection (12 files)
+
+**Location:** `com.yourname.expensetracker.domain.privacy`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `privacy/PrivacyCapability.kt` | PrivacyCapability | Enum of 21 gated capabilities | Enum | - | No |
+| `privacy/PrivacyGate.kt` | PrivacyGate | Gate check interface | Service | - | No |
+| `privacy/PrivacyDecision.kt` | PrivacyDecision | Allowed/Denied sealed interface | Model | - | No |
+| `privacy/PrivacySettings.kt` | PrivacySettings | 10 toggle + 2 retention settings | Model | - | No |
+| `privacy/PrivacySettingsRepository.kt` | PrivacySettingsRepository | Settings read/write interface | Repository | - | No |
+| `privacy/PrivacyAuditLogger.kt` | PrivacyAuditLogger | Gate check audit logging | Service | - | No |
+| `privacy/NotificationPrivacyGate.kt` | NotificationPrivacyGate | Notification capture gate | Service | PrivacyGate | No |
+| `privacy/CloudAiPrivacyGate.kt` | CloudAiPrivacyGate | Cloud AI capability gate | Service | PrivacyGate | No |
+| `privacy/LocationPrivacyGate.kt` | LocationPrivacyGate | Location capability gate | Service | PrivacyGate | No |
+| `privacy/BackupPrivacyGate.kt` | BackupPrivacyGate | Backup capability gate | Service | PrivacyGate | No |
+| `privacy/CompositePrivacyGate.kt` | CompositePrivacyGate | Chains all sub-gates | Service | All sub-gates | No |
+| `privacy/RedactionSanitizer.kt` | RedactionSanitizer | PII redaction utility | Utility | - | No |
+
+### Receipt Lifecycle (7 files)
+
+**Location:** `com.yourname.expensetracker.domain.receipt.lifecycle`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `receipt/lifecycle/ReceiptLifecycleCoordinator.kt` | ReceiptLifecycleCoordinator | Single entry for ALL receipt processing | Engine | - | No |
+| `receipt/lifecycle/ReceiptLinkService.kt` | ReceiptLinkService | Centralized receipt-expense linking | Service | - | No |
+| `receipt/lifecycle/ReceiptAssetStore.kt` | ReceiptAssetStore | File persistence, hashing, backup | Service | - | No |
+| `receipt/lifecycle/ReceiptInputValidator.kt` | ReceiptInputValidator | URI/MIME/size validation | Service | - | No |
+| `receipt/lifecycle/ReceiptDuplicateDetector.kt` | ReceiptDuplicateDetector | 3-signal dedup engine | Engine | - | No |
+| `receipt/lifecycle/ReceiptSideEffectDispatcher.kt` | ReceiptSideEffectDispatcher | Document-type-gated side effects | Engine | - | No |
+| `receipt/lifecycle/BankStatementLifecycleProcessor.kt` | BankStatementLifecycleProcessor | Statement-specific processing | Engine | - | No |
+
+### Recurring Expenses (10 files)
+
+**Location:** `com.yourname.expensetracker.domain.recurring`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `recurring/RecurringOccurrenceExpander.kt` | RecurringOccurrenceExpander | Expands recurrence rules to occurrences | Engine | - | No |
+| `recurring/OccurrenceConflictResolver.kt` | OccurrenceConflictResolver | Resolves candidates vs actuals | Engine | - | No |
+| `recurring/RecurringPlanProjectionService.kt` | RecurringPlanProjectionService | Materialises PlannedExpense rows | Service | - | No |
+| `recurring/lifecycle/RecurringLifecycleCoordinator.kt` | RecurringLifecycleCoordinator | Primary entry for occurrence generation | Engine | - | No |
+| `recurring/lifecycle/RecurringOccurrenceMaterializer.kt` | RecurringOccurrenceMaterializer | Persists occurrences + reminders | Engine | - | No |
+
+### Reminder Management (1 file)
+
+**Location:** `com.yourname.expensetracker.domain.reminder`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `reminder/BillReminderManager.kt` | BillReminderManager | Bill reminder management | Engine | - | No |
+
+### Savings (4 files)
+
+**Location:** `com.yourname.expensetracker.domain.savings`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `savings/AutomatedSavingsRuleEngine.kt` | AutomatedSavingsRuleEngine | Automated savings rules | Engine | - | No |
+| `savings/SavingsGamificationEngine.kt` | SavingsGamificationEngine | Gamification for savings | Engine | - | No |
+| `savings/SavingsGoalRepository.kt` | SavingsGoalRepository | Savings goal interface | Repository | - | No |
+| `savings/SmartSavingsEngine.kt` | SmartSavingsEngine | Smart savings logic | Engine | - | No |
+
 ### Tax (2 files)
 
 **Location:** `com.yourname.expensetracker.domain.tax`
@@ -379,25 +567,75 @@
 | `text/DashboardTextKeys.kt` | DashboardTextKeys | Dashboard text keys | Config | - | No |
 | `text/DomainTextKeys.kt` | DomainTextKeys | Domain text keys | Config | - | No |
 
-### Use Cases (13 files)
+### Transaction Lifecycle (9 files)
+
+**Location:** `com.yourname.expensetracker.domain.transaction`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `transaction/ExpenseSource.kt` | ExpenseSource | 14-value expense origin enum | Enum | - | No |
+| `transaction/LifecycleEventType.kt` | LifecycleEventType | 14-value lifecycle event enum | Enum | - | No |
+| `transaction/DeduplicationMode.kt` | DeduplicationMode | Dedup strategy enum | Enum | - | No |
+| `transaction/CreateExpenseRequest.kt` | CreateExpenseRequest | Source-neutral creation request (40+ fields) | Model | - | No |
+| `transaction/CreateExpenseResult.kt` | CreateExpenseResult | Sealed result (Created, DuplicateSkipped, etc.) | Model | - | No |
+| `transaction/ExpenseUpdates.kt` | ExpenseUpdates | Patch-style update model | Model | - | No |
+| `transaction/SideEffectMode.kt` | SideEffectMode | IMMEDIATE/DEFER enum | Enum | - | No |
+| `transaction/lifecycle/TransactionLifecycleCoordinator.kt` | TransactionLifecycleCoordinator | Single entry point for ALL expense CUD | Engine | - | No |
+| `transaction/lifecycle/TransactionSideEffectDispatcher.kt` | TransactionSideEffectDispatcher | Post-creation side effects | Engine | - | No |
+
+### Use Cases (41 files)
 
 **Location:** `com.yourname.expensetracker.domain.usecase`
+
+#### AI Use Cases (listed in AI Subsystem section above)
+
+#### Budget Use Cases
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
 | `usecase/budget/CalculateBudgetStatusUseCase.kt` | CalculateBudgetStatusUseCase | Calculates budget status | UseCase | BudgetCalculator | No |
 | `usecase/budget/GetMonteCarloBudgetImpactUseCase.kt` | GetMonteCarloBudgetImpactUseCase | Gets budget impact forecast | UseCase | - | No |
+
+#### Dashboard Use Cases
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
 | `usecase/dashboard/ComputeDashboardWidgetsUseCase.kt` | ComputeDashboardWidgetsUseCase | Computes dashboard widgets | UseCase | - | No |
 | `usecase/dashboard/ComputeMoneyRadarUseCase.kt` | ComputeMoneyRadarUseCase | Computes money radar | UseCase | - | No |
 | `usecase/dashboard/DashboardDataProvider.kt` | DashboardDataProvider | Dashboard data provider | Service | - | No |
 | `usecase/dashboard/DashboardRepositoryContracts.kt` | DashboardRepositoryContracts | Dashboard repo contracts | Service | - | No |
+
+#### Expense Use Cases
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
 | `usecase/expense/CategorizeExpenseUseCase.kt` | CategorizeExpenseUseCase | Categorizes expenses | UseCase | CategorizationEngine | No |
 | `usecase/expense/DetectDuplicateExpenseUseCase.kt` | DetectDuplicateExpenseUseCase | Detects duplicate expenses | UseCase | - | No |
 | `usecase/expense/ExpenseUseCases.kt` | ExpenseUseCases | Expense use cases facade | Service | - | No |
+
+#### Forecast Use Cases
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
 | `usecase/forecast/CalculateFinancialForecastUseCase.kt` | CalculateFinancialForecastUseCase | Calculates financial forecast | UseCase | - | No |
+
+#### Receipt Use Cases
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
 | `usecase/receipt/ProcessReceiptUseCase.kt` | ProcessReceiptUseCase | Processes receipts | UseCase | - | No |
+
+#### Savings Use Cases
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
 | `usecase/savings/LifestyleSavingsPromptUseCase.kt` | LifestyleSavingsPromptUseCase | Lifestyle savings prompt | UseCase | - | No |
 | `usecase/savings/MonthlySavingsSweepUseCase.kt` | MonthlySavingsSweepUseCase | Monthly savings sweep | UseCase | - | No |
+
+#### Warranty Use Cases
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
 | `usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt` | AutoCreateWarrantyFromReceiptUseCase | Creates warranty from receipt | UseCase | - | No |
 
 ### Utilities (24 files)
@@ -434,11 +672,20 @@
 | `widget/model/WidgetStyle.kt` | WidgetStyle | Widget style models | Model | - | No |
 | `widget/service/WidgetStyleRepository.kt` | WidgetStyleRepository | Widget style interface | Repository | - | No |
 
+### Workers (2 files)
+
+**Location:** `com.yourname.expensetracker.domain.workers`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `workers/WorkerSpec.kt` | WorkerSpec | Worker specification data class | Model | - | No |
+| `workers/WorkerSpecScheduler.kt` | WorkerSpecScheduler | Centralized worker scheduling | Service | - | No |
+
 ---
 
 ## DATA PACKAGE
 
-### Database Layer (89 files)
+### Database Layer (103 files)
 
 **Location:** `com.yourname.expensetracker.data.database`
 
@@ -455,7 +702,7 @@
 |------|-------|---------|------|--------------|-------|
 | `database/converter/Converters.kt` | Converters | Room type converters | Converter | - | No |
 
-#### DAOs (54 files)
+#### DAOs (55 files)
 
 **Location:** `com.yourname.expensetracker.data.database.dao`
 
@@ -465,6 +712,7 @@
 | `dao/AiChatMessageDao.kt` | AiChatMessageDao | Chat messages DAO | DAO | - | No |
 | `dao/AiChatSessionDao.kt` | AiChatSessionDao | Chat sessions DAO | DAO | - | No |
 | `dao/AnomalyAlertDao.kt` | AnomalyAlertDao | Anomaly alerts DAO | DAO | - | No |
+| `dao/BackgroundJobRunDao.kt` | BackgroundJobRunDao | Background job runs DAO | DAO | - | No |
 | `dao/BankConnectionDao.kt` | BankConnectionDao | Bank connections DAO | DAO | - | No |
 | `dao/BlockedPackageDao.kt` | BlockedPackageDao | Blocked packages DAO | DAO | - | No |
 | `dao/BudgetAdjustmentDao.kt` | BudgetAdjustmentDao | Budget adjustments DAO | DAO | - | No |
@@ -487,16 +735,24 @@
 | `dao/MileageTrackingDao.kt` | MileageTrackingDao | Mileage tracking DAO | DAO | - | No |
 | `dao/PendingReviewDao.kt` | PendingReviewDao | Pending review DAO | DAO | - | No |
 | `dao/PlannedExpenseDao.kt` | PlannedExpenseDao | Planned expenses DAO | DAO | - | No |
+| `dao/PrivacyAuditDao.kt` | PrivacyAuditDao | Privacy audit log DAO | DAO | - | No |
 | `dao/PromptStateDao.kt` | PromptStateDao | Prompt state DAO | DAO | - | No |
 | `dao/RawNotificationDao.kt` | RawNotificationDao | Raw notifications DAO | DAO | - | No |
+| `dao/ReceiptEventDao.kt` | ReceiptEventDao | Receipt events DAO | DAO | - | No |
+| `dao/ReceiptExpenseLinkDao.kt` | ReceiptExpenseLinkDao | Receipt-expense link DAO | DAO | - | No |
 | `dao/ReceiptItemCategorizationDao.kt` | ReceiptItemCategorizationDao | Receipt items DAO | DAO | - | No |
 | `dao/RecommendationDao.kt` | RecommendationDao | Recommendations DAO | DAO | - | No |
+| `dao/RecurringEventDao.kt` | RecurringLifecycleEventDao | Recurring lifecycle events DAO | DAO | - | No |
 | `dao/RecurringExpenseDao.kt` | RecurringExpenseDao | Recurring expenses DAO | DAO | - | No |
+| `dao/RecurringOccurrenceDao.kt` | RecurringOccurrenceDao | Recurring occurrences DAO | DAO | - | No |
+| `dao/RecurringReminderDeliveryDao.kt` | RecurringReminderDeliveryDao | Recurring reminder delivery DAO | DAO | - | No |
 | `dao/ReturnWindowDao.kt` | ReturnWindowDao | Return windows DAO | DAO | - | No |
 | `dao/SavingsGoalDao.kt` | SavingsGoalDao | Savings goals DAO | DAO | - | No |
 | `dao/SavingsSweepPlanDao.kt` | SavingsSweepPlanDao | Savings sweep plans DAO | DAO | - | No |
 | `dao/ScannedReceiptDao.kt` | ScannedReceiptDao | Scanned receipts DAO | DAO | - | No |
 | `dao/SourceStatsDao.kt` | SourceStatsDao | Source statistics DAO | DAO | - | No |
+| `dao/SourceStatsEventDao.kt` | SourceStatsEventDao | Source stats events DAO | DAO | - | No |
+| `dao/SpendingChallengeDao.kt` | SpendingChallengeDao | Spending challenges DAO | DAO | - | No |
 | `dao/SpendingPersonalityProfileDao.kt` | SpendingPersonalityProfileDao | Spending personality DAO | DAO | - | No |
 | `dao/SplitItemAssignmentDao.kt` | SplitItemAssignmentDao | Split assignments DAO | DAO | - | No |
 | `dao/SplitTemplateDao.kt` | SplitTemplateDao | Split templates DAO | DAO | - | No |
@@ -507,7 +763,7 @@
 | `dao/UserCorrectionDao.kt` | UserCorrectionDao | User corrections DAO | DAO | - | No |
 | `dao/WarrantyDao.kt` | WarrantyDao | Warranties DAO | DAO | - | No |
 
-#### Entities (55 files)
+#### Entities (59 files)
 
 **Location:** `com.yourname.expensetracker.data.database.entity`
 
@@ -517,6 +773,7 @@
 | `entity/AiChatMessageEntity.kt` | AiChatMessageEntity | Chat message entity | Entity | - | No |
 | `entity/AiChatSessionEntity.kt` | AiChatSessionEntity | Chat session entity | Entity | - | No |
 | `entity/AnomalyAlert.kt` | AnomalyAlert | Anomaly alert entity | Entity | - | No |
+| `entity/BackgroundJobRun.kt` | BackgroundJobRun | Background job run entity | Entity | - | No |
 | `entity/BankConnection.kt` | BankConnection | Bank connection entity | Entity | - | No |
 | `entity/BlockedPackage.kt` | BlockedPackage | Blocked package entity | Entity | - | No |
 | `entity/Budget.kt` | Budget | Budget entity | Entity | - | No |
@@ -543,13 +800,20 @@
 | `entity/PlannedExpense.kt` | PlannedExpense | Planned expense entity | Entity | - | No |
 | `entity/PromptState.kt` | PromptState | Prompt state entity | Entity | - | No |
 | `entity/RawNotification.kt` | RawNotification | Raw notification entity | Entity | - | No |
+| `entity/ReceiptEvent.kt` | ReceiptEvent | Receipt event entity | Entity | - | No |
+| `entity/ReceiptExpenseLink.kt` | ReceiptExpenseLink | Receipt-expense link entity | Entity | - | No |
 | `entity/ReceiptItemCategorization.kt` | ReceiptItemCategorization | Receipt item entity | Entity | - | No |
 | `entity/RecommendationEntity.kt` | RecommendationEntity | Recommendation entity | Entity | - | No |
+| `entity/RecurringLifecycleEvent.kt` | RecurringLifecycleEvent | Recurring lifecycle event entity | Entity | - | No |
+| `entity/RecurringOccurrence.kt` | RecurringOccurrence | Recurring occurrence entity | Entity | - | No |
+| `entity/RecurringReminderDelivery.kt` | RecurringReminderDelivery | Recurring reminder delivery entity | Entity | - | No |
 | `entity/ReturnWindow.kt` | ReturnWindow | Return window entity | Entity | - | No |
 | `entity/SavingsGoal.kt` | SavingsGoal | Savings goal entity | Entity | - | No |
 | `entity/SavingsSweepPlan.kt` | SavingsSweepPlan | Savings sweep plan entity | Entity | - | No |
 | `entity/ScannedReceipt.kt` | ScannedReceipt | Scanned receipt entity | Entity | - | No |
 | `entity/SourceStats.kt` | SourceStats | Source statistics entity | Entity | - | No |
+| `entity/SourceStatsEvent.kt` | SourceStatsEvent | Source stats event entity | Entity | - | No |
+| `entity/SpendingChallengeEntity.kt` | SpendingChallengeEntity | Spending challenge entity | Entity | - | No |
 | `entity/SpendingPersonalityProfileEntity.kt` | SpendingPersonalityProfileEntity | Spending profile entity | Entity | - | No |
 | `entity/SplitItemAssignment.kt` | SplitItemAssignment | Split item assignment entity | Entity | - | No |
 | `entity/SplitTemplate.kt` | SplitTemplate | Split template entity | Entity | - | No |
@@ -573,7 +837,7 @@
 | `model/ExpenseWithCategory_Extensions.kt` | ExpenseWithCategory_Extensions | Extension functions | Utility | - | No |
 | `model/PendingReviewWithReceipt.kt` | PendingReviewWithReceipt | Review with receipt | Model | - | No |
 
-### Repositories (56 files)
+### Repositories (62 files)
 
 **Location:** `com.yourname.expensetracker.data.repository`
 
@@ -585,6 +849,8 @@
 | `repository/AiEngagementRepositoryImpl.kt` | AiEngagementRepositoryImpl | Engagement tracking | Repository | - | No |
 | `repository/AiSettingsRepositoryImpl.kt` | AiSettingsRepositoryImpl | AI settings implementation | Repository | - | No |
 | `repository/AnalyticsRepository.kt` | AnalyticsRepository | Analytics data access | Repository | ExpenseDao | No |
+| `repository/AnomalyAlertRepositoryImpl.kt` | AnomalyAlertRepositoryImpl | Anomaly alert repository impl | Repository | AnomalyAlertDao | No |
+| `repository/AutomatedSavingsRuleStateRepository.kt` | AutomatedSavingsRuleStateRepository | Savings rule state persistence | Repository | - | No |
 | `repository/BudgetRepository.kt` | BudgetRepository | Budget data access | Repository | BudgetDao, BudgetForecastDao | No |
 | `repository/BusinessExpenseRepository.kt` | BusinessExpenseRepository | Business expenses | Repository | ExpenseDao | No |
 | `repository/CategoryRepository.kt` | CategoryRepository | Category data access | Repository | CategoryDao | No |
@@ -594,6 +860,7 @@
 | `repository/DashboardContractsAdapter.kt` | DashboardContractsAdapter | Adapts dashboard contracts | Repository | - | No |
 | `repository/DashboardRepository.kt` | DashboardRepository | Dashboard data access | Repository | Multiple DAOs | No |
 | `repository/DatabaseBackupRepositoryImpl.kt` | DatabaseBackupRepositoryImpl | Backup implementation | Repository | AppDatabase | No |
+| `repository/DeterministicExpenseExportPager.kt` | DeterministicExpenseExportPager | Deterministic paged export | Repository | ExpenseDao | No |
 | `repository/ExpenseRepository.kt` | ExpenseRepository | Core expense repository | Repository | ExpenseDao, UserCorrectionDao | No |
 | `repository/ExportDataRepository.kt` | ExportDataRepository | Export data access | Repository | Multiple DAOs | No |
 | `repository/FinancialWeatherRepository.kt` | FinancialWeatherRepository | Financial weather data | Repository | - | No |
@@ -618,19 +885,21 @@
 | `repository/RecommendationRepository.kt` | RecommendationRepository | Recommendations | Repository | RecommendationDao | No |
 | `repository/RecurringExpenseRepository.kt` | RecurringExpenseRepository | Recurring expenses | Repository | RecurringExpenseDao | No |
 | `repository/ReviewQueueRepository.kt` | ReviewQueueRepository | Pending review queue | Repository | PendingReviewDao | No |
+| `repository/SavingsContributionHistoryRepository.kt` | SavingsContributionHistoryRepository | Savings contribution tracking | Repository | - | No |
 | `repository/SavingsGoalRepository.kt` | SavingsGoalRepository | Savings goals | Repository | SavingsGoalDao | No |
 | `repository/SharedExpenseDataPortAdapter.kt` | SharedExpenseDataPortAdapter | Shared expense adapter | Repository | GroupExpenseDao | No |
 | `repository/SourceStatsRepository.kt` | SourceStatsRepository | Source statistics | Repository | SourceStatsDao | No |
+| `repository/SpendingChallengeRepository.kt` | SpendingChallengeRepository | Spending challenge data | Repository | SpendingChallengeDao | No |
 | `repository/SubscriptionManagementRepository.kt` | SubscriptionManagementRepository | Subscription data | Repository | SubscriptionCandidateDao | No |
 | `repository/UserCorrectionRepository.kt` | UserCorrectionRepository | User corrections | Repository | UserCorrectionDao | No |
 | `repository/WarrantyTrackerRepository.kt` | WarrantyTrackerRepository | Warranty data | Repository | WarrantyDao | No |
 | `repository/WidgetStyleRepositoryImpl.kt` | WidgetStyleRepositoryImpl | Widget styles | Repository | - | No |
 
-### AI Providers (38 files)
+### AI Providers (44 files)
 
 **Location:** `com.yourname.expensetracker.data.ai`
 
-#### Provider Implementations (22 files)
+#### Provider Implementations (33 files)
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
@@ -668,7 +937,7 @@
 | `ai/provider/OnDeviceSemanticDuplicateDetector.kt` | OnDeviceSemanticDuplicateDetector | On-device duplicate | Service | - | No |
 | `ai/provider/SmartReceiptAssistService.kt` | SmartReceiptAssistService | Smart receipt assist | Service | - | No |
 
-#### Provider Internals (4 files)
+#### Provider Internals (7 files)
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
@@ -676,6 +945,9 @@
 | `ai/provider/internal/CloudJsonParser.kt` | CloudJsonParser | Cloud JSON parsing | Parser | - | No |
 | `ai/provider/internal/CloudPiiSanitizer.kt` | CloudPiiSanitizer | PII sanitization | Security | - | No |
 | `ai/provider/internal/CloudRetryPolicy.kt` | CloudRetryPolicy | Retry policy | Utility | - | No |
+| `ai/provider/internal/DashboardBriefingPromptFormatter.kt` | DashboardBriefingPromptFormatter | Formats briefing prompts | Utility | - | No |
+| `ai/provider/internal/DashboardBriefingResponseParser.kt` | DashboardBriefingResponseParser | Parses briefing responses | Parser | - | No |
+| `ai/provider/internal/StrictAiJsonParsing.kt` | StrictAiJsonParsing | Strict JSON parsing for AI | Parser | - | No |
 
 #### AI Worker (2 files)
 
@@ -684,17 +956,26 @@
 | `ai/worker/AiWorkSchedulerImpl.kt` | AiWorkSchedulerImpl | Work scheduler implementation | Service | - | No |
 | `ai/worker/DailyBriefingWorker.kt` | DailyBriefingWorker | Daily briefing worker | Worker | DashboardBriefingService | No |
 
-### Other Data Layer Services (23 files)
+### Backup Services (4 files)
 
-**Location:** Various data subsystems
+**Location:** `com.yourname.expensetracker.data.backup`
 
-#### Currency (1 file)
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `backup/BackupVerifier.kt` | BackupVerifier | Verifies backup integrity | Service | - | No |
+| `backup/CostbackupBundle.kt` | CostbackupBundle | Bundled backup data model | Model | - | No |
+| `backup/RestoreJournal.kt` | RestoreJournal | Restore operation journal | Service | - | No |
+| `backup/RestoreMaintenanceMode.kt` | RestoreMaintenanceMode | Maintenance mode for restore | Service | - | No |
+
+### Currency Services (1 file)
+
+**Location:** `com.yourname.expensetracker.data.currency`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
 | `currency/ExchangeRateStoreAdapter.kt` | ExchangeRateStoreAdapter | Exchange rate adapter | Repository | ExchangeRateDao | No |
 
-#### Email Ingestion (5 files)
+### Email Ingestion (5 files)
 
 **Location:** `com.yourname.expensetracker.data.email`
 
@@ -706,7 +987,7 @@
 | `email/provider/EmailReceiptParser.kt` | EmailReceiptParser | Email receipt parser interface | Service | - | No |
 | `email/provider/UberReceiptParser.kt` | UberReceiptParser | Uber receipt parser | Parser | - | No |
 
-#### Location Services (9 files)
+### Location Services (11 files)
 
 **Location:** `com.yourname.expensetracker.data.location`
 
@@ -721,15 +1002,24 @@
 | `location/NominatimGeocodingService.kt` | NominatimGeocodingService | Nominatim geocoding | Service | - | No |
 | `location/OverpassNearbyService.kt` | OverpassNearbyService | Overpass nearby POI | Service | - | No |
 | `location/PhotonGeocodingService.kt` | PhotonGeocodingService | Photon geocoding | Service | - | No |
+| `location/internal/CancellableHttpCall.kt` | CancellableHttpCall | Cancellable HTTP call utility | Utility | - | No |
 | `location/internal/LogSanitizer.kt` | LogSanitizer | Log sanitization | Security | - | No |
 
-#### Provider (1 file)
+### Privacy Services (7 files)
+
+**Location:** `com.yourname.expensetracker.data.privacy`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `provider/MerchantCategoryProvider.kt` | MerchantCategoryProvider | Merchant category provider | Provider | - | No |
+| `privacy/AtRestEncryptionService.kt` | AtRestEncryptionService | At-rest data encryption | Security | - | No |
+| `privacy/BackupEncryptionService.kt` | BackupEncryptionService | Backup encryption/decryption | Security | - | No |
+| `privacy/DataRetentionWorker.kt` | DataRetentionWorker | Data retention policy worker | Worker | - | No |
+| `privacy/DefaultCloudPayloadRedactor.kt` | DefaultCloudPayloadRedactor | Cloud payload redaction | Security | - | No |
+| `privacy/ExportAnonymizer.kt` | ExportAnonymizer | Anonymizes exported data | Security | - | No |
+| `privacy/PrivacyAuditLoggerImpl.kt` | PrivacyAuditLoggerImpl | Privacy audit logging impl | Repository | PrivacyAuditDao | No |
+| `privacy/PrivacySettingsRepositoryImpl.kt` | PrivacySettingsRepositoryImpl | Privacy settings persistence | Repository | - | No |
 
-#### Security (2 files)
+### Security Services (2 files)
 
 **Location:** `com.yourname.expensetracker.data.security`
 
@@ -738,21 +1028,22 @@
 | `security/BankTokenCipher.kt` | BankTokenCipher | Bank token encryption | Security | - | No |
 | `security/SecureKeyStorage.kt` | SecureKeyStorage | Secure key storage | Security | - | No |
 
-#### Services (2 files)
-
-**Location:** `com.yourname.expensetracker.data.service`
-
-| File | Class | Purpose | Type | Dependencies | Tests |
-|------|-------|---------|------|--------------|-------|
-| `service/AndroidNotificationService.kt` | AndroidNotificationService | Android notifications | Service | - | No |
-
-#### Speech (1 file)
+### Speech Services (1 file)
 
 **Location:** `com.yourname.expensetracker.data.speech`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
 | `speech/AndroidSpeechInputGateway.kt` | AndroidSpeechInputGateway | Android speech input | Service | - | No |
+
+### Other Data Services (3 files)
+
+**Location:** Various data subsystems
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `provider/MerchantCategoryProvider.kt` | MerchantCategoryProvider | Merchant category provider | Provider | - | No |
+| `service/AndroidNotificationService.kt` | AndroidNotificationService | Android notifications | Service | - | No |
 
 ---
 
@@ -763,6 +1054,7 @@
 | File | Class | Purpose | Type | Provides | Tests |
 |------|-------|---------|------|----------|-------|
 | `AiModule.kt` | AiModule | AI service binding | Module | All AI services | No |
+| `AlertsModule.kt` | AlertsModule | Alerts & anomaly binding | Module | AnomalyAlertOrchestrator | No |
 | `ApplicationScope.kt` | ApplicationScope | App scope annotation | Annotation | - | No |
 | `BackupRepositoryModule.kt` | BackupRepositoryModule | Backup binding | Module | DatabaseBackupRepository | No |
 | `CashFlowModule.kt` | CashFlowModule | Cash flow binding | Module | CashFlowCalculator | No |
@@ -781,7 +1073,9 @@
 | `NetworkModule.kt` | NetworkModule | Network client | Module | Retrofit, OkHttp | No |
 | `NetworkQualifiers.kt` | NetworkQualifiers | Network qualifiers | Qualifier | - | No |
 | `OcrImprovementsModule.kt` | OcrImprovementsModule | OCR binding | Module | OCR preprocessors | No |
+| `PrivacyModule.kt` | PrivacyModule | Privacy gate binding | Module | CompositePrivacyGate, all sub-gates | No |
 | `ReceiptParsingModule.kt` | ReceiptParsingModule | Receipt parsing | Module | All receipt parsers | No |
+| `RecurringModule.kt` | RecurringModule | Recurring expenses binding | Module | RecurringLifecycleCoordinator | No |
 | `SavingsModule.kt` | SavingsModule | Savings binding | Module | Savings engines | No |
 | `SavingsRepositoryBindingsModule.kt` | SavingsRepositoryBindingsModule | Savings repos | Module | Savings repositories | No |
 | `SecurityModule.kt` | SecurityModule | Security binding | Module | Token cipher, Key storage | No |
@@ -789,6 +1083,7 @@
 | `SubscriptionModule.kt` | SubscriptionModule | Subscription binding | Module | Subscription detection | No |
 | `TaxModule.kt` | TaxModule | Tax binding | Module | Tax estimator | No |
 | `TimeModule.kt` | TimeModule | Time provider | Module | TimeProvider, SystemTimeProvider | No |
+| `TransactionModule.kt` | TransactionModule | Transaction lifecycle binding | Module | TransactionLifecycleCoordinator | No |
 
 ---
 
@@ -835,6 +1130,71 @@ ConfidenceRouter (routes based on confidence)
 Domain Engine (categorization, dedup, etc.)
 ```
 
+### Privacy Gate Pipeline
+
+```
+Feature Request
+    ↓
+CompositePrivacyGate (chains all sub-gates)
+    ↓
+┌────────────────┬──────────────┬──────────────┬──────────────┐
+│ Notification  │ Cloud AI     │ Location     │ Backup       │
+│ PrivacyGate   │ PrivacyGate  │ PrivacyGate  │ PrivacyGate  │
+└────────────────┴──────────────┴──────────────┴──────────────┘
+    ↓
+PrivacyDecision (Allowed / Denied)
+    ↓
+PrivacyAuditLogger (logs gate check)
+    ↓
+Proceed or Block
+```
+
+### Transaction Lifecycle Flow
+
+```
+CreateExpenseRequest (from any source)
+    ↓
+TransactionLifecycleCoordinator (single entry point)
+    ↓
+┌──────────────────────────────────────────────┐
+│ 1. Deduplication check (DeduplicationMode)   │
+│ 2. Expense creation (CreateExpenseResult)    │
+│ 3. Side effect dispatch (SideEffectMode)     │
+└──────────────────────────────────────────────┘
+    ↓
+TransactionSideEffectDispatcher
+    ↓
+┌─────────────────┬─────────────────┬─────────────────┐
+│ Receipt Linking │ Budget Update    │ Analytics       │
+│ Notification    │ Recurring Check  │ AI Processing   │
+└─────────────────┴─────────────────┴─────────────────┘
+```
+
+### Receipt Lifecycle Flow
+
+```
+Receipt Input (Scan / Email / Gallery)
+    ↓
+ReceiptInputValidator (URI/MIME/size)
+    ↓
+ReceiptDuplicateDetector (3-signal dedup)
+    ↓
+ReceiptAssetStore (file persistence + hashing)
+    ↓
+ReceiptLifecycleCoordinator (orchestrates)
+    ↓
+┌──────────────────────────────────────────────┐
+│ 1. OCR Processing                            │
+│ 2. Merchant Extraction                       │
+│ 3. Categorization                            │
+│ 4. Receipt-Expense Linking (ReceiptLinkSvc)  │
+└──────────────────────────────────────────────┘
+    ↓
+ReceiptSideEffectDispatcher (document-type-gated)
+    ↓
+BankStatementLifecycleProcessor (for statements)
+```
+
 ### Database Entity Relationships
 
 **Core Transaction Entities:**
@@ -845,9 +1205,13 @@ Domain Engine (categorization, dedup, etc.)
 
 **Related Entities:**
 - `ScannedReceipt`, `EmailReceiptSource` ← Receipt sources
+- `ReceiptEvent`, `ReceiptExpenseLink` ← Receipt lifecycle
 - `ManualRecurringExpense`, `RecurringExpense` ← Recurring patterns
+- `RecurringOccurrence`, `RecurringLifecycleEvent` ← Recurring lifecycle
+- `RecurringReminderDelivery` ← Reminder tracking
 - `Budget`, `BudgetForecast` ← Budget tracking
 - `SavingsGoal`, `SavingsSweepPlan` ← Savings
+- `SpendingChallengeEntity` ← Challenges
 - `GroupExpense`, `GroupMember`, `ExpenseGroup` ← Shared expenses
 - `MerchantCanonical`, `MerchantAlias`, `MerchantLocation` ← Merchant data
 - `ExchangeRate` ← Currency conversion
@@ -855,6 +1219,9 @@ Domain Engine (categorization, dedup, etc.)
 - `Investment`, `InvestmentValue` ← Investment tracking
 - `SubscriptionCandidate`, `SubscriptionUsage` ← Subscription detection
 - `RawNotification`, `BlockedPackage` ← Notification tracking
+- `SourceStats`, `SourceStatsEvent` ← Source analytics
+- `BackgroundJobRun` ← Background job tracking
+- `AnomalyAlert` ← Anomaly alerting
 
 ### Repository → DAO → Entity Flow
 
@@ -922,10 +1289,12 @@ Engine (integration with other domain logic)
 |---------|----------------|-------|
 | **Dependency Injection** | Dagger/Hilt | `di/*Module.kt` |
 | **Database** | Room | `data/database/*` |
-| **Security** | Encryption, Key Storage | `data/security/*` |
+| **Security** | Encryption, Key Storage | `data/security/*`, `data/privacy/*` |
 | **Geocoding** | Multiple providers | `data/location/*` |
-| **AI** | Cloud + OnDevice + Fallback | `data/ai/provider/*` |
+| **AI** | Cloud + OnDevice + Hybrid + NoOp | `data/ai/provider/*` |
 | **Parsing** | Strategy pattern | `domain/parser/*`, `data/email/*` |
+| **Privacy** | Gate pattern + redaction | `domain/privacy/*`, `data/privacy/*` |
+| **Backup** | Encrypted bundles + journal | `data/backup/*` |
 | **Utilities** | Shared helpers | `domain/util/*` |
 
 ---
@@ -934,17 +1303,17 @@ Engine (integration with other domain logic)
 
 | Metric | Count |
 |--------|-------|
-| **Domain Files** | 244 |
-| **Data Files** | 206 |
-| **DI Modules** | 27 |
-| **Total Backend Files** | 477 |
-| **Test Files** | 317 |
-| **Database Entities** | 55 |
-| **DAOs** | 54 |
-| **Repositories** | 56 |
-| **Use Cases** | ~30 |
-| **Engines** | ~50 |
-| **AI Providers** | 32 |
+| **Domain Files** | ~450 |
+| **Data Files** | ~280 |
+| **DI Modules** | 31 |
+| **Total Backend Files** | 790 |
+| **Test Files** | 462 |
+| **Database Entities** | 59 |
+| **DAOs** | 55 |
+| **Repositories** | 62 |
+| **Use Cases** | 41 |
+| **Engines** | ~70 |
+| **AI Providers** | 44 |
 
 ---
 
@@ -960,8 +1329,10 @@ Engine (integration with other domain logic)
 8. **Decorator Pattern** - Hybrid AI services wrapping
 9. **Factory Pattern** - ParserRegistry, AppDatabase
 10. **Singleton Pattern** - Repositories, Engines via DI
+11. **Gate Pattern** - Privacy capability gating
+12. **Lifecycle Coordinator Pattern** - Centralized CUD entry points
+13. **Sealed Result Pattern** - Typed operation results (CreateExpenseResult, etc.)
 
 ---
 
 **End of Complete Backend Map**
-

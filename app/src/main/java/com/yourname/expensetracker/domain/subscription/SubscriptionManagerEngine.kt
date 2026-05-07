@@ -190,9 +190,11 @@ class SubscriptionManagerEngine @Inject constructor(
         
         // Only record if price actually changed
         if (abs(newAmount - previousPrice) > 0.01) {
+            // W04: Set recordedAt to timeProvider.now() to avoid the 0L sentinel
             val priceHistory = SubscriptionPriceHistory(
                 subscriptionId = subscriptionId,
                 amount = newAmount,
+                recordedAt = timeProvider.now(),
                 changeReason = reason
             )
             priceHistoryDao.insert(priceHistory)
@@ -204,6 +206,9 @@ class SubscriptionManagerEngine @Inject constructor(
             if (subscription != null && abs(subscription.amount - newAmount) > 0.01) {
                 recurringExpenseRepository.update(subscription.copy(amount = newAmount))
             }
+
+            // TODO (W07): Wrap priceHistoryDao.insert + recurringExpenseRepository.update
+            // in database.withTransaction for atomicity. Requires injecting AppDatabase.
         }
     }
     
@@ -256,7 +261,8 @@ class SubscriptionManagerEngine @Inject constructor(
         if (allUsage.isNotEmpty()) {
             val oldestUsage = allUsage.minByOrNull { it.usedAt }?.usedAt ?: now
             // Use calendar-aware month counting (DST-safe, handles varying month lengths)
-            val monthsActive = TimePeriodUtils.daysBetween(oldestUsage, now).coerceAtLeast(1) / 30
+            // W05: Prevent divide-by-zero when monthsActive rounds to 0 (< 30 days)
+            val monthsActive = (TimePeriodUtils.daysBetween(oldestUsage, now).coerceAtLeast(1) / 30).coerceAtLeast(1)
             averageUsesPerMonth = totalUses.toDouble() / monthsActive
         }
         

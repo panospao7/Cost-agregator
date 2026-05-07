@@ -178,6 +178,8 @@ class CsvExpenseImporter @Inject constructor(
         }
     }
 
+    // TODO (T07): Apply hardened CSV cell sanitizer that neutralizes formula-leading
+    // characters (=, +, -, @) per OWASP CSV Injection guidelines before parsing lines.
     private fun parseCsvLine(line: String): List<String> {
         val fields = mutableListOf<String>()
         val current = StringBuilder()

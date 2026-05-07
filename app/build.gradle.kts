@@ -413,3 +413,6 @@ tasks.register("checkLifecycleBypasses") {
 tasks.named("check") {
     dependsOn("checkLifecycleBypasses")
 }
+
+// TODO (M10): Add CI guard for direct System.currentTimeMillis/Instant.now/Date()
+// calls outside approved TimeProvider implementations

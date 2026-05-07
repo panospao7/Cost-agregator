@@ -1,6 +1,6 @@
 # Hilt Module Bindings Map
 
-> Complete interface → implementation binding map for all 28 Hilt modules.
+> Complete interface → implementation binding map for all 31 Hilt modules.
 
 ---
 
@@ -18,15 +18,15 @@ Dependencies:
 
 ### `DaoModule` — `di/DaoModule.kt`
 ```
-Provides (54 DAOs):
+Provides (55 DAOs):
   PlannedExpenseDao, SavingsGoalDao, RawNotificationDao, BlockedPackageDao,
   ExpenseDao, BudgetDao, ScannedReceiptDao, CategoryDao, MerchantCategoryDao,
-  PendingReviewDao, UserCorrectionDao, SourceStatsDao, RecurringExpenseDao,
+  PendingReviewDao, UserCorrectionDao, SourceStatsDao, SourceStatsEventDao, RecurringExpenseDao,
   ManualRecurringExpenseDao, MerchantNormalizationDao, MerchantLocationDao,
   RecommendationDao, ReceiptItemCategorizationDao, WarrantyDao, ReturnWindowDao,
   SubscriptionPriceHistoryDao, SubscriptionUsageDao, MileageTrackingDao,
   ExchangeRateDao, ExpenseGroupDao, GroupMemberDao, GroupExpenseDao,
-  BudgetForecastDao, InvestmentDao, InvestmentValueDao, BankConnectionDao,
+  BudgetForecastDao, InvestmentDao, InvestmentValueDao, BankConnectionDao, BackgroundJobRunDao,
   SplitTemplateDao, SplitItemAssignmentDao, SubscriptionCandidateDao,
   BudgetAdjustmentDao, EmailReceiptDao, AnomalyAlertDao, HealthScoreHistoryDao,
   PromptStateDao, SpendingPersonalityProfileDao, StressForecastSnapshotDao,
@@ -45,6 +45,12 @@ Provides:
   @ApplicationScope CoroutineScope            → SupervisorJob + IO
 Dependencies:
   @IoDispatcher (for @ApplicationScope)
+```
+
+### `ApplicationScope` — `di/ApplicationScope.kt`
+```
+Provides nothing directly (qualifier definition only).
+Defines @ApplicationScope qualifier annotation used by DispatchersModule.
 ```
 
 ### `TimeModule` — `di/TimeModule.kt`
@@ -331,3 +337,6 @@ SecurityModule        │
 PrivacyModule ───────► PrivacyGate ──► All Gated Services
 BackupRepositoryModule ──► Backup/Restore
 ```
+
+---
+**Stats:** 31 Hilt modules · 70 repositories · 55 DAOs · 59 entities

@@ -281,9 +281,11 @@ class SubscriptionManagementViewModel @Inject constructor(
                 val id = repository.insertSubscription(subscription)
                 
                 // REC-8: Record initial baseline price entry
+                // W04: Set recordedAt to timeProvider.now() to avoid the 0L sentinel
                 val priceHistory = SubscriptionPriceHistory(
                     subscriptionId = id,
                     amount = amount,
+                    recordedAt = timeProvider.now(),
                     changeReason = "BASELINE: Initial subscription"
                 )
                 repository.insertPriceHistory(priceHistory)
@@ -357,9 +359,11 @@ class SubscriptionManagementViewModel @Inject constructor(
                 val subscriptionId = repository.insertSubscription(subscription)
                 
                 // REC-8: Record initial baseline price entry
+                // W04: Set recordedAt to timeProvider.now() to avoid the 0L sentinel
                 val priceHistory = SubscriptionPriceHistory(
                     subscriptionId = subscriptionId,
                     amount = candidate.averageAmount,
+                    recordedAt = timeProvider.now(),
                     changeReason = "BASELINE: Auto-detected from notifications"
                 )
                 repository.insertPriceHistory(priceHistory)

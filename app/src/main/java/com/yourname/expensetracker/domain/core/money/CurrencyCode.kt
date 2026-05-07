@@ -16,7 +16,8 @@ value class CurrencyCode(val code: String) : Comparable<CurrencyCode> {
 
     init {
         require(code.length == 3) { "Currency code must be 3 letters: '$code'" }
-        require(code.all { it.isUpperCase() || it.isDigit() }) { "Currency code must be uppercase alphanumeric: '$code'" }
+        require(code.all { it.isUpperCase() }) { "Currency code must be uppercase: '$code'" }
+        require(code.none { it.isDigit() }) { "Currency code must not contain digits: '$code'" }
     }
 
     override fun compareTo(other: CurrencyCode): Int = code.compareTo(other.code)

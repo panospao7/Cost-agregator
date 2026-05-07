@@ -17,6 +17,8 @@
 8. [Worker/Startup Dependency Map](#8-workerstartup-dependency-map)
 9. [Hilt Module Map](#9-hilt-module-map)
 10. [DAO/Repository Map](#10-daorepository-map)
+11. [Location Services Dependency Map](#11-location-services-dependency-map)
+12. [AI Provider Dependency Map](#12-ai-provider-dependency-map)
 
 ---
 
@@ -424,6 +426,10 @@ RedactionSanitizer                        [domain/privacy/RedactionSanitizer.kt]
 | `BACKGROUND_LOCATION_BACKFILL` | `LocationBackfillWorker` | `data/location/LocationBackfillWorker.kt` |
 | `RAWBACKUP_EXPORT` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
 | `ENCRYPTED_BACKUP` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
+| `CLOUD_AI_WARRANTY_EXTRACTION` | `HybridWarrantyExtractionService` | `data/ai/provider/HybridWarrantyExtractionService.kt` |
+| `CLOUD_AI_RECEIPT_ITEM_CATEGORIZATION` | `HybridReceiptItemCategorizationService` | `data/ai/provider/HybridReceiptItemCategorizationService.kt` |
+| `DEVICE_GPS_LOCATION` | `AndroidForegroundLocationProvider` | `data/location/AndroidForegroundLocationProvider.kt` |
+| `OVERPASS_API` | `OverpassNearbyService` | `data/location/OverpassNearbyService.kt` |
 
 ---
 
@@ -654,6 +660,91 @@ before performing write operations, ensuring workers yield during an active rest
 
 ---
 
+## 11. Location Services Dependency Map
+
+```
+MapScreen / LocationResolver
+  │
+  ▼
+LocationResolver                         [domain/location/LocationResolver.kt]
+  │
+  ├──► CompositeGeocodingService          [data/location/CompositeGeocodingService.kt]
+  │     ├──► NominatimGeocodingService    [data/location/NominatimGeocodingService.kt]
+  │     ├──► GeoapifyGeocodingService     [data/location/GeoapifyGeocodingService.kt]
+  │     ├──► GooglePlacesGeocodingService [data/location/GooglePlacesGeocodingService.kt]
+  │     └──► PhotonGeocodingService       [data/location/PhotonGeocodingService.kt]
+  │
+  ├──► OverpassNearbyService              [data/location/OverpassNearbyService.kt]
+  ├──► AndroidForegroundLocationProvider  [data/location/AndroidForegroundLocationProvider.kt]
+  │
+  ├──► LocationPrivacyGate                [domain/privacy/LocationPrivacyGate.kt]
+  │     └──► PrivacyGate.check(EXTERNAL_GEOCODING | BACKGROUND_LOCATION_BACKFILL | GPS | OVERPASS)
+  │
+  ├──► MerchantLocationRepository         [data/repository/MerchantLocationRepository.kt]
+  └──► TravelDetectionEngine              [domain/location/TravelDetectionEngine.kt]
+
+Pipeline consumers:
+- AnalyticsViewModel → LocationInsightsEngine, AreaSpendingEngine, TravelDetectionEngine
+- SpendingMapViewModel → LocationResolver
+- LocationBackfillWorker → CompositeGeocodingService + ExpenseDao
+```
+
+---
+
+## 12. AI Provider Dependency Map
+
+```
+Domain AI Services (interfaces)
+  │
+  ├──► CategorizationAssistService
+  │     ├──► CloudCategorizationAssistService
+  │     ├──► OnDeviceCategorizationAssistService
+  │     ├──► HybridCategorizationAssistService
+  │     └──► NoOpCategorizationAssistService
+  │
+  ├──► DashboardBriefingService
+  │     ├──► CloudDashboardBriefingService
+  │     ├──► OnDeviceDashboardBriefingService
+  │     ├──► HybridDashboardBriefingService
+  │     └──► NoOpDashboardBriefingService
+  │
+  ├──► DedupeJudgeService
+  │     ├──► CloudDedupeJudgeService
+  │     ├──► OnDeviceDedupeJudgeService
+  │     ├──► HybridDedupeJudgeService
+  │     └──► NoOpDedupeJudgeService
+  │
+  ├──► QueryInterpretationService
+  │     ├──► CloudQueryInterpretationService
+  │     ├──► OnDeviceQueryInterpretationService
+  │     ├──► HybridQueryInterpretationService
+  │     └──► NoOpQueryInterpretationService
+  │
+  ├──► ReceiptAssistService
+  │     ├──► SmartReceiptAssistService
+  │     ├──► OnDeviceReceiptAssistService
+  │     ├──► HybridReceiptAssistService
+  │     └──► NoOpReceiptAssistService
+  │
+  ├──► ReviewExplanationService
+  │     ├──► CloudReviewExplanationService
+  │     ├──► OnDeviceReviewExplanationService
+  │     ├──► HybridReviewExplanationService
+  │     └──► NoOpReviewExplanationService
+  │
+  └──► ReceiptItemCategorizationService
+        ├──► CloudReceiptItemCategorizationService
+        ├──► OnDeviceReceiptItemCategorizationService
+        └──► HybridReceiptItemCategorizationService
+
+All Hybrid services use:
+  ├──► AiCapabilityRouter            — Routes to Cloud/OnDevice/NoOp
+  ├──► PrivacyGate.check()           — Respects user privacy settings
+  └──► RedactionSanitizer            — PII redaction before cloud calls
+```
+
+---
+
 ## ViewModel Constructor Injection Reference
 
 | ViewModel | Injected Dependencies |
@@ -686,8 +777,8 @@ before performing write operations, ensuring workers yield during an active rest
 
 ---
 
-> **Generated:** Manual analysis of 620+ Kotlin files across 3 layers (UI/Domain/Data),  
-> 30 Hilt modules, 39 ViewModels, 51 repositories, 54 DAOs, 56 entities.  
+> **Generated:** Manual analysis of 790+ source files across 3 layers (UI/Domain/Data),  
+> 31 Hilt modules, 39 ViewModels, 70 repositories (53 data + 17 domain interfaces), 55 DAOs, 59 entities.  
 > **Next update:** Regenerate when significant architectural changes occur (new module, major refactor).
 
 ---

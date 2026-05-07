@@ -1,6 +1,8 @@
 # Navigation Route ↔ ViewModel Map
 
 > Complete mapping of every `NavigationDestination` to its corresponding ViewModel, screen file, and feature segment.
+>
+> *Last updated: 2026-05-07*
 
 ---
 
@@ -60,14 +62,16 @@
 | Budget Forecasting | `NavigationDestination.BudgetForecasting(budget?)` | `BudgetForecastingViewModel` | `ui/screens/budget/BudgetForecastingScreen.kt` | 1 (Forecast) |
 | Category Management | `NavigationDestination.CategoryManagement` | `CategoryViewModel` | `ui/screens/categories/CategoryScreen.kt` | 6 (Merchant Cat.) |
 | AI Settings | `NavigationDestination.AiSettings` | `AiSettingsViewModel` | `ui/screens/aisettings/AiSettingsScreen.kt` | 20 (AI Platform) |
+| Assistant | `NavigationDestination.Assistant` | `AssistantViewModel` | `ui/screens/assistant/AssistantSheet.kt` | 20 (AI Platform) |
 
-### Screens with no dedicated ViewModel (composable-only)
+### Screens with no NavigationDestination route
 
-> **Note**: `PrivacySettingsViewModel` exists but has no `NavigationDestination` route.
+> **Note**: `PrivacySettingsViewModel` exists but is only accessible from within the Settings screen, not as a standalone navigation route.
 
-| Route | Destination Class | Logic Source | Screen File |
-|-------|------------------|-------------|-------------|
-| Debug | _(Debug-only, not in NavigationDestination)_ | `DebugViewModel` | `ui/screens/debug/DebugScreen.kt` |
+| Route | Destination Class | ViewModel | Screen File | Segment |
+|-------|------------------|-----------|-------------|---------|
+| Privacy Settings | *(no NavigationDestination)* | `PrivacySettingsViewModel` | `ui/screens/privacysettings/PrivacySettingsScreen.kt` | 6 (Privacy) |
+| Debug | _(Debug-only, not in NavigationDestination)_ | `DebugViewModel` | `ui/screens/debug/DebugScreen.kt` | — |
 
 ---
 

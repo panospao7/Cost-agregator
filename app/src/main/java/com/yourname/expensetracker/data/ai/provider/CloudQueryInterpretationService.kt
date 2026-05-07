@@ -136,6 +136,8 @@ class CloudQueryInterpretationService @Inject constructor(
     private fun buildRequestBody(input: FinancialQueryInterpretationInput): String {
         val prompt = promptHelper.buildPrompt(input.toCloudPromptInput())
         // ARCH-04: Redact PII from prompt before sending to cloud AI
+        // TODO (W17): Apply CloudPayloadRedactor before building prompt (ARCH-04).
+        // CloudQueryInterpretationService is already migrated in ARCH-04.
         val redacted = redactor.redactText(prompt, CloudPayloadPurpose.QUERY_INTERPRETATION)
         return JSONObject().apply {
             put(

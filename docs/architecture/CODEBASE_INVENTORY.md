@@ -1,6 +1,6 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated:** 2026-04-02 (snapshot)  
+**Generated:** 2026-05-07 (snapshot)  
 **Database Version:** 117  
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
@@ -218,6 +218,8 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - MapFinancialQueryToNavigationUseCase, PrioritizeReviewItemsUseCase
 - SuggestCategoryFallbackUseCase, SuggestReceiptExtractionUseCase
 - SyncProactiveBriefingWorkUseCase
+- AiArtifactFreshness, TransactionInsightInputBuilder
+- ValidateBankStatementTransactionsUseCase
 - Plus 7 InputBuilder classes
 
 **Models/Policies:**
@@ -297,11 +299,27 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - CalculateBudgetStatusUseCase, CalculateFinancialForecastUseCase
 - ComputeDashboardWidgetsUseCase, DashboardDataProvider
 
+### Additional Domain Packages
+- **privacy/** - Privacy settings & data portability
+- **transaction/** - Transaction parsing & validation
+- **core/money/** - Money, currency, amount utilities
+- **core/time/** - Time providers & period utilities
+- **recurring/** - Recurring expense lifecycle
+- **alerts/** - Anomaly & alert domain models
+- **bank/** - Bank connection domain
+- **business/** - Business expense reporting
+- **carbon/** - Carbon footprint calculation
+- **cashflow/** - Cash flow analysis
+- **diagnostics/** - Debug & diagnostics
+- **dto/** - Data transfer objects
+- **reminder/** - Reminder domain models
+- **workers/** - Worker domain definitions
+
 ---
 
 ## 5. REPOSITORIES
 
-Representative repository inventory; counts shift as implementations are added, renamed, or split.
+Actual repository inventory (interfaces and implementations); counts shift as implementations are added, renamed, or split.
 
 ### Core finance
 - ExpenseRepository
@@ -342,18 +360,22 @@ Representative repository inventory; counts shift as implementations are added, 
 - WidgetStyleRepositoryImpl
 
 ### Current repositories not to omit
-- GroupsRepository
-- GroupsRepositoryImpl
+- GroupsRepository (interface) / GroupsRepositoryImpl (implementation)
 - ManualRecurringExpenseRepository
 - PromptStateRepository
 - ReceiptItemCategorizationRepository
 - SpendingChallengeRepository
 - SubscriptionManagementRepository
 - AnomalyAlertRepositoryImpl
+- AutomatedSavingsRuleStateRepository
+- SavingsContributionHistoryRepository
+- DeterministicExpenseExportPager
+- SharedExpenseDataPortAdapter
+- PrivacySettingsRepositoryImpl
 
 ---
 
-## 6. DATABASE (Version 92)
+## 6. DATABASE (Version 117)
 
 ### Entities
 
@@ -388,11 +410,19 @@ Representative repository inventory; counts shift as implementations are added, 
 - BudgetAdjustmentRecommendation, BudgetAdjustmentEvent
 - SpendingPersonalityProfileEntity, StressForecastSnapshot
 - EmailReceiptSource, SpendingChallengeEntity
+- BackgroundJobRun, SourceStatsEvent, ReceiptEvent
+- ReceiptExpenseLink, RecurringLifecycleEvent
+- RecurringOccurrence, RecurringReminderDelivery
+- PrivacyAuditEvent
 
 ### DAOs
 One DAO per entity (mostly 1-to-1 mapping)
 - **Deprecated:** RecurringExpenseDao (delegates to ManualRecurringExpenseDao)
 - **Special:** MerchantNormalizationDao, BankConnectionDao
+- BackgroundJobRunDao, SourceStatsEventDao, ReceiptEventDao
+- ReceiptExpenseLinkDao, RecurringLifecycleEventDao
+- RecurringOccurrenceDao, RecurringReminderDeliveryDao
+- SpendingChallengeDao, PrivacyAuditDao
 
 ### Migration History
 - Database Version: 117
@@ -433,8 +463,11 @@ One DAO per entity (mostly 1-to-1 mapping)
 ### Specialized / Support
 - **BackupRepositoryModule** - Backup/restore
 - **SecurityModule** - Encryption & security
+- **AlertsModule** - Anomaly/alert bindings
+- **PrivacyModule** - Privacy settings bindings
 - **LocationResolverPortsModule** - Location abstractions
 - **EmptyStateModule** - Empty-state wiring
+- **EmptyStatePresentationModule** - Empty-state presentation wiring
 - **ApplicationScope** - App-scoped coroutine support
 - **EmptyStateRegistryInitializer** - Empty-state bootstrap
 - **Feature bindings** - Current feature modules bind via `@Inject` / `@Provides`
@@ -526,6 +559,9 @@ One DAO per entity (mostly 1-to-1 mapping)
 15. **MerchantKeyBackfillWorker** - Merchant key backfill
 16. **WarrantyExpirationWorker** - Warranty expiry tracking
 17. **ReceiptMatchingWorker** - Receipt matching background work
+18. **BillReminderWorker** - Bill reminder background processing
+19. **DataRetentionWorker** - Data retention policy enforcement
+> **Note:** All 7 workers are paused during restore via `RestoreMaintenanceMode`.
 
 ### Utilities
 18. TransactionFilterSerializer
@@ -612,7 +648,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Room Database Persistence  
 
 ### Database
-✅ Version 92 with current migration chain  
+✅ Version 117 with current migration chain  
 ✅ Export schema enabled  
 ✅ Type converters defined
 
@@ -639,4 +675,4 @@ One DAO per entity (mostly 1-to-1 mapping)
 
 ## End of Inventory
 
-**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-04-02.**
+**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-05-07.**

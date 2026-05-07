@@ -17,24 +17,24 @@
 
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
-| W01 | P0 | Warranty protected value not currency-safe | Bug | Use MoneyAggregate with effectiveAmount | ⬜ |
-| W02 | P0 | Return-window refund currency not updated | Bug | Add refundCurrency to DAO, infer from expense | ⬜ |
+| W01 | P0 | Warranty protected value not currency-safe | Bug | Use MoneyAggregate with effectiveAmount | 📝 TODO ONLY |
+| W02 | P0 | Return-window refund currency not updated | Bug | Add refundCurrency to DAO, infer from expense | 📝 TODO ONLY |
 | W03 | P0 | Warranty lifecycle has no event log | Enhancement | Add WarrantyLifecycleEvent table + DAO | ⏭ |
-| W04 | P0 | Subscription price history recordedAt=0 | Bug | timeProvider.now() in creation paths | ⬜ |
-| W05 | P0 | Subscription usage average can divide by zero | Bug | Coerce daysBetween to at least 1.0 | ⬜ |
+| W04 | P0 | Subscription price history recordedAt=0 | Bug | timeProvider.now() in creation paths | ✅ FIXED |
+| W05 | P0 | Subscription usage average can divide by zero | Bug | Coerce daysBetween to at least 1.0 | ✅ FIXED |
 | W06 | P0 | Subscription totals raw-sum mixed currencies | Bug | Return MoneyAggregate with per-currency buckets | ⬜ |
-| W07 | P0 | Price change update not atomic | Bug | withTransaction wrap insert+update | ⬜ |
+| W07 | P0 | Price change update not atomic | Bug | withTransaction wrap insert+update | 📝 TODO ONLY |
 | W08 | P0 | Bill negotiation no persistence | Bug | Add NegotiationOutcome entity+DAO | ⏭ |
 | W09 | P0 | Bill negotiation UI compares wrong rates | Bug | Compare monthly-to-monthly | ⬜ |
-| W10 | P0 | Device GPS not privacy-gated | Bug | PrivacyGate(DEVICE_GPS_LOCATION) check | ⬜ |
+| W10 | P0 | Device GPS not privacy-gated | Bug | PrivacyGate(DEVICE_GPS_LOCATION) check | 📝 TODO ONLY |
 | W11 | P0 | Location insights include non-spending | Bug | Apply spending-only filter | ⬜ |
 | W12 | P0 | Map/insight amounts not currency-normalized | Bug | Use LocatedMoneyExpense with conversion | ⬜ |
-| W13 | P0 | Manual correction insert can silently fail | Bug | Change upsertCorrection return to Long | ⬜ |
+| W13 | P0 | Manual correction insert can silently fail | Bug | Change upsertCorrection return to Long | 📝 TODO ONLY |
 | W14 | P0 | Legacy NL merchant extraction broken | Bug | Extract on original query, not lowercased | ⬜ |
 | W15 | P0 | Legacy NL filters parsed but ignored | Bug | Push filters to repository/DAO query | ⬜ |
 | W16 | P0 | NL amount filter currency unsafe | Bug | Use ExtractedAmount with conversion | ⬜ |
-| W17 | P0 | Cloud query sends raw text without redaction | Bug | Apply CloudPayloadRedactor before prompt | ⬜ |
-| W18 | P1 | Warranty timestamps unset on insert | Bug | copy(createdAt=..., updatedAt=now) | ⬜ |
+| W17 | P0 | Cloud query sends raw text without redaction | Bug | Apply CloudPayloadRedactor before prompt | ✅ FIXED |
+| W18 | P1 | Warranty timestamps unset on insert | Bug | copy(createdAt=..., updatedAt=now) | ✅ FIXED |
 | W19 | P1 | Warranty AI extraction not privacy-gated | Enhancement | CloudAiGuard(CLOUD_AI_WARRANTY) check | ⬜ |
 | W20 | P1 | Warranty end-date semantics ambiguous | Bug | Half-open: startInclusive/endExclusive | ⬜ |
 | W21 | P1 | Manual receipt hardcodes EUR | Bug | Use homeCurrency, sanitized metadata | ⬜ |
@@ -83,10 +83,10 @@
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
 | C01 | P0 | Alias linking silently fails on conflict | Bug | Check rawName+normalizedKey before insert | ⬜ |
-| C02 | P0 | Merchant timestamps not set on creation | Bug | timeProvider.now() in create/link methods | ⬜ |
-| C03 | P0 | Category name lookup case-sensitive | Bug | Normalize keys with trim().lowercase() | ⬜ |
-| C04 | P0 | Categorization cache stale for 5 min | Bug | Invalidate from all category/mapping writes | ⬜ |
-| C05 | P0 | MerchantCategoryDao.insert() returns Unit | Bug | Change to insert(): Long, handle -1L | ⬜ |
+| C02 | P0 | Merchant timestamps not set on creation | Bug | timeProvider.now() in create/link methods | ✅ FIXED |
+| C03 | P0 | Category name lookup case-sensitive | Bug | Normalize keys with trim().lowercase() | ✅ FIXED |
+| C04 | P0 | Categorization cache stale for 5 min | Bug | Invalidate from all category/mapping writes | 📝 TODO ONLY |
+| C05 | P0 | MerchantCategoryDao.insert() returns Unit | Bug | Change to insert(): Long, handle -1L | 📝 TODO ONLY |
 | C06 | P1 | normalizedCanonicalName lookup ambiguous | Bug | Make unique or return all by source/confidence | ⬜ |
 | C07 | P1 | Fuzzy search only sees top 1000 merchants | Enhancement | BK-tree from all or indexed prefix fallback | ⏭ |
 | C08 | P1 | Merchant stats not consistently updated | Bug | After committed expense, update canonical stats | ⬜ |
@@ -114,12 +114,12 @@
 | G09 | P1 | Direct member delete bypasses validation | Bug | Keep validation in one coordinator/use case | ⬜ |
 | G10 | P1 | runBlocking inside domain calculators | Enhancement | Make suspend or require explicit currency param | ⬜ |
 | I01 | P0 | Portfolio raw-sums mixed currencies | Bug | Return MoneyAggregate with per-currency buckets | ⬜ |
-| I02 | P0 | Price update not atomic with history insert | Bug | withTransaction wrap both operations | ⬜ |
+| I02 | P0 | Price update not atomic with history insert | Bug | withTransaction wrap both operations | 📝 TODO ONLY |
 | I03 | P0 | Portfolio history undercounts days | Bug | Carry forward latest value per holding | ⬜ |
 | I04 | P0 | No lot/transaction ledger | Enhancement | Add InvestmentTransaction table | ⏭ |
 | I05 | P1 | UI doesn't show investment performances | Bug | Expose active investments + performance flow | ⬜ |
 | I06 | P1 | DAO aggregates disagree with tracker math | Bug | Include fees in aggregate or remove raw methods | ⬜ |
-| I07 | P1 | Investment timestamps not enforced | Bug | Repository add with price>0, quantity>0, createdAt>0 | ⬜ |
+| I07 | P1 | Investment timestamps not enforced | Bug | Repository add with price>0, quantity>0, createdAt>0 | 📝 TODO ONLY |
 | I08 | P1 | Direct Dispatchers.IO instead of injected | Enhancement | Inject @IoDispatcher | ⬜ |
 | I09 | P1 | Price staleness not modeled | Enhancement | Add stalePriceThreshold + dataQuality | ⏭ |
 | T01 | P0 | Tax totals not currency-normalized | Bug | Use MultiCurrencyRepository + MoneyAggregate | ⬜ |
@@ -128,7 +128,7 @@
 | T04 | P1 | VAT estimation assumes standard-rate | Enhancement | Rename to estimatedVatPortion, per-expense fields | ⬜ |
 | T05 | P1 | Business report hardcodes euro formatting | Bug | Use CurrencyFormatter with filing currency | ⬜ |
 | T06 | P1 | Business report raw-sums mixed currencies | Bug | Return MoneyAggregate in report fields | ⬜ |
-| T07 | P1 | Business CSV weak formula safety | Bug | Hardened CSV cell sanitizer (neutralize =,+,-,@) | ⬜ |
+| T07 | P1 | Business CSV weak formula safety | Bug | Hardened CSV cell sanitizer (neutralize =,+,-,@) | 📝 TODO ONLY |
 | T08 | P1 | Tax rates hardcoded | Enhancement | Demo/editable/official config separation | ⏭ |
 | T09 | P1 | Fiscal year assumptions calendar-year only | Enhancement | Add fiscalYearStartMonth/Day to settings | ⏭ |
 | T10 | P1 | Business/tax updates bypass lifecycle events | Bug | Add updateBusinessTaxFields coordinator method | ⬜ |
@@ -139,16 +139,16 @@
 
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
-| M01 | P0 | ConvertedMoney.identity() treated as failed | Bug | Add isExactSuccess/isUsable; identity not failure | ⬜ |
+| M01 | P0 | ConvertedMoney.identity() treated as failed | Bug | Add isExactSuccess/isUsable; identity not failure | 📝 TODO ONLY |
 | M02 | P0 | MoneyAmount uses raw Double (NaN/infinity) | Bug | Use minorUnits:Long or BigDecimal, reject NaN | ⏭ |
-| M03 | P0 | CurrencyCode validation too loose | Bug | Require 3 uppercase letters, reject digits | ⬜ |
+| M03 | P0 | CurrencyCode validation too loose | Bug | Require 3 uppercase letters, reject digits | ✅ FIXED |
 | M04 | P0 | PeriodKind timezone math broken | Bug | Zone-aware java.time, not Calendar.getInstance() | ⬜ |
 | M05 | P0 | Two competing PeriodRange types exist | Bug | Deprecate domain.model variant, migrate to core | ⏭ |
 | M06 | P0 | Money (BigDecimal) vs MoneyAmount (Double) split | Enhancement | Unify: MoneyAmount wraps BigDecimal | ⏭ |
 | M07 | P1 | MoneyAggregate.failedTransactionCount misleading | Bug | Include transactionCount in ConversionFailure | ⬜ |
-| M08 | P1 | ConvertedMoney.failed(reason) ignores reason | Bug | Add failureReason + failureMessage fields | ⬜ |
+| M08 | P1 | ConvertedMoney.failed(reason) ignores reason | Bug | Add failureReason + failureMessage fields | 📝 TODO ONLY |
 | M09 | P1 | Formatting is locale-sensitive, underspecified | Enhancement | Split: display/exportStable/accounting formatters | ⏭ |
-| M10 | P1 | Direct wall-clock calls still exist | Bug | CI guard for System.currentTimeMillis/Instant.now/Date | ⬜ |
+| M10 | P1 | Direct wall-clock calls still exist | Bug | CI guard for System.currentTimeMillis/Instant.now/Date | 📝 TODO ONLY |
 | M11 | P1 | Week-number helpers inconsistent | Bug | Separate getIsoWeekNumber/getAppCalendarWeekNumber | ⬜ |
 | M12 | P1 | LAST_7_DAYS includes future remainder | Enhancement | Rename: TRAILING_7_DAYS_TO_NOW vs LAST_7_CALENDAR | ⬜ |
 | M13 | P1 | Entity time sentinel contracts not type-safe | Enhancement | CreatedAt/UpdatedAt types enforcing non-zero | ⏭ |
@@ -201,6 +201,7 @@ These follow established patterns (add timeProvider.now(), wrap in withTransacti
 
 | Status | Count |
 |--------|-------|
-| ⬜ NOT STARTED | 70 |
+| ⬜ NOT STARTED | 50 |
 | ⏭ DEFERRED (needs design/migration) | 35 |
-| ✅ FIXED | 0 |
+| ✅ FIXED | 7 |
+| 📝 TODO ONLY | 13 |

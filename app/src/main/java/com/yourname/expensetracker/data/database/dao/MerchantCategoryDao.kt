@@ -28,6 +28,8 @@ interface MerchantCategoryDao {
     @Deprecated("Use repository-level insert with canonical name normalization instead")
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(merchantCategory: MerchantCategory)
+    // TODO (C05): Change return type from Unit to Long so callers can check
+    // for silent failures (0 = skipped due to IGNORE conflict).
 
     /**
      * Direct bulk insert that bypasses merchant normalization.
@@ -40,6 +42,7 @@ interface MerchantCategoryDao {
     @Deprecated("Use repository-level insertAll with canonical name normalization instead")
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(merchantCategories: List<MerchantCategory>)
+    // TODO (C05): Change return type from Unit to Long for insertAll as well.
     
     @Query("SELECT * FROM merchant_categories")
     suspend fun getAll(): List<MerchantCategory>

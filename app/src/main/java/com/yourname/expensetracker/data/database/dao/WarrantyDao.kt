@@ -76,6 +76,8 @@ interface WarrantyDao {
      * Note: effectiveAmount is a computed Kotlin property, not a column, so
      * the equivalent logic is expressed in SQL as a CASE expression.
      */
+    // TODO (W01): Use MoneyAggregate for protected value instead of raw Double
+    // to ensure proper currency handling and formatting.
     @Query(
         """
         SELECT SUM(COALESCE(

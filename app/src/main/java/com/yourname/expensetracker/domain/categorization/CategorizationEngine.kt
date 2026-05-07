@@ -421,7 +421,8 @@ class CategorizationEngine @Inject constructor(
                 // Build category ID -> name map from CategoryRepository
                 val categories = getCategoryRepository().getAll()
                 cachedCategoryMap = categories.associate { it.id to it.name }
-                cachedCategoryNameToId = categories.associate { it.name to it.id }
+                // C03: Normalize category name keys with trim().lowercase() for case-insensitive lookup
+                cachedCategoryNameToId = categories.associate { it.name.trim().lowercase() to it.id }
                 lastCacheTime = now
             }
             CacheData(cachedMappings!!, cachedPatternsSet!!, cachedCategoryMap!!)
@@ -443,8 +444,9 @@ class CategorizationEngine @Inject constructor(
     private suspend fun getCategoryIdByName(categoryName: String): Long? {
         // Use getCacheData() which already populates cachedCategoryNameToId under cacheMutex,
         // avoiding a second independent lock acquisition that would be redundant.
+        // C03: Use normalized key (lowercased) to match the cached map keys.
         val cacheData = getCacheData()
-        return cachedCategoryNameToId?.get(categoryName)
+        return cachedCategoryNameToId?.get(categoryName.trim().lowercase())
     }
     
     private fun getCategoryRepository(): CategoryRepository = categoryRepositoryProvider.get()
@@ -481,6 +483,10 @@ class CategorizationEngine @Inject constructor(
             lastCacheTime = 0
         }
     }
+
+    // TODO (C04): Call invalidateCache() from ALL category/mapping write paths
+    // (e.g., CategoryRepository.learnMerchantCategory, addCategory, mergeCategories,
+    // deleteCategory) to ensure the categorization engine picks up changes immediately.
     
     // Utility methods for testing
     fun testCanonicalize(merchant: String): CanonicalResult {

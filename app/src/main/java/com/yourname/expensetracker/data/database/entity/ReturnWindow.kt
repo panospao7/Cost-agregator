@@ -78,6 +78,8 @@ data class ReturnWindow(
     /**
      * Currency of the refund amount. Stored explicitly for multi-currency support.
      * When null, the currency should be inferred from the purchase context.
+     * TODO (W02): When refundCurrency is null, infer from linked Expense's currency
+     * at markAsReturned time rather than leaving it unset.
      */
     val refundCurrency: String? = null,
     /**

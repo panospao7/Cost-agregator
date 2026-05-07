@@ -92,7 +92,13 @@ class WarrantyTrackerRepository @Inject constructor(
      * when this method is part of a larger multi-table write (future-proofing).
      */
     suspend fun addWarranty(warranty: Warranty): Long = database.withTransaction {
-        warrantyDao.insertWarranty(warranty)
+        // W18: Ensure createdAt and updatedAt are set to timeProvider.now()
+        val now = timeProvider.now()
+        val warrantyWithTimestamps = warranty.copy(
+            createdAt = if (warranty.createdAt == 0L) now else warranty.createdAt,
+            updatedAt = if (warranty.updatedAt == 0L) now else warranty.updatedAt
+        )
+        warrantyDao.insertWarranty(warrantyWithTimestamps)
     }
 
     suspend fun addWarrantyIgnoreConflicts(warranty: Warranty): Long = database.withTransaction {

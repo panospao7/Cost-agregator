@@ -1,6 +1,8 @@
 # DAO ↔ Entity ↔ Repository Map
 
-> Complete mapping of all 54 DAOs to their entities and consuming repositories/services.
+> Complete mapping of all 55 DAOs to their entities and consuming repositories/services.
+>
+> Last updated: 2026-05-07
 
 ---
 
@@ -40,26 +42,25 @@
 | `RawNotificationDao` | `RawNotification` | `NotificationRepository`, `ReviewQueueRepository` | TransactionsVM, ReviewVM, DebugVM |
 | `PendingReviewDao` | `PendingReview` | `NotificationRepository`, `ReviewQueueRepository`, `ExpenseRepository`, `ReceiptRepository` | ReviewVM, TransactionsVM |
 | `BlockedPackageDao` | `BlockedPackage` | `NotificationRepository` | Notification filter |
-| `SourceStatsEventDao` | `SourceStatsEvent` | (none yet — via AppDatabase directly) | Source stats event tracking (new, v117) |
 
 ## Receipt Domain
 
 | DAO | Entity | Repository Consumers | Ultimate Consumers |
 |-----|--------|---------------------|-------------------|
 | `ScannedReceiptDao` | `ScannedReceipt` | `ReceiptRepository`, `DataRetentionWorker`, `ReceiptLifecycleCoordinator`, `ReceiptLinkService` | ReceiptScanVM, ReviewVM |
+| `ReceiptItemCategorizationDao` | `ReceiptItemCategorization` | `ReceiptItemCategorizationRepository`, `ReceiptLinkService` | AI categorization |
 | `ReceiptEventDao` | `ReceiptEvent` | `ReceiptLifecycleCoordinator`, `ReceiptLinkService` | Receipt audit |
 | `ReceiptExpenseLinkDao` | `ReceiptExpenseLink` | `ReceiptLinkService`, `ReceiptLifecycleCoordinator` | Receipt matching |
-| `ReceiptItemCategorizationDao` | `ReceiptItemCategorization` | `ReceiptItemCategorizationRepository`, `ReceiptLinkService` | AI categorization |
 
 ## Recurring Domain
 
 | DAO | Entity | Repository Consumers | Ultimate Consumers |
 |-----|--------|---------------------|-------------------|
 | `ManualRecurringExpenseDao` | `ManualRecurringExpense` | `RecurringExpenseRepository`, `ManualRecurringExpenseRepository` | RecurringExpensesVM, FinancialWeatherRepository, ManualRecurringExpenseVM |
-| `RecurringOccurrenceDao` | `RecurringOccurrence` | `RecurringLifecycleCoordinator`, `CashFlowCalculator`, `MonthlySavingsSweepUseCase` | RecurringExpensesVM, BillReminderWorker |
-| `RecurringReminderDeliveryDao` | `RecurringReminderDelivery` | `RecurringLifecycleCoordinator` | BillReminderWorker |
-| `RecurringLifecycleEventDao` | `RecurringLifecycleEvent` | `RecurringLifecycleCoordinator` | Recurring audit log |
 | `PlannedExpenseDao` | `PlannedExpense` | `PlannedExpenseRepository`, `RecurringPlanProjectionService` | HomeVM, FinancialWeatherRepository |
+| `RecurringOccurrenceDao` | `RecurringOccurrence` | `RecurringLifecycleCoordinator`, `RecurringOccurrenceMaterializer` | RecurringExpensesVM, BillReminderWorker |
+| `RecurringReminderDeliveryDao` | `RecurringReminderDelivery` | `RecurringLifecycleCoordinator`, `RecurringOccurrenceMaterializer` | BillReminderWorker |
+| `RecurringLifecycleEventDao` | `RecurringLifecycleEvent` | `RecurringLifecycleCoordinator` | Recurring audit log |
 
 ## Currency Domain
 
@@ -143,14 +144,15 @@
 
 | DAO | Entity | Repository Consumers | Ultimate Consumers |
 |-----|--------|---------------------|-------------------|
-| `PrivacyAuditDao` | `PrivacyAuditEvent` | `PrivacyAuditLogger`, `DataRetentionWorker` | Privacy audit |
+| `PrivacyAuditDao` | `PrivacyAuditEvent` | `PrivacyAuditLoggerImpl` | Privacy audit |
 | `AnomalyAlertDao` | `AnomalyAlert` | `AnomalyAlertRepositoryImpl` | Analytics, Dashboard |
 | `HealthScoreHistoryDao` | `HealthScoreHistory` | — | — |
 | `EmailReceiptDao` | `EmailReceiptSource` | `EmailReceiptIngestionService` | Email ingestion |
 | `PromptStateDao` | `PromptState` | `PromptStateRepository` | Savings prompts |
-| `BackgroundJobRunDao` | `BackgroundJobRun` | — | — |
+| `BackgroundJobRunDao` | `BackgroundJobRun` | Workers directly | Worker tracking |
 | `RecommendationDao` | `RecommendationEntity` | `RecommendationRepository` | AI recommendations |
 | `StressForecastSnapshotDao` | `StressForecastSnapshot` | `FinancialStressForecastEngine` | Cash flow |
+| `SourceStatsEventDao` | `SourceStatsEvent` | — | Source stats event tracking (event-based, v117+) |
 
 ---
 
@@ -167,5 +169,11 @@
 | `TransactionEventDao` | **1** consumer | 🟢 MEDIUM (append-only log) |
 | `RecurringOccurrenceDao` | **2** consumers | 🟢 MEDIUM |
 | `ExchangeRateDao` | **2** consumers | 🟢 MEDIUM |
-| All other DAOs | **1** consumer | 🟢 LOW (isolated) |
+| `ManualRecurringExpenseDao` | **2** repositories | 🟢 MEDIUM |
+| `ExpenseGroupDao` | **2** repositories | 🟢 MEDIUM |
+| `WarrantyDao` | **2** repositories | 🟢 MEDIUM |
+| `ReturnWindowDao` | **2** repositories | 🟢 MEDIUM |
+| `BudgetAdjustmentDao` | **1** consumer | 🟢 LOW |
+| `AiArtifactDao` | **1** repository | 🟢 LOW |
+| `SourceStatsEventDao` | **0** direct repositories | 🟢 LOW (event-based tracking) |
 

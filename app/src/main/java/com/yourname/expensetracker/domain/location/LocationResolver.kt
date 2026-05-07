@@ -82,6 +82,7 @@ class LocationResolver @Inject constructor(
 
         suspend fun getDeviceLocation(): Pair<Double, Double>? {
             if (!hasLoadedDeviceLocation) {
+                // TODO (W10): Check PrivacyGate(DEVICE_GPS_LOCATION) before reading device location.
                 cachedDeviceLocation = locationProvider.getLastKnownLocation()
                 hasLoadedDeviceLocation = true
             }
