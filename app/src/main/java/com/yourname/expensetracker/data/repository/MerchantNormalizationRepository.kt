@@ -36,6 +36,8 @@ class MerchantNormalizationRepository @Inject constructor(
     suspend fun updateCanonicalCategory(id: Long, categoryId: Long?) =
         dao.updateCanonicalCategory(id, categoryId)
 
+    // TODO (C08): incrementMerchantStats is never called — wire it from TransactionSideEffectDispatcher
+    // after committed expense creation/update.
     suspend fun incrementMerchantStats(id: Long, amount: Double, timestamp: Long) =
         dao.incrementMerchantStats(id, amount, timestamp)
 

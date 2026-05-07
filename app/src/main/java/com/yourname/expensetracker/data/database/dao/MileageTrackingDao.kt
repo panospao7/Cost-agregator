@@ -35,6 +35,7 @@ interface MileageTrackingDao {
     @Query("SELECT SUM(distanceKm) FROM mileage_tracking WHERE isBusinessTrip = 1 AND date >= :startDate AND date < :endDate")
     suspend fun getTotalBusinessDistanceBetween(startDate: Long, endDate: Long): Double?
     
+    // T02: Use CASE fallback: SUM(CASE WHEN calculatedDeduction IS NULL THEN distanceKm * :rate ELSE calculatedDeduction END).
     @Query("SELECT SUM(calculatedDeduction) FROM mileage_tracking WHERE isBusinessTrip = 1 AND date >= :startDate AND date < :endDate")
     suspend fun getTotalDeductionBetween(startDate: Long, endDate: Long): Double?
     

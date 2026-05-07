@@ -5,6 +5,9 @@ import com.yourname.expensetracker.data.database.entity.WarrantyStatus
 import com.yourname.expensetracker.data.database.entity.WarrantyType
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.receipt.WarrantyExtractionData
 import com.yourname.expensetracker.domain.receipt.WarrantyTextExtractor
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -51,7 +54,8 @@ sealed class WarrantyCreationResult {
 class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
     private val warrantyTrackerRepository: WarrantyTrackerRepository,
     private val receiptRepository: ReceiptRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val privacyGate: PrivacyGate
 ) {
     companion object {
         private const val HIGH_CONFIDENCE_THRESHOLD = 70.0
@@ -114,6 +118,11 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
                     Timber.tag(TAG).d("Low confidence extraction (${extractionData.confidence}%) for receipt $receiptId, creating review draft")
                     // WRN-15: Future cloud fallback — when local confidence is below threshold
                     // AND cloud AI is enabled in settings, attempt cloud-based extraction here.
+                    val cloudDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION)
+                    if (cloudDecision is PrivacyDecision.Denied) {
+                        Timber.tag(TAG).d("Cloud warranty extraction denied: ${cloudDecision.reason}")
+                        return WarrantyCreationResult.Failure("Cloud AI warranty extraction disabled by privacy settings")
+                    }
                     Timber.tag(TAG).d("WRN-15: Local confidence=%.1f%% below threshold=%.1f%% — cloud fallback would be attempted here if enabled", extractionData.confidence, HIGH_CONFIDENCE_THRESHOLD)
                     val persistResult = createReviewDraftWarranty(receiptId, extractionData)
                     when (persistResult) {

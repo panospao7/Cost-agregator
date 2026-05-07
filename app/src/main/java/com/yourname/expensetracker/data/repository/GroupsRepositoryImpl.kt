@@ -166,6 +166,10 @@ class GroupsRepositoryImpl @Inject constructor(
         coordinator.deleteGroup(groupId)
     }
 
+    // TODO (G09): Keep deletion validation in one coordinator/use case, not in optional caller code.
+    //             The pre-flight checks and the actual deletion are currently split between
+    //             this repository method and the SharedExpenseManager, making it possible
+    //             for callers to bypass validation by calling this method directly.
     override suspend fun deleteMember(groupId: Long, memberId: Long): DeleteGroupMemberResult = withContext(ioDispatcher) {
         try {
             val preflightMember = memberDao.getById(memberId)

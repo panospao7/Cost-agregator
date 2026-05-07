@@ -30,6 +30,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
+ * ## A02: Multi-currency safety
+ * Some aggregation paths (weekly, daily totals) still use raw DAO doubles that
+ * silently sum amounts across different currencies. Callers that invoke these
+ * methods on datasets spanning multiple currencies will get wrong results.
+ *
+ * TODO (A02): Guard with require(isSingleCurrencyDataset) or refactor to use
+ *             normalizer — currently silently wrong for multi-currency.
+ *
  * ## DSH-10-FIXED: Analytics methods now return reactive Flows
  *
  * All public analytics methods now return `Flow<List<PeriodTotal>>` (or `Flow<List<CategoryBreakdown>>`)

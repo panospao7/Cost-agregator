@@ -54,9 +54,12 @@ class SettlementCalculator @Inject constructor(
         // If all members share the same currency, settle in that currency.
         // Otherwise, fall back to the user's home currency.
         val distinctCurrencies = balances.values.map { it.currency }.distinct()
+        // TODO (G04): Reject mixed-currency settlements or convert all balances to group currency using as-of rates.
+        //             Currently falls back to home currency but sums raw amounts without conversion.
         val groupCurrency = if (distinctCurrencies.size == 1) {
             distinctCurrencies.first()
         } else {
+            // TODO (G10): Remove runBlocking — accept explicit groupCurrency parameter from caller
             getHomeCurrencySync()
         }
         val normalized = normalizeBalancesToCents(balances)

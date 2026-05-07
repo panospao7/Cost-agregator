@@ -630,6 +630,9 @@ class InsightsEngine @Inject constructor(
 
     // === Utility Functions ===
     
+    // A08: Replace buildDailyTotals(expenses, days) with buildBuckets(expenses, startMs, endMs, granularity).
+    // Using timeProvider.now() as the anchor means the window shifts every day, which is wrong
+    // for historical analysis. An explicit startMs/endMs pair keeps the window fixed.
     fun buildDailyTotals(expenses: List<ExpenseSnapshot>, days: Int): Map<String, Double> {
         val now = timeProvider.now()
         val result = LinkedHashMap<String, Double>()

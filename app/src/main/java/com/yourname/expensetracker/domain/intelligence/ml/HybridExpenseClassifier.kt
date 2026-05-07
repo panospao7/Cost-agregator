@@ -233,11 +233,12 @@ class HybridExpenseClassifier @Inject constructor(
         // if the merchant has no existing mapping, or the correction agrees with it.
         val existingResult = categorizationEngine.categorize(merchantName)
         val shouldLearnGlobally = when {
-            existingResult.categoryId == null -> true  // No existing mapping — safe to learn
+            existingResult.categoryId == null -> true       // No existing mapping
             existingResult.categoryId == correctCategoryId -> true  // Reinforcement
-            existingResult.confidence < 0.5 -> true  // Existing mapping is weak — override allowed
-            else -> false  // Existing mapping is confident and disagrees — do NOT override
+            existingResult.matchType == com.yourname.expensetracker.domain.categorization.MatchType.UNKNOWN -> true  // First-time learning only
+            else -> false
         }
+        // TODO (C10): Require at least 2 confirming corrections to override a disagreeing weak mapping.
         
         if (shouldLearnGlobally) {
             categorizationEngine.learnMerchantCategory(merchantName, correctCategoryId)

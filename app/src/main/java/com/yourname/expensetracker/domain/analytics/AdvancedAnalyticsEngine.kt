@@ -62,6 +62,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
     // PERIOD CALCULATIONS
     // ============================================================
     
+    // A09: Accept explicit AnalyticsPeriodRange from ViewModel, don't recalculate internally.
+    // This method duplicates period logic that the ViewModel already computes, risking
+    // inconsistent boundaries between the engine and the UI.
     /**
      * Calculates the period range for the given analytics period type.
      * @param period The period type to calculate

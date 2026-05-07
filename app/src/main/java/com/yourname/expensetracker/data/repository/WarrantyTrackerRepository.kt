@@ -465,6 +465,7 @@ class WarrantyTrackerRepository @Inject constructor(
             parsedDate = purchaseDate,
             parsedItems = null,
             parsedTaxAmount = null,
+            // W21: Use homeCurrency from CurrencySettingsRepository instead of hardcoded EUR.
             currency = "EUR",
             confidence = 1f
         )

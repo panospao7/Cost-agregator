@@ -230,7 +230,7 @@ class MerchantNormalizer @Inject constructor(
 
     private fun createPlaceholder(cleaned: String, key: String, catId: Long?): MerchantLookupResult {
         return MerchantLookupResult(
-            canonical = MerchantCanonical(normalizedName = cleaned, searchKey = key, categoryId = catId),
+            canonical = MerchantCanonical(normalizedName = key, searchKey = key, categoryId = catId),
             alias = null, confidence = 0.0f, matchType = MatchType.NEW_MERCHANT
         )
     }

@@ -35,6 +35,10 @@ class SpendingPaceCalculator @Inject constructor(
         private const val PACE_OVER_THRESHOLD = 110f
     }
 
+    // A13: Add referenceNow parameter; use period.endMs for historical, timeProvider.now() for live.
+    // Currently uses timeProvider.now() unconditionally, which makes the pace calculation
+    // wrong when run against a past (historical) period — it compares to "now" instead of
+    // the period's end.
     fun calculate(
         currentMonthStart: Long,
         previousMonthStart: Long,

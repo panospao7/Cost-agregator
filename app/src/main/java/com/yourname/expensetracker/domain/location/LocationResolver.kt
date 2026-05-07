@@ -82,7 +82,12 @@ class LocationResolver @Inject constructor(
 
         suspend fun getDeviceLocation(): Pair<Double, Double>? {
             if (!hasLoadedDeviceLocation) {
-                // TODO (W10): Check PrivacyGate(DEVICE_GPS_LOCATION) before reading device location.
+                val decision = privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION)
+                if (decision is PrivacyDecision.Denied) {
+                    Timber.d("Device GPS denied by privacy gate: ${decision.reason}")
+                    hasLoadedDeviceLocation = true
+                    return null
+                }
                 cachedDeviceLocation = locationProvider.getLastKnownLocation()
                 hasLoadedDeviceLocation = true
             }

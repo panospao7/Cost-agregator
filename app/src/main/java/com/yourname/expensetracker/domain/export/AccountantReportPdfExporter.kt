@@ -136,6 +136,8 @@ class AccountantReportPdfExporter @Inject constructor(
         }
     }
 
+    // T05: Use CurrencyFormatter.format(amount, filingCurrency) instead of manual "$currency $formatted".
+    // This ensures locale-aware formatting, correct fraction digits, and currency symbol support.
     private fun formatAmount(amount: Double, currency: String, formatters: ExportFormatters): String {
         return "$currency ${formatters.formatTwoDecimals(amount)}"
     }

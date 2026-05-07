@@ -396,6 +396,9 @@ class GroupTransactionCoordinator @Inject constructor(
      * expenses semantically orphaned (the group link is gone but the expense
      * still exists). Prefer [deleteGroup] (soft archive) unless you are certain
      * the linked expenses should become standalone.
+     *
+     * TODO (G08): Route through archiveGroup() for soft-delete or ensure all
+     *             deletions write lifecycle events to maintain audit trail.
      */
     override suspend fun permanentlyDeleteGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
         try {
@@ -514,6 +517,9 @@ class GroupTransactionCoordinator @Inject constructor(
                     "Current user member not found or share could not be calculated"
                 )
 
+                // G02: createExpense is called with SideEffectMode.DEFER inside database.withTransaction.
+                // Side effects are dispatched after the outer transaction commits (see .also block below).
+                // This is the correct pattern — no changes needed.
                 // 3. Create system expense via TransactionLifecycleCoordinator
                 // Side effects are deferred until after this outer transaction commits
                 val createResult = transactionLifecycleCoordinator.createExpense(
@@ -668,6 +674,11 @@ class GroupTransactionCoordinator @Inject constructor(
      * as part of creating a group-expense link, not a user-originated edit of
      * individual ownership fields. The lifecycle coordinator is reserved for
      * user-driven ownership changes that need individual audit events.
+     *
+     * TODO (G03): Replace direct ExpenseDao updates with
+     *             transactionLifecycleCoordinator.updateOwnership() once the
+     *             coordinator supports bulk/metadata-only ownership changes
+     *             without requiring a full UPDATED event per row.
      */
     private suspend fun normalizeLinkedSystemExpense(
         expense: Expense,

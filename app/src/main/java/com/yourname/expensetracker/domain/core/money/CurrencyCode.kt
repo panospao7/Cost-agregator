@@ -60,7 +60,7 @@ value class CurrencyCode(val code: String) : Comparable<CurrencyCode> {
             if (input.isNullOrBlank()) return null
             val upper = input.trim().uppercase()
             if (upper.length != 3) return null
-            if (!upper.all { it.isUpperCase() || it.isDigit() }) return null
+            if (!upper.all { it.isUpperCase() }) return null
             return try {
                 CurrencyCode(upper)
             } catch (e: IllegalArgumentException) {

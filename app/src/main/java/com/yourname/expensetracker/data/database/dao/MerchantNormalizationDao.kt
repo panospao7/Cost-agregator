@@ -103,6 +103,9 @@ interface MerchantNormalizationDao {
     
     @Transaction
     suspend fun linkAliasToCanonical(rawName: String, normalizedKey: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long) {
+        // TODO (C01): Check both rawName AND normalizedKey before insert; update existing alias on conflict.
+        //              Currently only checks by rawName — if a different rawName produces the same
+        //              normalizedKey, the insert silently succeeds, creating a duplicate alias entry.
         val existing = getAliasByRawName(rawName)
         if (existing != null) {
             updateAlias(existing.copy(

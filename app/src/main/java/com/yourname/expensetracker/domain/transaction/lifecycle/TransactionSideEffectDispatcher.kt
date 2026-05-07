@@ -73,6 +73,10 @@ class TransactionSideEffectDispatcher @Inject constructor(
                 merchantCategoryRepository.learnPattern(expense.merchant, expense.categoryId)
             }
         }
+
+        // TODO (C08): Increment merchant canonical stats (totalOccurrences, totalSpent)
+        // after committed expense creation. Requires MerchantNormalizationRepository injection.
+        // See: merchantNormalizationRepository.incrementMerchantStats(canonical.id, amount, timestamp)
     }
 
     /**
@@ -110,6 +114,9 @@ class TransactionSideEffectDispatcher @Inject constructor(
                 merchantCategoryRepository.learnPattern(expense.merchant, expense.categoryId)
             }
         }
+
+        // TODO (C08): Increment merchant canonical stats (totalOccurrences, totalSpent)
+        // after expense update. Requires MerchantNormalizationRepository injection.
     }
 
     /**

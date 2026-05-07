@@ -53,6 +53,10 @@ data class Warranty(
     val merchantName: String,
     val purchaseDate: Long,
     val warrantyDurationMonths: Int,
+    // W20: warrantyEndDate is stored as the exclusive end (upper bound). The half-open
+    // interval is [warrantyStartInclusive, warrantyEndExclusive). Display should
+    // show (end - 1 day) to the user so the warranty appears valid through the
+    // last covered day rather than one day beyond.
     val warrantyEndDate: Long,
     @ColumnInfo(defaultValue = "MANUFACTURER") val warrantyType: WarrantyType = WarrantyType.MANUFACTURER,
     val supportPhone: String? = null,

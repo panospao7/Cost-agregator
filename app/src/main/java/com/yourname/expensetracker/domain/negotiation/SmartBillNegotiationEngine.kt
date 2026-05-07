@@ -291,6 +291,10 @@ class SmartBillNegotiationEngine @Inject constructor(
             hasCompetitors = marketRate.competitors.isNotEmpty()
         )
         
+        // W09: Compare monthlyEquivalentPrice to monthlyEquivalentPrice, not raw billing-cycle amounts.
+        // The NegotiationOpportunity stores currentPrice (raw amount) but subsequent comparisons
+        // and the generated script should use monthlyEquivalentPrice so that annual/quarterly
+        // subscriptions are fairly compared against monthly market rates.
         return NegotiationOpportunity(
             subscriptionId = subscription.id,
             serviceName = subscription.merchant,

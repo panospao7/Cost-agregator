@@ -24,6 +24,11 @@ data class HeatmapPoint(
 )
 
 /**
+ * TODO (A14): Use normalized snapshots/MoneyAggregate instead of raw DAO sums
+ *             for multi-currency safety. The [LocatedExpense.amount] values are
+ *             raw per-currency amounts and summing them across currencies is
+ *             silently wrong. See LOC-9 below for details.
+ *
  * Domain-layer engine that converts a list of [LocatedExpense]s into a list
  * of [HeatmapPoint]s suitable for rendering on the osmdroid map.
  *

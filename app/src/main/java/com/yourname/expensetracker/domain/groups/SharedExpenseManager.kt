@@ -15,7 +15,6 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -289,7 +288,11 @@ class SharedExpenseManager @Inject constructor(
         withContext(ioDispatcher) {
             val group = sharedExpenseDataPort.getGroupOnce(groupId)
             if (group == null) android.util.Log.w("SharedExpenseManager", "Group $groupId not found in calculateBalances, defaulting to home currency")
-            val groupCurrency = group?.defaultCurrency ?: getHomeCurrencySync()
+            val groupCurrency = group?.defaultCurrency ?: try {
+                currencySettingsRepository.homeCurrency().first()
+            } catch (_: Exception) {
+                "EUR"
+            }
             val members = sharedExpenseDataPort.getGroupMembersOnce(groupId)
             val expenses = sharedExpenseDataPort.getGroupExpensesOnce(groupId)
             val splitMembers = members.map { it.toGroupMember() }
@@ -371,18 +374,6 @@ class SharedExpenseManager @Inject constructor(
             }
         }
         return null
-    }
-
-    /**
-     * Synchronously retrieve the user's home currency.
-     * Used as a fallback when no group context is available.
-     */
-    private fun getHomeCurrencySync(): String = runBlocking {
-        try {
-            currencySettingsRepository.homeCurrency().first()
-        } catch (_: Exception) {
-            "EUR"
-        }
     }
 
     private fun toCents(amount: Double): Long {

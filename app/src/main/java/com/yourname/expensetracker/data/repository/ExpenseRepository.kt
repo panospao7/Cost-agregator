@@ -94,6 +94,15 @@ enum class OwnershipFilter {
  *   createExpense() call in the same flow.
  *
  * Total: 7 remaining (all intentional/backfill).
+ *
+ * ### NOT YET IMPLEMENTED (no update path exists yet):
+ * - Business/tax field updates (isBusinessExpense, businessPurpose, businessCategory,
+ *   businessProject, requiresReceipt) — these fields are currently set at creation
+ *   time only. When a dedicated update method is added, it MUST route through the
+ *   lifecycle coordinator.
+ *   TODO (T10): Add updateBusinessTaxFields(expenseId, patch, source) coordinator
+ *               method that writes UPDATED event.
+ *
  * See docs/analyses and debug master/debugging/pipeline-2-transaction-lifecycle-debug-report.md
  * for the full inventory and migration plan.
  */
