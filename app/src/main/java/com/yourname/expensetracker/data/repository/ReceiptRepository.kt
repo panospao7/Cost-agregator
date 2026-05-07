@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAssetStore
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.debug.DebugData
@@ -68,6 +69,7 @@ class ReceiptRepository @Inject constructor(
     private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
     private val coordinator: TransactionLifecycleCoordinator,
     private val receiptLinkService: ReceiptLinkService,
+    private val assetStore: ReceiptAssetStore,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val receiptLifecycleCoordinator: Lazy<ReceiptLifecycleCoordinator>
 ) {
@@ -108,6 +110,16 @@ class ReceiptRepository @Inject constructor(
         autoCreateReview: Boolean = false
     ): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
         return withContext(ioDispatcher) {
+            // 0. Pre-OCR exact-hash dedup: skip expensive OCR if this exact file was already processed
+            val uriHashResult = assetStore.computeUriHash(imageUri)
+        if (uriHashResult.isSuccess) {
+            val existingMatch = scannedReceiptDao.getByImageHash(uriHashResult.getOrThrow())
+            if (existingMatch != null) {
+                Timber.d("Duplicate receipt detected pre-OCR by exact hash: existingId=${existingMatch.id}")
+                return@withContext Pair(existingMatch, ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), "EUR", emptyList(), 0f))
+            }
+        }
+
             // 1. Run OCR (Separate Try-Catch to distinguish OCR failure vs Parse failure)
             val ocrResult = try {
                 ocrService.processUri(imageUri)

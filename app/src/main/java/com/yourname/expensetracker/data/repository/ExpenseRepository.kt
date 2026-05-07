@@ -56,6 +56,20 @@ enum class OwnershipFilter {
     ALL, MINE, NOT_MINE, SHARED, TRANSFER
 }
 
+/**
+ * KNOWN BYPASS NOTE: The following methods in this class mutate expense columns directly
+ * via ExpenseDao without routing through TransactionLifecycleCoordinator:
+ * - updateExpenseCategoryBulk (categoryId)
+ * - updateExpenseMerchant, updateExpenseMerchantBulk (merchant, merchantKey, dedupeKey)
+ * - updateExpenseType (transactionType, dedupeKey)
+ * - updateTransferDetails (transferDirection, transferAccountName)
+ * - updateNotMineDetails, updateSharedExpenseDetails, updateOwnership (ownership fields)
+ * - updateExpenseLocation, conditionallySetLocation, clearExpenseLocation (location fields)
+ * - incrementBackfillAttempts (counter)
+ * - updateMerchantKey (backfill)
+ *
+ * None of these write TransactionEvent records. See pipeline-2 debug report for details.
+ */
 @Singleton
 class ExpenseRepository @Inject constructor(
     private val database: AppDatabase,
@@ -359,41 +373,25 @@ class ExpenseRepository @Inject constructor(
         transactionLifecycleCoordinator.updateExpense(expense)
     }
 
-    suspend fun updateExpenseCategory(expense: Expense, newCategoryId: Long) {
-        categoryUpdateMutex.withLock {
-            database.withTransaction {
-                expenseDao.updateCategory(expense.id, newCategoryId)
-                merchantCategoryRepository.learnPattern(expense.merchant, newCategoryId)
-
-                // Also record as a correction for learning
-                val correction = UserCorrection(
-                    packageName = "manual_edit",
-                    originalMerchant = expense.merchant,
-                    correctedMerchant = null,
-                    originalAmount = expense.amount,
-                    correctedAmount = null,
-                    originalCategoryId = expense.categoryId,
-                    correctedCategoryId = newCategoryId,
-                    originalType = expense.transactionType.name,
-                    correctedType = null,
-                    wasRejected = false,
-                    wasApproved = true,
-                    notificationTitle = null,
-                    notificationText = null
-                )
-                userCorrectionDao.insert(correction)
-            }
+    @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.UPDATED. Use TransactionLifecycleCoordinator.updateExpense() instead for proper lifecycle tracking.")
+    suspend fun updateExpenseCategory(expense: Expense, newCategoryId: Long?) {
+        transactionLifecycleCoordinator.updateCategory(
+            expenseId = expense.id,
+            newCategoryId = newCategoryId,
+            source = "USER_EDIT"
+        )
+        // The merchant learning and user correction logic can remain here (non-lifecycle side effects)
+        if (newCategoryId != null) {
+            merchantCategoryRepository.learnPattern(expense.merchant, newCategoryId)
         }
     }
 
     /**
      * Overload to update category by expense ID directly.
      */
+    @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.UPDATED. Use TransactionLifecycleCoordinator.updateExpense() instead for proper lifecycle tracking.")
     suspend fun updateExpenseCategory(expenseId: Long, categoryId: Long?) {
-        if (categoryId == null) return
-        categoryUpdateMutex.withLock {
-            expenseDao.updateCategory(expenseId, categoryId)
-        }
+        transactionLifecycleCoordinator.updateCategory(expenseId, categoryId)
     }
 
     /**
@@ -404,6 +402,7 @@ class ExpenseRepository @Inject constructor(
      * provide transactional atomicity — a crash after the DAO update but
      * before the correction insert could leave inconsistent state.
      */
+    @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.BULK_UPDATED. Use TransactionLifecycleCoordinator.updateExpense() for each affected expense instead.")
     suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long) {
         categoryUpdateMutex.withLock {
             database.withTransaction {
@@ -441,6 +440,7 @@ class ExpenseRepository @Inject constructor(
         merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant)
     }
 
+    @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.UPDATED. Use TransactionLifecycleCoordinator.updateExpense() instead for proper lifecycle tracking.")
     suspend fun updateExpenseMerchant(expense: Expense, newMerchant: String, applyToAll: Boolean = false) {
         if (expense.merchant == newMerchant) return
 
@@ -476,6 +476,7 @@ class ExpenseRepository @Inject constructor(
         }
     }
 
+    @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.UPDATED. Use TransactionLifecycleCoordinator.updateExpense() instead for proper lifecycle tracking.")
     suspend fun updateExpenseType(expense: Expense, newType: TransactionType) {
         if (expense.transactionType == newType) return
         val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
@@ -503,6 +504,7 @@ class ExpenseRepository @Inject constructor(
         }
     }
 
+    @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.UPDATED. Use TransactionLifecycleCoordinator.updateExpense() instead for proper lifecycle tracking.")
     suspend fun updateNotMineDetails(
         expense: Expense,
         isNotMine: Boolean,

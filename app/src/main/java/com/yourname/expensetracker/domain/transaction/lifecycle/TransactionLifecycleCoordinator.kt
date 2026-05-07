@@ -498,6 +498,55 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * Updates only the category on an expense, with full lifecycle tracking.
+     * Writes a UPDATED TransactionEvent with before/after snapshots.
+     *
+     * @param expenseId   The ID of the expense to update.
+     * @param newCategoryId The new category ID to set (null is treated as no-op
+     *                      since the DAO requires a non-null category value).
+     * @param reason      Optional human-readable explanation for the update.
+     * @param source      The source system/component that triggered the update.
+     */
+    suspend fun updateCategory(
+        expenseId: Long,
+        newCategoryId: Long?,
+        reason: String? = null,
+        source: String = "USER_EDIT"
+    ) {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+
+        val existing = expenseDao.getById(expenseId) ?: return
+        val resolvedCategoryId = newCategoryId ?: return // DAO requires non-null
+        if (existing.categoryId == resolvedCategoryId) return  // nothing to change
+
+        val now = timeProvider.now()
+        val beforeSnapshot = expenseToSnapshot(existing)
+        val updated = existing.copy(categoryId = resolvedCategoryId)
+
+        database.withTransaction {
+            expenseDao.updateCategory(expenseId, resolvedCategoryId)
+            transactionEventDao.insert(
+                TransactionEvent(
+                    expenseId = expenseId,
+                    eventType = LifecycleEventType.UPDATED.name,
+                    source = source,
+                    actor = null,
+                    occurredAt = now,
+                    dedupeKey = existing.dedupeKey,
+                    duplicateExpenseId = null,
+                    beforeSnapshot = beforeSnapshot,
+                    afterSnapshot = expenseToSnapshot(expenseId, updated),
+                    metadata = null,
+                    reason = reason
+                )
+            )
+        }
+    }
+
+    /**
      * Deletes an expense by its ID with full lifecycle handling:
      * load → write DELETED event → delete.
      *
