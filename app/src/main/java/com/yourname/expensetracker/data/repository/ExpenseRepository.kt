@@ -57,8 +57,16 @@ enum class OwnershipFilter {
 }
 
 /**
- * KNOWN BYPASS NOTE: The following methods in this class mutate expense columns directly
- * via ExpenseDao without routing through TransactionLifecycleCoordinator:
+ * ## C1 LIFECYCLE MIGRATION — PARTIALLY COMPLETE
+ *
+ * This is part of a staged architectural migration to route all expense mutations
+ * through TransactionLifecycleCoordinator (Phase C of testing/master plan).
+ *
+ * ### DONE (routed through coordinator, writes TransactionEvent.UPDATED):
+ * - updateExpenseCategory() — both overloads → coordinator.updateCategory()
+ * - updateExpense() (full-row) — already routed through coordinator
+ *
+ * ### STILL BYPASSING (direct ExpenseDao calls, no lifecycle events):
  * - updateExpenseCategoryBulk (categoryId)
  * - updateExpenseMerchant, updateExpenseMerchantBulk (merchant, merchantKey, dedupeKey)
  * - updateExpenseType (transactionType, dedupeKey)
@@ -68,7 +76,13 @@ enum class OwnershipFilter {
  * - incrementBackfillAttempts (counter)
  * - updateMerchantKey (backfill)
  *
- * None of these write TransactionEvent records. See pipeline-2 debug report for details.
+ * ### ALSO BYPASSING IN OTHER FILES:
+ * - ReceiptLinkService.linkReceiptToExpense() — RCP-30 category propagation (runCatching)
+ * - GroupTransactionCoordinator — shared-expense flags clearing + ownership normalization
+ *
+ * Total: 16 remaining bypass sites across 3 files (18 were fixed for category).
+ * See docs/analyses and debug master/debugging/pipeline-2-transaction-lifecycle-debug-report.md
+ * for the full inventory and migration plan.
  */
 @Singleton
 class ExpenseRepository @Inject constructor(
