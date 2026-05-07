@@ -164,7 +164,7 @@ class EmailReceiptIngestionService(
                 parsedReceipt.merchant
             ).canonical.normalizedName
 
-            val fingerprint = createFingerprint(normalizedMerchant, parsedReceipt.amount, parsedReceipt.date)
+            val fingerprint = createFingerprint(normalizedMerchant, parsedReceipt.amount, parsedReceipt.date, messageId)
 
             val result = transactionRunner {
                 // Step 4a: If a nonblank messageId is provided, check it first before any
@@ -273,7 +273,8 @@ class EmailReceiptIngestionService(
                 val expenseIds = createExpenseFromReceipt(
                     receiptId = receiptId,
                     processedReceipt = processedReceipt,
-                    receipt = parsedReceipt
+                    receipt = parsedReceipt,
+                    messageId = messageId
                 )
 
                 if (expenseIds.isEmpty()) {
@@ -361,12 +362,13 @@ class EmailReceiptIngestionService(
      * Create a fingerprint for deduplication.
      * Format: normalized_merchant_amount_date
      */
-    private fun createFingerprint(merchant: String, amount: Double, date: Long): String {
+    private fun createFingerprint(merchant: String, amount: Double, date: Long, messageId: String = ""): String {
         // Round amount to 2 decimal places for consistent fingerprinting
         val roundedAmount = String.format(Locale.US, "%.2f", amount)
         // Use date bucket (5 minute window) for deduplication
         val dateBucket = date / 300_000L // 5 minute buckets
-        return "${merchant.lowercase()}_${roundedAmount}_${dateBucket}"
+        val base = "${merchant.lowercase()}_${roundedAmount}_${dateBucket}"
+        return if (messageId.isNotBlank()) "${base}_${messageId}" else base
     }
 
     /**
@@ -393,7 +395,8 @@ class EmailReceiptIngestionService(
     private suspend fun createExpenseFromReceipt(
         receiptId: Long,
         processedReceipt: ProcessedReceipt,
-        receipt: ParsedEmailReceipt
+        receipt: ParsedEmailReceipt,
+        messageId: String
     ): List<Long> {
         // Route through the transaction lifecycle coordinator so that
         // a CREATED event is written and deduplication is handled consistently.
@@ -405,6 +408,7 @@ class EmailReceiptIngestionService(
             transactionType = TransactionType.PURCHASE,
             source = ExpenseSource.EMAIL_RECEIPT,
             categoryId = processedReceipt.categoryId,
+            idempotencyKey = messageId.takeUnless { it.isBlank() },
             notes = receipt.items
                 .takeIf { it.isNotEmpty() }
                 ?.joinToString(prefix = "Email receipt: ", separator = ", ") { it.description }

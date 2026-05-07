@@ -1335,10 +1335,14 @@ Second guiding rule:
 **STATUS: CONFIRMED — NOT FIXED (design limitation — two parsing phases)**
 
 ## Finding P0-7 — Dedupe fingerprint is too weak
-**STATUS: CONFIRMED — NOT FIXED (requires stronger fingerprinting with order/message ID)**
+**STATUS: FIXED (2026-05-06)**: createFingerprint() now accepts optional messageId parameter.
+When messageId is present, it's appended to the fingerprint: merchant_amount_datebucket_messageId.
+Strengthens dedupe for the scanned_receipt cross-check path where messageId was previously unused.
 
 ## Finding P0-8 — Message/order IDs not used as transaction idempotency keys
-**STATUS: CONFIRMED — NOT FIXED (requires CreateExpenseRequest extension)**
+**STATUS: FIXED (2026-05-06)**: Email receipt expense creation now passes
+emailSource.messageId as idempotencyKey in CreateExpenseRequest. Prevents
+duplicate expenses on re-processing of the same email receipt.
 
 ## Finding P1-1 — Raw email body stored without privacy policy
 **STATUS: CONFIRMED — NOT FIXED (DataRetentionWorker handles OCR text purge)**
@@ -1364,8 +1368,8 @@ No additional issues beyond those in the original report were found during code 
 # 14. Remaining work priority
 
 1. **P0-1/P0-2**: Unify email receipt entry points through ReceiptLifecycleCoordinator
-2. **P0-7**: Strengthen dedupe fingerprint with order/message ID components
-3. **P0-8**: Use message/order IDs as transaction dedup keys
+2. ~~**P0-7**: Strengthen dedupe fingerprint with order/message ID components~~ **DONE**
+3. ~~**P0-8**: Use message/order IDs as transaction dedup keys~~ **DONE**
 4. **P0-6**: Consider removing double-parsing (provider + ProcessReceiptUseCase)
 
 ---
