@@ -76,8 +76,7 @@ interface WarrantyDao {
      * Note: effectiveAmount is a computed Kotlin property, not a column, so
      * the equivalent logic is expressed in SQL as a CASE expression.
      */
-    // TODO (W01): Use MoneyAggregate for protected value instead of raw Double
-    // to ensure proper currency handling and formatting.
+    @Deprecated("Use getTotalProtectedValueByCurrency() for multi-currency safety")
     @Query(
         """
         SELECT SUM(COALESCE(
@@ -95,4 +94,20 @@ interface WarrantyDao {
         """
     )
     suspend fun getTotalProtectedValue(currentTime: Long): Double?
+
+    @Query("""
+        SELECT UPPER(COALESCE(e.currency, 'EUR')) AS currency,
+               SUM(COALESCE(CASE 
+                   WHEN e.isNotMine = 1 THEN 0.0 
+                   WHEN e.isSharedExpense = 1 AND e.myShareAmount IS NOT NULL THEN e.myShareAmount 
+                   WHEN e.isSharedExpense = 1 AND e.mySharePercentage IS NOT NULL THEN e.amount * e.mySharePercentage / 100.0 
+                   ELSE e.amount END, 0)) AS total,
+               COUNT(*) AS txCount
+        FROM warranties w
+        LEFT JOIN expenses e ON e.id = w.expenseId
+        WHERE w.status = 'ACTIVE' AND w.warrantyEndDate > :currentTime
+        GROUP BY UPPER(COALESCE(e.currency, 'EUR'))
+        ORDER BY total DESC
+    """)
+    suspend fun getTotalProtectedValueByCurrency(currentTime: Long): List<CurrencyTotal>
 }

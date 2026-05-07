@@ -13,6 +13,12 @@ import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult
 import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.core.money.ConversionFailure
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.FailureReason
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
 import kotlinx.coroutines.flow.first
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -151,11 +157,55 @@ class WarrantyTrackerRepository @Inject constructor(
 
     suspend fun getActiveWarrantyCount(): Int = warrantyDao.getActiveWarrantyCount(timeProvider.now())
     
-    // TODO (W01): Return MoneyAggregate instead of raw Double.
-    // Current DAO sums raw amounts across potentially mixed currencies.
-    // Change WarrantyDao to return per-currency totals, wrap in MoneyAggregate.
+    @Deprecated("Use getTotalProtectedValueAggregate() for multi-currency safety",
+        ReplaceWith("getTotalProtectedValueAggregate().displayAmount"))
     suspend fun getTotalProtectedValue(): Double =
         warrantyDao.getTotalProtectedValue(timeProvider.now()) ?: 0.0
+
+    /**
+     * Returns protected value aggregated by currency with conversion awareness.
+     * W01: Replaces raw Double sum with MoneyAggregate for multi-currency safety.
+     *
+     * TODO (W01): Inject CurrencyConverter and CurrencySettingsRepository to
+     * properly convert multi-currency totals to the user's home currency.
+     * Currently returns the total in the first-encountered currency when
+     * multiple currencies are present (all others recorded as failures).
+     */
+    suspend fun getTotalProtectedValueAggregate(): MoneyAggregate {
+        val currencyTotals = warrantyDao.getTotalProtectedValueByCurrency(timeProvider.now())
+        if (currencyTotals.isEmpty()) return MoneyAggregate.empty(CurrencyCode.EUR)
+
+        val sourceBuckets = currencyTotals.map {
+            MoneyBucket(CurrencyCode(it.currency), it.total, it.txCount)
+        }
+
+        // If all same currency, return singleCurrency for efficiency
+        if (sourceBuckets.size == 1) {
+            return MoneyAggregate.singleCurrency(
+                amount = sourceBuckets[0].amount,
+                currency = sourceBuckets[0].currency,
+                transactionCount = sourceBuckets[0].transactionCount
+            )
+        }
+
+        // Mixed currencies: need CurrencyConverter + CurrencySettingsRepository
+        // TODO (W01): Convert each bucket to home currency. Currently falls back
+        // to the first bucket's currency with all others recorded as failures.
+        val displayCurrency = sourceBuckets.first().currency
+        val failures = sourceBuckets.drop(1).map { bucket ->
+            ConversionFailure(
+                originalAmount = MoneyAmount(bucket.amount, bucket.currency),
+                targetCurrency = displayCurrency,
+                reason = FailureReason.MISSING_RATE
+            )
+        }
+        return MoneyAggregate.partial(
+            displayAmount = sourceBuckets.first().amount,
+            displayCurrency = displayCurrency,
+            sourceBuckets = sourceBuckets,
+            failures = failures
+        )
+    }
     
     // Return window operations
     fun getAllReturnWindows(): Flow<List<ReturnWindow>> = returnWindowDao.getAllReturnWindows()

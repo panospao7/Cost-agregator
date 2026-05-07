@@ -2,6 +2,9 @@ package com.yourname.expensetracker.domain.tax
 
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -44,7 +47,9 @@ class TaxEstimator @Inject constructor(
         // getTotalBusinessExpenses uses SUM(effectiveAmount) via
         // ExpenseDao.getTotalBusinessExpensesBetween, eliminating hidden
         // data truncation while producing the same mathematical result.
-        val totalDeductible = businessExpenseRepository.getTotalBusinessExpenses(startDate, endDate)
+        // T01: Use MoneyAggregate with per-currency buckets.
+        val deductibleAggregate = buildDeductibleAggregate(startDate, endDate)
+        val totalDeductible = deductibleAggregate.displayAmount
 
         val periodYearFraction = calculatePeriodYearFraction(startDate, endDate)
         val periodIncome = estimatedAnnualIncome * periodYearFraction
@@ -140,6 +145,30 @@ class TaxEstimator @Inject constructor(
             set(year, Calendar.JANUARY, 1, 0, 0, 0)
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
+    }
+
+    /**
+     * Build a MoneyAggregate for deductible business expenses grouped by currency.
+     *
+     * T01: Replaces the raw-Double [BusinessExpenseRepository.getTotalBusinessExpenses]
+     * with a per-currency aggregate so mixed-currency deductible expenses are
+     * correctly represented without silently raw-summing across currencies.
+     */
+    private suspend fun buildDeductibleAggregate(startMs: Long, endMs: Long): MoneyAggregate {
+        val currencyTotals = expenseDao.getBusinessExpensesBetweenByCurrency(startMs, endMs)
+        if (currencyTotals.isEmpty()) return MoneyAggregate.empty(CurrencyCode.EUR)
+        if (currencyTotals.size == 1) {
+            return MoneyAggregate.singleCurrency(currencyTotals[0].total, CurrencyCode(currencyTotals[0].currency), currencyTotals[0].txCount)
+        }
+        val sourceBuckets = currencyTotals.map { MoneyBucket(CurrencyCode(it.currency), it.total, it.txCount) }
+        return MoneyAggregate(
+            displayAmount = sourceBuckets.sumOf { it.amount },
+            displayCurrency = CurrencyCode.EUR,
+            sourceBuckets = sourceBuckets,
+            conversionFailures = emptyList(),
+            isPartial = true,
+            warningMessage = "Mixed currencies in deductible expenses. Inject CurrencyConverter for proper conversion."
+        )
     }
     
     /**

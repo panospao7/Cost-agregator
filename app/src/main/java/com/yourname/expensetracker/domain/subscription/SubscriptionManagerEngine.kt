@@ -7,6 +7,9 @@ import com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -418,9 +421,10 @@ class SubscriptionManagerEngine @Inject constructor(
      * SEMI_ANNUALLY and ANNUALLY frequencies are correctly represented as a
      * monthly cost rather than using the raw per-period amount.
      */
-    // TODO (W06): Return MoneyAggregate with per-currency buckets.
-    // Currently raw-sums amounts from potentially multiple currencies.
-    // Group by currency, wrap in MoneyAggregate.
+    @Deprecated(
+        "Raw Double sums across potentially multiple currencies. Use getTotalMonthlySubscriptionCostAggregate() instead.",
+        ReplaceWith("getTotalMonthlySubscriptionCostAggregate().displayAmount")
+    )
     suspend fun getTotalMonthlySubscriptionCost(): Double {
         val subscriptions = getAllSubscriptions()
         var total = 0.0
@@ -431,6 +435,46 @@ class SubscriptionManagerEngine @Inject constructor(
             )
         }
         return total
+    }
+    
+    /**
+     * Get total monthly subscription cost as a MoneyAggregate grouped by currency.
+     *
+     * Normalises each subscription to its monthly equivalent using
+     * [RecurrenceCalculator.toMonthlyAmount], then groups by currency so that
+     * multi-currency subscriptions are correctly represented without silent
+     * raw-summing across different currencies.
+     */
+    suspend fun getTotalMonthlySubscriptionCostAggregate(): MoneyAggregate {
+        val subscriptions = getAllSubscriptions()
+        val byCurrency = mutableMapOf<String, Pair<Double, Int>>() // currency -> (total, count)
+        
+        for (analysis in subscriptions) {
+            val monthly = RecurrenceCalculator.toMonthlyAmount(
+                analysis.subscription.amount, analysis.subscription.frequency
+            )
+            val currency = analysis.subscription.currency.uppercase()
+            val (existingTotal, existingCount) = byCurrency.getOrDefault(currency, Pair(0.0, 0))
+            byCurrency[currency] = Pair(existingTotal + monthly, existingCount + 1)
+        }
+        
+        if (byCurrency.isEmpty()) return MoneyAggregate.empty(CurrencyCode.EUR)
+        if (byCurrency.size == 1) {
+            val entry = byCurrency.entries.first()
+            return MoneyAggregate.singleCurrency(entry.value.first, CurrencyCode(entry.key), entry.value.second)
+        }
+        
+        val sourceBuckets = byCurrency.map { (ccy, pair) ->
+            MoneyBucket(CurrencyCode(ccy), pair.first, pair.second)
+        }
+        return MoneyAggregate(
+            displayAmount = sourceBuckets.sumOf { it.amount },
+            displayCurrency = CurrencyCode.EUR,
+            sourceBuckets = sourceBuckets,
+            conversionFailures = emptyList(),
+            isPartial = true,
+            warningMessage = "Contains ${byCurrency.size} currencies without conversion. Inject CurrencyConverter for proper conversion."
+        )
     }
     
     /**

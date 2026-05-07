@@ -5,6 +5,8 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryBreakdown
 import com.yourname.expensetracker.domain.analytics.AnalyticsCategoryRef
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.DataQualityReport
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.Flow
@@ -29,7 +31,9 @@ data class SpendingSummary(
     /** Daily spending totals for the previous period, one entry per day. */
     val previousDailyHistory: List<Double>,
     val transactionCount: Int,
-    val currency: String = "EUR"
+    val currency: String = "EUR",
+    val aggregate: MoneyAggregate? = null,  // A05: full aggregate for multi-currency safety
+    val isPartial: Boolean = false           // A05: whether any conversion failures exist
 )
 
 data class LocationSpendSummary(
@@ -47,7 +51,9 @@ data class LocationSpendSummary(
 data class LocationMerchantStat(
     val merchant: String,
     val totalSpend: Double,
-    val transactionCount: Int
+    val transactionCount: Int,
+    val aggregate: MoneyAggregate? = null,  // A14: per-merchant aggregate
+    val currency: String? = null           // A14: currency from per-currency DAO
 )
 
 @Singleton
@@ -128,7 +134,9 @@ class AnalyticsRepository @Inject constructor(
                 dailyHistory = dailyHistory.toList(),
                 previousDailyHistory = previousDailyHistory.toList(),
                 transactionCount = transactionCount,
-                currency = homeCurrency
+                currency = homeCurrency,
+                aggregate = currentAggregate,
+                isPartial = currentAggregate.isPartial
             )
             )
         }
@@ -225,22 +233,39 @@ class AnalyticsRepository @Inject constructor(
 
     // ── Location-aware analytics (v28) ────────────────────────────────────────
 
-    // TODO (A14): Use MoneyAggregate for multi-currency safety.
-    // Currently raw-sums merchant totals from DAO across potentially mixed currencies.
     /**
      * Returns a summary of spending grouped by located vs un-located expenses,
      * and the top merchants that have been geocoded.
+     * A14: Now uses per-currency DAO and builds MoneyAggregate per merchant
+     * for multi-currency safety.
      */
     suspend fun getLocationSpendSummary(): LocationSpendSummary {
-        val merchantTotals = expenseDao.getLocatedMerchantTotals()
         val locatedCount = expenseDao.countLocated()
         val unlocatedCount = expenseDao.countUnlocated()
 
-        val topMerchants = merchantTotals.take(20).map { mt ->
+        // A14: Use per-currency DAO instead of deprecated raw-sum version
+        val merchantCurrencyTotals = expenseDao.getLocatedMerchantTotalsByCurrency()
+
+        // Group per-currency rows by merchant and build LocationMerchantStat
+        val grouped = merchantCurrencyTotals.groupBy { it.merchant }
+        val topMerchants = grouped.entries.take(20).map { (merchant, rows) ->
+            val totalSpend = rows.sumOf { it.total }
+            val txCount = rows.sumOf { it.txCount }
+            val primaryCurrency = rows.first().currency
+
+            // A14: simple per-merchant MoneyAggregate
+            val aggregate = MoneyAggregate.singleCurrency(
+                amount = totalSpend,
+                currency = CurrencyCode(primaryCurrency),
+                transactionCount = txCount
+            )
+
             LocationMerchantStat(
-                merchant = mt.merchant,
-                totalSpend = mt.total,
-                transactionCount = mt.cnt
+                merchant = merchant,
+                totalSpend = totalSpend,
+                transactionCount = txCount,
+                aggregate = aggregate,
+                currency = primaryCurrency
             )
         }
 

@@ -1819,6 +1819,7 @@ AND LENGTH(:merchantKey) >= 8
      * Aggregate spend by merchant for expenses that have coordinates.
      * Used by [SpendingHeatmapEngine] to weight heatmap intensity.
      */
+    @Deprecated("Use getLocatedMerchantTotalsByCurrency() for multi-currency safety")
     @Query("""
         SELECT merchantKey as merchantKey, MIN(merchant) as merchant,
                SUM(${EFFECTIVE_AMOUNT_SQL}) as total, COUNT(*) as cnt
@@ -1832,6 +1833,26 @@ AND LENGTH(:merchantKey) >= 8
         ORDER BY total DESC
     """)
     suspend fun getLocatedMerchantTotals(): List<MerchantTotal>
+
+    /**
+     * Per-currency aggregate spend by merchant for expenses that have coordinates.
+     * Used by [SpendingHeatmapEngine] to weight heatmap intensity per currency.
+     */
+    @Query("""
+        SELECT merchant AS merchant,
+               UPPER(COALESCE(currency, 'EUR')) AS currency,
+               SUM(COALESCE(CASE 
+                   WHEN isNotMine = 1 THEN 0.0
+                   WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
+                   WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
+                   ELSE amount END, 0)) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        GROUP BY merchantKey, UPPER(COALESCE(currency, 'EUR'))
+        ORDER BY total DESC
+    """)
+    suspend fun getLocatedMerchantTotalsByCurrency(): List<MerchantCurrencyTotal>
 
     /**
      * Expenses within a geographic bounding box.
@@ -2039,7 +2060,7 @@ AND LENGTH(:merchantKey) >= 8
     fun getBusinessExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>>
     
     // TODO (P5-P1-5): Remove after all callers migrate to MultiCurrencyRepository
-    @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")
+    @Deprecated("Use getBusinessExpensesBetweenByCurrency() for multi-currency safety")
     @Query("""
         SELECT COALESCE(SUM(${EFFECTIVE_AMOUNT_SQL}), 0.0) FROM expenses 
         WHERE isBusinessExpense = 1 
@@ -2047,6 +2068,21 @@ AND LENGTH(:merchantKey) >= 8
         AND date >= :startDate AND date < :endDate
     """)
     suspend fun getTotalBusinessExpensesBetween(startDate: Long, endDate: Long): Double?
+
+    @Query("""
+        SELECT UPPER(COALESCE(currency, 'EUR')) AS currency,
+               SUM(COALESCE(CASE 
+                   WHEN isNotMine = 1 THEN 0.0
+                   WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount
+                   WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL THEN amount * mySharePercentage / 100.0
+                   ELSE amount END, 0)) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE isBusinessExpense = 1 AND date >= :startDate AND date < :endDate
+        GROUP BY UPPER(COALESCE(currency, 'EUR'))
+        ORDER BY total DESC
+    """)
+    suspend fun getBusinessExpensesBetweenByCurrency(startDate: Long, endDate: Long): List<CurrencyTotal>
     
     // TODO (P5-P1-5): Remove after all callers migrate to MultiCurrencyRepository
     @Deprecated("Raw SUM across mixed currencies. Use MultiCurrencyRepository for currency-aware aggregation.")

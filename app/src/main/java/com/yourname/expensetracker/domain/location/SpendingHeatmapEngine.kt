@@ -78,6 +78,8 @@ class SpendingHeatmapEngine @Inject constructor() {
      * produce correct relative intensities regardless of source currency mix.
      */
     fun compute(expenses: List<LocatedExpense>): List<HeatmapPoint> {
+        // W29: Callers must pre-normalize expenses to home currency.
+        // This engine does NOT perform currency conversion.
         if (expenses.isEmpty()) return emptyList()
 
         // ── Step 1: Grid-snap cluster ─────────────────────────────────────────

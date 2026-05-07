@@ -5,6 +5,9 @@ import com.yourname.expensetracker.data.database.dao.InvestmentValueDao
 import com.yourname.expensetracker.data.database.entity.Investment
 import com.yourname.expensetracker.data.database.entity.InvestmentType
 import com.yourname.expensetracker.data.database.entity.InvestmentValue
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -40,8 +43,10 @@ class InvestmentTracker @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
     
-    // TODO (I01): Return MoneyAggregate with per-currency buckets.
-    // Currently raw-sums portfolio totals across currencies.
+    @Deprecated(
+        "Raw Double portfolio summary may mix currencies. Use getPortfolioSummaryAggregate() for multi-currency safety.",
+        ReplaceWith("getPortfolioSummaryAggregate(investmentDao.getAllActiveInvestments().first())")
+    )
     /**
      * Get complete portfolio summary.
      */
@@ -75,6 +80,64 @@ class InvestmentTracker @Inject constructor(
             investmentCount = investments.size,
             byType = byType
         )
+    }
+    
+    /**
+     * Get portfolio summary together with a MoneyAggregate grouped by currency.
+     *
+     * Computes the same [PortfolioSummary] as [getPortfolioSummary] but also
+     * returns a [MoneyAggregate] with per-currency buckets, so callers can
+     * display multi-currency totals safely without raw-summing across currencies.
+     */
+    fun getPortfolioSummaryAggregate(holdings: List<Investment>): Pair<PortfolioSummary, MoneyAggregate> {
+        var totalValue = 0.0
+        var totalInvested = 0.0
+        
+        for (investment in holdings) {
+            totalValue += investment.currentPrice * investment.quantity
+            totalInvested += (investment.purchasePrice * investment.quantity) + investment.purchaseFees
+        }
+        
+        val gainLoss = totalValue - totalInvested
+        val gainLossPercent = if (totalInvested > 0) (gainLoss / totalInvested) * 100 else 0.0
+        
+        // Group by type
+        val byType = mutableMapOf<InvestmentType, Double>()
+        for (investment in holdings) {
+            val currentValue = investment.currentPrice * investment.quantity
+            val current = byType[investment.type] ?: 0.0
+            byType[investment.type] = current + currentValue
+        }
+        
+        val summary = PortfolioSummary(
+            totalValue = totalValue,
+            totalInvested = totalInvested,
+            totalGainLoss = gainLoss,
+            totalGainLossPercent = gainLossPercent,
+            investmentCount = holdings.size,
+            byType = byType
+        )
+        
+        // Group by currency for MoneyAggregate
+        val byCurrency = holdings.groupBy { it.currency.uppercase() }
+            .mapValues { (_, list) -> list.sumOf { (it.currentPrice) * (it.quantity) } }
+        
+        val sourceBuckets = byCurrency.map { (ccy, value) ->
+            MoneyBucket(CurrencyCode(ccy), value, 0)
+        }
+        val aggregate = if (sourceBuckets.size == 1) {
+            MoneyAggregate.singleCurrency(sourceBuckets[0].amount, sourceBuckets[0].currency, byCurrency.values.sumOf { 1 }.toInt())
+        } else {
+            MoneyAggregate(
+                displayAmount = sourceBuckets.sumOf { it.amount },
+                displayCurrency = CurrencyCode.EUR,
+                sourceBuckets = sourceBuckets,
+                conversionFailures = emptyList(),
+                isPartial = true,
+                warningMessage = "Mixed currencies in portfolio. Inject CurrencyConverter for proper conversion."
+            )
+        }
+        return Pair(summary, aggregate)
     }
     
     /**
