@@ -383,5 +383,33 @@ tasks.register("verifyNoIgnoredGrowth") {
     }
 }
 
+// CI guard: fails if production code calls deprecated raw aggregation DAO methods
 // TODO: Add CI guard that fails if production code calls deprecated raw aggregation
 // methods (e.g., getTotalSpentBetween, getTotalSpent) via grep/lint rule.
+
+// ARCH-01: Lifecycle bypass guard — wired into check lifecycle
+tasks.register("checkLifecycleBypasses") {
+    group = "verification"
+    description = "Fails if production code contains direct ExpenseDao calls that bypass TransactionLifecycleCoordinator"
+
+    doLast {
+        val script = file("$rootDir/scripts/guards/check_lifecycle_bypasses.kts")
+        if (!script.exists()) {
+            logger.warn("Lifecycle bypass guard script not found at ${script.absolutePath}")
+            return@doLast
+        }
+        try {
+            exec {
+                workingDir = rootDir
+                commandLine("kotlin", script.absolutePath)
+            }
+        } catch (e: Exception) {
+            throw GradleException("Lifecycle bypass guard failed: ${e.message}")
+        }
+    }
+}
+
+// Wire both guards into the check lifecycle
+tasks.named("check") {
+    dependsOn("checkLifecycleBypasses")
+}

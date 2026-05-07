@@ -562,7 +562,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             val stagedDbPath = stagedDbFile.absolutePath
 
             // 2. Create restore journal — state = PREPARING
-            val journalEntry = restoreJournal.beginJournal(
+            var journalEntry = restoreJournal.beginJournal(
                 sourceBackupPath = bundleFile.absolutePath,
                 stagedDbPath = stagedDbPath,
                 liveDbPath = liveDbPath
@@ -591,7 +591,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
 
             val manifest = extractionResult.manifest
-            restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.STAGED)
+            journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.STAGED)
 
             // 4. Verify manifest has data
             val manifestTableCounts = manifest.tableCounts
@@ -637,14 +637,21 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     val postMigrationCheck = runCatching {
                         BackupVerifier.verifyQuick(stagedDbFile, manifestTableCounts)
                     }
-                    if (postMigrationCheck.isFailure) {
-                        Timber.e(
-                            postMigrationCheck.exceptionOrNull(),
-                            "Post-migration verification failed: ${postMigrationCheck.exceptionOrNull()?.message}"
+
+                    postMigrationCheck.getOrElse { error ->
+                        Timber.e(error, "Post-migration staged DB verification failed — aborting restore")
+                        restoreMaintenanceMode.exit(forceRestartRequired = false)
+                        restoreJournal.failJournal(journalEntry, "Post-migration verification failed: ${error.message}")
+                        stagedDbFile.delete()
+                        File(stagedDbPath + "-wal").delete()
+                        File(stagedDbPath + "-shm").delete()
+                        tempDir.deleteRecursively()
+                        return@withContext Result.failure(
+                            Exception("Post-migration staged DB verification failed: ${error.message}")
                         )
-                    } else {
-                        Timber.d("Post-migration quick verification passed")
                     }
+
+                    Timber.d("Post-migration quick verification passed")
                 } finally {
                     runCatching { stagedDatabase.close() }
                 }
@@ -678,13 +685,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
             // 8. Persist safety backup path in journal before swap, so crash recovery
             //    can restore from it if the process dies during the swap.
-            restoreJournal.transitionTo(
+            journalEntry = restoreJournal.transitionTo(
                 journalEntry,
                 RestoreJournal.JournalState.SAFETY_BACKUP_CREATED,
                 safetyBackupPath = safetyBackupFile.absolutePath
             )
             // Swap live DB with staged DB
-            restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.SWAPPING)
+            journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.SWAPPING)
             val liveDbWalFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-wal")
             val liveDbShmFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-shm")
             val stagedDbWalFile = File(stagedDbFile.parentFile, "$stagedDbName-wal")
@@ -724,7 +731,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // obtain a fresh Room instance.
 
             // 9. Verify live DB
-            restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.VERIFYING)
+            journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.VERIFYING)
             try {
                 database.openHelper.writableDatabase
                 refreshInvalidationTrackerSafelyForVerification(database)
