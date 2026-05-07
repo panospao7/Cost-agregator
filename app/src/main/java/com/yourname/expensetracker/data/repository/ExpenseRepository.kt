@@ -67,12 +67,14 @@ enum class OwnershipFilter {
  * - updateExpense() (full-row) — already routed through coordinator
  * - updateExpenseMerchant (single path) → coordinator.updateMerchant()
  * - updateExpenseType → coordinator.updateType()
+ * - updateTransferDetails → coordinator.updateTransferDetails()
+ * - updateNotMineDetails → coordinator.updateOwnership()
+ * - updateSharedExpenseDetails → coordinator.updateOwnership()
+ * - updateOwnership → coordinator.updateOwnership()
  *
  * ### STILL BYPASSING (direct ExpenseDao calls, no lifecycle events):
  * - updateExpenseCategoryBulk (categoryId)
  * - updateExpenseMerchantBulk (merchant, merchantKey, dedupeKey) — bulk path still bypasses
- * - updateTransferDetails (transferDirection, transferAccountName)
- * - updateNotMineDetails, updateSharedExpenseDetails, updateOwnership (ownership fields)
  * - updateExpenseLocation, conditionallySetLocation, clearExpenseLocation (location fields)
  * - incrementBackfillAttempts (counter)
  * - updateMerchantKey (backfill)
@@ -81,7 +83,7 @@ enum class OwnershipFilter {
  * - ReceiptLinkService.linkReceiptToExpense() — RCP-30 category propagation (runCatching)
  * - GroupTransactionCoordinator — shared-expense flags clearing + ownership normalization
  *
- * Total: 16 remaining bypass sites across 3 files (18 were fixed for category).
+ * Total: 10 remaining bypass sites across 3 files.
  * See docs/analyses and debug master/debugging/pipeline-2-transaction-lifecycle-debug-report.md
  * for the full inventory and migration plan.
  */
@@ -388,7 +390,7 @@ class ExpenseRepository @Inject constructor(
         transactionLifecycleCoordinator.updateExpense(expense)
     }
 
-    @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.UPDATED. Use TransactionLifecycleCoordinator.updateExpense() instead for proper lifecycle tracking.")
+    @Deprecated("Use TransactionLifecycleCoordinator.updateCategory() instead for proper lifecycle tracking.")
     suspend fun updateExpenseCategory(expense: Expense, newCategoryId: Long?) {
         transactionLifecycleCoordinator.updateCategory(
             expenseId = expense.id,
@@ -404,7 +406,7 @@ class ExpenseRepository @Inject constructor(
     /**
      * Overload to update category by expense ID directly.
      */
-    @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.UPDATED. Use TransactionLifecycleCoordinator.updateExpense() instead for proper lifecycle tracking.")
+    @Deprecated("Use TransactionLifecycleCoordinator.updateCategory() instead for proper lifecycle tracking.")
     suspend fun updateExpenseCategory(expenseId: Long, categoryId: Long?) {
         transactionLifecycleCoordinator.updateCategory(expenseId, categoryId)
     }
@@ -455,7 +457,7 @@ class ExpenseRepository @Inject constructor(
         merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant)
     }
 
-    @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.UPDATED. Use TransactionLifecycleCoordinator.updateExpense() instead for proper lifecycle tracking.")
+    @Deprecated("Use TransactionLifecycleCoordinator.updateMerchant() instead for proper lifecycle tracking.")
     suspend fun updateExpenseMerchant(expense: Expense, newMerchant: String, applyToAll: Boolean = false) {
         if (expense.merchant == newMerchant) return
         val oldMerchant = expense.merchant
@@ -484,7 +486,7 @@ class ExpenseRepository @Inject constructor(
         }
     }
 
-    @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.UPDATED. Use TransactionLifecycleCoordinator.updateExpense() instead for proper lifecycle tracking.")
+    @Deprecated("Use TransactionLifecycleCoordinator.updateType() instead for proper lifecycle tracking.")
     suspend fun updateExpenseType(expense: Expense, newType: TransactionType) {
         transactionLifecycleCoordinator.updateType(
             expenseId = expense.id,
@@ -498,11 +500,14 @@ class ExpenseRepository @Inject constructor(
         transferDirection: TransferDirection?,
         transferAccountName: String?
     ) {
-        database.withTransaction {
-            expenseDao.updateTransferDirection(expense.id, transferDirection?.name)
-            expenseDao.updateTransferAccountName(expense.id, transferAccountName)
-        }
+        transactionLifecycleCoordinator.updateTransferDetails(
+            expenseId = expense.id,
+            transferDirection = transferDirection,
+            transferAccountName = transferAccountName,
+            source = "USER_EDIT"
+        )
 
+        // Side effect (non-lifecycle, best-effort)
         if (transferDirection != null) {
             transferDirectionAnalytics.recordUserCorrection(
                 transferId = expense.id,
@@ -512,20 +517,22 @@ class ExpenseRepository @Inject constructor(
         }
     }
 
-    @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.UPDATED. Use TransactionLifecycleCoordinator.updateExpense() instead for proper lifecycle tracking.")
+    @Deprecated("Use TransactionLifecycleCoordinator.updateOwnership() instead for proper lifecycle tracking.")
     suspend fun updateNotMineDetails(
         expense: Expense,
         isNotMine: Boolean,
         ownerName: String?
     ) {
-        val normalized = expense.copy(
+        transactionLifecycleCoordinator.updateOwnership(
+            expenseId = expense.id,
             isNotMine = isNotMine,
-            ownerName = ownerName
-        ).normalizeOwnership()
-
-        database.withTransaction {
-            applyOwnershipDetails(expense.id, normalized)
-        }
+            ownerName = ownerName,
+            isSharedExpense = expense.isSharedExpense,
+            sharedWithName = expense.sharedWithName,
+            mySharePercentage = expense.mySharePercentage,
+            myShareAmount = expense.myShareAmount,
+            source = "USER_EDIT"
+        )
     }
 
     suspend fun updateSharedExpenseDetails(
@@ -535,16 +542,16 @@ class ExpenseRepository @Inject constructor(
         mySharePercentage: Int?,
         myShareAmount: Double?
     ) {
-        val normalized = expense.copy(
+        transactionLifecycleCoordinator.updateOwnership(
+            expenseId = expense.id,
+            isNotMine = expense.isNotMine,
+            ownerName = expense.ownerName,
             isSharedExpense = isSharedExpense,
             sharedWithName = sharedWithName,
             mySharePercentage = mySharePercentage,
-            myShareAmount = myShareAmount
-        ).normalizeOwnership()
-
-        database.withTransaction {
-            applyOwnershipDetails(expense.id, normalized)
-        }
+            myShareAmount = myShareAmount,
+            source = "USER_EDIT"
+        )
     }
 
     /**
@@ -571,27 +578,16 @@ class ExpenseRepository @Inject constructor(
         mySharePercentage: Int?,
         myShareAmount: Double?
     ) {
-        val normalized = expense.copy(
+        transactionLifecycleCoordinator.updateOwnership(
+            expenseId = expense.id,
             isNotMine = isNotMine,
             ownerName = ownerName,
             isSharedExpense = isSharedExpense,
             sharedWithName = sharedWithName,
             mySharePercentage = mySharePercentage,
-            myShareAmount = myShareAmount
-        ).normalizeOwnership()
-
-        database.withTransaction {
-            applyOwnershipDetails(expense.id, normalized)
-        }
-    }
-
-    private suspend fun applyOwnershipDetails(expenseId: Long, normalized: Expense) {
-        expenseDao.updateIsNotMine(expenseId, normalized.isNotMine)
-        expenseDao.updateOwnerName(expenseId, normalized.ownerName)
-        expenseDao.updateIsSharedExpense(expenseId, normalized.isSharedExpense)
-        expenseDao.updateSharedWithName(expenseId, normalized.sharedWithName)
-        expenseDao.updateMySharePercentage(expenseId, normalized.mySharePercentage)
-        expenseDao.updateMyShareAmount(expenseId, normalized.myShareAmount)
+            myShareAmount = myShareAmount,
+            source = "USER_EDIT"
+        )
     }
 
     suspend fun searchMerchants(query: String): List<MerchantSuggestion> {

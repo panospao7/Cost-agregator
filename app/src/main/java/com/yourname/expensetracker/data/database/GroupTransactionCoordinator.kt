@@ -650,11 +650,25 @@ class GroupTransactionCoordinator @Inject constructor(
         }
 
         // Clear orphaned shared-expense flags
+        // NOTE: Intentionally NOT routed through TransactionLifecycleCoordinator.
+        // This is a group-level atomic cleanup operation (hard group delete), not a
+        // user-originated edit of individual expense ownership fields. The lifecycle
+        // coordinator is reserved for user-driven ownership changes that need audit
+        // events. ClearSharedExpenseFlags is a bulk data-integrity operation.
         linkedExpenseIds.forEach { expenseId ->
             expenseDao.clearSharedExpenseFlags(expenseId)
         }
     }
 
+    /**
+     * Normalizes a system expense's ownership fields when it is linked to a group.
+     *
+     * NOTE: Intentionally NOT routed through TransactionLifecycleCoordinator.
+     * This is a group-level atomic operation that sets shared-expense metadata
+     * as part of creating a group-expense link, not a user-originated edit of
+     * individual ownership fields. The lifecycle coordinator is reserved for
+     * user-driven ownership changes that need individual audit events.
+     */
     private suspend fun normalizeLinkedSystemExpense(
         expense: Expense,
         myShareAmount: Double

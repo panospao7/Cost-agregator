@@ -655,6 +655,139 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * Updates transfer direction and transfer account name atomically,
+     * with full lifecycle tracking. Writes a UPDATED TransactionEvent
+     * with before/after snapshots.
+     *
+     * @param expenseId           The ID of the expense to update.
+     * @param transferDirection   The new transfer direction (nullable).
+     * @param transferAccountName The new transfer account name (nullable).
+     * @param reason              Optional human-readable explanation.
+     * @param source              The source system/component that triggered the update.
+     */
+    suspend fun updateTransferDetails(
+        expenseId: Long,
+        transferDirection: com.yourname.expensetracker.data.database.entity.TransferDirection?,
+        transferAccountName: String?,
+        reason: String? = null,
+        source: String = "USER_EDIT"
+    ) {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+
+        val existing = expenseDao.getById(expenseId) ?: return
+        if (existing.transferDirection == transferDirection && existing.transferAccountName == transferAccountName) return
+
+        val now = timeProvider.now()
+        val beforeSnapshot = expenseToSnapshot(existing)
+        val updated = existing.copy(
+            transferDirection = transferDirection,
+            transferAccountName = transferAccountName
+        )
+
+        database.withTransaction {
+            expenseDao.updateTransferDirection(expenseId, transferDirection?.name)
+            expenseDao.updateTransferAccountName(expenseId, transferAccountName)
+            transactionEventDao.insert(
+                TransactionEvent(
+                    expenseId = expenseId,
+                    eventType = LifecycleEventType.UPDATED.name,
+                    source = source,
+                    actor = null,
+                    occurredAt = now,
+                    dedupeKey = existing.dedupeKey,
+                    duplicateExpenseId = null,
+                    beforeSnapshot = beforeSnapshot,
+                    afterSnapshot = expenseToSnapshot(expenseId, updated),
+                    metadata = null,
+                    reason = reason
+                )
+            )
+        }
+    }
+
+    /**
+     * Updates all six ownership fields atomically with [Expense.normalizeOwnership]
+     * enforcement, with full lifecycle tracking. Writes a UPDATED TransactionEvent
+     * with before/after snapshots.
+     *
+     * @param expenseId       The ID of the expense to update.
+     * @param isNotMine       Whether the expense is not mine.
+     * @param ownerName       The owner name (nullable).
+     * @param isSharedExpense Whether the expense is shared.
+     * @param sharedWithName  The shared-with name (nullable).
+     * @param mySharePercentage The user's share percentage (nullable).
+     * @param myShareAmount   The user's share amount (nullable).
+     * @param reason          Optional human-readable explanation.
+     * @param source          The source system/component that triggered the update.
+     */
+    suspend fun updateOwnership(
+        expenseId: Long,
+        isNotMine: Boolean,
+        ownerName: String?,
+        isSharedExpense: Boolean,
+        sharedWithName: String?,
+        mySharePercentage: Int?,
+        myShareAmount: Double?,
+        reason: String? = null,
+        source: String = "USER_EDIT"
+    ) {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+
+        val existing = expenseDao.getById(expenseId) ?: return
+
+        // Apply normalizeOwnership to enforce mutual exclusivity
+        val normalized = existing.copy(
+            isNotMine = isNotMine,
+            ownerName = ownerName,
+            isSharedExpense = isSharedExpense,
+            sharedWithName = sharedWithName,
+            mySharePercentage = mySharePercentage,
+            myShareAmount = myShareAmount
+        ).normalizeOwnership()
+
+        // Check if anything actually changed
+        if (existing.isNotMine == normalized.isNotMine &&
+            existing.ownerName == normalized.ownerName &&
+            existing.isSharedExpense == normalized.isSharedExpense &&
+            existing.sharedWithName == normalized.sharedWithName &&
+            existing.mySharePercentage == normalized.mySharePercentage &&
+            existing.myShareAmount == normalized.myShareAmount
+        ) return
+
+        val now = timeProvider.now()
+        val beforeSnapshot = expenseToSnapshot(existing)
+        val updated = normalized  // for snapshot
+
+        database.withTransaction {
+            expenseDao.updateIsNotMine(expenseId, normalized.isNotMine)
+            expenseDao.updateOwnerName(expenseId, normalized.ownerName)
+            expenseDao.updateIsSharedExpense(expenseId, normalized.isSharedExpense)
+            expenseDao.updateSharedWithName(expenseId, normalized.sharedWithName)
+            expenseDao.updateMySharePercentage(expenseId, normalized.mySharePercentage)
+            expenseDao.updateMyShareAmount(expenseId, normalized.myShareAmount)
+            transactionEventDao.insert(
+                TransactionEvent(
+                    expenseId = expenseId,
+                    eventType = LifecycleEventType.UPDATED.name,
+                    source = source,
+                    actor = null,
+                    occurredAt = now,
+                    dedupeKey = existing.dedupeKey,
+                    duplicateExpenseId = null,
+                    beforeSnapshot = beforeSnapshot,
+                    afterSnapshot = expenseToSnapshot(expenseId, updated),
+                    metadata = null,
+                    reason = reason
+                )
+            )
+        }
+    }
+
+    /**
      * Deletes an expense by its ID with full lifecycle handling:
      * load → write DELETED event → delete.
      *

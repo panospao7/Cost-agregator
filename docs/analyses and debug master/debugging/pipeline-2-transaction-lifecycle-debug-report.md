@@ -1184,19 +1184,19 @@ Files changed:
 - `updateExpenseMerchant()` single path → `coordinator.updateMerchant()` (C1-PR2)
 - `updateExpenseType()` → `coordinator.updateType()` (C1-PR2)
 - `ExpenseRepository.kt` now has a comprehensive `## C1 LIFECYCLE MIGRATION — PARTIALLY COMPLETE` KDoc block documenting all remaining bypasses
+- `updateTransferDetails()` → `coordinator.updateTransferDetails()` (C1-PR3)
+- `updateNotMineDetails()` / `updateSharedExpenseDetails()` / `updateOwnership()` → `coordinator.updateOwnership()` (C1-PR3)
 
-**STILL BYPASSING (14 methods across 3 files):**
+**STILL BYPASSING (10 methods across 3 files):**
 - `updateExpenseCategoryBulk()` — calls `expenseDao.updateCategoryForMerchant()` directly
 - `updateExpenseMerchantBulk()` — direct DAO (single path fixed in C1-PR2)
-- `updateTransferDetails()` — direct DAO
-- `updateNotMineDetails()` / `updateSharedExpenseDetails()` / `updateOwnership()` — direct DAO
 - `updateExpenseLocation()` / `conditionallySetLocation()` / `clearExpenseLocation()` — direct DAO
 - `ReceiptLinkService.kt` RCP-30 category propagation — `runCatching` block
 - `GroupTransactionCoordinator.kt` — shared-expense flags clearing + ownership normalization
 
 The remaining bypasses are deprecated with `@Deprecated` annotations and documented in the code.
 Full migration still requires adding `updateTransferDetails()`, `updateOwnership()`,
-`updateLocation()`, `bulkUpdateCategory()`, and `bulkUpdateMerchant()` to the coordinator (staged PRs 3-5).
+`updateLocation()`, `bulkUpdateCategory()`, and `bulkUpdateMerchant()` to the coordinator (staged PRs 4-5).
 
 ### P1-1 — Strict external ID idempotency returns InsertConflict
 **Status: CONFIRMED, NOT FIXED**
