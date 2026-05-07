@@ -1885,6 +1885,14 @@ AND LENGTH(:merchantKey) >= 8
     suspend fun getExpensesWithNullMerchantKey(limit: Int): List<Expense>
 
     /**
+     * Fetch all expenses matching a given merchant key.
+     * Used by [com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator.bulkUpdateMerchant]
+     * to recompute individual dedupeKeys during a bulk merchant rename.
+     */
+    @Query("SELECT * FROM expenses WHERE merchantKey = :merchantKey")
+    suspend fun getExpensesByMerchantKey(merchantKey: String): List<Expense>
+
+    /**
      * Write the computed canonical key back for a single expense row.
      */
     @Query("UPDATE expenses SET merchantKey = :merchantKey WHERE id = :expenseId")

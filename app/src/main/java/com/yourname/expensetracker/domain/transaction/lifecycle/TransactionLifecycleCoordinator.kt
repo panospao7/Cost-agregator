@@ -924,7 +924,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 source = source, actor = null, occurredAt = now,
                 dedupeKey = null, duplicateExpenseId = null,
                 beforeSnapshot = null, afterSnapshot = null,
-                metadata = """{"merchant":"$merchant","merchantKey":"$merchantKey","newCategoryId":$newCategoryId}""",
+                metadata = JSONObject().apply {
+                    put("merchant", merchant)
+                    put("merchantKey", merchantKey)
+                    put("newCategoryId", newCategoryId)
+                }.toString(),
                 reason = reason
             ))
         }
@@ -959,14 +963,30 @@ class TransactionLifecycleCoordinator @Inject constructor(
         val now = timeProvider.now()
 
         database.withTransaction {
-            expenseDao.updateMerchantForMerchant(oldMerchantKey, newMerchant, newMerchantKey)
+            // Fetch affected rows inside transaction to prevent TOCTOU race
+            val affectedExpenses = expenseDao.getExpensesByMerchantKey(oldMerchantKey)
+            if (affectedExpenses.isEmpty()) return@withTransaction
+
+            for (expense in affectedExpenses) {
+                val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                    expense.amount, newMerchant, expense.date, expense.currency, expense.transactionType
+                )
+                expenseDao.updateMerchantAndKey(expense.id, newMerchant, newMerchantKey, newDedupeKey)
+            }
+            val metadata = JSONObject().apply {
+                put("oldMerchant", oldMerchant)
+                put("newMerchant", newMerchant)
+                put("oldMerchantKey", oldMerchantKey)
+                put("newMerchantKey", newMerchantKey)
+                put("affectedCount", affectedExpenses.size)
+            }.toString()
             transactionEventDao.insert(TransactionEvent(
                 expenseId = null,
                 eventType = LifecycleEventType.BULK_UPDATED.name,
                 source = source, actor = null, occurredAt = now,
                 dedupeKey = null, duplicateExpenseId = null,
                 beforeSnapshot = null, afterSnapshot = null,
-                metadata = """{"oldMerchant":"$oldMerchant","newMerchant":"$newMerchant","oldMerchantKey":"$oldMerchantKey","newMerchantKey":"$newMerchantKey"}""",
+                metadata = metadata,
                 reason = reason
             ))
         }
