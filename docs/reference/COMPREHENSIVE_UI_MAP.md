@@ -1,8 +1,8 @@
 # ExpenseTracker Frontend UI/UX Comprehensive Mapping
 
-**Refreshed**: April 22, 2026  
+**Refreshed**: May 7, 2026  
 **Scope**: Current frontend inventory including screens, components, navigation, integration, and theming
-**Total Files**: Current UI inventory
+**Total Files**: 154 UI source files (38 ViewModels, 59 components)
 
 ---
 
@@ -30,6 +30,7 @@ ExpenseTrackerApp
 │   ├── Receipt Scan (Full Screen)
 │   ├── Recurring Expenses
 │   ├── Manual Recurring Expense
+│   ├── Budget Forecasting (Full Screen)
 │   └── AI Assistant (Chat Sheet)
 │
 ├── Feature Screens (Config-Driven)
@@ -40,7 +41,9 @@ ExpenseTrackerApp
 │
 └── Settings/Management Screens
     ├── AI Settings
-    └── Category Management
+    ├── Category Management
+    ├── Backup &amp; Restore
+    └── Privacy Settings
 ```
 
 ---
@@ -333,7 +336,7 @@ These appear over main tabs via `NavigationDestination` sealed class.
 
 ---
 
-## 4. FEATURE SCREENS (22 Config-Driven Features)
+## 4. FEATURE SCREENS (24 Config-Driven Features)
 
 All features accessible from:
 1. Home screen widgets/cards
@@ -641,6 +644,29 @@ All features accessible from:
 
 ---
 
+### Feature 22: Backup &amp; Restore
+**File**: `ui/screens/backup/BackupRestoreScreen.kt` + `BackupRestoreViewModel.kt`
+**Navigation**: `NavigationDestination.BackupRestore`
+
+#### Features:
+- Create encrypted .costbackup bundles
+- Restore from backup with crash-safe journal
+- AES-256-GCM encryption
+- Privacy-gated export options (raw/anonymized)
+
+---
+
+### Feature 23: Privacy Settings
+**File**: `ui/screens/privacysettings/PrivacySettingsScreen.kt` + `PrivacySettingsViewModel.kt`
+**Navigation**: *(no standalone route — accessible from Settings)*
+
+#### Features:
+- 10 privacy toggles (notification capture, cloud AI, geocoding, etc.)
+- 2 retention day settings
+- Privacy audit log viewer
+
+---
+
 ## 5. MANAGEMENT SCREENS
 
 ### AI Settings Screen
@@ -762,6 +788,10 @@ All features accessible from:
 | **DedupeAssistCard** | `ai/DedupeAssistCard.kt` | Duplicate detection UI |
 | **ReceiptAssistCard** | `ai/ReceiptAssistCard.kt` | Receipt scanning results |
 | **ReceiptItemBreakdownCard** | `ai/ReceiptItemBreakdownCard.kt` | Item-level receipt data |
+| **AiChatBubble** | `ai/AiChatBubble.kt` | Chat message bubble for AI assistant |
+| **AiInsightsCard** | `ai/AiInsightsCard.kt` | AI-generated insights display |
+| **AiRecommendationCard** | `ai/AiRecommendationCard.kt` | AI recommendation card |
+| **AiTypingIndicator** | `ai/AiTypingIndicator.kt` | Typing indicator animation |
 
 ### 7.5 Common/Shared Components
 
@@ -817,13 +847,14 @@ All features accessible from:
 | **FormComponents** | `feature/FormComponents.kt` | Form inputs (text, dropdown, etc.) |
 | **MetricComponents** | `feature/MetricComponents.kt` | Metric display components |
 
-### 7.10 Support Components
+### 7.10 Empty State Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **LocationSearchPicker** | `LocationSearchPicker.kt` | Location search/selection |
 | **EmptyStateAction** | `emptystate/EmptyStateAction.kt` | Contextual empty state actions |
 | **ContextualActionRegistry** | `emptystate/ContextualActionRegistry.kt` | Empty state action registry |
+| **DefaultEmptyStateRegistryInitializer** | `emptystate/DefaultEmptyStateRegistryInitializer.kt` | Empty-state registry bootstrap |
+| **EmptyStatePresentationModule** | `emptystate/EmptyStatePresentationModule.kt` | Hilt module for empty state wiring |
 
 ---
 
@@ -976,6 +1007,7 @@ Standard Material 3 padding/spacing scales:
 |--------|------|---------|
 | **DashboardWidgetUiMapper** | `mappers/DashboardWidgetUiMapper.kt` | Domain models → UI models |
 | **TransactionFilterUiMapper** | `mappers/TransactionFilterUiMapper.kt` | Filter domain → UI state |
+| **MonteCarloBudgetImpactUiMapper** | `mappers/MonteCarloBudgetImpactUiMapper.kt` | Budget impact forecast → UI models |
 
 ### UI Utilities
 
@@ -1095,16 +1127,18 @@ All screens are currently navigated to via NavigationDestination. No orphaned sc
 | Category | Count |
 |----------|-------|
 | **Main Tabs** | 6 |
-| **Feature Screens** | 22 |
-| **Overlay Screens** | 4 |
-| **Management Screens** | 2 |
-| **Debug Screens** | current debug set |
-| **Total Screen Files** | current screen inventory |
-| **Component Files** | current component inventory |
-| **Total UI Files** | current UI inventory |
-| **ViewModels** | many feature-scoped ViewModels |
+| **Feature Screens** | 23 |
+| **Overlay Screens** | 6 |
+| **Management Screens** | 4 |
+| **Debug Screens** | 5 |
+| **Total Screen Files** | 35 packages, ~90 files |
+| **Component Files** | 59 |
+| **Total UI Files** | 154 |
+| **ViewModels** | 38 |
 | **Dialog/Sheet Variants** | 20+ |
-| **Deep Link Hosts** | current set |
+| **Deep Link Hosts** | 8 |
+| **UI Mapper Files** | 3 |
+| **UI Utility Files** | 4 |
 
 ---
 

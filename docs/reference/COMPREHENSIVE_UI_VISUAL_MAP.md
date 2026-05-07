@@ -1,4 +1,5 @@
 # ExpenseTracker Frontend - Visual Navigation Map
+*Last refreshed: May 7, 2026*
 
 ## APPLICATION FLOW DIAGRAM
 
@@ -520,14 +521,15 @@ Modal Sheet (Bottom-up animation)
 │  │  ├─ Analytics                                               │
 │  │  └─ SpendingMap                                             │
 │  │                                                              │
-│  ├─ Overlay Screens (4)                                        │
+│  ├─ Overlay Screens (5)                                        │
 │  │  ├─ AddExpense                                              │
 │  │  ├─ ScanReceipt                                             │
 │  │  ├─ RecurringExpenses                                       │
 │  │  ├─ ManualRecurringExpense                                  │
+│  │  ├─ BudgetForecasting(budget)                               │
 │  │  └─ Assistant                                               │
 │  │                                                              │
-│  ├─ Feature Screens (current set)                              │
+│  ├─ Feature Screens (23)                                       │
 │  │  ├─ SavingsGoals                                            │
 │  │  ├─ CarbonFootprint                                         │
 │  │  ├─ WarrantyTracker                                         │
@@ -548,11 +550,14 @@ Modal Sheet (Bottom-up animation)
 │  │  ├─ SubscriptionManagement                                  │
 │  │  ├─ TaxConfiguration                                        │
 │  │  ├─ ExportOptions                                           │
-│  │  └─ SharedExpenseGroups                                     │
+│  │  ├─ SharedExpenseGroups                                     │
+│  │  ├─ BackupRestore                                           │
+│  │  └─ BudgetForecasting                                       │
 │  │                                                              │
 │  ├─ Management Screens (2)                                     │
 │  │  ├─ AiSettings                                              │
-│  │  └─ CategoryManagement                                      │
+│  │  ├─ CategoryManagement                                      │
+│  │  └─ PrivacySettings                                         │
 │  │                                                              │
 │  └─ Parametric Screens (2)                                     │
 │     ├─ BudgetForecasting(budget)                               │
@@ -769,6 +774,14 @@ ui/
 │   │   ├── CategoryScreen.kt
 │   │   └── CategoryViewModel.kt
 │   │
+│   ├── backup/
+│   │   ├── BackupRestoreScreen.kt
+│   │   └── BackupRestoreViewModel.kt
+│   │
+│   ├── privacysettings/
+│   │   ├── PrivacySettingsScreen.kt
+│   │   └── PrivacySettingsViewModel.kt
+│   │
 │   └── debug/
 │       ├── DebugScreen.kt
 │       ├── DebugViewModel.kt
@@ -812,6 +825,10 @@ ui/
 │   ├── TransferDirectionBadge.kt
 │   │
 │   ├── ai/
+│   │   ├── AiChatBubble.kt
+│   │   ├── AiInsightsCard.kt
+│   │   ├── AiRecommendationCard.kt
+│   │   ├── AiTypingIndicator.kt
 │   │   ├── AssistantResultCard.kt
 │   │   ├── CategoryAssistCard.kt
 │   │   ├── DedupeAssistCard.kt
@@ -834,7 +851,9 @@ ui/
 │   │
 │   ├── emptystate/
 │   │   ├── ContextualActionRegistry.kt
-│   │   └── EmptyStateAction.kt
+│   │   ├── DefaultEmptyStateRegistryInitializer.kt
+│   │   ├── EmptyStateAction.kt
+│   │   └── EmptyStatePresentationModule.kt
 │   │
 │   ├── feature/
 │   │   ├── FeatureComponents.kt
@@ -847,6 +866,7 @@ ui/
 │
 ├── mappers/
 │   ├── DashboardWidgetUiMapper.kt
+│   ├── MonteCarloBudgetImpactUiMapper.kt
 │   └── TransactionFilterUiMapper.kt
 │
 └── util/

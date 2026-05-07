@@ -1,6 +1,6 @@
 # ExpenseTracker Frontend UI/UX - Quick Reference Index
 
-**Scout Analysis Complete** | Generated: April 4, 2026
+**Scout Analysis Complete** | Generated: May 7, 2026
 
 ---
 
@@ -42,7 +42,7 @@ Index 4  Analytics/Insights  (AnalyticsScreen.kt)
 Index 5  Map/Spending Map    (SpendingMapScreen.kt)
 ```
 
-### Feature Screens (Config-Driven)
+### Feature Screens (23 Config-Driven)
 Accessible from: Home widgets, Features Menu, or deep links
 
 ```
@@ -68,10 +68,12 @@ TaxConfiguration          (TaxConfigurationScreen)
 ExportOptions             (ExportOptionsScreen)
 RecurringExpenses         (RecurringExpensesScreen)
 SharedExpenseGroups       (SharedExpenseGroupsScreen)
+BackupRestore             (BackupRestoreScreen)
 
 Management Screens:
 - AiSettings                 (AiSettingsScreen)
 - CategoryManagement         (CategoryScreen)
+- PrivacySettings           (PrivacySettingsScreen)
 
 Debug / Support Screens:
 - DebugScreen                (DebugScreen)
@@ -80,7 +82,7 @@ Debug / Support Screens:
 - DebugIssueDetector         (debug support)
 ```
 
-### Overlay Screens (Modals/Sheets)
+### Overlay Screens (6 Modals/Sheets)
 Appear over main tabs without closing them:
 
 ```
@@ -162,7 +164,7 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 
 ---
 
-## 📊 COMPONENT INVENTORY
+## 📊 COMPONENT INVENTORY (59 Components)
 
 ### Dashboard Widgets (Home Screen)
 - TotalsDashboardCard
@@ -171,7 +173,7 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 - FinancialRunwayCard
 - FinancialStressForecastCard
 - MonteCarloForecastCard
-- HealthScoreWidget / FinancialHealthScoreV2Widget
+- HealthScoreWidget / FinancialHealthScoreV2Widget (health/ subdir)
 - RecommendationCard
 - PlaceInsightCard
 - NearbyShopSuggestionCard
@@ -191,12 +193,19 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 - DedupeAssistCard
 - ReceiptAssistCard
 - ReceiptItemBreakdownCard
+- AiChatBubble
+- AiInsightsCard  
+- AiRecommendationCard
+- AiTypingIndicator
 
 ### Common Components
 - EmptyState
 - EnhancedEmptyState
 - ErrorState
 - LoadingSkeleton
+- ContextualActionRegistry
+- DefaultEmptyStateRegistryInitializer  
+- EmptyStateAction
 
 ### Navigation Components
 - AppNavigationBar (6 tabs)
@@ -205,8 +214,6 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 ### Support Components
 - FeatureIntegration
 - UiTextExtensions
-- EmptyStatePresentationModule
-- DefaultEmptyStateRegistryInitializer
 
 ### Dialogs/Sheets
 - CategoryBreakdownSheet
@@ -224,7 +231,7 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 - PulseDot (status indicator)
 - BentoCard
 
-**Total**: 51 component files
+**Total**: 59 component files
 
 ---
 
@@ -345,15 +352,17 @@ Scaffold(
 
 | Metric | Count |
 |--------|-------|
-| Screen Files | 77 |
-| Component Files | 51 |
-| ViewModels | ~70 |
+| Screen Packages | 35 |
+| Screen Files | ~90 |
+| Component Files | 59 |
+| ViewModels | 38 |
 | Dialog/Sheet Variants | 20+ |
-| Feature Destinations | 22 |
+| Feature Destinations | 23 |
+| Management Screens | 4 |
 | Main Tabs | 6 |
 | Deep Links | 8 |
-| Text Color Variants | 3 (primary, secondary, muted) |
-| Status Color States | 7 |
+| UI Mapper Files | 3 |
+| UI Utility Files | 4 |
 
 ---
 
@@ -525,10 +534,10 @@ Column {
 
 ## 📝 SUMMARY
 
-**Total UI Files**: current UI inventory  
+**Total UI Files**: 154  
 **Architecture**: Pure Compose with type-safe navigation  
 **Color Scheme**: Midnight Navy with semantic tokens  
-**Features**: 22 config-driven features  
+**Features**: 23 config-driven features + 4 management screens  
 **Accessibility**: Material 3 standards compliant  
 **State Management**: ViewModel + StateFlow pattern  
 **Navigation**: Sealed class + CompositionLocal  
