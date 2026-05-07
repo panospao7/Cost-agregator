@@ -746,9 +746,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
 
                 // 10. Restore receipt assets if present
-                val assetsDir = extractionResult.assetsDir
-                if (assetsDir != null && assetsDir.exists()) {
-                    restoreReceiptAssets(assetsDir, manifest)
+                val receiptWarnings = if (tempDir.exists()) {
+                    restoreReceiptAssets(tempDir, manifest)
+                } else {
+                    emptyList()
                 }
 
                 // 11. Cleanup
@@ -778,7 +779,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                             groupCount = liveSummary.groupCount,
                             subscriptionCount = liveSummary.subscriptionCount,
                             savingsGoalCount = liveSummary.savingsGoalCount,
-                            allTableCounts = liveSummary.allTableCounts
+                            allTableCounts = liveSummary.allTableCounts,
+                            receiptAssetWarnings = receiptWarnings
                         )
                     )
                 )
@@ -852,29 +854,31 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      *
      * Backup files are named as "{receiptId}_{originalFilename}", so we parse the
      * receipt ID from the filename to locate the corresponding DB record.
+     *
+     * @return list of warning messages for any files that could not be restored.
      */
     private suspend fun restoreReceiptAssets(
         assetsDir: java.io.File,
         manifest: CostbackupBundle.BackupManifest
-    ) {
+    ): List<String> {
+        val warnings = mutableListOf<String>()
         val receiptsDir = java.io.File(context.filesDir, "receipts")
         receiptsDir.mkdirs()
 
         val receiptsSubdir = java.io.File(assetsDir, "receipts")
         if (!receiptsSubdir.exists()) {
             Timber.d("No receipt assets to restore")
-            return
+            return warnings
         }
 
         val receiptFiles = receiptsSubdir.listFiles { f -> f.isFile } ?: emptyArray()
         if (receiptFiles.isEmpty()) {
             Timber.d("No receipt asset files in bundle")
-            return
+            return warnings
         }
 
         val dao = database.scannedReceiptDao()
         var restoredCount = 0
-        var updateErrors = 0
 
         for (assetFile in receiptFiles) {
             try {
@@ -905,29 +909,35 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                             assetFile.name, destFile.absolutePath, receiptId
                         )
                     } else {
-                        Timber.w(
-                            "Receipt record not found for restored asset (id=%d, file=%s); " +
-                                "imagePath not updated",
-                            receiptId, assetFile.name
-                        )
+                        val msg = "Receipt record not found for restored asset (id=$receiptId, file=${assetFile.name})"
+                        warnings.add(msg)
+                        Timber.w(msg)
                     }
                 } else {
-                    Timber.w(
-                        "Could not parse receipt ID from filename: %s; imagePath not updated",
-                        assetFile.name
-                    )
+                    val msg = "Could not parse receipt ID from filename: ${assetFile.name}"
+                    warnings.add(msg)
+                    Timber.w(msg)
                 }
                 restoredCount++
             } catch (e: Exception) {
+                val msg = "Failed to restore receipt asset: ${assetFile.name} - ${e.message}"
+                warnings.add(msg)
                 Timber.e(e, "Failed to restore receipt asset: %s", assetFile.name)
-                updateErrors++
             }
         }
 
-        Timber.d(
-            "Receipt asset restore complete: %d files restored, %d update errors",
-            restoredCount, updateErrors
-        )
+        if (warnings.isNotEmpty()) {
+            Timber.w(
+                "Receipt asset restore complete: %d files restored, %d warnings",
+                restoredCount, warnings.size
+            )
+        } else {
+            Timber.d(
+                "Receipt asset restore complete: %d files restored, no warnings",
+                restoredCount
+            )
+        }
+        return warnings
     }
 
     /**

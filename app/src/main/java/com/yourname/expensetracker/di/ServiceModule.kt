@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.service.AndroidNotificationService
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
 import com.yourname.expensetracker.domain.location.GeocodingService
 import com.yourname.expensetracker.domain.location.NearbyPoiService
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.service.NavigationTargetResolver
 import com.yourname.expensetracker.service.NavigationTargetResolverImpl
@@ -56,8 +57,9 @@ object ServiceModule {
         photon: PhotonGeocodingService,
         geoapify: GeoapifyGeocodingService,
         googlePlaces: GooglePlacesGeocodingService,
-        nominatim: NominatimGeocodingService
-    ): GeocodingService = CompositeGeocodingService(photon, geoapify, googlePlaces, nominatim)
+        nominatim: NominatimGeocodingService,
+        privacyGate: PrivacyGate
+    ): GeocodingService = CompositeGeocodingService(photon, geoapify, googlePlaces, nominatim, privacyGate)
 
     @Provides
     @Singleton

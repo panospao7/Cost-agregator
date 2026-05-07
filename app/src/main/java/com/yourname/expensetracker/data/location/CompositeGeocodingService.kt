@@ -7,6 +7,9 @@ import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
 import com.yourname.expensetracker.domain.location.GeocodingService
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +47,8 @@ class CompositeGeocodingService @Inject constructor(
     private val photon: PhotonGeocodingService,
     private val geoapify: GeoapifyGeocodingService,
     private val googlePlaces: GooglePlacesGeocodingService,
-    private val nominatim: NominatimGeocodingService
+    private val nominatim: NominatimGeocodingService,
+    private val privacyGate: PrivacyGate
 ) : GeocodingService {
 
     /**
@@ -63,6 +67,11 @@ class CompositeGeocodingService @Inject constructor(
         cityHint: String?,
         bounded: Boolean
     ): GeocodingLookupResult {
+        // P8-P1-8: Gate external geocoding via PrivacyGate
+        if (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING) is PrivacyDecision.Denied) {
+            Log.w(TAG, "search blocked by privacy gate: EXTERNAL_GEOCODING denied")
+            return GeocodingLookupResult.Failure(GeocodingError.Disabled)
+        }
         val primary = safeLookup("Nominatim") {
             nominatim.search(merchantName, biasLat, biasLon, cityHint, bounded)
         }
@@ -112,8 +121,14 @@ class CompositeGeocodingService @Inject constructor(
      * full implementation. The interface default returns null, so without this
      * override long-press pins would never resolve an address.
      */
-    override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingLookupResult =
-        nominatim.reverseGeocode(lat, lon)
+    override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingLookupResult {
+        // P8-P1-8: Gate external geocoding via PrivacyGate
+        if (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING) is PrivacyDecision.Denied) {
+            Log.w(TAG, "reverseGeocode blocked by privacy gate: EXTERNAL_GEOCODING denied")
+            return GeocodingLookupResult.Failure(GeocodingError.Disabled)
+        }
+        return nominatim.reverseGeocode(lat, lon)
+    }
 
     /**
      * Interactive picker multi-result search.
@@ -136,6 +151,11 @@ class CompositeGeocodingService @Inject constructor(
         limit: Int,
         useGoogle: Boolean
     ): GeocodingBatchResult {
+        // P8-P1-8: Gate external geocoding via PrivacyGate
+        if (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING) is PrivacyDecision.Denied) {
+            Log.w(TAG, "searchMultiple blocked by privacy gate: EXTERNAL_GEOCODING denied")
+            return GeocodingBatchResult.Failure(GeocodingError.Disabled)
+        }
         val complex = isComplexQuery(query)
         val queryHash = query.anonymizeForLog()
         Log.d(TAG, "searchMultiple: queryHash=$queryHash complex=$complex useGoogle=$useGoogle")

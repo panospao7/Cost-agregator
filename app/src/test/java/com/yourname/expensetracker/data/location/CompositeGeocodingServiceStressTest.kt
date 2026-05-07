@@ -5,11 +5,14 @@ import com.yourname.expensetracker.domain.location.GeocodingBatchResult
 import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
-import io.mockk.every
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Ignore
@@ -27,6 +30,7 @@ class CompositeGeocodingServiceStressTest {
     private lateinit var geoapifyService: GeoapifyGeocodingService
     private lateinit var googlePlacesService: GooglePlacesGeocodingService
     private lateinit var nominatimService: NominatimGeocodingService
+    private lateinit var privacyGate: PrivacyGate
     private lateinit var compositeService: CompositeGeocodingService
 
     @Before
@@ -39,11 +43,14 @@ class CompositeGeocodingServiceStressTest {
         geoapifyService = mockk(relaxed = true)
         googlePlacesService = mockk(relaxed = true)
         nominatimService = mockk(relaxed = true)
+        privacyGate = mockk(relaxed = true)
+        coEvery { privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING, any()) } returns PrivacyDecision.Allowed
         compositeService = CompositeGeocodingService(
             photon = photonService,
             geoapify = geoapifyService,
             googlePlaces = googlePlacesService,
-            nominatim = nominatimService
+            nominatim = nominatimService,
+            privacyGate = privacyGate
         )
     }
 

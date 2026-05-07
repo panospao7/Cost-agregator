@@ -94,7 +94,8 @@ data class DatabaseImportSummary(
     val groupCount: Int = 0,
     val subscriptionCount: Int = 0,
     val savingsGoalCount: Int = 0,
-    val allTableCounts: Map<String, Int> = emptyMap()
+    val allTableCounts: Map<String, Int> = emptyMap(),
+    val receiptAssetWarnings: List<String> = emptyList()
 ) {
     fun hasMeaningfulData(): Boolean {
         return transactionCount > 0 ||

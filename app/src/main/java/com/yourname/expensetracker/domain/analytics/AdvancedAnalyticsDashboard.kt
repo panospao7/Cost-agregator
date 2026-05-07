@@ -27,7 +27,8 @@ data class AnalyticsDashboardData(
     val monthlyTrend: List<MonthlyDataPoint>,
     val weeklyPattern: List<DayOfWeekSpending>,
     val insights: List<DashboardInsight>,
-    val conversionWarnings: List<AnalyticsConversionWarning> = emptyList()
+    val conversionWarnings: List<AnalyticsConversionWarning> = emptyList(),
+    val conversionConfidence: ConversionConfidence = ConversionConfidence.HIGH
 )
 
 data class AnalyticsDashboardCategoryBreakdown(
@@ -84,6 +85,19 @@ enum class DashboardInsightSeverity {
     ALERT
 }
 
+/**
+ * Confidence level for currency conversion completeness in the dashboard.
+ *
+ * - HIGH: all transactions converted without issues.
+ * - PARTIAL: some transactions could not be converted (missing rates, etc.).
+ * - LOW: a significant portion of data is unreliable or missing.
+ */
+enum class ConversionConfidence {
+    HIGH,
+    PARTIAL,
+    LOW
+}
+
 @Singleton
 class AdvancedAnalyticsDashboard @Inject constructor(
     private val expenseDao: ExpenseDao,
@@ -125,6 +139,11 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             }
         }
         
+        // Derive conversion confidence from normalization results
+        val conversionConfidence = computeConversionConfidence(
+            expensesNormalization, comparisonNormalization
+        )
+        
         // Generate all dashboard components
         AnalyticsDashboardData(
             totalSpent = totalSpent,
@@ -136,7 +155,8 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             monthlyTrend = getMonthlyTrend(startDate, endDate, displayCurrency),
             weeklyPattern = getWeeklyPattern(expenses, displayCurrency),
             insights = generateInsights(expenses, totalSpent, totalIncome),
-            conversionWarnings = (expensesNormalization.warnings + comparisonNormalization.warnings)
+            conversionWarnings = (expensesNormalization.warnings + comparisonNormalization.warnings),
+            conversionConfidence = conversionConfidence
         )
     }
     
@@ -400,5 +420,27 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         }
 
         return insights
+    }
+
+    /**
+     * Determines [ConversionConfidence] from the normalization results of the
+     * current and comparison periods.
+     *
+     * - HIGH:  No conversion warnings at all.
+     * - LOW:   >= 50% of input transactions excluded in either period, or
+     *          any severe warning (missing exchange rate, invalid currency).
+     * - PARTIAL: Warnings exist but below the LOW threshold.
+     */
+    private fun computeConversionConfidence(
+        current: AnalyticsNormalizationResult,
+        comparison: AnalyticsNormalizationResult
+    ): ConversionConfidence {
+        if (!current.hasWarnings && !comparison.hasWarnings) return ConversionConfidence.HIGH
+
+        val hasSevere = current.severeWarnings.isNotEmpty() || comparison.severeWarnings.isNotEmpty()
+        val isHeavyLoss = current.lossPercentage >= 50.0 || comparison.lossPercentage >= 50.0
+
+        return if (hasSevere || isHeavyLoss) ConversionConfidence.LOW
+        else ConversionConfidence.PARTIAL
     }
 }

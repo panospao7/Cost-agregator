@@ -3,6 +3,9 @@ package com.yourname.expensetracker.data.location
 import android.util.Log
 import com.yourname.expensetracker.domain.location.GeocodingLookupResult
 import com.yourname.expensetracker.domain.location.GeocodingResult
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -20,6 +23,7 @@ class CompositeGeocodingServiceTest {
     private val geoapify = mockk<GeoapifyGeocodingService>(relaxed = true)
     private val google = mockk<GooglePlacesGeocodingService>(relaxed = true)
     private val nominatim = mockk<NominatimGeocodingService>(relaxed = true)
+    private val privacyGate = mockk<PrivacyGate>(relaxed = true)
     private lateinit var service: CompositeGeocodingService
 
     @Before
@@ -27,7 +31,9 @@ class CompositeGeocodingServiceTest {
         mockkStatic(Log::class)
         every { Log.d(any(), any()) } returns 0
         every { Log.w(any(), any<String>()) } returns 0
-        service = CompositeGeocodingService(photon, geoapify, google, nominatim)
+        // Default: allow geocoding
+        coEvery { privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING, any()) } returns PrivacyDecision.Allowed
+        service = CompositeGeocodingService(photon, geoapify, google, nominatim, privacyGate)
     }
 
     @Test

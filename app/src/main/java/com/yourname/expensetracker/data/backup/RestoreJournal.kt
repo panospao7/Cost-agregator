@@ -128,12 +128,21 @@ class RestoreJournal @Inject constructor(
 
     /**
      * Creates a new journal with PREPARING state.
+     *
+     * Cleans up any previous failure journal from the last failed restore
+     * so diagnostics always reflect the most recent failure.
      */
     fun beginJournal(
         sourceBackupPath: String,
         stagedDbPath: String,
         liveDbPath: String
     ): JournalEntry {
+        // Clean up previous failure journal
+        val failureFile = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
+        if (failureFile.exists()) {
+            failureFile.delete()
+            Timber.d("Cleaned up previous failure journal: %s", FAILURE_JOURNAL_FILENAME)
+        }
         val entry = JournalEntry(
             state = JournalState.PREPARING,
             sourceBackupPath = sourceBackupPath,
@@ -187,12 +196,32 @@ class RestoreJournal @Inject constructor(
     }
 
     /**
-     * BAK-ND-FIXED: Skip terminal-state write before deletion (see [commitJournal]).
+     * P7-P1-8: Preserve failed restore journal for diagnostics.
+     *
+     * Instead of deleting the journal on failure, we write the terminal FAILED
+     * state and rename the file to [FAILURE_JOURNAL_FILENAME] so that
+     * diagnostics / crash-recovery analysis can inspect the cause.
      */
     fun failJournal(entry: JournalEntry, errorMessage: String): JournalEntry {
         val updated = entry.copy(state = JournalState.FAILED, error = errorMessage)
-        deleteJournal()
+        writeJournal(updated)
+        preserveJournal()
         return updated
+    }
+
+    /**
+     * Renames the current journal file to [FAILURE_JOURNAL_FILENAME] so the
+     * failure record is not lost and can be inspected for diagnostics.
+     */
+    private fun preserveJournal() {
+        if (!journalFile.exists()) return
+        val failureFile = File(context.filesDir, FAILURE_JOURNAL_FILENAME)
+        try {
+            journalFile.renameTo(failureFile)
+            Timber.d("Restore journal preserved as %s", FAILURE_JOURNAL_FILENAME)
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to preserve restore journal as %s", FAILURE_JOURNAL_FILENAME)
+        }
     }
 
     /**
@@ -295,5 +324,6 @@ class RestoreJournal @Inject constructor(
 
     companion object {
         private const val JOURNAL_FILENAME = "restore_journal.json"
+        private const val FAILURE_JOURNAL_FILENAME = "restore_journal_last_failure.json"
     }
 }
