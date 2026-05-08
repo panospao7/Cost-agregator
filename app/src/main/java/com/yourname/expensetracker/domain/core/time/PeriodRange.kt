@@ -17,6 +17,15 @@ import java.time.ZoneId
  * and replaces the untyped `Pair<Long, Long>` that previously carried no
  * information about period kind, timezone, or boundary semantics.
  *
+ * ## DST transitions
+ *
+ * Calendar day boundaries are computed in the given [zoneId]. A day may be 23
+ * or 25 hours during DST transitions, so wall-clock duration arithmetic
+ * (e.g. `endExclusiveMillis - startInclusiveMillis`) is not a reliable way to
+ * compute the number of calendar days in the range. Use
+ * [com.yourname.expensetracker.domain.util.TimePeriodUtils.daysBetween] for
+ * calendar-day difference.
+ *
  * ## Usage
  *
  * ```kotlin

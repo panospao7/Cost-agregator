@@ -15,6 +15,14 @@ import java.time.ZoneId
  * (bounded by calendar boundaries like month-start) or a **rolling window**
  * (a fixed number of days back from the current moment).
  *
+ * ## Half-open interval contract
+ *
+ * All ranges follow the **`[startInclusive, endExclusive)`** convention.
+ * A timestamp `t` belongs to a period when:
+ * ```
+ *   t >= periodStart && t < periodEnd
+ * ```
+ *
  * ## Calendar periods (use calendar-aware helpers)
  *
  * | Kind | Typical helper |
@@ -49,19 +57,25 @@ enum class PeriodKind {
     /** Current calendar day (midnight to next midnight). */
     TODAY,
 
-    /** Monday-start current calendar week. */
+    /** ISO week (Monday-start, locale-independent) for the current calendar week. */
     THIS_WEEK,
 
     /** Monday-start previous calendar week. */
     LAST_WEEK,
 
     /**
-     * Last 7 calendar days including today (e.g., if today is Wednesday, shows data through today).
-     * For trailing 7 complete days ending at midnight, use a custom CUSTOM period instead.
+     * Last 7 calendar days including today.
+     *
+     * Example: If today is Wednesday May 7, shows Wed May 7 through Thu May 1
+     * (7 calendar days including today). For trailing 7 complete days ending at
+     * midnight, use CUSTOM.
      */
     LAST_7_DAYS,
 
-    /** Current calendar month (1st to 1st of next month). */
+    /**
+     * Calendar month in the given timezone (1st to 1st of next month).
+     * February has 28 or 29 days depending on the year.
+     */
     THIS_MONTH,
 
     /** Previous calendar month. */

@@ -157,8 +157,11 @@ object TimePeriodUtils {
     }
 
     /**
-     * Returns the **exclusive** upper bound of the week containing [timestamp]:
+     * Returns the **exclusive** upper bound of the ISO week containing [timestamp]:
      * the **next** Monday at `00:00:00.000`.
+     *
+     * This always uses ISO week boundaries (Monday-start, locale-independent),
+     * not an app-configured week start day.
      *
      * Half-open contract: `t >= getStartOfWeek(ts) && t < getEndOfWeek(ts)`.
      */
@@ -170,8 +173,11 @@ object TimePeriodUtils {
     }
 
     /**
-     * Returns a `[startInclusive, endExclusive)` pair for the calendar week
+     * Returns a `[startInclusive, endExclusive)` pair for the ISO calendar week
      * containing [timestamp], optionally shifted by [weekOffset] weeks.
+     *
+     * This always uses ISO week boundaries (Monday-start, locale-independent),
+     * not an app-configured week start day.
      *
      * - Week starts on Monday `00:00:00.000`.
      * - Week ends at the **next** Monday `00:00:00.000` (exclusive).

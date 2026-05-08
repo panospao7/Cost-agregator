@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import timber.log.Timber
 import com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -113,7 +114,8 @@ class SpendingMapViewModel @Inject constructor(
  val geocodingService: com.yourname.expensetracker.domain.location.GeocodingService,
   private val currencySettingsRepository: CurrencySettingsRepository,
   private val currencyConverter: CurrencyConverter,
-  private val timeProvider: TimeProvider
+  private val timeProvider: TimeProvider,
+  private val privacyGate: PrivacyGate
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SpendingMapState(referenceNowMillis = timeProvider.now()))
@@ -532,32 +534,38 @@ class SpendingMapViewModel @Inject constructor(
     /**
      * Fetch device location once per permission grant and cache it.
      * Bug #11 fix: avoids repeated GPS calls on every data reload.
+     *
+     * Checks app-level GPS privacy gate before accessing device location.
      */
-    private suspend fun fetchDeviceLocation() {
-        // TODO (PR 4a): Inject PrivacyGate via constructor when available.
-        //                Currently not injected — uncomment the check below after injection:
-        // val decision = privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION)
-        // if (decision is PrivacyDecision.Denied) {
-        //     Timber.d("Device GPS denied by privacy gate in SpendingMapViewModel")
-        //     return
-        // }
-        try {
-            val loc = locationProvider.getLastKnownLocation() ?: return
-            cachedDeviceLoc = loc
-            _state.update { it.copy(
-                deviceLatitude = loc.first,
-                deviceLongitude = loc.second,
-                snackbarMessage = null
-            ) }
-        } catch (se: SecurityException) {
-            Log.w(TAG, "Location permission changed during fetch", se)
-            _state.update {
-                it.copy(snackbarMessage = "Location permission changed. Please re-enable to show device position.")
+    private fun fetchDeviceLocation() {
+        viewModelScope.launch {
+            // Check app-level GPS privacy before accessing device location
+            val decision = privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION)
+            if (decision is PrivacyDecision.Denied) {
+                Timber.d("Device GPS denied by privacy settings")
+                _state.update {
+                    it.copy(snackbarMessage = "Device GPS is disabled in Privacy settings.")
+                }
+                return@launch
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch device location", e)
-            _state.update {
-                it.copy(snackbarMessage = "Unable to fetch device location right now.")
+            try {
+                val loc = locationProvider.getLastKnownLocation() ?: return@launch
+                cachedDeviceLoc = loc
+                _state.update { it.copy(
+                    deviceLatitude = loc.first,
+                    deviceLongitude = loc.second,
+                    snackbarMessage = null
+                ) }
+            } catch (se: SecurityException) {
+                Log.w(TAG, "Location permission changed during fetch", se)
+                _state.update {
+                    it.copy(snackbarMessage = "Location permission changed. Please re-enable to show device position.")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch device location", e)
+                _state.update {
+                    it.copy(snackbarMessage = "Unable to fetch device location right now.")
+                }
             }
         }
     }
