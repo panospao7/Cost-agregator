@@ -112,7 +112,7 @@ class AndroidSpeechInputGateway @Inject constructor(
      * TODO (W35): Wire this to ViewModel.onCleared() in the speech
      * input ViewModel/HiltViewModel lifecycle.
      */
-    fun destroy() {
+    override fun destroy() {
         try {
             recognizer?.apply {
                 stopListening()

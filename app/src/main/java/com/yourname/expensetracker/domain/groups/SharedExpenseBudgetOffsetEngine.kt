@@ -107,6 +107,8 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
 
         // G07: Use convertAsOf per expense for historical accuracy instead of latest rate.
         var totalPersonalSpend = 0.0
+        var failedConversionCount = 0
+        val conversionWarnings = mutableListOf<String>()
         for (expense in personalExpenses) {
             val conversion = currencyConverter.convertAsOf(
                 amount = expense.effectiveAmount,
@@ -117,7 +119,10 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
             if (conversion != null) {
                 totalPersonalSpend += conversion.convertedAmount
             } else {
-                android.util.Log.w("BudgetOffset", "Personal spend conversion failed for ${expense.merchant}: ${expense.effectiveAmount} ${expense.currency} -> $homeCurrency at ${expense.date}")
+                failedConversionCount++
+                val msg = "Personal spend conversion failed for ${expense.merchant}: ${expense.effectiveAmount} ${expense.currency} -> $homeCurrency at ${expense.date}"
+                conversionWarnings.add(msg)
+                android.util.Log.w("BudgetOffset", msg)
             }
         }
         // G07: Use convertAsOf per expense for historical accuracy instead of latest rate.
@@ -145,7 +150,10 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                     if (conversion != null) {
                         totalSharedSpend += conversion.convertedAmount
                     } else {
-                        android.util.Log.w("BudgetOffset", "Shared spend conversion failed: $share ${groupExpense.currency} -> $homeCurrency at ${groupExpense.date}")
+                        failedConversionCount++
+                        val msg = "Shared spend conversion failed: $share ${groupExpense.currency} -> $homeCurrency at ${groupExpense.date}"
+                        conversionWarnings.add(msg)
+                        android.util.Log.w("BudgetOffset", msg)
                     }
                 }
 
@@ -160,7 +168,10 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                     if (conversion != null) {
                         totalReimbursed += conversion.convertedAmount
                     } else {
-                        android.util.Log.w("BudgetOffset", "Reimbursed conversion failed: $reimb ${groupExpense.currency} -> $homeCurrency at ${groupExpense.date}")
+                        failedConversionCount++
+                        val msg = "Reimbursed conversion failed: $reimb ${groupExpense.currency} -> $homeCurrency at ${groupExpense.date}"
+                        conversionWarnings.add(msg)
+                        android.util.Log.w("BudgetOffset", msg)
                     }
                 }
             }
@@ -168,6 +179,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
 
         val netSharedLiability = totalSharedSpend
         val effectiveBudgetSpend = totalPersonalSpend + totalSharedSpend
+        val isPartial = failedConversionCount > 0
 
         BudgetSpendBreakdown(
             totalPersonalSpend = totalPersonalSpend,
@@ -175,7 +187,10 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
             totalReimbursed = totalReimbursed,
             netSharedLiability = netSharedLiability,
             effectiveBudgetSpend = effectiveBudgetSpend,
-            displayCurrency = homeCurrency
+            displayCurrency = homeCurrency,
+            isPartial = isPartial,
+            conversionWarnings = conversionWarnings,
+            failedConversionCount = failedConversionCount
         )
     }
 
@@ -221,7 +236,10 @@ data class BudgetSpendBreakdown(
     val totalReimbursed: Double,       // Sum of received reimbursements
     val netSharedLiability: Double,      // Accrual liability used for budgeting (equals sharedSpend)
     val effectiveBudgetSpend: Double,     // Personal + sharedSpend (what counts against budget)
-    val displayCurrency: String = "EUR"
+    val displayCurrency: String = "EUR",
+    val isPartial: Boolean = false,           // PR 3: true when any conversions failed
+    val conversionWarnings: List<String> = emptyList(),  // PR 3: per-currency warning messages
+    val failedConversionCount: Int = 0         // PR 3: number of conversion failures
 ) {
     /**
      * Returns the amount pending reimbursement (positive = I'm owed money, negative = I owe money)

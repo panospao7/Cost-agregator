@@ -4,9 +4,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
-import com.yourname.expensetracker.domain.core.money.ConversionFailure
-import com.yourname.expensetracker.domain.core.money.FailureReason
-import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.core.money.MoneyBucket
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -167,12 +165,11 @@ class TaxEstimator @Inject constructor(
      */
     private suspend fun buildDeductibleAggregate(startMs: Long, endMs: Long): MoneyAggregate {
         val currencyTotals = expenseDao.getBusinessExpensesBetweenByCurrency(startMs, endMs)
-        if (currencyTotals.isEmpty()) return MoneyAggregate.empty(CurrencyCode.EUR)
-        if (currencyTotals.size == 1) {
-            return MoneyAggregate.singleCurrency(currencyTotals[0].total, CurrencyCode(currencyTotals[0].currency), currencyTotals[0].txCount)
-        }
-        val sourceBuckets = currencyTotals.map { MoneyBucket(CurrencyCode(it.currency), it.total, it.txCount) }
-        return convertBucketsToHomeCurrency(sourceBuckets)
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        val buckets = currencyTotals.map { Pair(it.total, it.currency) }
+        val counts = currencyTotals.map { it.txCount }
+        return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, counts)
     }
 
     /**
@@ -183,46 +180,11 @@ class TaxEstimator @Inject constructor(
      */
     private suspend fun buildIncomeAggregate(startMs: Long, endMs: Long): MoneyAggregate {
         val currencyTotals = expenseDao.getDepositTotalsBetweenByCurrency(startMs, endMs)
-        if (currencyTotals.isEmpty()) return MoneyAggregate.empty(CurrencyCode.EUR)
-        if (currencyTotals.size == 1) {
-            return MoneyAggregate.singleCurrency(currencyTotals[0].total, CurrencyCode(currencyTotals[0].currency), currencyTotals[0].txCount)
-        }
-        val sourceBuckets = currencyTotals.map { MoneyBucket(CurrencyCode(it.currency), it.total, it.txCount) }
-        return convertBucketsToHomeCurrency(sourceBuckets)
-    }
-
-    private suspend fun convertBucketsToHomeCurrency(sourceBuckets: List<MoneyBucket>): MoneyAggregate {
-        val homeCurrencyCode = runCatching { currencySettingsRepository.homeCurrency().first() }
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
             .getOrDefault("EUR")
-        val homeCurrency = CurrencyCode(homeCurrencyCode)
-
-        val pairs = sourceBuckets.map { bucket ->
-            Pair(bucket.amount, bucket.currency.code)
-        }
-        val conversionResult = currencyConverter.convertMultiple(pairs, homeCurrencyCode)
-
-        val failures = conversionResult.failedConversions.map { failed ->
-            ConversionFailure(
-                originalAmount = MoneyAmount(failed.originalAmount, CurrencyCode(failed.originalCurrency)),
-                targetCurrency = homeCurrency,
-                reason = FailureReason.MISSING_RATE
-            )
-        }
-
-        if (failures.isEmpty()) {
-            return MoneyAggregate.singleCurrency(
-                amount = conversionResult.total,
-                currency = homeCurrency,
-                transactionCount = sourceBuckets.sumOf { it.transactionCount }
-            )
-        }
-
-        return MoneyAggregate.partial(
-            displayAmount = conversionResult.total,
-            displayCurrency = homeCurrency,
-            sourceBuckets = sourceBuckets,
-            failures = failures
-        )
+        val buckets = currencyTotals.map { Pair(it.total, it.currency) }
+        val counts = currencyTotals.map { it.txCount }
+        return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, counts)
     }
 
     /**

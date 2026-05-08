@@ -7,6 +7,7 @@ interface SpeechInputGateway {
         onError: (SpeechInputError) -> Unit = {}
     )
     fun stopListening()
+    fun destroy()
 }
 
 sealed class SpeechInputError {

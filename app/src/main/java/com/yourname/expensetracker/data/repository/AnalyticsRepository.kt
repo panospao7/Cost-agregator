@@ -7,6 +7,8 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.analytics.DataQualityReport
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.Flow
@@ -60,7 +62,8 @@ class AnalyticsRepository @Inject constructor(
     private val categoryRepository: com.yourname.expensetracker.data.repository.CategoryRepository,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val multiCurrencyRepository: MultiCurrencyRepository,
-    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencyConverter: CurrencyConverter
 ) {
 
     /**
@@ -250,6 +253,8 @@ class AnalyticsRepository @Inject constructor(
     suspend fun getLocationSpendSummary(): LocationSpendSummary {
         val locatedCount = expenseDao.countLocated()
         val unlocatedCount = expenseDao.countUnlocated()
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault(MultiCurrencyRepository.DEFAULT_HOME_CURRENCY)
 
         // A14: Use per-currency DAO instead of deprecated raw-sum version
         val merchantCurrencyTotals = expenseDao.getLocatedMerchantTotalsByCurrency()
@@ -257,23 +262,16 @@ class AnalyticsRepository @Inject constructor(
         // Group per-currency rows by merchant and build LocationMerchantStat
         val grouped = merchantCurrencyTotals.groupBy { it.merchant }
         val topMerchants = grouped.entries.take(20).map { (merchant, rows) ->
-            val totalSpend = rows.sumOf { it.total }
-            val txCount = rows.sumOf { it.txCount }
-            val primaryCurrency = rows.first().currency
-
-            // A14: simple per-merchant MoneyAggregate
-            val aggregate = MoneyAggregate.singleCurrency(
-                amount = totalSpend,
-                currency = CurrencyCode(primaryCurrency),
-                transactionCount = txCount
-            )
+            val buckets = rows.map { Pair(it.total, it.currency) }
+            val counts = rows.map { it.txCount }
+            val aggregate = MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, counts)
 
             LocationMerchantStat(
                 merchant = merchant,
-                totalSpend = totalSpend,
-                transactionCount = txCount,
+                totalSpend = aggregate.displayAmount,
+                transactionCount = aggregate.totalTransactionCount,
                 aggregate = aggregate,
-                currency = primaryCurrency
+                currency = homeCurrency
             )
         }
 

@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpense
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageSearchEngine
 import com.yourname.expensetracker.domain.naturallanguage.SearchResult
+import com.yourname.expensetracker.domain.naturallanguage.SpeechInputGateway
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
@@ -49,7 +50,8 @@ import javax.inject.Inject
 class NaturalLanguageSearchViewModel @Inject constructor(
     private val searchEngine: NaturalLanguageSearchEngine,
     currencySettingsRepository: CurrencySettingsRepository,
-    private val currencyConverter: CurrencyConverter
+    private val currencyConverter: CurrencyConverter,
+    private val speechInputGateway: SpeechInputGateway
 ) : ViewModel() {
 
     val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
@@ -84,6 +86,11 @@ class NaturalLanguageSearchViewModel @Inject constructor(
                 performSearch(queryText)
             }
             .launchIn(viewModelScope)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        speechInputGateway.destroy()
     }
     
     fun updateQuery(newQuery: String) {

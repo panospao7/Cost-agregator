@@ -1839,7 +1839,7 @@ AND LENGTH(:merchantKey) >= 8
      * Used by [SpendingHeatmapEngine] to weight heatmap intensity per currency.
      */
     @Query("""
-        SELECT merchant AS merchant,
+        SELECT MIN(merchant) AS merchant,
                UPPER(COALESCE(currency, 'EUR')) AS currency,
                SUM(COALESCE(CASE 
                    WHEN isNotMine = 1 THEN 0.0
@@ -1848,7 +1848,11 @@ AND LENGTH(:merchantKey) >= 8
                    ELSE amount END, 0)) AS total,
                COUNT(*) AS txCount
         FROM expenses
-        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        WHERE latitude IS NOT NULL
+          AND longitude IS NOT NULL
+          AND ${SPENDING_TYPE_SQL}
+          AND isNotMine = 0
+          AND merchantKey IS NOT NULL
         GROUP BY merchantKey, UPPER(COALESCE(currency, 'EUR'))
         ORDER BY total DESC
     """)
@@ -2078,7 +2082,9 @@ AND LENGTH(:merchantKey) >= 8
                    ELSE amount END, 0)) AS total,
                COUNT(*) AS txCount
         FROM expenses
-        WHERE isBusinessExpense = 1 AND date >= :startDate AND date < :endDate
+        WHERE isBusinessExpense = 1
+          AND ${SPENDING_TYPE_SQL}
+          AND date >= :startDate AND date < :endDate
         GROUP BY UPPER(COALESCE(currency, 'EUR'))
         ORDER BY total DESC
     """)

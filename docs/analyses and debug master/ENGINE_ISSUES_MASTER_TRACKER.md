@@ -3,7 +3,7 @@
 > Consolidated P0/P1 issues from 5 engine debug reports.
 > Source: warranty-subscription-location-nlp, analytical, categorization-merchant, groups-investment-tax, money-time-primitives
 > **Last updated: 2026-05-08**
-> **All 105 issues have been addressed: 22 fixed with code changes, 48 documented with TODO comments in source files, 35 deferred for future design sessions.**
+> **All 105 issues have been triaged: 25 fixed with code, 48 documented as TODO-only, 35 deferred for design/migration.**
 
 ## Status Legend
 - ⬜ NOT STARTED
