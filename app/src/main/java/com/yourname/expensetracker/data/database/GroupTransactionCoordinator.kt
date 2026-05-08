@@ -49,6 +49,12 @@ import javax.inject.Singleton
  * TODO (PR-E15): Create GroupLifecycleCoordinator for group lifecycle methods:
  * createGroup(), addMember(), removeMember(), addExpense(), archiveGroup(), deleteGroupPermanently().
  * Rules: currentUserGroupKey invariant, deferred side effects, lifecycle event logging.
+ *
+ * NEXT STEPS:
+ * 1. Create GroupLifecycleCoordinator with: createGroup(), addMember(), removeMember()
+ * 2. Enforce single-currency group policy (reject expense if currency != group.currency)
+ * 3. Implement recordSettlement() with persistent settlement records
+ * 4. Route all group deletions through archiveGroup() for soft-delete
  */
 @Singleton
 class GroupTransactionCoordinator @Inject constructor(

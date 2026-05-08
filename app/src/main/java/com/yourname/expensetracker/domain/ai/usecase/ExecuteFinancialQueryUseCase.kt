@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.model.ExpenseWithCategory
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryIntent
 import com.yourname.expensetracker.domain.ai.model.FinancialQueryResult
+import com.yourname.expensetracker.domain.ai.model.FinancialQueryDataQuality
 import com.yourname.expensetracker.domain.ai.model.QueryComparison
 import com.yourname.expensetracker.domain.ai.model.QueryGrouping
 import com.yourname.expensetracker.domain.ai.model.QueryMetric
@@ -63,25 +64,62 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+
+        // Apply amount filter with currency awareness (in-memory after period/type/category narrowing)
+        if (intent.filters.minAmount != null || intent.filters.maxAmount != null) {
+            val results = expenseRepository.getAssistantExpensesFiltered(
+                startDate = period.start,
+                endDate = period.end,
+                transactionTypes = intent.filters.transactionTypes.map { it.toEntity() }.toSet(),
+                categoryIds = intent.filters.categoryIds,
+                merchantNames = intent.filters.merchants,
+                ownershipFilter = intent.filters.ownership.toRepositoryOwnershipFilter(),
+                minAmount = null,
+                maxAmount = null
+            )
+            var failedConversions = 0
+            val filteredResults = results.mapNotNull { expenseWithCategory ->
+                val expense = expenseWithCategory.expense
+                val normalizedAmount = if (expense.currency.equals(homeCurrency, true)) {
+                    expense.effectiveAmount
+                } else {
+                    currencyConverter.convert(expense.effectiveAmount, expense.currency, homeCurrency)?.convertedAmount
+                }
+                if (normalizedAmount == null) {
+                    failedConversions++
+                    null
+                } else if (intent.filters.minAmount != null && normalizedAmount < intent.filters.minAmount) {
+                    null
+                } else if (intent.filters.maxAmount != null && normalizedAmount > intent.filters.maxAmount) {
+                    null
+                } else {
+                    expenseWithCategory
+                }
+            }
+            // TODO (PR 5a): Propagate failedConversions into dataQuality once TransactionList supports warnings.
+            return FinancialQueryResult.TransactionList(
+                title = buildListTitle(intent),
+                previewCount = filteredResults.size,
+                drilldownIntent = intent,
+                dataQuality = FinancialQueryDataQuality()
+            )
+        }
+
         val previewCount = expenseRepository.getAssistantExpenseCountFiltered(
             startDate = period.start,
             endDate = period.end,
             transactionTypes = intent.filters.transactionTypes.map { it.toEntity() }.toSet(),
             categoryIds = intent.filters.categoryIds,
             merchantNames = intent.filters.merchants,
-            ownershipFilter = intent.filters.ownership.toRepositoryOwnershipFilter(),
-            // TODO (PR-E8): Use ExtractedAmountFilter for currency-aware filtering.
-            // Currently minAmount/maxAmount compare raw effectiveAmount across all currencies.
-            // Policy: if currency specified, convert amount to that currency.
-            // If no currency, interpret as home currency and normalize before comparing.
-            // See: ExpenseRepository.buildExpenseDynamicQueryParts
-            minAmount = intent.filters.minAmount,
-            maxAmount = intent.filters.maxAmount
+            ownershipFilter = intent.filters.ownership.toRepositoryOwnershipFilter()
         )
         return FinancialQueryResult.TransactionList(
             title = buildListTitle(intent),
             previewCount = previewCount,
-            drilldownIntent = intent
+            drilldownIntent = intent,
+            dataQuality = FinancialQueryDataQuality()
         )
     }
 
@@ -123,10 +161,13 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             )
         }
 
+        // TODO (PR 5a): Track and propagate failedConversions from currency conversion
+        // in the assistantFilteredExpenses / toCurrencyTotals path.
         return FinancialQueryResult.Breakdown(
             title = UiText.fromKey("domain_ai_top_categories"),
             rows = rows,
-            drilldownIntent = intent
+            drilldownIntent = intent,
+            dataQuality = FinancialQueryDataQuality()
         )
     }
 
@@ -165,10 +206,13 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             )
         }
 
+        // TODO (PR 5a): Track and propagate failedConversions from currency conversion
+        // in the assistantFilteredExpenses / toCurrencyTotals path.
         return FinancialQueryResult.Breakdown(
             title = UiText.fromKey("domain_ai_top_merchants"),
             rows = merchantRows,
-            drilldownIntent = intent
+            drilldownIntent = intent,
+            dataQuality = FinancialQueryDataQuality()
         )
     }
 
@@ -210,9 +254,15 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
                 }
                 normalizedAmount?.let { expenseWithCategory to it }
             }
-            // TODO (PR 5a): Surface failedConversions in the return type (e.g., partial flag).
             withNormalized.maxByOrNull { it.second }?.first
         } ?: return FinancialQueryResult.Unsupported("No matching transactions found")
+
+        val dataQuality = FinancialQueryDataQuality(
+            isPartial = failedConversions > 0,
+            excludedCount = failedConversions,
+            missingRateCount = failedConversions, // simplified — all failures are missing rates in this path
+            warnings = if (failedConversions > 0) listOf("$failedConversions expense(s) excluded due to missing exchange rates") else emptyList()
+        )
 
         return FinancialQueryResult.Summary(
             title = UiText.fromKey("domain_ai_largest_purchase"),
@@ -223,7 +273,8 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
                     merchants = setOf(largest.expense.merchant),
                     transactionTypes = setOf(largest.expense.transactionType.toDomain())
                 )
-            )
+            ),
+            dataQuality = dataQuality
         )
     }
 
@@ -233,6 +284,9 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
     ): FinancialQueryResult {
         val current = assistantFilteredExpenses(intent, period)
         val currentCurrencyTotals = current.expenses.toCurrencyTotals()
+
+        // TODO (PR 5a): Track and propagate failedConversions from currency conversion
+        // in the assistantFilteredExpenses / toCurrencyTotals path.
 
         val supporting = if (intent.comparison == QueryComparison.PREVIOUS_EQUIVALENT_PERIOD) {
             val previous = previousEquivalentPeriod(period)
@@ -246,7 +300,8 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             title = UiText.fromKey("domain_ai_total_spending"),
             primaryText = formatCurrencyTotals(currentCurrencyTotals),
             supportingText = supporting,
-            drilldownIntent = intent
+            drilldownIntent = intent,
+            dataQuality = FinancialQueryDataQuality()
         )
     }
 
@@ -277,11 +332,14 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
     ): FinancialQueryResult {
         val result = assistantFilteredExpenses(intent, period)
         val expenses = result.expenses
+        // TODO (PR 5a): Track and propagate failedConversions from currency conversion
+        // in the assistantFilteredExpenses / toCurrencyTotals path.
         return FinancialQueryResult.Summary(
             title = UiText.fromKey("domain_ai_average_spending"),
             primaryText = formatCurrencyAverages(expenses.toCurrencyTotals()),
             supportingText = if (expenses.isNotEmpty()) "Across ${expenses.size} transactions" else null,
-            drilldownIntent = intent
+            drilldownIntent = intent,
+            dataQuality = FinancialQueryDataQuality()
         )
     }
 

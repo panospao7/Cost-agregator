@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.naturallanguage
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.naturallanguage.NaturalLanguageExpense
@@ -124,17 +125,19 @@ class NaturalLanguageSearchViewModel @Inject constructor(
             val searchResults = searchEngine.executeSearch(interpretation)
             _results.value = searchResults
 
-            // Compute total in home currency (handles mixed-currency results correctly)
+            // Compute total in home currency using MoneyAggregateBuilder
+            // (handles single-currency, single non-home, and mixed-currency results correctly)
             val home = homeCurrency.first()
             val amounts = searchResults.groupBy { it.expense.currency }.map { (currency, expenseList) ->
-                // SAFE: grouping by native currency first, then converting at line 93 — correct multi-currency handling
+                // SAFE: grouping by native currency first, then converting — correct multi-currency handling
                 expenseList.sumOf { it.expense.effectiveAmount } to currency
             }
-            _totalInHomeCurrency.value = if (amounts.size == 1) {
-                amounts.first().first
-            } else {
-                currencyConverter.convertMultiple(amounts, home).total
-            }
+            val aggregate = MoneyAggregateBuilder.fromBuckets(
+                buckets = amounts,
+                homeCurrency = home,
+                converter = currencyConverter
+            )
+            _totalInHomeCurrency.value = aggregate.displayAmount
 
             _searchState.value = if (searchResults.isEmpty()) {
                 SearchState.Empty

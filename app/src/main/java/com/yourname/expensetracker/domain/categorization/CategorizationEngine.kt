@@ -486,6 +486,10 @@ class CategorizationEngine @Inject constructor(
 
     // TODO (C04): Create CategoryMappingWriter that emits CategoryMappingChanged.
     // Invalidate category/merchant/semantic caches from all write paths.
+    //
+    // NEXT: Change insert return types from Unit to Long (needs DAO migration)
+    // NEXT: Emit CategoryMappingChanged events from all write paths
+    // NEXT: Wire merchant canonical stats to TransactionSideEffectDispatcher
     
     // Utility methods for testing
     fun testCanonicalize(merchant: String): CanonicalResult {

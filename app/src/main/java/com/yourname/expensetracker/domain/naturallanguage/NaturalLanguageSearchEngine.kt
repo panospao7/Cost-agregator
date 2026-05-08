@@ -208,9 +208,14 @@ class NaturalLanguageSearchEngine @Inject constructor(
         val dateRange = extractDateRange(normalized)
         val locations = extractLocations(normalized)
         val categories = extractCategories(normalized)
-        val merchants = extractMerchants(normalized)
-        // TODO (W14): Extract merchant on original query, not lowercased version.
-        // Lowercasing before regex matching breaks case-sensitive patterns.
+        val merchants = extractMerchants(query)  // pass original query for case-sensitive patterns
+
+        // Category and location filters are parsed but NOT applied in the legacy NL path.
+        // Warn so callers know to use ExecuteFinancialQueryUseCase for filtered queries.
+        if (categories != null || locations != null) {
+            Timber.w("Category/location filters parsed but not applied in legacy NL. " +
+                "Use ExecuteFinancialQueryUseCase for filtered queries.")
+        }
         
         // Determine query type
         val queryType = determineQueryType(normalized)
@@ -509,8 +514,9 @@ class NaturalLanguageSearchEngine @Inject constructor(
     
     private fun extractMerchants(query: String): List<String>? {
         // In production, this would use a database of known merchants
-        // For now, we'll extract capitalized words that might be merchant names
-        val merchantPattern = Regex("""(?:at|from)\s+([A-Z][a-zA-Z]+)""")
+        // For now, we'll extract words that might be merchant names
+        // Normalize for comparison (case-insensitive pattern), but extract original-case names
+        val merchantPattern = Regex("""(?:at|from)\s+([A-Za-z][a-zA-Z]+)""", RegexOption.IGNORE_CASE)
         val merchants = merchantPattern.findAll(query).map { it.groupValues[1] }.toList()
         
         return if (merchants.isNotEmpty()) merchants else null

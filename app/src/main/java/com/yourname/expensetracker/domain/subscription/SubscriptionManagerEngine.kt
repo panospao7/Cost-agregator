@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.subscription
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
@@ -122,6 +124,7 @@ data class CreateSubscriptionRequest(
 
 @Singleton
 class SubscriptionManagerEngine @Inject constructor(
+    private val database: AppDatabase,
     private val recurringExpenseRepository: RecurringExpenseRepository,
     private val priceHistoryDao: SubscriptionPriceHistoryDao,
     private val usageDao: SubscriptionUsageDao,
@@ -251,25 +254,25 @@ class SubscriptionManagerEngine @Inject constructor(
         
         // Only record if price actually changed
         if (abs(newAmount - previousPrice) > 0.01) {
-            // W04: Set recordedAt to timeProvider.now() to avoid the 0L sentinel
-            val priceHistory = SubscriptionPriceHistory(
-                subscriptionId = subscriptionId,
-                amount = newAmount,
-                recordedAt = timeProvider.now(),
-                changeReason = reason
-            )
-            priceHistoryDao.insert(priceHistory)
+            // Wrap history insert + subscription update in transaction for atomicity
+            database.withTransaction {
+                // W04: Set recordedAt to timeProvider.now() to avoid the 0L sentinel
+                val priceHistory = SubscriptionPriceHistory(
+                    subscriptionId = subscriptionId,
+                    amount = newAmount,
+                    recordedAt = timeProvider.now(),
+                    changeReason = reason
+                )
+                priceHistoryDao.insert(priceHistory)
 
-            // REC-7: Update the subscription's current amount so it reflects
-            // the new price immediately rather than showing the old amount
-            // until the next full sync.
-            val subscription = recurringExpenseRepository.getById(subscriptionId)
-            if (subscription != null && abs(subscription.amount - newAmount) > 0.01) {
-                recurringExpenseRepository.update(subscription.copy(amount = newAmount))
+                // REC-7: Update the subscription's current amount so it reflects
+                // the new price immediately rather than showing the old amount
+                // until the next full sync.
+                val subscription = recurringExpenseRepository.getById(subscriptionId)
+                if (subscription != null && abs(subscription.amount - newAmount) > 0.01) {
+                    recurringExpenseRepository.update(subscription.copy(amount = newAmount))
+                }
             }
-
-            // TODO (W07): Wrap priceHistoryDao.insert + recurringExpenseRepository.update
-            // in database.withTransaction for atomicity. Requires injecting AppDatabase.
         }
     }
     

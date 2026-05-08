@@ -610,10 +610,17 @@ private fun MarkerDetailCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = marker.merchant, style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        text = CurrencyFormatter.format(marker.amount, homeCurrency),
+                        text = CurrencyFormatter.format(marker.amount, marker.displayCurrency),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
+                    marker.conversionWarning?.let { warning ->
+                        Text(
+                            text = warning,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                     marker.locationSource?.let { src ->
                         Text(
                             text = stringResource(R.string.map_source_format, src),

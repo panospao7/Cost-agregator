@@ -133,14 +133,64 @@ class SpendingHeatmapEngine @Inject constructor() {
     }
 
     /**
-     * TODO PR-E6: Replace raw-Double [compute] with this currency-safe variant.
-     * Sums only [ConversionStatus.CONVERTED] and [ConversionStatus.HOME_CURRENCY] rows
-     * using [LocatedMoneyExpense.normalizedAmount] for heatmap intensity.
-     * Currently a stub — returns empty list.
+     * Currency-safe heatmap computation using [LocatedMoneyExpense.normalizedAmount].
+     *
+     * Sums only [ConversionStatus.CONVERTED] and [ConversionStatus.HOME_CURRENCY] rows,
+     * skipping expenses where conversion failed ([ConversionStatus.FAILED]).
+     * Uses the same grid-snap clustering and log-normalisation as [compute].
      */
     fun computeNormalized(expenses: List<LocatedMoneyExpense>): List<HeatmapPoint> {
-        // TODO PR-E6: implement normalized heatmap computation using normalizedAmount
-        return emptyList()
+        val validExpenses = expenses.filter {
+            it.conversionStatus == ConversionStatus.HOME_CURRENCY ||
+            it.conversionStatus == ConversionStatus.CONVERTED
+        }
+
+        if (validExpenses.isEmpty()) return emptyList()
+
+        // ── Step 1: Grid-snap cluster ─────────────────────────────────────────
+        data class GridCell(val latBucket: Long, val lonBucket: Long)
+
+        data class Accumulator(
+            var totalSpend: Double = 0.0,
+            var count: Int = 0,
+            var latSum: Double = 0.0,
+            var lonSum: Double = 0.0
+        )
+
+        val cells = HashMap<GridCell, Accumulator>()
+
+        for (expense in validExpenses) {
+            val normAmount = expense.normalizedAmount ?: continue
+            if (normAmount <= 0.0) continue
+
+            val latBucket = floor(expense.latitude / CLUSTER_RADIUS_DEG).toLong()
+            val lonBucket = floor(expense.longitude / CLUSTER_RADIUS_DEG).toLong()
+            val cell = GridCell(latBucket, lonBucket)
+            val acc = cells.getOrPut(cell) { Accumulator() }
+            acc.totalSpend += normAmount
+            acc.count += 1
+            acc.latSum += expense.latitude
+            acc.lonSum += expense.longitude
+        }
+
+        if (cells.isEmpty()) return emptyList()
+
+        // ── Step 2: Log-normalise ─────────────────────────────────────────────
+        val entries = cells.values.toList()
+        val logWeights = entries.map { ln(1.0 + it.totalSpend) }
+        val maxRaw = logWeights.maxOrNull() ?: return emptyList()
+        if (maxRaw == 0.0) return emptyList()
+
+        // ── Step 3: Build result list ─────────────────────────────────────────
+        return entries.mapIndexed { idx, acc ->
+            HeatmapPoint(
+                latitude = acc.latSum / acc.count,
+                longitude = acc.lonSum / acc.count,
+                weight = (logWeights[idx] / maxRaw).toFloat().coerceIn(0f, 1f),
+                totalSpend = acc.totalSpend,
+                count = acc.count
+            )
+        }
     }
 
     private companion object {

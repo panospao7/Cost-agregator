@@ -223,22 +223,25 @@ class WarrantyTrackerRepository @Inject constructor(
 
     /**
      * W02: Marks a return window as RETURNED with the given refund amount and currency.
-     * If [refundCurrency] is null, the currency is inferred from the linked Expense,
-     * falling back to "EUR".
+     * If [refundAmount] is null, refund-related fields are left unchanged.
+     * If [refundCurrency] is null, it falls back to the linked Expense's currency,
+     * then to the user's home currency setting.
      */
     suspend fun markAsReturned(
         returnWindowId: Long,
-        refundAmount: Double,
+        refundAmount: Double? = null,
         refundCurrency: String? = null
     ): ReturnWindow? {
         val existing = returnWindowDao.getReturnWindowById(returnWindowId) ?: return null
         val linkedExpense = existing.expenseId?.let { database.expenseDao().getById(it) }
-        val currency = refundCurrency ?: linkedExpense?.currency ?: "EUR"
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        val currency = refundCurrency ?: linkedExpense?.currency ?: homeCurrency
         val updated = existing.copy(
             status = ReturnStatus.RETURNED,
             returnedAt = timeProvider.now(),
-            refundAmount = refundAmount,
-            refundCurrency = currency,
+            refundAmount = refundAmount ?: existing.refundAmount,
+            refundCurrency = if (refundAmount != null) currency else existing.refundCurrency,
             updatedAt = timeProvider.now()
         )
         returnWindowDao.updateReturnWindow(updated)

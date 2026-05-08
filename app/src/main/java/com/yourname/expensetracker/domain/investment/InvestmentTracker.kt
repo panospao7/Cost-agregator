@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.investment
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.InvestmentDao
 import com.yourname.expensetracker.data.database.dao.InvestmentValueDao
 import com.yourname.expensetracker.data.database.entity.Investment
@@ -41,6 +43,7 @@ data class InvestmentPerformance(
 
 @Singleton
 class InvestmentTracker @Inject constructor(
+    private val database: AppDatabase,
     private val investmentDao: InvestmentDao,
     private val investmentValueDao: InvestmentValueDao,
     private val timeProvider: TimeProvider,
@@ -108,17 +111,22 @@ class InvestmentTracker @Inject constructor(
             createdAt = if (investment.createdAt > 0) investment.createdAt else now,
             lastUpdated = now
         )
-        val id = investmentDao.insert(validated)
 
-        // Record initial value history snapshot
-        investmentValueDao.insert(
-            InvestmentValue(
-                investmentId = id,
-                price = investment.purchasePrice,
-                totalValue = investment.purchasePrice * investment.quantity,
-                timestamp = now
+        // Wrap insert + value insert in transaction for atomicity
+        val id = database.withTransaction {
+            val insertedId = investmentDao.insert(validated)
+
+            // Record initial value history snapshot
+            investmentValueDao.insert(
+                InvestmentValue(
+                    investmentId = insertedId,
+                    price = investment.purchasePrice,
+                    totalValue = investment.purchasePrice * investment.quantity,
+                    timestamp = now
+                )
             )
-        )
+            insertedId
+        }
         return Result.success(id)
     }
 
@@ -219,22 +227,22 @@ class InvestmentTracker @Inject constructor(
             if (it.price > 0.0) ((newPrice - it.price) / it.price) * 100 else 0.0
         }
         
-        // Update investment
-        investmentDao.updatePrice(investmentId, newPrice, timestamp)
-        
-        // Record value history
-        val value = InvestmentValue(
-            investmentId = investmentId,
-            price = newPrice,
-            totalValue = newPrice * investment.quantity,
-            timestamp = timestamp,
-            dayChange = dayChange,
-            dayChangePercent = dayChangePercent
-        )
-        investmentValueDao.insert(value)
-
-        // TODO (I02): Wrap updatePrice + insert in database.withTransaction for atomicity.
-        // Requires injecting AppDatabase.
+        // Wrap update + insert in transaction for atomicity
+        database.withTransaction {
+            // Update investment
+            investmentDao.updatePrice(investmentId, newPrice, timestamp)
+            
+            // Record value history
+            val value = InvestmentValue(
+                investmentId = investmentId,
+                price = newPrice,
+                totalValue = newPrice * investment.quantity,
+                timestamp = timestamp,
+                dayChange = dayChange,
+                dayChangePercent = dayChangePercent
+            )
+            investmentValueDao.insert(value)
+        }
     }
     
     /**

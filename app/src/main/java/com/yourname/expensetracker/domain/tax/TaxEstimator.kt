@@ -28,6 +28,9 @@ import javax.inject.Singleton
  */
 // TODO (PR-E21): Add TaxSettings with countryCode, filingCurrency, fiscalYearStartMonth.
 // Persist via TaxSettingsRepository. Use selected country for rates.
+//
+// NEXT: Add TaxSettings entity: countryCode, filingCurrency, fiscalYearStartMonth, fiscalYearStartDay
+// See TaxConfiguration entity in database for existing fields.
 @Singleton
 class TaxEstimator @Inject constructor(
     private val expenseDao: ExpenseDao,

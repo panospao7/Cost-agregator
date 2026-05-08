@@ -48,7 +48,10 @@ data class MapExpenseMarker(
     val date: Long,
     val locationSource: String?,
     val placeId: String?,
-    val isConverted: Boolean = true
+    val isConverted: Boolean = true,
+    val displayCurrency: String = "EUR",
+    val originalCurrency: String = "EUR",
+    val conversionWarning: String? = null
 )
 
 data class MapCategoryFilterOption(
@@ -100,7 +103,8 @@ data class SpendingMapState(
     * async home-currency load completes. See [CURR-6] in MASTER-ISSUE-REGISTRY.
     */
    val homeCurrency: String = "EUR",
-  val referenceNowMillis: Long = 0L
+  val referenceNowMillis: Long = 0L,
+  val mapConversionWarnings: Int = 0
 )
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
@@ -375,31 +379,51 @@ class SpendingMapViewModel @Inject constructor(
         val markers = filteredExpenses.mapNotNull { e ->
             val lat = e.latitude ?: return@mapNotNull null
             val lon = e.longitude ?: return@mapNotNull null
-            val (homeAmount, isConverted) = if (e.currency != currentState.homeCurrency) {
+            val markerAmount: Double
+            val markerIsConverted: Boolean
+            val markerDisplayCurrency: String
+            val markerOriginalCurrency: String
+            val markerConversionWarning: String?
+            if (e.currency != currentState.homeCurrency) {
                 val converted = currencyConverter.convert(
                     amount = e.effectiveAmount,
                     fromCurrency = e.currency,
                     toCurrency = currentState.homeCurrency
                 )
                 if (converted != null) {
-                    Pair(converted.convertedAmount, true)
+                    markerAmount = converted.convertedAmount
+                    markerIsConverted = true
+                    markerDisplayCurrency = currentState.homeCurrency
+                    markerOriginalCurrency = e.currency
+                    markerConversionWarning = null
                 } else {
                     Timber.w("Conversion failed for marker ${e.merchant}: ${e.effectiveAmount} ${e.currency}")
-                    Pair(e.effectiveAmount, false)
+                    markerAmount = e.effectiveAmount
+                    markerIsConverted = false
+                    markerDisplayCurrency = e.currency
+                    markerOriginalCurrency = e.currency
+                    markerConversionWarning = "Conversion to ${currentState.homeCurrency} failed — showing original ${e.currency}"
                 }
             } else {
-                Pair(e.effectiveAmount, true)
+                markerAmount = e.effectiveAmount
+                markerIsConverted = true
+                markerDisplayCurrency = currentState.homeCurrency
+                markerOriginalCurrency = e.currency
+                markerConversionWarning = null
             }
             MapExpenseMarker(
                 expenseId = e.id,
                 latitude = lat,
                 longitude = lon,
-                amount = homeAmount,
+                amount = markerAmount,
                 merchant = e.merchant,
                 date = e.date,
                 locationSource = e.locationSource,
                 placeId = e.placeId,
-                isConverted = isConverted
+                isConverted = markerIsConverted,
+                displayCurrency = markerDisplayCurrency,
+                originalCurrency = markerOriginalCurrency,
+                conversionWarning = markerConversionWarning
             )
         }
 
@@ -479,10 +503,8 @@ class SpendingMapViewModel @Inject constructor(
                 date = e.date
             )
         }
-        // TODO PR-E6: use moneyExpenses with heatmapEngine.computeNormalized() once implemented
-        // val normalizedHeatmap = heatmapEngine.computeNormalized(moneyExpenses)
-        val heatmap = heatmapEngine.compute(heatmapExpenses)
-        val insights = insightsEngine.compute(spendingDomainExpenses)
+        val heatmap = heatmapEngine.computeNormalized(moneyExpenses)
+        val insights = insightsEngine.computeNormalized(moneyExpenses)
 
         val categoriesById = runCatching {
             categoryRepository.getAll().associateBy { it.id }
@@ -500,13 +522,16 @@ class SpendingMapViewModel @Inject constructor(
             }
         }
 
+        val failedConversions = moneyExpenses.count { it.conversionStatus == ConversionStatus.FAILED }
+
         _state.update { it.copy(
             isLoading = false,
             markers = markers,
             heatmapPoints = heatmap,
             placeInsights = insights,
             availableCategories = availableCategories,
-            referenceNowMillis = timeProvider.now()
+            referenceNowMillis = timeProvider.now(),
+            mapConversionWarnings = failedConversions
         ) }
     }
 
