@@ -136,10 +136,10 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         period: PeriodRange
     ): FinancialQueryResult {
         val categoriesById = categoryRepository.getAll().associateBy { it.id }
-        val filtered = assistantFilteredExpenses(intent, period)
+        val (filteredExpenses, amountFilterDataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
             .getOrDefault("EUR")
-        val groups = filtered.expenses
+        val groups = filteredExpenses
             .filter { it.expense.categoryId != null }
             .groupBy { it.expense.categoryId!! }
             .values
@@ -179,15 +179,16 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             )
         }
 
+        val totalFailed = amountFilterDataQuality.excludedCount + failedConversions
         return FinancialQueryResult.Breakdown(
             title = UiText.fromKey("domain_ai_top_categories"),
             rows = rows,
             drilldownIntent = intent,
             dataQuality = FinancialQueryDataQuality(
-                isPartial = failedConversions > 0,
-                excludedCount = failedConversions,
-                missingRateCount = failedConversions,
-                warnings = if (failedConversions > 0) {
+                isPartial = totalFailed > 0,
+                excludedCount = totalFailed,
+                missingRateCount = totalFailed,
+                warnings = amountFilterDataQuality.warnings + if (failedConversions > 0) {
                     listOf("$failedConversions category breakdown item(s) affected by missing exchange rates")
                 } else {
                     emptyList()
@@ -200,10 +201,10 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val filtered = assistantFilteredExpenses(intent, period)
+        val (filteredExpenses, amountFilterDataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
             .getOrDefault("EUR")
-        val groups = filtered.expenses
+        val groups = filteredExpenses
             .groupBy { it.expense.merchantKey ?: it.expense.merchant }
             .values
         var failedConversions = 0
@@ -238,15 +239,16 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             )
         }
 
+        val totalFailed = amountFilterDataQuality.excludedCount + failedConversions
         return FinancialQueryResult.Breakdown(
             title = UiText.fromKey("domain_ai_top_merchants"),
             rows = merchantRows,
             drilldownIntent = intent,
             dataQuality = FinancialQueryDataQuality(
-                isPartial = failedConversions > 0,
-                excludedCount = failedConversions,
-                missingRateCount = failedConversions,
-                warnings = if (failedConversions > 0) {
+                isPartial = totalFailed > 0,
+                excludedCount = totalFailed,
+                missingRateCount = totalFailed,
+                warnings = amountFilterDataQuality.warnings + if (failedConversions > 0) {
                     listOf("$failedConversions merchant breakdown item(s) affected by missing exchange rates")
                 } else {
                     emptyList()
@@ -321,17 +323,13 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val current = assistantFilteredExpenses(intent, period)
-        val currentCurrencyTotals = current.expenses.toCurrencyTotals()
-        // No conversion loop in this path — per-currency totals are shown side-by-side.
-        // failedConversions is 0 because toCurrencyTotals groups raw amounts by currency
-        // without attempting cross-currency conversion.
-        val failedConversions = 0
+        val (currentExpenses, dataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
+        val currentCurrencyTotals = currentExpenses.toCurrencyTotals()
 
         val supporting = if (intent.comparison == QueryComparison.PREVIOUS_EQUIVALENT_PERIOD) {
             val previous = previousEquivalentPeriod(period)
-            val previousResult = assistantFilteredExpenses(intent, previous)
-            "Previous period: ${formatCurrencyTotals(previousResult.expenses.toCurrencyTotals())}"
+            val (prevExpenses, _) = assistantFilteredExpensesCurrencyAware(intent, previous)
+            "Previous period: ${formatCurrencyTotals(prevExpenses.toCurrencyTotals())}"
         } else {
             null
         }
@@ -341,11 +339,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             primaryText = formatCurrencyTotals(currentCurrencyTotals),
             supportingText = supporting,
             drilldownIntent = intent,
-            dataQuality = FinancialQueryDataQuality(
-                isPartial = failedConversions > 0,
-                excludedCount = failedConversions,
-                missingRateCount = failedConversions
-            )
+            dataQuality = dataQuality
         )
     }
 
@@ -374,28 +368,19 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val result = assistantFilteredExpenses(intent, period)
-        val expenses = result.expenses
-        // Per-currency averages are computed from raw amounts without cross-currency
-        // conversion, so failedConversions is 0 in this path.
-        val failedConversions = 0
+        val (expenses, dataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
         return FinancialQueryResult.Summary(
             title = UiText.fromKey("domain_ai_average_spending"),
             primaryText = formatCurrencyAverages(expenses.toCurrencyTotals()),
             supportingText = if (expenses.isNotEmpty()) "Across ${expenses.size} transactions" else null,
             drilldownIntent = intent,
-            dataQuality = FinancialQueryDataQuality(
-                isPartial = failedConversions > 0,
-                excludedCount = failedConversions,
-                missingRateCount = failedConversions
-            )
+            dataQuality = dataQuality
         )
     }
 
     /**
-     * TODO (PR-E22): Replace per-method inline filtering with this unified helper.
-     * Currently ALL execute* methods have their own currency-aware amount filter logic.
-     * This helper consolidates the pattern:
+     * Currency-aware expense fetching that handles minAmount/maxAmount filters
+     * with proper cross-currency normalization (as opposed to raw-DB filtering).
      *
      * Step 1: Push date/type/category/merchant filters to DAO (minAmount/maxAmount = null).
      * Step 2: Normalize each expense's effectiveAmount to homeCurrency via currencyConverter.convertAsOf().
@@ -403,12 +388,9 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
      * Step 4: Track failedConversions (count of expenses excluded due to missing rates).
      * Step 5: Return Pair<List<ExpenseWithCategory>, FinancialQueryDataQuality>.
      *
-     * Migration plan:
-     * - executeList() already does this inline (lines 71-115). Replace with call to this helper.
-     * - executeCategoryBreakdown() uses assistantFilteredExpenses + inline conversion. Replace.
-     * - executeMerchantBreakdown() uses assistantFilteredExpenses + inline conversion. Replace.
-     * - executeLargest() uses assistantFilteredExpenses + inline conversion. Replace.
-     * - executeTotal() / executeAverage() / executeCount() don't need amount filter, keep as-is.
+     * Currently wired into: executeTotal, executeAverage, executeCategoryBreakdown,
+     * executeMerchantBreakdown. Remaining: executeList (inline), executeLargest (inline
+     * with W32 fix), executeCount (no amount filter needed).
      */
     private suspend fun assistantFilteredExpensesCurrencyAware(
         intent: FinancialQueryIntent,

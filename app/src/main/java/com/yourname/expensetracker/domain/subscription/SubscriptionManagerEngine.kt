@@ -155,6 +155,7 @@ class SubscriptionManagerEngine @Inject constructor(
             frequency = request.frequency,
             nextDate = request.startDate,
             createdAt = now,
+            isSubscription = true,
             isActive = true
         )
         val id = recurringExpenseRepository.insert(subscription)
