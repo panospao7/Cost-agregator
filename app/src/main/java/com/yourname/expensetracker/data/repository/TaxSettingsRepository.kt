@@ -56,6 +56,11 @@ class TaxSettingsRepository @Inject constructor(
         prefs.edit().putString(KEY_FILING_CURRENCY, currency).apply()
     }
 
+    /** Sets the fiscal year start month (1 = January, 12 = December). */
+    fun setFiscalYearStartMonth(month: Int) {
+        prefs.edit().putInt(KEY_FISCAL_YEAR_START, month.coerceIn(1, 12)).apply()
+    }
+
     companion object {
         private const val PREFS_NAME = "tax_settings"
 

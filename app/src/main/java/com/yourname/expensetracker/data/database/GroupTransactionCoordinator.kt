@@ -412,6 +412,13 @@ class GroupTransactionCoordinator @Inject constructor(
                 val existingExpense = expenseDao.getById(systemExpenseId)
                     ?: return@withTransaction GroupExpenseCreationResult.Error("Linked system expense not found")
 
+                // G03: Reject mixed-currency group expenses — groups are single-currency.
+                if (existingExpense.currency != group.defaultCurrency) {
+                    return@withTransaction GroupExpenseCreationResult.Error(
+                        "Expense currency '${existingExpense.currency}' does not match group currency '${group.defaultCurrency}'. Groups are single-currency."
+                    )
+                }
+
                 if (groupExpenseDao.getGroupExpenseForExpense(systemExpenseId) != null) {
                     return@withTransaction GroupExpenseCreationResult.Error(
                         LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE
@@ -776,31 +783,32 @@ class GroupTransactionCoordinator @Inject constructor(
     /**
      * Normalizes a system expense's ownership fields when it is linked to a group.
      *
-     * NOTE: Intentionally NOT routed through TransactionLifecycleCoordinator.
-     * This is a group-level atomic operation that sets shared-expense metadata
-     * as part of creating a group-expense link, not a user-originated edit of
-     * individual ownership fields. The lifecycle coordinator is reserved for
-     * user-driven ownership changes that need individual audit events.
+     * G03: Routes through [TransactionLifecycleCoordinator.updateOwnership] so the
+     * operation writes a UPDATED lifecycle event and dispatches post-update side
+     * effects (budget, anomaly, merchant learning). The coordinator is available
+     * (injected as [transactionLifecycleCoordinator]) so there is no circular
+     * dependency — the data-layer [GroupTransactionCoordinator] owns the DB
+     * transaction, and the domain-layer coordinator handles audit/side-effects.
      *
-     * G03: Direct mutation of the Expense DAO is intentional — the normalization
-     * is part of the group-expense atomic create operation (inside a single
-     * database.withTransaction). Routing through TransactionLifecycleCoordinator
-     * would split a single atomic group operation into unrelated per-field events,
-     * breaking the group-level atomicity contract (see C1-PR3 documentation).
-     *
-     * TODO: Replace direct ExpenseDao updates with
-     *       transactionLifecycleCoordinator.updateOwnership() once the
-     *       coordinator supports bulk/metadata-only ownership changes
-     *       without requiring a full UPDATED event per row.
+     * A UPDATED event is intentionally produced here: linking a system expense to a
+     * group is a semantic ownership change that should appear in the audit trail.
+     * Side effects are best-effort (caught inside [TransactionLifecycleCoordinator.updateOwnership]).
      */
     private suspend fun normalizeLinkedSystemExpense(
         expense: Expense,
         myShareAmount: Double
     ) {
-        expenseDao.updateIsNotMine(expense.id, false)
-        expenseDao.updateIsSharedExpense(expense.id, true)
-        expenseDao.updateMySharePercentage(expense.id, null)
-        expenseDao.updateMyShareAmount(expense.id, myShareAmount)
+        transactionLifecycleCoordinator.updateOwnership(
+            expenseId = expense.id,
+            isNotMine = false,
+            ownerName = null,
+            isSharedExpense = true,
+            sharedWithName = null,
+            mySharePercentage = null,
+            myShareAmount = myShareAmount,
+            reason = "Group expense linking: set shared-expense metadata",
+            source = "GROUP_EXPENSE"
+        )
     }
 
     private fun resolveCurrentUserShare(

@@ -158,6 +158,24 @@ class CategoryRepository @Inject constructor(
         expensesMoved
     }
 
+    /**
+     * Backfill the new category to all existing expenses for a given merchant.
+     *
+     * C11: When user confirms "always categorize as X", offer lifecycle-aware backfill
+     * by calling transactionLifecycleCoordinator.updateCategory() for each affected expense.
+     * This writes UPDATED events and dispatches side effects.
+     *
+     * TODO (C11): Implement per-expense backfill by injecting TransactionLifecycleCoordinator
+     * (via Lazy to avoid circular dependency) and iterating over expenses matching the
+     * merchant key. Currently a no-op stub.
+     */
+    suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long) = withContext(Dispatchers.IO) {
+        // C11: When user confirms "always categorize as X", offer lifecycle-aware backfill
+        // by calling transactionLifecycleCoordinator.updateCategory() for each affected expense.
+        // This writes UPDATED events and dispatches side effects.
+        Timber.d("C11: updateExpenseCategoryBulk called for merchant='$merchant', category=$newCategoryId — backfill not yet implemented")
+    }
+
     suspend fun deleteCategory(categoryId: Long): DeleteCategoryResult = withContext(Dispatchers.IO) {
         val category = categoryDao.getById(categoryId)
             ?: return@withContext DeleteCategoryResult.NotFound

@@ -195,6 +195,12 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
 
         val now = timeProvider.now()
 
+        // W20: Compute the display-friendly inclusive end date from the stored
+        // exclusive (half-open) warrantyEndDate. The warranty is valid through the
+        // last covered day; displayEndDate is the last millisecond of that day.
+        val warrantyEndDate = data.warrantyEndDate
+        val displayEndDate = getDisplayEndDate(warrantyEndDate)
+
         val warranty = Warranty(
             id = 0, // Will be auto-generated
             receiptId = receiptId,
@@ -205,12 +211,13 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
             warrantyDurationMonths = data.warrantyDurationMonths,
             // W20: warrantyEndDate is exclusive (half-open). The warranty is valid
             // through the end of the last covered day. Display as warrantyEndDate - 1 day.
-            warrantyEndDate = data.warrantyEndDate,
+            warrantyEndDate = warrantyEndDate,
             warrantyType = warrantyType,
             supportPhone = data.supportPhone,
             supportEmail = data.supportEmail,
             warrantyDocumentUrl = null, // Could be extracted from receipt images in future
-            notes = if (autoDetect) "Auto-detected from receipt" else null,
+            // W20: Include the display-friendly end date in notes for UI consumption.
+            notes = if (autoDetect) "Auto-detected from receipt. Coverage ends: ${java.time.Instant.ofEpochMilli(displayEndDate).atZone(java.time.ZoneId.systemDefault()).toLocalDate()}" else null,
             status = if (needsReview) WarrantyStatus.PENDING_REVIEW else WarrantyStatus.ACTIVE,
             claimedAt = null,
             createdAt = now,
