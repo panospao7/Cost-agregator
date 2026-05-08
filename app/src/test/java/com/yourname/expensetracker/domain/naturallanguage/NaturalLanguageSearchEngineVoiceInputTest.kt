@@ -79,6 +79,8 @@ class NaturalLanguageSearchEngineVoiceInputTest {
 
         override fun stopListening() = Unit
 
+        override fun destroy() = Unit
+
         fun emitResult(result: String) {
             onResult?.invoke(result)
         }
