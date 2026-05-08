@@ -144,27 +144,31 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             .groupBy { it.expense.categoryId!! }
             .values
         var failedConversions = 0
-        val sorted = groups.map { grouped ->
+        val sorted = groups.mapNotNull { grouped ->
             val byCurrency = grouped.groupBy { it.expense.currency }
                 // SAFE: per-currency bucket sum, then convertMultiple — correct multi-currency handling
                 .map { (currency, list) -> list.sumOf { it.expense.effectiveAmount } to currency }
             val sortKey = if (byCurrency.size == 1) {
                 val (amount, currency) = byCurrency.first()
                 // VERIFIED (PR-E22 / PR5): Single non-home currency conversion correctly
-                // uses currencyConverter.convert() and increments failedConversions
-                // when conversion fails (missing rate). The 0.0 fallback avoids NPE.
+                // uses currencyConverter.convertAsOf() with the most recent expense date
+                // and increments failedConversions when conversion fails (missing rate).
                 if (currency.equals(homeCurrency, ignoreCase = true)) amount
-                else currencyConverter.convert(amount, currency, homeCurrency)?.convertedAmount
-                    ?: run {
-                        failedConversions++
-                        0.0
-                    }
+                else currencyConverter.convertAsOf(
+                    amount = amount,
+                    fromCurrency = currency,
+                    toCurrency = homeCurrency,
+                    atMillis = grouped.maxOf { it.expense.date }
+                )?.convertedAmount ?: run {
+                    failedConversions++
+                    null
+                }
             } else {
                 val aggregate = currencyConverter.convertMultiple(byCurrency, homeCurrency)
                 failedConversions += aggregate.failedConversions.size
                 aggregate.total
             }
-            grouped to sortKey
+            sortKey?.let { grouped to it }
         }.sortedByDescending { it.second }
             .take(8)
             .map { it.first }
@@ -208,24 +212,28 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             .groupBy { it.expense.merchantKey ?: it.expense.merchant }
             .values
         var failedConversions = 0
-        val sorted = groups.map { grouped ->
+        val sorted = groups.mapNotNull { grouped ->
             val byCurrency = grouped.groupBy { it.expense.currency }
                 // SAFE: per-currency bucket sum, then convertMultiple — correct multi-currency handling
                 .map { (currency, list) -> list.sumOf { it.expense.effectiveAmount } to currency }
             val sortKey = if (byCurrency.size == 1) {
                 val (amount, currency) = byCurrency.first()
                 if (currency.equals(homeCurrency, ignoreCase = true)) amount
-                else currencyConverter.convert(amount, currency, homeCurrency)?.convertedAmount
-                    ?: run {
-                        failedConversions++
-                        0.0
-                    }
+                else currencyConverter.convertAsOf(
+                    amount = amount,
+                    fromCurrency = currency,
+                    toCurrency = homeCurrency,
+                    atMillis = grouped.maxOf { it.expense.date }
+                )?.convertedAmount ?: run {
+                    failedConversions++
+                    null
+                }
             } else {
                 val aggregate = currencyConverter.convertMultiple(byCurrency, homeCurrency)
                 failedConversions += aggregate.failedConversions.size
                 aggregate.total
             }
-            grouped to sortKey
+            sortKey?.let { grouped to it }
         }.sortedByDescending { it.second }
             .take(8)
             .map { it.first }
@@ -261,8 +269,8 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val matching = assistantFilteredExpenses(intent, period)
-        if (matching.expenses.isEmpty()) {
+        val (expenses, amountFilterDataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
+        if (expenses.isEmpty()) {
             return FinancialQueryResult.Unsupported("No matching transactions found")
         }
 
@@ -274,13 +282,13 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         var failedConversions = 0
 
         // Determine if we have mixed currencies
-        val distinctCurrencies = matching.expenses.map { it.expense.currency }.distinct()
+        val distinctCurrencies = expenses.map { it.expense.currency }.distinct()
         val largest = if (distinctCurrencies.size <= 1) {
             // Single currency — safe to compare directly
-            matching.expenses.maxByOrNull { it.expense.effectiveAmount }
+            expenses.maxByOrNull { it.expense.effectiveAmount }
         } else {
             // Mixed currencies — convert each to home currency for comparison
-            val withNormalized = matching.expenses.mapNotNull { expenseWithCategory ->
+            val withNormalized = expenses.mapNotNull { expenseWithCategory ->
                 val normalizedAmount = if (expenseWithCategory.expense.currency.equals(homeCurrency, ignoreCase = true)) {
                     expenseWithCategory.expense.effectiveAmount
                 } else {
@@ -298,11 +306,16 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             withNormalized.maxByOrNull { it.second }?.first
         } ?: return FinancialQueryResult.Unsupported("No matching transactions found")
 
+        val totalFailed = amountFilterDataQuality.excludedCount + failedConversions
         val dataQuality = FinancialQueryDataQuality(
-            isPartial = failedConversions > 0,
-            excludedCount = failedConversions,
-            missingRateCount = failedConversions, // simplified — all failures are missing rates in this path
-            warnings = if (failedConversions > 0) listOf("$failedConversions expense(s) excluded due to missing exchange rates") else emptyList()
+            isPartial = totalFailed > 0,
+            excludedCount = totalFailed,
+            missingRateCount = totalFailed,
+            warnings = amountFilterDataQuality.warnings + if (failedConversions > 0) {
+                listOf("$failedConversions expense(s) excluded due to missing exchange rates")
+            } else {
+                emptyList()
+            }
         )
 
         return FinancialQueryResult.Summary(
@@ -347,20 +360,12 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): FinancialQueryResult {
-        val count = expenseRepository.getAssistantExpenseCountFiltered(
-            startDate = period.start,
-            endDate = period.end,
-            transactionTypes = intent.filters.transactionTypes.map { it.toEntity() }.toSet(),
-            categoryIds = intent.filters.categoryIds,
-            merchantNames = intent.filters.merchants,
-            ownershipFilter = intent.filters.ownership.toRepositoryOwnershipFilter(),
-            minAmount = intent.filters.minAmount,
-            maxAmount = intent.filters.maxAmount
-        )
-        return FinancialQueryResult.Summary(
+        val (filtered, dataQuality) = assistantFilteredExpensesCurrencyAware(intent, period)
+        return FinancialQueryResult.TransactionList(
             title = UiText.fromKey("domain_ai_transaction_count"),
-            primaryText = count.toString(),
-            drilldownIntent = intent
+            previewCount = filtered.size,
+            drilldownIntent = intent,
+            dataQuality = dataQuality
         )
     }
 
@@ -457,6 +462,11 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         return Pair(filtered, dataQuality)
     }
 
+    @Deprecated(
+        "Use assistantFilteredExpensesCurrencyAware() instead — it handles cross-currency " +
+        "minAmount/maxAmount normalization via currencyConverter.convertAsOf().",
+        ReplaceWith("assistantFilteredExpensesCurrencyAware(intent, period)")
+    )
     private suspend fun assistantFilteredExpenses(
         intent: FinancialQueryIntent,
         period: PeriodRange

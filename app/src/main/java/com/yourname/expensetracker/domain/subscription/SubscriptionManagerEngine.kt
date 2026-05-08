@@ -158,18 +158,21 @@ class SubscriptionManagerEngine @Inject constructor(
             isSubscription = true,
             isActive = true
         )
-        val id = recurringExpenseRepository.insert(subscription)
+        val id = database.withTransaction {
+            val subscriptionId = recurringExpenseRepository.insert(subscription)
 
-        // Also record baseline price history with recordedAt set
-        if (request.recordPriceHistory) {
-            priceHistoryDao.insert(
-                SubscriptionPriceHistory(
-                    subscriptionId = id,
-                    amount = request.amount,
-                    currency = request.currency,
-                    recordedAt = now
+            // Also record baseline price history with recordedAt set
+            if (request.recordPriceHistory) {
+                priceHistoryDao.insert(
+                    SubscriptionPriceHistory(
+                        subscriptionId = subscriptionId,
+                        amount = request.amount,
+                        currency = request.currency,
+                        recordedAt = now
+                    )
                 )
-            )
+            }
+            subscriptionId
         }
         return Result.success(subscription.copy(id = id))
     }
