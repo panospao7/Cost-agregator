@@ -3,7 +3,7 @@
 > Consolidated P0/P1 issues from 5 engine debug reports.
 > Source: warranty-subscription-location-nlp, analytical, categorization-merchant, groups-investment-tax, money-time-primitives
 > **Last updated: 2026-05-08**
-> **All 105 issues have been triaged: 34 fixed with code, 39 documented as TODO-only, 35 deferred for design/migration.**
+> **All 108 issues have been triaged: 34 fixed with code, 52 documented as TODO-only, 22 deferred for design/migration.**
 
 ## Status Legend
 - ⬜ NOT STARTED
@@ -29,7 +29,7 @@
 | W09 | P0 | Bill negotiation UI compares wrong rates | Bug | Compare monthly-to-monthly | 📝 TODO ONLY |
 | W10 | P0 | Device GPS not privacy-gated | Bug | PrivacyGate(DEVICE_GPS_LOCATION) check | ✅ FIXED |
 | W11 | P0 | Location insights include non-spending | Bug | Apply spending-only filter | 📝 TODO ONLY |
-| W12 | P0 | Map/insight amounts not currency-normalized | Bug | Use LocatedMoneyExpense with conversion | 📝 TODO ONLY |
+| W12 | P0 | Map/insight amounts not currency-normalized | Bug | Use LocatedMoneyExpense with conversion; display currency in map marker label | ✅ FIXED |
 | W13 | P0 | Manual correction insert can silently fail | Bug | Change upsertCorrection return to Long | 📝 TODO ONLY |
 | W14 | P0 | Legacy NL merchant extraction broken | Bug | Extract on original query, not lowercased | 📝 TODO ONLY |
 | W15 | P0 | Legacy NL filters parsed but ignored | Bug | Push filters to repository/DAO query | 📝 TODO ONLY |
@@ -50,7 +50,7 @@
 | W30 | P1 | Legacy NL does date-only broad paging | Enhancement | Use filtered DAO query | 📝 TODO ONLY |
 | W31 | P1 | NL offset paging not snapshot-stable | Bug | Keyset pagination or single-txn snapshot | 📝 TODO ONLY |
 | W32 | P1 | Assistant "largest" query raw mixed-currency | Bug | Normalize before maxByOrNull | ✅ FIXED |
-| W33 | P1 | Assistant query totals no partial state | Enhancement | Return dataQuality in FinancialQueryResult | 📝 TODO ONLY |
+| W33 | P1 | Assistant query totals no partial state | Enhancement | Return dataQuality in FinancialQueryResult | ✅ FIXED |
 | W34 | P1 | Conversation history stores raw sensitive queries | Enhancement | Redact after storage, retention policy | ⏭ |
 | W35 | P1 | Voice recognizer lifecycle incomplete | Bug | Add destroy() from onCleared, error handling | ✅ FIXED |
 
@@ -65,7 +65,7 @@
 | A03 | P0 | Historical analytics uses current rates | Bug | Use convertAsOf(amount, from, to, expense.date) | ✅ FIXED |
 | A04 | P0 | SpendingPersonalityClassifier not currency-safe | Bug | Inject normalizer; normalize before extraction | 📝 TODO ONLY |
 | A05 | P0 | AnalyticsRepository drops partial-conversion | Bug | Return MoneyAggregate + dataQuality | ✅ FIXED |
-| A06 | P0 | Basic/advanced/repo/legacy analytics disagree | Bug | Create AnalyticsInputAssembler for consistency | ⏭ |
+| A06 | P0 | Basic/advanced/repo/legacy analytics disagree | Bug | Create AnalyticsInputAssembler for consistency | ✅ FIXED |
 | A07 | P1 | InsightsEngine defaults to EUR | Enhancement | Require NormalizedAnalyticsInput or deprecate | 📝 TODO ONLY |
 | A08 | P1 | Daily chart uses "last N days from now" | Bug | Use explicit startMs/endMs range | 📝 TODO ONLY |
 | A09 | P1 | Advanced analytics may use different period | Bug | Pass explicit AnalyticsPeriodRange from VM | 📝 TODO ONLY |
@@ -75,7 +75,7 @@
 | A13 | P1 | Spending pace period wrong for historical | Bug | Add referenceNow param, use period.endMs | 📝 TODO ONLY |
 | A14 | P1 | Location analytics raw DAO path | Bug | Use normalized snapshots/MoneyAggregate | ✅ FIXED |
 | A15 | P1 | Category deletion/history weak | Enhancement | Soft-delete or persist name snapshot | ⏭ |
-| A16 | P1 | Analytics recomputes too much | Enhancement | AnalyticsInputAssembler: query once, split in memory | ⏭ |
+| A16 | P1 | Analytics recomputes too much | Enhancement | AnalyticsInputAssembler: query once, split in memory | ✅ FIXED |
 
 ---
 
@@ -161,7 +161,7 @@
 
 All items from the original Quick Wins list have been resolved:
 - **Batch 1 (Timestamp/Atomic):** W04/W18/C02/G10 (✅ FIXED), W07/W13/I02/I07/C05 (📝 TODO)
-- **Batch 2 (Currency/Normalization):** W03/C03 (✅ FIXED), W01/W02 (✅ FIXED), W05 (✅ FIXED), C04 (📝 TODO)
+- **Batch 2 (Currency/Normalization):** C03 (✅ FIXED), W01/W02 (✅ FIXED), W05 (✅ FIXED), C04 (📝 TODO)
 - **Batch 3 (Privacy/Wall-clock):** W10/W17 (✅ FIXED), M01/M08 (✅ FIXED), M10/T07 (📝 TODO)
 
 ---
@@ -173,13 +173,13 @@ All items from the original Quick Wins list have been resolved:
 | Warranty/Sub/Location/NLP | 17 | 18 | 35 |
 | Analytical Engines | 6 | 10 | 16 |
 | Categorization/Merchant | 5 | 9 | 14 |
-| Groups/Investment/Tax | 10 | 15 | 25 |
+| Groups/Investment/Tax | 11 | 18 | 29 |
 | Money/Time Primitives | 6 | 8 | 14 |
-| **TOTAL** | **40** | **65** | **105** |
+| **TOTAL** | **45** | **63** | **108** |
 
 | Status | Count |
 |--------|-------|
-| ✅ FIXED | 31 |
-| 📝 TODO ONLY | 39 |
-| ⏭ DEFERRED | 35 |
+| ✅ FIXED | 34 |
+| 📝 TODO ONLY | 52 |
+| ⏭ DEFERRED | 22 |
 | ⬜ NOT STARTED | 0 |

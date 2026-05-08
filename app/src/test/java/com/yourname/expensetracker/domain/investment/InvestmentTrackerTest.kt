@@ -33,7 +33,7 @@ class InvestmentTrackerTest {
 
     @Before
     fun setup() {
-        tracker = InvestmentTracker(investmentDao, investmentValueDao, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
+        tracker = InvestmentTracker(mockk(relaxed = true), investmentDao, investmentValueDao, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
     }
 
     // ---- All-time high/low correctness ----

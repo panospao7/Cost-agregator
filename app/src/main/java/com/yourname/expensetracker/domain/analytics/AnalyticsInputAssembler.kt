@@ -2,7 +2,6 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.core.time.PeriodRange
-import com.yourname.expensetracker.domain.currency.CurrencyConverter
 
 /**
  * Assembles a [NormalizedAnalyticsInput] by fetching expenses once, normalizing
@@ -18,26 +17,27 @@ object AnalyticsInputAssembler {
      * Build a [NormalizedAnalyticsInput] for the given [period].
      *
      * 1. Fetches all expenses in the period via [ExpenseRepository].
-     * 2. Normalises to EUR using [AnalyticsCurrencyNormalizer.normalizeExpenses].
+     * 2. Normalises to [homeCurrency] using [AnalyticsCurrencyNormalizer.normalizeExpenses].
      * 3. Maps the normalised result to the [NormalizedAnalyticsInput] contract.
      *
      * @param period            The date range to analyse.
+     * @param homeCurrency      The user's home currency code (e.g. "EUR", "USD"),
+     *                          obtained from [CurrencySettingsRepository.homeCurrency].
      * @param expenseRepository Repository providing raw [Expense] entities.
      * @param normalizer        Currency normalizer that converts to home currency.
-     * @param converter         Currency converter for MoneyAggregate fallback.
      * @return A fully populated [NormalizedAnalyticsInput].
      */
     suspend fun build(
         period: PeriodRange,
+        homeCurrency: String,
         expenseRepository: ExpenseRepository,
-        normalizer: AnalyticsCurrencyNormalizer,
-        converter: CurrencyConverter
+        normalizer: AnalyticsCurrencyNormalizer
     ): NormalizedAnalyticsInput {
         // 1. Fetch expenses once
         val expenses = expenseRepository.getExpensesBetween(period.startInclusiveMillis, period.endExclusiveMillis)
 
         // 2. Normalise via AnalyticsCurrencyNormalizer
-        val normalized = normalizer.normalizeExpenses(expenses, "EUR")
+        val normalized = normalizer.normalizeExpenses(expenses, homeCurrency)
 
         // 3. Map normalised expenses to the canonical contract
         val included = normalized.normalizedExpenses.map { normExp ->
@@ -47,7 +47,7 @@ object AnalyticsInputAssembler {
                 originalAmount = normExp.originalEffectiveAmount,
                 originalCurrency = normExp.originalCurrency,
                 normalizedAmount = snap.effectiveAmount, // already converted by the normalizer
-                normalizedCurrency = "EUR",
+                normalizedCurrency = homeCurrency,
                 date = snap.date,
                 merchant = snap.merchant,
                 merchantKey = snap.merchantKey,
@@ -71,7 +71,7 @@ object AnalyticsInputAssembler {
 
         return NormalizedAnalyticsInput(
             period = period,
-            homeCurrency = "EUR",
+            homeCurrency = homeCurrency,
             includedExpenses = included,
             excludedExpenses = excluded,
             dataQuality = AnalyticsDataQuality(
