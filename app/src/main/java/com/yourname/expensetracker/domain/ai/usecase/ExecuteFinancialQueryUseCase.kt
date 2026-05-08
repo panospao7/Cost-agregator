@@ -29,6 +29,10 @@ import javax.inject.Inject
  * Amount filters (minAmount/maxAmount) operate on raw effectiveAmount — they do not automatically
  * convert to home currency. Queries like "expenses over $50" filter on the numeric value of
  * effectiveAmount regardless of currency.
+ *
+ * TODO (PR 5/W32): Amount filters (minAmount/maxAmount) should accept optional currency.
+ * Currently "expenses over $50" compares raw effectiveAmount across all currencies.
+ * See: ExpenseRepository.buildExpenseDynamicQueryParts for filter SQL.
  */
 class ExecuteFinancialQueryUseCase @Inject constructor(
     private val expenseRepository: ExpenseRepository,
@@ -92,8 +96,13 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             val byCurrency = grouped.groupBy { it.expense.currency }
                 // SAFE: per-currency bucket sum, then convertMultiple — correct multi-currency handling
                 .map { (currency, list) -> list.sumOf { it.expense.effectiveAmount } to currency }
-            val sortKey = if (byCurrency.size == 1) byCurrency.first().first
-            else currencyConverter.convertMultiple(byCurrency, homeCurrency).total
+            val sortKey = if (byCurrency.size == 1) {
+                val (amount, currency) = byCurrency.first()
+                if (currency.equals(homeCurrency, ignoreCase = true)) amount
+                else currencyConverter.convert(amount, currency, homeCurrency)?.convertedAmount ?: 0.0
+            } else {
+                currencyConverter.convertMultiple(byCurrency, homeCurrency).total
+            }
             grouped to sortKey
         }.sortedByDescending { it.second }
             .take(8)
@@ -130,8 +139,13 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             val byCurrency = grouped.groupBy { it.expense.currency }
                 // SAFE: per-currency bucket sum, then convertMultiple — correct multi-currency handling
                 .map { (currency, list) -> list.sumOf { it.expense.effectiveAmount } to currency }
-            val sortKey = if (byCurrency.size == 1) byCurrency.first().first
-            else currencyConverter.convertMultiple(byCurrency, homeCurrency).total
+            val sortKey = if (byCurrency.size == 1) {
+                val (amount, currency) = byCurrency.first()
+                if (currency.equals(homeCurrency, ignoreCase = true)) amount
+                else currencyConverter.convert(amount, currency, homeCurrency)?.convertedAmount ?: 0.0
+            } else {
+                currencyConverter.convertMultiple(byCurrency, homeCurrency).total
+            }
             grouped to sortKey
         }.sortedByDescending { it.second }
             .take(8)
@@ -167,6 +181,8 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
             .getOrDefault("EUR")
 
+        var failedConversions = 0
+
         // Determine if we have mixed currencies
         val distinctCurrencies = matching.expenses.map { it.expense.currency }.distinct()
         val largest = if (distinctCurrencies.size <= 1) {
@@ -174,7 +190,7 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             matching.expenses.maxByOrNull { it.expense.effectiveAmount }
         } else {
             // Mixed currencies — convert each to home currency for comparison
-            val withNormalized = matching.expenses.map { expenseWithCategory ->
+            val withNormalized = matching.expenses.mapNotNull { expenseWithCategory ->
                 val normalizedAmount = if (expenseWithCategory.expense.currency.equals(homeCurrency, ignoreCase = true)) {
                     expenseWithCategory.expense.effectiveAmount
                 } else {
@@ -182,10 +198,14 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
                         amount = expenseWithCategory.expense.effectiveAmount,
                         fromCurrency = expenseWithCategory.expense.currency,
                         toCurrency = homeCurrency
-                    )?.convertedAmount ?: expenseWithCategory.expense.effectiveAmount
+                    )?.convertedAmount ?: run {
+                        failedConversions++
+                        null  // exclude this row
+                    }
                 }
-                expenseWithCategory to normalizedAmount
+                normalizedAmount?.let { expenseWithCategory to it }
             }
+            // TODO (PR 5a): Surface failedConversions in the return type (e.g., partial flag).
             withNormalized.maxByOrNull { it.second }?.first
         } ?: return FinancialQueryResult.Unsupported("No matching transactions found")
 

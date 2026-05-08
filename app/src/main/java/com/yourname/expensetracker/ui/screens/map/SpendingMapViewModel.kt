@@ -4,6 +4,9 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import timber.log.Timber
 import com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
@@ -352,7 +355,7 @@ class SpendingMapViewModel @Inject constructor(
         val currentState = _state.value
         val filteredExpenses = locatedExpenses.filter { expense ->
             val dateInRange = (currentState.dateRangeStartMs == null || expense.date >= currentState.dateRangeStartMs) &&
-                (currentState.dateRangeEndMs == null || expense.date <= currentState.dateRangeEndMs)
+                (currentState.dateRangeEndMs == null || expense.date < currentState.dateRangeEndMs)
             val categoryMatch = currentState.selectedCategories.isEmpty() ||
                 currentState.selectedCategories.contains(expense.categoryId?.toString() ?: UNCATEGORIZED_KEY)
             dateInRange && categoryMatch
@@ -369,12 +372,15 @@ class SpendingMapViewModel @Inject constructor(
             val lon = e.longitude ?: return@mapNotNull null
             val homeAmount = if (e.currency != currentState.homeCurrency) {
                 currencyConverter.convert(
-                    amount = e.amount,
+                    amount = e.effectiveAmount,
                     fromCurrency = e.currency,
                     toCurrency = currentState.homeCurrency
-                )?.convertedAmount ?: e.amount // fallback to raw amount
+                )?.convertedAmount ?: run {
+                    Timber.w("Failed to convert %s amount %.2f to %s, falling back to raw amount", e.currency, e.effectiveAmount, currentState.homeCurrency)
+                    e.amount
+                }
             } else {
-                e.amount
+                e.effectiveAmount
             }
             MapExpenseMarker(
                 expenseId = e.id,
@@ -389,7 +395,11 @@ class SpendingMapViewModel @Inject constructor(
         }
 
         // Map to domain LocatedExpense before calling domain engines
-        val domainExpenses = filteredExpenses.mapNotNull { e ->
+        // Apply the same spending-only filter used for heatmap — non-spending
+        // types (deposits, transfers, withdrawals) must not contribute to insights.
+        val spendingDomainExpenses = filteredExpenses.filter { e ->
+            e.transactionType.toDomain().isSpending
+        }.mapNotNull { e ->
             val lat = e.latitude ?: return@mapNotNull null
             val lon = e.longitude ?: return@mapNotNull null
             LocatedExpense(
@@ -400,7 +410,8 @@ class SpendingMapViewModel @Inject constructor(
                 merchant = e.merchant,
                 date = e.date,
                 locationSource = e.locationSource,
-                placeId = e.placeId
+                placeId = e.placeId,
+                currency = e.currency
             )
         }
 
@@ -422,12 +433,13 @@ class SpendingMapViewModel @Inject constructor(
                 merchant = e.merchant,
                 date = e.date,
                 locationSource = e.locationSource,
-                placeId = e.placeId
+                placeId = e.placeId,
+                currency = e.currency
             )
         }
 
         val heatmap = heatmapEngine.compute(heatmapExpenses)
-        val insights = insightsEngine.compute(domainExpenses)
+        val insights = insightsEngine.compute(spendingDomainExpenses)
 
         val categoriesById = runCatching {
             categoryRepository.getAll().associateBy { it.id }
@@ -522,6 +534,13 @@ class SpendingMapViewModel @Inject constructor(
      * Bug #11 fix: avoids repeated GPS calls on every data reload.
      */
     private suspend fun fetchDeviceLocation() {
+        // TODO (PR 4a): Inject PrivacyGate via constructor when available.
+        //                Currently not injected — uncomment the check below after injection:
+        // val decision = privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION)
+        // if (decision is PrivacyDecision.Denied) {
+        //     Timber.d("Device GPS denied by privacy gate in SpendingMapViewModel")
+        //     return
+        // }
         try {
             val loc = locationProvider.getLastKnownLocation() ?: return
             cachedDeviceLoc = loc
