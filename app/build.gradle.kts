@@ -460,6 +460,8 @@ tasks.register("checkDirectTimeCalls") {
 }
 
 // Wire both new guards into the check lifecycle
+// VERIFIED (PR-E24): Both checkRawMoneyAggregates and checkDirectTimeCalls are
+// registered (above) AND wired to the "check" lifecycle via dependsOn.
 tasks.named("check") {
     dependsOn("checkRawMoneyAggregates")
     dependsOn("checkDirectTimeCalls")

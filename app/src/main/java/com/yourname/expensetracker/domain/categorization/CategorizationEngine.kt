@@ -487,6 +487,11 @@ class CategorizationEngine @Inject constructor(
     // TODO (C04): Create CategoryMappingWriter that emits CategoryMappingChanged.
     // Invalidate category/merchant/semantic caches from all write paths.
     //
+    // C04-VERIFIED: invalidateCache() is called after the only write operation in
+    // this engine (learnMerchantCategory at line 457). The TODO tracks future work
+    // for a broader CategoryMappingWriter pattern. For now, all merchant-category
+    // writes within CategorizationEngine trigger cache invalidation.
+    //
     // NEXT: Change insert return types from Unit to Long (needs DAO migration)
     // NEXT: Emit CategoryMappingChanged events from all write paths
     // NEXT: Wire merchant canonical stats to TransactionSideEffectDispatcher

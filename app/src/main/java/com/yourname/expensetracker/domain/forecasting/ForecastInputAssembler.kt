@@ -28,6 +28,7 @@ import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
@@ -80,6 +81,7 @@ class ForecastInputAssembler @Inject constructor(
     private val timeProvider: TimeProvider,
     private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
     private val currencySettingsRepository: CurrencySettingsRepository,
+    private val currencyConverter: CurrencyConverter,
     /** @suppress Coordinator injected for occurrence-driven dedup. */
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
     /** @suppress DAO injected to query materialized occurrences for dedup. */
@@ -428,37 +430,34 @@ class ForecastInputAssembler @Inject constructor(
                 planned.sourceOccurrenceKey in materializedOccurrenceKeys
         }
 
-        // TODO (ARCH-02 / PR-E12): Populate ForecastDataQuality from NormalizedAnalyticsInput.
-        // Actual expense quality is partially populated. Planned/recurring deferred.
-        //
-        // IMPLEMENTATION PLAN for planned/recurring quality population:
-        //
-        // 1. Planned expense quality (excludedPlannedCount):
-        //    - Track how many planned expenses are excluded during dedup (sourceOccurrenceKey match).
-        //    - Count planned expenses with amount <= 0 (invalid) or null/blank currency.
-        //    - Report these as excludedPlannedCount with a "planned_expense_excluded" warning.
-        //
-        // 2. Recurring quality (excludedRecurringCount):
-        //    - Track how many detected recurring patterns fall below HIGH_CONFIDENCE_THRESHOLD
-        //      and are filtered out by mergeRecurringPatterns(). Each filtered pattern represents
-        //      a potential recurring expense whose contribution is missing from the forecast.
-        //    - Count manual recurring rules that are inactive (rule.isActive == false) and thus
-        //      not generating occurrences.
-        //    - Count manual recurring rules whose generateOccurrences() call throws (non-fatal
-        //      catch at line 401-403).
-        //    - Report these as excludedRecurringCount with appropriate warnings.
-        //
-        // 3. Confidence penalty refinement:
-        //    - Currently only actual-expense conversion failures contribute to confidencePenalty.
-        //    - Add planned and recurring exclusion ratios to the formula:
-        //      confidencePenalty += (excludedPlannedRatio * 0.15) + (excludedRecurringRatio * 0.15)
-        //    - Cap total at 0.70 (up from current 0.50) to reflect the broader input quality base.
-        //
-        // 4. Warning messages:
-        //    - Generate human-readable warnings for each exclusion category, e.g.
-        //      "N planned expenses excluded (duplicate source occurrence key)"
-        //      "M recurring patterns excluded (confidence below 70% threshold)"
-        //    - Append to conversionWarnings list.
+        // ── Planned expense quality tracking ──────────────────────────────────
+        val plannedDedupExcluded = plannedExpenses.size - deduplicatedPlannedExpenses.size
+        var plannedConversionFailures = 0
+        val plannedWarnings = mutableListOf<String>()
+
+        // Normalize planned expenses: attempt conversion to home currency for each.
+        // Expenses that fail conversion are still included in the forecast (for
+        // transparency) but are counted in excludedPlannedCount so consumers can
+        // adjust confidence.
+        val normalizedPlannedExpenses = deduplicatedPlannedExpenses.map { pe ->
+            val normalizedAmount = if (pe.currency.equals(resolvedHomeCurrency, ignoreCase = true)) {
+                pe.amount
+            } else {
+                currencyConverter.convert(
+                    amount = pe.amount,
+                    fromCurrency = pe.currency,
+                    toCurrency = resolvedHomeCurrency
+                )?.convertedAmount
+            }
+            if (normalizedAmount == null && pe.currency.isNotBlank()) {
+                plannedConversionFailures++
+                plannedWarnings.add("Planned expense '${pe.description}' ${pe.amount} ${pe.currency} excluded — conversion failed")
+            }
+            pe // keep the original planned expense (still used in forecast)
+        }
+
+        val totalPlannedExcluded = plannedDedupExcluded + plannedConversionFailures
+
         val inputCount = normalized.totalInputCount
         val excludedCount = normalized.excludedCount
         val missingRateWarnings = normalized.warnings.filter {
@@ -476,21 +475,21 @@ class ForecastInputAssembler @Inject constructor(
                 manualEntities = manualRecurringEntities,
                 detectedPatterns = detectedRecurringPatterns
             ),
-            plannedExpenses = deduplicatedPlannedExpenses,
+            plannedExpenses = normalizedPlannedExpenses,
             savingsGoals = savingsGoals,
             budgetStatuses = budgetStatuses,
             spendingPace = buildSpendingPace(normalizedExpenses, resolvedHomeCurrency),
             confirmedOccurrences = confirmedOccurrences,
             displayCurrency = resolvedHomeCurrency,
             dataQuality = ForecastDataQuality(
-                isPartial = excludedCount > 0,
+                isPartial = excludedCount > 0 || totalPlannedExcluded > 0,
                 confidencePenalty = confidencePenalty,
                 excludedActualCount = excludedCount,
-                excludedPlannedCount = 0,
+                excludedPlannedCount = totalPlannedExcluded,
                 excludedRecurringCount = 0,
                 conversionWarnings = normalized.warnings.map { warning ->
                     "${warning.type.name}: ${warning.message}"
-                }
+                } + plannedWarnings
             )
         )
     }

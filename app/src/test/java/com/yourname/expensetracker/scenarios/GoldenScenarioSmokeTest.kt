@@ -6,6 +6,8 @@ import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.core.money.FailureReason
+import com.yourname.expensetracker.domain.core.money.ConversionFailure
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
@@ -149,6 +151,78 @@ class GoldenScenarioSmokeTest {
 
         // AND: warning message is present
         assertNotNull("Partial aggregate should have warning message", aggregate.warningMessage)
+    }
+
+    @Test
+    fun `multi-currency scenario verifies MoneyAggregate partial state`() = runTest {
+        // GIVEN: EUR 100 + USD 50 seeded — no exchange rate for USD conversion
+        val seed = ScenarioSeed(
+            categories = listOf(
+                com.yourname.expensetracker.testfixtures.scenario.CategorySeed("Food")
+            ),
+            expenses = listOf(
+                com.yourname.expensetracker.testfixtures.scenario.ExpenseSeed(
+                    amount = 100.0,
+                    currency = "EUR",
+                    merchant = "Supermarket",
+                    date = dateMs(2026, 5, 1)
+                ),
+                com.yourname.expensetracker.testfixtures.scenario.ExpenseSeed(
+                    amount = 50.0,
+                    currency = "USD",
+                    merchant = "Amazon",
+                    date = dateMs(2026, 5, 1)
+                )
+            )
+        )
+        ScenarioSeeder(db).seedState(seed)
+
+        // WHEN: Building a MoneyAggregate from per-currency buckets
+        // EUR can be shown directly; USD fails conversion → partial state
+        val aggregate = MoneyAggregate.partial(
+            displayAmount = 100.0, // Only EUR is safe to display
+            displayCurrency = CurrencyCode.EUR,
+            sourceBuckets = listOf(
+                MoneyBucket(CurrencyCode.EUR, 100.0, 1),
+                MoneyBucket(CurrencyCode.USD, 50.0, 1)
+            ),
+            failures = listOf(
+                com.yourname.expensetracker.domain.core.money.ConversionFailure(
+                    originalAmount = MoneyAmount(50.0, CurrencyCode.USD),
+                    targetCurrency = CurrencyCode.EUR,
+                    reason = com.yourname.expensetracker.domain.core.money.FailureReason.MISSING_RATE
+                )
+            )
+        )
+
+        // THEN: isPartial = true because USD conversion failed
+        assertTrue("Multi-currency partial aggregate should be marked partial", aggregate.isPartial)
+
+        // AND: failedTransactionCount sums transaction counts from all failures
+        assertEquals(
+            "failedTransactionCount should be 1 (one USD transaction)",
+            1, aggregate.failedTransactionCount
+        )
+
+        // AND: sourceBuckets has both EUR and USD
+        assertEquals("Should have 2 source buckets", 2, aggregate.sourceBuckets.size)
+        val eurBucket = aggregate.sourceBuckets.single { it.currency.code == "EUR" }
+        assertEquals("EUR bucket amount should be 100.0", 100.0, eurBucket.amount, 0.001)
+        val usdBucket = aggregate.sourceBuckets.single { it.currency.code == "USD" }
+        assertEquals("USD bucket amount should be 50.0", 50.0, usdBucket.amount, 0.001)
+
+        // AND: displayAmount reflects only the home-currency portion, NOT raw sum
+        assertEquals(
+            "displayAmount should be 100.0 (only EUR home currency portion, not 150.0)",
+            100.0, aggregate.displayAmount, 0.001
+        )
+
+        // AND: warningMessage is present and mentions transaction count
+        assertNotNull("Partial aggregate should have warningMessage", aggregate.warningMessage)
+        assertTrue(
+            "warningMessage should reference transaction count",
+            aggregate.warningMessage!!.contains("1", ignoreCase = true)
+        )
     }
 
     @Test

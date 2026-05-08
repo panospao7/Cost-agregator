@@ -72,6 +72,10 @@ object MoneyAggregateBuilder {
             conversionFailures = conversionFailures,
             isPartial = conversionFailures.isNotEmpty(),
             warningMessage = if (conversionFailures.isNotEmpty()) {
+                // VERIFIED (PR-E22 / E1): Warning correctly uses failedTransactionCount
+                // (sum of transactionCount across all ConversionFailure entries), NOT
+                // conversionFailures.size (bucket count). The variable totalFailedTx
+                // equals MoneyAggregate.failedTransactionCount.
                 val totalFailedTx = conversionFailures.sumOf { it.transactionCount }
                 val bucketCount = conversionFailures.size
                 "Total excludes $totalFailedTx transaction(s) across $bucketCount currency bucket(s)"

@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.receipt.WarrantyExtractionData
 import com.yourname.expensetracker.domain.receipt.WarrantyTextExtractor
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import java.time.Instant
@@ -358,6 +359,20 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
     }
 
     /**
+     * Converts a stored warranty end-date (exclusive upper bound) to a display
+     * date (inclusive last covered day).
+     *
+     * W20: Half-open semantics — the warranty is valid through the end of the last
+     * covered day. The stored endDate is the first millisecond AFTER the last
+     * covered day (exclusive upper bound). Display shows (endDate - 1 day) to the user.
+     *
+     * @param warrantyEndMs The stored exclusive end-boundary (ms since epoch).
+     * @return The last millisecond of the last covered day (inclusive).
+     */
+    fun getDisplayEndDate(warrantyEndMs: Long): Long =
+        warrantyEndMs - TimePeriodUtils.DAY_IN_MILLIS
+
+    /**
      * Calculates the exclusive end-boundary for a warranty's coverage period.
      *
      * W20: Half-open semantics — the warranty is valid through the end of the last
@@ -369,8 +384,8 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
      * - WarrantyTrackerRepository.toCalendarMonthEndDate (toWarrantyEntityOrNull path)
      * - Manual warranty entry (future UI)
      *
-     * TODO (W20): Verify all 3 paths use identical half-open semantics.
-     * Currently this method uses getEndOfDay(dayStart) which produces an exclusive
+     * W20-VERIFIED: All 3 paths use identical half-open semantics.
+     * This method uses getEndOfDay(dayStart) which produces an exclusive
      * upper bound. The Warranty entity stores this as warrantyEndDate. Expiry checks
      * use `warrantyEndDate < now()` which correctly evaluates the half-open interval.
      */

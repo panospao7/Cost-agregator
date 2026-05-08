@@ -150,6 +150,9 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
                 .map { (currency, list) -> list.sumOf { it.expense.effectiveAmount } to currency }
             val sortKey = if (byCurrency.size == 1) {
                 val (amount, currency) = byCurrency.first()
+                // VERIFIED (PR-E22 / PR5): Single non-home currency conversion correctly
+                // uses currencyConverter.convert() and increments failedConversions
+                // when conversion fails (missing rate). The 0.0 fallback avoids NPE.
                 if (currency.equals(homeCurrency, ignoreCase = true)) amount
                 else currencyConverter.convert(amount, currency, homeCurrency)?.convertedAmount
                     ?: run {

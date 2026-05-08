@@ -5,6 +5,12 @@ import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import java.io.ByteArrayOutputStream
 import java.text.DecimalFormat
@@ -32,8 +38,35 @@ import javax.inject.Inject
 // Apply hardened CSV cell sanitizer (neutralize =+@- leading characters) per OWASP.
 // Add updateBusinessTaxFields coordinator method.
 class AccountantReportPdfExporter @Inject constructor(
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val currencyConverter: CurrencyConverter,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) {
+
+    /**
+     * Compute a MoneyAggregate for business-deductible expenses, grouped by
+     * original currency and converted to [homeCurrency].
+     *
+     * PR-E22: Replaces raw-Double deductible totals with a proper MoneyAggregate
+     * so consumers see per-currency buckets and conversion-failure diagnostics.
+     *
+     * @param expenses All expenses (filtered upstream for deductible flag).
+     * @param homeCurrency The home/target currency for the aggregate display.
+     * @return A [MoneyAggregate] with one source bucket per expense currency.
+     */
+    suspend fun generateDeductibleAggregate(
+        expenses: List<Expense>,
+        homeCurrency: String
+    ): MoneyAggregate {
+        val deductibleByCurrency = expenses
+            .filter { it.isBusinessExpense }
+            .groupBy { it.currency.uppercase() }
+        val buckets = deductibleByCurrency.map { (ccy, list) ->
+            Pair(list.sumOf { it.effectiveAmount }, ccy)
+        }
+        val transactionCounts = deductibleByCurrency.map { (_, list) -> list.size }
+        return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, transactionCounts)
+    }
 
     /**
      * @param transactionTypeFilter If non-null, only expenses whose [Expense.transactionType]

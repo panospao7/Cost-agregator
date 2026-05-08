@@ -36,6 +36,14 @@ class LocationInsightsEngine @Inject constructor() {
     /**
      * Compute place insights from [expenses].
      * Results are sorted by [PlaceInsight.totalSpend] descending.
+     *
+     * ## Transaction-type filter contract
+     * The caller (SpendingMapViewModel) pre-filters to spending-only expenses
+     * (PURCHASE transaction type) before invoking this method. Deposits,
+     * transfers, and withdrawals are excluded upstream. This engine does NOT
+     * apply its own transaction-type filter — it relies on the caller contract.
+     *
+     * @see SpendingMapViewModel.recomputeMapData
      */
     fun compute(expenses: List<LocatedExpense>): List<PlaceInsight> {
         if (expenses.isEmpty()) return emptyList()
@@ -96,6 +104,11 @@ class LocationInsightsEngine @Inject constructor() {
      * Filters to [ConversionStatus.HOME_CURRENCY] and [ConversionStatus.CONVERTED]
      * only, skipping expenses where conversion failed. Uses the same grid-snap
      * clustering as [compute].
+     *
+     * ## Transaction-type filter contract
+     * Same as [compute] — the caller (SpendingMapViewModel) pre-filters to
+     * spending-only expenses. This engine only applies currency-conversion
+     * filtering, not transaction-type filtering.
      */
     fun computeNormalized(expenses: List<LocatedMoneyExpense>): List<PlaceInsight> {
         val validExpenses = expenses.filter {

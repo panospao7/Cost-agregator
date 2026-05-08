@@ -10,6 +10,8 @@ import com.yourname.expensetracker.data.repository.SubscriptionManagementReposit
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.subscription.CreateSubscriptionRequest
+import com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -61,7 +63,8 @@ data class PriceChangeInfo(
 class SubscriptionManagementViewModel @Inject constructor(
     private val repository: SubscriptionManagementRepository,
     private val timeProvider: TimeProvider,
-    currencySettingsRepository: CurrencySettingsRepository
+    private val subscriptionManagerEngine: SubscriptionManagerEngine,
+    private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
     val homeCurrency: Flow<String> = currencySettingsRepository.homeCurrency()
@@ -259,16 +262,15 @@ class SubscriptionManagementViewModel @Inject constructor(
     /**
      * Add a new subscription.
      *
-     * TODO (W22): Route through SubscriptionManagerEngine.validateAndCreate() instead of
-     * directly calling repository.insertSubscription(). validateAndCreate enforces:
+     * W22-FIXED: Now routes through [SubscriptionManagerEngine.validateAndCreate]
+     * which enforces:
      * - positive amount (require(amount > 0))
      * - valid 3-letter currency code
      * - non-blank merchant
      * - createdAt timestamp via timeProvider.now()
      * - baseline price history recording
      *
-     * Entry points that need validateAndCreate:
-     * - This method (SubscriptionManagementViewModel.addSubscription)
+     * Entry points that still need validateAndCreate:
      * - SubscriptionManagementRepository.insertSubscription (called externally)
      * - Any candidate-conversion path (markCandidateAsConverted → auto-create)
      * - NotificationSubscriptionDetector auto-creation path
@@ -282,29 +284,26 @@ class SubscriptionManagementViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             try {
-                val subscription = ManualRecurringExpense(
+                val hc = currencySettingsRepository.homeCurrency().first()
+                val request = CreateSubscriptionRequest(
                     merchant = merchant,
                     amount = amount,
+                    currency = hc,
                     frequency = frequency,
-                    subscriptionCategory = category,
-                    nextDate = nextDate,
-                    isSubscription = true,
-                    isActive = true
+                    startDate = nextDate
                 )
-                
-                val id = repository.insertSubscription(subscription)
-                
-                // REC-8: Record initial baseline price entry
-                // W04: Set recordedAt to timeProvider.now() to avoid the 0L sentinel
-                val priceHistory = SubscriptionPriceHistory(
-                    subscriptionId = id,
-                    amount = amount,
-                    recordedAt = timeProvider.now(),
-                    changeReason = "BASELINE: Initial subscription"
+                subscriptionManagerEngine.validateAndCreate(request).fold(
+                    onSuccess = { created ->
+                        // If a subscriptionCategory was provided, update it after creation
+                        if (category != null) {
+                            repository.updateSubscription(
+                                created.copy(subscriptionCategory = category)
+                            )
+                        }
+                        loadSubscriptions()
+                    },
+                    onFailure = { error -> throw error }
                 )
-                repository.insertPriceHistory(priceHistory)
-                
-                loadSubscriptions()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     error = "Failed to add subscription: ${e.message}"

@@ -241,6 +241,8 @@ class SubscriptionManagerEngine @Inject constructor(
      * [ManualRecurringExpense.amount] on the subscription entity so that
      * downstream consumers (dashboard, budget calculations, recurring
      * expense generation) see the current price without stale data.
+     *
+     * ATOMICITY-VERIFIED: Wrapped in [database.withTransaction] at the call site.
      */
     suspend fun recordPriceChange(
         subscriptionId: Long,

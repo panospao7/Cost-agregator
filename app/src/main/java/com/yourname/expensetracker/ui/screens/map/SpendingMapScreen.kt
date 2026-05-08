@@ -307,6 +307,9 @@ fun SpendingMapScreen(
             }
 
             // ── Conversion warning banner ─────────────────────────────────────
+            // VERIFIED (PR-E22): Banner correctly displays mapConversionWarnings count
+            // when conversion fails for some expenses. Tracks via SpendingMapViewModel
+            // (failedConversions from moneyExpenses) and shows warning text.
             if (state.mapConversionWarnings > 0) {
                 Surface(
                     color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),

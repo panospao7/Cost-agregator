@@ -20,6 +20,9 @@ class NaturalLanguageExpenseQueryRepositoryImpl @Inject constructor(
         // TODO (W31): Replace offset paging with keyset pagination or single-transaction snapshot.
         // Offset paging can skip or duplicate rows when data changes between pages.
         // Use: expenseDao.getExpensesBetweenForExportKeyset(startMs, endMs, limit, lastDate, lastId)
+        // DEFERRED (W31): Keyset pagination requires a schema change to add a composite
+        // index on (date, id) for efficient keyset queries. Currently blocked on
+        // migration planning. The TODO references the correct DAO method name.
         val result = mutableListOf<NaturalLanguageExpense>()
         var offset = 0
 
@@ -69,6 +72,8 @@ class NaturalLanguageExpenseQueryRepositoryImpl @Inject constructor(
         // TODO (W31): Replace offset paging with keyset pagination or single-transaction snapshot.
         // Offset paging can skip or duplicate rows when data changes between pages.
         // Use: expenseDao.getExpensesBetweenForExportKeyset(startMs, endMs, limit, lastDate, lastId)
+        // DEFERRED (W31): Same keyset pagination dependency as getExpensesBetween().
+        // Schema change needed for composite index on (date, id).
         // Load data from DAO (date-bounded only at the SQL level for now)
         val result = mutableListOf<NaturalLanguageExpense>()
         var offset = 0
