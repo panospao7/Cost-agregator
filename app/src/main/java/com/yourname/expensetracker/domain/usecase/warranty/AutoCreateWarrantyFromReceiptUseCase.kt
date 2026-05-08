@@ -203,6 +203,8 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
             merchantName = data.merchantName,
             purchaseDate = data.purchaseDate,
             warrantyDurationMonths = data.warrantyDurationMonths,
+            // W20: warrantyEndDate is exclusive (half-open). The warranty is valid
+            // through the end of the last covered day. Display as warrantyEndDate - 1 day.
             warrantyEndDate = data.warrantyEndDate,
             warrantyType = warrantyType,
             supportPhone = data.supportPhone,

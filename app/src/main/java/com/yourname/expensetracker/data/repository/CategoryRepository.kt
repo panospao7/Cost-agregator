@@ -115,6 +115,7 @@ class CategoryRepository @Inject constructor(
 
             val category = Category(name = normalizedName, icon = icon, color = color)
             val id = categoryDao.insert(category)
+            categorizationEngine.invalidateCache()
             hybridExpenseClassifier.get().invalidateCategorySnapshot()
             category.copy(id = id)
         }
@@ -151,6 +152,7 @@ class CategoryRepository @Inject constructor(
      */
     suspend fun mergeCategories(sourceCategoryId: Long, targetCategoryId: Long): Int = withContext(Dispatchers.IO) {
         val expensesMoved = categoryDao.mergeCategories(sourceCategoryId, targetCategoryId)
+        categorizationEngine.invalidateCache()
         hybridExpenseClassifier.get().invalidateCategorySnapshot()
         Timber.i("Merged category %d into %d: %d expenses reassigned", sourceCategoryId, targetCategoryId, expensesMoved)
         expensesMoved
@@ -173,6 +175,7 @@ class CategoryRepository @Inject constructor(
         }
 
         categoryDao.delete(category)
+        categorizationEngine.invalidateCache()
         hybridExpenseClassifier.get().invalidateCategorySnapshot()
         DeleteCategoryResult.Deleted
     }

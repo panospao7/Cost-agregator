@@ -23,6 +23,26 @@ import java.time.ZoneId
  *   t >= periodStart && t < periodEnd
  * ```
  *
+ * ## 🌍 DST-aware timezone math (M04)
+ *
+ * Calendar boundaries (day start, month start, etc.) are computed in the
+ * **system-default timezone** (see [ZoneId.systemDefault]). On DST transition
+ * days the length of a calendar day is **23 or 25 hours** instead of 24.
+ *
+ * - **Spring-forward days** (e.g. 2025-03-30 in Europe): clock jumps from
+ *   02:59:59 to 04:00:00. The day contains only **23 hours**.
+ * - **Fall-back days** (e.g. 2025-10-26 in Europe): clock falls back from
+ *   03:59:59 to 03:00:00. The day contains **25 hours**.
+ *
+ * Current computation uses `getStartOfDay(now)`/`getEndOfDay(now)` which call
+ * `java.time.LocalDate.atStartOfDay(zoneId).toInstant()`. This correctly accounts
+ * for zone offsets but callers should be aware that:
+ * - `THIS_MONTH` / `LAST_MONTH` ranges on DST transition dates span 23 or 25 hours.
+ * - `LAST_7_DAYS` / `LAST_30_DAYS` rolling windows may include one short or long day.
+ * - `THIS_YEAR` / `LAST_YEAR` are unaffected by DST (annual boundaries are midnight Jan 1).
+ *
+ * For UTC-based analytics or export, pass [ZoneId.of("UTC")] explicitly.
+ *
  * ## Calendar periods (use calendar-aware helpers)
  *
  * | Kind | Typical helper |

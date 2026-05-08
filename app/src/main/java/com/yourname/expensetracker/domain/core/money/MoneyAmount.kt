@@ -67,6 +67,12 @@ data class MoneyAmount(
     fun isNegative(): Boolean = amount < 0.0
 
     /** Format for display using currency symbol. */
+    // TODO (M09): Split formatDisplay into three variants:
+    //   fun display(locale: Locale): String       — locale-aware grouping separators, currency symbol
+    //   fun exportStable(): String                 — Locale.US always, for CSV/JSON export consistency
+    //   fun accounting(): String                   — parentheses for negatives, e.g. (€12.34)
+    // Current implementation uses String.format("%.2f") which is Locale-dependent
+    // and can produce unexpected separators on某些 locale (e.g. comma as decimal).
     fun formatDisplay(): String = "${CurrencyCode.symbolFor(currency)}${String.format("%.2f", amount)}"
 
     /** Add two money amounts in the SAME currency. Throws if currencies differ. */

@@ -3,7 +3,6 @@ package com.yourname.expensetracker.domain.groups
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import java.math.BigDecimal
 import java.math.RoundingMode
 import javax.inject.Inject
@@ -47,21 +46,26 @@ class SettlementCalculator @Inject constructor(
     /**
      * Calculate an optimal settlement plan to balance all debts.
      * Returns a list of who should pay whom and how much.
+     *
+     * @param balances Per-member balance map (all must be in the same currency).
+     * @param groupCurrency Explicit group currency to use. If null, resolved from balances
+     *                      or falls back to the user's home currency.
+     * @throws IllegalArgumentException if balances contain mixed currencies.
      */
-    fun calculateSettlements(balances: Map<Long, MemberBalance>): List<Settlement> {
+    suspend fun calculateSettlements(
+        balances: Map<Long, MemberBalance>,
+        groupCurrency: String? = null
+    ): List<Settlement> {
         if (balances.isEmpty()) return emptyList()
 
-        // If all members share the same currency, settle in that currency.
-        // Otherwise, fall back to the user's home currency.
-        val distinctCurrencies = balances.values.map { it.currency }.distinct()
-        // TODO (G04): Reject mixed-currency settlements or convert all balances to group currency using as-of rates.
-        //             Currently falls back to home currency but sums raw amounts without conversion.
-        val groupCurrency = if (distinctCurrencies.size == 1) {
-            distinctCurrencies.first()
-        } else {
-            // TODO (G10): Remove runBlocking — accept explicit groupCurrency parameter from caller
-            getHomeCurrencySync()
+        val currencies = balances.values.map { it.currency }.distinct()
+        require(currencies.size <= 1) {
+            "Settlement requires single currency. Found: $currencies. Convert all balances to group currency first."
         }
+
+        val currency = groupCurrency ?: currencies.firstOrNull()
+            ?: currencySettingsRepository.homeCurrency().first()
+
         val normalized = normalizeBalancesToCents(balances)
         val debtors = normalized
             .filter { it.netCents < 0 }
@@ -86,7 +90,7 @@ class SettlementCalculator @Inject constructor(
                 toMemberName = it.toMemberName,
                 amount = centsToAmount(it.amountCents),
                 usedGreedyFallback = transferPlan.usedGreedyFallback,
-                currency = groupCurrency
+                currency = currency
             )
         }
     }
@@ -95,8 +99,11 @@ class SettlementCalculator @Inject constructor(
      * Alternative settlement entry point.
      * Uses the same exact optimization strategy.
      */
-    fun calculateSettlementsMinAmount(balances: Map<Long, MemberBalance>): List<Settlement> {
-        return calculateSettlements(balances)
+    suspend fun calculateSettlementsMinAmount(
+        balances: Map<Long, MemberBalance>,
+        groupCurrency: String? = null
+    ): List<Settlement> {
+        return calculateSettlements(balances, groupCurrency)
     }
 
     /**
@@ -400,18 +407,6 @@ class SettlementCalculator @Inject constructor(
         return BigDecimal.valueOf(cents)
             .movePointLeft(2)
             .toDouble()
-    }
-
-    /**
-     * Synchronously retrieve the user's home currency.
-     * Used as a fallback when balances use mixed currencies.
-     */
-    private fun getHomeCurrencySync(): String = runBlocking {
-        try {
-            currencySettingsRepository.homeCurrency().first()
-        } catch (_: Exception) {
-            "EUR"
-        }
     }
 
     private companion object {

@@ -85,11 +85,12 @@ class TransactionSideEffectDispatcher @Inject constructor(
         //
         // 2. After the anomaly alert check (step 3), add:
         //    ```kotlin
+        //    // Wire: merchantNormalizationRepository.incrementMerchantStats(canonical.id, amount, now)
         //    runSafely("merchant canonical stats for expense $expenseId") {
         //        expense.merchantKey?.let { key ->
         //            val canonical = merchantNormalizationRepository.resolveCanonical(key)
         //            if (canonical != null) {
-        //                merchantNormalizationRepository.incrementStats(
+        //                merchantNormalizationRepository.incrementMerchantStats(
         //                    canonicalId = canonical.id,
         //                    amount = expense.effectiveAmount,
         //                    timestamp = expense.date
@@ -99,7 +100,7 @@ class TransactionSideEffectDispatcher @Inject constructor(
         //    }
         //    ```
         //
-        // 3. Verify MerchantNormalizationRepository.incrementStats() exists and is suspend.
+        // 3. Verify MerchantNormalizationRepository.incrementMerchantStats() exists and is suspend.
         //    If not, create it. The implementation should update a merchant_stats table with:
         //    - totalSpend (sum of effectiveAmount), transactionCount, lastTransactionDate, avg.
     }
@@ -146,11 +147,12 @@ class TransactionSideEffectDispatcher @Inject constructor(
         // - Same pattern as dispatchOnCreated above.
         // - Inject MerchantNormalizationRepository, then:
         //   ```kotlin
+        //   // Wire: merchantNormalizationRepository.incrementMerchantStats(canonical.id, amount, now)
         //   runSafely("merchant canonical stats update for expense $expenseId") {
         //       expense.merchantKey?.let { key ->
         //           val canonical = merchantNormalizationRepository.resolveCanonical(key)
         //           if (canonical != null) {
-        //               merchantNormalizationRepository.incrementStats(
+        //               merchantNormalizationRepository.incrementMerchantStats(
         //                   canonicalId = canonical.id,
         //                   amount = expense.effectiveAmount,
         //                   timestamp = expense.date

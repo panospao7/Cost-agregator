@@ -180,8 +180,12 @@ class GroupTransactionCoordinator @Inject constructor(
                 val newGroupId = groupDao.insert(group)
                 
                 // If this fails, group insertion rolls back
-                val membersWithGroupId = members.map { 
-                    it.copy(groupId = newGroupId) 
+                val membersWithGroupId = members.map { member ->
+                    member.copy(groupId = newGroupId).let { m ->
+                        // G01: currentUserGroupKey invariant — currentUser=true members
+                        // get currentUserGroupKey set to the group's primary key.
+                        if (m.isCurrentUser) m.copy(currentUserGroupKey = newGroupId) else m
+                    }
                 }
                 memberDao.insertAll(membersWithGroupId)
                 
@@ -234,7 +238,11 @@ class GroupTransactionCoordinator @Inject constructor(
                     name = name,
                     email = email,
                     isCurrentUser = isCurrentUser
-                )
+                ).let { m ->
+                    // G01: currentUserGroupKey invariant — isCurrentUser=true members
+                    // get currentUserGroupKey set to the owning group's primary key.
+                    if (isCurrentUser) m.copy(currentUserGroupKey = groupId) else m
+                }
 
                 memberDao.insert(member)
                 Result.Success(Unit)
@@ -481,6 +489,13 @@ class GroupTransactionCoordinator @Inject constructor(
      * still exists). Prefer [deleteGroup] (soft archive) unless you are certain
      * the linked expenses should become standalone.
      *
+     * G08: This hard-delete bypasses the lifecycle coordinator and writes
+     * no audit events. Eventually all group deletions should route through
+     * archiveGroup() for soft-delete (isActive=false), which preserves the
+     * group record and allows future restore. Hard-delete should require an
+     * explicit confirmation flag and always write a GROUP_PERMANENTLY_DELETED
+     * lifecycle event.
+     *
      * TODO (G08): Route through archiveGroup() for soft-delete or ensure all
      *             deletions write lifecycle events to maintain audit trail.
      */
@@ -514,8 +529,12 @@ class GroupTransactionCoordinator @Inject constructor(
             val groupId = groupDao.insert(group)
             
             // If this fails, group insertion rolls back
-            val membersWithGroupId = members.map { 
-                it.copy(groupId = groupId) 
+            val membersWithGroupId = members.map { member ->
+                member.copy(groupId = groupId).let { m ->
+                    // G01: currentUserGroupKey invariant — currentUser=true members
+                    // get currentUserGroupKey set to the group's primary key.
+                    if (m.isCurrentUser) m.copy(currentUserGroupKey = groupId) else m
+                }
             }
             memberDao.insertAll(membersWithGroupId)
             
@@ -601,9 +620,9 @@ class GroupTransactionCoordinator @Inject constructor(
                     "Current user member not found or share could not be calculated"
                 )
 
-                // G02: createExpense is called with SideEffectMode.DEFER inside database.withTransaction.
-                // Side effects are dispatched after the outer transaction commits (see .also block below).
-                // This is the correct pattern — no changes needed.
+                // G02-VERIFIED: createExpense is called with SideEffectMode.DEFER inside
+                // database.withTransaction. Side effects are dispatched after the outer
+                // transaction commits (see .also block below). No changes needed.
                 // 3. Create system expense via TransactionLifecycleCoordinator
                 // Side effects are deferred until after this outer transaction commits
                 val createResult = transactionLifecycleCoordinator.createExpense(
@@ -732,6 +751,10 @@ class GroupTransactionCoordinator @Inject constructor(
             groupExpenseDao.deleteAllForGroup(groupId)
             
             // Delete members
+            // TODO (G09): Add validation before member delete — check that:
+            // 1. Member has no outstanding balance (unsettled debts)
+            // 2. Member is not the last currentUser (block or transfer ownership first)
+            // 3. A GROUP_MEMBER_REMOVED lifecycle event is emitted for audit trail
             memberDao.deleteAllForGroup(groupId)
             
             // Delete group last (parent table)
@@ -759,10 +782,16 @@ class GroupTransactionCoordinator @Inject constructor(
      * individual ownership fields. The lifecycle coordinator is reserved for
      * user-driven ownership changes that need individual audit events.
      *
-     * TODO (G03): Replace direct ExpenseDao updates with
-     *             transactionLifecycleCoordinator.updateOwnership() once the
-     *             coordinator supports bulk/metadata-only ownership changes
-     *             without requiring a full UPDATED event per row.
+     * G03: Direct mutation of the Expense DAO is intentional — the normalization
+     * is part of the group-expense atomic create operation (inside a single
+     * database.withTransaction). Routing through TransactionLifecycleCoordinator
+     * would split a single atomic group operation into unrelated per-field events,
+     * breaking the group-level atomicity contract (see C1-PR3 documentation).
+     *
+     * TODO: Replace direct ExpenseDao updates with
+     *       transactionLifecycleCoordinator.updateOwnership() once the
+     *       coordinator supports bulk/metadata-only ownership changes
+     *       without requiring a full UPDATED event per row.
      */
     private suspend fun normalizeLinkedSystemExpense(
         expense: Expense,

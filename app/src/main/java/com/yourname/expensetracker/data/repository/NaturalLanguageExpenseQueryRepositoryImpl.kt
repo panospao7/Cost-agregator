@@ -17,12 +17,12 @@ class NaturalLanguageExpenseQueryRepositoryImpl @Inject constructor(
     }
 
     override suspend fun getExpensesBetween(startMs: Long, endMs: Long): List<NaturalLanguageExpense> {
-        // TODO (W31): Replace offset paging with keyset pagination or single-transaction snapshot.
+        // DEFERRED (W30/W31): Replace offset paging with keyset pagination.
         // Offset paging can skip or duplicate rows when data changes between pages.
-        // Use: expenseDao.getExpensesBetweenForExportKeyset(startMs, endMs, limit, lastDate, lastId)
-        // DEFERRED (W31): Keyset pagination requires a schema change to add a composite
-        // index on (date, id) for efficient keyset queries. Currently blocked on
-        // migration planning. The TODO references the correct DAO method name.
+        // Target: expenseDao.getExpensesBetweenForExportKeyset(startMs, endMs, limit, lastDate, lastId)
+        // BLOCKED: Keyset pagination requires a schema migration to add a composite
+        // index on (date ASC, id ASC) for efficient keyset queries. Currently deferred
+        // until the next schema version bump.
         val result = mutableListOf<NaturalLanguageExpense>()
         var offset = 0
 
@@ -68,12 +68,9 @@ class NaturalLanguageExpenseQueryRepositoryImpl @Inject constructor(
         minAmount: Double?,
         maxAmount: Double?
     ): List<NaturalLanguageExpense> {
-        // TODO (W30): Use filtered DAO query instead of broad date-only paging + in-memory filter.
-        // TODO (W31): Replace offset paging with keyset pagination or single-transaction snapshot.
-        // Offset paging can skip or duplicate rows when data changes between pages.
-        // Use: expenseDao.getExpensesBetweenForExportKeyset(startMs, endMs, limit, lastDate, lastId)
-        // DEFERRED (W31): Same keyset pagination dependency as getExpensesBetween().
-        // Schema change needed for composite index on (date, id).
+        // DEFERRED (W30/W31): Replace offset paging with keyset pagination +
+        // push filters down to DAO SQL. Same schema index dependency as
+        // getExpensesBetween() — composite index on (date ASC, id ASC) required.
         // Load data from DAO (date-bounded only at the SQL level for now)
         val result = mutableListOf<NaturalLanguageExpense>()
         var offset = 0

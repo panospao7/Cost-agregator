@@ -12,6 +12,18 @@ data class ContextPrediction(
 
 @Singleton
 class ContextualInferenceEngine @Inject constructor() {
+
+    // TODO (C13): Expand CategorizationContext with additional signals:
+    // - Day-of-week (already partially: dayOfWeek param on inferFromContext)
+    // - Time-of-day (already present via hour)
+    // - Geographic location (GPS-based merchant category hints)
+    // - Recent spending patterns (last-N-transactions category distribution)
+    // - Recurring expense detection (known recurring vs one-off)
+    // - Notification source app package (already partially: notificationSource param)
+    // - Merchant proximity to known locations (via MerchantLocationRepository)
+    // - User correction history (which categories the user manually reassigns)
+    // Each signal should feed into a weighted scoring model rather than
+    // flat confidence boosts.
     
     companion object {
         // Confidence thresholds
