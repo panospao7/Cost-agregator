@@ -138,13 +138,15 @@ sealed interface FinancialQueryResult {
         val title: UiText,
         val primaryText: String,
         val supportingText: String? = null,
-        val drilldownIntent: FinancialQueryIntent? = null
+        val drilldownIntent: FinancialQueryIntent? = null,
+        val dataQuality: FinancialQueryDataQuality = FinancialQueryDataQuality()
     ) : FinancialQueryResult
 
     data class Breakdown(
         val title: UiText,
         val rows: List<Row>,
-        val drilldownIntent: FinancialQueryIntent? = null
+        val drilldownIntent: FinancialQueryIntent? = null,
+        val dataQuality: FinancialQueryDataQuality = FinancialQueryDataQuality()
     ) : FinancialQueryResult {
         data class Row(
             val label: String,
@@ -157,7 +159,8 @@ sealed interface FinancialQueryResult {
     data class TransactionList(
         val title: UiText,
         val previewCount: Int,
-        val drilldownIntent: FinancialQueryIntent
+        val drilldownIntent: FinancialQueryIntent,
+        val dataQuality: FinancialQueryDataQuality = FinancialQueryDataQuality()
     ) : FinancialQueryResult
 
     data class Clarification(

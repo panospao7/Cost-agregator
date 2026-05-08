@@ -70,6 +70,11 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             categoryIds = intent.filters.categoryIds,
             merchantNames = intent.filters.merchants,
             ownershipFilter = intent.filters.ownership.toRepositoryOwnershipFilter(),
+            // TODO (PR-E8): Use ExtractedAmountFilter for currency-aware filtering.
+            // Currently minAmount/maxAmount compare raw effectiveAmount across all currencies.
+            // Policy: if currency specified, convert amount to that currency.
+            // If no currency, interpret as home currency and normalize before comparing.
+            // See: ExpenseRepository.buildExpenseDynamicQueryParts
             minAmount = intent.filters.minAmount,
             maxAmount = intent.filters.maxAmount
         )

@@ -209,11 +209,15 @@ class NaturalLanguageSearchEngine @Inject constructor(
         val locations = extractLocations(normalized)
         val categories = extractCategories(normalized)
         val merchants = extractMerchants(normalized)
+        // TODO (W14): Extract merchant on original query, not lowercased version.
+        // Lowercasing before regex matching breaks case-sensitive patterns.
         
         // Determine query type
         val queryType = determineQueryType(normalized)
         
         // Build search filter
+        // TODO (W15): Apply parsed category/location/merchant filters to repository queries.
+        // Currently filters are extracted but not pushed to DAO filters.
         val filter = buildSearchFilter(amounts, dateRange, locations, categories, merchants)
         
         return QueryInterpretation(
@@ -296,6 +300,11 @@ class NaturalLanguageSearchEngine @Inject constructor(
         val maxAmount = interpretation.extractedAmounts
             ?.firstOrNull { it.comparison == AmountComparison.UNDER }
             ?.value
+
+        // TODO (W16): Use currency-aware amount filter (see PR-E8 ExtractedAmountFilter).
+        // Current minAmount/maxAmount compare raw effectiveAmount regardless of currency.
+
+        // TODO (W30): Use filtered DAO query instead of broad date-only paging + in-memory filter.
 
         return when (interpretation.queryType) {
             QueryType.TOTAL_AMOUNT -> {
