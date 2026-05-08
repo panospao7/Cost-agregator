@@ -3,7 +3,7 @@
 > Consolidated P0/P1 issues from 5 engine debug reports.
 > Source: warranty-subscription-location-nlp, analytical, categorization-merchant, groups-investment-tax, money-time-primitives
 > **Last updated: 2026-05-08**
-> **All 105 issues have been triaged: 25 fixed with code, 48 documented as TODO-only, 35 deferred for design/migration.**
+> **All 105 issues have been triaged: 34 fixed with code, 39 documented as TODO-only, 35 deferred for design/migration.**
 
 ## Status Legend
 - ⬜ NOT STARTED
@@ -19,7 +19,7 @@
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
 | W01 | P0 | Warranty protected value not currency-safe | Bug | Use MoneyAggregate with effectiveAmount + CurrencyConverter | ✅ FIXED |
-| W02 | P0 | Return-window refund currency not updated | Bug | Add refundCurrency to DAO, infer from expense | 📝 TODO ONLY |
+| W02 | P0 | Return-window refund currency not updated | Bug | Add refundCurrency to DAO, infer from expense | ✅ FIXED |
 | W03 | P0 | Warranty lifecycle has no event log | Enhancement | Add WarrantyLifecycleEvent table + DAO | ⏭ |
 | W04 | P0 | Subscription price history recordedAt=0 | Bug | timeProvider.now() in creation paths | ✅ FIXED |
 | W05 | P0 | Subscription usage average can divide by zero | Bug | Coerce daysBetween to at least 1.0 | ✅ FIXED |
@@ -38,7 +38,7 @@
 | W18 | P1 | Warranty timestamps unset on insert | Bug | copy(createdAt=..., updatedAt=now) | ✅ FIXED |
 | W19 | P1 | Warranty AI extraction not privacy-gated | Enhancement | CloudAiGuard(CLOUD_AI_WARRANTY) check | ✅ FIXED |
 | W20 | P1 | Warranty end-date semantics ambiguous | Bug | Half-open: startInclusive/endExclusive | 📝 TODO ONLY |
-| W21 | P1 | Manual receipt hardcodes EUR | Bug | Use homeCurrency, sanitized metadata | 📝 TODO ONLY |
+| W21 | P1 | Manual receipt hardcodes EUR | Bug | Use homeCurrency, sanitized metadata | ✅ FIXED |
 | W22 | P1 | Subscription missing createdAt/currency/validation | Bug | CreateSubscription with enforced fields | 📝 TODO ONLY |
 | W23 | P1 | Candidate accepted date uses fixed millis | Bug | Use RecurrenceCalculator.nextOccurrence() | 📝 TODO ONLY |
 | W24 | P1 | Candidate uniqueness wider than intended | Enhancement | Partial unique index or ledger table | ⏭ |
@@ -64,7 +64,7 @@
 | A02 | P0 | TotalsAggregationEngine unsafe multi-currency | Bug | Guard with require(isSingleCurrency) | 📝 TODO ONLY |
 | A03 | P0 | Historical analytics uses current rates | Bug | Use convertAsOf(amount, from, to, expense.date) | ✅ FIXED |
 | A04 | P0 | SpendingPersonalityClassifier not currency-safe | Bug | Inject normalizer; normalize before extraction | 📝 TODO ONLY |
-| A05 | P0 | AnalyticsRepository drops partial-conversion | Bug | Return MoneyAggregate + dataQuality | 📝 TODO ONLY |
+| A05 | P0 | AnalyticsRepository drops partial-conversion | Bug | Return MoneyAggregate + dataQuality | ✅ FIXED |
 | A06 | P0 | Basic/advanced/repo/legacy analytics disagree | Bug | Create AnalyticsInputAssembler for consistency | ⏭ |
 | A07 | P1 | InsightsEngine defaults to EUR | Enhancement | Require NormalizedAnalyticsInput or deprecate | 📝 TODO ONLY |
 | A08 | P1 | Daily chart uses "last N days from now" | Bug | Use explicit startMs/endMs range | 📝 TODO ONLY |
@@ -73,7 +73,7 @@
 | A11 | P1 | Conversion warnings don't affect confidence | Enhancement | Add AnalyticsDataQuality + confidencePenalty | 📝 TODO ONLY |
 | A12 | P1 | Merchant anomaly limited history in normal path | Bug | Fetch 12-month lookback independent of chart | 📝 TODO ONLY |
 | A13 | P1 | Spending pace period wrong for historical | Bug | Add referenceNow param, use period.endMs | 📝 TODO ONLY |
-| A14 | P1 | Location analytics raw DAO path | Bug | Use normalized snapshots/MoneyAggregate | 📝 TODO ONLY |
+| A14 | P1 | Location analytics raw DAO path | Bug | Use normalized snapshots/MoneyAggregate | ✅ FIXED |
 | A15 | P1 | Category deletion/history weak | Enhancement | Soft-delete or persist name snapshot | ⏭ |
 | A16 | P1 | Analytics recomputes too much | Enhancement | AnalyticsInputAssembler: query once, split in memory | ⏭ |
 
@@ -124,11 +124,11 @@
 | I08 | P1 | Direct Dispatchers.IO instead of injected | Enhancement | Inject @IoDispatcher | ✅ FIXED |
 | I09 | P1 | Price staleness not modeled | Enhancement | Add stalePriceThreshold + dataQuality | ⏭ |
 | T01 | P0 | Tax totals not currency-normalized | Bug | Use MultiCurrencyRepository + MoneyAggregate + CurrencyConverter | ✅ FIXED |
-| T02 | P0 | Mileage deduction undercounts null values | Bug | DAO SUM CASE fallback: distance * rate | 📝 TODO ONLY |
+| T02 | P0 | Mileage deduction undercounts null values | Bug | DAO SUM CASE fallback: distance * rate | ✅ FIXED |
 | T03 | P0 | Tax country not persisted | Bug | TaxSettingsRepository with selectedCountry | ⏭ |
 | T04 | P1 | VAT estimation assumes standard-rate | Enhancement | Rename to estimatedVatPortion, per-expense fields | 📝 TODO ONLY |
 | T05 | P1 | Business report hardcodes euro formatting | Bug | Use CurrencyFormatter with filing currency | 📝 TODO ONLY |
-| T06 | P1 | Business report raw-sums mixed currencies | Bug | Return MoneyAggregate in report fields | 📝 TODO ONLY |
+| T06 | P1 | Business report raw-sums mixed currencies | Bug | Return MoneyAggregate in report fields | ✅ FIXED |
 | T07 | P1 | Business CSV weak formula safety | Bug | Hardened CSV cell sanitizer (neutralize =,+,-,@) | 📝 TODO ONLY |
 | T08 | P1 | Tax rates hardcoded | Enhancement | Demo/editable/official config separation | ⏭ |
 | T09 | P1 | Fiscal year assumptions calendar-year only | Enhancement | Add fiscalYearStartMonth/Day to settings | ⏭ |
@@ -140,14 +140,14 @@
 
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
-| M01 | P0 | ConvertedMoney.identity() treated as failed | Bug | Add isExactSuccess/isUsable; identity not failure | 📝 TODO ONLY |
+| M01 | P0 | ConvertedMoney.identity() treated as failed | Bug | Add isExactSuccess/isUsable; identity not failure | ✅ FIXED |
 | M02 | P0 | MoneyAmount uses raw Double (NaN/infinity) | Bug | Use minorUnits:Long or BigDecimal, reject NaN | ⏭ |
 | M03 | P0 | CurrencyCode validation too loose | Bug | Require 3 uppercase letters, reject digits | ✅ FIXED |
 | M04 | P0 | PeriodKind timezone math broken | Bug | Zone-aware java.time, not Calendar.getInstance() | 📝 TODO ONLY |
 | M05 | P0 | Two competing PeriodRange types exist | Bug | Deprecate domain.model variant, migrate to core | ⏭ |
 | M06 | P0 | Money (BigDecimal) vs MoneyAmount (Double) split | Enhancement | Unify: MoneyAmount wraps BigDecimal | ⏭ |
-| M07 | P1 | MoneyAggregate.failedTransactionCount misleading | Bug | Include transactionCount in ConversionFailure | 📝 TODO ONLY |
-| M08 | P1 | ConvertedMoney.failed(reason) ignores reason | Bug | Add failureReason + failureMessage fields | 📝 TODO ONLY |
+| M07 | P1 | MoneyAggregate.failedTransactionCount misleading | Bug | Include transactionCount in ConversionFailure | ✅ FIXED |
+| M08 | P1 | ConvertedMoney.failed(reason) ignores reason | Bug | Add failureReason + failureMessage fields | ✅ FIXED |
 | M09 | P1 | Formatting is locale-sensitive, underspecified | Enhancement | Split: display/exportStable/accounting formatters | ⏭ |
 | M10 | P1 | Direct wall-clock calls still exist | Bug | CI guard for System.currentTimeMillis/Instant.now/Date | 📝 TODO ONLY |
 | M11 | P1 | Week-number helpers inconsistent | Bug | Separate getIsoWeekNumber/getAppCalendarWeekNumber | 📝 TODO ONLY |
@@ -161,8 +161,8 @@
 
 All items from the original Quick Wins list have been resolved:
 - **Batch 1 (Timestamp/Atomic):** W04/W18/C02/G10 (✅ FIXED), W07/W13/I02/I07/C05 (📝 TODO)
-- **Batch 2 (Currency/Normalization):** W03/C03 (✅ FIXED), W01 (✅ FIXED), W02/C04 (📝 TODO), W05 (✅ FIXED)
-- **Batch 3 (Privacy/Wall-clock):** W10/W17 (✅ FIXED), M10/M08/M01/T07 (📝 TODO)
+- **Batch 2 (Currency/Normalization):** W03/C03 (✅ FIXED), W01/W02 (✅ FIXED), W05 (✅ FIXED), C04 (📝 TODO)
+- **Batch 3 (Privacy/Wall-clock):** W10/W17 (✅ FIXED), M01/M08 (✅ FIXED), M10/T07 (📝 TODO)
 
 ---
 
@@ -179,7 +179,7 @@ All items from the original Quick Wins list have been resolved:
 
 | Status | Count |
 |--------|-------|
-| ✅ FIXED | 22 |
-| 📝 TODO ONLY | 48 |
+| ✅ FIXED | 31 |
+| 📝 TODO ONLY | 39 |
 | ⏭ DEFERRED | 35 |
 | ⬜ NOT STARTED | 0 |

@@ -198,6 +198,7 @@ Owns statistical analysis, anomaly detection, category insights, and merchant in
 - `domain/analytics/InsightsEngine.kt`
 - `domain/analytics/AnomalyDetector.kt`
 - `domain/analytics/AdvancedAnalyticsEngine.kt`
+- `domain/analytics/NormalizedAnalyticsInput.kt` — Canonical analytics input with per-expense normalization + data quality (PR-E11)
 - `data/repository/AnalyticsRepository.kt`
 - `ui/screens/analytics/AnalyticsScreen.kt`
 - `ui/components/analytics/StatisticalVisualizations.kt`
@@ -374,6 +375,8 @@ Owns geocoding, location correction, and map-based enrichment.
 **Representative files**
 - `domain/location/LocationResolver.kt`
 - `domain/location/LocationInsightsEngine.kt`
+- `domain/location/LocatedMoneyExpense.kt` — Multi-currency-safe expense for heatmap/insight engines (PR-E6)
+- `domain/location/SpendingHeatmapEngine.kt`
 - `data/location/CompositeGeocodingService.kt`
 - `ui/screens/map/SpendingMapScreen.kt`
 
@@ -462,6 +465,8 @@ Owns natural-language query parsing and voice-enabled search.
 
 **Representative files**
 - `domain/naturallanguage/NaturalLanguageSearchEngine.kt`
+- `domain/ai/model/FinancialQueryDataQuality.kt` — Partial-conversion metadata for query results (isPartial, staleRateCount, missingRateCount)
+- `domain/ai/model/ExtractedAmountFilter.kt` — Currency-aware amount filter extracted from NL queries (PR-E8)
 - `ui/screens/naturallanguage/NaturalLanguageSearchScreen.kt`
 
 ## SEGMENT 27: Carbon Footprint Tracking

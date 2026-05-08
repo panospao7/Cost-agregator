@@ -807,3 +807,17 @@ direct ExpenseDao calls, with documented allowlist.
 
 ### Rate Staleness
 CurrencyConverter.convert() checks rate.lastUpdated against 24h threshold.
+
+### MoneyAggregateBuilder (Segment 16)
+`domain/core/money/MoneyAggregateBuilder.kt` — Common helper for building
+MoneyAggregate from per-currency buckets. Used by WarrantyTrackerRepository,
+SubscriptionManagerEngine, InvestmentTracker, TaxEstimator, and AnalyticsRepository.
+Handles single non-home conversion, mixed-currency conversion, and failure mapping
+(STALE_RATE vs MISSING_RATE).
+
+### ConvertedMoney Failure Semantics (Segment 16)
+`domain/core/money/ConvertedMoney.kt` now properly distinguishes three states:
+- **identity()** — same-currency, always `isSuccess=true` (M01 fix)
+- **success()** — cross-currency conversion succeeded
+- **failed(reason, message)** — stores `failureReason` and `failureMessage` (M08 fix)
+Previously `identity()` was misclassified as a failure and `failed()` discarded the reason.
