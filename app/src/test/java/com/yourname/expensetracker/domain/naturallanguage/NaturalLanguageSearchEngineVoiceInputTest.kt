@@ -16,6 +16,7 @@ class NaturalLanguageSearchEngineVoiceInputTest {
             timeProvider = mockk(),
             currencyConverter = mockk(),
             currencySettingsRepository = mockk(),
+            categoryRepository = mockk(),
         )
 
         var receivedResult: String? = null
@@ -35,6 +36,7 @@ class NaturalLanguageSearchEngineVoiceInputTest {
             timeProvider = mockk(),
             currencyConverter = mockk(),
             currencySettingsRepository = mockk(),
+            categoryRepository = mockk(),
         )
 
         var receivedError: SpeechInputError? = null
@@ -54,6 +56,7 @@ class NaturalLanguageSearchEngineVoiceInputTest {
             timeProvider = mockk(),
             currencyConverter = mockk(),
             currencySettingsRepository = mockk(),
+            categoryRepository = mockk(),
         )
 
         engine.startVoiceInput(onResult = {})

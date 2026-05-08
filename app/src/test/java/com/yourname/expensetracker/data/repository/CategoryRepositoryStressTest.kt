@@ -28,8 +28,8 @@ class CategoryRepositoryStressTest {
         // Mock insert functions - CategoryDao returns Long, MerchantCategoryDao returns Unit
         coEvery { categoryDao.insert(any()) } returns 1L
         coEvery { categoryDao.insertAll(any()) } returns Unit
-        coEvery { merchantCategoryDao.insert(any()) } returns Unit
-        coEvery { merchantCategoryDao.insertAll(any()) } returns Unit
+        coEvery { merchantCategoryDao.insert(any()) } returns 1L
+        coEvery { merchantCategoryDao.insertAll(any()) } returns emptyList()
         // Normalize is suspend
         coEvery { categorizationEngine.normalize(any()) } returns "normalized"
         

@@ -411,7 +411,12 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         intent: FinancialQueryIntent,
         period: PeriodRange
     ): Pair<List<ExpenseWithCategory>, FinancialQueryDataQuality> {
-        // Step 1: Push date/type/category/merchant to DAO (no amount filter)
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        var failedConversions = 0
+        val warnings = mutableListOf<String>()
+
+        // 1. Fetch expenses with date/type/category/merchant filters (no amount filter)
         val expenses = expenseRepository.getAssistantExpensesFiltered(
             startDate = period.start,
             endDate = period.end,
@@ -422,11 +427,15 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
             minAmount = null,
             maxAmount = null
         )
-        // Step 2-4: Normalize amounts to home currency, apply amount filter in-memory
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
-        var failedConversions = 0
-        val filteredResults = if (intent.filters.minAmount != null || intent.filters.maxAmount != null) {
+
+        // 2. Apply amount filter in-memory with currency normalization
+        val minAmount = intent.filters.minAmount
+        val maxAmount = intent.filters.maxAmount
+        val needsAmountFilter = minAmount != null || maxAmount != null
+
+        val filtered = if (!needsAmountFilter) {
+            expenses
+        } else {
             expenses.mapNotNull { ewc ->
                 val expense = ewc.expense
                 val normalizedAmount = if (expense.currency.equals(homeCurrency, true)) {
@@ -441,27 +450,26 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
                 }
                 if (normalizedAmount == null) {
                     failedConversions++
+                    warnings.add("Excluded ${expense.merchant}: ${expense.effectiveAmount} ${expense.currency} — conversion failed")
                     null
-                } else if (intent.filters.minAmount != null && normalizedAmount < intent.filters.minAmount) {
+                } else if (minAmount != null && normalizedAmount < minAmount) {
                     null
-                } else if (intent.filters.maxAmount != null && normalizedAmount > intent.filters.maxAmount) {
+                } else if (maxAmount != null && normalizedAmount > maxAmount) {
                     null
                 } else {
                     ewc
                 }
             }
-        } else {
-            expenses
         }
-        // Step 5: Return filtered rows + dataQuality
-        return filteredResults to FinancialQueryDataQuality(
+
+        val dataQuality = FinancialQueryDataQuality(
             isPartial = failedConversions > 0,
             excludedCount = failedConversions,
             missingRateCount = failedConversions,
-            warnings = if (failedConversions > 0) {
-                listOf("$failedConversions expense(s) excluded due to missing exchange rates")
-            } else emptyList()
+            warnings = warnings
         )
+
+        return Pair(filtered, dataQuality)
     }
 
     private suspend fun assistantFilteredExpenses(

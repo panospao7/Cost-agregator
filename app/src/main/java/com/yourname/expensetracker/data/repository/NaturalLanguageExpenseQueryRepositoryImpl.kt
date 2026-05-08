@@ -19,6 +19,7 @@ class NaturalLanguageExpenseQueryRepositoryImpl @Inject constructor(
     override suspend fun getExpensesBetween(startMs: Long, endMs: Long): List<NaturalLanguageExpense> {
         // TODO (W31): Replace offset paging with keyset pagination or single-transaction snapshot.
         // Offset paging can skip or duplicate rows when data changes between pages.
+        // Use: expenseDao.getExpensesBetweenForExportKeyset(startMs, endMs, limit, lastDate, lastId)
         val result = mutableListOf<NaturalLanguageExpense>()
         var offset = 0
 
@@ -67,6 +68,7 @@ class NaturalLanguageExpenseQueryRepositoryImpl @Inject constructor(
         // TODO (W30): Use filtered DAO query instead of broad date-only paging + in-memory filter.
         // TODO (W31): Replace offset paging with keyset pagination or single-transaction snapshot.
         // Offset paging can skip or duplicate rows when data changes between pages.
+        // Use: expenseDao.getExpensesBetweenForExportKeyset(startMs, endMs, limit, lastDate, lastId)
         // Load data from DAO (date-bounded only at the SQL level for now)
         val result = mutableListOf<NaturalLanguageExpense>()
         var offset = 0

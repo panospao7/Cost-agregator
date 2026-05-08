@@ -66,6 +66,9 @@ interface ExpenseGroupDao {
     @Query("UPDATE expense_groups SET isActive = 1 WHERE id = :groupId")
     suspend fun restoreGroup(groupId: Long)
     
+    @Query("DELETE FROM expense_groups WHERE id = :groupId")
+    suspend fun deleteById(groupId: Long)
+    
     @Query("UPDATE expense_groups SET isActive = :isActive WHERE id = :groupId")
     suspend fun setActiveStatus(groupId: Long, isActive: Boolean)
     

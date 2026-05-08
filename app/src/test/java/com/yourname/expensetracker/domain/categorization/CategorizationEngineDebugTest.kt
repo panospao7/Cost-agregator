@@ -105,7 +105,7 @@ class CategorizationEngineDebugTest {
         // Mock the DAO to return the new mapping after insertion
         val newMapping = MerchantCategory(merchantName.lowercase(), categoryId)
         coEvery { merchantCategoryRepository.getAll() } returns listOf(newMapping)
-        coEvery { merchantCategoryRepository.insert(any()) } just runs
+        coEvery { merchantCategoryRepository.insert(any()) } returns 1L
         
         // This should trigger invalidateCache()
         engine.learnMerchantCategory(merchantName, categoryId)

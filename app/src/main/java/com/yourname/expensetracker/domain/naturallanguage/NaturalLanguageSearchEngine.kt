@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.naturallanguage
 
+import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -87,7 +88,8 @@ class NaturalLanguageSearchEngine @Inject constructor(
     private val speechInputGateway: SpeechInputGateway,
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val categoryRepository: CategoryRepository
 ) {
     
     private val amountPattern = Regex("""
@@ -215,7 +217,7 @@ class NaturalLanguageSearchEngine @Inject constructor(
         val dateRange = extractDateRange(normalized)
         val locations = extractLocations(normalized)
         val categories = extractCategories(normalized)
-        val merchants = extractMerchants(query)  // pass original query for case-sensitive patterns
+        val merchants = extractMerchants(normalized, query)  // pass original query for case-sensitive patterns
 
         // Category and location filters are parsed but NOT applied in the legacy NL path.
         // Warn so callers know to use ExecuteFinancialQueryUseCase for filtered queries.
@@ -302,6 +304,7 @@ class NaturalLanguageSearchEngine @Inject constructor(
 
         // Extract simple filters from interpretation to push down
         val merchants = interpretation.merchants
+        val categories = interpretation.categories
         val minAmount = interpretation.extractedAmounts
             ?.firstOrNull { it.comparison == AmountComparison.OVER || it.comparison == AmountComparison.EXACTLY }
             ?.let {
@@ -313,6 +316,18 @@ class NaturalLanguageSearchEngine @Inject constructor(
             ?.firstOrNull { it.comparison == AmountComparison.UNDER }
             ?.value
 
+        // Resolve parsed category names to category IDs for in-memory filtering
+        val targetCategoryIds: Set<Long> = if (categories.isNullOrEmpty()) {
+            emptySet()
+        } else {
+            val allCategories = categoryRepository.getAll()
+            val categoryNameToId = allCategories.associate { it.normalizedName to it.id }
+            categories.mapNotNull { catName ->
+                categoryNameToId[catName.trim().lowercase()]
+            }.toSet()
+        }
+        val hasCategoryFilter = targetCategoryIds.isNotEmpty()
+
         // TODO (W16): Use currency-aware amount filter (see PR-E8 ExtractedAmountFilter).
         // Current minAmount/maxAmount compare raw effectiveAmount regardless of currency.
 
@@ -323,20 +338,27 @@ class NaturalLanguageSearchEngine @Inject constructor(
                 expenseQueryRepository.getExpensesBetweenFiltered(
                     startMs, endMs,
                     merchants = merchants,
+                    categories = categories,
                     minAmount = minAmount,
                     maxAmount = maxAmount
-                ).map { SearchResult(it, MatchType.EXACT) }
+                ).filter { expense ->
+                    // Apply category filter in-memory (DAO doesn't support it yet)
+                    !hasCategoryFilter || expense.categoryId in targetCategoryIds
+                }.map { SearchResult(it, MatchType.EXACT) }
             }
             QueryType.FIND_TRANSACTIONS -> {
                 val preFiltered = expenseQueryRepository.getExpensesBetweenFiltered(
                     startMs, endMs,
                     merchants = merchants,
+                    categories = categories,
                     minAmount = minAmount,
                     maxAmount = maxAmount
-                )
+                ).filter { expense ->
+                    // Apply category filter in-memory (DAO doesn't support it yet)
+                    !hasCategoryFilter || expense.categoryId in targetCategoryIds
+                }
                 val hasAmountFilter = interpretation.extractedAmounts != null
                 val hasMerchantFilter = interpretation.merchants != null
-                val totalFilters = listOfNotNull(hasAmountFilter to hasAmountFilter, hasMerchantFilter to hasMerchantFilter).size
 
                 // Apply currency-aware amount matching on the pre-filtered results
                 val matched = if (hasAmountFilter) {
@@ -394,7 +416,10 @@ class NaturalLanguageSearchEngine @Inject constructor(
                     val matchedMerchant = hasMerchantFilter && interpretation.merchants.any {
                         expense.merchant.contains(it, ignoreCase = true)
                     }
-                    val isExact = (!hasAmountFilter || matchedAmount) && (!hasMerchantFilter || matchedMerchant)
+                    val matchedCategory = !hasCategoryFilter || expense.categoryId in targetCategoryIds
+                    val isExact = (!hasAmountFilter || matchedAmount) &&
+                        (!hasMerchantFilter || matchedMerchant) &&
+                        matchedCategory
                     SearchResult(expense, if (isExact) MatchType.EXACT else MatchType.PARTIAL)
                 }
             }
@@ -402,9 +427,13 @@ class NaturalLanguageSearchEngine @Inject constructor(
                 expenseQueryRepository.getExpensesBetweenFiltered(
                     startMs, endMs,
                     merchants = merchants,
+                    categories = categories,
                     minAmount = minAmount,
                     maxAmount = maxAmount
-                ).map { SearchResult(it, MatchType.EXACT) }
+                ).filter { expense ->
+                    // Apply category filter in-memory (DAO doesn't support it yet)
+                    !hasCategoryFilter || expense.categoryId in targetCategoryIds
+                }.map { SearchResult(it, MatchType.EXACT) }
             }
             else -> emptyList()
         }
@@ -519,12 +548,14 @@ class NaturalLanguageSearchEngine @Inject constructor(
         return if (foundCategories.isNotEmpty()) foundCategories else null
     }
     
-    private fun extractMerchants(query: String): List<String>? {
+    private fun extractMerchants(query: String, originalQuery: String): List<String>? {
         // In production, this would use a database of known merchants
         // For now, we'll extract words that might be merchant names
-        // Normalize for comparison (case-insensitive pattern), but extract original-case names
+        // Extract from original (case-preserving) query to preserve merchant name casing
         val merchantPattern = Regex("""(?:at|from)\s+([A-Za-z][a-zA-Z]+)""", RegexOption.IGNORE_CASE)
-        val merchants = merchantPattern.findAll(query).map { it.groupValues[1] }.toList()
+        val rawMatches = merchantPattern.findAll(originalQuery).map { it.groupValues[1] }.toList()
+        // Normalize for comparison/dedup
+        val merchants = rawMatches.distinctBy { it.lowercase().trim() }
         
         return if (merchants.isNotEmpty()) merchants else null
     }

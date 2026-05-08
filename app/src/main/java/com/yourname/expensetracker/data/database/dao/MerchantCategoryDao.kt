@@ -51,12 +51,11 @@ interface MerchantCategoryDao {
      */
     /**
      * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
+     * Verify: Room @Insert already returns Long for single insert.
      */
     @Deprecated("Use repository-level insert with canonical name normalization instead")
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insert(merchantCategory: MerchantCategory)
-    // TODO (C05): Change return type from Unit to Long so callers can check
-    // for silent failures (0 = skipped due to IGNORE conflict).
+    suspend fun insert(merchantCategory: MerchantCategory): Long
 
     /**
      * Direct bulk insert that bypasses merchant normalization.
@@ -65,11 +64,11 @@ interface MerchantCategoryDao {
      */
     /**
      * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
+     * Verify: Room @Insert already returns List<Long> for batch insert.
      */
     @Deprecated("Use repository-level insertAll with canonical name normalization instead")
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertAll(merchantCategories: List<MerchantCategory>)
-    // TODO (C05): Change return type from Unit to Long for insertAll as well.
+    suspend fun insertAll(merchantCategories: List<MerchantCategory>): List<Long>
     
     @Query("SELECT * FROM merchant_categories")
     suspend fun getAll(): List<MerchantCategory>
