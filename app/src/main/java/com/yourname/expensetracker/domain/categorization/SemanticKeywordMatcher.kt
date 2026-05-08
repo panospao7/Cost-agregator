@@ -123,6 +123,9 @@ class SemanticKeywordMatcher @Inject constructor(
             )
     }
     
+    // TODO (C12): Add conflict policy for semantic keyword collisions.
+    // When top two matches are close, return alternatives with lower confidence.
+    // Route ambiguous cases to review.
     fun findBestMatch(merchant: String, minConfidence: Double = 0.50): SemanticMatch? {
         val matches = match(merchant, minConfidence)
         return matches.firstOrNull()

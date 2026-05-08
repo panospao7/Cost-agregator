@@ -96,6 +96,8 @@ class MerchantNormalizer @Inject constructor(
         val fuzzyResult = fuzzyMatch(cleaned, normalizedKey)
         if (fuzzyResult != null && fuzzyResult.confidence >= 0.95f) {
             // Only auto-learn very high confidence fuzzy matches (95%+)
+            // TODO (C01): Check both rawName AND normalizedKey before insert.
+            // Return AliasLinkResult.Conflict(existing) on conflict instead of silently ignoring.
             repository.linkAliasToCanonical(rawName, normalizedKey, fuzzyResult.canonical.id, isUserDefined = false, timestamp = timeProvider.now())
             return@withContext fuzzyResult
         } else if (fuzzyResult != null) {

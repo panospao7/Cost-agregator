@@ -484,9 +484,8 @@ class CategorizationEngine @Inject constructor(
         }
     }
 
-    // TODO (C04): Call invalidateCache() from ALL category/mapping write paths
-    // (e.g., CategoryRepository.learnMerchantCategory, addCategory, mergeCategories,
-    // deleteCategory) to ensure the categorization engine picks up changes immediately.
+    // TODO (C04): Create CategoryMappingWriter that emits CategoryMappingChanged.
+    // Invalidate category/merchant/semantic caches from all write paths.
     
     // Utility methods for testing
     fun testCanonicalize(merchant: String): CanonicalResult {
