@@ -55,8 +55,28 @@ import javax.inject.Singleton
  * 2. Enforce single-currency group policy (reject expense if currency != group.currency)
  * 3. Implement recordSettlement() with persistent settlement records
  * 4. Route all group deletions through archiveGroup() for soft-delete
+ * 5. Add currentUserGroupKey invariant enforcement (G01): when inserting members,
+ *    automatically set groupId = currentUserGroupKey on the current-user member.
+ * 6. Add deferred side-effect list (G02): collect post-commit effects from
+ *    TransactionLifecycleCoordinator and dispatch after outer transaction commits.
+ * 7. Reject mixed-currency settlements (G04) or convert to group defaultCurrency.
+ * 8. Add lifecycle event logging (audit table) for all group mutations.
  *
- * ── GroupLifecycleCoordinator Implementation Plan ──────────────────────────
+ * ── GroupLifecycleCoordinator Implementation Plan (cont.) ──────────────────
+ * 9. Settlement persistence: new table `group_settlements` with columns:
+ *    id, groupId, fromMemberId, toMemberId, amount, currency, settledAt, notes.
+ * 10. Balance computation: SplitCalculator should compute net balances including
+ *     settled amounts, using SettlementDao to factor in past settlements.
+ * 11. Validation rules for removeMember:
+ *     - Verify member has no outstanding balance before removal.
+ *     - Block removal of last currentUser (must transfer ownership first via
+ *       transferOwnership method on GroupLifecycleCoordinator).
+ *     - Fire GROUP_MEMBER_REMOVED lifecycle event.
+ * 12. Hard-delete guard (G08): permanentlyDeleteGroup() should require an explicit
+ *     boolean flag `confirmPermanentDelete: Boolean` to prevent accidental data loss.
+ * 13. Side-effect dispatch (G02): in createSystemExpenseAndLinkToGroup, the .also{}
+ *     block dispatches side effects after transaction commit. Ensure the same pattern
+ *     is used in all group mutation methods that create system expenses.
  * Design goals:
  * - GroupLifecycleCoordinator wraps GroupTransactionCoordinator + domain services
  *   to provide a single entry point for all group lifecycle operations.

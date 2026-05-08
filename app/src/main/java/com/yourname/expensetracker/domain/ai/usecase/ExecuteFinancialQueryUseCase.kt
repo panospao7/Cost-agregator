@@ -389,6 +389,81 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
         )
     }
 
+    /**
+     * TODO (PR-E22): Replace per-method inline filtering with this unified helper.
+     * Currently ALL execute* methods have their own currency-aware amount filter logic.
+     * This helper consolidates the pattern:
+     *
+     * Step 1: Push date/type/category/merchant filters to DAO (minAmount/maxAmount = null).
+     * Step 2: Normalize each expense's effectiveAmount to homeCurrency via currencyConverter.convertAsOf().
+     * Step 3: Apply minAmount/maxAmount filter in-memory on normalized amounts.
+     * Step 4: Track failedConversions (count of expenses excluded due to missing rates).
+     * Step 5: Return Pair<List<ExpenseWithCategory>, FinancialQueryDataQuality>.
+     *
+     * Migration plan:
+     * - executeList() already does this inline (lines 71-115). Replace with call to this helper.
+     * - executeCategoryBreakdown() uses assistantFilteredExpenses + inline conversion. Replace.
+     * - executeMerchantBreakdown() uses assistantFilteredExpenses + inline conversion. Replace.
+     * - executeLargest() uses assistantFilteredExpenses + inline conversion. Replace.
+     * - executeTotal() / executeAverage() / executeCount() don't need amount filter, keep as-is.
+     */
+    private suspend fun assistantFilteredExpensesCurrencyAware(
+        intent: FinancialQueryIntent,
+        period: PeriodRange
+    ): Pair<List<ExpenseWithCategory>, FinancialQueryDataQuality> {
+        // Step 1: Push date/type/category/merchant to DAO (no amount filter)
+        val expenses = expenseRepository.getAssistantExpensesFiltered(
+            startDate = period.start,
+            endDate = period.end,
+            transactionTypes = intent.filters.transactionTypes.map { it.toEntity() }.toSet(),
+            categoryIds = intent.filters.categoryIds,
+            merchantNames = intent.filters.merchants,
+            ownershipFilter = intent.filters.ownership.toRepositoryOwnershipFilter(),
+            minAmount = null,
+            maxAmount = null
+        )
+        // Step 2-4: Normalize amounts to home currency, apply amount filter in-memory
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+        var failedConversions = 0
+        val filteredResults = if (intent.filters.minAmount != null || intent.filters.maxAmount != null) {
+            expenses.mapNotNull { ewc ->
+                val expense = ewc.expense
+                val normalizedAmount = if (expense.currency.equals(homeCurrency, true)) {
+                    expense.effectiveAmount
+                } else {
+                    currencyConverter.convertAsOf(
+                        amount = expense.effectiveAmount,
+                        fromCurrency = expense.currency,
+                        toCurrency = homeCurrency,
+                        atMillis = expense.date
+                    )?.convertedAmount
+                }
+                if (normalizedAmount == null) {
+                    failedConversions++
+                    null
+                } else if (intent.filters.minAmount != null && normalizedAmount < intent.filters.minAmount) {
+                    null
+                } else if (intent.filters.maxAmount != null && normalizedAmount > intent.filters.maxAmount) {
+                    null
+                } else {
+                    ewc
+                }
+            }
+        } else {
+            expenses
+        }
+        // Step 5: Return filtered rows + dataQuality
+        return filteredResults to FinancialQueryDataQuality(
+            isPartial = failedConversions > 0,
+            excludedCount = failedConversions,
+            missingRateCount = failedConversions,
+            warnings = if (failedConversions > 0) {
+                listOf("$failedConversions expense(s) excluded due to missing exchange rates")
+            } else emptyList()
+        )
+    }
+
     private suspend fun assistantFilteredExpenses(
         intent: FinancialQueryIntent,
         period: PeriodRange

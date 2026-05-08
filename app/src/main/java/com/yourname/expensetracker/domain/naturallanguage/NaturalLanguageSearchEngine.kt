@@ -12,6 +12,13 @@ import kotlinx.coroutines.flow.first
 import timber.log.Timber
 
 /**
+ * LEGACY NL: This engine is partially migrated. For new query work, use
+ * ExecuteFinancialQueryUseCase which provides full dataQuality, currency-aware
+ * filtering, and normalized results via MoneyAggregateBuilder.
+ *
+ * Remaining legacy gaps documented inline (W14-W16, W30-W31).
+ * This engine is feature-contained — no new query features will be added.
+ *
  * Natural language search engine for expense queries.
  *
  * ## SRH-20: Hybrid query cascading fallback (planned)

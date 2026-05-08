@@ -306,6 +306,24 @@ fun SpendingMapScreen(
                 }
             }
 
+            // ── Conversion warning banner ─────────────────────────────────────
+            if (state.mapConversionWarnings > 0) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "${state.mapConversionWarnings} expense(s) shown in original currency due to missing exchange rates.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+            }
+
             // ── Map ───────────────────────────────────────────────────────────
             Box(
                 modifier = Modifier

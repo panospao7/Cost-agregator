@@ -3,13 +3,14 @@
 > Consolidated P0/P1 issues from 5 engine debug reports.
 > Source: warranty-subscription-location-nlp, analytical, categorization-merchant, groups-investment-tax, money-time-primitives
 > **Last updated: 2026-05-08**
-> **All 108 issues have been triaged: 34 fixed with code, 52 documented as TODO-only, 22 deferred for design/migration.**
+> **All 108 issues have been triaged: 29 fixed with code, 41 documented as TODO-only, 18 deferred for design/migration, 20 deferred-design (full re-architecture needed).**
 
 ## Status Legend
 - ⬜ NOT STARTED
 - 🔧 IN PROGRESS  
 - ✅ FIXED
 - ⏭ DEFERRED (needs design/migration)
+- ⏭ DEFERRED_DESIGN (full re-architecture needed, not just migration)
 - 📝 TODO ONLY (documented, not coded)
 
 ---
@@ -104,16 +105,16 @@
 
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
-| G01 | P0 | Current-user member inserts violate key invariant | Bug | Set currentUserGroupKey=groupId on insert | 📝 TODO ONLY |
-| G02 | P0 | Group expense side effects inside outer txn | Bug | Deferred post-commit side-effect list | 📝 TODO ONLY |
-| G03 | P0 | Linked expense normalization bypasses lifecycle | Bug | Use coordinator.updateSharedOwnership() | 📝 TODO ONLY |
-| G04 | P0 | Mixed-currency settlements labeled wrong | Bug | Reject or convert to group currency | 📝 TODO ONLY |
-| G05 | P1 | Group currency consistency not enforced | Enhancement | Single-currency or multi-currency with conversion | ⏭ |
-| G06 | P1 | Shared budget offsets drop conversion failures | Enhancement | Return MoneyAggregate with isPartial | 📝 TODO ONLY |
-| G07 | P1 | Shared offset uses current rates not historical | Bug | Use convertAsOf(atMillis=expense.date) | ✅ FIXED |
-| G08 | P1 | Hard delete path bypasses coordinator | Bug | Route through archiveGroup/permanentlyDelete | 📝 TODO ONLY |
-| G09 | P1 | Direct member delete bypasses validation | Bug | Keep validation in one coordinator/use case | 📝 TODO ONLY |
-| G10 | P1 | runBlocking inside domain calculators | Enhancement | Make suspend or require explicit currency param | ✅ FIXED |
+| G01 | P0 | Current-user member inserts violate key invariant | Bug | Set currentUserGroupKey=groupId on insert | ⏭ DEFERRED_DESIGN |
+| G02 | P0 | Group expense side effects inside outer txn | Bug | Deferred post-commit side-effect list | ⏭ DEFERRED_DESIGN |
+| G03 | P0 | Linked expense normalization bypasses lifecycle | Bug | Use coordinator.updateSharedOwnership() | ⏭ DEFERRED_DESIGN |
+| G04 | P0 | Mixed-currency settlements labeled wrong | Bug | Reject or convert to group currency | ⏭ DEFERRED_DESIGN |
+| G05 | P1 | Group currency consistency not enforced | Enhancement | Single-currency or multi-currency with conversion | ⏭ DEFERRED_DESIGN |
+| G06 | P1 | Shared budget offsets drop conversion failures | Enhancement | Return MoneyAggregate with isPartial | ⏭ DEFERRED_DESIGN |
+| G07 | P1 | Shared offset uses current rates not historical | Bug | Use convertAsOf(atMillis=expense.date) | ⏭ DEFERRED_DESIGN |
+| G08 | P1 | Hard delete path bypasses coordinator | Bug | Route through archiveGroup/permanentlyDelete | ⏭ DEFERRED_DESIGN |
+| G09 | P1 | Direct member delete bypasses validation | Bug | Keep validation in one coordinator/use case | ⏭ DEFERRED_DESIGN |
+| G10 | P1 | runBlocking inside domain calculators | Enhancement | Make suspend or require explicit currency param | ⏭ DEFERRED_DESIGN |
 | I01 | P0 | Portfolio raw-sums mixed currencies | Bug | Return MoneyAggregate with per-currency buckets + CurrencyConverter | ✅ FIXED |
 | I02 | P0 | Price update not atomic with history insert | Bug | withTransaction wrap both operations | 📝 TODO ONLY |
 | I03 | P0 | Portfolio history undercounts days | Bug | Carry forward latest value per holding | 📝 TODO ONLY |
@@ -123,16 +124,16 @@
 | I07 | P1 | Investment timestamps not enforced | Bug | Repository add with price>0, quantity>0, createdAt>0 | 📝 TODO ONLY |
 | I08 | P1 | Direct Dispatchers.IO instead of injected | Enhancement | Inject @IoDispatcher | ✅ FIXED |
 | I09 | P1 | Price staleness not modeled | Enhancement | Add stalePriceThreshold + dataQuality | ⏭ |
-| T01 | P0 | Tax totals not currency-normalized | Bug | Use MultiCurrencyRepository + MoneyAggregate + CurrencyConverter | ✅ FIXED |
-| T02 | P0 | Mileage deduction undercounts null values | Bug | DAO SUM CASE fallback: distance * rate | ✅ FIXED |
-| T03 | P0 | Tax country not persisted | Bug | TaxSettingsRepository with selectedCountry | ⏭ |
-| T04 | P1 | VAT estimation assumes standard-rate | Enhancement | Rename to estimatedVatPortion, per-expense fields | 📝 TODO ONLY |
-| T05 | P1 | Business report hardcodes euro formatting | Bug | Use CurrencyFormatter with filing currency | 📝 TODO ONLY |
-| T06 | P1 | Business report raw-sums mixed currencies | Bug | Return MoneyAggregate in report fields | ✅ FIXED |
-| T07 | P1 | Business CSV weak formula safety | Bug | Hardened CSV cell sanitizer (neutralize =,+,-,@) | 📝 TODO ONLY |
-| T08 | P1 | Tax rates hardcoded | Enhancement | Demo/editable/official config separation | ⏭ |
-| T09 | P1 | Fiscal year assumptions calendar-year only | Enhancement | Add fiscalYearStartMonth/Day to settings | ⏭ |
-| T10 | P1 | Business/tax updates bypass lifecycle events | Bug | Add updateBusinessTaxFields coordinator method | 📝 TODO ONLY |
+| T01 | P0 | Tax totals not currency-normalized | Bug | Use MultiCurrencyRepository + MoneyAggregate + CurrencyConverter | ⏭ DEFERRED_DESIGN |
+| T02 | P0 | Mileage deduction undercounts null values | Bug | DAO SUM CASE fallback: distance * rate | ⏭ DEFERRED_DESIGN |
+| T03 | P0 | Tax country not persisted | Bug | TaxSettingsRepository with selectedCountry | ⏭ DEFERRED_DESIGN |
+| T04 | P1 | VAT estimation assumes standard-rate | Enhancement | Rename to estimatedVatPortion, per-expense fields | ⏭ DEFERRED_DESIGN |
+| T05 | P1 | Business report hardcodes euro formatting | Bug | Use CurrencyFormatter with filing currency | ⏭ DEFERRED_DESIGN |
+| T06 | P1 | Business report raw-sums mixed currencies | Bug | Return MoneyAggregate in report fields | ⏭ DEFERRED_DESIGN |
+| T07 | P1 | Business CSV weak formula safety | Bug | Hardened CSV cell sanitizer (neutralize =,+,-,@) | ⏭ DEFERRED_DESIGN |
+| T08 | P1 | Tax rates hardcoded | Enhancement | Demo/editable/official config separation | ⏭ DEFERRED_DESIGN |
+| T09 | P1 | Fiscal year assumptions calendar-year only | Enhancement | Add fiscalYearStartMonth/Day to settings | ⏭ DEFERRED_DESIGN |
+| T10 | P1 | Business/tax updates bypass lifecycle events | Bug | Add updateBusinessTaxFields coordinator method | ⏭ DEFERRED_DESIGN |
 
 ---
 
@@ -160,9 +161,9 @@
 # Quick Wins — All Completed
 
 All items from the original Quick Wins list have been resolved:
-- **Batch 1 (Timestamp/Atomic):** W04/W18/C02/G10 (✅ FIXED), W07/W13/I02/I07/C05 (📝 TODO)
+- **Batch 1 (Timestamp/Atomic):** W04/W18/C02 (✅ FIXED), W07/W13/I02/I07/C05 (📝 TODO), G10 (⏭ DEFERRED_DESIGN)
 - **Batch 2 (Currency/Normalization):** C03 (✅ FIXED), W01/W02 (✅ FIXED), W05 (✅ FIXED), C04 (📝 TODO)
-- **Batch 3 (Privacy/Wall-clock):** W10/W17 (✅ FIXED), M01/M08 (✅ FIXED), M10/T07 (📝 TODO)
+- **Batch 3 (Privacy/Wall-clock):** W10/W17 (✅ FIXED), M01/M08 (✅ FIXED), M10 (📝 TODO), T07 (⏭ DEFERRED_DESIGN)
 
 ---
 
@@ -179,7 +180,8 @@ All items from the original Quick Wins list have been resolved:
 
 | Status | Count |
 |--------|-------|
-| ✅ FIXED | 34 |
-| 📝 TODO ONLY | 52 |
-| ⏭ DEFERRED | 22 |
+| ✅ FIXED | 29 |
+| 📝 TODO ONLY | 41 |
+| ⏭ DEFERRED | 18 |
+| ⏭ DEFERRED_DESIGN | 20 |
 | ⬜ NOT STARTED | 0 |

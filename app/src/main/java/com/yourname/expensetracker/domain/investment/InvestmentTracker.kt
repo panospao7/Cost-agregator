@@ -297,6 +297,31 @@ class InvestmentTracker @Inject constructor(
     
     // TODO (PR-E20): Carry forward latest known value per holding for each day in range.
     // Don't only count holdings with price updates that day.
+    //
+    // IMPLEMENTATION PLAN for portfolio history carry-forward:
+    //
+    // Problem: getPortfolioValueHistory() only includes days where a price update
+    // was recorded for a given holding. If a holding has no price update on day X,
+    // its value is missing, causing the daily total to undercount.
+    //
+    // Algorithm:
+    // 1. For each holding, collect ALL InvestmentValue records in [startDate, endDate].
+    // 2. Sort records by timestamp ascending.
+    // 3. For each day D in the range:
+    //    a. Find the most recent InvestmentValue with timestamp <= end of day D.
+    //       This is the "carry-forward" value for that day.
+    //    b. If no record exists before or on day D, use the holding's purchasePrice *
+    //       quantity as the initial value (fallback).
+    //    c. Add the carry-forward totalValue to the day's aggregate.
+    // 4. The current approach (latestValueByDay map with "latest on same day") is correct
+    //    for days WITH updates but misses days WITHOUT updates entirely.
+    //
+    // Implementation steps:
+    // 1. Create a helper method: `fun carryForwardDailyValues(values: List<InvestmentValue>, startDate: Long, endDate: Long): Map<String, Double>`
+    // 2. For each day in the range, find the latest value <= end of that day.
+    // 3. Replace the current loop that iterates `latestValueByDay` with the new helper.
+    // 4. Add integration test verifying that a holding with one price update on day 1
+    //    still appears in the history for days 2-30 (carried forward).
     /**
      * Get portfolio value history over time.
      */

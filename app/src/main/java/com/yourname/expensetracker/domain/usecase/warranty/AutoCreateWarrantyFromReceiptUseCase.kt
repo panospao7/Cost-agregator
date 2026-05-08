@@ -357,6 +357,23 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
         }
     }
 
+    /**
+     * Calculates the exclusive end-boundary for a warranty's coverage period.
+     *
+     * W20: Half-open semantics — the warranty is valid through the end of the last
+     * covered day. The stored endDate is the first millisecond AFTER the last
+     * covered day (exclusive upper bound). Display shows (endDate - 1 day) to the user.
+     *
+     * All warranty creation paths must converge on this same half-open contract:
+     * - AutoCreateWarrantyFromReceiptUseCase.calculateWarrantyEndDate (this method)
+     * - WarrantyTrackerRepository.toCalendarMonthEndDate (toWarrantyEntityOrNull path)
+     * - Manual warranty entry (future UI)
+     *
+     * TODO (W20): Verify all 3 paths use identical half-open semantics.
+     * Currently this method uses getEndOfDay(dayStart) which produces an exclusive
+     * upper bound. The Warranty entity stores this as warrantyEndDate. Expiry checks
+     * use `warrantyEndDate < now()` which correctly evaluates the half-open interval.
+     */
     private fun calculateWarrantyEndDate(purchaseDate: Long, durationMonths: Int): Long {
         val zoneId = ZoneId.systemDefault()
         val endDate = Instant.ofEpochMilli(purchaseDate)

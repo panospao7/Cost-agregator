@@ -258,6 +258,20 @@ class SubscriptionManagementViewModel @Inject constructor(
     
     /**
      * Add a new subscription.
+     *
+     * TODO (W22): Route through SubscriptionManagerEngine.validateAndCreate() instead of
+     * directly calling repository.insertSubscription(). validateAndCreate enforces:
+     * - positive amount (require(amount > 0))
+     * - valid 3-letter currency code
+     * - non-blank merchant
+     * - createdAt timestamp via timeProvider.now()
+     * - baseline price history recording
+     *
+     * Entry points that need validateAndCreate:
+     * - This method (SubscriptionManagementViewModel.addSubscription)
+     * - SubscriptionManagementRepository.insertSubscription (called externally)
+     * - Any candidate-conversion path (markCandidateAsConverted → auto-create)
+     * - NotificationSubscriptionDetector auto-creation path
      */
     fun addSubscription(
         merchant: String,

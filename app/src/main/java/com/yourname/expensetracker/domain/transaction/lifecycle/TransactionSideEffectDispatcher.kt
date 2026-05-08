@@ -75,7 +75,33 @@ class TransactionSideEffectDispatcher @Inject constructor(
         }
 
         // TODO (C08): After committed expense creation/update, update merchant canonical stats.
-        // Inject MerchantNormalizationRepository and call incrementMerchantStats(canonical.id, amount, timestamp).
+        //
+        // IMPLEMENTATION PLAN for merchant canonical stats wiring (dispatchOnCreated):
+        //
+        // 1. Inject MerchantNormalizationRepository into this constructor:
+        //    ```kotlin
+        //    private val merchantNormalizationRepository: MerchantNormalizationRepository
+        //    ```
+        //
+        // 2. After the anomaly alert check (step 3), add:
+        //    ```kotlin
+        //    runSafely("merchant canonical stats for expense $expenseId") {
+        //        expense.merchantKey?.let { key ->
+        //            val canonical = merchantNormalizationRepository.resolveCanonical(key)
+        //            if (canonical != null) {
+        //                merchantNormalizationRepository.incrementStats(
+        //                    canonicalId = canonical.id,
+        //                    amount = expense.effectiveAmount,
+        //                    timestamp = expense.date
+        //                )
+        //            }
+        //        }
+        //    }
+        //    ```
+        //
+        // 3. Verify MerchantNormalizationRepository.incrementStats() exists and is suspend.
+        //    If not, create it. The implementation should update a merchant_stats table with:
+        //    - totalSpend (sum of effectiveAmount), transactionCount, lastTransactionDate, avg.
     }
 
     /**
@@ -115,7 +141,26 @@ class TransactionSideEffectDispatcher @Inject constructor(
         }
 
         // TODO (C08): After committed expense creation/update, update merchant canonical stats.
-        // Inject MerchantNormalizationRepository and call incrementMerchantStats(canonical.id, amount, timestamp).
+        //
+        // IMPLEMENTATION PLAN for merchant canonical stats wiring (dispatchOnUpdated):
+        // - Same pattern as dispatchOnCreated above.
+        // - Inject MerchantNormalizationRepository, then:
+        //   ```kotlin
+        //   runSafely("merchant canonical stats update for expense $expenseId") {
+        //       expense.merchantKey?.let { key ->
+        //           val canonical = merchantNormalizationRepository.resolveCanonical(key)
+        //           if (canonical != null) {
+        //               merchantNormalizationRepository.incrementStats(
+        //                   canonicalId = canonical.id,
+        //                   amount = expense.effectiveAmount,
+        //                   timestamp = expense.date
+        //               )
+        //           }
+        //       }
+        //   }
+        //   ```
+        // - For updates, consider whether to use delta (newAmount - oldAmount) or
+        //   re-compute from scratch. Delta is simpler but requires old amount fetch.
     }
 
     /**

@@ -18,6 +18,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
+ * TAX CONTAINMENT NOTICE (2026-05-08):
+ * The entire Tax feature is ⏭ DEFERRED_DESIGN. The code below works for basic
+ * single-currency EUR cases but has known gaps (T01-T10). The feature is
+ * contained behind a feature flag and NOT exposed in the production UI.
+ *
+ * No new tax features should be added without a full design review.
+ * The existing implementation is kept for demo/testing purposes only.
+ *
  * HIGH FIX (HIGH-6): Calculates estimated taxes using configurable tax rates.
  * 
  * Replaces hardcoded tax rates with TaxConfiguration for country-specific rates.

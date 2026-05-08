@@ -6,11 +6,32 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 
-// NEXT STEPS (ARCH-E13):
-// 1. Change insert() return from Unit to Long (Room @Insert already returns Long)
-// 2. Change insertAll() return from Unit to List<Long>
-// 3. Add conflict detection: check both rawName AND normalizedKey before insert
-// 4. Return AliasLinkResult.Conflict(existing) on conflict
+// NEXT STEPS (ARCH-E13): Categorization migration — DAO-level changes
+//
+// MIGRATION PLAN:
+// ===============
+// 1. DAO return type changes:
+//    a. insert(merchantCategory) → change return from Unit to Long
+//       (Room @Insert onConflict=IGNORE returns Long — callers must check for 0L).
+//    b. insertAll(merchantCategories) → change return from Unit to List<Long>.
+//
+// 2. Conflict detection at DAO boundary:
+//    a. Add a @Query method to check existence by both rawName AND normalizedKey:
+//       `SELECT id FROM merchant_categories WHERE merchantPattern = :rawName OR normalizedCanonicalName = :normalizedKey LIMIT 1`
+//    b. Callers should use this before insert to distinguish IGNORE-skip (-1L) from real insert.
+//    c. Return AliasLinkResult.Conflict(existingId) when a match is found.
+//
+// 3. Unique constraint enforcement:
+//    a. Add migration step to create a UNIQUE index on normalizedCanonicalName
+//       (or make the column UNIQUE directly).
+//    b. C06: getCategoryByNormalizedCanonical currently returns a single result.
+//       After UNIQUE, this is safe. Before UNIQUE, it may return ambiguous results.
+//    c. Migration SQL: `CREATE UNIQUE INDEX IF NOT EXISTS idx_merchant_categories_normalized ON merchant_categories(normalizedCanonicalName)`
+//
+// 4. Deprecation cleanup:
+//    a. Remove @Deprecated annotations on insert/insertAll after all callers
+//       have been migrated to use MerchantCategoryRepository.
+//    b. Remove the deprecated methods entirely once migration is complete.
 @Dao
 interface MerchantCategoryDao {
     @Query("SELECT * FROM merchant_categories WHERE merchantPattern = :merchantPattern")
