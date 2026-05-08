@@ -1,0 +1,24 @@
+package com.yourname.expensetracker.domain.location
+
+/**
+ * Located expense with normalized currency for multi-currency safety.
+ * PR-E6: Replaces raw Double amounts in heatmap/insight engines.
+ */
+data class LocatedMoneyExpense(
+    val expenseId: Long,
+    val latitude: Double,
+    val longitude: Double,
+    val normalizedAmount: Double?,  // converted to home currency, null if conversion failed
+    val normalizedCurrency: String,  // home currency
+    val originalAmount: Double,      // raw effectiveAmount
+    val originalCurrency: String,    // expense's currency
+    val conversionStatus: ConversionStatus,
+    val merchant: String,
+    val date: Long
+)
+
+enum class ConversionStatus {
+    HOME_CURRENCY,    // no conversion needed
+    CONVERTED,        // successfully converted
+    FAILED            // conversion failed, exclude from normalized totals
+}

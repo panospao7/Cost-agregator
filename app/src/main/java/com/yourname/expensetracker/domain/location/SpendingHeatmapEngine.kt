@@ -132,6 +132,17 @@ class SpendingHeatmapEngine @Inject constructor() {
         }
     }
 
+    /**
+     * TODO PR-E6: Replace raw-Double [compute] with this currency-safe variant.
+     * Sums only [ConversionStatus.CONVERTED] and [ConversionStatus.HOME_CURRENCY] rows
+     * using [LocatedMoneyExpense.normalizedAmount] for heatmap intensity.
+     * Currently a stub — returns empty list.
+     */
+    fun computeNormalized(expenses: List<LocatedMoneyExpense>): List<HeatmapPoint> {
+        // TODO PR-E6: implement normalized heatmap computation using normalizedAmount
+        return emptyList()
+    }
+
     private companion object {
         /** ~0.0015° ≈ 150 m at mid-latitude. */
         const val CLUSTER_RADIUS_DEG = 0.0015

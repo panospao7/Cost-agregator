@@ -13,7 +13,9 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.location.ForegroundLocationProvider
+import com.yourname.expensetracker.domain.location.ConversionStatus
 import com.yourname.expensetracker.domain.location.LocatedExpense
+import com.yourname.expensetracker.domain.location.LocatedMoneyExpense
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
 import com.yourname.expensetracker.domain.location.NearbyPoi
@@ -45,7 +47,8 @@ data class MapExpenseMarker(
     val merchant: String,
     val date: Long,
     val locationSource: String?,
-    val placeId: String?
+    val placeId: String?,
+    val isConverted: Boolean = true
 )
 
 data class MapCategoryFilterOption(
@@ -372,17 +375,20 @@ class SpendingMapViewModel @Inject constructor(
         val markers = filteredExpenses.mapNotNull { e ->
             val lat = e.latitude ?: return@mapNotNull null
             val lon = e.longitude ?: return@mapNotNull null
-            val homeAmount = if (e.currency != currentState.homeCurrency) {
-                currencyConverter.convert(
+            val (homeAmount, isConverted) = if (e.currency != currentState.homeCurrency) {
+                val converted = currencyConverter.convert(
                     amount = e.effectiveAmount,
                     fromCurrency = e.currency,
                     toCurrency = currentState.homeCurrency
-                )?.convertedAmount ?: run {
-                    Timber.w("Failed to convert %s amount %.2f to %s, falling back to raw amount", e.currency, e.effectiveAmount, currentState.homeCurrency)
-                    e.amount
+                )
+                if (converted != null) {
+                    Pair(converted.convertedAmount, true)
+                } else {
+                    Timber.w("Conversion failed for marker ${e.merchant}: ${e.effectiveAmount} ${e.currency}")
+                    Pair(e.effectiveAmount, false)
                 }
             } else {
-                e.effectiveAmount
+                Pair(e.effectiveAmount, true)
             }
             MapExpenseMarker(
                 expenseId = e.id,
@@ -392,7 +398,8 @@ class SpendingMapViewModel @Inject constructor(
                 merchant = e.merchant,
                 date = e.date,
                 locationSource = e.locationSource,
-                placeId = e.placeId
+                placeId = e.placeId,
+                isConverted = isConverted
             )
         }
 
@@ -440,6 +447,40 @@ class SpendingMapViewModel @Inject constructor(
             )
         }
 
+        // PR-E6: Create LocatedMoneyExpense instances for multi-currency-safe heatmap
+        val moneyExpenses = spendingOnlyExpenses.mapNotNull { e ->
+            val lat = e.latitude ?: return@mapNotNull null
+            val lon = e.longitude ?: return@mapNotNull null
+            val (normalizedAmount, conversionStatus) = if (e.currency == currentState.homeCurrency) {
+                Pair(e.effectiveAmount, ConversionStatus.HOME_CURRENCY)
+            } else {
+                val converted = currencyConverter.convertAsOf(
+                    amount = e.effectiveAmount,
+                    fromCurrency = e.currency,
+                    toCurrency = currentState.homeCurrency,
+                    atMillis = e.date
+                )
+                if (converted != null) {
+                    Pair(converted.convertedAmount, ConversionStatus.CONVERTED)
+                } else {
+                    Pair(null, ConversionStatus.FAILED)
+                }
+            }
+            LocatedMoneyExpense(
+                expenseId = e.id,
+                latitude = lat,
+                longitude = lon,
+                normalizedAmount = normalizedAmount,
+                normalizedCurrency = currentState.homeCurrency,
+                originalAmount = e.effectiveAmount,
+                originalCurrency = e.currency,
+                conversionStatus = conversionStatus,
+                merchant = e.merchant,
+                date = e.date
+            )
+        }
+        // TODO PR-E6: use moneyExpenses with heatmapEngine.computeNormalized() once implemented
+        // val normalizedHeatmap = heatmapEngine.computeNormalized(moneyExpenses)
         val heatmap = heatmapEngine.compute(heatmapExpenses)
         val insights = insightsEngine.compute(spendingDomainExpenses)
 
