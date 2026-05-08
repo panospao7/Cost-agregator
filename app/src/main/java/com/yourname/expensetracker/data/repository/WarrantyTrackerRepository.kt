@@ -221,16 +221,29 @@ class WarrantyTrackerRepository @Inject constructor(
     suspend fun deleteReturnWindow(returnWindow: ReturnWindow) =
         returnWindowDao.deleteReturnWindow(returnWindow)
 
-    // TODO (W02): Infer refundCurrency from linked Expense's currency at markAsReturned time.
+    /**
+     * W02: Marks a return window as RETURNED with the given refund amount and currency.
+     * If [refundCurrency] is null, the currency is inferred from the linked Expense,
+     * falling back to "EUR".
+     */
     suspend fun markAsReturned(
-        returnWindowId: Long, 
-        refundAmount: Double? = null
-    ) = returnWindowDao.markAsReturned(
-        returnWindowId = returnWindowId,
-        returnedAt = timeProvider.now(),
-        refundAmount = refundAmount,
-        updatedAt = timeProvider.now()
-    )
+        returnWindowId: Long,
+        refundAmount: Double,
+        refundCurrency: String? = null
+    ): ReturnWindow? {
+        val existing = returnWindowDao.getReturnWindowById(returnWindowId) ?: return null
+        val linkedExpense = existing.expenseId?.let { database.expenseDao().getById(it) }
+        val currency = refundCurrency ?: linkedExpense?.currency ?: "EUR"
+        val updated = existing.copy(
+            status = ReturnStatus.RETURNED,
+            returnedAt = timeProvider.now(),
+            refundAmount = refundAmount,
+            refundCurrency = currency,
+            updatedAt = timeProvider.now()
+        )
+        returnWindowDao.updateReturnWindow(updated)
+        return updated
+    }
 
     suspend fun reconcileExpiredItems(now: Long = timeProvider.now()): ExpiryReconciliationResult {
         val expiredWarranties = warrantyDao.markExpiredWarranties(currentTime = now, updatedAt = now)
@@ -478,12 +491,14 @@ class WarrantyTrackerRepository @Inject constructor(
      * No OCR, deduplication, or warranty side effects are needed since the user is
      * manually entering warranty data.
      */
-    // TODO (W21): Use homeCurrency from CurrencySettingsRepository instead of hardcoded EUR in createManualPlaceholderReceipt.
+    // W21: Use homeCurrency from CurrencySettingsRepository instead of hardcoded EUR.
     suspend fun createManualPlaceholderReceipt(
         merchantName: String,
         purchaseDate: Long,
         productName: String
     ): Long {
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
         val receipt = ScannedReceipt(
             imagePath = null,
             rawOcrText = "Manual warranty entry: $productName",
@@ -493,7 +508,7 @@ class WarrantyTrackerRepository @Inject constructor(
             parsedItems = null,
             parsedTaxAmount = null,
             // W21: Use homeCurrency from CurrencySettingsRepository instead of hardcoded EUR.
-            currency = "EUR",
+            currency = homeCurrency,
             confidence = 1f
         )
         return receiptRepository.get().insertReceipt(receipt)

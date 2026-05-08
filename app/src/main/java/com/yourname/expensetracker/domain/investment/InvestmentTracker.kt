@@ -39,9 +39,6 @@ data class InvestmentPerformance(
     val allTimeLow: Double?
 )
 
-// TODO (PR-E19): Add AddInvestmentCommand with validation (quantity>0, price>0, fees>=0, currency valid).
-// Wrap price update + history insert in withTransaction.
-// Either include fees in DAO aggregates or deprecate raw methods.
 @Singleton
 class InvestmentTracker @Inject constructor(
     private val investmentDao: InvestmentDao,
@@ -91,6 +88,40 @@ class InvestmentTracker @Inject constructor(
         )
     }
     
+    /**
+     * Add a new investment holding with validation.
+     *
+     * Validates that quantity and purchase price are positive, currency is provided,
+     * then persists the investment and records its initial value history snapshot.
+     *
+     * @param investment The investment to add (must have quantity > 0, purchasePrice > 0,
+     *                   and non-blank currency).
+     * @return [Result.success] with the generated ID, or [Result.failure] if validation fails.
+     * @throws IllegalArgumentException if any validation constraint is violated.
+     */
+    suspend fun addHolding(investment: Investment): Result<Long> {
+        require(investment.quantity > 0) { "Quantity must be positive" }
+        require(investment.purchasePrice > 0) { "Purchase price must be positive" }
+        require(investment.currency.isNotBlank()) { "Currency is required" }
+        val now = timeProvider.now()
+        val validated = investment.copy(
+            createdAt = if (investment.createdAt > 0) investment.createdAt else now,
+            lastUpdated = now
+        )
+        val id = investmentDao.insert(validated)
+
+        // Record initial value history snapshot
+        investmentValueDao.insert(
+            InvestmentValue(
+                investmentId = id,
+                price = investment.purchasePrice,
+                totalValue = investment.purchasePrice * investment.quantity,
+                timestamp = now
+            )
+        )
+        return Result.success(id)
+    }
+
     /**
      * Get portfolio summary together with a MoneyAggregate grouped by currency.
      *

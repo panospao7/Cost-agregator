@@ -157,6 +157,17 @@ object RecurrenceCalculator {
     }
     
     /**
+     * Calculate the next occurrence date based on the last seen date and frequency.
+     *
+     * @param lastSeen The last date the subscription was seen/charged in milliseconds
+     * @param frequency Recurrence frequency
+     * @return Next occurrence date in milliseconds
+     */
+    fun nextOccurrence(lastSeen: Long, frequency: RecurrenceFrequency): Long {
+        return calculateNextDate(lastSeen, frequency)
+    }
+
+    /**
      * Calculate total annual cost from monthly amount.
      * 
      * @param monthlyAmount Monthly cost

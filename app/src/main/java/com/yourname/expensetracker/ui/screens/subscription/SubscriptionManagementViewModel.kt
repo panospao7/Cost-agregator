@@ -337,23 +337,19 @@ class SubscriptionManagementViewModel @Inject constructor(
                     else -> RecurrenceFrequency.MONTHLY
                 }
                 
-                // TODO (W23): Use RecurrenceCalculator.nextOccurrence() instead of adding fixed day offsets.
+                // W23: Use RecurrenceCalculator.nextOccurrence() instead of fixed day offsets.
                 // Fixed offsets (30 days, 90 days, 365 days) don't account for variable month lengths.
+                val nextDate = RecurrenceCalculator.nextOccurrence(
+                    lastSeen = candidate.lastSeen,
+                    frequency = frequency
+                )
                 // Create subscription from candidate
                 val subscription = ManualRecurringExpense(
                     merchant = candidate.merchant,
                     amount = candidate.averageAmount,
                     currency = candidate.currency,
                     frequency = frequency,
-                    nextDate = candidate.lastSeen + when (frequency) {
-                        RecurrenceFrequency.WEEKLY -> 7L * TimePeriodUtils.DAY_IN_MILLIS
-                        RecurrenceFrequency.BIWEEKLY -> 14L * TimePeriodUtils.DAY_IN_MILLIS
-                        RecurrenceFrequency.MONTHLY -> 30L * TimePeriodUtils.DAY_IN_MILLIS
-                        RecurrenceFrequency.QUARTERLY -> 90L * TimePeriodUtils.DAY_IN_MILLIS
-                        RecurrenceFrequency.SEMI_ANNUALLY -> 180L * TimePeriodUtils.DAY_IN_MILLIS
-                        RecurrenceFrequency.ANNUALLY -> 365L * TimePeriodUtils.DAY_IN_MILLIS
-                        RecurrenceFrequency.IRREGULAR -> 30L * TimePeriodUtils.DAY_IN_MILLIS
-                    },
+                    nextDate = nextDate,
                     isSubscription = true,
                     isActive = true
                 )

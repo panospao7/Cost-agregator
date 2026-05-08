@@ -25,6 +25,9 @@ interface ReturnWindowDao {
     @Query("SELECT * FROM return_windows WHERE returnDeadline < :currentTime AND status = 'RETURNABLE'")
     suspend fun getRecentlyExpiredReturnWindows(currentTime: Long): List<ReturnWindow>
 
+    @Query("SELECT * FROM return_windows WHERE id = :id")
+    suspend fun getReturnWindowById(id: Long): ReturnWindow?
+
     @Query("SELECT * FROM return_windows WHERE receiptId = :receiptId")
     suspend fun getReturnWindowByReceiptId(receiptId: Long?): ReturnWindow?
 

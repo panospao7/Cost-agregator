@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.subscription
 
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
 import com.yourname.expensetracker.data.database.entity.SubscriptionUsage
 import com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
@@ -106,9 +107,19 @@ data class SubscriptionAnalysis(
     val healthScore: Int // 0-100, higher is better value
 )
 
-// TODO (PR-E18): Create CreateSubscriptionCommand with validation (amount>0, currency valid, createdAt set).
-// Wrap price history insert + subscription update in database.withTransaction.
-// Use RecurrenceCalculator.nextOccurrence() instead of fixed day offsets for candidate dates.
+/**
+ * Request to create a new subscription.
+ * Validated by [SubscriptionManagerEngine.validateAndCreate].
+ */
+data class CreateSubscriptionRequest(
+    val merchant: String,
+    val amount: Double,
+    val currency: String,
+    val frequency: RecurrenceFrequency,
+    val startDate: Long,
+    val recordPriceHistory: Boolean = true
+)
+
 @Singleton
 class SubscriptionManagerEngine @Inject constructor(
     private val recurringExpenseRepository: RecurringExpenseRepository,
@@ -119,6 +130,46 @@ class SubscriptionManagerEngine @Inject constructor(
     private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     
+    /**
+     * Validate a subscription creation request, persist the subscription and
+     * its initial baseline price history, and return the created entity.
+     *
+     * @param request The validated creation request.
+     * @return [Result.success] with the created [ManualRecurringExpense] (including its generated ID),
+     *         or [Result.failure] if validation fails.
+     * @throws IllegalArgumentException if any validation constraint is violated.
+     */
+    suspend fun validateAndCreate(request: CreateSubscriptionRequest): Result<ManualRecurringExpense> {
+        require(request.amount > 0) { "Amount must be positive" }
+        require(request.currency.isNotBlank() && request.currency.length == 3) { "Invalid currency" }
+        require(request.merchant.isNotBlank()) { "Merchant is required" }
+
+        val now = timeProvider.now()
+        val subscription = ManualRecurringExpense(
+            merchant = request.merchant,
+            amount = request.amount,
+            currency = request.currency.uppercase(),
+            frequency = request.frequency,
+            nextDate = request.startDate,
+            createdAt = now,
+            isActive = true
+        )
+        val id = recurringExpenseRepository.insert(subscription)
+
+        // Also record baseline price history with recordedAt set
+        if (request.recordPriceHistory) {
+            priceHistoryDao.insert(
+                SubscriptionPriceHistory(
+                    subscriptionId = id,
+                    amount = request.amount,
+                    currency = request.currency,
+                    recordedAt = now
+                )
+            )
+        }
+        return Result.success(subscription.copy(id = id))
+    }
+
     /**
      * Get all active subscriptions with full analysis.
      */
