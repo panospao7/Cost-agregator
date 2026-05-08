@@ -35,11 +35,10 @@ fun Expense.toGrossMoneyAmount(): MoneyAmount =
 /** Map an existing ConversionResult to the new ConvertedMoney type. */
 fun ConversionResult.toConvertedMoney(originalCurrency: CurrencyCode): ConvertedMoney =
     ConvertedMoney.success(
-        original = MoneyAmount(originalAmount, originalCurrency),
-        convertedAmount = convertedAmount,
-        convertedCurrency = CurrencyCode(targetCurrency),
-        rateUsed = rateUsed,
-        rateTimestamp = timestamp
+        amount = convertedAmount,
+        currency = CurrencyCode(targetCurrency),
+        originalAmount = originalAmount,
+        originalCurrency = originalCurrency
     )
 
 // ── MultiConversionAggregate → MoneyAggregate ─────────────────────────

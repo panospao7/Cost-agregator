@@ -1,78 +1,76 @@
 package com.yourname.expensetracker.domain.core.money
 
 /**
- * Result of converting a [MoneyAmount] from one currency to another.
+ * Result of converting a monetary amount from one currency to another.
  *
  * Unlike [MoneyAmount], this preserves the original amount/currency AND the
- * converted result, plus the exchange rate metadata used for the conversion.
+ * converted result. It also captures failure information when a conversion
+ * cannot be completed.
  *
- * When conversion fails (rate unavailable), [convertedAmount] is null and
- * [conversionStatus] indicates why.
+ * Identity conversions (same currency) are treated as successful — they are
+ * NOT failures.
  */
 data class ConvertedMoney(
-    val original: MoneyAmount,
-    val convertedAmount: Double?,
-    val convertedCurrency: CurrencyCode,
-    val rateUsed: Double?,
-    val rateTimestamp: Long?,
-    val conversionStatus: ConversionStatus
+    val amount: Double = 0.0,
+    val currency: CurrencyCode,
+    val originalAmount: Double = amount,
+    val originalCurrency: CurrencyCode = currency,
+    val isSuccess: Boolean = true,
+    val isExactIdentity: Boolean = originalCurrency == currency,
+    val failureReason: FailureReason? = null,
+    val failureMessage: String? = null
 ) {
-
-    /** The converted result as a MoneyAmount, or null if conversion failed. */
-    val converted: MoneyAmount?
-        get() = convertedAmount?.let { MoneyAmount(it, convertedCurrency) }
-
-    /** Whether the conversion succeeded. */
-    val isConverted: Boolean
-        get() = conversionStatus == ConversionStatus.SUCCESS
-
-    /** Whether the conversion failed. */
-    // TODO (M01): Fix isFailed to not treat SAME_CURRENCY (identity) as a failure.
-    // Add isExactSuccess/isUsable flags. Identity conversion is not a failure.
-    val isFailed: Boolean
-        get() = conversionStatus != ConversionStatus.SUCCESS
 
     companion object {
         /** Create a successful conversion result. */
         fun success(
-            original: MoneyAmount,
-            convertedAmount: Double,
-            convertedCurrency: CurrencyCode,
-            rateUsed: Double,
-            rateTimestamp: Long?
+            amount: Double,
+            currency: CurrencyCode,
+            originalAmount: Double = amount,
+            originalCurrency: CurrencyCode = currency
         ): ConvertedMoney = ConvertedMoney(
-            original = original,
-            convertedAmount = convertedAmount,
-            convertedCurrency = convertedCurrency,
-            rateUsed = rateUsed,
-            rateTimestamp = rateTimestamp,
-            conversionStatus = ConversionStatus.SUCCESS
+            amount = amount,
+            currency = currency,
+            originalAmount = originalAmount,
+            originalCurrency = originalCurrency,
+            isSuccess = true,
+            isExactIdentity = originalCurrency == currency
         )
 
-        /** Create a failed conversion result (no rate available). */
-        // TODO (M08): Add failureReason and failureMessage fields to ConvertedMoney.
-        // Preserve the `reason` parameter in the result instead of discarding it.
+        /**
+         * Create a failed conversion result with a preserved [FailureReason].
+         *
+         * Unlike the previous implementation which discarded the [reason], this
+         * version stores it so callers can inspect why the conversion failed.
+         */
         fun failed(
-            original: MoneyAmount,
-            targetCurrency: CurrencyCode,
-            reason: String
+            amount: Double,
+            currency: CurrencyCode,
+            reason: FailureReason,
+            message: String? = null
         ): ConvertedMoney = ConvertedMoney(
-            original = original,
-            convertedAmount = null,
-            convertedCurrency = targetCurrency,
-            rateUsed = null,
-            rateTimestamp = null,
-            conversionStatus = ConversionStatus.FAILED_MISSING_RATE
+            amount = 0.0,
+            currency = currency,
+            isSuccess = false,
+            failureReason = reason,
+            failureMessage = message
         )
 
-        /** Create a same-currency "conversion" (identity, no rate needed). */
-        fun identity(original: MoneyAmount): ConvertedMoney = ConvertedMoney(
-            original = original,
-            convertedAmount = original.amount,
-            convertedCurrency = original.currency,
-            rateUsed = 1.0,
-            rateTimestamp = null,
-            conversionStatus = ConversionStatus.SAME_CURRENCY
+        /**
+         * Create a same-currency identity "conversion".
+         *
+         * Identity conversions are always successful — they are NOT treated as
+         * failures, unlike the previous `isFailed` logic which incorrectly
+         * flagged SAME_CURRENCY as failed.
+         */
+        fun identity(
+            amount: Double,
+            currency: CurrencyCode
+        ): ConvertedMoney = ConvertedMoney(
+            amount = amount,
+            currency = currency,
+            isSuccess = true,
+            isExactIdentity = true
         )
     }
 }
