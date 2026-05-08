@@ -221,6 +221,7 @@ class WarrantyTrackerRepository @Inject constructor(
     suspend fun deleteReturnWindow(returnWindow: ReturnWindow) =
         returnWindowDao.deleteReturnWindow(returnWindow)
 
+    // TODO (W02): Infer refundCurrency from linked Expense's currency at markAsReturned time.
     suspend fun markAsReturned(
         returnWindowId: Long, 
         refundAmount: Double? = null
@@ -420,6 +421,7 @@ class WarrantyTrackerRepository @Inject constructor(
         }
     }
 
+    // TODO (W20): Use half-open warranty dates: startInclusive, endExclusive.
     /**
      * Returns the exclusive end-boundary of the calendar date [durationMonths]
      * after the date represented by this timestamp.
@@ -476,6 +478,7 @@ class WarrantyTrackerRepository @Inject constructor(
      * No OCR, deduplication, or warranty side effects are needed since the user is
      * manually entering warranty data.
      */
+    // TODO (W21): Use homeCurrency from CurrencySettingsRepository instead of hardcoded EUR in createManualPlaceholderReceipt.
     suspend fun createManualPlaceholderReceipt(
         merchantName: String,
         purchaseDate: Long,

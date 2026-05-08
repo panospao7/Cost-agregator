@@ -106,6 +106,9 @@ data class SubscriptionAnalysis(
     val healthScore: Int // 0-100, higher is better value
 )
 
+// TODO (PR-E18): Create CreateSubscriptionCommand with validation (amount>0, currency valid, createdAt set).
+// Wrap price history insert + subscription update in database.withTransaction.
+// Use RecurrenceCalculator.nextOccurrence() instead of fixed day offsets for candidate dates.
 @Singleton
 class SubscriptionManagerEngine @Inject constructor(
     private val recurringExpenseRepository: RecurringExpenseRepository,

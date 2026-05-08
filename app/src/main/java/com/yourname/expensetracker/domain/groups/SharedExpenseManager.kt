@@ -64,6 +64,8 @@ import javax.inject.Singleton
  * validation. Old serialized customSplitsJson (with all member entries) continues
  * to parse correctly.
  */
+// TODO (PR-E16): Enforce single-currency groups. Reject adding expense if currency != group.currency.
+// Settlements use group.currency. Legacy mixed-currency rows show partial/unsupported warning.
 @Singleton
 class SharedExpenseManager @Inject constructor(
     private val sharedExpenseDataPort: SharedExpenseDataPort,

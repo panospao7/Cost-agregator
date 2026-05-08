@@ -414,5 +414,10 @@ tasks.named("check") {
     dependsOn("checkLifecycleBypasses")
 }
 
+// TODO (PR-E23): Add check_raw_money_aggregates.kts CI guard for raw Double financial totals.
+// Flag: sumOf { it.amount }, sumOf { it.effectiveAmount }, total: Double in public engine results.
+// TODO (PR-E24): Add check_direct_time_calls.kts CI guard.
+// Flag: System.currentTimeMillis(), Date(), Calendar.getInstance(), Instant.now(), LocalDate.now()
+// Allowlist: TimeProvider implementations, platform adapters, tests.
 // TODO (M10): Add CI guard for direct System.currentTimeMillis/Instant.now/Date()
 // calls outside approved TimeProvider implementations

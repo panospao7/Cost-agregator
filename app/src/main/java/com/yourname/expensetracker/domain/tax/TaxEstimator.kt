@@ -26,6 +26,8 @@ import javax.inject.Singleton
  * T01: Deductible expenses use MoneyAggregate via buildDeductibleAggregate().
  * Income aggregates via buildIncomeAggregate(). Both use CurrencyConverter.
  */
+// TODO (PR-E21): Add TaxSettings with countryCode, filingCurrency, fiscalYearStartMonth.
+// Persist via TaxSettingsRepository. Use selected country for rates.
 @Singleton
 class TaxEstimator @Inject constructor(
     private val expenseDao: ExpenseDao,

@@ -71,6 +71,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             currencySettingsRepository = mockk(),
             currencyConverter = mockk(),
             timeProvider = mockk(),
+            privacyGate = mockk(relaxed = true),
         )
     }
 
@@ -135,6 +136,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             currencySettingsRepository = mockk(),
             currencyConverter = mockk(),
             timeProvider = mockk(),
+            privacyGate = mockk(relaxed = true),
         )
 
         // Wait for the init coroutine (runs on Dispatchers.IO) to finish
@@ -175,6 +177,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             currencySettingsRepository = mockk(),
             currencyConverter = mockk(),
             timeProvider = mockk(),
+            privacyGate = mockk(relaxed = true),
         )
 
         // Wait for the init coroutine to complete
@@ -217,6 +220,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             currencySettingsRepository = mockk(),
             currencyConverter = mockk(),
             timeProvider = mockk(),
+            privacyGate = mockk(relaxed = true),
         )
 
         // Wait for data load
@@ -256,6 +260,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             currencySettingsRepository = mockk(),
             currencyConverter = mockk(),
             timeProvider = mockk(),
+            privacyGate = mockk(relaxed = true),
         )
 
         // Wait for data load
@@ -393,6 +398,7 @@ class SpendingMapHeatmapFilterTest : ViewModelTestUtils() {
             currencySettingsRepository = mockk(),
             currencyConverter = mockk(),
             timeProvider = mockk(),
+            privacyGate = mockk(relaxed = true),
         )
 
         vm.state.test {
@@ -422,6 +428,7 @@ class SpendingMapHeatmapFilterTest : ViewModelTestUtils() {
             currencySettingsRepository = mockk(),
             currencyConverter = mockk(),
             timeProvider = mockk(),
+            privacyGate = mockk(relaxed = true),
             )
 
         vm.state.test {

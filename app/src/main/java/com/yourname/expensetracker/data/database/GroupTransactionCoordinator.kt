@@ -45,6 +45,10 @@ import javax.inject.Singleton
  * B.4 Batch 2: Added ExpenseDao for atomic system-expense + group-link flow.
  * 
  * This is the SINGLE implementation of the GroupTransactionCoordinator contract.
+ *
+ * TODO (PR-E15): Create GroupLifecycleCoordinator for group lifecycle methods:
+ * createGroup(), addMember(), removeMember(), addExpense(), archiveGroup(), deleteGroupPermanently().
+ * Rules: currentUserGroupKey invariant, deferred side effects, lifecycle event logging.
  */
 @Singleton
 class GroupTransactionCoordinator @Inject constructor(

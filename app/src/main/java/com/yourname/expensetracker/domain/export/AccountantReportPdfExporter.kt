@@ -28,6 +28,9 @@ import javax.inject.Inject
  * spending by default rather than all account activity. Pass `null` to
  * include all transaction types (legacy behavior).
  */
+// TODO (PR-E22): Return MoneyAggregate for deductible/income totals instead of raw Double.
+// Apply hardened CSV cell sanitizer (neutralize =+@- leading characters) per OWASP.
+// Add updateBusinessTaxFields coordinator method.
 class AccountantReportPdfExporter @Inject constructor(
     private val timeProvider: TimeProvider
 ) {

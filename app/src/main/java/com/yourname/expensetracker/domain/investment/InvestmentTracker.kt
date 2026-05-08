@@ -39,6 +39,9 @@ data class InvestmentPerformance(
     val allTimeLow: Double?
 )
 
+// TODO (PR-E19): Add AddInvestmentCommand with validation (quantity>0, price>0, fees>=0, currency valid).
+// Wrap price update + history insert in withTransaction.
+// Either include fees in DAO aggregates or deprecate raw methods.
 @Singleton
 class InvestmentTracker @Inject constructor(
     private val investmentDao: InvestmentDao,
@@ -253,6 +256,8 @@ class InvestmentTracker @Inject constructor(
             Pair(topPerformers, worstPerformers)
         }
     
+    // TODO (PR-E20): Carry forward latest known value per holding for each day in range.
+    // Don't only count holdings with price updates that day.
     /**
      * Get portfolio value history over time.
      */
