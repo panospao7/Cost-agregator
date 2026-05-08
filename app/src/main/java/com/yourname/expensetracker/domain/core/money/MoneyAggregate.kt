@@ -18,8 +18,8 @@ package com.yourname.expensetracker.domain.core.money
  * 2. If [isPartial], show a warning like "Total excludes N transactions due to missing rates"
  * 3. Optionally show [sourceBuckets] for per-currency detail
  *
- * TODO (M07): Include transactionCount in ConversionFailure.
- * Expose failedBucketCount and failedTransactionCount for accurate diagnostics.
+ * Use [failedTransactionCount] (sum of transaction counts across all failures)
+ * and [failedBucketCount] (number of failure entries) for accurate diagnostics.
  *
  * @see MoneyAmount The single-currency counterpart for non-aggregated values.
  */
@@ -40,11 +40,12 @@ data class MoneyAggregate(
         get() = sourceBuckets.sumOf { it.transactionCount }
 
     /**
-     * Number of conversion failures (not failed transactions — one failure may affect multiple transactions).
-     * For accurate per-transaction diagnostics, use [ConversionFailure.transactionCount].
+     * Total number of transactions affected by conversion failures.
+     * This sums [ConversionFailure.transactionCount] across all failure entries.
+     * For the count of failure entries (buckets) use [failedBucketCount].
      */
     val failedTransactionCount: Int
-        get() = conversionFailures.size
+        get() = conversionFailures.sumOf { it.transactionCount }
 
     /** Number of source buckets that failed conversion (same as [conversionFailures].size). */
     val failedBucketCount: Int

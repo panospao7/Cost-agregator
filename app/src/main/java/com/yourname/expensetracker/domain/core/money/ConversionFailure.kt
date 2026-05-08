@@ -14,7 +14,8 @@ package com.yourname.expensetracker.domain.core.money
 data class ConversionFailure(
     val originalAmount: MoneyAmount,
     val targetCurrency: CurrencyCode,
-    val reason: FailureReason
+    val reason: FailureReason,
+    val transactionCount: Int = 0  // E1: how many transactions this failure affects
 ) {
 
     /** Human-readable description of the failure. */

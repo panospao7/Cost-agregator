@@ -61,7 +61,8 @@ object MoneyAggregateBuilder {
 
         // Uses toConversionFailure() which correctly maps STALE_RATE vs MISSING_RATE
         val conversionFailures = conversionResult.failedConversions.map { failure ->
-            failure.toConversionFailure()
+            val txCount = byCurrency[failure.originalCurrency.uppercase()]?.second ?: 0
+            failure.toConversionFailure().copy(transactionCount = txCount)
         }
 
         return MoneyAggregate(
@@ -71,7 +72,9 @@ object MoneyAggregateBuilder {
             conversionFailures = conversionFailures,
             isPartial = conversionFailures.isNotEmpty(),
             warningMessage = if (conversionFailures.isNotEmpty()) {
-                "Total excludes ${conversionFailures.size} currency bucket(s)"
+                val totalFailedTx = conversionFailures.sumOf { it.transactionCount }
+                val bucketCount = conversionFailures.size
+                "Total excludes $totalFailedTx transaction(s) across $bucketCount currency bucket(s)"
             } else null
         )
     }

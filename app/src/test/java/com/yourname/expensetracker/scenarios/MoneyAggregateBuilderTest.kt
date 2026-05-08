@@ -239,13 +239,20 @@ class MoneyAggregateBuilderTest {
             transactionCounts = listOf(1, 2)
         )
 
-        // Warning message should mention "currency bucket(s)" not "transaction(s)"
+        // Warning message should mention transaction count AND currency bucket count
         assertNotNull("Warning message should be present", result.warningMessage)
+        assertTrue(
+            "Warning message should contain 'transaction(s)'",
+            result.warningMessage!!.contains("transaction(s)")
+        )
         assertTrue(
             "Warning message should contain 'currency bucket(s)'",
             result.warningMessage!!.contains("currency bucket(s)")
         )
-        assertEquals("Warning should report 2 failed buckets", "Total excludes 2 currency bucket(s)", result.warningMessage)
+        assertTrue(
+            "Warning message should contain failed transaction count",
+            result.warningMessage!!.contains("3 transaction(s)")
+        )
     }
 
     @Test
