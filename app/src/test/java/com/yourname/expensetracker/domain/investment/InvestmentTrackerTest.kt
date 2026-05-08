@@ -11,6 +11,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -32,7 +33,7 @@ class InvestmentTrackerTest {
 
     @Before
     fun setup() {
-        tracker = InvestmentTracker(investmentDao, investmentValueDao, timeProvider)
+        tracker = InvestmentTracker(investmentDao, investmentValueDao, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
     }
 
     // ---- All-time high/low correctness ----

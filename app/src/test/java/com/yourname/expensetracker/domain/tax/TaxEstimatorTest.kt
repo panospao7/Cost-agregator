@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -32,7 +33,10 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         taxEstimator = TaxEstimator(
             expenseDao = expenseDao,
             businessExpenseRepository = businessExpenseRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            currencyConverter = mockk(relaxed = true),
+            currencySettingsRepository = mockk(relaxed = true),
+            ioDispatcher = Dispatchers.Unconfined
         )
     }
 

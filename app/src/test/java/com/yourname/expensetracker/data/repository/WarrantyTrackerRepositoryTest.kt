@@ -51,7 +51,9 @@ class WarrantyTrackerRepositoryTest {
             aiSettingsRepository = aiSettingsRepository,
             aiPolicy = aiPolicy,
             aiCapabilityRouter = aiCapabilityRouter,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            currencyConverter = mockk(relaxed = true),
+            currencySettingsRepository = mockk(relaxed = true)
         )
 
         every { aiSettingsRepository.settings() } returns settingsFlow

@@ -34,7 +34,8 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
         useCase = AutoCreateWarrantyFromReceiptUseCase(
             warrantyTrackerRepository = warrantyTrackerRepository,
             receiptRepository = receiptRepository,
-            timeProvider = timeProvider
+            timeProvider = timeProvider,
+            privacyGate = mockk(relaxed = true)
         )
     }
 
