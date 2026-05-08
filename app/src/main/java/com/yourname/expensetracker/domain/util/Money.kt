@@ -3,6 +3,13 @@ package com.yourname.expensetracker.domain.util
 import java.math.BigDecimal
 import java.math.RoundingMode
 
+@Deprecated(
+    "Use MoneyAmount + MoneyAggregate from domain.core.money instead. " +
+    "MoneyAmount provides Double-based amounts with currency; MoneyAggregate handles multi-currency.",
+    ReplaceWith("MoneyAmount(amount, CurrencyCode(currency))",
+        "com.yourname.expensetracker.domain.core.money.MoneyAmount",
+        "com.yourname.expensetracker.domain.core.money.CurrencyCode")
+)
 /**
  * HIGH FIX (HIGH-2): Money value class for precise financial calculations.
  * 

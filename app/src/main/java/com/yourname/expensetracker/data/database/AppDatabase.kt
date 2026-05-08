@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 117
+const val APP_DATABASE_SCHEMA_VERSION = 119
 
 @Database(
     entities = [
@@ -98,7 +98,9 @@ const val APP_DATABASE_SCHEMA_VERSION = 117
         RecurringLifecycleEvent::class,
         PrivacyAuditEvent::class,
         BackgroundJobRun::class,
-        SourceStatsEvent::class
+        SourceStatsEvent::class,
+        WarrantyLifecycleEvent::class,
+        InvestmentTransaction::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -161,6 +163,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun privacyAuditDao(): PrivacyAuditDao
     abstract fun backgroundJobRunDao(): BackgroundJobRunDao
     abstract fun sourceStatsEventDao(): SourceStatsEventDao
+    abstract fun warrantyLifecycleEventDao(): WarrantyLifecycleEventDao
+    abstract fun investmentTransactionDao(): InvestmentTransactionDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -7550,6 +7554,43 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_117_118 = object : androidx.room.migration.Migration(117, 118) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS warranty_lifecycle_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        warrantyId INTEGER NOT NULL,
+                        eventType TEXT NOT NULL,
+                        occurredAt INTEGER NOT NULL,
+                        description TEXT,
+                        metadata TEXT
+                    )
+                """)
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_warranty_lifecycle_events_warrantyId ON warranty_lifecycle_events(warrantyId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_warranty_lifecycle_events_occurredAt ON warranty_lifecycle_events(occurredAt)")
+            }
+        }
+
+        val MIGRATION_118_119 = object : androidx.room.migration.Migration(118, 119) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS investment_transactions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        holdingId INTEGER NOT NULL,
+                        type TEXT NOT NULL,
+                        quantity REAL NOT NULL,
+                        pricePerUnit REAL NOT NULL,
+                        totalAmount REAL NOT NULL,
+                        currency TEXT NOT NULL DEFAULT 'EUR',
+                        fee REAL NOT NULL DEFAULT 0.0,
+                        date INTEGER NOT NULL
+                    )
+                """)
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_investment_transactions_holdingId ON investment_transactions(holdingId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_investment_transactions_date ON investment_transactions(date)")
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -7702,7 +7743,9 @@ MIGRATION_91_92,
         MIGRATION_113_114,
         MIGRATION_114_115,
         MIGRATION_115_116,
-        MIGRATION_116_117
+        MIGRATION_116_117,
+        MIGRATION_117_118,
+        MIGRATION_118_119
     )
 }
 }

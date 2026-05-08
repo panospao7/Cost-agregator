@@ -36,16 +36,19 @@ interface InvestmentDao {
     // TODO (I06): Include fees in DAO aggregate or remove raw DAO methods from production; use tracker math only.
     //             These SUM queries exclude fees (broker commissions, transaction costs, etc.),
     //             which can cause the DAO totals to disagree with the investment tracker's net calculations.
+    @Deprecated("Use MoneyAmount + MoneyAggregate from domain.core.money instead")
     @Query("SELECT SUM(currentPrice * quantity) FROM investments WHERE isActive = 1")
     suspend fun getTotalPortfolioValue(): Double?
-    
+
+    @Deprecated("Use MoneyAmount + MoneyAggregate from domain.core.money instead")
     @Query("""
         SELECT SUM((currentPrice - purchasePrice) * quantity) 
         FROM investments 
         WHERE isActive = 1
     """)
     suspend fun getTotalUnrealizedGainLoss(): Double?
-    
+
+    @Deprecated("Use MoneyAmount + MoneyAggregate from domain.core.money instead")
     @Query("""
         SELECT SUM(purchasePrice * quantity) 
         FROM investments 

@@ -56,6 +56,11 @@ data class MoneyAmount(
     val amount: Double,
     val currency: CurrencyCode
 ) {
+    init {
+        require(!amount.isNaN() && !amount.isInfinite()) {
+            "MoneyAmount must be a finite number, got $amount"
+        }
+    }
 
     /** Whether the amount is zero. */
     fun isZero(): Boolean = amount == 0.0
