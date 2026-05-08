@@ -55,6 +55,60 @@ import javax.inject.Singleton
  * 2. Enforce single-currency group policy (reject expense if currency != group.currency)
  * 3. Implement recordSettlement() with persistent settlement records
  * 4. Route all group deletions through archiveGroup() for soft-delete
+ *
+ * ── GroupLifecycleCoordinator Implementation Plan ──────────────────────────
+ * Design goals:
+ * - GroupLifecycleCoordinator wraps GroupTransactionCoordinator + domain services
+ *   to provide a single entry point for all group lifecycle operations.
+ * - Each method is idempotent where possible and emits lifecycle events for audit.
+ *
+ * Methods to implement:
+ * 1. createGroup(name, description, currency, members) → GroupCreationResult
+ *    - Validates member count >= 2 and exactly 1 currentUser
+ *    - Sets defaultCurrency, initializes createdAt/updatedAt timestamps
+ *    - Delegates DB work to GroupTransactionCoordinator.createGroupWithMembers()
+ *    - Fires LifecycleEvent GROUP_CREATED on success
+ *
+ * 2. addMember(groupId, name, email, isCurrentUser) → Result<Unit, GroupValidationError>
+ *    - Checks group is active before proceeding
+ *    - Verifies no duplicate member name within the group
+ *    - Enforces single currentUser invariant
+ *    - Delegates DB work to GroupTransactionCoordinator.addMemberToGroup()
+ *    - Fires LifecycleEvent GROUP_MEMBER_ADDED on success
+ *
+ * 3. removeMember(groupId, memberId) → Result<Unit, GroupValidationError>
+ *    - Verifies member exists and belongs to the group
+ *    - Block removal of last currentUser (must transfer ownership first)
+ *    - Settles outstanding balances before removal
+ *    - Fires LifecycleEvent GROUP_MEMBER_REMOVED on success
+ *
+ * 4. addExpense(groupId, description, amount, paidById, ...) → GroupExpenseCreationResult
+ *    - Validates single-currency policy: expense.currency must match group.currency
+ *      (or group.defaultCurrency if currency is null)
+ *    - Delegates to GroupTransactionCoordinator.addExpenseWithLink() or addExpenseToGroup()
+ *    - Fires LifecycleEvent GROUP_EXPENSE_ADDED on success
+ *
+ * 5. archiveGroup(groupId) → Boolean
+ *    - Verifies group exists and is active
+ *    - Sets isActive = false (soft delete)
+ *    - Fires LifecycleEvent GROUP_ARCHIVED on success
+ *
+ * 6. deleteGroupPermanently(groupId) → Boolean
+ *    - Requires explicit confirmation flag (prevents accidental hard delete)
+ *    - Calls GroupTransactionCoordinator.permanentlyDeleteGroup()
+ *    - Warns about orphaned linked expenses (J2)
+ *    - Fires LifecycleEvent GROUP_DELETED on success
+ *
+ * 7. recordSettlement(groupId, fromMemberId, toMemberId, amount, currency) → SettlementResult
+ *    - Creates persistent settlement record (new table or repurposed GroupExpense)
+ *    - Updates member balances accordingly
+ *    - Fires LifecycleEvent SETTLEMENT_RECORDED on success
+ *
+ * State invariants:
+ * - currentUserGroupKey: at most one member per group has isCurrentUser=true
+ * - deferred side effects: post-commit dispatch via
+ *   transactionLifecycleCoordinator.dispatchPostCreationSideEffects()
+ * - lifecycle event logging: each mutation writes a GroupLifecycleEvent to audit table
  */
 @Singleton
 class GroupTransactionCoordinator @Inject constructor(

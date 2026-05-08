@@ -414,10 +414,56 @@ tasks.named("check") {
     dependsOn("checkLifecycleBypasses")
 }
 
-// TODO (PR-E23): Add check_raw_money_aggregates.kts CI guard for raw Double financial totals.
-// Flag: sumOf { it.amount }, sumOf { it.effectiveAmount }, total: Double in public engine results.
-// TODO (PR-E24): Add check_direct_time_calls.kts CI guard.
-// Flag: System.currentTimeMillis(), Date(), Calendar.getInstance(), Instant.now(), LocalDate.now()
+// PR-E23: Wire check_raw_money_aggregates.kts CI guard for raw Double financial totals.
+// Flags: sumOf { it.amount }, sumOf { it.effectiveAmount }, total: Double in public engine results.
+tasks.register("checkRawMoneyAggregates") {
+    group = "verification"
+    description = "Fails if production code uses raw Double financial aggregates without MoneyAggregate"
+    doLast {
+        val script = file("$rootDir/scripts/guards/check_raw_money_aggregates.kts")
+        if (!script.exists()) {
+            logger.warn("Raw money aggregates guard script not found at ${script.absolutePath}")
+            return@doLast
+        }
+        try {
+            exec {
+                workingDir = rootDir
+                commandLine("kotlin", script.absolutePath)
+            }
+        } catch (e: Exception) {
+            throw GradleException("Raw money aggregates guard failed: ${e.message}")
+        }
+    }
+}
+
+// PR-E24: Wire check_direct_time_calls.kts CI guard.
+// Flags: System.currentTimeMillis(), Date(), Calendar.getInstance(), Instant.now(), LocalDate.now()
 // Allowlist: TimeProvider implementations, platform adapters, tests.
+tasks.register("checkDirectTimeCalls") {
+    group = "verification"
+    description = "Fails if production code calls System.currentTimeMillis() or Date() outside TimeProvider"
+    doLast {
+        val script = file("$rootDir/scripts/guards/check_direct_time_calls.kts")
+        if (!script.exists()) {
+            logger.warn("Direct time calls guard script not found at ${script.absolutePath}")
+            return@doLast
+        }
+        try {
+            exec {
+                workingDir = rootDir
+                commandLine("kotlin", script.absolutePath)
+            }
+        } catch (e: Exception) {
+            throw GradleException("Direct time calls guard failed: ${e.message}")
+        }
+    }
+}
+
+// Wire both new guards into the check lifecycle
+tasks.named("check") {
+    dependsOn("checkRawMoneyAggregates")
+    dependsOn("checkDirectTimeCalls")
+}
+
 // TODO (M10): Add CI guard for direct System.currentTimeMillis/Instant.now/Date()
 // calls outside approved TimeProvider implementations

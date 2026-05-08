@@ -6,6 +6,11 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 
+// NEXT STEPS (ARCH-E13):
+// 1. Change insert() return from Unit to Long (Room @Insert already returns Long)
+// 2. Change insertAll() return from Unit to List<Long>
+// 3. Add conflict detection: check both rawName AND normalizedKey before insert
+// 4. Return AliasLinkResult.Conflict(existing) on conflict
 @Dao
 interface MerchantCategoryDao {
     @Query("SELECT * FROM merchant_categories WHERE merchantPattern = :merchantPattern")

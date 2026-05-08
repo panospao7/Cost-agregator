@@ -29,7 +29,42 @@ import javax.inject.Singleton
 // TODO (PR-E21): Add TaxSettings with countryCode, filingCurrency, fiscalYearStartMonth.
 // Persist via TaxSettingsRepository. Use selected country for rates.
 //
-// NEXT: Add TaxSettings entity: countryCode, filingCurrency, fiscalYearStartMonth, fiscalYearStartDay
+// ── TaxSettings Entity & Repository Implementation Plan ─────────────────────
+//
+// 1. Create TaxSettings entity (@Entity tableName = "tax_settings")
+//    Fields:
+//      id: Long (PK, single-row pattern, always id=1)
+//      countryCode: String (ISO 3166-1 alpha-2, e.g. "GR", "DE", "US")
+//      filingCurrency: String (ISO 4217, e.g. "EUR", "USD")
+//      fiscalYearStartMonth: Int (1=January, 4=April, etc.)
+//      fiscalYearStartDay: Int (default 1)
+//      taxRatePreset: String? (nullable, e.g. "FREELANCER_GR", "STANDARD_DE")
+//      updatedAt: Long
+//
+// 2. Create TaxSettingsDao (@Dao)
+//    - get(): suspend fun TaxSettings? (single-row, fetches id=1)
+//    - upsert(settings): suspend fun (INSERT OR REPLACE with id=1)
+//    - delete(): suspend fun (resets to defaults)
+//
+// 3. Create TaxSettingsRepository
+//    - getSettings(): Flow<TaxSettings> (emits defaults if none stored)
+//    - updateSettings(settings): suspend fun
+//    - resetToDefaults(): suspend fun
+//    Uses DataStore or Room (prefer Room for consistency with other settings).
+//
+// 4. Integration in TaxEstimator
+//    - Inject TaxSettingsRepository
+//    - In estimateTaxes(): call settingsRepository.getSettings().first() to
+//      resolve countryCode, then load TaxConfiguration via TaxConfigurationFactory
+//      using the stored countryCode instead of getCurrentConfiguration() default.
+//    - In getTaxYearSummary(): use fiscalYearStartMonth/Day to compute correct
+//      year range instead of assuming Jan 1.
+//
+// 5. Migration path
+//    - Existing users: on first read with no settings row, return defaults
+//      (countryCode = "GR", filingCurrency = "EUR", fiscalYearStartMonth = 1)
+//    - Settings screen: new TaxSettingsScreen or embedded in existing Preferences
+//
 // See TaxConfiguration entity in database for existing fields.
 @Singleton
 class TaxEstimator @Inject constructor(

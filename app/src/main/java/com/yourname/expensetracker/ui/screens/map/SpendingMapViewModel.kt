@@ -385,10 +385,12 @@ class SpendingMapViewModel @Inject constructor(
             val markerOriginalCurrency: String
             val markerConversionWarning: String?
             if (e.currency != currentState.homeCurrency) {
-                val converted = currencyConverter.convert(
+                // #6: Use convertAsOf for historically accurate rates at the expense date
+                val converted = currencyConverter.convertAsOf(
                     amount = e.effectiveAmount,
                     fromCurrency = e.currency,
-                    toCurrency = currentState.homeCurrency
+                    toCurrency = currentState.homeCurrency,
+                    atMillis = e.date
                 )
                 if (converted != null) {
                     markerAmount = converted.convertedAmount

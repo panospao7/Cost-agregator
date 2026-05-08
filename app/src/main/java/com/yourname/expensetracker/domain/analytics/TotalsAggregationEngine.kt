@@ -504,6 +504,55 @@ class TotalsAggregationEngine @Inject constructor(
     private fun toLocalDate(timestamp: Long): LocalDate =
         Instant.ofEpochMilli(timestamp).atZone(systemZoneId()).toLocalDate()
 
+    /**
+     * PR-E11: Compute period totals from pre-normalized input.
+     *
+     * Accepts a [NormalizedAnalyticsInput] whose [includedExpenses] are already
+     * normalized to [homeCurrency]. Groups by day, week, or month depending on
+     * context, using the same period-key logic as the other methods.
+     *
+     * TODO (ARCH-E13): Extract private period-key helpers (dayKey, weekKey, monthKey)
+     *                  into shared utility so this method and the reactive methods
+     *                  use the same grouping logic.
+     * TODO (ARCH-E13): Support [PeriodType] parameter to control grouping granularity.
+     * TODO (ARCH-E13): Add data-quality metadata from [input.dataQuality] to result.
+     */
+    fun computeFromNormalized(input: NormalizedAnalyticsInput): List<PeriodTotal> {
+        val expenses = input.includedExpenses
+        if (expenses.isEmpty()) return emptyList()
+
+        val defaultStatus = PeriodStatus.NO_DATA
+        val average = if (expenses.isNotEmpty()) {
+            expenses.sumOf { it.normalizedAmount } / expenses.size
+        } else 0.0
+
+        // Group by day using the same dayKey format as [dayKey]
+        val groupedByDay = expenses.groupBy { exp ->
+            val date = Instant.ofEpochMilli(exp.date).atZone(systemZoneId()).toLocalDate()
+            "%04d%02d%02d".format(date.year, date.monthValue, date.dayOfMonth)
+        }
+
+        return groupedByDay.map { (periodKey, group) ->
+            val firstDate = Instant.ofEpochMilli(group.first().date).atZone(systemZoneId()).toLocalDate()
+            val dayStart = firstDate.atStartOfDay(systemZoneId()).toInstant().toEpochMilli()
+            val dayEnd = dayStart + 86_400_000L // 24 hours in ms
+            val total = group.sumOf { it.normalizedAmount }
+
+            PeriodTotal(
+                periodLabel = DAY_FORMAT.format(firstDate),
+                periodKey = periodKey,
+                totalAmount = total,
+                transactionCount = group.size,
+                periodType = PeriodType.DAY,
+                startDateMs = dayStart,
+                endDateMs = dayEnd,
+                status = if (average > 0 && total > average) PeriodStatus.OVER_AVERAGE
+                         else if (average > 0) PeriodStatus.UNDER_AVERAGE
+                         else defaultStatus
+            )
+        }.sortedBy { it.periodKey }
+    }
+
     private fun systemZoneId(): ZoneId = ZoneId.systemDefault()
 
     /**
