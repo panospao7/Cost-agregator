@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
 **Generated:** 2026-05-07 (snapshot)  
-**Database Version:** 117  
+**Database Version:** 120  
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -229,6 +229,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - OnDeviceRuntimePresentation, ReceiptItemCategorizationModels
 - ReviewPriorityModels, SemanticDuplicateModels, DefaultAiCapabilityRouter
 - AiRuntimeStatusModels
+- ExtractedAmountFilter, FinancialQueryDataQuality
 
 ### Analytics
 - AdvancedAnalyticsEngine, AdvancedAnalyticsDashboard, AdvancedAnalyticsModels
@@ -236,6 +237,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - DayOfWeekAnalyzer, InsightsEngine, MerchantInsightEngine
 - MonthlyComparisonCalculator, SpendingPaceCalculator
 - SpendingThresholdCalculator, TotalsAggregationEngine, TransferDirectionAnalytics
+- AnalyticsInputAssembler, NormalizedAnalyticsInput
 
 ### Budget & Forecasting
 - BudgetCalculator, BudgetForecastingEngine, BudgetModels
@@ -263,6 +265,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - AreaSpendingEngine, GeocodingResult, LocatedExpense
 - LocationInsightsEngine, LocationModels, LocationResolver
 - NearbyPoi, SpendingHeatmapEngine, TravelDetectionEngine
+- LocatedMoneyExpense
 
 ### Recurring & Scheduling
 - RecurringExpenseEngine, RecurrenceCalculator, PlannedExpense models
@@ -304,8 +307,9 @@ Assistant is an overlay/entry surface, not a bottom tab.
 ### Additional Domain Packages
 - **privacy/** - Privacy settings & data portability
 - **transaction/** - Transaction parsing & validation
-- **core/money/** - Money, currency, amount utilities
+- **core/money/** - Money, currency, amount utilities (incl. MoneyAggregateBuilder)
 - **core/time/** - Time providers & period utilities
+- **core/validation/** - Entity time validation (EntityTimeValidation)
 - **recurring/** - Recurring expense lifecycle
 - **alerts/** - Anomaly & alert domain models
 - **bank/** - Bank connection domain
@@ -371,6 +375,7 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 - ReceiptItemCategorizationRepository
 - SpendingChallengeRepository
 - SubscriptionManagementRepository
+- TaxSettingsRepository
 - AnomalyAlertRepositoryImpl
 - AutomatedSavingsRuleStateRepository
 - SavingsContributionHistoryRepository
@@ -380,7 +385,7 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 
 ---
 
-## 6. DATABASE (Version 117)
+## 6. DATABASE (Version 120)
 
 ### Entities
 
@@ -401,16 +406,16 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 - RecommendationEntity, ReceiptItemCategorization
 
 **Financial / planning:**
-- ExchangeRate, Investment, InvestmentValue, BankConnection
+- ExchangeRate, Investment, InvestmentValue, InvestmentTransaction, BankConnection
 - SubscriptionPriceHistory, SubscriptionUsage, MileageTracking
 - BudgetForecast
 
 **Groups / split:**
-- ExpenseGroup, GroupMember, GroupExpense
+- ExpenseGroup, GroupMember, GroupExpense, GroupSettlementEntity
 - SplitTemplate, SplitItemAssignment
 
 **Lifecycle / alerts / support:**
-- Warranty, ReturnWindow, AnomalyAlert, PromptState
+- Warranty, ReturnWindow, WarrantyLifecycleEvent, AnomalyAlert, PromptState
 - HealthScoreHistory, SavingsSweepPlan, SubscriptionCandidate
 - BudgetAdjustmentRecommendation, BudgetAdjustmentEvent
 - SpendingPersonalityProfileEntity, StressForecastSnapshot
@@ -428,9 +433,10 @@ One DAO per entity (mostly 1-to-1 mapping)
 - ReceiptExpenseLinkDao, RecurringLifecycleEventDao
 - RecurringOccurrenceDao, RecurringReminderDeliveryDao
 - SpendingChallengeDao, PrivacyAuditDao
+- InvestmentTransactionDao, WarrantyLifecycleEventDao, GroupSettlementDao
 
 ### Migration History
-- Database Version: 117
+- Database Version: 120
 - Migration methods: current chain in `AppDatabase.kt`
 - Export schema: Enabled
 - Type converters: Defined in `converter/Converters.kt`
@@ -656,7 +662,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Room Database Persistence  
 
 ### Database
-✅ Version 117 with current migration chain  
+✅ Version 120 with current migration chain  
 ✅ Export schema enabled  
 ✅ Type converters defined
 

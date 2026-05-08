@@ -1,7 +1,7 @@
 # 📋 COMPLETE BACKEND & DATABASE MAP INDEX
 
 **Generated:** 2026-05-07  
-**Total Files Documented:** 790 source files (337 domain + 246 data + 30 DI + 177 other) + 462 test files  
+**Total Files Documented:** 804 source files (344 domain + 253 data + 30 DI + 177 other) + 475 test files  
 **Scope:** ExpenseTracker domain, data, and DI packages
 
 ---
@@ -11,7 +11,7 @@
 ### Primary Maps (NEW)
 
 1. **[COMPLETE-BACKEND-MAP.md](./COMPLETE-BACKEND-MAP.md)** ⭐ START HERE
-   - Exhaustive list of ALL 790 backend files
+   - Exhaustive list of ALL 804 backend files
    - Organized by package and subpackage
    - File type, purpose, dependencies for each
    - Data flow diagrams
@@ -19,7 +19,7 @@
    - **Size:** ~8000 lines
 
 2. **[BACKEND-DEPENDENCIES.md](./BACKEND-DEPENDENCIES.md)** ⭐ DEPENDENCY CHAINS
-   - Test coverage summary (462 tests)
+   - Test coverage summary (475 tests)
    - 7 critical dependency chains with visualizations
    - Repository → DAO → Entity relationships
    - Service → Engine → Utility stacks
@@ -47,7 +47,7 @@
 
 ### By Package Type
 
-#### Domain Package (337 files)
+#### Domain Package (344 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/domain/`
 
 - **AI Subsystem** (58 files)
@@ -139,17 +139,17 @@
   - Notification fingerprinting — `domain/notification/RawNotificationFingerprint`
   - Shared hashing — `domain/common/Hashing.kt`
 
-#### Data Package (246 files)
+#### Data Package (253 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/data/`
 
 - **Database** (89 files)
-  - 1 main database (AppDatabase.kt)
-  - 55 DAOs (data access objects)
-  - 59 Entities (Room-managed tables, 57 registered in AppDatabase)
-  - 6 composite models
+   - 1 main database (AppDatabase.kt, v120)
+   - 58 DAOs (data access objects)
+   - 62 Entities (Room-managed tables, 60 registered in AppDatabase)
+   - 6 composite models
 
-- **Repositories** (64 files)
-  - 51 data-layer implementations + 13 domain-layer interfaces
+- **Repositories** (65 files)
+  - 52 data-layer implementations + 13 domain-layer interfaces
   - Expense, budget, analytics, currency
   - Merchant, location, notification
   - Savings, subscription, warranty
@@ -242,20 +242,20 @@
 ## 🎯 By Architecture Layer
 
 ### Database Layer
-- **Core:** `AppDatabase.kt` (Room database)
-- **Access:** 55 DAOs for direct table access
-- **Entities:** 59 Room-managed entities (57 registered in AppDatabase)
+- **Core:** `AppDatabase.kt` (Room database, v120)
+- **Access:** 58 DAOs for direct table access
+- **Entities:** 62 Room-managed entities (60 registered in AppDatabase)
 - **Models:** 6 composite query result models
 - **Coordinator:** `GroupTransactionCoordinator.kt`
 
 ### Repository Layer
-- **64 repositories** providing business logic (51 data + 13 domain interfaces)
+- **65 repositories** providing business logic (52 data + 13 domain interfaces)
 - Handle data transformation and aggregation
 - Implement domain interfaces
 - Manage database transactions
 
 ### Domain/Business Logic Layer
-- **337 files** implementing business rules
+- **344 files** implementing business rules
 - Engines, services, use cases, value objects
 - No database dependencies
 - Clean separation from infrastructure
@@ -270,12 +270,12 @@
 
 ## 🔍 Files by Type
 
-### Database-Related (155 files)
-- DAOs (55), Entities (59), Models (6), Converters (1), Coordinator (1), Database (1)
+### Database-Related (161 files)
+- DAOs (58), Entities (62), Models (6), Converters (1), Coordinator (1), Database (1)
 - **Key files:** `ExpenseDao.kt`, `Expense.kt`, `AppDatabase.kt`
 
-### Repository-Related (64 files)
-- Data-layer repositories (51), Domain interfaces (13)
+### Repository-Related (65 files)
+- Data-layer repositories (52), Domain interfaces (13)
 - **Key files:** `ExpenseRepository.kt`, `BudgetRepository.kt`, `CategoryRepository.kt`
 
 ### AI-Related (78+ files)
@@ -304,14 +304,14 @@
 
 | Metric | Count |
 |--------|-------|
-| **Total Source Files** | 790 |
-| Domain files | 337 |
-| Data files | 246 |
+| **Total Source Files** | 804 |
+| Domain files | 344 |
+| Data files | 253 |
 | DI files | 30 |
 | Hilt @Module files | 28 |
-| **Database Entities** | 59 |
-| **DAOs** | 55 |
-| **Repositories** | 64 (51 data + 13 domain interfaces) |
+| **Database Entities** | 62 |
+| **DAOs** | 58 |
+| **Repositories** | 65 (52 data + 13 domain interfaces) |
 | **Use Cases** | 41 |
 | **ViewModels** | 39 |
 | **Workers** | 7 |
@@ -320,7 +320,7 @@
 | **Parsers** | 8 |
 | **Geocoders** | 5 |
 | **Email Receipt Parsers** | 4 |
-| **Test Files** | 462 |
+| **Test Files** | 475 |
 
 ---
 
@@ -393,7 +393,7 @@ Query Text → AI Interpretation → Query Execution → Transaction Results →
 
 ## 🧪 Test Coverage
 
-**Total Tests:** 462 (436 test + 26 androidTest)
+**Total Tests:** 475 (449 test + 26 androidTest)
 
 ### High-Coverage Areas
 - Consistency tests (15+ files)
@@ -460,7 +460,7 @@ Query Text → AI Interpretation → Query Execution → Transaction Results →
 4. Review specific provider implementations
 
 ### For Database Schema Changes
-1. Review all 59 entities in `COMPLETE-BACKEND-MAP.md`
+1. Review all 62 entities in `COMPLETE-BACKEND-MAP.md`
 2. Check DAOs and repositories that use them
 3. Consider migrations
 4. Review existing tests
@@ -497,8 +497,8 @@ Query Text → AI Interpretation → Query Execution → Transaction Results →
 
 ## ✅ Completeness Checklist
 
-- ✅ ALL 337 domain files listed
-- ✅ ALL 246 data files listed
+- ✅ ALL 344 domain files listed
+- ✅ ALL 253 data files listed
 - ✅ ALL 28 Hilt @Module files + @EntryPoint listed
 - ✅ File-by-file breakdown with:
   - ✅ File path

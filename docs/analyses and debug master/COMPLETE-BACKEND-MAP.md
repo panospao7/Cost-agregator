@@ -1,14 +1,14 @@
 # Complete Backend & Database Map - ExpenseTracker
 
 **Generated:** 2026-05-07  
-**Total Files Mapped:** 790 (337 domain + 246 data + 30 di + 177 other)  
-**Test Coverage:** 462 test files (436 test + 26 androidTest)
+**Total Files Mapped:** 804 (344 domain + 253 data + 30 di + 177 other)  
+**Test Coverage:** 475 test files (449 test + 26 androidTest)
 
 ---
 
 ## Table of Contents
 
-1. [Domain Package (337 files)](#domain-package)
+1. [Domain Package (344 files)](#domain-package)
    - [AI/ML Subsystem](#ai-subsystem)
    - [Alerts & Anomalies](#alerts--anomalies)
    - [Analytics & Insights](#analytics--insights)
@@ -49,7 +49,7 @@
    - [Utilities](#utilities)
    - [Widget](#widget)
    - [Workers](#workers)
-2. [Data Package (246 files)](#data-package)
+2. [Data Package (253 files)](#data-package)
    - [Database Layer](#database-layer)
    - [Repositories](#repositories)
    - [AI Providers](#ai-providers)
@@ -68,7 +68,7 @@
 
 ## DOMAIN PACKAGE
 
-### AI Subsystem (62 files)
+### AI Subsystem (64 files)
 
 **Location:** `com.yourname.expensetracker.domain.ai`
 
@@ -86,6 +86,8 @@
 | `ai/model/ReviewPriorityModels.kt` | ReviewPriorityModels | Transaction review prioritization models | Model | - | No |
 | `ai/model/SemanticDuplicateModels.kt` | SemanticDuplicateModels | Duplicate detection models | Model | - | No |
 | `ai/model/WarrantyExtractionModels.kt` | WarrantyExtractionModels | Warranty data extraction models | Model | - | No |
+| `ai/model/ExtractedAmountFilter.kt` | ExtractedAmountFilter | Currency filter for NL queries | Model | - | No |
+| `ai/model/FinancialQueryDataQuality.kt` | FinancialQueryDataQuality | Data quality metadata for NL queries | Model | - | No |
 | `ai/policy/AiPolicy.kt` | AiPolicy | AI policy interface | Service | - | No |
 | `ai/policy/AiPolicyImpl.kt` | AiPolicyImpl | AI policy implementation | Service | AiPolicy | No |
 | `ai/policy/DefaultAiCapabilityRouter.kt` | DefaultAiCapabilityRouter | Default routing logic | Engine | AiCapabilityRouter | No |
@@ -162,6 +164,8 @@
 | `analytics/SpendingThresholdCalculator.kt` | SpendingThresholdCalculator | Calculates spending thresholds | Engine | - | No |
 | `analytics/TotalsAggregationEngine.kt` | TotalsAggregationEngine | Aggregates financial totals | Engine | - | No |
 | `analytics/TransferDirectionAnalytics.kt` | TransferDirectionAnalytics | Analyzes transfer directions | Engine | - | No |
+| `analytics/NormalizedAnalyticsInput.kt` | NormalizedAnalyticsInput | Currency-normalized analytics input | Model | - | No |
+| `analytics/AnalyticsInputAssembler.kt` | AnalyticsInputAssembler | Assembles analytics inputs | Engine | - | No |
 
 ### Backup & Export (7 files)
 
@@ -263,6 +267,7 @@
 | `core/money/CurrencyAssumption.kt` | CurrencyAssumption | Why a currency was assigned | Enum | - | No |
 | `core/money/MoneyMappers.kt` | MoneyMappers | Bridge legacy to new money types | Utility | MoneyAmount | No |
 | `core/money/MoneyFormatUtils.kt` | MoneyFormatUtils | Money formatting extensions | Utility | CurrencyCode | No |
+| `core/money/MoneyAggregateBuilder.kt` | MoneyAggregateBuilder | Builder for MoneyAggregate | Utility | MoneyAggregate | No |
 
 ### Core Time Types (2 files)
 
@@ -272,6 +277,14 @@
 |------|-------|---------|------|--------------|-------|
 | `core/time/PeriodRange.kt` | PeriodRange | Typed half-open period | Model | - | No |
 | `core/time/PeriodKind.kt` | PeriodKind | Semantic period enum | Enum | - | No |
+
+### Core Validation (1 file)
+
+**Location:** `com.yourname.expensetracker.domain.core.validation`
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `core/validation/EntityTimeValidation.kt` | EntityTimeValidation | Validates entity time fields | Utility | - | No |
 
 ### Dashboard & Engine (3 files)
 
@@ -296,7 +309,6 @@
 | `model/PeriodTotal.kt` | PeriodTotal | Period total models | Model | - | No |
 | `model/PlannedExpense.kt` | PlannedExpense | Planned expense models | Model | - | No |
 | `model/RecurringPattern.kt` | RecurringPattern | Recurring transaction pattern | Model | - | No |
-| `model/Result.kt` | Result | Generic result wrapper | Model | - | No |
 | `model/SavingsGoal.kt` | SavingsGoal | Savings goal models | Model | - | No |
 | `model/UiText.kt` | UiText | UI text localization | Model | - | No |
 | `model/UpcomingItem.kt` | UpcomingItem | Upcoming transaction models | Model | - | No |
@@ -358,7 +370,7 @@
 | `forecasting/MonteCarloResult.kt` | MonteCarloResult | Monte Carlo simulation results | Model | - | No |
 | `forecasting/MonteCarloSpendingSimulator.kt` | MonteCarloSpendingSimulator | Simulates spending scenarios | Engine | - | No |
 
-### Groups & Shared Expenses (9 files)
+### Groups & Shared Expenses (11 files)
 
 **Location:** `com.yourname.expensetracker.domain.groups`
 
@@ -369,6 +381,8 @@
 | `groups/SharedExpenseBudgetOffsetEngine.kt` | SharedExpenseBudgetOffsetEngine | Budget impact for shared expenses | Engine | - | No |
 | `groups/SharedExpenseManager.kt` | SharedExpenseManager | Manages shared expenses | Engine | - | No |
 | `groups/SharedExpensePort.kt` | SharedExpensePort | Port for shared expenses | Service | - | No |
+| `groups/GroupValidationError.kt` | GroupValidationError | Group validation error models | Model | - | No |
+| `groups/Result.kt` | Result (copied) | Result wrapper for groups | Model | - | No |
 | `groups/usecase/AddGroupExpenseUseCase.kt` | AddGroupExpenseUseCase | Adds group expenses | UseCase | - | No |
 | `groups/usecase/AddGroupMemberUseCase.kt` | AddGroupMemberUseCase | Adds group members | UseCase | - | No |
 | `groups/usecase/DeleteGroupMemberUseCase.kt` | DeleteGroupMemberUseCase | Deletes group members | UseCase | - | No |
@@ -408,7 +422,7 @@
 | `investment/InvestmentTracker.kt` | InvestmentTracker | Tracks investments | Engine | - | No |
 | `lifestyle/LifestyleInflationDetector.kt` | LifestyleInflationDetector | Detects lifestyle inflation | Engine | - | No |
 
-### Location Services (11 files)
+### Location Services (12 files)
 
 **Location:** `com.yourname.expensetracker.domain.location`
 
@@ -417,6 +431,7 @@
 | `location/AreaSpendingEngine.kt` | AreaSpendingEngine | Analyzes spending by area | Engine | - | No |
 | `location/GeocodingResult.kt` | GeocodingResult | Geocoding result models | Model | - | No |
 | `location/LocatedExpense.kt` | LocatedExpense | Expense with location data | Model | - | No |
+| `location/LocatedMoneyExpense.kt` | LocatedMoneyExpense | Currency-aware located expense | Model | - | No |
 | `location/LocationInsightsEngine.kt` | LocationInsightsEngine | Location-based insights | Engine | - | No |
 | `location/LocationModels.kt` | LocationModels | Location data models | Model | - | No |
 | `location/LocationResolver.kt` | LocationResolver | Resolves merchant locations | Engine | - | No |
@@ -702,7 +717,7 @@
 
 ## DATA PACKAGE
 
-### Database Layer (103 files)
+### Database Layer (109 files)
 
 **Location:** `com.yourname.expensetracker.data.database`
 
@@ -710,7 +725,7 @@
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `database/AppDatabase.kt` | AppDatabase | Room database definition | Database | All entities, DAOs | No |
+| `database/AppDatabase.kt` | AppDatabase | Room database definition (v120) | Database | All entities, DAOs | No |
 | `database/GroupTransactionCoordinator.kt` | GroupTransactionCoordinator | Coordinates group transactions | Engine | GroupExpenseDao, GroupMemberDao | No |
 
 #### Type Converters (1 file)
@@ -719,7 +734,7 @@
 |------|-------|---------|------|--------------|-------|
 | `database/converter/Converters.kt` | Converters | Room type converters | Converter | - | No |
 
-#### DAOs (55 files)
+#### DAOs (58 files)
 
 **Location:** `com.yourname.expensetracker.data.database.dao`
 
@@ -779,8 +794,11 @@
 | `dao/SubscriptionUsageDao.kt` | SubscriptionUsageDao | Subscription usage DAO | DAO | - | No |
 | `dao/UserCorrectionDao.kt` | UserCorrectionDao | User corrections DAO | DAO | - | No |
 | `dao/WarrantyDao.kt` | WarrantyDao | Warranties DAO | DAO | - | No |
+| `dao/InvestmentTransactionDao.kt` | InvestmentTransactionDao | Investment transactions DAO | DAO | - | No |
+| `dao/WarrantyLifecycleEventDao.kt` | WarrantyLifecycleEventDao | Warranty lifecycle events DAO | DAO | - | No |
+| `dao/GroupSettlementDao.kt` | GroupSettlementDao | Group settlement DAO | DAO | - | No |
 
-#### Entities (59 files)
+#### Entities (62 files)
 
 **Location:** `com.yourname.expensetracker.data.database.entity`
 
@@ -840,6 +858,9 @@
 | `entity/SubscriptionUsage.kt` | SubscriptionUsage | Subscription usage entity | Entity | - | No |
 | `entity/UserCorrection.kt` | UserCorrection | User correction entity | Entity | - | No |
 | `entity/Warranty.kt` | Warranty | Warranty entity | Entity | - | No |
+| `entity/InvestmentTransaction.kt` | InvestmentTransaction | Investment transaction entity | Entity | - | No |
+| `entity/WarrantyLifecycleEvent.kt` | WarrantyLifecycleEvent | Warranty lifecycle event entity | Entity | - | No |
+| `entity/GroupSettlementEntity.kt` | GroupSettlementEntity | Group settlement entity | Entity | - | No |
 
 #### Database Models (6 files)
 
@@ -854,7 +875,7 @@
 | `model/ExpenseWithCategory_Extensions.kt` | ExpenseWithCategory_Extensions | Extension functions | Utility | - | No |
 | `model/PendingReviewWithReceipt.kt` | PendingReviewWithReceipt | Review with receipt | Model | - | No |
 
-### Repositories (62 files)
+### Repositories (65 files)
 
 **Location:** `com.yourname.expensetracker.data.repository`
 
@@ -911,6 +932,7 @@
 | `repository/UserCorrectionRepository.kt` | UserCorrectionRepository | User corrections | Repository | UserCorrectionDao | No |
 | `repository/WarrantyTrackerRepository.kt` | WarrantyTrackerRepository | Warranty data | Repository | WarrantyDao | No |
 | `repository/WidgetStyleRepositoryImpl.kt` | WidgetStyleRepositoryImpl | Widget styles | Repository | - | No |
+| `repository/TaxSettingsRepository.kt` | TaxSettingsRepository | Tax settings repository | Repository | - | No |
 
 ### AI Providers (44 files)
 
@@ -1370,14 +1392,14 @@ Engine (integration with other domain logic)
 
 | Metric | Count |
 |--------|-------|
-| **Domain Files** | 337 |
-| **Data Files** | 246 |
+| **Domain Files** | 344 |
+| **Data Files** | 253 |
 | **DI / @Module Files** | 28 |
-| **Total Backend Files** | 790 |
-| **Test Files** | 462 |
-| **Database Entities** | 59 |
-| **DAOs** | 55 |
-| **Repositories** | 64 (51 data + 13 domain interfaces) |
+| **Total Backend Files** | 804 |
+| **Test Files** | 475 |
+| **Database Entities** | 62 |
+| **DAOs** | 58 |
+| **Repositories** | 65 (52 data + 13 domain interfaces) |
 | **Use Cases** | 41 |
 | **Engines** | ~70 |
 | **AI Providers** | 44 |

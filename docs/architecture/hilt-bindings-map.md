@@ -339,4 +339,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 28 Hilt @Module files · 64 repositories (51 data + 13 domain) · 55 DAOs · 59 entities
+**Stats:** 28 Hilt @Module files · 65 repositories (52 data + 13 domain) · 58 DAOs · 62 entities

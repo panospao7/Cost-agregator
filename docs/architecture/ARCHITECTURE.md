@@ -29,9 +29,9 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v117
-- 790+ Kotlin files (~170 net new since last Phase)
-- 55 DAOs, 59 entities (57 registered in AppDatabase)
+- Database version: v120
+- 804+ Kotlin files (~170 net new since last Phase)
+- 58 DAOs, 62 entities (57 registered in AppDatabase)
 - 39 ViewModels
 - SimpleDateFormat → DateTimeFormatter: **100% complete** (38 replacements across 21 files, 0 remaining in production code)
 - REPLACE → IGNORE: **14 of 14 DAOs converted** (3 kept with KDoc: ExchangeRateDao ×2, AiArtifactDao ×1)
@@ -227,7 +227,7 @@ data/
 │   ├── ExportAnonymizer.kt               # Strips raw text from exports
 │   └── DataRetentionWorker.kt            # WorkManager purging worker
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v117)
+│   ├── AppDatabase.kt          # Room database (v120)
 │   ├── entity/                  # Room entities across finance, AI, groups, location, settings, and privacy
 │   │   ├── RecurringLifecycleEvent.kt   # Phase 5b — audit log for recurring occurrences
 │   │   └── PrivacyAuditEvent.kt         # Phase 6 — privacy gate audit log
@@ -342,7 +342,7 @@ FinancialWeatherRepository
 | Startup delegate | `startup/AppStartupDelegate.kt` | Hilt entry-point bootstrap |
 | Startup coordinator | `startup/AppStartupCoordinator.kt` | Lifecycle observer + startup jobs |
 | Main Activity | `ui/MainActivity.kt` | Navigation host + deep links |
-| Database | `data/database/AppDatabase.kt` | Room DB v117 |
+| Database | `data/database/AppDatabase.kt` | Room DB v120 |
 | NotificationCaptureService | `service/NotificationCaptureService.kt` | Android notification listener service |
 
 ### Core Engines
@@ -1063,9 +1063,9 @@ KDoc annotation of EUR defaults applied across 4 analytics engines (`InsightsEng
 
 ## Database Schema
 
-### Version: v117 (post-hardening; latest migration: 116→117 for source_stats_events)
+### Version: v120 (post-hardening; latest migration: 119→120 for InvestmentTransaction, WarrantyLifecycleEvent, GroupSettlementEntity)
 
-The Room schema in v117 includes all tables from v106 plus:
+The Room schema in v120 includes all tables from v106 plus:
 
 **Phase 5b additions (migration 100→101→102):**
 
@@ -1091,7 +1091,7 @@ The Room schema in v117 includes all tables from v106 plus:
 
 - **New table:** `background_job_runs` — persistent record of worker executions. Columns: id, workerName, startedAt, finishedAt, status (SCHEDULED/RUNNING/SUCCESS/FAILED/RETRY), rowsScanned, rowsUpdated, notificationsSent, retryReason, errorMessage. Indices on `(workerName, startedAt)` and `(status)`.
 
-**Post-Phase 10 hardening migrations (v107→v117):**
+**Post-Phase 10 hardening migrations (v107→v120):**
 
 | Migration | Purpose | Schema Change |
 |-----------|---------|---------------|
@@ -1535,4 +1535,4 @@ After the initial feature-wave rollout, the codebase underwent 12 structured har
 - 6 lifecycle coordinators introduced
 - 3 normalizer/validator middleware services added (currency, privacy, AI-output)
 - 15+ materialized-key constraints deployed
-- Database version advanced from v68 to v117
+- Database version advanced from v68 to v120

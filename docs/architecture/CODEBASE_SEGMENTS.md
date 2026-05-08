@@ -199,6 +199,7 @@ Owns statistical analysis, anomaly detection, category insights, and merchant in
 - `domain/analytics/AnomalyDetector.kt`
 - `domain/analytics/AdvancedAnalyticsEngine.kt`
 - `domain/analytics/NormalizedAnalyticsInput.kt` — Canonical analytics input with per-expense normalization + data quality (PR-E11)
+- `domain/analytics/AnalyticsInputAssembler.kt` — Assembles `NormalizedAnalyticsInput` from raw expense data
 - `data/repository/AnalyticsRepository.kt`
 - `ui/screens/analytics/AnalyticsScreen.kt`
 - `ui/components/analytics/StatisticalVisualizations.kt`
@@ -306,7 +307,9 @@ Owns holdings, portfolio tracking, and investment metrics.
 - `domain/investment/InvestmentTracker.kt`
 - `data/database/entity/Investment.kt`
 - `data/database/entity/InvestmentValue.kt`
+- `data/database/entity/InvestmentTransaction.kt`
 - `data/database/dao/InvestmentDao.kt`
+- `data/database/dao/InvestmentTransactionDao.kt`
 - `ui/screens/investment/InvestmentPortfolioScreen.kt`
 
 ## SEGMENT 16: Currency & Exchange
@@ -323,6 +326,7 @@ Owns currency normalization, exchange-rate handling, multi-currency calculations
 - `domain/core/money/CurrencyAssumption.kt` — Why a currency was assigned (UNKNOWN, ASSUMED_LEGACY_EUR, etc.)
 - `domain/core/money/MoneyMappers.kt` — Bridge from legacy ConversionResult → ConvertedMoney
 - `domain/core/money/MoneyFormatUtils.kt` — MoneyAmount extension formatting functions
+- `domain/core/money/MoneyAggregateBuilder.kt` — Builds `MoneyAggregate` from per-expense normalized amounts
 
 **Representative files — legacy + new**
 - `domain/currency/CurrencyConverter.kt` — Currency conversion engine
@@ -349,6 +353,7 @@ Owns tax allocation and tax-aware reporting logic.
 - `domain/tax/TaxConfiguration.kt`
 - `domain/business/BusinessExpenseReportGenerator.kt`
 - `domain/export/AccountantReportPdfExporter.kt`
+- `data/repository/TaxSettingsRepository.kt`
 - `ui/screens/tax/TaxConfigurationScreen.kt`
 
 ## SEGMENT 18: Export & Backup
@@ -448,6 +453,8 @@ Owns the base group/shared-expense model, membership, and transaction coordinati
 - `domain/groups/GroupTransactionCoordinator.kt`
 - `domain/groups/usecase/AddGroupExpenseUseCase.kt`
 - `domain/groups/SharedExpenseManager.kt`
+- `data/database/dao/GroupSettlementDao.kt`
+- `data/database/entity/GroupSettlementEntity.kt`
 - `ui/screens/groups/SharedExpenseGroupsViewModel.kt`
 
 ## SEGMENT 25: Shared Expense Budget Offset
@@ -543,6 +550,7 @@ Owns reusable helpers shared across segments.
 - `domain/util/BKTree.kt`
 - `domain/core/time/PeriodRange.kt` — Typed half-open period model `[startInclusive, endExclusive)`
 - `domain/core/time/PeriodKind.kt` — Semantic period kind enum (TODAY, THIS_WEEK, THIS_MONTH, etc.)
+- `domain/core/validation/EntityTimeValidation.kt` — Cross-entity time constraint validation
 - `ui/util/ColorExtensions.kt`
 - `ui/util/HapticFeedback.kt`
 
@@ -569,6 +577,8 @@ Owns warranty tracking, subscription management, bill negotiation, and price pro
 - `ui/screens/subscription/SubscriptionManagementScreen.kt`
 - `domain/negotiation/SmartBillNegotiationEngine.kt`
 - `ui/screens/negotiation/BillNegotiationScreen.kt`
+- `data/database/dao/WarrantyLifecycleEventDao.kt`
+- `data/database/entity/WarrantyLifecycleEvent.kt`
 - `domain/price/PriceProtectionTracker.kt`
 - `ui/screens/price/PriceProtectionScreen.kt`
 
@@ -644,7 +654,7 @@ File-to-segment mapping for all 38 segments:
 | 21 | Enhanced Split Transactions | `domain/split/`, `VisualSplitEditor`, `SplitTemplate` |
 | 22 | Lifestyle Inflation Detector | `domain/lifestyle/`, `LifestyleInflationDetector` |
 | 23 | Savings Prompts & Nudges | `domain/usecase/savings/`, `PromptState` |
-| 24 | Shared Expense Groups | `domain/groups/`, `GroupsRepository` |
+| 24 | Shared Expense Groups | `domain/groups/`, `GroupsRepository`, `GroupSettlementDao`, `GroupSettlementEntity` |
 | 25 | Shared Expense Budget Offset | `SharedExpenseBudgetOffsetEngine` |
 | 26 | Natural Language Search | `domain/naturallanguage/` |
 | 27 | Carbon Footprint Tracking | `domain/carbon/` |

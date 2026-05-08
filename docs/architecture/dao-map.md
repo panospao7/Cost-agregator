@@ -1,6 +1,6 @@
 # DAO ↔ Entity ↔ Repository Map
 
-> Complete mapping of all 55 DAOs to their entities and consuming repositories/services.
+> Complete mapping of all 58 DAOs to their entities and consuming repositories/services.
 >
 > Last updated: 2026-05-07
 
@@ -90,6 +90,7 @@
 | `ExpenseGroupDao` | `ExpenseGroup` | `GroupsRepositoryImpl`, `GroupTransactionCoordinator` | SharedExpenseGroupsVM |
 | `GroupMemberDao` | `GroupMember` | `GroupsRepositoryImpl`, `GroupTransactionCoordinator` | SharedExpenseGroupsVM |
 | `GroupExpenseDao` | `GroupExpense` | `GroupsRepositoryImpl`, `GroupTransactionCoordinator` | SharedExpenseGroupsVM |
+| `GroupSettlementDao` | `GroupSettlementEntity` | `GroupTransactionCoordinator` | SharedExpenseGroupsVM |
 
 ## Investment Domain
 
@@ -97,6 +98,7 @@
 |-----|--------|---------------------|-------------------|
 | `InvestmentDao` | `Investment` | `InvestmentTracker` | InvestmentVM |
 | `InvestmentValueDao` | `InvestmentValue` | `InvestmentTracker` | InvestmentVM |
+| `InvestmentTransactionDao` | `InvestmentTransaction` | — | InvestmentVM |
 
 ## Bank Domain
 
@@ -118,6 +120,7 @@
 |-----|--------|---------------------|-------------------|
 | `WarrantyDao` | `Warranty` | `WarrantyTrackerRepository`, `ReceiptLinkService` | WarrantyTrackerVM |
 | `ReturnWindowDao` | `ReturnWindow` | `WarrantyTrackerRepository`, `ReceiptLinkService` | WarrantyTrackerVM |
+| `WarrantyLifecycleEventDao` | `WarrantyLifecycleEvent` | `WarrantyTrackerRepository` | WarrantyTrackerVM |
 
 ## Split Domain
 
@@ -176,4 +179,5 @@
 | `BudgetAdjustmentDao` | **1** consumer | 🟢 LOW |
 | `AiArtifactDao` | **1** repository | 🟢 LOW |
 | `SourceStatsEventDao` | **0** direct repositories | 🟢 LOW (event-based tracking) |
+| **Total: 58 DAOs** | | |
 
