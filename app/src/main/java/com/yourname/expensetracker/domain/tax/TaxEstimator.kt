@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.data.repository.TaxSettingsRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.di.IoDispatcher
@@ -81,6 +82,7 @@ class TaxEstimator @Inject constructor(
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
+    private val taxSettings: TaxSettingsRepository,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     /**
@@ -90,13 +92,17 @@ class TaxEstimator @Inject constructor(
      * purchase aggregates, income is aligned to the requested period, and income
      * tax brackets are applied cumulatively for the covered fraction of a tax year.
      * 
-     * @param taxConfig The tax configuration to use (defaults to Greece if not specified)
+     * PR-T1: Country and filing currency are resolved from [TaxSettingsRepository].
+     * The default [taxConfig] is loaded via [TaxConfigurationFactory.getConfiguration]
+     * using the stored tax country code instead of a hardcoded default.
+     *
+     * @param taxConfig The tax configuration to use (defaults to the configured tax country)
      */
     suspend fun estimateTaxes(
         startDate: Long,
         endDate: Long,
         estimatedAnnualIncome: Double,
-        taxConfig: TaxConfiguration = TaxConfigurationFactory.getCurrentConfiguration()
+        taxConfig: TaxConfiguration = TaxConfigurationFactory.getConfiguration(taxSettings.getTaxCountry())
     ): TaxEstimate = withContext(ioDispatcher) {
         // A.9: Aggregate SQL replaces capped row scan for deductible total.
         // getTotalBusinessExpenses uses SUM(effectiveAmount) via
@@ -108,6 +114,9 @@ class TaxEstimator @Inject constructor(
 
         val periodYearFraction = calculatePeriodYearFraction(startDate, endDate)
         val periodIncome = estimatedAnnualIncome * periodYearFraction
+
+        // Filing currency for display purposes
+        val filingCurrency = taxSettings.getFilingCurrency()
 
         // HIGH FIX: Use configured VAT rate
         val vatRate = taxConfig.getVatRate()
@@ -131,7 +140,7 @@ class TaxEstimator @Inject constructor(
             estimatedIncomeTax = estimatedIncomeTax,
             estimatedVatPaid = vatPaid,
             effectiveTaxRate = if (periodIncome > 0) (estimatedIncomeTax / periodIncome) * 100 else 0.0,
-            notes = "Estimate using ${taxConfig.getCountryCode()} tax rates. Consult tax professional for accurate filing."
+            notes = "Estimate using ${taxConfig.getCountryCode()} tax rates (filing currency: $filingCurrency). Consult tax professional for accurate filing."
         )
     }
     
@@ -214,7 +223,7 @@ class TaxEstimator @Inject constructor(
     private suspend fun buildDeductibleAggregate(startMs: Long, endMs: Long): MoneyAggregate {
         val currencyTotals = expenseDao.getBusinessExpensesBetweenByCurrency(startMs, endMs)
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrDefault(taxSettings.getFilingCurrency())
         val buckets = currencyTotals.map { Pair(it.total, it.currency) }
         val counts = currencyTotals.map { it.txCount }
         return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, counts)
@@ -229,7 +238,7 @@ class TaxEstimator @Inject constructor(
     private suspend fun buildIncomeAggregate(startMs: Long, endMs: Long): MoneyAggregate {
         val currencyTotals = expenseDao.getDepositTotalsBetweenByCurrency(startMs, endMs)
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrDefault("EUR")
+            .getOrDefault(taxSettings.getFilingCurrency())
         val buckets = currencyTotals.map { Pair(it.total, it.currency) }
         val counts = currencyTotals.map { it.txCount }
         return MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, counts)
@@ -242,7 +251,7 @@ class TaxEstimator @Inject constructor(
      */
     suspend fun getTaxYearSummary(
         year: Int,
-        taxConfig: TaxConfiguration = TaxConfigurationFactory.getCurrentConfiguration()
+        taxConfig: TaxConfiguration = TaxConfigurationFactory.getConfiguration(taxSettings.getTaxCountry())
     ): TaxYearSummary = withContext(ioDispatcher) {
         val yearStart = startOfYear(year)
         val yearEnd = startOfYear(year + 1)

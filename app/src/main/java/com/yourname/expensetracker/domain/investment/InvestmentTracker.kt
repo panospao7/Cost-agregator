@@ -3,8 +3,10 @@ package com.yourname.expensetracker.domain.investment
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.InvestmentDao
+import com.yourname.expensetracker.data.database.dao.InvestmentTransactionDao
 import com.yourname.expensetracker.data.database.dao.InvestmentValueDao
 import com.yourname.expensetracker.data.database.entity.Investment
+import com.yourname.expensetracker.data.database.entity.InvestmentTransaction
 import com.yourname.expensetracker.data.database.entity.InvestmentType
 import com.yourname.expensetracker.data.database.entity.InvestmentValue
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
@@ -46,6 +48,7 @@ class InvestmentTracker @Inject constructor(
     private val database: AppDatabase,
     private val investmentDao: InvestmentDao,
     private val investmentValueDao: InvestmentValueDao,
+    private val investmentTransactionDao: InvestmentTransactionDao,
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
@@ -112,7 +115,7 @@ class InvestmentTracker @Inject constructor(
             lastUpdated = now
         )
 
-        // Wrap insert + value insert in transaction for atomicity
+        // Wrap insert + value insert + transaction record in transaction for atomicity
         val id = database.withTransaction {
             val insertedId = investmentDao.insert(validated)
 
@@ -125,6 +128,20 @@ class InvestmentTracker @Inject constructor(
                     timestamp = now
                 )
             )
+
+            // PR-I1: Record BUY transaction for cost-basis tracking
+            investmentTransactionDao.insert(
+                InvestmentTransaction(
+                    holdingId = insertedId,
+                    type = "BUY",
+                    quantity = investment.quantity,
+                    pricePerUnit = investment.purchasePrice,
+                    totalAmount = investment.purchasePrice * investment.quantity,
+                    currency = investment.currency,
+                    date = timeProvider.now()
+                )
+            )
+
             insertedId
         }
         return Result.success(id)

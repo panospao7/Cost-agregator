@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.domain.groups
 
+import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
+import com.yourname.expensetracker.data.database.entity.GroupSettlementEntity
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -148,6 +151,33 @@ class SettlementCalculator @Inject constructor(
      */
     fun getTransactionCount(settlements: List<Settlement>): Int {
         return settlements.size
+    }
+
+    /**
+     * Record a settlement transaction for a group, persisting it to the database.
+     *
+     * @param groupId The group this settlement belongs to.
+     * @param fromMemberId The member who pays.
+     * @param toMemberId The member who receives.
+     * @param amount The positive settlement amount.
+     * @param currency The currency of the settlement.
+     * @param settlementDao DAO used to persist the settlement.
+     * @param timeProvider Provides the current timestamp for [GroupSettlementEntity.createdAt].
+     * @return The generated row id of the persisted settlement.
+     * @throws IllegalArgumentException if amount is not positive or from/to are the same member.
+     */
+    suspend fun recordSettlement(
+        groupId: Long, fromMemberId: Long, toMemberId: Long,
+        amount: Double, currency: String,
+        settlementDao: GroupSettlementDao, timeProvider: TimeProvider
+    ): Long {
+        require(amount > 0) { "Settlement amount must be positive" }
+        require(fromMemberId != toMemberId) { "Cannot settle to self" }
+        val now = timeProvider.now()
+        return settlementDao.insert(GroupSettlementEntity(
+            groupId = groupId, fromMemberId = fromMemberId, toMemberId = toMemberId,
+            amount = amount, currency = currency, createdAt = now
+        ))
     }
 
     private data class BalanceInCents(

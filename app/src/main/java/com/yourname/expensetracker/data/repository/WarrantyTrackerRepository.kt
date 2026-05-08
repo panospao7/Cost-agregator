@@ -105,40 +105,70 @@ class WarrantyTrackerRepository @Inject constructor(
             createdAt = if (warranty.createdAt == 0L) now else warranty.createdAt,
             updatedAt = if (warranty.updatedAt == 0L) now else warranty.updatedAt
         )
-        warrantyDao.insertWarranty(warrantyWithTimestamps)
+        val warrantyId = warrantyDao.insertWarranty(warrantyWithTimestamps)
+
+        // PR-W1: Record CREATED lifecycle event
+        database.warrantyLifecycleEventDao().insert(
+            WarrantyLifecycleEvent(
+                warrantyId = warrantyId,
+                eventType = "CREATED",
+                occurredAt = now,
+                description = "Warranty created for ${warranty.productName}"
+            )
+        )
+
+        warrantyId
     }
 
     suspend fun addWarrantyIgnoreConflicts(warranty: Warranty): Long = database.withTransaction {
         val id = warrantyDao.insertWarrantyIgnore(warranty)
-        // AID-9 Gap 2: Audit trail for AI-driven warranty creation
-        if (id > 0L && warranty.autoDetected) {
-            val auditMessage = JSONObject().apply {
-                put("confidence", warranty.extractionConfidence)
-                put("extractionSource", warranty.extractionSource)
-            }.toString()
-            val auditMetadata = JSONObject().apply {
-                put("productName", warranty.productName)
-                put("warrantyDurationMonths", warranty.warrantyDurationMonths)
-                put("warrantyType", warranty.warrantyType.name)
-            }.toString()
+        if (id > 0L) {
+            val now = timeProvider.now()
+
+            // PR-W1: Record CREATED lifecycle event
             runCatching {
-                database.receiptEventDao().insert(
-                    ReceiptEvent(
-                        receiptId = warranty.receiptId,
-                        sourceType = warranty.extractionSource,
-                        documentType = "WARRANTY_EXTRACTION",
-                        eventType = "AI_WARRANTY_CREATED",
-                        occurredAt = timeProvider.now(),
-                        oldStatus = null,
-                        newStatus = null,
-                        actor = "system:ai_warranty_extraction",
-                        message = auditMessage,
-                        metadata = auditMetadata,
-                        errorDetails = null
+                database.warrantyLifecycleEventDao().insert(
+                    WarrantyLifecycleEvent(
+                        warrantyId = id,
+                        eventType = "CREATED",
+                        occurredAt = now,
+                        description = "Warranty created for ${warranty.productName}"
                     )
                 )
             }.onFailure { error ->
-                Timber.w(error, "AID-9: Failed to write AI_WARRANTY_CREATED audit event for warrantyId=$id")
+                Timber.w(error, "PR-W1: Failed to write CREATED lifecycle event for warrantyId=$id")
+            }
+
+            // AID-9 Gap 2: Audit trail for AI-driven warranty creation
+            if (warranty.autoDetected) {
+                val auditMessage = JSONObject().apply {
+                    put("confidence", warranty.extractionConfidence)
+                    put("extractionSource", warranty.extractionSource)
+                }.toString()
+                val auditMetadata = JSONObject().apply {
+                    put("productName", warranty.productName)
+                    put("warrantyDurationMonths", warranty.warrantyDurationMonths)
+                    put("warrantyType", warranty.warrantyType.name)
+                }.toString()
+                runCatching {
+                    database.receiptEventDao().insert(
+                        ReceiptEvent(
+                            receiptId = warranty.receiptId,
+                            sourceType = warranty.extractionSource,
+                            documentType = "WARRANTY_EXTRACTION",
+                            eventType = "AI_WARRANTY_CREATED",
+                            occurredAt = now,
+                            oldStatus = null,
+                            newStatus = null,
+                            actor = "system:ai_warranty_extraction",
+                            message = auditMessage,
+                            metadata = auditMetadata,
+                            errorDetails = null
+                        )
+                    )
+                }.onFailure { error ->
+                    Timber.w(error, "AID-9: Failed to write AI_WARRANTY_CREATED audit event for warrantyId=$id")
+                }
             }
         }
         id
@@ -148,13 +178,29 @@ class WarrantyTrackerRepository @Inject constructor(
     
     suspend fun deleteWarranty(warranty: Warranty) = warrantyDao.deleteWarranty(warranty)
     
-    suspend fun markWarrantyAsClaimed(warrantyId: Long) = 
+    suspend fun markWarrantyAsClaimed(warrantyId: Long) = database.withTransaction {
+        val now = timeProvider.now()
         warrantyDao.updateWarrantyStatus(
             warrantyId = warrantyId,
             status = WarrantyStatus.CLAIMED,
-            claimedAt = timeProvider.now(),
-            updatedAt = timeProvider.now()
+            claimedAt = now,
+            updatedAt = now
         )
+
+        // PR-W1: Record CLAIMED lifecycle event
+        runCatching {
+            database.warrantyLifecycleEventDao().insert(
+                WarrantyLifecycleEvent(
+                    warrantyId = warrantyId,
+                    eventType = "CLAIMED",
+                    occurredAt = now,
+                    description = "Warranty claimed"
+                )
+            )
+        }.onFailure { error ->
+            Timber.w(error, "PR-W1: Failed to write CLAIMED lifecycle event for warrantyId=$warrantyId")
+        }
+    }
 
     suspend fun getActiveWarrantyCount(): Int = warrantyDao.getActiveWarrantyCount(timeProvider.now())
     

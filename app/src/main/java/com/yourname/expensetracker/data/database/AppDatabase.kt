@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 119
+const val APP_DATABASE_SCHEMA_VERSION = 120
 
 @Database(
     entities = [
@@ -100,7 +100,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 119
         BackgroundJobRun::class,
         SourceStatsEvent::class,
         WarrantyLifecycleEvent::class,
-        InvestmentTransaction::class
+        InvestmentTransaction::class,
+        GroupSettlementEntity::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -165,6 +166,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun sourceStatsEventDao(): SourceStatsEventDao
     abstract fun warrantyLifecycleEventDao(): WarrantyLifecycleEventDao
     abstract fun investmentTransactionDao(): InvestmentTransactionDao
+    abstract fun groupSettlementDao(): GroupSettlementDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"
@@ -7591,6 +7593,31 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_119_120 = object : androidx.room.migration.Migration(119, 120) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS group_settlements (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId INTEGER NOT NULL,
+                        fromMemberId INTEGER NOT NULL,
+                        toMemberId INTEGER NOT NULL,
+                        amount REAL NOT NULL,
+                        currency TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        linkedExpenseId INTEGER,
+                        status TEXT NOT NULL DEFAULT 'RECORDED',
+                        notes TEXT,
+                        FOREIGN KEY(groupId) REFERENCES expense_groups(id) ON DELETE CASCADE,
+                        FOREIGN KEY(fromMemberId) REFERENCES group_members(id) ON DELETE CASCADE,
+                        FOREIGN KEY(toMemberId) REFERENCES group_members(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_settlements_groupId ON group_settlements (groupId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_settlements_fromMemberId ON group_settlements (fromMemberId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_settlements_toMemberId ON group_settlements (toMemberId)")
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -7745,7 +7772,8 @@ MIGRATION_91_92,
         MIGRATION_115_116,
         MIGRATION_116_117,
         MIGRATION_117_118,
-        MIGRATION_118_119
+        MIGRATION_118_119,
+        MIGRATION_119_120
     )
 }
 }

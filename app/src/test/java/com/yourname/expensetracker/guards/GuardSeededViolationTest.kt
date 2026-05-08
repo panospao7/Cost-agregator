@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.guards
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -47,6 +48,32 @@ class GuardSeededViolationTest {
                 "Time guard regex must match seeded violation",
                 timePattern.containsMatchIn(tempFile.readText())
             )
+        } finally {
+            tempFile.delete()
+        }
+    }
+
+    @Test
+    fun `guard script detects multiple violations`() {
+        val tempFile = File.createTempFile("test_multi", ".kt")
+        try {
+            tempFile.writeText("""
+                val a = expenses.sumOf { it.amount }
+                val b = expenses.sumOf { it.effectiveAmount }
+            """.trimIndent())
+            val guardScript = File("scripts/guards/check_raw_money_aggregates.kts")
+            assertTrue("Guard script must exist", guardScript.exists())
+            assertTrue("Guard script must be readable", guardScript.canRead())
+
+            val content = tempFile.readText()
+            val rawSumPattern = Regex("""sumOf\s*\{\s*it\.\w+\s*\}""")
+            val matches = rawSumPattern.findAll(content).toList()
+            assertEquals(
+                "Guard regex must detect both sumOf violations",
+                2, matches.size
+            )
+            assertTrue("First violation must contain 'amount'", matches[0].value.contains("amount"))
+            assertTrue("Second violation must contain 'effectiveAmount'", matches[1].value.contains("effectiveAmount"))
         } finally {
             tempFile.delete()
         }

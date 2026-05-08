@@ -82,6 +82,7 @@ import timber.log.Timber
  * appear to produce a narrower set but the initial data pull can be very large.
  * For proper drilldown, filters should be pushed down to the repository/DAO layer.
  */
+@Deprecated("Legacy NL engine. Use ExecuteFinancialQueryUseCase for new query work. This engine is feature-contained.")
 @Singleton
 class NaturalLanguageSearchEngine @Inject constructor(
     private val expenseQueryRepository: NaturalLanguageExpenseQueryRepository,
