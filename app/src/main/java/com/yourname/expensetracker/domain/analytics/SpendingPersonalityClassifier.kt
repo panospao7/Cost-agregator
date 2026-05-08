@@ -35,6 +35,9 @@ import kotlin.math.sqrt
  *
  * TODO (A04): Verified SAFE — all monetary values have been normalized via
  * AnalyticsCurrencyNormalizer before reaching this classifier. No code change needed.
+ *
+ * TODO (PR-E11): Already safe — data is normalized upstream by callers.
+ * No changes needed for NormalizedAnalyticsInput migration.
  */
 @Singleton
 class SpendingPersonalityClassifier @Inject constructor(

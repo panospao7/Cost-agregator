@@ -428,7 +428,8 @@ class ForecastInputAssembler @Inject constructor(
                 planned.sourceOccurrenceKey in materializedOccurrenceKeys
         }
 
-        // ── Populate ForecastDataQuality from normalization result ──
+        // TODO (ARCH-02 / PR-E12): Populate ForecastDataQuality from NormalizedAnalyticsInput.
+        // Actual expense quality is partially populated. Planned/recurring deferred.
         val inputCount = normalized.totalInputCount
         val excludedCount = normalized.excludedCount
         val missingRateWarnings = normalized.warnings.filter {

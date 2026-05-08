@@ -41,6 +41,9 @@ import kotlin.math.sqrt
  *
  * All `sumOf { it.effectiveAmount }`, `amounts.sum()`, and other raw-Double
  * arithmetic operate on normalized values. No gap exists.
+ *
+ * TODO (PR-E11): Accept NormalizedAnalyticsInput instead of querying raw expenses.
+ * Engine should not call CurrencyConverter itself unless explicitly responsible.
  */
 @Singleton
 class AdvancedAnalyticsEngine @Inject constructor(

@@ -38,6 +38,9 @@ import javax.inject.Singleton
  * TODO (A02): Guard with require(isSingleCurrencyDataset) or refactor to use
  *             normalizer — currently silently wrong for multi-currency.
  *
+ * TODO (PR-E11): Accept NormalizedAnalyticsInput instead of querying raw expenses.
+ * Engine should not call CurrencyConverter itself unless explicitly responsible.
+ *
  * ## DSH-10-FIXED: Analytics methods now return reactive Flows
  *
  * All public analytics methods now return `Flow<List<PeriodTotal>>` (or `Flow<List<CategoryBreakdown>>`)

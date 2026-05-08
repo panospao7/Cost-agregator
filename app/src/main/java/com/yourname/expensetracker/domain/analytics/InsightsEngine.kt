@@ -33,6 +33,9 @@ import kotlin.coroutines.cancellation.CancellationException
  * Callers should use [AnalyticsCurrencyNormalizer.normalizeSnapshots] before
  * passing expenses to [generateInsights] or [getLegacyInsights].
  *
+ * TODO (PR-E11): Accept NormalizedAnalyticsInput instead of querying raw expenses.
+ * Engine should not call CurrencyConverter itself unless explicitly responsible.
+ *
  * ## CURRENCY LIMITATION: Hardcoded EUR default
  * Several methods in this engine default `displayCurrency` to `"EUR"` when no
  * currency is provided by the caller. This means insights (formatting, comparison)
