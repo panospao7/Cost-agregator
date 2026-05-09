@@ -7,12 +7,13 @@ package com.yourname.expensetracker.domain.export
  */
 object CsvCellSanitizer {
     fun sanitize(field: String): String {
-        val trimmed = field.trimStart()
-        if (trimmed.startsWith("=") || trimmed.startsWith("+") || 
-            trimmed.startsWith("-") || trimmed.startsWith("@")) {
-            return "'$field"
+        val cleaned = field.replace("\t", " ").replace("\n", " ").replace("\r", " ")
+        val trimmed = cleaned.trimStart()
+        return if (trimmed.startsWith("=") || trimmed.startsWith("+") || 
+                   trimmed.startsWith("-") || trimmed.startsWith("@")) {
+            "'$cleaned"
+        } else {
+            cleaned
         }
-        // Replace tabs and newlines in non-quoted contexts
-        return field.replace("\t", " ").replace("\n", " ").replace("\r", " ")
     }
 }

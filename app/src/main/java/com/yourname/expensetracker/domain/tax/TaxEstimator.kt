@@ -35,46 +35,9 @@ import javax.inject.Singleton
  * T01: Deductible expenses use MoneyAggregate via buildDeductibleAggregate().
  * Income aggregates via buildIncomeAggregate(). Both use CurrencyConverter.
  */
-// TODO (PR-E21): Add TaxSettings with countryCode, filingCurrency, fiscalYearStartMonth.
-// Persist via TaxSettingsRepository. Use selected country for rates.
-//
-// ── TaxSettings Entity & Repository Implementation Plan ─────────────────────
-//
-// 1. Create TaxSettings entity (@Entity tableName = "tax_settings")
-//    Fields:
-//      id: Long (PK, single-row pattern, always id=1)
-//      countryCode: String (ISO 3166-1 alpha-2, e.g. "GR", "DE", "US")
-//      filingCurrency: String (ISO 4217, e.g. "EUR", "USD")
-//      fiscalYearStartMonth: Int (1=January, 4=April, etc.)
-//      fiscalYearStartDay: Int (default 1)
-//      taxRatePreset: String? (nullable, e.g. "FREELANCER_GR", "STANDARD_DE")
-//      updatedAt: Long
-//
-// 2. Create TaxSettingsDao (@Dao)
-//    - get(): suspend fun TaxSettings? (single-row, fetches id=1)
-//    - upsert(settings): suspend fun (INSERT OR REPLACE with id=1)
-//    - delete(): suspend fun (resets to defaults)
-//
-// 3. Create TaxSettingsRepository
-//    - getSettings(): Flow<TaxSettings> (emits defaults if none stored)
-//    - updateSettings(settings): suspend fun
-//    - resetToDefaults(): suspend fun
-//    Uses DataStore or Room (prefer Room for consistency with other settings).
-//
-// 4. Integration in TaxEstimator
-//    - Inject TaxSettingsRepository
-//    - In estimateTaxes(): call settingsRepository.getSettings().first() to
-//      resolve countryCode, then load TaxConfiguration via TaxConfigurationFactory
-//      using the stored countryCode instead of getCurrentConfiguration() default.
-//    - In getTaxYearSummary(): use fiscalYearStartMonth/Day to compute correct
-//      year range instead of assuming Jan 1.
-//
-// 5. Migration path
-//    - Existing users: on first read with no settings row, return defaults
-//      (countryCode = "GR", filingCurrency = "EUR", fiscalYearStartMonth = 1)
-//    - Settings screen: new TaxSettingsScreen or embedded in existing Preferences
-//
-// See TaxConfiguration entity in database for existing fields.
+// T03/T09-FIXED: TaxSettings consumed (countryCode, filingCurrency, fiscalYearStartMonth/Day).
+// See TaxSettingsRepository for the current implementation.
+// TaxRateProvider available via constructor injection (DemoTaxRateProvider by default).
 @Singleton
 class TaxEstimator @Inject constructor(
     private val expenseDao: ExpenseDao,
@@ -121,8 +84,15 @@ class TaxEstimator @Inject constructor(
         val filingCurrency = taxSettings.getFilingCurrency()
 
         // T04-FIXED: VAT fields renamed for clarity; confidence marked LOW when estimated from standard rate.
+        // T04-FIXED: TaxRateProvider used as supplementary rate source. Falls back to TaxConfiguration for backward compat.
         // HIGH FIX: Use configured VAT rate
-        val vatRate = taxConfig.getVatRate()
+        val providerRate = try {
+            val result = taxRateProvider.getRate(taxSettings.getTaxCountry(), null)
+            result.standardVatRate
+        } catch (e: Exception) {
+            null
+        }
+        val vatRate = if (providerRate != null) providerRate else taxConfig.getVatRate()
 
         // B.8 Batch 7: VAT must use business-only purchase spend, not all purchases.
         val vatPaid = totalDeductible * (vatRate / (1 + vatRate))

@@ -308,6 +308,8 @@ class InvestmentTracker @Inject constructor(
      * Calculate portfolio allocation percentages.
      */
     suspend fun getPortfolioAllocation(): Map<InvestmentType, Double> = withContext(ioDispatcher) {
+        // I03 WARNING: getPortfolioSummary() uses raw mixed-currency totals.
+        // Use getPortfolioSummaryAggregate() + per-holding MoneyAggregate for currency safety.
         val summary = getPortfolioSummary()
         val totalValue = summary.totalValue
         
@@ -315,6 +317,8 @@ class InvestmentTracker @Inject constructor(
         
         summary.byType.mapValues { (_, value) -> (value / totalValue) * 100 }
     }
+    // I03 NEXUS: Upgrade path → switch to getPortfolioSummaryAggregate() with per-holding
+    // MoneyAggregate for currency-safe allocation percentages.
     
     /**
      * Get best and worst performing investments.

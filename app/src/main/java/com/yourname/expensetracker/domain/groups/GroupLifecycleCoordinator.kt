@@ -53,6 +53,10 @@ import javax.inject.Singleton
  * 7. recordSettlement – persists settlement record with lifecycle event
  */
 @Singleton
+// G02 DOCUMENTED: emitLifecycleEvent() dispatches budget checks + side effects
+// as best-effort post-commit dispatch. Group lifecycle audit events are NOT
+// persisted to a dedicated table — this is an intentional deferral. If audit
+// events are needed, add a group_lifecycle_events table in a future PR.
 class GroupLifecycleCoordinator @Inject constructor(
     private val groupCoordinator: GroupTransactionCoordinator,
     private val groupDao: ExpenseGroupDao,
@@ -217,6 +221,16 @@ class GroupLifecycleCoordinator @Inject constructor(
                 "Cannot remove member with outstanding balance. " +
                 "Member has ${unpaidPayerExpenses.size} unpaid expense(s) as payer. " +
                 "Settle all expenses before removal."
+            ))
+        }
+        // G04: Also check settlement records — member may owe money even if not the payer
+        val settlements = settlementDao.getSettlementsForGroup(groupId)
+        val netOwed = settlements.filter { it.toMemberId == memberId }.sumOf { it.amount } -
+            settlements.filter { it.fromMemberId == memberId }.sumOf { it.amount }
+        if (netOwed > 0.01) {
+            return@withContext Result.Error(GroupValidationError.Unknown(
+                "Cannot remove member with outstanding balance. " +
+                "Member is owed %.2f %s in unsettled payments.".format(netOwed, group.defaultCurrency)
             ))
         }
 
