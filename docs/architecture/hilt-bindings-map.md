@@ -239,7 +239,12 @@ Auto-provided:
 ```
 Provides:
   TaxConfiguration                            → GreeceTaxConfiguration
+
+Auto-provided via @Inject constructor:
+  DemoTaxRateProvider                         → @Singleton @Inject constructor (seed-data impl of TaxRateProvider, no Dagger module needed)
 ```
+
+Note: `TaxRateProvider` interface is consumed by `TaxEstimator`; `DemoTaxRateProvider` is the single `@Inject`-constructor implementation, satisfying Hilt's auto-binding rules for single-implementation interfaces.
 
 ### `ExportModule` — `di/ExportModule.kt`
 ```

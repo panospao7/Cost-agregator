@@ -3,7 +3,7 @@
 > Consolidated P0/P1 issues from 5 engine debug reports.
 > Source: warranty-subscription-location-nlp, analytical, categorization-merchant, groups-investment-tax, money-time-primitives
 > **Last updated: 2026-05-09**
-> **Core engines stabilized (70 fixed with real code). Advanced engines (groups, tax, investment advanced features) are beta/contained — 14 items documented as TODO-only, 13 deferred, 15 deferred-design.**
+> **Core engines stabilized (87 fixed with real code). Advanced engines (groups, tax, investment advanced features) are beta/contained — 11 items documented as TODO-only, 12 deferred, 2 deferred-design.**
 
 ## Status Legend
 - ⬜ NOT STARTED
@@ -110,34 +110,34 @@
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
 | G01 | P0 | Current-user member inserts violate key invariant | Bug | GroupLifecycleCoordinator.createGroup()/addMember() enforce exactly 1 currentUser + DB currentUserGroupKey unique index | ✅ FIXED |
-| G02 | P0 | Group expense side effects inside outer txn | Bug | Deferred post-commit side-effect list | ⏭ DEFERRED_DESIGN |
-| G03 | P0 | Linked expense normalization bypasses lifecycle | Bug | Use coordinator.updateSharedOwnership() | ⏭ DEFERRED_DESIGN |
+| G02 | P0 | Group expense side effects inside outer txn | Bug | GroupLifecycleCoordinator.emitLifecycleEvent() dispatches post-commit side effects (BudgetMonitor + TransactionSideEffectDispatcher) | ✅ FIXED |
+| G03 | P0 | Linked expense normalization bypasses lifecycle | Bug | linked ownership writes route through TransactionLifecycleCoordinator.updateOwnership() with normalizeOwnership() guard | ✅ FIXED |
 | G04 | P0 | Mixed-currency settlements labeled wrong | Bug | GroupLifecycleCoordinator.recordSettlement() rejects non-matching currencies (G04); addExpense() enforces single-currency policy (G05) | ✅ FIXED |
 | G05 | P1 | Group currency consistency not enforced | Enhancement | GroupLifecycleCoordinator.addExpense() enforces single-currency policy (G03) | ✅ FIXED |
-| G06 | P1 | Shared budget offsets drop conversion failures | Enhancement | Return MoneyAggregate with isPartial | ⏭ DEFERRED_DESIGN |
-| G07 | P1 | Shared offset uses current rates not historical | Bug | Use convertAsOf(atMillis=expense.date) | ⏭ DEFERRED_DESIGN |
+| G06 | P1 | Shared budget offsets drop conversion failures | Enhancement | SharedExpenseBudgetOffsetEngine gains MoneyAggregate fields (grossPersonalAggregate, sharedContributionAggregate, adjustedSpendAggregate) | ✅ FIXED |
+| G07 | P1 | Shared offset uses current rates not historical | Bug | convertAsOf used for historical rate conversion in shared offsets | ✅ FIXED |
 | G08 | P1 | Hard delete path bypasses coordinator | Bug | GroupLifecycleCoordinator.deleteGroupPermanently() requires explicit confirmPermanentDelete flag (G08) | ✅ FIXED |
 | G09 | P1 | Direct member delete bypasses validation | Bug | GroupLifecycleCoordinator.removeMember() validates active group, member ownership, and blocks last-currentUser removal (G09) | ✅ FIXED |
 | G10 | P1 | runBlocking inside domain calculators | Enhancement | Make suspend or require explicit currency param | ⏭ DEFERRED_DESIGN |
 | I01 | P0 | Portfolio raw-sums mixed currencies | Bug | Return MoneyAggregate with per-currency buckets + CurrencyConverter | ✅ FIXED |
 | I02 | P0 | Price update not atomic with history insert | Bug | withTransaction wrap both operations in updatePrice() | ✅ FIXED |
-| I03 | P0 | Portfolio history undercounts days | Bug | Carry forward latest value per holding | 📝 TODO ONLY |
+| I03 | P0 | Portfolio history undercounts days | Bug | Portfolio history carry-forward with dataQuality.isPartial for missing-price days | ✅ FIXED |
 | I04 | P0 | No lot/transaction ledger | Enhancement | InvestmentTransaction entity + DAO implemented (BUY/SELL/DIVIDEND); ledger wiring deferred | ✅ FIXED |
-| I05 | P1 | UI doesn't show investment performances | Bug | Expose active investments + performance flow | 📝 TODO ONLY |
-| I06 | P1 | DAO aggregates disagree with tracker math | Bug | Include fees in aggregate or remove raw methods | 📝 TODO ONLY |
+| I05 | P1 | UI doesn't show investment performances | Bug | InvestmentPerformance gains currentValueAggregate/costBasisAggregate; getInvestmentPerformances() added | ✅ FIXED |
+| I06 | P1 | DAO aggregates disagree with tracker math | Bug | InvestmentDao raw aggregates deprecated → InvestmentTracker.getPortfolioSummaryAggregate() | ✅ FIXED |
 | I07 | P1 | Investment timestamps not enforced | Bug | addHolding() validates quantity>0, price>0, currency non-blank, createdAt>0 | ✅ FIXED |
 | I08 | P1 | Direct Dispatchers.IO instead of injected | Enhancement | Inject @IoDispatcher | ✅ FIXED |
-| I09 | P1 | Price staleness not modeled | Enhancement | Add stalePriceThreshold + dataQuality | ⏭ |
-| T01 | P0 | Tax totals not currency-normalized | Bug | Use MultiCurrencyRepository + MoneyAggregate + CurrencyConverter | ⏭ DEFERRED_DESIGN |
-| T02 | P0 | Mileage deduction undercounts null values | Bug | DAO SUM CASE fallback: distance * rate | ⏭ DEFERRED_DESIGN |
-| T03 | P0 | Tax country not persisted | Bug | TaxSettingsRepository with selectedCountry | ⏭ DEFERRED_DESIGN |
+| I09 | P1 | Price staleness not modeled | Enhancement | Price staleness model: 7-day stale/30-day very-stale thresholds, staleHoldingCount, missingPriceCount, lastUpdatedAt | ✅ FIXED |
+| T01 | P0 | Tax totals not currency-normalized | Bug | TaxEstimate/TaxYearSummary gain MoneyAggregate fields (deductible/vat/taxable/income/estimatedTax aggregates) | ✅ FIXED |
+| T02 | P0 | Mileage deduction undercounts null values | Bug | Mileage null fallback: distance*rate when calculatedDeduction is null | ✅ FIXED |
+| T03 | P0 | Tax country not persisted | Bug | TaxSettingsRepository gains fiscalYearStartDay, vatEnabled, businessReportCurrencyPolicy | ✅ FIXED |
 | T04 | P1 | VAT estimation assumes standard-rate | Enhancement | Rename to estimatedVatPortion, per-expense fields | ⏭ DEFERRED_DESIGN |
-| T05 | P1 | Business report hardcodes euro formatting | Bug | Use CurrencyFormatter with filing currency | ⏭ DEFERRED_DESIGN |
-| T06 | P1 | Business report raw-sums mixed currencies | Bug | Return MoneyAggregate in report fields | ⏭ DEFERRED_DESIGN |
-| T07 | P1 | Business CSV weak formula safety | Bug | Hardened CSV cell sanitizer (neutralize =,+,-,@) | ⏭ DEFERRED_DESIGN |
-| T08 | P1 | Tax rates hardcoded | Enhancement | Demo/editable/official config separation | ⏭ DEFERRED_DESIGN |
-| T09 | P1 | Fiscal year assumptions calendar-year only | Enhancement | Add fiscalYearStartMonth/Day to settings | ⏭ DEFERRED_DESIGN |
-| T10 | P1 | Business/tax updates bypass lifecycle events | Bug | Add updateBusinessTaxFields coordinator method | ⏭ DEFERRED_DESIGN |
+| T05 | P1 | Business report hardcodes euro formatting | Bug | CsvCellSanitizer extracted from AccountingExporters; formula injection prevention | ✅ FIXED |
+| T06 | P1 | Business report raw-sums mixed currencies | Bug | Tax totals + business reports use MoneyAggregate | ✅ FIXED |
+| T07 | P1 | Business CSV weak formula safety | Bug | BusinessExpenseReportGenerator no hardcoded euro | ✅ FIXED |
+| T08 | P1 | Tax rates hardcoded | Enhancement | TaxRateProvider interface + DemoTaxRateProvider with static EUR seed data | ✅ FIXED |
+| T09 | P1 | Fiscal year assumptions calendar-year only | Enhancement | TaxEstimator.getTaxYearSummary() uses fiscal year start from taxSettings | ✅ FIXED |
+| T10 | P1 | Business/tax updates bypass lifecycle events | Bug | TransactionLifecycleCoordinator.updateBusinessTaxFields() added | ✅ FIXED |
 
 ---
 
@@ -184,10 +184,10 @@ All items from the original Quick Wins list have been resolved:
 
 | Status | Count |
 |--------|-------|
-| ✅ FIXED | 70 |
-| 📝 TODO ONLY | 14 |
-| ⏭ DEFERRED | 13 |
-| ⏭ DEFERRED_DESIGN | 15 |
+| ✅ FIXED | 87 |
+| 📝 TODO ONLY | 11 |
+| ⏭ DEFERRED | 12 |
+| ⏭ DEFERRED_DESIGN | 2 |
 | ⬜ NOT STARTED | 0 |
 
 **2026-05-09 update:** 5 group items promoted from ⏭ DEFERRED_DESIGN → ✅ FIXED (G01, G04, G05, G08, G09) via `GroupLifecycleCoordinator`. `[Dagger/DependencyCycle]` fixed by deleting `SubscriptionModule.kt` (`SubscriptionManagerEngine` is auto-provided via `@Inject`). `CloudPayloadRedactor` Stage 2 complete (6 providers migrated). 3 missing DAO bindings added to `DaoModule`.
@@ -204,3 +204,9 @@ Final counts: 55 FIXED, 23 TODO ONLY, 15 DEFERRED, 15 DEFERRED_DESIGN.
 - A15: promoted from ⏭ DEFERRED — category name snapshots implemented in Assembler
 - A16–A20: new/completed items — normalization dedup, BudgetVsActualEngine extraction, java.time migration annotations (A17), SpendingPersonalityClassifier java.time switch (A18), ExcludedExpense warning metadata + confidencePenalty (A19), BudgetVsActualResult dataQuality + displayCurrency (A20)
 Final counts: 70 FIXED, 14 TODO ONLY, 13 DEFERRED, 15 DEFERRED_DESIGN.
+**Groups/Investment/Tax GIT-issues implementation (2026-05-09):** 17 items promoted to ✅ FIXED:
+- **Groups (4):** G02, G03, G06, G07 — side-effect dispatch via `emitLifecycleEvent()`, ownership routing through `updateOwnership()` with `normalizeOwnership()` guard, `SharedExpenseBudgetOffsetEngine` MoneyAggregate fields, `convertAsOf` for historical shared offsets.
+- **Investment (4):** I03 — portfolio history carry-forward with `dataQuality.isPartial`; I05 — `InvestmentPerformance` aggregates + `getInvestmentPerformances()`; I06 — `InvestmentDao` raw aggregates deprecated → `getPortfolioSummaryAggregate()`; I09 — price staleness model (7/30-day thresholds, `staleHoldingCount`, `missingPriceCount`, `lastUpdatedAt`).
+- **Tax/Business (9):** T01 — TaxEstimate/TaxYearSummary MoneyAggregate fields; T02 — mileage null fallback; T03 — TaxSettingsRepository expanded; T05 — `CsvCellSanitizer` extracted; T06 — tax totals + business reports use MoneyAggregate; T07 — `BusinessExpenseReportGenerator` no hardcoded euro; T08 — `TaxRateProvider` interface + `DemoTaxRateProvider`; T09 — fiscal year from taxSettings; T10 — `updateBusinessTaxFields()` coordinator method.
+- **Deferred items remaining:** W03, W08, W24, C07, C11, C13, G10, T04, M02, M05, M06, M09, M13, M14 (12 deferred, 2 deferred-design).
+Final counts: 87 FIXED, 11 TODO ONLY, 12 DEFERRED, 2 DEFERRED_DESIGN.

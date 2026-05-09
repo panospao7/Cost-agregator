@@ -83,6 +83,14 @@
 - **categoryNameSnapshot** (`String?`) added to `NormalizedExpense` — snapshot of the category name at normalization time, preventing drift when category names are later edited.
 - **BudgetVsActualEngine** logic extracted from `AnalyticsViewModel` — the ViewModel no longer performs inline budget-vs-actual aggregation.
 
+### Architecture Drift Updates (2026-05-09 — groups/tax/export/investment)
+- **TaxRateProvider** created (`domain/tax/TaxRateProvider.kt`) — interface for tax-rate data consumed by `TaxEstimator`. Returns `TaxRateResult` with standard/reduced VAT rates per country+region, with `TaxRateMetadata` describing source confidence.
+- **DemoTaxRateProvider** created (`data/tax/DemoTaxRateProvider.kt`) — `@Singleton @Inject` seed-data implementation with static EUR rates for GR/DE/FR/IT/ES/GB/US. Metadata declares LOW confidence; no Dagger module needed.
+- **CsvCellSanitizer** created (`domain/export/CsvCellSanitizer.kt`) — Kotlin `object` that neutralizes leading `=`, `+`, `-`, `@` characters and strips tabs/newlines from CSV cells, preventing formula injection in exported files.
+- **InvestmentDataQuality** added (`domain/investment/InvestmentTracker.kt`) — data class tracking investment price freshness: `isPartial`, `staleHoldingCount` (7-day threshold), `missingPriceCount`, `lastUpdatedAt`. Returned by `getPortfolioSummaryAggregate()` and used for portfolio data-quality warnings in investment UI.
+- **GroupLifecycleCoordinator** — `emitLifecycleEvent()` now dispatches real post-commit side effects: `BudgetMonitor.checkBudgets()` and `TransactionSideEffectDispatcher.dispatchOnCreated()` for group expenses (G02 deferred side-effects). No Dagger cycle — depends on domain interface, not data-layer implementation.
+- **TaxEstimator** — `TaxEstimate` and `TaxYearSummary` now carry `MoneyAggregate` fields (`deductibleAggregate`, `vatAggregate`, `taxableIncomeAggregate`, `incomeAggregate`, `estimatedTaxAggregate`) replacing raw Double totals with per-currency-bucket aggregates via `MoneyAggregateBuilder.fromBuckets()`. `buildDeductibleAggregate()` and `buildIncomeAggregate()` are private methods producing `MoneyAggregate` from expense data (T01).
+
 ---
 
 ## Architecture Overview
@@ -252,6 +260,8 @@ data/
 │       └── MerchantKeyBackfillWorker.kt    # One-shot merchant key backfill
 ├── negotiation/                  # Market-rate data implementations
 │   └── StaticMarketRateProvider.kt     # @Singleton @Inject seed-data impl
+├── tax/                          # Tax-rate data implementations
+│   └── DemoTaxRateProvider.kt         # @Singleton @Inject seed-data impl
 ├── security/                    # Secure storage / crypto helpers
 ├── speech/                      # Speech input services
 ├── privacy/                     # **NEW — Privacy data layer**
@@ -403,7 +413,8 @@ FinancialWeatherRepository
 | AssistantHistorySettings | `domain/ai/model/AssistantHistoryMode.kt` | Enum: OFF/REDACTED/RAW for conversation history redaction |
 | Transaction Lifecycle | `domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` | Single entry point for ALL expense CUD |
 | Receipt Lifecycle | `domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt` | Single entry point for ALL receipt processing |
-| Group Lifecycle | `domain/groups/GroupLifecycleCoordinator.kt` | Domain-level coordinator for group lifecycle: create, add/remove member, add expense, archive, permanent-delete, record settlement (7 methods, 8 invariants) |
+| Group Lifecycle | `domain/groups/GroupLifecycleCoordinator.kt` | Domain-level coordinator for group lifecycle: create, add/remove member, add expense, archive, permanent-delete, record settlement (7 methods, 8 invariants). `emitLifecycleEvent()` dispatches real post-commit side effects (budget check + expense side-effect dispatch). |
+| Tax Rate Provider | `domain/tax/TaxRateProvider.kt` | Interface for tax-rate data (standard/reduced VAT rates per country+region) consumed by TaxEstimator |
 | Privacy Gate | `domain/privacy/CompositePrivacyGate.kt` | Chains 4 privacy sub-gates |
 
 ### New Categorization Components (Feb 2026)
@@ -442,6 +453,21 @@ FinancialWeatherRepository
 |-----------|------|---------|
 | MarketRateProvider | `domain/negotiation/MarketRateProvider.kt` | Interface for market-rate data consumed by SmartBillNegotiationEngine |
 | StaticMarketRateProvider | `data/negotiation/StaticMarketRateProvider.kt` | @Singleton @Inject seed-data implementation with no Dagger module needed |
+
+### Tax Rate Provider & Export Sanitizer (May 2026)
+| Component | File | Purpose |
+|-----------|------|---------|
+| TaxRateProvider | `domain/tax/TaxRateProvider.kt` | Interface for tax-rate data consumed by TaxEstimator. Returns TaxRateResult with standard/reduced VAT rates, currency, country, region. |
+| DemoTaxRateProvider | `data/tax/DemoTaxRateProvider.kt` | @Singleton @Inject seed-data implementation with static EUR rates for EU countries plus GB/US. No Dagger module needed. |
+| CsvCellSanitizer | `domain/export/CsvCellSanitizer.kt` | Kotlin `object` — centralized CSV formula injection prevention. Neutralizes leading `=`, `+`, `-`, `@` and strips tabs/newlines. Used by all CSV export paths. |
+
+### Investment Data Quality (May 2026)
+| Component | File | Purpose |
+|-----------|------|---------|
+| InvestmentDataQuality | `domain/investment/InvestmentTracker.kt` | Data class tracking price freshness: `isPartial`, `staleHoldingCount` (7-day threshold), `missingPriceCount`, `lastUpdatedAt`. Returned by `getPortfolioSummaryAggregate()` alongside `PortfolioSummary` and `MoneyAggregate`. |
+
+### TaxEstimator MoneyAggregate Output (May 2026)
+`TaxEstimate` and `TaxYearSummary` (both in `domain/tax/TaxEstimator.kt`) now carry `MoneyAggregate` fields — `deductibleAggregate`, `vatAggregate`, `taxableIncomeAggregate`, `incomeAggregate`, `estimatedTaxAggregate` — replacing raw Double totals with per-currency-bucket aggregates. Backed by `buildDeductibleAggregate()` and `buildIncomeAggregate()` private methods using `MoneyAggregateBuilder.fromBuckets()`.
 
 ### Natural Language Search — Pagination & Data Quality (May 2026)
 | Component | File | Purpose |

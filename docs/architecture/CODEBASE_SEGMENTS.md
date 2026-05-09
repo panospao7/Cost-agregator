@@ -306,7 +306,8 @@ Owns bank account sync/import and bank-facing adapters.
 Owns holdings, portfolio tracking, and investment metrics.
 
 **Representative files**
-- `domain/investment/InvestmentTracker.kt`
+- `domain/investment/InvestmentTracker.kt` — houses `InvestmentDataQuality` data class (staleness model: `isPartial`, `staleHoldingCount`, `missingPriceCount`, `lastUpdatedAt`)
+- `domain/investment/InvestmentPerformance.kt` — includes `currentValueAggregate` and `costBasisAggregate` MoneyAggregate fields
 - `data/database/entity/Investment.kt`
 - `data/database/entity/InvestmentValue.kt`
 - `data/database/entity/InvestmentTransaction.kt`
@@ -351,7 +352,9 @@ Owns currency normalization, exchange-rate handling, multi-currency calculations
 Owns tax allocation and tax-aware reporting logic.
 
 **Representative files**
-- `domain/tax/TaxEstimator.kt`
+- `domain/tax/TaxRateProvider.kt` — Interface for tax-rate data (standard/reduced VAT rates per country+region)
+- `data/tax/DemoTaxRateProvider.kt` — @Singleton @Inject seed-data implementation (static EUR rates, LOW confidence)
+- `domain/tax/TaxEstimator.kt` — TaxEstimate and TaxYearSummary now carry MoneyAggregate fields (deductibleAggregate, vatAggregate, taxableIncomeAggregate, incomeAggregate, estimatedTaxAggregate) via MoneyAggregateBuilder.fromBuckets()
 - `domain/tax/TaxConfiguration.kt`
 - `domain/business/BusinessExpenseReportGenerator.kt`
 - `domain/export/AccountantReportPdfExporter.kt`
@@ -363,6 +366,7 @@ Owns tax allocation and tax-aware reporting logic.
 Owns export pipelines, backup/restore flows, and file packaging.
 
 **Representative files**
+- `domain/export/CsvCellSanitizer.kt` — Kotlin `object` preventing CSV formula injection (neutralizes =, +, -, @, strips tabs/newlines)
 - `data/repository/AccountingExportRepository.kt`
 - `data/repository/DatabaseBackupRepositoryImpl.kt`
 - `data/backup/BackupVerifier.kt`
@@ -653,10 +657,10 @@ File-to-segment mapping for all 38 segments:
 | 12 | Startup & Background Runtime | `startup/`, workers, `AppStartupCoordinator` |
 | 13 | Cash Flow Planning | `domain/cashflow/`, `CashFlowCalculator` |
 | 14 | Bank Integration | `domain/bank/`, `BankConnection` |
-| 15 | Investment Tracking | `domain/investment/`, `Investment` entities |
+| 15 | Investment Tracking | `domain/investment/`, `InvestmentTracker`, `InvestmentDataQuality`, `InvestmentPerformance` |
 | 16 | Currency & Exchange | `domain/core/money/`, `CurrencyConverter`, `MultiCurrencyRepository` |
-| 17 | Tax Calculation & Reporting | `domain/tax/`, `TaxEstimator` |
-| 18 | Export & Backup | `domain/backup/`, `data/backup/`, `AccountingExport` |
+| 17 | Tax Calculation & Reporting | `domain/tax/`, `TaxEstimator`, `TaxRateProvider`, `DemoTaxRateProvider` |
+| 18 | Export & Backup | `domain/backup/`, `data/backup/`, `AccountingExport`, `CsvCellSanitizer` |
 | 19 | Location Enrichment | `domain/location/`, `CompositeGeocodingService` |
 | 20 | AI Platform, Assistant & Follow-Through | `domain/ai/policy/`, `AiModule`, assistant, briefing |
 | 21 | Enhanced Split Transactions | `domain/split/`, `VisualSplitEditor`, `SplitTemplate` |
