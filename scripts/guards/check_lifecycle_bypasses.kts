@@ -25,6 +25,8 @@ val allowlist = setOf(
     "TransactionLifecycleCoordinator.kt",
     "ReceiptLinkService.kt",        // RCP-30: circular dependency, documented
     "GroupTransactionCoordinator.kt", // atomic group operations, documented
+    "GroupLifecycleCoordinator.kt",   // group lifecycle mutations, documented
+    "GroupBalanceCalculator.kt",      // reads DAOs for net balance formula
     "LocationBackfillWorker.kt",     // backfill worker, documented
     "MerchantKeyBackfillWorker.kt"   // backfill worker, documented
 )
