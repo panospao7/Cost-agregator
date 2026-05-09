@@ -60,6 +60,17 @@
 - **CloudPayloadRedactor Stage 2 COMPLETE:** Migrated 6 cloud providers from direct `CloudPiiSanitizer` calls to `CloudPayloadRedactor`. Affected: `CloudReviewExplanationService`, `CloudReceiptAssistService`, `CloudCategorizationAssistService`, `CloudDedupeJudgeService`, `CloudReceiptItemCategorizationService`, `CloudWarrantyExtractionService`. Removed `shouldRedact` extra argument from `redactor.redactMerchant()` calls. `DashboardBriefingPromptFormatter` intentionally remains on `CloudPiiSanitizer` (it is a prompt formatter, not a cloud service; `DefaultCloudPayloadRedactor` wraps `CloudPiiSanitizer` anyway).
 - **GroupLifecycleScenarioTest** created with 21 tests covering all 7 lifecycle methods + end-to-end scenario. 3 pre-existing test compilation errors fixed (`ExchangeRateDaoTest`, `PendingReviewDaoTest`, `WarrantyDaoTest`). Production + test compilation: BUILD SUCCESSFUL.
 
+### Architecture Drift Updates (2026-05-09 — afternoon)
+- **GeoCoordinate** created (`domain/location/GeoCoordinate.kt`) — validated coordinate value class rejecting NaN, Infinity, out-of-range, and null-island coordinates. Used by `AreaSpendingEngine` and `TravelDetectionEngine`.
+- **MarketRateProvider** created (`domain/negotiation/MarketRateProvider.kt`) — interface for market-rate data consumed by SmartBillNegotiationEngine. New `negotiation/` domain package.
+- **StaticMarketRateProvider** created (`data/negotiation/StaticMarketRateProvider.kt`) — `@Singleton @Inject` seed-data implementation in new `data/negotiation/` sub-package. No Dagger module needed.
+- **AssistantHistoryMode** created (`domain/ai/model/AssistantHistoryMode.kt`) — enum (OFF/REDACTED/RAW) for conversation history redaction in AiChatRepositoryImpl.
+- **SearchCursor** added (`domain/naturallanguage/NaturalLanguageExpenseQueryRepository.kt`) — keyset pagination cursor (date, id) replacing offset pagination.
+- **QueryDataQuality** added (`domain/naturallanguage/NaturalLanguageSearchEngine.kt`) — data class tracking `unsupportedLocations` and `failedCurrencyConversions` flags on NL query results.
+- **Keyset pagination refactored:** `NaturalLanguageSearchEngine.executeSearch()` and `NaturalLanguageExpenseQueryRepositoryImpl` migrated from offset pagination to keyset pagination. `ExpenseDao.getExpensesFilteredKeyset()` added as filtered Room query with categoryIds, transactionType, merchant LIKE, keyword LIKE, DESC ordering.
+- **SpendingMapViewModel.onCenterOnMeRequested()** — new method deferring GPS fetch to explicit user action (W27 pattern). No automatic location request on ViewModel init.
+- **AreaSpendingEngine.computeNormalized()** and **TravelDetectionEngine.computeNormalized()** — new `MoneyAggregate`-based computation paths using `AnalyticsCurrencyNormalizer` for currency-safe per-expense normalization.
+
 ---
 
 ## Architecture Overview
@@ -175,6 +186,7 @@ domain/
 ├── service/                     # Domain service interfaces
 ├── usecase/                     # Use cases / orchestration
 ├── model/                       # Shared domain models
+├── negotiation/                  # Market-rate provider for bill negotiation
 ├── core/
 │   ├── money/                   # Type-safe money primitives (CurrencyCode, MoneyAmount, etc.)
 │   └── time/                    # Typed time period models (PeriodRange, PeriodKind)
@@ -225,7 +237,9 @@ data/
 │   ├── GooglePlacesGeocodingService.kt # Google Places API geocoding
 │   ├── PhotonGeocodingService.kt       # Photon API geocoding
 │   ├── LocationBackfillWorker.kt       # Periodic location backfill worker
-│   └── MerchantKeyBackfillWorker.kt    # One-shot merchant key backfill
+│       └── MerchantKeyBackfillWorker.kt    # One-shot merchant key backfill
+├── negotiation/                  # Market-rate data implementations
+│   └── StaticMarketRateProvider.kt     # @Singleton @Inject seed-data impl
 ├── security/                    # Secure storage / crypto helpers
 ├── speech/                      # Speech input services
 ├── privacy/                     # **NEW — Privacy data layer**
@@ -372,6 +386,7 @@ FinancialWeatherRepository
 | Dashboard Widgets | `domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt` | Dashboard widget computation |
 | Dashboard Data | `domain/usecase/dashboard/DashboardDataProvider.kt` | Dashboard data provider |
 | AI Follow-Through | `domain/ai/...` | Recommendation, assistant, and receipt intelligence flows |
+| AssistantHistorySettings | `domain/ai/model/AssistantHistoryMode.kt` | Enum: OFF/REDACTED/RAW for conversation history redaction |
 | Transaction Lifecycle | `domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` | Single entry point for ALL expense CUD |
 | Receipt Lifecycle | `domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt` | Single entry point for ALL receipt processing |
 | Group Lifecycle | `domain/groups/GroupLifecycleCoordinator.kt` | Domain-level coordinator for group lifecycle: create, add/remove member, add expense, archive, permanent-delete, record settlement (7 methods, 8 invariants) |
@@ -405,7 +420,22 @@ FinancialWeatherRepository
 | Photon | `data/location/PhotonGeocodingService.kt` | Photon API |
 | Location Resolver | `domain/location/LocationResolver.kt` | Domain coordination |
 | Location Models | `domain/location/LocationModels.kt` | Location domain models |
+| GeoCoordinate | `domain/location/GeoCoordinate.kt` | Validated coordinate value class rejecting NaN/Infinity/out-of-range/null-island |
 | Map Screen | `ui/screens/map/SpendingMapScreen.kt` | Map visualization |
+
+### Market Rate & Negotiation (May 2026)
+| Component | File | Purpose |
+|-----------|------|---------|
+| MarketRateProvider | `domain/negotiation/MarketRateProvider.kt` | Interface for market-rate data consumed by SmartBillNegotiationEngine |
+| StaticMarketRateProvider | `data/negotiation/StaticMarketRateProvider.kt` | @Singleton @Inject seed-data implementation with no Dagger module needed |
+
+### Natural Language Search — Pagination & Data Quality (May 2026)
+| Component | File | Purpose |
+|-----------|------|---------|
+| SearchCursor | `domain/naturallanguage/NaturalLanguageExpenseQueryRepository.kt` | Keyset pagination cursor (date, id) for NL query results |
+| QueryDataQuality | `domain/naturallanguage/NaturalLanguageSearchEngine.kt` | Data class tracking unsupportedLocations and failedCurrencyConversions on NL queries |
+
+**Keyset pagination:** `NaturalLanguageSearchEngine.executeSearch()` and `NaturalLanguageExpenseQueryRepositoryImpl` migrated from offset pagination to keyset pagination via `SearchCursor`. `ExpenseDao.getExpensesFilteredKeyset()` added as the backing filtered Room query.
 
 ### Advanced Analytics Features (Mar 2026)
 ... (same high-level mapping as before) ...

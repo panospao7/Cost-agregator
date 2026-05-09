@@ -204,6 +204,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 **Services:**
 - AiArtifactRepository, AiCapabilityRouter, AiChatRepository
 - AiEngagementRepository, AiEnvironmentMonitor, AiSettingsRepository
+- AiModels: AiServiceResult, FinancialQueryModels, AssistantHistorySettings (OFF/REDACTED/RAW)
 - AiWorkScheduler, CategorizationAssistService, DashboardBriefingService
 - DedupeJudgeService, NotificationFallbackParser, QueryInterpretationService
 - ReceiptAssistService, ReceiptItemCategorizationService
@@ -265,21 +266,21 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - AreaSpendingEngine, GeocodingResult, LocatedExpense
 - LocationInsightsEngine, LocationModels, LocationResolver
 - NearbyPoi, SpendingHeatmapEngine, TravelDetectionEngine
-- LocatedMoneyExpense
+- LocatedMoneyExpense, GeoCoordinate
 
 ### Recurring & Scheduling
 - RecurringExpenseEngine, RecurrenceCalculator, PlannedExpense models
 
 ### Savings & Investment
 - AutomatedSavingsRuleEngine, SavingsGamificationEngine, SmartSavingsEngine
-- InvestmentTracker, SmartBillNegotiationEngine
-- NaturalLanguageSearchEngine, PriceProtectionTracker
+- InvestmentTracker, SmartBillNegotiationEngine, MarketRateProvider
+- NaturalLanguageSearchEngine (with SearchCursor keyset pagination, QueryDataQuality), PriceProtectionTracker
 
 ### Subscriptions
 - SubscriptionManagerEngine
 
 ### Groups & Splitting
-- GroupTransactionCoordinator, SettlementCalculator
+- GroupTransactionCoordinator, GroupLifecycleCoordinator, SettlementCalculator
 - SharedExpenseManager, EnhancedSplitManager, SplitCalculator
 
 ### Utilities

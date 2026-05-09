@@ -640,6 +640,7 @@ before performing write operations, ensuring workers yield during an active rest
 | `AiArtifactEntity` | `AiArtifactDao` | `AiArtifactRepositoryImpl` | AI follow-through |
 | `AiChatSession` | `AiChatSessionDao` | `AiChatRepositoryImpl` | Assistant |
 | `AiChatMessage` | `AiChatMessageDao` | `AiChatRepositoryImpl` | Assistant |
+| `AssistantHistorySettings` | *(enum)* | `AiChatRepositoryImpl` | Assistant (history redaction: OFF/REDACTED/RAW) |
 | `ReceiptItemCategorization` | `ReceiptItemCategorizationDao` | `ReceiptItemCategorizationRepository` | AI categorization |
 | `RecurringLifecycleEvent` | `RecurringLifecycleEventDao` | `RecurringLifecycleCoordinator` | Recurring audit log |
 | `RecurringReminderDelivery` | `RecurringReminderDeliveryDao` | `RecurringLifecycleCoordinator` | Reminder delivery |
@@ -652,6 +653,8 @@ before performing write operations, ensuring workers yield during an active rest
 | `ExpenseGroup` | `ExpenseGroupDao` | `GroupsRepositoryImpl` | SharedExpenseGroupsVM |
 | `GroupMember` | `GroupMemberDao` | `GroupsRepositoryImpl` | SharedExpenseGroupsVM |
 | `GroupExpense` | `GroupExpenseDao` | `GroupsRepositoryImpl` | SharedExpenseGroupsVM |
+| `GroupSettlementEntity` | `GroupSettlementDao` | `GroupLifecycleCoordinator` → recordSettlement() | SharedExpenseGroupsVM |
+| *(n/a)* | *(n/a)* | `GroupLifecycleCoordinator` → `GroupTransactionCoordinator` (domain interface), `TimeProvider`, `CurrencySettingsRepository` | Groups ViewModel |
 | `SplitTemplate` | `SplitTemplateDao` | (Direct usage) | VisualSplitVM |
 | `SplitItemAssignment` | `SplitItemAssignmentDao` | (Direct usage) | VisualSplitVM |
 | `SpendingChallengeEntity` | `SpendingChallengeDao` | `SpendingChallengeRepository` | SpendingChallengesVM |
@@ -683,9 +686,15 @@ LocationResolver                         [domain/location/LocationResolver.kt]
   ├──► MerchantLocationRepository         [data/repository/MerchantLocationRepository.kt]
   └──► TravelDetectionEngine              [domain/location/TravelDetectionEngine.kt]
 
+GeoCoordinate                               [domain/location/GeoCoordinate.kt]
+  │
+  ├──► AreaSpendingEngine.computeNormalized()  [domain/location/AreaSpendingEngine.kt]
+  ├──► TravelDetectionEngine.computeNormalized() [domain/location/TravelDetectionEngine.kt]
+  └──► SpendingMapViewModel                 [ui/screens/map/SpendingMapViewModel.kt]
+
 Pipeline consumers:
 - AnalyticsViewModel → LocationInsightsEngine, AreaSpendingEngine, TravelDetectionEngine
-- SpendingMapViewModel → LocationResolver
+- SpendingMapViewModel → LocationResolver, onCenterOnMeRequested (W27: GPS defer)
 - LocationBackfillWorker → CompositeGeocodingService + ExpenseDao
 ```
 
@@ -821,3 +830,41 @@ Handles single non-home conversion, mixed-currency conversion, and failure mappi
 - **success()** — cross-currency conversion succeeded
 - **failed(reason, message)** — stores `failureReason` and `failureMessage` (M08 fix)
 Previously `identity()` was misclassified as a failure and `failed()` discarded the reason.
+
+---
+
+## Negotiation Dependency Chain (2026-05-09)
+
+```
+MarketRateProvider                         [domain/negotiation/MarketRateProvider.kt]
+  │
+  ▼
+StaticMarketRateProvider                   [data/negotiation/StaticMarketRateProvider.kt]
+  │  @Singleton @Inject (no Dagger module needed)
+  │
+  ▼
+SmartBillNegotiationEngine                [domain/negotiation/SmartBillNegotiationEngine.kt]
+  │
+  ▼
+BillNegotiationScreen                     [ui/screens/negotiation/BillNegotiationScreen.kt]
+```
+
+## Natural Language Search Dependency Chain (2026-05-09)
+
+```
+QueryDataQuality                           [domain/naturallanguage/NaturalLanguageSearchEngine.kt]
+  │  data class: unsupportedLocations, failedCurrencyConversions, hasWarnings
+  │
+  ▼
+NaturalLanguageSearchEngine               [domain/naturallanguage/NaturalLanguageSearchEngine.kt]
+  │  executeSearch(): keyset pagination, convertAsOf currency safety, no raw fallback
+  │
+  ├──► SearchCursor                        [domain/naturallanguage/NaturalLanguageExpenseQueryRepository.kt]
+  │     (date, id) keyset cursor replacing offset pagination
+  │
+  ├──► NaturalLanguageExpenseQueryRepositoryImpl  [data/repository/...]
+  │     getExpensesBetweenFilteredKeyset() delegates to ExpenseDao.getExpensesFilteredKeyset()
+  │
+  └──► ExpenseDao.getExpensesFilteredKeyset()  [data/database/dao/ExpenseDao.kt]
+        Filtered Room @Query with categoryIds, transactionType, merchant LIKE, keyword LIKE, DESC ordering
+```

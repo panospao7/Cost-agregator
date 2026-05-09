@@ -215,6 +215,14 @@ Auto-provided via @Inject constructor:
   GroupLifecycleCoordinator                   → @Singleton @Inject constructor (no Dagger module needed)
 ```
 
+### `GroupsModule` — `di/GroupsModule.kt` (continued)
+```
+Auto-provided via @Inject constructor:
+  StaticMarketRateProvider                    → @Singleton @Inject constructor (seed-data impl of MarketRateProvider, no Dagger module needed)
+```
+
+Note: `MarketRateProvider` interface is consumed by `SmartBillNegotiationEngine`; `StaticMarketRateProvider` is the single `@Inject`-constructor implementation, satisfying Hilt's auto-binding rules for single-implementation interfaces.
+
 ### `TaxModule` — `di/TaxModule.kt`
 ```
 Provides:

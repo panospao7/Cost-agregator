@@ -3,7 +3,7 @@
 > Consolidated P0/P1 issues from 5 engine debug reports.
 > Source: warranty-subscription-location-nlp, analytical, categorization-merchant, groups-investment-tax, money-time-primitives
 > **Last updated: 2026-05-09**
-> **Core engines stabilized (44 fixed with real code). Advanced engines (groups, tax, investment advanced features) are beta/contained — 32 items documented as TODO-only, 17 deferred, 15 deferred-design.**
+> **Core engines stabilized (55 fixed with real code). Advanced engines (groups, tax, investment advanced features) are beta/contained — 23 items documented as TODO-only, 15 deferred, 15 deferred-design.**
 
 ## Status Legend
 - ⬜ NOT STARTED
@@ -31,10 +31,10 @@
 | W10 | P0 | Device GPS not privacy-gated | Bug | PrivacyGate(DEVICE_GPS_LOCATION) check | ✅ FIXED |
 | W11 | P0 | Location insights include non-spending | Bug | SpendingMapViewModel filters spending-only via isSpending (line 435-458) | ✅ FIXED |
 | W12 | P0 | Map/insight amounts not currency-normalized | Bug | Use LocatedMoneyExpense with conversion; display currency in map marker label | ✅ FIXED |
-| W13 | P0 | Manual correction insert can silently fail | Bug | Change upsertCorrection return to Long | 📝 TODO ONLY |
-| W14 | P0 | Legacy NL merchant extraction broken | Bug | Extract on original query, not lowercased | 📝 TODO ONLY |
-| W15 | P0 | Legacy NL filters parsed but ignored | Bug | Push filters to repository/DAO query | 📝 TODO ONLY |
-| W16 | P0 | NL amount filter currency unsafe | Bug | Use ExtractedAmount with conversion | 📝 TODO ONLY |
+| W13 | P0 | Manual correction insert can silently fail | Bug | upsertCorrection returns Long; saveCorrection returns Long — callers detect conflicts | ✅ FIXED |
+| W14 | P0 | Legacy NL merchant extraction broken | Bug | Multi-word regex + alias lookup via MerchantNormalizationRepository; original query used | ✅ FIXED |
+| W15 | P0 | Legacy NL filters parsed but ignored | Bug | Category IDs pushed to DAO SQL; location marked unsupported in QueryDataQuality | ✅ FIXED |
+| W16 | P0 | NL amount filter currency unsafe | Bug | convertAsOf(expense.date) normalizes each row; failed conversions excluded; no raw fallback | ✅ FIXED |
 | W17 | P0 | Cloud query sends raw text without redaction | Bug | Apply CloudPayloadRedactor before prompt | ✅ FIXED |
 | W18 | P1 | Warranty timestamps unset on insert | Bug | copy(createdAt=..., updatedAt=now) | ✅ FIXED |
 | W19 | P1 | Warranty AI extraction not privacy-gated | Enhancement | CloudAiGuard(CLOUD_AI_WARRANTY) check | ✅ FIXED |
@@ -43,16 +43,16 @@
 | W22 | P1 | Subscription missing createdAt/currency/validation | Bug | validateAndCreate() validates all fields + wraps in database.withTransaction | ✅ FIXED |
 | W23 | P1 | Candidate accepted date uses fixed millis | Bug | SubscriptionManagementViewModel uses RecurrenceCalculator.nextOccurrence() | ✅ FIXED |
 | W24 | P1 | Candidate uniqueness wider than intended | Enhancement | Partial unique index or ledger table | ⏭ |
-| W25 | P1 | Bill negotiation rates hardcoded EUR | Enhancement | MarketRateProvider with currency/region | ⏭ |
-| W26 | P1 | Date-range filtering uses inclusive end | Bug | Change <= to < for half-open contract | 📝 TODO ONLY |
-| W27 | P1 | LocationResolver fetches GPS too early | Enhancement | Defer until actually needed | 📝 TODO ONLY |
-| W28 | P1 | Coordinate validation incomplete | Enhancement | GeoCoordinate rejecting null-island/NaN | 📝 TODO ONLY |
-| W29 | P1 | Area/travel engines raw-sum mixed currencies | Bug | Use MoneyAggregate output | 📝 TODO ONLY |
-| W30 | P1 | Legacy NL does date-only broad paging | Enhancement | Use filtered DAO query | 📝 TODO ONLY |
-| W31 | P1 | NL offset paging not snapshot-stable | Bug | Keyset pagination or single-txn snapshot | 📝 TODO ONLY |
+| W25 | P1 | Bill negotiation rates hardcoded EUR | Enhancement | MarketRateProvider interface + StaticMarketRateProvider with EUR seed data | ✅ FIXED |
+| W26 | P1 | Date-range filtering uses inclusive end | Bug | Change <= to < for half-open contract — map uses < end; NL engine uses endExclusive; audit in progress | 📝 TODO ONLY |
+| W27 | P1 | LocationResolver fetches GPS too early | Enhancement | onPermissionResult only updates state; onCenterOnMeRequested fetches on explicit FAB tap | ✅ FIXED |
+| W28 | P1 | Coordinate validation incomplete | Enhancement | GeoCoordinate value class rejecting NaN/Infinity/out-of-range/null-island (0,0) | ✅ FIXED |
+| W29 | P1 | Area/travel engines raw-sum mixed currencies | Bug | computeNormalized() with MoneyAggregateBuilder in AreaSpendingEngine + TravelDetectionEngine | ✅ FIXED |
+| W30 | P1 | Legacy NL does date-only broad paging | Enhancement | getExpensesFilteredKeyset DAO query with categoryIds, transactionType, merchant LIKE | ✅ FIXED |
+| W31 | P1 | NL offset paging not snapshot-stable | Bug | SearchCursor(date, id) keyset pagination in NaturalLanguageExpenseQueryRepositoryImpl | ✅ FIXED |
 | W32 | P1 | Assistant "largest" query raw mixed-currency | Bug | Normalize before maxByOrNull | ✅ FIXED |
 | W33 | P1 | Assistant query totals no partial state | Enhancement | Return dataQuality in FinancialQueryResult | ✅ FIXED |
-| W34 | P1 | Conversation history stores raw sensitive queries | Enhancement | Redact after storage, retention policy | ⏭ |
+| W34 | P1 | Conversation history stores raw sensitive queries | Enhancement | AssistantHistorySettings enum (OFF/REDACTED/RAW); payloadJson redacted in REDACTED mode; purgeOldMessages via DAO | ✅ FIXED |
 | W35 | P1 | Voice recognizer lifecycle incomplete | Bug | Add destroy() from onCleared, error handling | ✅ FIXED |
 
 ---
@@ -161,7 +161,7 @@
 # Quick Wins — All Completed
 
 All items from the original Quick Wins list have been resolved:
-- **Batch 1 (Timestamp/Atomic):** W04/W07/W18/C02 (✅ FIXED), W13 (📝 TODO), I02/I07/C05 (✅ FIXED), G10 (⏭ DEFERRED_DESIGN)
+- **Batch 1 (Timestamp/Atomic):** W04/W07/W13/W18/C02 (✅ FIXED), I02/I07/C05 (✅ FIXED), G10 (⏭ DEFERRED_DESIGN)
 - **Batch 2 (Currency/Normalization):** C03 (✅ FIXED), W01/W02 (✅ FIXED), W05 (✅ FIXED), C04 (📝 TODO)
 - **Batch 3 (Privacy/Wall-clock):** W10/W17 (✅ FIXED), M01/M08 (✅ FIXED), M10 (📝 TODO), T07 (⏭ DEFERRED_DESIGN)
 
@@ -180,11 +180,18 @@ All items from the original Quick Wins list have been resolved:
 
 | Status | Count |
 |--------|-------|
-| ✅ FIXED | 44 |
-| 📝 TODO ONLY | 32 |
-| ⏭ DEFERRED | 17 |
+| ✅ FIXED | 55 |
+| 📝 TODO ONLY | 23 |
+| ⏭ DEFERRED | 15 |
 | ⏭ DEFERRED_DESIGN | 15 |
 | ⬜ NOT STARTED | 0 |
 
 **2026-05-09 update:** 5 group items promoted from ⏭ DEFERRED_DESIGN → ✅ FIXED (G01, G04, G05, G08, G09) via `GroupLifecycleCoordinator`. `[Dagger/DependencyCycle]` fixed by deleting `SubscriptionModule.kt` (`SubscriptionManagerEngine` is auto-provided via `@Inject`). `CloudPayloadRedactor` Stage 2 complete (6 providers migrated). 3 missing DAO bindings added to `DaoModule`.
 **Reconciliation pass (2026-05-09):** 6 items promoted from TODO→FIXED (W07, C01, C05, I02, I07) and DEFERRED→FIXED (I04) after codebase verification confirmed real implementations. 3 items noted as partial (A14 old compute path, C10 no source-authority check, W20 legacy paths). Final counts: 40 FIXED, 36 TODO ONLY, 17 DEFERRED, 15 DEFERRED_DESIGN.
+**W-issues implementation (2026-05-09):** 11 items promoted to ✅ FIXED:
+- PR 1 (W13): `upsertCorrection` returns `Long`; `saveCorrection` returns `Long`.
+- PR 2 (W14-W16, W30, W31): Legacy NL — multi-word merchant extraction + alias lookup, category push-down to DAO SQL, currency-safe amounts via `convertAsOf`, filtered keyset DAO query, `SearchCursor` keyset pagination, `QueryDataQuality` on `QueryInterpretation`.
+- PR 3 (W27-W29): GPS defer to explicit FAB (`onCenterOnMeRequested`), `GeoCoordinate` value class with NaN/Infinity/null-island rejection, `computeNormalized()` with `MoneyAggregateBuilder` in `AreaSpendingEngine` + `TravelDetectionEngine`.
+- PR 4 (W25): `MarketRateProvider` interface + `StaticMarketRateProvider` with EUR seed data.
+- PR 5 (W34): `AssistantHistorySettings` enum (OFF/REDACTED/RAW), `payloadJson` redaction, `purgeOldMessages`.
+Final counts: 55 FIXED, 23 TODO ONLY, 15 DEFERRED, 15 DEFERRED_DESIGN.

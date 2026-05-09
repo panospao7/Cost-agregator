@@ -384,6 +384,7 @@ Owns geocoding, location correction, and map-based enrichment.
 - `domain/location/SpendingHeatmapEngine.kt`
 - `data/location/CompositeGeocodingService.kt`
 - `ui/screens/map/SpendingMapScreen.kt`
+- `domain/location/GeoCoordinate.kt` — Validated coordinate value class rejecting NaN/Infinity/out-of-range/null-island
 
 **Boundary note:** `data/location/LocationBackfillWorker.kt` is orchestrated by this segment, but owned with startup/runtime in Segment 12.
 
@@ -396,6 +397,7 @@ Owns the app-wide AI platform surface: policy, assistant sheet, AI settings, pro
 - `domain/ai/policy/AiPolicy.kt`
 - `domain/ai/HybridRouter.kt` — Consolidates routing logic previously duplicated across provider services
 - `ui/screens/assistant/AssistantSheet.kt`
+- `domain/ai/model/AssistantHistoryMode.kt` — Enum (OFF/REDACTED/RAW) for conversation history redaction
 - `ui/screens/aisettings/AiSettingsScreen.kt`
 - `data/ai/provider/DefaultAiEnvironmentMonitor.kt`
 - `data/ai/provider/StrictAiJsonParsing.kt`
@@ -451,6 +453,7 @@ Owns the base group/shared-expense model, membership, and transaction coordinati
 - `data/repository/GroupsRepository.kt`
 - `data/repository/GroupsRepositoryImpl.kt`
 - `domain/groups/GroupTransactionCoordinator.kt`
+- `domain/groups/GroupLifecycleCoordinator.kt` — @Singleton domain coordinator wrapping GroupTransactionCoordinator (7 methods, 8 invariants)
 - `domain/groups/usecase/AddGroupExpenseUseCase.kt`
 - `domain/groups/SharedExpenseManager.kt`
 - `data/database/dao/GroupSettlementDao.kt`
@@ -472,6 +475,7 @@ Owns natural-language query parsing and voice-enabled search.
 
 **Representative files**
 - `domain/naturallanguage/NaturalLanguageSearchEngine.kt`
+- `domain/naturallanguage/NaturalLanguageExpenseQueryRepository.kt` — SearchCursor keyset pagination cursor; QueryDataQuality flags
 - `domain/ai/model/FinancialQueryDataQuality.kt` — Partial-conversion metadata for query results (isPartial, staleRateCount, missingRateCount)
 - `domain/ai/model/ExtractedAmountFilter.kt` — Currency-aware amount filter extracted from NL queries (PR-E8)
 - `ui/screens/naturallanguage/NaturalLanguageSearchScreen.kt`
@@ -576,6 +580,8 @@ Owns warranty tracking, subscription management, bill negotiation, and price pro
 - `data/repository/SubscriptionManagementRepository.kt`
 - `ui/screens/subscription/SubscriptionManagementScreen.kt`
 - `domain/negotiation/SmartBillNegotiationEngine.kt`
+- `domain/negotiation/MarketRateProvider.kt` — Interface for market-rate data (new negotiation/ package)
+- `data/negotiation/StaticMarketRateProvider.kt` — @Singleton @Inject seed-data implementation
 - `ui/screens/negotiation/BillNegotiationScreen.kt`
 - `data/database/dao/WarrantyLifecycleEventDao.kt`
 - `data/database/entity/WarrantyLifecycleEvent.kt`
