@@ -339,7 +339,6 @@ class SubscriptionManagementViewModel @Inject constructor(
     fun acceptCandidate(candidate: SubscriptionCandidate) {
         viewModelScope.launch {
             try {
-                // Map detected interval to RecurrenceFrequency
                 val frequency = when (candidate.detectedInterval) {
                     "weekly" -> RecurrenceFrequency.WEEKLY
                     "biweekly" -> RecurrenceFrequency.BIWEEKLY
@@ -349,39 +348,12 @@ class SubscriptionManagementViewModel @Inject constructor(
                     "annual" -> RecurrenceFrequency.ANNUALLY
                     else -> RecurrenceFrequency.MONTHLY
                 }
-                
-                // W23: Use RecurrenceCalculator.nextOccurrence() instead of fixed day offsets.
-                // Fixed offsets (30 days, 90 days, 365 days) don't account for variable month lengths.
                 val nextDate = RecurrenceCalculator.nextOccurrence(
                     lastSeen = candidate.lastSeen,
                     frequency = frequency
                 )
-                // Create subscription from candidate
-                val subscription = ManualRecurringExpense(
-                    merchant = candidate.merchant,
-                    amount = candidate.averageAmount,
-                    currency = candidate.currency,
-                    frequency = frequency,
-                    nextDate = nextDate,
-                    isSubscription = true,
-                    isActive = true
-                )
-                
-                val subscriptionId = repository.insertSubscription(subscription)
-                
-                // REC-8: Record initial baseline price entry
-                // W04: Set recordedAt to timeProvider.now() to avoid the 0L sentinel
-                val priceHistory = SubscriptionPriceHistory(
-                    subscriptionId = subscriptionId,
-                    amount = candidate.averageAmount,
-                    recordedAt = timeProvider.now(),
-                    changeReason = "BASELINE: Auto-detected from notifications"
-                )
-                repository.insertPriceHistory(priceHistory)
-                
-                // Mark candidate as converted
-                repository.markCandidateAsConverted(candidate.id, subscriptionId, timeProvider.now())
-                
+                // SUB-1: Delegate to engine for atomic subscription creation + candidate conversion
+                subscriptionManagerEngine.acceptCandidate(candidate, frequency, nextDate)
                 loadSubscriptions()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(

@@ -13,6 +13,8 @@ import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.service.AiChatRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
+import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -26,7 +28,8 @@ class AiChatRepositoryImpl @Inject constructor(
     private val sessionDao: AiChatSessionDao,
     private val messageDao: AiChatMessageDao,
     private val aiSettingsRepository: AiSettingsRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val redactor: CloudPayloadRedactor
 ) : AiChatRepository {
 
     /** W34: Controls history persistence mode. Defaults to REDACTED. */
@@ -70,10 +73,15 @@ class AiChatRepositoryImpl @Inject constructor(
         payloadJson: String?
     ): Long? {
         if (!shouldPersistHistory()) return null
-        if (historySettings == AssistantHistorySettings.OFF) return null
 
         // W34 redaction: strip payloadJson when not in RAW mode
         val storedPayloadJson = if (historySettings.storePayloadJson) payloadJson else null
+        // NLP-6: Redact text when in REDACTED mode (not OFF, not RAW)
+        val storedText = when (historySettings) {
+            AssistantHistorySettings.OFF -> return null
+            AssistantHistorySettings.REDACTED -> redactor.redactText(text, CloudPayloadPurpose.DASHBOARD_BRIEFING).text
+            AssistantHistorySettings.RAW -> text
+        }
 
         val now = timeProvider.now()
         return database.withTransaction {
@@ -82,7 +90,7 @@ class AiChatRepositoryImpl @Inject constructor(
                     sessionId = sessionId,
                     role = role,
                     kind = kind,
-                    text = text,
+                    text = storedText,
                     payloadJson = storedPayloadJson,
                     createdAt = now
                 )

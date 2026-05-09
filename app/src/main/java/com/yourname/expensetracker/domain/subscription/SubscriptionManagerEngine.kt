@@ -130,7 +130,8 @@ class SubscriptionManagerEngine @Inject constructor(
     private val usageDao: SubscriptionUsageDao,
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val candidateDao: com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
 ) {
     
     /**
@@ -175,6 +176,52 @@ class SubscriptionManagerEngine @Inject constructor(
             subscriptionId
         }
         return Result.success(subscription.copy(id = id))
+    }
+
+    /**
+     * SUB-1: Accepts a detected candidate and converts it to an active subscription atomically.
+     *
+     * All three operations (subscription insert, baseline price history, candidate mark-converted)
+     * are wrapped in a single database transaction. If any step fails, everything rolls back.
+     *
+     * @param candidate The detected candidate to accept.
+     * @param frequency Mapped recurrence frequency (computed by the caller from detectedInterval).
+     * @param nextDate  Next occurrence date computed via [RecurrenceCalculator.nextOccurrence].
+     * @return The ID of the created subscription, or throws on failure.
+     */
+    suspend fun acceptCandidate(
+        candidate: com.yourname.expensetracker.data.database.entity.SubscriptionCandidate,
+        frequency: RecurrenceFrequency,
+        nextDate: Long
+    ): Long {
+        val now = timeProvider.now()
+        val subscription = ManualRecurringExpense(
+            merchant = candidate.merchant,
+            amount = candidate.averageAmount,
+            currency = candidate.currency,
+            frequency = frequency,
+            nextDate = nextDate,
+            isSubscription = true,
+            isActive = true,
+            createdAt = now
+        )
+        val subscriptionId = database.withTransaction {
+            val id = recurringExpenseRepository.insert(subscription)
+            // SUB-2: Record baseline price entry with candidate currency
+            priceHistoryDao.insert(
+                SubscriptionPriceHistory(
+                    subscriptionId = id,
+                    amount = candidate.averageAmount,
+                    currency = candidate.currency,
+                    recordedAt = now,
+                    changeReason = "BASELINE: Auto-detected from notifications"
+                )
+            )
+            // Mark candidate as converted
+            candidateDao.markAsConverted(candidate.id, id, now)
+            id
+        }
+        return subscriptionId
     }
 
     /**

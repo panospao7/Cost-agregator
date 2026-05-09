@@ -301,7 +301,7 @@ class SpendingMapViewModel @Inject constructor(
             // device's current GPS. If the user is at home correcting a remote
             // transaction, the device location would produce the wrong area key
             // and the correction wouldn't match future transactions near the store.
-            merchantLocationRepository.saveCorrection(
+            val correctionId = merchantLocationRepository.saveCorrection(
                 MerchantLocationCorrection(
                     normalizedMerchantName = merchantLocationRepository.normalizeKey(merchantName),
                     correctedLatitude = correctedLat,
@@ -312,6 +312,11 @@ class SpendingMapViewModel @Inject constructor(
                     displayAddress = displayAddress
                 )
             )
+            // LOC-1: Check save result — conflict (id <= 0) means silent failure
+            if (correctionId <= 0L) {
+                _state.update { it.copy(snackbarMessage = "Location correction could not be saved (duplicate entry)") }
+                return@launch
+            }
             expenseRepository.updateExpenseLocation(
                 expenseId = forMarker.expenseId,
                 latitude = correctedLat,

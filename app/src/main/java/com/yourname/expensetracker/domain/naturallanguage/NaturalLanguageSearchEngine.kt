@@ -55,32 +55,19 @@ import timber.log.Timber
  * ~~Amount comparisons in [executeSearch] and [buildSearchFilter] compare raw
  * doubles without any currency conversion.~~
  *
- * ## SR-1 FIXED in v112
- * Amount comparisons now normalize expense amounts to the user's home currency
- * using [CurrencyConverter] before comparing with the filter value. If currency
- * conversion fails (missing exchange rate), the raw amount is used as fallback
- * with a logged warning. This ensures queries like "over $50" match expenses
- * in JPY, GBP, etc. after proper conversion.
+ * ## W16-FIXED: Currency-aware amount filtering
+ * Amount comparisons normalize amounts to home currency via
+ * [CurrencyConverter.convertAsOf] at historical rates. Failed conversions are
+ * excluded (no raw fallback) and surfaced via [QueryDataQuality].
  *
- * ### M2: Legacy parser bugs
- * - **Merchant extraction**: The [extractMerchants] method uses a basic regex
- *   (`(?:at|from)\s+([A-Z][a-zA-Z]+)`) that only captures single-word capitalized
- *   merchants preceded by "at" or "from". Multi-word merchants, merchants without
- *   those prepositions, and lowercase merchants are missed entirely.
- * - **Filter ignored during execution**: In [executeSearch], category and location
- *   filters are parsed during [interpretQuery] but NOT applied during the
- *   FIND_TRANSACTIONS query execution — only merchants and amounts are filtered.
- * - **No cross-filter narrowing**: When multiple filter types are extracted (e.g.
- *   date + category + amount), each is applied independently without cross-validation,
- *   which can produce broader result sets than the user intended.
+ * ### W14-FIXED: Multi-word merchant extraction
+ * [extractMerchants] uses a multi-word regex with stop-word lookahead and
+ * cross-references [MerchantNormalizationRepository] aliases. Original query
+ * casing is preserved.
  *
- * ### M3: Multi-filter drilldown produces broader results than answer
- * When multiple filters are combined (e.g. date range + category + merchant),
- * [executeSearch] returns the unfiltered expense list from the repository and then
- * applies filters in memory. Because the repository query is only date-bounded,
- * all matching-date expenses are loaded first; subsequent in-memory filters may
- * appear to produce a narrower set but the initial data pull can be very large.
- * For proper drilldown, filters should be pushed down to the repository/DAO layer.
+ * ### W15/W30/W31-FIXED: Category push-down + keyset pagination
+ * Category filters are pushed to DAO SQL via [getExpensesBetweenFilteredKeyset].
+ * Keyset pagination with [SearchCursor] replaces offset pagination (no duplicates).
  */
 @Deprecated("Legacy NL engine. Use ExecuteFinancialQueryUseCase for new query work. This engine is feature-contained.")
 @Singleton
@@ -327,51 +314,25 @@ class NaturalLanguageSearchEngine @Inject constructor(
             unsupportedLocations = interpretation.locations != null
         )
 
-        val preFiltered: List<NaturalLanguageExpense> = when (interpretation.queryType) {
-            QueryType.TOTAL_AMOUNT -> {
-                expenseQueryRepository.getExpensesBetweenFilteredKeyset(
-                    startMs = startMs, endMs = endMs,
-                    categoryIds = targetCategoryIds.takeIf { it.isNotEmpty() },
-                    merchants = merchants,
-                    transactionType = null,
-                    keywordSearch = null,
-                    limit = PAGE_SIZE_LARGE,
-                    cursor = null
-                )
-            }
-            QueryType.FIND_TRANSACTIONS -> {
-                expenseQueryRepository.getExpensesBetweenFilteredKeyset(
-                    startMs = startMs, endMs = endMs,
-                    categoryIds = targetCategoryIds.takeIf { it.isNotEmpty() },
-                    merchants = merchants,
-                    transactionType = null,
-                    keywordSearch = null,
-                    limit = PAGE_SIZE_LARGE,
-                    cursor = null
-                )
-            }
-            QueryType.SPENDING_BY_CATEGORY -> {
-                expenseQueryRepository.getExpensesBetweenFilteredKeyset(
-                    startMs = startMs, endMs = endMs,
-                    categoryIds = targetCategoryIds.takeIf { it.isNotEmpty() },
-                    merchants = merchants,
-                    transactionType = null,
-                    keywordSearch = null,
-                    limit = PAGE_SIZE_LARGE,
-                    cursor = null
-                )
-            }
-            else -> {
-                expenseQueryRepository.getExpensesBetweenFilteredKeyset(
-                    startMs = startMs, endMs = endMs,
-                    categoryIds = targetCategoryIds.takeIf { it.isNotEmpty() },
-                    merchants = merchants,
-                    transactionType = null,
-                    keywordSearch = null,
-                    limit = PAGE_SIZE_LARGE,
-                    cursor = null
-                )
-            }
+        // NLP-5: Loop through all keyset pages for full result correctness
+        val preFiltered = mutableListOf<NaturalLanguageExpense>()
+        val categoryFilter = targetCategoryIds.takeIf { it.isNotEmpty() }
+        var cursor: SearchCursor? = null
+        while (true) {
+            val page = expenseQueryRepository.getExpensesBetweenFilteredKeyset(
+                startMs = startMs, endMs = endMs,
+                categoryIds = categoryFilter,
+                merchants = merchants,
+                transactionType = null,
+                keywordSearch = null,
+                limit = PAGE_SIZE_LARGE,
+                cursor = cursor
+            )
+            if (page.isEmpty()) break
+            preFiltered.addAll(page)
+            if (page.size < PAGE_SIZE_LARGE) break
+            val last = page.last()
+            cursor = SearchCursor(date = last.date, id = last.id)
         }
 
         // W16: Apply currency-safe amount filtering.

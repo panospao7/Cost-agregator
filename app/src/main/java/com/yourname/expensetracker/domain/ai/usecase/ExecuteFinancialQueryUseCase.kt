@@ -85,7 +85,12 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
                 val normalizedAmount = if (expense.currency.equals(homeCurrency, true)) {
                     expense.effectiveAmount
                 } else {
-                    currencyConverter.convert(expense.effectiveAmount, expense.currency, homeCurrency)?.convertedAmount
+                    currencyConverter.convertAsOf(
+                        amount = expense.effectiveAmount,
+                        fromCurrency = expense.currency,
+                        toCurrency = homeCurrency,
+                        atMillis = expense.date
+                    )?.convertedAmount
                 }
                 if (normalizedAmount == null) {
                     failedConversions++
@@ -292,10 +297,11 @@ class ExecuteFinancialQueryUseCase @Inject constructor(
                 val normalizedAmount = if (expenseWithCategory.expense.currency.equals(homeCurrency, ignoreCase = true)) {
                     expenseWithCategory.expense.effectiveAmount
                 } else {
-                    currencyConverter.convert(
+                    currencyConverter.convertAsOf(
                         amount = expenseWithCategory.expense.effectiveAmount,
                         fromCurrency = expenseWithCategory.expense.currency,
-                        toCurrency = homeCurrency
+                        toCurrency = homeCurrency,
+                        atMillis = expenseWithCategory.expense.date
                     )?.convertedAmount ?: run {
                         failedConversions++
                         null  // exclude this row

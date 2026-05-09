@@ -104,7 +104,9 @@ class NaturalLanguageExpenseQueryRepositoryImpl @Inject constructor(
         limit: Int,
         cursor: SearchCursor?
     ): List<NaturalLanguageExpense> {
-        val merchantLike = merchants?.singleOrNull()?.let { "%$it%" }
+        // NLP-4: Push single merchant to DAO SQL for performance;
+        // filter multiple merchants in-memory after page load.
+        val merchantLike = merchants?.takeIf { it.size == 1 }?.single()?.let { "%$it%" }
         val keywordLike = keywordSearch?.let { "%$it%" }
 
         val page = expenseDao.getExpensesFilteredKeyset(
@@ -120,7 +122,16 @@ class NaturalLanguageExpenseQueryRepositoryImpl @Inject constructor(
             cursorId = cursor?.id
         )
 
-        return page.mapToNaturalLanguageExpenses()
+        val results = page.mapToNaturalLanguageExpenses()
+
+        // NLP-4: Multi-merchant in-memory filter — only applied when merchants.size > 1
+        return if (merchants != null && merchants.size > 1) {
+            results.filter { exp ->
+                merchants.any { exp.merchant.contains(it, ignoreCase = true) }
+            }
+        } else {
+            results
+        }
     }
 
     private fun List<com.yourname.expensetracker.data.database.entity.Expense>.mapToNaturalLanguageExpenses() =

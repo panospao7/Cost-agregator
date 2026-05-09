@@ -483,7 +483,7 @@ class WarrantyTrackerRepository @Inject constructor(
         }
     }
 
-    // TODO (W20): Use half-open warranty dates: startInclusive, endExclusive.
+    // W20-FIXED: Half-open warranty dates used for new paths (exclusive end boundary).
     /**
      * Returns the exclusive end-boundary of the calendar date [durationMonths]
      * after the date represented by this timestamp.
