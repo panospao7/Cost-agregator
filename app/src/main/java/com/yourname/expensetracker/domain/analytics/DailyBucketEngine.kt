@@ -30,8 +30,6 @@ class DailyBucketEngine @Inject constructor() {
     ): List<DailyBucket> {
         val startDay = Instant.ofEpochMilli(period.startInclusiveMillis).atZone(zoneId)
             .truncatedTo(ChronoUnit.DAYS)
-        val endDay = Instant.ofEpochMilli(period.endExclusiveMillis).atZone(zoneId)
-            .truncatedTo(ChronoUnit.DAYS)
 
         // Aggregate normalized amounts per day
         val byDay = input.includedExpenses
@@ -40,12 +38,11 @@ class DailyBucketEngine @Inject constructor() {
 
         val buckets = mutableListOf<DailyBucket>()
         var current = startDay
-        while (current < endDay || current == startDay) {  // include start day
+        while (current.toInstant().toEpochMilli() < period.endExclusiveMillis) {
             val dayEpoch = current.toInstant().toEpochMilli()
             val dayExpenses = byDay[dayEpoch].orEmpty()
             buckets.add(DailyBucket(dayEpoch, dayExpenses.sumOf { it.normalizedAmount }, dayExpenses.size))
             current = current.plusDays(1)
-            if (current > endDay) break
         }
         return buckets
     }

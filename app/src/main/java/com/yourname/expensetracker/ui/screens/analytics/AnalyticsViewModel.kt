@@ -67,7 +67,7 @@ data class AnalyticsState(
     val transactionCount: Int = 0,
     val categoryBreakdown: List<AnalyticsCategoryBreakdown> = emptyList(),
     val merchantBreakdown: List<MerchantBreakdown> = emptyList(),
-    val dailyTotals: Map<String, Double> = emptyMap(),
+    val dailyTotals: Map<Long, Double> = emptyMap(),
     val insights: List<SpendingInsight> = emptyList(),
     val recurring: List<RecurringCandidate> = emptyList(),
     val yearOverYear: YearOverYearComparison? = null,
@@ -125,7 +125,8 @@ class AnalyticsViewModel @Inject constructor(
     private val analyticsInputAssembler: AnalyticsInputAssembler,
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val budgetVsActualEngine: BudgetVsActualEngine
+    private val budgetVsActualEngine: BudgetVsActualEngine,
+    private val dailyBucketEngine: DailyBucketEngine
 ) : ViewModel() {
 
     // A16: The following analytics computations remain in the ViewModel pending extraction
@@ -419,31 +420,10 @@ class AnalyticsViewModel @Inject constructor(
             }
             .sortedByDescending { it.totalSpent }
 
-        // Daily totals for chart
-        // Repo returns daily history as list of floats (daily totals)
-        // InsightsEngine.buildDailyTotals previously returned Map<String, Double>
-        // We need to check what the UI expects.
-        // AnalyticsViewModel State: val dailyTotals: Map<String, Double>
-        // We need to map Repo's list back to a Map if the UI depends on it. 
-        // Or refactor UI. Let's look at `dailyTotals` usage in `AnalyticsScreen` later.
-        // For now, let's keep using `insightsEngine` for `dailyTotals` to avoid breaking specific UI graph formatting 
-        // OR map the repo data. 
-        // Actually, `insightsEngine.buildDailyTotals` probably formats dates as keys. 
-        // The repo returns just values. 
-        // Let's stick to `insightsEngine.buildDailyTotals` for `dailyTotals` UNTIL we update the UI to accept a list.
-        // But we SHOULD upgrade `getPeriodRange` to use Utils.
-        val chartDays = when (period) {
-            TimePeriod.TODAY -> 1
-            TimePeriod.WEEK -> 7
-            TimePeriod.MONTH -> 30
-            TimePeriod.QUARTER -> 90
-            TimePeriod.YEAR -> 365
-            TimePeriod.ALL -> {
-                val oldest = currentExpenseSnapshots.minOfOrNull { it.date } ?: now
-                TimePeriodUtils.daysBetween(oldest, now).coerceIn(7, 365)
-            }
-        }
-        val dailyTotals = insightsEngine.buildDailyTotals(currentExpenseSnapshots, chartDays)
+        // Daily totals for chart — built by DailyBucketEngine from normalized input
+        val dailyTotals = currentInput.period?.let {
+            dailyBucketEngine.buildBuckets(currentInput, it).associate { bucket -> bucket.date to bucket.total }
+        } ?: emptyMap()
 
         // Insights
         val budgetChartResult = buildBudgetVsActualItems(homeCurrency, currentExpenseSnapshots, categories, currentInput)
@@ -558,9 +538,17 @@ class AnalyticsViewModel @Inject constructor(
         }
 
         val advResult = advancedCache[cacheKey] ?: coroutineScope {
+            // A10 PARTIAL: Advanced analytics engine still self-normalizes budget comparisons.
+            // Upgrade path: BudgetVsActualEngine.compute() for normalized budget-vs-actual.
             val catDeferred = async { advancedAnalyticsEngine.getCategoryAnalytics(advRange, displayCurrency = homeCurrency) }
+            // A09 PARTIAL: Advanced analytics engine still self-normalizes.
+            // Results are approximate until engine consumes NormalizedAnalyticsInput.
             val merchDeferred = async { advancedAnalyticsEngine.getMerchantAnalytics(advRange, displayCurrency = homeCurrency, limit = 15) }
+            // A09 PARTIAL: Advanced analytics engine still self-normalizes.
+            // Results are approximate until engine consumes NormalizedAnalyticsInput.
             val patternsDeferred = async { advancedAnalyticsEngine.getSpendingPatterns(advRange, displayCurrency = homeCurrency) }
+            // A09 PARTIAL: Advanced analytics engine still self-normalizes.
+            // Results are approximate until engine consumes NormalizedAnalyticsInput.
             val statsDeferred = async { advancedAnalyticsEngine.getStatisticalInsights(advRange, displayCurrency = homeCurrency) }
             val (cats, catWarnings) = try { catDeferred.await() } catch (_: Exception) { emptyList<EnhancedCategoryAnalytics>() to emptyList() }
             val (merchs, merchWarnings) = try { merchDeferred.await() } catch (_: Exception) { emptyList<EnhancedMerchantAnalytics>() to emptyList() }
@@ -648,7 +636,7 @@ class AnalyticsViewModel @Inject constructor(
 
         // ── F13: Spending Personality Profile ────────────────────────────────
         val personalityProfile = try {
-            spendingPersonalityClassifier.classify(currentInput)  // A18: uses java.time, not Calendar
+            spendingPersonalityClassifier.classify(allInput)  // A18: uses java.time, not Calendar
         } catch (e: Exception) {
             null
         }

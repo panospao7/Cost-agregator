@@ -867,8 +867,8 @@ fun SpendingChartBento(state: AnalyticsState) {
                 val bottomAxisFormatter = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
                     val idx = value.toInt()
                     if (idx in dateLabels.indices) {
-                        val label = dateLabels[idx]
-                        label.substringAfterLast("-").trimStart('0').ifEmpty { "0" }
+                        val epochMillis = dateLabels[idx]
+                        java.text.SimpleDateFormat("dd", java.util.Locale.getDefault()).format(java.util.Date(epochMillis))
                     } else ""
                 }
 

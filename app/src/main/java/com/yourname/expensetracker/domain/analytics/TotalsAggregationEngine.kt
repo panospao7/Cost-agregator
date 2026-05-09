@@ -140,6 +140,8 @@ class TotalsAggregationEngine @Inject constructor(
     // or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.
     @Deprecated("Use MultiCurrencyRepository.getHomeCurrencyWeeklyTotals() for currency-safe weekly aggregation, or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.")
     fun getWeeklyTotals(year: Int, month: Int): Flow<List<PeriodTotal>> = reactiveFlow {
+        Timber.w("A02: getWeeklyTotals called — raw mixed-currency path. Use MultiCurrencyRepository or DailyBucketEngine.")
+        return@reactiveFlow emptyList()
         val (monthStartMs, monthEndMs) = getMonthRange(year, month)
         val weeklyTotals = expenseRepository.getWeeklyTotalsForPeriod(monthStartMs, monthEndMs)
         val average = getAverageForPeriodType(PeriodType.WEEK, excludeCurrent = false)
@@ -205,6 +207,8 @@ class TotalsAggregationEngine @Inject constructor(
     // or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.
     @Deprecated("Use MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe daily aggregation, or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.")
     fun getDailyTotals(year: Int, weekOfYear: Int): Flow<List<PeriodTotal>> = reactiveFlow {
+        Timber.w("A02: getDailyTotals called — raw mixed-currency path. Use MultiCurrencyRepository or DailyBucketEngine.")
+        return@reactiveFlow emptyList()
         val (startMs, endMs) = getWeekRange(year, weekOfYear)
 
         // DSH-3: Determine the month that contains this week's Thursday
@@ -240,6 +244,8 @@ class TotalsAggregationEngine @Inject constructor(
     // or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.
     @Deprecated("Use MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe daily aggregation, or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.")
     fun getDailyTotalsForRange(startMs: Long, endMs: Long): Flow<List<PeriodTotal>> = reactiveFlow {
+        Timber.w("A02: getDailyTotalsForRange called — raw mixed-currency path. Use MultiCurrencyRepository or DailyBucketEngine.")
+        return@reactiveFlow emptyList()
         val dailyTotals = expenseRepository.getDailyTotalsWithDatesForPeriod(startMs, endMs)
         val average = getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
@@ -378,6 +384,8 @@ class TotalsAggregationEngine @Inject constructor(
                     }
                 }
                 PeriodType.WEEK -> {
+                    Timber.w("A02: getAverageForPeriodType(WEEK) called — raw mixed-currency path. Use MultiCurrencyRepository or DailyBucketEngine.")
+                    return@withContext 0.0
                     val startMs = TimePeriodUtils.getStartOfWeek(TimePeriodUtils.addDays(now, -56))
                     // I4: no MCR weekly equivalent yet — keep the DAO call for now
                     val weeks = expenseRepository.getWeeklyTotalsForPeriod(startMs, now)
