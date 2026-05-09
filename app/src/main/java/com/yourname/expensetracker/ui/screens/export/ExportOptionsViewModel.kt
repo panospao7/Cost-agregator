@@ -406,16 +406,30 @@ class ExportOptionsViewModel @Inject constructor(
                 }
             }
             else -> {
-                // Generic CSV
+                // Generic CSV — full ExportTransaction schema
                 page.forEach { expense ->
+                    val tx = expense.toExportTransaction()
                     val line = buildString {
-                        val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
-                        val merchant = escapeCsv(expense.merchant)
-                        val amount = escapeCsv(CurrencyFormatter.formatForExport(expense.effectiveAmount))
-                        val currency = escapeCsv(expense.currency)
-                        val category = escapeCsv(categories[expense.categoryId] ?: "Uncategorized")
-                        val notes = escapeCsv(expense.notes ?: "")
-                        append("$date,$merchant,$amount,$currency,$category,$notes,${expense.id}\n")
+                        append(tx.id).append(',')
+                        append(Instant.ofEpochMilli(tx.date).atZone(zoneId).toLocalDate().format(dateFormatter)).append(',')
+                        append(Instant.ofEpochMilli(tx.createdAt).atZone(zoneId).toLocalDate().format(dateFormatter)).append(',')
+                        append(escapeCsv(tx.merchant)).append(',')
+                        append(tx.amount).append(',')
+                        append(tx.effectiveAmount).append(',')
+                        append(escapeCsv(tx.currency)).append(',')
+                        append(tx.transactionType.name).append(',')
+                        append(escapeCsv(categories[tx.categoryId] ?: "")).append(',')
+                        append(escapeCsv(tx.notes ?: "")).append(',')
+                        append(escapeCsv(tx.source ?: "")).append(',')
+                        append(escapeCsv(tx.paymentMethod)).append(',')
+                        append(escapeCsv(tx.originalCurrency)).append(',')
+                        append(tx.originalAmount?.let { formatCsvNumber(it) } ?: "").append(',')
+                        append(escapeCsv(tx.homeCurrency)).append(',')
+                        append(tx.baseAmount).append(',')
+                        append(escapeCsv(tx.baseCurrency)).append(',')
+                        append(tx.exchangeRateUsed).append(',')
+                        append(if (tx.isBusinessExpense) "true" else "false").append(',')
+                        append(escapeCsv(tx.businessPurpose ?: "")).append('\n')
                     }
                     writer.append(line)
                     preview?.append(line)
@@ -435,22 +449,40 @@ class ExportOptionsViewModel @Inject constructor(
     ) {
         var first = pageNumber == 1
         page.forEach { expense ->
+            val tx = expense.toExportTransaction()
             val row = buildString {
                 if (!first) append(',')
                 first = false
-                val date = Instant.ofEpochMilli(expense.date).atZone(zoneId).toLocalDate().format(dateFormatter)
-                val category = categories[expense.categoryId] ?: "Uncategorized"
+                val date = Instant.ofEpochMilli(tx.date).atZone(zoneId).toLocalDate().format(dateFormatter)
+                val category = categories[tx.categoryId] ?: ""
                 append("{")
-                append("\"id\":").append(expense.id).append(',')
+                append("\"id\":").append(tx.id).append(',')
                 append("\"date\":\"").append(escapeJson(date)).append("\",")
-                append("\"timestamp\":").append(expense.date).append(',')
-                append("\"merchant\":\"").append(escapeJson(expense.merchant)).append("\",")
-                append("\"amount\":").append(formatJsonNumber(expense.effectiveAmount)).append(',')
-                append("\"currency\":\"").append(escapeJson(expense.currency)).append("\",")
+                append("\"timestamp\":").append(tx.date).append(',')
+                append("\"createdAt\":").append(tx.createdAt).append(',')
+                append("\"merchant\":\"").append(escapeJson(tx.merchant)).append("\",")
+                append("\"amount\":").append(formatJsonNumber(tx.amount)).append(',')
+                append("\"effectiveAmount\":").append(formatJsonNumber(tx.effectiveAmount)).append(',')
+                append("\"currency\":\"").append(escapeJson(tx.currency)).append("\",")
+                append("\"transactionType\":\"").append(tx.transactionType.name).append("\",")
                 append("\"category\":\"").append(escapeJson(category)).append("\",")
                 append("\"notes\":")
-                if (expense.notes == null) append("null")
-                else append("\"").append(escapeJson(expense.notes)).append("\"")
+                if (tx.notes == null) append("null,")
+                else append("\"").append(escapeJson(tx.notes)).append("\",")
+                append("\"source\":")
+                if (tx.source == null) append("null")
+                else append("\"").append(escapeJson(tx.source)).append("\",")
+                append("\"paymentMethod\":\"").append(escapeJson(tx.paymentMethod)).append("\",")
+                append("\"originalCurrency\":\"").append(escapeJson(tx.originalCurrency)).append("\",")
+                append("\"originalAmount\":").append(tx.originalAmount?.let { formatJsonNumber(it) } ?: "null").append(',')
+                append("\"homeCurrency\":\"").append(escapeJson(tx.homeCurrency)).append("\",")
+                append("\"baseAmount\":").append(formatJsonNumber(tx.baseAmount)).append(',')
+                append("\"baseCurrency\":\"").append(escapeJson(tx.baseCurrency)).append("\",")
+                append("\"exchangeRateUsed\":").append(tx.exchangeRateUsed).append(',')
+                append("\"isBusinessExpense\":").append(if (tx.isBusinessExpense) "true" else "false").append(',')
+                append("\"businessPurpose\":")
+                if (tx.businessPurpose == null) append("null")
+                else append("\"").append(escapeJson(tx.businessPurpose)).append("\"")
                 append("}")
             }
             writer.append(row)
@@ -533,7 +565,7 @@ class ExportOptionsViewModel @Inject constructor(
                 val eDate = Instant.ofEpochMilli(endDate).atZone(zoneId).toLocalDate().format(dateFormatter)
                 val prefix = buildString {
                     append("{")
-                    append("\"schemaVersion\":1,")
+                    append("\"schemaVersion\":2,")
                     append("\"exportType\":\"expenses\",")
                     append("\"generatedAt\":\"").append(escapeJson(generatedAtIso)).append("\",")
                     append("\"dateRange\":{")
@@ -546,7 +578,7 @@ class ExportOptionsViewModel @Inject constructor(
                 preview.append(prefix)
             }
             "csv" -> {
-                val header = "Date,Merchant,Amount,Currency,Category,Notes,ID\n"
+                val header = "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,IsBusinessExpense,BusinessPurpose\n"
                 writer.append(header)
                 preview.append(header)
             }
@@ -623,6 +655,8 @@ class ExportOptionsViewModel @Inject constructor(
     }
 
     private fun formatJsonNumber(value: Double): String = if (value.isFinite()) value.toString() else "0.0"
+
+    private fun formatCsvNumber(value: Double): String = if (value.isFinite()) value.toString() else ""
 
     private fun isDangerousFormulaPrefix(char: Char): Boolean =
         char == '=' || char == '+' || char == '-' || char == '@'
