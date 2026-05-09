@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
@@ -55,7 +56,8 @@ class WarrantyTrackerRepository @Inject constructor(
     private val aiCapabilityRouter: AiCapabilityRouter,
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     private companion object {
         private const val ACTIVE_ITEMS_REFRESH_INTERVAL_MS = 60 * 60 * 1000L // 1 hour
@@ -174,11 +176,19 @@ class WarrantyTrackerRepository @Inject constructor(
         id
     }
     
-    suspend fun updateWarranty(warranty: Warranty) = warrantyDao.updateWarranty(warranty)
-    
-    suspend fun deleteWarranty(warranty: Warranty) = warrantyDao.deleteWarranty(warranty)
-    
-    suspend fun markWarrantyAsClaimed(warrantyId: Long) = database.withTransaction {
+    suspend fun updateWarranty(warranty: Warranty) {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.updateWarranty")
+        warrantyDao.updateWarranty(warranty)
+    }
+
+    suspend fun deleteWarranty(warranty: Warranty) {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.deleteWarranty")
+        warrantyDao.deleteWarranty(warranty)
+    }
+
+    suspend fun markWarrantyAsClaimed(warrantyId: Long) {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.markWarrantyAsClaimed")
+        database.withTransaction {
         val now = timeProvider.now()
         warrantyDao.updateWarrantyStatus(
             warrantyId = warrantyId,
@@ -199,6 +209,7 @@ class WarrantyTrackerRepository @Inject constructor(
             )
         }.onFailure { error ->
             Timber.w(error, "PR-W1: Failed to write CLAIMED lifecycle event for warrantyId=$warrantyId")
+        }
         }
     }
 
@@ -246,8 +257,9 @@ class WarrantyTrackerRepository @Inject constructor(
         )
     }
     
-    suspend fun addReturnWindow(returnWindow: ReturnWindow): Long =
-        createReturnWindowTimestamps().let { timestamps ->
+    suspend fun addReturnWindow(returnWindow: ReturnWindow): Long {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.addReturnWindow")
+        return createReturnWindowTimestamps().let { timestamps ->
             returnWindowDao.insertReturnWindow(
                 returnWindow.withTimestamps(
                     createdAt = timestamps.createdAt,
@@ -255,17 +267,22 @@ class WarrantyTrackerRepository @Inject constructor(
                 )
             )
         }
+    }
 
     suspend fun getReturnWindowByReceiptId(receiptId: Long): ReturnWindow? =
         returnWindowDao.getReturnWindowByReceiptId(receiptId)
     
-    suspend fun updateReturnWindow(returnWindow: ReturnWindow) =
+    suspend fun updateReturnWindow(returnWindow: ReturnWindow) {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.updateReturnWindow")
         returnWindowDao.updateReturnWindow(
             returnWindow.copy(updatedAt = timeProvider.now())
         )
+    }
     
-    suspend fun deleteReturnWindow(returnWindow: ReturnWindow) =
+    suspend fun deleteReturnWindow(returnWindow: ReturnWindow) {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.deleteReturnWindow")
         returnWindowDao.deleteReturnWindow(returnWindow)
+    }
 
     /**
      * W02: Marks a return window as RETURNED with the given refund amount and currency.
@@ -278,6 +295,7 @@ class WarrantyTrackerRepository @Inject constructor(
         refundAmount: Double? = null,
         refundCurrency: String? = null
     ): ReturnWindow? {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.markAsReturned")
         val existing = returnWindowDao.getReturnWindowById(returnWindowId) ?: return null
         val linkedExpense = existing.expenseId?.let { database.expenseDao().getById(it) }
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }

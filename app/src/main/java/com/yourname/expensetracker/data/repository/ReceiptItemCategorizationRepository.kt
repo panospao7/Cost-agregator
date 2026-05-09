@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.dto.ReceiptItemCategorizationSnapshot
 import org.json.JSONArray
 import org.json.JSONObject
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 /**
@@ -27,6 +28,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class ReceiptItemCategorizationRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val dao: ReceiptItemCategorizationDao
 ) {
     suspend fun getByReceiptId(receiptId: Long): List<ReceiptItemCategorization> =
@@ -42,8 +44,10 @@ class ReceiptItemCategorizationRepository @Inject constructor(
     /**
      * Deletes all categorization rows for the given receipt.
      */
-    suspend fun deleteByReceiptId(receiptId: Long) =
+    suspend fun deleteByReceiptId(receiptId: Long) {
+        writeBarrier.checkWritesAllowed("ReceiptItemCategorizationRepository.deleteByReceiptId")
         dao.deleteByReceiptId(receiptId)
+    }
 
     /**
      * Persists a full categorization result for a receipt.
@@ -56,6 +60,7 @@ class ReceiptItemCategorizationRepository @Inject constructor(
         result: ReceiptItemCategorizationResult,
         now: Long
     ): Int {
+        writeBarrier.checkWritesAllowed("ReceiptItemCategorizationRepository.saveCategorizationResult")
         var insertedCount = 0
         result.items.forEach { item ->
             val alternativesJson = JSONArray().apply {
@@ -98,12 +103,15 @@ class ReceiptItemCategorizationRepository @Inject constructor(
         categoryId: Long?,
         categoryName: String?,
         timestamp: Long
-    ) = dao.updateUserCorrection(
-        itemId = itemId,
-        categoryId = categoryId,
-        categoryName = categoryName,
-        timestamp = timestamp
-    )
+    ) {
+        writeBarrier.checkWritesAllowed("ReceiptItemCategorizationRepository.updateUserCorrection")
+        dao.updateUserCorrection(
+            itemId = itemId,
+            categoryId = categoryId,
+            categoryName = categoryName,
+            timestamp = timestamp
+        )
+    }
 
     // --- Private mapper: entity → domain snapshot ---
 

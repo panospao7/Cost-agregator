@@ -278,4 +278,14 @@ object DaoModule {
     @Singleton
     fun provideGroupLifecycleEventDao(database: AppDatabase): GroupLifecycleEventDao =
         database.groupLifecycleEventDao()
+
+    @Provides
+    @Singleton
+    fun provideBackgroundJobRunDao(database: AppDatabase): BackgroundJobRunDao =
+        database.backgroundJobRunDao()
+
+    @Provides
+    @Singleton
+    fun providePipelineDiagnosticEventDao(database: AppDatabase): PipelineDiagnosticEventDao =
+        database.pipelineDiagnosticEventDao()
 }

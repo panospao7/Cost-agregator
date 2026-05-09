@@ -1008,40 +1008,50 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      * their data first.
      */
     override suspend fun importDatabase(sourceFile: File): Result<DatabaseImportSummary> = withContext(ioDispatcher) {
+        // Enter maintenance mode first — blocks all concurrent writes during the swap
+        restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
+        Timber.w("Legacy import: entered maintenance mode")
         try {
             // Validate source file exists and is readable
             if (!sourceFile.exists()) {
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(Exception("Source database file not found: ${sourceFile.absolutePath}"))
             }
             if (!sourceFile.canRead()) {
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(Exception("Cannot read source database file. Check file permissions."))
             }
             if (sourceFile.length() == 0L) {
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(Exception("Source database file is empty."))
             }
-            
+
             // Validate source database before touching anything
             val sourceValidation = validateSourceDatabase(sourceFile)
             if (sourceValidation.isFailure) {
                 Timber.e("Source database validation failed: ${sourceValidation.exceptionOrNull()?.message}")
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(
                     Exception("Invalid backup file: ${sourceValidation.exceptionOrNull()?.message}")
                 )
             }
-            val sourceSummary = sourceValidation.getOrNull()
-                ?: return@withContext Result.failure(Exception("Failed to read backup summary"))
-            
+            val sourceSummary = sourceValidation.getOrNull() ?: run {
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                return@withContext Result.failure(Exception("Failed to read backup summary"))
+            }
+
             // Block empty imports only when all tracked meaningful tables are empty.
             if (!sourceSummary.hasMeaningfulData()) {
                 Timber.e(
                     "Source database is empty across tracked tables " +
                         "(expenses=0, categories=0, merchants=0, pendingReviews=0, budgets=0). Blocking import."
                 )
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(
                     Exception("Backup file contains no data. Import blocked to prevent data loss.")
                 )
             }
-            
+
             Timber.d("Source validated: ${sourceSummary.transactionCount} transactions, ${sourceSummary.categoryCount} categories, schema v${sourceSummary.schemaVersion}")
             val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
             val liveDbWalFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-wal")
@@ -1050,6 +1060,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             val stagedDbFile = context.getDatabasePath(stagedDbName)
             val stagedDbWalFile = File(stagedDbFile.parentFile, "$stagedDbName-wal")
             val stagedDbShmFile = File(stagedDbFile.parentFile, "$stagedDbName-shm")
+
+            // Create restore journal — crash-safe state tracking identical to restoreCostBackup
+            var journalEntry = restoreJournal.beginJournal(
+                sourceBackupPath = sourceFile.absolutePath,
+                stagedDbPath = stagedDbFile.absolutePath,
+                liveDbPath = liveDbFile.absolutePath
+            )
+            Timber.d("Legacy import journal created: %s", journalEntry.operationId)
 
             var destinationFilesMutated = false
             var importSucceeded = false
@@ -1070,11 +1088,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     sourceSummary.toImportSummary()
                 )
 
+                journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.STAGED)
+
                 val safetyBackupResult = createSafetyBackup()
                 if (safetyBackupResult.isFailure) {
-                    val reason = safetyBackupResult.exceptionOrNull()?.message
-                        ?: "Unknown backup error"
+                    val reason = safetyBackupResult.exceptionOrNull()?.message ?: "Unknown backup error"
                     Timber.e("Database import aborted: safety backup failed: $reason")
+                    restoreJournal.failJournal(journalEntry, "Safety backup failed: $reason")
+                    restoreMaintenanceMode.exit(forceRestartRequired = false)
                     return@withContext Result.failure(
                         Exception(
                             "Import cancelled because safety backup failed. " +
@@ -1082,9 +1103,19 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         )
                     )
                 }
-                safetyBackupFile = safetyBackupResult.getOrNull()
-                    ?: return@withContext Result.failure(Exception("Safety backup was created but path is unavailable"))
+                safetyBackupFile = safetyBackupResult.getOrNull() ?: run {
+                    restoreJournal.failJournal(journalEntry, "Safety backup path unavailable")
+                    restoreMaintenanceMode.exit(forceRestartRequired = false)
+                    return@withContext Result.failure(Exception("Safety backup was created but path is unavailable"))
+                }
 
+                journalEntry = restoreJournal.transitionTo(
+                    journalEntry,
+                    RestoreJournal.JournalState.SAFETY_BACKUP_CREATED,
+                    safetyBackupPath = safetyBackupFile.absolutePath
+                )
+
+                journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.SWAPPING)
                 closeLiveDatabaseForFileSwap()
 
                 destinationFilesMutated = true
@@ -1099,6 +1130,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                 Timber.d("Verified database staged and swapped from: ${sourceFile.absolutePath}")
 
+                journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.VERIFYING)
                 val finalSummary = liveImportVerifier(
                     database,
                     liveDbFile,
@@ -1108,6 +1140,12 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                 Timber.d("Import verified: ${finalSummary.transactionCount} transactions, ${finalSummary.categoryCount} categories")
                 importSucceeded = true
+
+                // P7-P1-9: The injected `database` val is a stale Room instance after the
+                // file swap — a full app restart is required to obtain a fresh binding.
+                restoreJournal.commitJournal(journalEntry)
+                restoreMaintenanceMode.exit(forceRestartRequired = true)
+
                 Result.success(finalSummary)
             } catch (importError: Exception) {
                 if (destinationFilesMutated && !importSucceeded) {
@@ -1118,6 +1156,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         dbWalFile = liveDbWalFile,
                         dbShmFile = liveDbShmFile
                     )
+
+                    restoreJournal.failJournal(journalEntry, importError.message ?: "Import failed after swap")
+                    restoreMaintenanceMode.exit(forceRestartRequired = false)
 
                     return@withContext if (rollbackResult.isSuccess) {
                         Result.failure(
@@ -1140,8 +1181,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         )
                     }
                 }
+                restoreJournal.failJournal(journalEntry, importError.message ?: "Import failed pre-swap")
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 throw importError
-                
+
             } finally {
                 stagedDbFile.delete()
                 stagedDbWalFile.delete()
@@ -1149,6 +1192,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
         } catch (e: Exception) {
             Timber.e(e, "Failed to import database")
+            // Ensure maintenance mode is exited even for unexpected failures.
+            // Calling exit() when already NORMAL is harmless (idempotent write).
+            restoreMaintenanceMode.exit(forceRestartRequired = false)
             Result.failure(e)
         }
     }

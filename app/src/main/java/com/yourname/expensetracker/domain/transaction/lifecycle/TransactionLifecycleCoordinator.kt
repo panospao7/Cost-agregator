@@ -82,13 +82,58 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         val now = timeProvider.now()
 
-        // 1. Validate
+        // 1. Write CREATE_ATTEMPTED event before validation
+        val attemptDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+            amount = request.amount,
+            merchant = request.merchant,
+            date = request.date,
+            currency = request.currency,
+            transactionType = request.transactionType
+        )
+        runCatching {
+            transactionEventDao.insert(
+                TransactionEvent(
+                    expenseId = null,
+                    eventType = LifecycleEventType.CREATE_ATTEMPTED.name,
+                    source = request.source.name,
+                    actor = null,
+                    occurredAt = now,
+                    dedupeKey = attemptDedupeKey,
+                    duplicateExpenseId = null,
+                    beforeSnapshot = null,
+                    afterSnapshot = null,
+                    metadata = null,
+                    reason = "Attempting create for ${request.merchant} ${request.amount} ${request.currency}"
+                )
+            )
+        }
+
+        // 2. Validate
         val errors = validate(request)
         if (errors.isNotEmpty()) {
+            runCatching {
+                transactionEventDao.insert(
+                    TransactionEvent(
+                        expenseId = null,
+                        eventType = LifecycleEventType.CREATE_VALIDATION_FAILED.name,
+                        source = request.source.name,
+                        actor = null,
+                        occurredAt = now,
+                        dedupeKey = attemptDedupeKey,
+                        duplicateExpenseId = null,
+                        beforeSnapshot = null,
+                        afterSnapshot = null,
+                        metadata = org.json.JSONObject().apply {
+                            put("errors", errors.joinToString("; "))
+                        }.toString(),
+                        reason = "Validation failed: ${errors.first()}"
+                    )
+                )
+            }
             return CreateExpenseResult.ValidationFailed(errors)
         }
 
-        // 2. Generate merchant key and dedupe key
+        // 3. Generate merchant key and dedupe key
         val merchantKey = MerchantKeyGenerator.generate(request.merchant)
         val dedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
             amount = request.amount,
@@ -296,6 +341,57 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
 
         if (insertedId <= 0L) {
+            // Write CREATE_INSERT_CONFLICT event for observability
+            runCatching {
+                transactionEventDao.insert(
+                    TransactionEvent(
+                        expenseId = null,
+                        eventType = LifecycleEventType.CREATE_INSERT_CONFLICT.name,
+                        source = request.source.name,
+                        actor = null,
+                        occurredAt = now,
+                        dedupeKey = expense.dedupeKey,
+                        duplicateExpenseId = null,
+                        beforeSnapshot = null,
+                        afterSnapshot = null,
+                        metadata = org.json.JSONObject().apply {
+                            put("dedupMode", dedupMode.name)
+                            put("dedupeKey", expense.dedupeKey ?: "unknown")
+                        }.toString(),
+                        reason = "Insert conflict for dedupeKey=${expense.dedupeKey}"
+                    )
+                )
+            }
+            // For STRICT_EXTERNAL_ID mode, resolve the conflict by looking up existing ID
+            if (dedupMode == DeduplicationMode.STRICT_EXTERNAL_ID && expense.dedupeKey != null) {
+                val existingId = expenseDao.findIdByDedupeKey(expense.dedupeKey!!)
+                if (existingId != null) {
+                    runCatching {
+                        transactionEventDao.insert(
+                            TransactionEvent(
+                                expenseId = existingId,
+                                eventType = LifecycleEventType.CREATE_DUPLICATE_SKIPPED.name,
+                                source = request.source.name,
+                                actor = null,
+                                occurredAt = now,
+                                dedupeKey = expense.dedupeKey,
+                                duplicateExpenseId = existingId,
+                                beforeSnapshot = null,
+                                afterSnapshot = null,
+                                metadata = org.json.JSONObject().apply {
+                                    put("reason", "Idempotent STRICT_EXTERNAL_ID duplicate resolved")
+                                    put("existingExpenseId", existingId)
+                                }.toString(),
+                                reason = "STRICT_EXTERNAL_ID idempotent retry resolved to existing expense"
+                            )
+                        )
+                    }
+                    return CreateExpenseResult.DuplicateSkipped(
+                        existingExpenseId = existingId,
+                        reason = "Idempotent STRICT_EXTERNAL_ID duplicate resolved"
+                    )
+                }
+            }
             return CreateExpenseResult.InsertConflict(expense.dedupeKey ?: "unknown")
         }
 
@@ -626,6 +722,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
         receiptRequired: Boolean? = null,
         source: String = "BUSINESS_TAX_UPDATE"
     ) {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
         val existing = expenseDao.getById(expenseId) ?: return
         val now = timeProvider.now()
         val beforeSnapshot = expenseToSnapshot(existing)

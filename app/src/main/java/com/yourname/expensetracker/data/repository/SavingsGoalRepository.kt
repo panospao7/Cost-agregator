@@ -7,10 +7,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 @Singleton
 class SavingsGoalRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val savingsGoalDao: SavingsGoalDao
 ) : com.yourname.expensetracker.domain.savings.SavingsGoalRepository {
     override fun observeSavingsGoals(): Flow<List<com.yourname.expensetracker.domain.model.SavingsGoal>> {
@@ -26,18 +28,22 @@ class SavingsGoalRepository @Inject constructor(
     }
 
     override suspend fun createSavingsGoal(goal: com.yourname.expensetracker.domain.model.SavingsGoal): Long {
+        writeBarrier.checkWritesAllowed("SavingsGoalRepository.createSavingsGoal")
         return savingsGoalDao.insertGoal(goal.toEntity())
     }
 
     override suspend fun deleteSavingsGoal(goal: com.yourname.expensetracker.domain.model.SavingsGoal) {
+        writeBarrier.checkWritesAllowed("SavingsGoalRepository.deleteSavingsGoal")
         savingsGoalDao.deleteGoal(goal.toEntity())
     }
 
     override suspend fun updateSavingsGoalAmount(goalId: Long, amount: Double) {
+        writeBarrier.checkWritesAllowed("SavingsGoalRepository.updateSavingsGoalAmount")
         savingsGoalDao.updateGoalAmount(goalId, amount)
     }
 
     override suspend fun incrementSavingsGoalAmount(goalId: Long, delta: Double): Boolean {
+        writeBarrier.checkWritesAllowed("SavingsGoalRepository.incrementSavingsGoalAmount")
         return savingsGoalDao.addToGoalAmount(goalId, delta) > 0
     }
 
@@ -53,16 +59,19 @@ class SavingsGoalRepository @Inject constructor(
 
     @Deprecated("Use createSavingsGoal() with domain model")
     suspend fun addGoal(goal: SavingsGoal): Long {
+        writeBarrier.checkWritesAllowed("SavingsGoalRepository.addGoal")
         return savingsGoalDao.insertGoal(goal)
     }
 
     @Deprecated("Use deleteSavingsGoal() with domain model")
     suspend fun deleteGoal(goal: SavingsGoal) {
+        writeBarrier.checkWritesAllowed("SavingsGoalRepository.deleteGoal")
         savingsGoalDao.deleteGoal(goal)
     }
 
     @Deprecated("Use updateSavingsGoalAmount()")
     suspend fun updateGoalAmount(goalId: Long, amount: Double) {
+        writeBarrier.checkWritesAllowed("SavingsGoalRepository.updateGoalAmount")
         savingsGoalDao.updateGoalAmount(goalId, amount)
     }
 
@@ -78,6 +87,7 @@ class SavingsGoalRepository @Inject constructor(
      */
     @Deprecated("Use incrementSavingsGoalAmount()")
     suspend fun addToGoalAmount(goalId: Long, delta: Double): Boolean {
+        writeBarrier.checkWritesAllowed("SavingsGoalRepository.addToGoalAmount")
         return savingsGoalDao.addToGoalAmount(goalId, delta) > 0
     }
 

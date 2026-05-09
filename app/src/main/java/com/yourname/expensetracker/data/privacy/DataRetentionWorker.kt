@@ -8,15 +8,16 @@ import android.content.Context
 import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
-import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
 import com.yourname.expensetracker.data.database.entity.PrivacyAuditEvent
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
-import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
+import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.util.concurrent.TimeUnit
@@ -45,24 +46,18 @@ class DataRetentionWorker @AssistedInject constructor(
     private val privacySettingsRepository: PrivacySettingsRepository,
     private val appDatabase: AppDatabase,
     private val timeProvider: TimeProvider,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val executionGuard: WorkerExecutionGuard
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
         Log.d(TAG, "Data retention worker started")
 
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            Log.w(TAG, "Writes blocked during restore mode, skipping")
-            return Result.success()
-        }
-
-        val spec = WorkerSpec.DEFAULTS[WORK_NAME]
-        if (spec != null && !spec.enabled) {
-            Log.d(TAG, "Worker disabled via WorkerSpec.DEFAULTS, skipping")
-            return Result.success()
-        }
-
-        return try {
+        val guardResult = executionGuard.runGuarded(
+            WorkerGuardRequest(
+                workerName = "data_retention",
+                allowDuringBackupExport = false
+            )
+        ) {
             val settings = privacySettingsRepository.getSettings()
             val now = timeProvider.now()
 
@@ -106,11 +101,9 @@ class DataRetentionWorker @AssistedInject constructor(
             }
 
             Log.d(TAG, "Data retention worker completed: notifications=$notificationPurgeCount ocr=$ocrPurgeCount")
-            Result.success()
-        } catch (e: Exception) {
-            Log.e(TAG, "Data retention worker failed", e)
-            Result.retry()
         }
+
+        return guardResult.toWorkerResult()
     }
 
     /**

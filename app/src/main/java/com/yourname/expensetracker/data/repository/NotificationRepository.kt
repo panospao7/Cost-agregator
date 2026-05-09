@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BlockedPackageDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -38,7 +39,8 @@ class NotificationRepository @Inject constructor(
     private val userCorrectionDao: UserCorrectionDao,
     private val sourceStatsDao: SourceStatsDao,
     private val classifier: TransactionClassifier,
-    private val pipeline: NotificationProcessingPipeline
+    private val pipeline: NotificationProcessingPipeline,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
 
     data class DebugNotificationsSnapshot(
@@ -54,7 +56,10 @@ class NotificationRepository @Inject constructor(
         dao.getByPackageFlow(packageName)
     fun getAllPackages(): Flow<List<String>> = dao.getAllPackagesFlow()
     fun getCount(): Flow<Int> = dao.getCountFlow()
-    suspend fun save(notification: RawNotification): Long = dao.insert(notification)
+    suspend fun save(notification: RawNotification): Long {
+        writeBarrier.checkWritesAllowed("NotificationRepository.save")
+        return dao.insert(notification)
+    }
     suspend fun exists(packageName: String, timestamp: Long, title: String?, text: String?, bigText: String? = null): Boolean =
         dao.exists(packageName, timestamp, title, text, bigText)
 
@@ -67,27 +72,41 @@ class NotificationRepository @Inject constructor(
 
     // === Core Processing Pipeline (delegated) ===
     suspend fun processAndSave(notification: RawNotification) {
-        when (val result = pipeline.process(notification)) {
-            is NotificationProcessingPipeline.ProcessingResult.Success -> Unit
-            is NotificationProcessingPipeline.ProcessingResult.Rejected -> {
-                Timber.w("Notification rejected: ${result.packageName}, reason=${result.reason}")
-            }
-            is NotificationProcessingPipeline.ProcessingResult.Error -> {
-                Timber.e(result.error, "Notification processing failed for ${result.packageName}")
-            }
+        when (val outcome = pipeline.process(notification)) {
+            is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted ->
+                Timber.i("Notification auto-accepted: expenseId=%d", outcome.expenseId)
+            is NotificationProcessingPipeline.NotificationPipelineOutcome.NeedsReview ->
+                Timber.i("Notification queued for review: reviewId=%d", outcome.reviewId)
+            is NotificationProcessingPipeline.NotificationPipelineOutcome.Duplicate ->
+                Timber.w("Notification duplicate: reason=%s", outcome.reason)
+            is NotificationProcessingPipeline.NotificationPipelineOutcome.ParserFailed ->
+                Timber.w("Notification parser failed: reason=%s", outcome.reason)
+            is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoRejected ->
+                Timber.w("Notification auto-rejected: reason=%s", outcome.reason)
+            is NotificationProcessingPipeline.NotificationPipelineOutcome.Dropped ->
+                Timber.w("Notification dropped: reason=%s", outcome.reason)
+            is NotificationProcessingPipeline.NotificationPipelineOutcome.Error ->
+                Timber.e(outcome.throwable, "Notification processing failed for ${outcome.packageName}")
         }
     }
 
     suspend fun processAndSaveAll(notifications: List<RawNotification>) {
-        pipeline.processBatch(notifications).forEach { result ->
-            when (result) {
-                is NotificationProcessingPipeline.ProcessingResult.Success -> Unit
-                is NotificationProcessingPipeline.ProcessingResult.Rejected -> {
-                    Timber.w("Batch notification rejected: ${result.packageName}, reason=${result.reason}")
-                }
-                is NotificationProcessingPipeline.ProcessingResult.Error -> {
-                    Timber.e(result.error, "Batch notification failed for ${result.packageName}")
-                }
+        pipeline.processBatch(notifications).forEach { outcome ->
+            when (outcome) {
+                is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted ->
+                    Timber.i("Batch auto-accepted: expenseId=%d", outcome.expenseId)
+                is NotificationProcessingPipeline.NotificationPipelineOutcome.NeedsReview ->
+                    Timber.i("Batch queued for review: reviewId=%d", outcome.reviewId)
+                is NotificationProcessingPipeline.NotificationPipelineOutcome.Duplicate ->
+                    Timber.w("Batch duplicate: reason=%s", outcome.reason)
+                is NotificationProcessingPipeline.NotificationPipelineOutcome.ParserFailed ->
+                    Timber.w("Batch parser failed: reason=%s", outcome.reason)
+                is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoRejected ->
+                    Timber.w("Batch auto-rejected: reason=%s", outcome.reason)
+                is NotificationProcessingPipeline.NotificationPipelineOutcome.Dropped ->
+                    Timber.w("Batch dropped: reason=%s", outcome.reason)
+                is NotificationProcessingPipeline.NotificationPipelineOutcome.Error ->
+                    Timber.e(outcome.throwable, "Batch notification failed for ${outcome.packageName}")
             }
         }
     }
@@ -106,6 +125,7 @@ class NotificationRepository @Inject constructor(
         blockedPackageDao.getAllFlow()
 
     suspend fun delete(notification: RawNotification) {
+        writeBarrier.checkWritesAllowed("NotificationRepository.delete")
         database.withTransaction {
             val pendingReview = pendingReviewDao.getByRawId(notification.id)
             if (pendingReview != null && pendingReview.status == PendingReviewStatus.PENDING) {
@@ -131,6 +151,7 @@ class NotificationRepository @Inject constructor(
      * safe for notification-specific cleanup without losing imported expense records.
      */
     suspend fun deleteAllNotifications() {
+        writeBarrier.checkWritesAllowed("NotificationRepository.deleteAllNotifications")
         database.withTransaction {
             dao.deleteAll()
             pendingReviewDao.deleteAll()
@@ -157,6 +178,7 @@ class NotificationRepository @Inject constructor(
         level = DeprecationLevel.ERROR
     )
     suspend fun deleteAll() {
+        writeBarrier.checkWritesAllowed("NotificationRepository.deleteAll")
         database.withTransaction {
             dao.deleteAll()
             expenseDao.deleteAll()
@@ -167,10 +189,14 @@ class NotificationRepository @Inject constructor(
     }
 
     suspend fun resetSourceStats() {
+        writeBarrier.checkWritesAllowed("NotificationRepository.resetSourceStats")
         sourceStatsDao.deleteAll()
     }
 
     suspend fun createDebugSnapshot(): DebugNotificationsSnapshot {
+        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
+            throw UnsupportedOperationException("Debug snapshots disabled in release")
+        }
         return DebugNotificationsSnapshot(
             notifications = dao.getAll(),
             sourceStats = sourceStatsDao.getAll()
@@ -178,6 +204,10 @@ class NotificationRepository @Inject constructor(
     }
 
     suspend fun restoreDebugSnapshot(snapshot: DebugNotificationsSnapshot) {
+        writeBarrier.checkWritesAllowed("NotificationRepository.restoreDebugSnapshot")
+        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
+            throw UnsupportedOperationException("Debug snapshots disabled in release")
+        }
         database.withTransaction {
             dao.deleteAll()
             sourceStatsDao.deleteAll()

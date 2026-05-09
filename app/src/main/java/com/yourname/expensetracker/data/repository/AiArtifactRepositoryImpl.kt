@@ -9,10 +9,12 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 @Singleton
 class AiArtifactRepositoryImpl @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val dao: AiArtifactDao,
     private val timeProvider: TimeProvider
 ) : AiArtifactRepository {
@@ -23,20 +25,30 @@ class AiArtifactRepositoryImpl @Inject constructor(
     override suspend fun getLatest(targetKey: String, capability: AiCapability): AiArtifactRecord? =
         dao.getLatest(targetKey, capability.name)?.toRecord()
 
-    override suspend fun upsert(artifact: AiArtifactRecord): Long =
-        dao.upsert(artifact.toEntity())
+    override suspend fun upsert(artifact: AiArtifactRecord): Long {
+        writeBarrier.checkWritesAllowed("AiArtifactRepositoryImpl.upsert")
+        return dao.upsert(artifact.toEntity())
+    }
 
-    override suspend fun markDismissed(id: Long) =
+    override suspend fun markDismissed(id: Long) {
+        writeBarrier.checkWritesAllowed("AiArtifactRepositoryImpl.markDismissed")
         dao.markDismissed(id, now = timeProvider.now())
+    }
 
-    override suspend fun markApplied(id: Long) =
+    override suspend fun markApplied(id: Long) {
+        writeBarrier.checkWritesAllowed("AiArtifactRepositoryImpl.markApplied")
         dao.markApplied(id, now = timeProvider.now())
+    }
 
-    override suspend fun deleteExpired(now: Long) =
+    override suspend fun deleteExpired(now: Long) {
+        writeBarrier.checkWritesAllowed("AiArtifactRepositoryImpl.deleteExpired")
         dao.deleteExpired(now)
+    }
 
-    override suspend fun deleteByTargetKey(targetKey: String) =
+    override suspend fun deleteByTargetKey(targetKey: String) {
+        writeBarrier.checkWritesAllowed("AiArtifactRepositoryImpl.deleteByTargetKey")
         dao.deleteByTargetKey(targetKey)
+    }
 
     // ── Entity ↔ Record mappers (data-layer only) ────────────────────────
 

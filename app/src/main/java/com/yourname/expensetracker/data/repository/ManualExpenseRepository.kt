@@ -34,10 +34,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import dagger.hilt.android.qualifiers.ApplicationContext
 
 @Singleton
 class ManualExpenseRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     @ApplicationContext private val context: Context,
     private val database: AppDatabase,
     private val expenseDao: com.yourname.expensetracker.data.database.dao.ExpenseDao,
@@ -102,6 +104,7 @@ class ManualExpenseRepository @Inject constructor(
         recurrenceFrequency: RecurrenceFrequency? = null,
         recurringNote: String? = null
     ): Result<Long> {
+        writeBarrier.checkWritesAllowed("ManualExpenseRepository.addManualExpense")
         // ── Guard validation (kept for early return with localized messages) ──
         if (amount <= 0) {
             return Result.Error(message = context.getString(R.string.debug_error_amount_greater_than_zero))

@@ -1,13 +1,16 @@
 package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
+import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
+import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.ExtractionState
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
@@ -126,12 +129,24 @@ class NotificationProcessingPipeline @Inject constructor(
     private val subscriptionDetector: NotificationSubscriptionDetector,
     private val coordinator: TransactionLifecycleCoordinator,
     private val transactionEventDao: TransactionEventDao,
+    private val pipelineDiagnosticEventDao: PipelineDiagnosticEventDao,
+    private val writeBarrier: DatabaseWriteBarrier,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
     sealed interface ProcessingResult {
         data class Success(val packageName: String) : ProcessingResult
         data class Rejected(val packageName: String, val reason: String) : ProcessingResult
         data class Error(val packageName: String, val error: Throwable) : ProcessingResult
+    }
+
+    sealed interface NotificationPipelineOutcome {
+        data class AutoAccepted(val rawId: Long, val expenseId: Long) : NotificationPipelineOutcome
+        data class NeedsReview(val rawId: Long, val reviewId: Long) : NotificationPipelineOutcome
+        data class Duplicate(val packageName: String, val reason: String) : NotificationPipelineOutcome
+        data class ParserFailed(val rawId: Long?, val reason: String) : NotificationPipelineOutcome
+        data class AutoRejected(val rawId: Long?, val reason: String) : NotificationPipelineOutcome
+        data class Dropped(val packageName: String, val reason: String) : NotificationPipelineOutcome
+        data class Error(val packageName: String, val throwable: Throwable) : NotificationPipelineOutcome
     }
 
     private val processMutex = Mutex()
@@ -142,51 +157,50 @@ class NotificationProcessingPipeline @Inject constructor(
     private val asyncScope: CoroutineScope = applicationScope
     private val recommendationSemaphore = Semaphore(MAX_CONCURRENT_RECOMMENDATION_JOBS)
 
-    suspend fun process(notification: RawNotification): ProcessingResult {
+    suspend fun process(notification: RawNotification): NotificationPipelineOutcome {
+        writeBarrier.checkWritesAllowed("NotificationProcessingPipeline.process")
         processMutex.withLock {
-            try {
-                processInternal(notification, initializeClassifier = true)
-                return ProcessingResult.Success(notification.packageName)
+            return try {
+                val outcome = processInternal(notification, initializeClassifier = true)
+                writePipelineDiagnosticEvent(outcome, notification.packageName)
+                outcome
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.e(e, "Error processing notification: ${notification.packageName}")
-                return ProcessingResult.Error(notification.packageName, e)
+                val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, e)
+                writePipelineDiagnosticEvent(errorOutcome, notification.packageName)
+                errorOutcome
             }
         }
     }
 
-    suspend fun processBatch(notifications: List<RawNotification>): List<ProcessingResult> {
+    suspend fun processBatch(notifications: List<RawNotification>): List<NotificationPipelineOutcome> {
+        writeBarrier.checkWritesAllowed("NotificationProcessingPipeline.processBatch")
         if (notifications.isEmpty()) return emptyList()
-        val results = mutableListOf<ProcessingResult>()
+        val results = mutableListOf<NotificationPipelineOutcome>()
         processMutex.withLock {
             classifier.initialize()
             notifications.forEach { notification ->
                 try {
-                    processInternal(notification, initializeClassifier = false)
-                    results += ProcessingResult.Success(notification.packageName)
+                    results += processInternal(notification, initializeClassifier = false)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     Timber.e(e, "Error processing notification in batch: ${notification.packageName}")
-                    results += ProcessingResult.Error(notification.packageName, e)
+                    results += NotificationPipelineOutcome.Error(notification.packageName, e)
                 }
             }
         }
         return results
     }
 
-    private suspend fun processInternal(notification: RawNotification, initializeClassifier: Boolean) {
+    private suspend fun processInternal(notification: RawNotification, initializeClassifier: Boolean): NotificationPipelineOutcome {
         if (initializeClassifier) {
             classifier.initialize()
         }
         val sourceStatsTimestamp = timeProvider.now()
 
         // ── TRN-8: Fast fingerprint dedup check before expensive parse ──────────
-        // Check if an identical notification already exists in the DB. If it does,
-        // skip the expensive parse + AI fallback entirely. The raw-notification
-        // dedup in insertRawNotificationIfNotDuplicate (Phase 2) was too late —
-        // the parse work had already been wasted.
         if (dao.exists(
                 packageName = notification.packageName,
                 timestamp = notification.timestamp,
@@ -198,7 +212,7 @@ class NotificationProcessingPipeline @Inject constructor(
             Timber.d("TRN-8: Duplicate notification detected before parse, skipping: ${notification.packageName}")
             Timber.d("Pipeline outcome: DUPLICATE for package=%s", notification.packageName)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
-            return
+            return NotificationPipelineOutcome.Duplicate(notification.packageName, "Fast fingerprint dedup")
         }
 
         // Phase 1: Pre-DB work (no transaction held)
@@ -219,11 +233,14 @@ class NotificationProcessingPipeline @Inject constructor(
             )
 
             // Phase 2: DB transaction (DB-only mutations)
+            var parserFailedOutcome: NotificationPipelineOutcome? = null
             database.withTransaction {
                 val rawId = insertRawNotificationIfNotDuplicate(notification)
-                if (rawId == -1L) return@withTransaction
+                if (rawId == -1L) {
+                    parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, "Raw duplicate before parser")
+                    return@withTransaction
+                }
 
-                // Ensure source_stats row exists before any increment updates.
                 sourceStatsDao.insertIfNotExists(
                     SourceStats(
                         packageName = notification.packageName,
@@ -231,16 +248,6 @@ class NotificationProcessingPipeline @Inject constructor(
                     )
                 )
 
-                // ── Oversized-amount fallback ──────────────────────────────────
-                // When a raw notification contains an amount exceeding the
-                // MAX_TRANSACTION_AMOUNT threshold and the parser cannot extract
-                // a structured transaction, we create a PendingReview with a
-                // merchant hint.
-                //
-                // The "Unknown" merchant name here is a UI placeholder — the user
-                // must provide a real merchant before approval.  approveReview()
-                // blocks approval without a user override.  The coordinator also
-                // rejects any creation request carrying this sentinel.
                 if (oversizedCandidate != null) {
                     val oversizedMerchant = oversizedCandidate.merchantHint ?: "Unknown"
                     val oversizedMerchantKey = MerchantKeyGenerator.generate(oversizedMerchant)
@@ -268,6 +275,7 @@ class NotificationProcessingPipeline @Inject constructor(
                     if (hasExpenseDuplicate || hasPendingDuplicate) {
                         sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
                         dao.markRelevance(rawId, false)
+                        parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, "Oversized duplicate")
                         return@withTransaction
                     }
 
@@ -291,6 +299,7 @@ class NotificationProcessingPipeline @Inject constructor(
                     Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
                     sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
                     dao.markRelevance(rawId, true)
+                    parserFailedOutcome = NotificationPipelineOutcome.NeedsReview(rawId, reviewId)
                 } else {
                     val transactionSignalCandidate = detectTransactionSignalCandidate(
                         title = notification.title,
@@ -298,16 +307,6 @@ class NotificationProcessingPipeline @Inject constructor(
                         bigText = notification.bigText
                     )
 
-                    // ── Transaction-signal fallback ──────────────────────────────
-                    // When a notification contains a transaction keyword and
-                    // amount but the structured parser still failed (e.g. format
-                    // not recognised), we create a PendingReview with a merchant
-                    // hint.
-                    //
-                    // The "Unknown" merchant name is a UI placeholder — the user
-                    // must provide a real merchant before approval.  Both
-                    // approveReview() and the TransactionLifecycleCoordinator
-                    // block creation of real expenses from this sentinel.
                     if (transactionSignalCandidate != null) {
                         val signalMerchant = transactionSignalCandidate.merchantHint ?: "Unknown"
                         val signalMerchantKey = MerchantKeyGenerator.generate(signalMerchant)
@@ -335,6 +334,7 @@ class NotificationProcessingPipeline @Inject constructor(
                         if (hasExpenseDuplicate || hasPendingDuplicate) {
                             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
                             dao.markRelevance(rawId, false)
+                            parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, "Signal duplicate")
                             return@withTransaction
                         }
 
@@ -358,20 +358,21 @@ class NotificationProcessingPipeline @Inject constructor(
                         Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
                         sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
                         dao.markRelevance(rawId, true)
+                        parserFailedOutcome = NotificationPipelineOutcome.NeedsReview(rawId, reviewId)
                     } else {
                         Timber.d("Pipeline outcome: AUTO_REJECTED reason=%s", "Unparseable notification with no transaction signal")
                         sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, sourceStatsTimestamp)
                         dao.markRelevance(rawId, false)
+                        parserFailedOutcome = NotificationPipelineOutcome.AutoRejected(rawId, "Unparseable notification with no transaction signal")
                     }
                 }
             }
 
             // Phase 3: Post-commit best-effort actions
             runPostCommitSafely("invalidate source stats cache for ${notification.packageName}") {
-                // AIML-13: Invalidate comprehensively after pipeline processing
                 confidenceRouter.invalidateSourceStatsCache(notification.packageName)
             }
-            return
+            return parserFailedOutcome ?: NotificationPipelineOutcome.ParserFailed(null, "No outcome tracked")
         }
 
         val preDbContext = buildPreDbContext(notification, parsed)
@@ -381,7 +382,6 @@ class NotificationProcessingPipeline @Inject constructor(
             val rawId = insertRawNotificationIfNotDuplicate(notification)
             if (rawId == -1L) return@withTransaction ParsedDbOutcome.RawDuplicate
 
-            // Keep source stats row creation transactional while avoiding non-DB work.
             sourceStatsDao.insertIfNotExists(
                 SourceStats(
                     packageName = notification.packageName,
@@ -420,20 +420,33 @@ class NotificationProcessingPipeline @Inject constructor(
             }
         }
 
-        // Log detailed pipeline outcome for parsed notifications
-        when (dbOutcome) {
-            is ParsedDbOutcome.AutoAccepted -> Timber.d("Pipeline outcome: AUTO_ACCEPTED expenseId=%d", dbOutcome.expenseId)
-            ParsedDbOutcome.NeedsReviewCreated -> Timber.d("Pipeline outcome: NEEDS_REVIEW for package=%s", notification.packageName)
-            ParsedDbOutcome.AutoRejected -> Timber.d("Pipeline outcome: AUTO_REJECTED reason=%s", "Routing decision rejected")
-            ParsedDbOutcome.RawDuplicate -> Timber.d("Pipeline outcome: DUPLICATE for package=%s", notification.packageName)
-            ParsedDbOutcome.Duplicate -> Timber.d("Pipeline outcome: DUPLICATE for package=%s", notification.packageName)
+        val outcome = when (dbOutcome) {
+            is ParsedDbOutcome.AutoAccepted -> NotificationPipelineOutcome.AutoAccepted(
+                rawId = dbOutcome.insertedExpense.rawNotificationId ?: 0L,
+                expenseId = dbOutcome.expenseId
+            )
+            ParsedDbOutcome.NeedsReviewCreated -> NotificationPipelineOutcome.NeedsReview(
+                rawId = 0L,
+                reviewId = 0L
+            )
+            ParsedDbOutcome.AutoRejected -> NotificationPipelineOutcome.AutoRejected(
+                rawId = null,
+                reason = "Routing decision rejected"
+            )
+            ParsedDbOutcome.RawDuplicate -> NotificationPipelineOutcome.Duplicate(
+                notification.packageName,
+                "Raw duplicate in transaction"
+            )
+            ParsedDbOutcome.Duplicate -> NotificationPipelineOutcome.Duplicate(
+                notification.packageName,
+                "Canonical duplicate"
+            )
         }
 
-        if (dbOutcome == ParsedDbOutcome.RawDuplicate) return
+        if (dbOutcome == ParsedDbOutcome.RawDuplicate) return outcome
 
         // Phase 3: Post-commit best-effort actions
         runPostCommitSafely("invalidate source stats cache for ${notification.packageName}") {
-            // AIML-13: Invalidate comprehensively after pipeline processing
             confidenceRouter.invalidateAfterUserAction(
                 notification.packageName,
                 preDbContext.correctedMerchant
@@ -441,6 +454,38 @@ class NotificationProcessingPipeline @Inject constructor(
         }
 
         runParsedPostCommitActions(notification, preDbContext, dbOutcome)
+
+        return outcome
+    }
+
+    private suspend fun writePipelineDiagnosticEvent(outcome: NotificationPipelineOutcome, packageName: String) {
+        runCatching {
+            val (stage, outcomeStr) = when (outcome) {
+                is NotificationPipelineOutcome.AutoAccepted -> "create" to "AUTO_ACCEPTED"
+                is NotificationPipelineOutcome.NeedsReview -> "review" to "NEEDS_REVIEW"
+                is NotificationPipelineOutcome.Duplicate -> "dedup" to "DUPLICATE"
+                is NotificationPipelineOutcome.ParserFailed -> "parse" to "PARSER_FAILED"
+                is NotificationPipelineOutcome.AutoRejected -> "reject" to "AUTO_REJECTED"
+                is NotificationPipelineOutcome.Dropped -> "drop" to "DROPPED"
+                is NotificationPipelineOutcome.Error -> "error" to "ERROR"
+            }
+            pipelineDiagnosticEventDao.insert(
+                PipelineDiagnosticEvent(
+                    pipeline = "notification",
+                    stage = stage,
+                    outcome = outcomeStr,
+                    packageName = packageName,
+                    dropReason = when (outcome) {
+                        is NotificationPipelineOutcome.Duplicate -> outcome.reason
+                        is NotificationPipelineOutcome.ParserFailed -> outcome.reason
+                        is NotificationPipelineOutcome.AutoRejected -> outcome.reason
+                        is NotificationPipelineOutcome.Dropped -> outcome.reason
+                        else -> null
+                    },
+                    timestamp = timeProvider.now()
+                )
+            )
+        }
     }
 
     private suspend fun insertRawNotificationIfNotDuplicate(notification: RawNotification): Long {

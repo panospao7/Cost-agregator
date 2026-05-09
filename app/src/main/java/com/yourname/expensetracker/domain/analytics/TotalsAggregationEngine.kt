@@ -535,7 +535,8 @@ class TotalsAggregationEngine @Inject constructor(
      *                  into shared utility so this method and the reactive methods
      *                  use the same grouping logic.
      * TODO (ARCH-E13): Support [PeriodType] parameter to control grouping granularity.
-     * TODO (ARCH-E13): Add data-quality metadata from [input.dataQuality] to result.
+     * ARCH-E13: PeriodTotal now carries [input.dataQuality] for stale-rate and conversion
+     * warnings. Callers should inspect periodTotal.dataQuality instead of querying input separately.
      */
     fun computeFromNormalized(input: NormalizedAnalyticsInput): List<PeriodTotal> {
         val expenses = input.includedExpenses
@@ -568,7 +569,8 @@ class TotalsAggregationEngine @Inject constructor(
                 endDateMs = dayEnd,
                 status = if (average > 0 && total > average) PeriodStatus.OVER_AVERAGE
                          else if (average > 0) PeriodStatus.UNDER_AVERAGE
-                         else defaultStatus
+                         else defaultStatus,
+                dataQuality = input.dataQuality
             )
         }.sortedBy { it.periodKey }
     }

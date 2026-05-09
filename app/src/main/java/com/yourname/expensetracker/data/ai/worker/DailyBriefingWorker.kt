@@ -10,11 +10,11 @@ import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
 import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
-import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
-import com.yourname.expensetracker.domain.privacy.PrivacyDecision
-import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
+import com.yourname.expensetracker.domain.workers.toWorkerResult
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import com.yourname.expensetracker.domain.util.NotificationIdGenerator
@@ -53,28 +53,21 @@ class DailyBriefingWorker @AssistedInject constructor(
     private val analyticsRepository: DashboardAnalyticsRepository,
     private val deliverProactiveBriefingNotificationUseCase: DeliverProactiveBriefingNotificationUseCase,
     private val timeProvider: TimeProvider,
-    private val privacyGate: PrivacyGate,
     private val aiArtifactRepository: AiArtifactRepository,
-    /** WRK-15: Used to re-schedule the next one-shot briefing at midnight. */
     private val aiWorkScheduler: AiWorkScheduler,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val executionGuard: WorkerExecutionGuard
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
         Timber.d("DailyBriefingWorker: starting.")
 
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            Timber.w("DailyBriefingWorker: writes blocked during restore mode, skipping")
-            return Result.success()
-        }
-
-        val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING)
-        if (gateCheck is PrivacyDecision.Denied) {
-            Timber.w("DailyBriefingWorker: blocked by privacy gate: ${gateCheck.reason}")
-            return Result.success()
-        }
-
-        return try {
+        val guardResult = executionGuard.runGuarded(
+            WorkerGuardRequest(
+                workerName = "ai_daily_briefing",
+                requiredCapabilities = listOf(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING),
+                allowDuringBackupExport = false
+            )
+        ) {
             val startedAt = timeProvider.now()
             val dateKey = java.time.Instant.ofEpochMilli(startedAt)
                 .atZone(ZoneId.systemDefault())
@@ -82,14 +75,12 @@ class DailyBriefingWorker @AssistedInject constructor(
                 .toString()
             val targetKey = "dashboard_home:$dateKey"
 
-            // WRK-6: Check cache before generating fresh to avoid unnecessary work.
-            // If a fresh artifact already exists for today, skip the entire pipeline.
             val existing = aiArtifactRepository.getLatest(targetKey, AiCapability.DASHBOARD_BRIEFING)
             if (existing != null && existing.status == com.yourname.expensetracker.domain.ai.model.AiArtifactStatus.READY) {
                 val now = timeProvider.now()
                 if (existing.expiresAt == null || now < existing.expiresAt) {
                     Timber.d("DailyBriefingWorker: fresh artifact found, skipping generation.")
-                    return Result.success()
+                    return@runGuarded
                 }
             }
 
@@ -106,52 +97,10 @@ class DailyBriefingWorker @AssistedInject constructor(
                 )
             }
             Timber.d("DailyBriefingWorker: completed successfully.")
-            // WRK-15: Re-schedule at the next midnight boundary.
             aiWorkScheduler.scheduleDailyBriefing()
-            Result.success()
-        } catch (e: TimeoutCancellationException) {
-            Timber.w(
-                e,
-                "DailyBriefingWorker: timed out after ${BRIEFING_PIPELINE_TIMEOUT_MS}ms. Retrying."
-            )
-            Result.retry()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            // WRK-7: Classify error types — permanent exceptions should NOT be retried.
-            if (isPermanentError(e)) {
-                Timber.e(e, "DailyBriefingWorker: permanent failure, NOT retrying.")
-                Result.failure()
-            } else {
-                Timber.e(e, "DailyBriefingWorker: transient failure, scheduling retry.")
-                Result.retry()
-            }
         }
-    }
 
-    /**
-     * WRK-7: Classifies exceptions as permanent (non-retriable) or transient (retriable).
-     * Permanent errors include coding bugs (IllegalArgument, NPE, State), configuration
-     * errors, and privacy/security rejections. Transient errors include network failures,
-     * timeouts, service unavailability, and database contention.
-     */
-    private fun isPermanentError(e: Exception): Boolean {
-        return when (e) {
-            is IllegalArgumentException,
-            is IllegalStateException,
-            is NullPointerException,
-            is UnsupportedOperationException,
-            is SecurityException -> true
-            else -> {
-                val message = e.message?.lowercase().orEmpty()
-                message.contains("not found") ||
-                message.contains("permission denied") ||
-                message.contains("access denied") ||
-                message.contains("invalid argument") ||
-                message.contains("unsupported") ||
-                message.contains("disabled")
-            }
-        }
+        return guardResult.toWorkerResult()
     }
 
     companion object {

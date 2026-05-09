@@ -4,16 +4,15 @@ import android.content.Context
 import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
-import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
-import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
+import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * One-shot WorkManager worker that backfills [Expense.merchantKey] for every
@@ -37,76 +36,73 @@ class MerchantKeyBackfillWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val expenseRepository: ExpenseRepository,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val executionGuard: WorkerExecutionGuard
 ) : CoroutineWorker(appContext, workerParams) {
 
-    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+    override suspend fun doWork(): Result {
         Log.d(TAG, "Merchant-key backfill started")
 
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            Log.w(TAG, "Writes blocked during restore mode, skipping")
-            return@withContext Result.success()
-        }
+        val guardResult = executionGuard.runGuarded(
+            WorkerGuardRequest(
+                workerName = "merchant_key_backfill",
+                allowDuringBackupExport = false
+            )
+        ) {
+            var totalUpdated = 0
+            var batchesProcessed = 0
+            val maxBatches = 25 // WRK-11: Per-run budget — max 25 batches (5000 rows)
+            val failedExpenseIdsThisRun = mutableSetOf<Long>()
 
-        val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return@withContext Result.success()
-        if (!spec.enabled) {
-            Log.w(TAG, "Worker $WORK_NAME disabled by spec, skipping")
-            return@withContext Result.success()
-        }
-
-        var totalUpdated = 0
-        var batchesProcessed = 0
-        val maxBatches = 25 // WRK-11: Per-run budget — max 25 batches (5000 rows)
-        val failedExpenseIdsThisRun = mutableSetOf<Long>()
-
-        while (!isStopped && batchesProcessed < maxBatches) {
-            batchesProcessed++
-            val batch = try {
-                expenseRepository.getExpensesWithNullMerchantKey(limit = BATCH_SIZE)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to fetch batch", e)
-                return@withContext Result.retry()
-            }
-
-            if (batch.isEmpty()) break
-
-            val pendingBatch = batch.filterNot { expense -> expense.id in failedExpenseIdsThisRun }
-            if (pendingBatch.isEmpty()) {
-                Log.w(
-                    TAG,
-                    "Merchant-key backfill made no progress; retrying after repeated failures for ${batch.size} rows"
-                )
-                return@withContext Result.retry()
-            }
-
-            var batchUpdated = 0
-
-            for (expense in pendingBatch) {
-                if (isStopped) break
-                val key = MerchantKeyGenerator.generate(expense.merchant)
-                try {
-                    expenseRepository.updateMerchantKey(expense.id, key)
-                    totalUpdated++
-                    batchUpdated++
+            while (!isStopped && batchesProcessed < maxBatches) {
+                batchesProcessed++
+                val batch = try {
+                    expenseRepository.getExpensesWithNullMerchantKey(limit = BATCH_SIZE)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    failedExpenseIdsThisRun += expense.id
-                    // Non-fatal: row will be retried in the next batch on the next run.
-                    Log.w(TAG, "Failed to update merchantKey for expense ${expense.id}", e)
+                    Log.e(TAG, "Failed to fetch batch", e)
+                    throw e
+                }
+
+                if (batch.isEmpty()) break
+
+                val pendingBatch = batch.filterNot { expense -> expense.id in failedExpenseIdsThisRun }
+                if (pendingBatch.isEmpty()) {
+                    Log.w(
+                        TAG,
+                        "Merchant-key backfill made no progress; retrying after repeated failures for ${batch.size} rows"
+                    )
+                    throw RuntimeException("No progress made")
+                }
+
+                var batchUpdated = 0
+
+                for (expense in pendingBatch) {
+                    if (isStopped) break
+                    val key = MerchantKeyGenerator.generate(expense.merchant)
+                    try {
+                        expenseRepository.updateMerchantKey(expense.id, key)
+                        totalUpdated++
+                        batchUpdated++
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        failedExpenseIdsThisRun += expense.id
+                        // Non-fatal: row will be retried in the next batch on the next run.
+                        Log.w(TAG, "Failed to update merchantKey for expense ${expense.id}", e)
+                    }
+                }
+
+                if (!isStopped && batchUpdated == 0) {
+                    Log.w(TAG, "Merchant-key backfill made no progress for current batch; retrying")
+                    throw RuntimeException("No progress in current batch")
                 }
             }
 
-            if (!isStopped && batchUpdated == 0) {
-                Log.w(TAG, "Merchant-key backfill made no progress for current batch; retrying")
-                return@withContext Result.retry()
-            }
+            Log.d(TAG, "Merchant-key backfill complete: updated $totalUpdated rows")
         }
 
-        Log.d(TAG, "Merchant-key backfill complete: updated $totalUpdated rows")
-        Result.success()
+        return guardResult.toWorkerResult()
     }
 
     companion object {

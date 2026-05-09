@@ -25,10 +25,10 @@ interface ExchangeRateDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateAll(rates: List<ExchangeRate>)
     
-    @Query("SELECT * FROM exchange_rates WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency LIMIT 1")
+    @Query("SELECT * FROM exchange_rates WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency ORDER BY lastUpdated DESC LIMIT 1")
     suspend fun getRate(fromCurrency: String, toCurrency: String): ExchangeRate?
     
-    @Query("SELECT * FROM exchange_rates WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency LIMIT 1")
+    @Query("SELECT * FROM exchange_rates WHERE fromCurrency = :fromCurrency AND toCurrency = :toCurrency ORDER BY lastUpdated DESC LIMIT 1")
     fun getRateFlow(fromCurrency: String, toCurrency: String): Flow<ExchangeRate?>
     
     /**

@@ -27,10 +27,12 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.SideEffectMode
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 
 @Singleton
 class ReviewQueueRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val database: AppDatabase,
     private val pendingReviewDao: PendingReviewDao,
     private val rawNotificationDao: RawNotificationDao,
@@ -94,6 +96,7 @@ class ReviewQueueRepository @Inject constructor(
         finalAddress: String? = null,
         finalPlaceId: String? = null
     ): Result<Long> {
+        writeBarrier.checkWritesAllowed("ReviewQueueRepository.approveReview")
         val review = pendingReviewDao.getById(reviewId)
             ?: return Result.Error(message = ERROR_REVIEW_NOT_FOUND)
 
@@ -359,6 +362,7 @@ class ReviewQueueRepository @Inject constructor(
     }
 
     suspend fun rejectReview(reviewId: Long) {
+        writeBarrier.checkWritesAllowed("ReviewQueueRepository.rejectReview")
         val review = pendingReviewDao.getById(reviewId) ?: return
 
         val rejected = database.withTransaction {
@@ -416,6 +420,7 @@ class ReviewQueueRepository @Inject constructor(
      * @return List of (reviewId, Result) pairs indicating success or failure for each review.
      */
     suspend fun approveAllReview(): List<Pair<Long, Result<Long>>> {
+        writeBarrier.checkWritesAllowed("ReviewQueueRepository.approveAllReview")
         val pendingReviews = pendingReviewDao.getPendingUncapped()
         return pendingReviews.map { review ->
             val result = try {
@@ -429,6 +434,7 @@ class ReviewQueueRepository @Inject constructor(
     }
 
     suspend fun rejectAllReviews() {
+        writeBarrier.checkWritesAllowed("ReviewQueueRepository.rejectAllReviews")
         val pendingReviews = pendingReviewDao.getPendingUncapped()
         for (review in pendingReviews) {
             try {
@@ -440,6 +446,7 @@ class ReviewQueueRepository @Inject constructor(
     }
 
     suspend fun markAsRelevant(id: Long, isRelevant: Boolean) {
+        writeBarrier.checkWritesAllowed("ReviewQueueRepository.markAsRelevant")
         val notification = rawNotificationDao.getById(id) ?: return
 
         val fullNotificationText = listOfNotNull(
@@ -666,11 +673,13 @@ class ReviewQueueRepository @Inject constructor(
     }
 
     suspend fun updatePendingReviewCategoryBulk(merchantName: String, categoryId: Long) {
+        writeBarrier.checkWritesAllowed("ReviewQueueRepository.updatePendingReviewCategoryBulk")
         val merchantKey = MerchantKeyGenerator.generate(merchantName)
         pendingReviewDao.bulkUpdateCategoryByMerchant(merchantKey, merchantName, categoryId)
     }
 
     suspend fun updatePendingReviewMerchantBulk(oldMerchant: String, newMerchant: String) {
+        writeBarrier.checkWritesAllowed("ReviewQueueRepository.updatePendingReviewMerchantBulk")
         val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
         pendingReviewDao.bulkRenameMerchant(oldMerchantKey, oldMerchant, newMerchant, newMerchantKey)

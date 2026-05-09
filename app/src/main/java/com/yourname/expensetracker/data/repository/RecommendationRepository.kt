@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 /**
@@ -26,6 +27,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class RecommendationRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val dao: RecommendationDao,
     private val deduplicator: RecommendationDeduplicator,
     private val timeProvider: TimeProvider,
@@ -59,6 +61,7 @@ class RecommendationRepository @Inject constructor(
      * Save a single recommendation.
      */
     suspend fun save(recommendation: DashboardFollowThroughRecommendation) {
+        writeBarrier.checkWritesAllowed("RecommendationRepository.save")
         withContext(ioDispatcher) {
             dao.insert(recommendation.toEntity())
         }
@@ -73,6 +76,7 @@ class RecommendationRepository @Inject constructor(
      * Also checks against existing active recommendations in DB to prevent duplicates.
      */
     suspend fun saveAll(recommendations: List<DashboardFollowThroughRecommendation>) {
+        writeBarrier.checkWritesAllowed("RecommendationRepository.saveAll")
         withContext(ioDispatcher) {
             if (recommendations.isEmpty()) return@withContext
             
@@ -143,6 +147,7 @@ class RecommendationRepository @Inject constructor(
      * Dismiss (archive) a recommendation by ID.
      */
     suspend fun dismiss(recommendationId: String) {
+        writeBarrier.checkWritesAllowed("RecommendationRepository.dismiss")
         withContext(ioDispatcher) {
             dao.archive(recommendationId, timeProvider.now())
         }
@@ -152,6 +157,7 @@ class RecommendationRepository @Inject constructor(
      * Expire all old recommendations for a user.
      */
     suspend fun expireOld(userId: String, beforeTimestamp: Long = timeProvider.now()) {
+        writeBarrier.checkWritesAllowed("RecommendationRepository.expireOld")
         withContext(ioDispatcher) {
             dao.expireOld(userId, beforeTimestamp)
         }
@@ -162,6 +168,7 @@ class RecommendationRepository @Inject constructor(
      * Alias kept to match follow-through infrastructure contract.
      */
     suspend fun expireAll(userId: String, beforeTimestamp: Long = timeProvider.now()) {
+        writeBarrier.checkWritesAllowed("RecommendationRepository.expireAll")
         withContext(ioDispatcher) {
             dao.expireOld(userId, beforeTimestamp)
             dao.expireAllActiveByUser(userId, timeProvider.now())
@@ -172,6 +179,7 @@ class RecommendationRepository @Inject constructor(
      * Clear all recommendations for a user (account switch scenario).
      */
     suspend fun clearForUser(userId: String) {
+        writeBarrier.checkWritesAllowed("RecommendationRepository.clearForUser")
         withContext(ioDispatcher) {
             dao.clearByUser(userId)
         }
@@ -208,6 +216,7 @@ class RecommendationRepository @Inject constructor(
      * Clean up expired recommendations (for background worker).
      */
     suspend fun cleanupExpired(): Int {
+        writeBarrier.checkWritesAllowed("RecommendationRepository.cleanupExpired")
         return withContext(ioDispatcher) {
             dao.deleteExpired(timeProvider.now())
         }

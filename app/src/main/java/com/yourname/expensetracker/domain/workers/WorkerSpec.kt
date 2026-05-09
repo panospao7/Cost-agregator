@@ -61,7 +61,8 @@ data class WorkerSpec(
             ),
             "bill_reminder_periodic" to WorkerSpec(
                 name = "bill_reminder_periodic",
-                enabled = false,
+                version = 2, // bumped: enabled=true (worker was silently disabled)
+                enabled = true,
                 repeatIntervalHours = 6,
                 flexMinutes = 15,
                 constraints = Constraints.Builder()

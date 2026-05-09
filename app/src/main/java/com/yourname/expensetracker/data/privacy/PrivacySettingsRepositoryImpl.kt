@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import androidx.work.WorkManager
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -45,6 +46,7 @@ private fun fallbackPreferences(): Preferences {
 class PrivacySettingsRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context
 ) : PrivacySettingsRepository {
+    private val workManager = WorkManager.getInstance(context)
 
     private object Keys {
         val NOTIFICATION_CAPTURE_ENABLED = booleanPreferencesKey("notification_capture_enabled")
@@ -78,6 +80,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         context.privacySettingsDataStore.data.first().toPrivacySettings()
 
     override suspend fun updateSettings(transform: (PrivacySettings) -> PrivacySettings) {
+        val old = context.privacySettingsDataStore.data.first().toPrivacySettings()
         context.privacySettingsDataStore.edit { prefs ->
             val current = prefs.toPrivacySettings()
             val updated = transform(current)
@@ -94,9 +97,23 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
             prefs[Keys.RAW_OCR_RETENTION_DAYS] = updated.rawOcrRetentionDays
             prefs[Keys.DEBUG_DATA_PERSISTENCE_ENABLED] = updated.debugDataPersistenceEnabled
         }
-        // TODO (P8-P1-4): When privacy settings change, immediately cancel active workers
-        // and stop capture services at runtime instead of waiting for app restart.
-        // See: WorkerSpecScheduler.cancelUniqueWork(), NotificationCaptureService lifecycle.
+        // P8-P1-4: Apply privacy changes immediately — cancel affected workers at runtime.
+        applyPrivacyChange(old, transform(old))
+    }
+
+    private fun applyPrivacyChange(old: PrivacySettings, updated: PrivacySettings) {
+        if (old.cloudAiEnabled && !updated.cloudAiEnabled) {
+            workManager.cancelUniqueWork("ai_daily_briefing")
+            Timber.i("P8: Cancelled ai_daily_briefing — cloud AI disabled")
+        }
+        if (old.backgroundLocationBackfillEnabled && !updated.backgroundLocationBackfillEnabled) {
+            workManager.cancelUniqueWork("location_backfill")
+            Timber.i("P8: Cancelled location_backfill — background location disabled")
+        }
+        if (old.notificationCaptureEnabled && !updated.notificationCaptureEnabled) {
+            workManager.cancelUniqueWork("data_retention")
+            Timber.i("P8: Cancelled data_retention — notification capture disabled")
+        }
     }
 
     private fun Preferences.toPrivacySettings(): PrivacySettings = PrivacySettings(

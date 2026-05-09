@@ -11,10 +11,12 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 @Singleton
 class BusinessExpenseRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val expenseDao: ExpenseDao,
     private val mileageDao: MileageTrackingDao
 ) {
@@ -77,6 +79,7 @@ class BusinessExpenseRepository @Inject constructor(
      * Add mileage tracking entry.
      */
     suspend fun addMileage(mileage: MileageTracking): Long {
+        writeBarrier.checkWritesAllowed("BusinessExpenseRepository.addMileage")
         validateMileageForInsert(mileage)
         return mileageDao.insert(mileage)
     }

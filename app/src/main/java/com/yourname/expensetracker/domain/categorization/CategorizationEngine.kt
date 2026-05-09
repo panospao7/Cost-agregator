@@ -25,10 +25,11 @@ enum class MatchType {
 data class CategorizationResult(
     val categoryId: Long?,
     val categoryName: String?,
-    val confidence: Double,
     val matchType: MatchType,
     val explanation: String = "",
-    val isAmbiguous: Boolean = false
+    val isAmbiguous: Boolean = false,
+    val requiresReview: Boolean = isAmbiguous,  // auto-derived: ambiguous results need review
+    val confidence: Double = if (isAmbiguous) 0.5 else 0.8  // reduced when ambiguous
 )
 
 data class LayerDebugResult(
@@ -183,7 +184,7 @@ class CategorizationEngine @Inject constructor(
                 return CategorizationResult(
                     categoryId = categoryId,
                     categoryName = semanticMatch.categoryName,
-                    confidence = semanticMatch.confidence,
+                    confidence = if (isAmbiguous) 0.5 else semanticMatch.confidence,
                     matchType = MatchType.KEYWORD,
                     explanation = "Keyword match: '${semanticMatch.matchedKeyword}'",
                     isAmbiguous = isAmbiguous
@@ -353,7 +354,7 @@ class CategorizationEngine @Inject constructor(
                     val result = CategorizationResult(
                         categoryId = categoryId,
                         categoryName = semanticMatch.categoryName,
-                        confidence = semanticMatch.confidence,
+                        confidence = if (isAmbiguous) 0.5 else semanticMatch.confidence,
                         matchType = MatchType.KEYWORD,
                         explanation = "Keyword match: '${semanticMatch.matchedKeyword}'",
                         isAmbiguous = isAmbiguous

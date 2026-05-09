@@ -40,7 +40,9 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
+
 
 enum class SortOrder(val sql: String, val displayName: String) {
     DATE_DESC("e.date DESC", "Newest First"),
@@ -108,6 +110,7 @@ enum class OwnershipFilter {
  */
 @Singleton
 class ExpenseRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val database: AppDatabase,
     private val expenseDao: ExpenseDao,
     private val userCorrectionDao: UserCorrectionDao,
@@ -440,6 +443,7 @@ class ExpenseRepository @Inject constructor(
      */
     @Deprecated("Routes directly to ExpenseDao without writing TransactionEvent.BULK_UPDATED. Use TransactionLifecycleCoordinator.updateExpense() for each affected expense instead.")
     suspend fun updateExpenseCategoryBulk(merchant: String, newCategoryId: Long) {
+        writeBarrier.checkWritesAllowed("ExpenseRepository.updateExpenseCategoryBulk")
         categoryUpdateMutex.withLock {
             transactionLifecycleCoordinator.bulkUpdateCategory(
                 merchant = merchant, newCategoryId = newCategoryId, source = "USER_EDIT"
@@ -620,13 +624,26 @@ class ExpenseRepository @Inject constructor(
         return expenseDao.getRecentTransactionsForMerchant(merchantKey, limit)
     }
 
-    suspend fun deleteAllExpenses() = expenseDao.deleteAll()
+    suspend fun deleteAllExpenses() {
+        writeBarrier.checkWritesAllowed("ExpenseRepository.deleteAllExpenses")
+        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
+            throw UnsupportedOperationException("deleteAllExpenses disabled in release")
+        }
+        expenseDao.deleteAll()
+    }
 
     suspend fun createDebugSnapshot(): DebugExpenseSnapshot {
+        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
+            throw UnsupportedOperationException("Debug snapshots disabled in release")
+        }
         return DebugExpenseSnapshot(expenses = expenseDao.getAllUncapped())
     }
 
     suspend fun restoreDebugSnapshot(snapshot: DebugExpenseSnapshot) {
+        writeBarrier.checkWritesAllowed("ExpenseRepository.restoreDebugSnapshot")
+        if (!com.yourname.expensetracker.BuildConfig.DEBUG) {
+            throw UnsupportedOperationException("Debug snapshots disabled in release")
+        }
         database.withTransaction {
             expenseDao.deleteAll()
             if (snapshot.expenses.isNotEmpty()) {

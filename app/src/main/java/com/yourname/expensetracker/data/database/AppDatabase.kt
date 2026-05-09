@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 121
+const val APP_DATABASE_SCHEMA_VERSION = 122
 
 @Database(
     entities = [
@@ -102,7 +102,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 121
         WarrantyLifecycleEvent::class,
         InvestmentTransaction::class,
         GroupSettlementEntity::class,
-        GroupLifecycleEventEntity::class
+        GroupLifecycleEventEntity::class,
+        PipelineDiagnosticEvent::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -164,6 +165,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recurringLifecycleEventDao(): RecurringLifecycleEventDao
     abstract fun privacyAuditDao(): PrivacyAuditDao
     abstract fun backgroundJobRunDao(): BackgroundJobRunDao
+    abstract fun pipelineDiagnosticEventDao(): PipelineDiagnosticEventDao
     abstract fun sourceStatsEventDao(): SourceStatsEventDao
     abstract fun warrantyLifecycleEventDao(): WarrantyLifecycleEventDao
     abstract fun investmentTransactionDao(): InvestmentTransactionDao
@@ -7641,6 +7643,26 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_121_122 = object : androidx.room.migration.Migration(121, 122) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS pipeline_diagnostic_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        pipeline TEXT NOT NULL,
+                        stage TEXT NOT NULL,
+                        outcome TEXT NOT NULL,
+                        packageName TEXT,
+                        sourceId INTEGER,
+                        dropReason TEXT,
+                        message TEXT,
+                        timestamp INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pipeline_diagnostic_events_pipeline_stage ON pipeline_diagnostic_events (pipeline, stage)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pipeline_diagnostic_events_timestamp ON pipeline_diagnostic_events (timestamp)")
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -7797,7 +7819,8 @@ MIGRATION_91_92,
         MIGRATION_117_118,
         MIGRATION_118_119,
         MIGRATION_119_120,
-        MIGRATION_120_121
+        MIGRATION_120_121,
+        MIGRATION_121_122
     )
 }
 }

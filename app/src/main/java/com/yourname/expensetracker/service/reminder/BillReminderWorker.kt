@@ -11,10 +11,11 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.R
-import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
-import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
+import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 
@@ -30,54 +31,49 @@ class BillReminderWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val coordinator: RecurringLifecycleCoordinator,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val executionGuard: WorkerExecutionGuard
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
         Log.d(TAG, "BillReminderWorker started — checking for due reminders")
 
-        // Defense-in-depth: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            Log.w(TAG, "Writes blocked during restore mode, skipping")
-            return Result.success()
-        }
-
-        // WorkerSpec gate: check if this worker is enabled
-        val spec = WorkerSpec.DEFAULTS[WORK_NAME] ?: return Result.success()
-        if (!spec.enabled) {
-            Log.w(TAG, "Worker $WORK_NAME disabled by spec, skipping")
-            return Result.success()
-        }
-
-        return try {
-            val dueReminders = coordinator.getDueReminders()
-            if (dueReminders.isEmpty()) {
-                Log.d(TAG, "No due reminders found")
-                return Result.success()
-            }
-
-            var sentCount = 0
-            for (reminder in dueReminders) {
-                if (isStopped) break
-
-                val title = "Bill due"
-                val body = buildNotificationBody(reminder)
-                val delivered = sendNotification(reminder, title, body)
-
-                if (delivered) {
-                    coordinator.markReminderSent(reminder.id)
-                    sentCount++
-                } else {
-                    Log.w(TAG, "Notification not delivered for reminder ${reminder.id}, leaving status unchanged")
+        val guardResult = executionGuard.runGuarded(
+            WorkerGuardRequest(
+                workerName = "bill_reminder_periodic",
+                allowDuringBackupExport = false
+            )
+        ) {
+            try {
+                val dueReminders = coordinator.getDueReminders()
+                if (dueReminders.isEmpty()) {
+                    Log.d(TAG, "No due reminders found")
+                    return@runGuarded
                 }
-            }
 
-            Log.d(TAG, "BillReminderWorker completed — sent $sentCount reminders")
-            Result.success()
-        } catch (e: Exception) {
-            Log.e(TAG, "BillReminderWorker failed", e)
-            Result.retry()
+                var sentCount = 0
+                for (reminder in dueReminders) {
+                    if (isStopped) break
+
+                    val title = "Bill due"
+                    val body = buildNotificationBody(reminder)
+                    val delivered = sendNotification(reminder, title, body)
+
+                    if (delivered) {
+                        coordinator.markReminderSent(reminder.id)
+                        sentCount++
+                    } else {
+                        Log.w(TAG, "Notification not delivered for reminder ${reminder.id}, leaving status unchanged")
+                    }
+                }
+
+                Log.d(TAG, "BillReminderWorker completed — sent $sentCount reminders")
+            } catch (e: Exception) {
+                Log.e(TAG, "BillReminderWorker failed", e)
+                throw e
+            }
         }
+
+        return guardResult.toWorkerResult()
     }
 
     /**

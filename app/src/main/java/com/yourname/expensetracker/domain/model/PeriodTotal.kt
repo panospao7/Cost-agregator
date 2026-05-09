@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.model
 
+import com.yourname.expensetracker.domain.analytics.AnalyticsDataQuality
+
 enum class PeriodType { YEAR, MONTH, WEEK, DAY }
 
 enum class PeriodStatus { UNDER_AVERAGE, OVER_AVERAGE, CURRENT, NO_DATA }
@@ -12,7 +14,8 @@ data class PeriodTotal(
     val periodType: PeriodType,
     val startDateMs: Long,
     val endDateMs: Long,
-    val status: PeriodStatus
+    val status: PeriodStatus,
+    val dataQuality: AnalyticsDataQuality? = null
 ) {
     init {
         require(periodLabel.isNotBlank()) { "periodLabel cannot be blank" }

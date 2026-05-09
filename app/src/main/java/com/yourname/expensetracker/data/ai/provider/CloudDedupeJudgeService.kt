@@ -84,21 +84,14 @@ class CloudDedupeJudgeService @Inject constructor(
             return AiServiceResult.Failure(AiServiceError.Disabled("Gemini API key missing"))
         }
 
-        // PRIVACY GUARD: Cloud must not be used if user has disabled it.
-        val settings = aiSettingsRepository?.settings()?.first()
-        if (settings != null && !settings.allowCloudAi) {
-            Timber.d("CloudDedupeJudgeService: Cloud AI disabled in settings, skipping.")
-            return AiServiceResult.Failure(AiServiceError.Disabled("Cloud AI is disabled in settings"))
-        }
-
-        // PRIVACY GATE: Check privacy gate before cloud AI call
+        // PRIVACY GATE: Unified cloud AI gate — checks both PrivacySettings + AiSettings
         val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
         if (gateCheck is PrivacyDecision.Denied) {
             Timber.w("CloudDedupeJudgeService: blocked by privacy gate: ${gateCheck.reason}")
             return AiServiceResult.Failure(AiServiceError.Disabled("Blocked by privacy gate: ${gateCheck.reason}"))
         }
 
-        val shouldRedact = settings?.redactBeforeCloud ?: true // default to redact if unknown
+        val shouldRedact = aiSettingsRepository?.settings()?.first()?.redactBeforeCloud ?: true
         val requestBody = buildRequestBody(input, shouldRedact)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.DEDUPE_JUDGE_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()

@@ -27,4 +27,18 @@ interface RecurringReminderDeliveryDao {
         ORDER BY COALESCE(snoozedUntil, scheduledAt)
     """)
     suspend fun getPendingDeliveries(now: Long): List<RecurringReminderDelivery>
+
+    /**
+     * Cancels all SCHEDULED or SNOOZED reminder deliveries for the given occurrence.
+     *
+     * Called when an occurrence transitions to PAID so that outstanding reminder
+     * notifications are not dispatched for a bill the user has already paid.
+     */
+    @Query("""
+        UPDATE recurring_reminder_deliveries
+        SET status = 'CANCELLED'
+        WHERE occurrenceId = :occurrenceId
+          AND status IN ('SCHEDULED', 'SNOOZED')
+    """)
+    suspend fun suppressOpenDeliveriesForOccurrence(occurrenceId: Long)
 }

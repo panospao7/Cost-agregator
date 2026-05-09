@@ -133,7 +133,9 @@ class BudgetForecastingEngine @Inject constructor(
             predictedRemaining = predictedRemaining,
             confidenceScore = confidence,
             riskLevel = riskLevel,
-            overspendProbability = overspendProbability
+            overspendProbability = overspendProbability,
+            createdAt = now,
+            currency = homeCurrency
         )
         
         // Save forecast — deactivate any existing active forecast for the same

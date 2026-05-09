@@ -6,10 +6,12 @@ import com.yourname.expensetracker.domain.alerts.AnomalyAlertRepository
 import com.yourname.expensetracker.domain.alerts.NewAnomalyAlert
 import com.yourname.expensetracker.domain.alerts.StoredAnomalyAlert
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 @Singleton
 class AnomalyAlertRepositoryImpl @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val anomalyAlertDao: AnomalyAlertDao
 ) : AnomalyAlertRepository,
     com.yourname.expensetracker.domain.usecase.dashboard.AnomalyAlertRepository {
@@ -31,6 +33,7 @@ class AnomalyAlertRepositoryImpl @Inject constructor(
     }
 
     override suspend fun insert(alert: NewAnomalyAlert): Long {
+        writeBarrier.checkWritesAllowed("AnomalyAlertRepositoryImpl.insert")
         return anomalyAlertDao.insert(
             AnomalyAlert(
                 expenseId = alert.expenseId,

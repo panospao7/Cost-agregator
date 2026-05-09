@@ -20,10 +20,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 @Singleton
 class AiChatRepositoryImpl @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val database: AppDatabase,
     private val sessionDao: AiChatSessionDao,
     private val messageDao: AiChatMessageDao,
@@ -53,6 +55,7 @@ class AiChatRepositoryImpl @Inject constructor(
         sessionDao.getById(sessionId)?.toDomain()
 
     override suspend fun createSession(title: String?): Long? {
+        writeBarrier.checkWritesAllowed("AiChatRepositoryImpl.createSession")
         if (!shouldPersistHistory()) return null
 
         val now = timeProvider.now()
@@ -72,6 +75,7 @@ class AiChatRepositoryImpl @Inject constructor(
         text: String,
         payloadJson: String?
     ): Long? {
+        writeBarrier.checkWritesAllowed("AiChatRepositoryImpl.appendMessage")
         if (!shouldPersistHistory()) return null
 
         // W34 redaction: strip payloadJson when not in RAW mode
@@ -101,15 +105,18 @@ class AiChatRepositoryImpl @Inject constructor(
     }
 
     override suspend fun clearSession(sessionId: Long) {
+        writeBarrier.checkWritesAllowed("AiChatRepositoryImpl.clearSession")
         sessionDao.deleteById(sessionId)
     }
 
     override suspend fun clearAllHistory() {
+        writeBarrier.checkWritesAllowed("AiChatRepositoryImpl.clearAllHistory")
         sessionDao.deleteAll()
     }
 
     /** W34: Delete messages older than [cutoff] (epoch millis). */
     suspend fun purgeOldMessages(cutoff: Long) {
+        writeBarrier.checkWritesAllowed("AiChatRepositoryImpl.purgeOldMessages")
         messageDao.deleteOlderThan(cutoff)
     }
 

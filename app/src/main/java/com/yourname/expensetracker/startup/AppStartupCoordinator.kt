@@ -83,6 +83,12 @@ class AppStartupCoordinator @Inject constructor(
 
                 // Attempt recovery from safety backup
                 val safetyBackupPath = entry.safetyBackupPath
+                // P7-P0-02: Fail-closed crash recovery.
+                // Track whether the safety-backup copy actually succeeded.
+                // If it fails we must NOT delete the journal, NOT reset maintenance mode,
+                // and NOT allow normal startup — the DB may be corrupt.
+                var recovered = false
+
                 if (safetyBackupPath != null) {
                     val safetyBackupFile = File(safetyBackupPath)
                     if (safetyBackupFile.exists() && safetyBackupFile.canRead()) {
@@ -121,6 +127,7 @@ class AppStartupCoordinator @Inject constructor(
                                     }
                                 }
 
+                                recovered = true
                                 Timber.w("Startup: successfully recovered live DB from safety backup after incomplete restore")
                             } catch (e: Exception) {
                                 Timber.e(e, "Startup: failed to recover from safety backup during crash recovery")
@@ -135,7 +142,23 @@ class AppStartupCoordinator @Inject constructor(
                     Timber.e("Startup: journal has no safety backup path; cannot recover from incomplete restore")
                 }
 
-                // Clean up staging files and delete journal regardless of recovery outcome
+                if (!recovered) {
+                    // Fail-closed: preserve journal as failure record and block all writes.
+                    // Do NOT clean staging, do NOT delete journal, do NOT reset maintenance mode.
+                    // The app is in an unknown state — operator must intervene before use.
+                    restoreJournal.failJournal(
+                        entry,
+                        "Startup crash recovery failed: safety backup copy did not complete"
+                    )
+                    restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED)
+                    Timber.e(
+                        "Startup: CRITICAL — crash recovery failed; " +
+                            "maintenance mode blocks all writes until manual intervention and app restart"
+                    )
+                    return
+                }
+
+                // Recovery succeeded — clean up staging files and journal.
                 restoreJournal.cleanStagingFiles(entry)
                 restoreJournal.deleteJournal()
             }

@@ -270,6 +270,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
             // 5. Update receipt with lifecycle metadata and fingerprints,
             //    and carry the taxInclusive flag for downstream consumers.
+            val now = timeProvider.now()
+            // P3-P1-02: Repair createdAt=0L sentinel that arrives when the OCR
+            // pipeline creates a ScannedReceipt without setting a timestamp.
+            val repairedCreatedAt = if (receipt.createdAt == 0L) now else receipt.createdAt
             val updated = receipt.copy(
                 imagePath = receipt.imagePath,
                 imageHash = fileHash ?: receipt.imageHash,
@@ -278,43 +282,51 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 processingStatus = processingStatus,
                 textFingerprint = textFingerprint,
                 semanticFingerprint = semanticFingerprint,
-                updatedAt = timeProvider.now()
+                createdAt = repairedCreatedAt,
+                updatedAt = now
             ).also { it.taxInclusive = taxInclusive }
-            scannedReceiptDao.update(updated)
 
-            // 6. Write lifecycle event
-            receiptEventDao.insert(
-                ReceiptEvent(
-                    receiptId = updated.id,
-                    sourceType = updated.sourceType,
-                    documentType = updated.documentType,
-                    eventType = "RECEIPT_SAVED",
-                    occurredAt = timeProvider.now(),
-                    oldStatus = null,
-                    newStatus = updated.processingStatus,
-                    actor = "system:coordinator",
-                    message = "Receipt processed via lifecycle coordinator",
-                    metadata = null,
-                    errorDetails = null
-                )
-            )
+            // 5+6. Atomically persist the receipt update and all lifecycle events.
+            // P3-P1-01: wrap update+events in a single transaction so a partial
+            // write (event inserted but receipt row not yet updated, or vice versa)
+            // cannot leave the database in an inconsistent state.
+            database.withTransaction {
+                scannedReceiptDao.update(updated)
 
-            if (isOcrFailure) {
+                // 6. Write lifecycle event
                 receiptEventDao.insert(
                     ReceiptEvent(
                         receiptId = updated.id,
                         sourceType = updated.sourceType,
                         documentType = updated.documentType,
-                        eventType = "OCR_FAILED",
-                        occurredAt = timeProvider.now(),
+                        eventType = "RECEIPT_SAVED",
+                        occurredAt = now,
                         oldStatus = null,
-                        newStatus = ReceiptProcessingStatus.OCR_FAILED.name,
+                        newStatus = updated.processingStatus,
                         actor = "system:coordinator",
-                        message = "OCR failed for receipt input",
+                        message = "Receipt processed via lifecycle coordinator",
                         metadata = null,
                         errorDetails = null
                     )
                 )
+
+                if (isOcrFailure) {
+                    receiptEventDao.insert(
+                        ReceiptEvent(
+                            receiptId = updated.id,
+                            sourceType = updated.sourceType,
+                            documentType = updated.documentType,
+                            eventType = "OCR_FAILED",
+                            occurredAt = now,
+                            oldStatus = null,
+                            newStatus = ReceiptProcessingStatus.OCR_FAILED.name,
+                            actor = "system:coordinator",
+                            message = "OCR failed for receipt input",
+                            metadata = null,
+                            errorDetails = null
+                        )
+                    )
+                }
             }
 
             // 7. Dispatch post-save side effects (warranty, categorization, matching, etc.)

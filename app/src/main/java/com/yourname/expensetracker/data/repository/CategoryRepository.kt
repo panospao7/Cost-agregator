@@ -14,10 +14,12 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import timber.log.Timber
 
 @Singleton
 class CategoryRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val database: AppDatabase,
     private val categoryDao: CategoryDao,
     private val merchantCategoryDao: MerchantCategoryDao,
@@ -40,7 +42,9 @@ class CategoryRepository @Inject constructor(
      *   avoid fragile flow semantics inside a seeding path.
      * - Ensures "Uncategorized" category exists for existing users via one-shot read.
      */
-    suspend fun ensureDefaultCategories() = withContext(Dispatchers.IO) {
+    suspend fun ensureDefaultCategories() {
+        writeBarrier.checkWritesAllowed("CategoryRepository.ensureDefaultCategories")
+        withContext(Dispatchers.IO) {
         try {
             val defaults = com.yourname.expensetracker.data.provider.MerchantCategoryProvider.categoryBlueprints
             val seeded = categoryDao.seedDefaultsIfEmpty(defaults)
@@ -87,6 +91,7 @@ class CategoryRepository @Inject constructor(
         } catch (e: Exception) {
             Timber.e(e, "Failed to seed default categories")
         }
+        }
     }
 
     /**
@@ -101,7 +106,9 @@ class CategoryRepository @Inject constructor(
      *
      * @return the newly created or existing [Category].
      */
-    suspend fun addCategory(name: String, icon: String, color: String): Category = withContext(Dispatchers.IO) {
+    suspend fun addCategory(name: String, icon: String, color: String): Category {
+        writeBarrier.checkWritesAllowed("CategoryRepository.addCategory")
+        return withContext(Dispatchers.IO) {
         // Normalize: trim whitespace and lowercase for consistency with Category.normalizedName
         val normalizedName = name.trim().lowercase()
 
@@ -118,6 +125,7 @@ class CategoryRepository @Inject constructor(
             categorizationEngine.invalidateCache()
             hybridExpenseClassifier.get().invalidateCategorySnapshot()
             category.copy(id = id)
+        }
         }
     }
 
@@ -150,12 +158,15 @@ class CategoryRepository @Inject constructor(
      * @return The number of expenses that were reassigned.
      * @throws IllegalArgumentException if either ID is invalid or identical.
      */
-    suspend fun mergeCategories(sourceCategoryId: Long, targetCategoryId: Long): Int = withContext(Dispatchers.IO) {
+    suspend fun mergeCategories(sourceCategoryId: Long, targetCategoryId: Long): Int {
+        writeBarrier.checkWritesAllowed("CategoryRepository.mergeCategories")
+        return withContext(Dispatchers.IO) {
         val expensesMoved = categoryDao.mergeCategories(sourceCategoryId, targetCategoryId)
         categorizationEngine.invalidateCache()
         hybridExpenseClassifier.get().invalidateCategorySnapshot()
         Timber.i("Merged category %d into %d: %d expenses reassigned", sourceCategoryId, targetCategoryId, expensesMoved)
         expensesMoved
+        }
     }
 
     /**
@@ -176,7 +187,9 @@ class CategoryRepository @Inject constructor(
         Timber.d("C11: updateExpenseCategoryBulk called for merchant='$merchant', category=$newCategoryId — backfill not yet implemented")
     }
 
-    suspend fun deleteCategory(categoryId: Long): DeleteCategoryResult = withContext(Dispatchers.IO) {
+    suspend fun deleteCategory(categoryId: Long): DeleteCategoryResult {
+        writeBarrier.checkWritesAllowed("CategoryRepository.deleteCategory")
+        return withContext(Dispatchers.IO) {
         val category = categoryDao.getById(categoryId)
             ?: return@withContext DeleteCategoryResult.NotFound
 
@@ -196,6 +209,7 @@ class CategoryRepository @Inject constructor(
         categorizationEngine.invalidateCache()
         hybridExpenseClassifier.get().invalidateCategorySnapshot()
         DeleteCategoryResult.Deleted
+        }
     }
 }
 

@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.groups.SharedGroupExpense
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 /**
@@ -23,6 +24,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class SharedExpenseDataPortAdapter @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val groupDao: ExpenseGroupDao,
     private val memberDao: GroupMemberDao,
     private val groupExpenseDao: GroupExpenseDao,
@@ -33,14 +35,16 @@ class SharedExpenseDataPortAdapter @Inject constructor(
         group: SharedExpenseGroup,
         members: List<SharedExpenseMember>
     ): Long {
+        writeBarrier.checkWritesAllowed("SharedExpenseDataPortAdapter.createGroupWithMembers")
         return transactionCoordinator.createGroupWithMembersAtomic(
             group = group.toEntity(),
             members = members.map { it.toEntity() }
         )
     }
 
-    override suspend fun addMember(member: SharedExpenseMember): Long =
-        when (val result = transactionCoordinator.addMemberToGroup(
+    override suspend fun addMember(member: SharedExpenseMember): Long {
+        writeBarrier.checkWritesAllowed("SharedExpenseDataPortAdapter.addMember")
+        return when (val result = transactionCoordinator.addMemberToGroup(
             groupId = member.groupId,
             name = member.name,
             email = member.email,
@@ -60,12 +64,15 @@ class SharedExpenseDataPortAdapter @Inject constructor(
                 throw IllegalArgumentException(result.error.toString())
             }
         }
+    }
 
     override suspend fun removeMember(member: SharedExpenseMember) {
+        writeBarrier.checkWritesAllowed("SharedExpenseDataPortAdapter.removeMember")
         memberDao.delete(member.toEntity())
     }
 
     override suspend fun addExpense(expense: SharedGroupExpense): Long {
+        writeBarrier.checkWritesAllowed("SharedExpenseDataPortAdapter.addExpense")
         val result = if (expense.expenseId != null) {
             transactionCoordinator.addExpenseWithLink(
                 groupId = expense.groupId,
@@ -124,14 +131,17 @@ class SharedExpenseDataPortAdapter @Inject constructor(
         groupExpenseDao.getExpensesForGroupOnce(groupId).map { it.toDomain() }
 
     override suspend fun archiveGroup(groupId: Long) {
+        writeBarrier.checkWritesAllowed("SharedExpenseDataPortAdapter.archiveGroup")
         groupDao.archiveGroup(groupId)
     }
 
     override suspend fun restoreGroup(groupId: Long) {
+        writeBarrier.checkWritesAllowed("SharedExpenseDataPortAdapter.restoreGroup")
         groupDao.restoreGroup(groupId)
     }
 
     override suspend fun deleteGroup(group: SharedExpenseGroup) {
+        writeBarrier.checkWritesAllowed("SharedExpenseDataPortAdapter.deleteGroup")
         transactionCoordinator.permanentlyDeleteGroup(group.id)
     }
 

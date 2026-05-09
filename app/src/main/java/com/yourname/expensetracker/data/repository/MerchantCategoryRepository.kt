@@ -4,19 +4,27 @@ import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.MerchantCategory
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 @Singleton
 class MerchantCategoryRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val dao: MerchantCategoryDao,
     private val categorizationEngineProvider: javax.inject.Provider<CategorizationEngine>
 ) {
 
     suspend fun getAll(): List<MerchantCategory> = dao.getAll()
 
-    suspend fun insert(mapping: MerchantCategory) = dao.insert(mapping)
+    suspend fun insert(mapping: MerchantCategory) {
+        writeBarrier.checkWritesAllowed("MerchantCategoryRepository.insert")
+        dao.insert(mapping)
+    }
 
-    suspend fun deleteAll() = dao.deleteAll()
+    suspend fun deleteAll() {
+        writeBarrier.checkWritesAllowed("MerchantCategoryRepository.deleteAll")
+        dao.deleteAll()
+    }
 
     /**
      * Learns a merchant -> category mapping.

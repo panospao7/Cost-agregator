@@ -6,17 +6,23 @@ import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 @Singleton
 class MerchantNormalizationRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val dao: MerchantNormalizationDao
 ) {
-    suspend fun insertCanonical(merchant: MerchantCanonical): Long =
-        dao.insertCanonical(merchant)
+    suspend fun insertCanonical(merchant: MerchantCanonical): Long {
+        writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.insertCanonical")
+        return dao.insertCanonical(merchant)
+    }
 
-    suspend fun updateCanonical(merchant: MerchantCanonical) =
+    suspend fun updateCanonical(merchant: MerchantCanonical) {
+        writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.updateCanonical")
         dao.updateCanonical(merchant)
+    }
 
     suspend fun getCanonicalById(id: Long): MerchantCanonical? =
         dao.getCanonicalById(id)
@@ -33,19 +39,27 @@ class MerchantNormalizationRepository @Inject constructor(
     suspend fun getTopMerchants(limit: Int): List<MerchantCanonical> =
         dao.getTopMerchants(limit)
 
-    suspend fun updateCanonicalCategory(id: Long, categoryId: Long?) =
+    suspend fun updateCanonicalCategory(id: Long, categoryId: Long?) {
+        writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.updateCanonicalCategory")
         dao.updateCanonicalCategory(id, categoryId)
+    }
 
     // TODO (C08): incrementMerchantStats is never called — wire it from TransactionSideEffectDispatcher
     // after committed expense creation/update.
-    suspend fun incrementMerchantStats(id: Long, amount: Double, timestamp: Long) =
+    suspend fun incrementMerchantStats(id: Long, amount: Double, timestamp: Long) {
+        writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.incrementMerchantStats")
         dao.incrementMerchantStats(id, amount, timestamp)
+    }
 
-    suspend fun insertAlias(alias: MerchantAlias): Long =
-        dao.insertAlias(alias)
+    suspend fun insertAlias(alias: MerchantAlias): Long {
+        writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.insertAlias")
+        return dao.insertAlias(alias)
+    }
 
-    suspend fun updateAlias(alias: MerchantAlias) =
+    suspend fun updateAlias(alias: MerchantAlias) {
+        writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.updateAlias")
         dao.updateAlias(alias)
+    }
 
     suspend fun getAliasById(id: Long): MerchantAlias? =
         dao.getAliasById(id)
@@ -79,11 +93,15 @@ class MerchantNormalizationRepository @Inject constructor(
         return (prefixMatches + dedupedContains).take(limit)
     }
 
-    suspend fun deleteUnusedAliasesOlderThan(olderThan: Long): Int =
-        dao.deleteUnusedAliasesOlderThan(olderThan)
+    suspend fun deleteUnusedAliasesOlderThan(olderThan: Long): Int {
+        writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.deleteUnusedAliasesOlderThan")
+        return dao.deleteUnusedAliasesOlderThan(olderThan)
+    }
 
-    suspend fun linkAliasToCanonical(rawName: String, normalizedKey: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long) =
+    suspend fun linkAliasToCanonical(rawName: String, normalizedKey: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long) {
+        writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.linkAliasToCanonical")
         dao.linkAliasToCanonical(rawName, normalizedKey, canonicalId, isUserDefined, timestamp)
+    }
 
     suspend fun getCanonicalCount(): Int =
         dao.getCanonicalCount()

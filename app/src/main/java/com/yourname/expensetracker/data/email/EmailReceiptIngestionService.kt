@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.email
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
@@ -68,6 +69,7 @@ class EmailReceiptIngestionService(
     private val categorizationEngine: CategorizationEngine,
     private val timeProvider: TimeProvider,
     private val coordinator: TransactionLifecycleCoordinator,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val transactionRunner: suspend (suspend () -> EmailReceiptResult) -> EmailReceiptResult
 ) {
     @Inject
@@ -82,7 +84,8 @@ class EmailReceiptIngestionService(
         categorizationEngine: CategorizationEngine,
         timeProvider: TimeProvider,
         coordinator: TransactionLifecycleCoordinator,
-        database: AppDatabase
+        database: AppDatabase,
+        restoreMaintenanceMode: RestoreMaintenanceMode
     ) : this(
         receiptParser = receiptParser,
         processReceiptUseCase = processReceiptUseCase,
@@ -94,6 +97,7 @@ class EmailReceiptIngestionService(
         categorizationEngine = categorizationEngine,
         timeProvider = timeProvider,
         coordinator = coordinator,
+        restoreMaintenanceMode = restoreMaintenanceMode,
         transactionRunner = { block -> database.withTransaction { block() } }
     )
 
@@ -107,7 +111,8 @@ class EmailReceiptIngestionService(
         merchantNormalizer: MerchantNormalizer,
         categorizationEngine: CategorizationEngine,
         timeProvider: TimeProvider,
-        coordinator: TransactionLifecycleCoordinator
+        coordinator: TransactionLifecycleCoordinator,
+        restoreMaintenanceMode: RestoreMaintenanceMode
     ) : this(
         receiptParser = receiptParser,
         processReceiptUseCase = processReceiptUseCase,
@@ -119,6 +124,7 @@ class EmailReceiptIngestionService(
         categorizationEngine = categorizationEngine,
         timeProvider = timeProvider,
         coordinator = coordinator,
+        restoreMaintenanceMode = restoreMaintenanceMode,
         transactionRunner = { block -> block() }
     )
 
@@ -146,6 +152,10 @@ class EmailReceiptIngestionService(
         receivedAt: Long,
         messageId: String
     ): EmailReceiptResult = ingestionMutex.withLock {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            return@withLock EmailReceiptResult.ParseError("Database writes blocked during restore")
+        }
         try {
             // Step 1: Detect provider
             val provider = detectProvider(sender, subject, emailBody)

@@ -8,10 +8,12 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 @Singleton
 class SpendingChallengeRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val spendingChallengeDao: SpendingChallengeDao,
     private val timeProvider: TimeProvider
 ) {
@@ -27,6 +29,7 @@ class SpendingChallengeRepository @Inject constructor(
     }
 
     suspend fun saveChallenge(challenge: SpendingChallenge): SpendingChallenge {
+        writeBarrier.checkWritesAllowed("SpendingChallengeRepository.saveChallenge")
         val entity = challenge.toEntity()
         val persistedId = spendingChallengeDao.insert(entity).takeIf { it > 0 } ?: entity.id
         return entity.copy(id = persistedId).toDomain(
@@ -37,6 +40,7 @@ class SpendingChallengeRepository @Inject constructor(
     }
 
     suspend fun deactivateChallenges(challengeIds: List<Long>, updatedAt: Long) {
+        writeBarrier.checkWritesAllowed("SpendingChallengeRepository.deactivateChallenges")
         if (challengeIds.isEmpty()) return
         spendingChallengeDao.deactivateChallenges(challengeIds, updatedAt)
     }

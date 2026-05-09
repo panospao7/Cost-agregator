@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
@@ -86,7 +87,8 @@ class ReceiptLinkService @Inject constructor(
     private val warrantyDao: WarrantyDao,
     private val returnWindowDao: ReturnWindowDao,
     private val expenseDao: ExpenseDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) {
 
     /**
@@ -122,6 +124,11 @@ class ReceiptLinkService @Inject constructor(
         allowRelink: Boolean = false,
         matchStatus: MatchStatus? = null
     ): Result<ReceiptExpenseLink> {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        }
+
         // 1. Load receipt — fail fast if not found
         val receipt = scannedReceiptDao.getById(receiptId)
             ?: return Result.failure(
@@ -298,6 +305,11 @@ class ReceiptLinkService @Inject constructor(
         receiptId: Long,
         expenseId: Long
     ): Result<Unit> {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            return Result.failure(IllegalStateException("Database writes blocked during restore"))
+        }
+
         return try {
             // Load receipt for metadata (may be null if already deleted)
             val receipt = scannedReceiptDao.getById(receiptId)

@@ -75,23 +75,14 @@ class CloudCategorizationAssistService @Inject constructor(
             return null
         }
 
-        // PRIVACY GUARD: Cloud must not be used if user has disabled it.
-        // This is a defense-in-depth check — the HybridService/Router already gates,
-        // but this prevents bypass via direct DI injection of the cloud service.
-        val settings = aiSettingsRepository?.settings()?.first()
-        if (settings != null && !settings.allowCloudAi) {
-            Timber.d("CloudCategorizationAssistService: Cloud AI disabled in settings, skipping.")
-            return null
-        }
-
-        // PRIVACY GATE: Check privacy gate before cloud AI call
+        // PRIVACY GATE: Unified cloud AI gate — checks both PrivacySettings + AiSettings
         val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
         if (gateCheck is PrivacyDecision.Denied) {
             Timber.w("CloudCategorizationAssistService: blocked by privacy gate: ${gateCheck.reason}")
             return null
         }
 
-        val shouldRedact = settings?.redactBeforeCloud ?: true // default to redact if unknown
+        val shouldRedact = aiSettingsRepository?.settings()?.first()?.redactBeforeCloud ?: true
         val requestBody = buildRequestBody(input, shouldRedact)
         val url = "${AppConfig.Ai.GEMINI_BASE_URL}/v1beta/models/${AppConfig.Ai.CATEGORIZATION_ASSIST_CLOUD_MODEL}:generateContent"
         val request = Request.Builder()

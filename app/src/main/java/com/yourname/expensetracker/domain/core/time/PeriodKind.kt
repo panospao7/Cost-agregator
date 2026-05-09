@@ -144,54 +144,8 @@ fun PeriodKind.toPeriodRange(
     customStart: Long? = null,
     customEnd: Long? = null
 ): PeriodRange {
-    val (start, end) = when (this) {
-        PeriodKind.TODAY -> {
-            val dayStart = TimePeriodUtils.getStartOfDay(now)
-            dayStart to TimePeriodUtils.getEndOfDay(now)
-        }
-        PeriodKind.THIS_WEEK -> TimePeriodUtils.getWeekRange(now, 0)
-        PeriodKind.LAST_WEEK -> TimePeriodUtils.getWeekRange(now, -1)
-        PeriodKind.LAST_7_DAYS -> TimePeriodUtils.getLastNCalendarDaysRange(now, 7)
-        PeriodKind.THIS_MONTH -> TimePeriodUtils.getMonthRange(now)
-        PeriodKind.LAST_MONTH -> TimePeriodUtils.getMonthRange(
-            TimePeriodUtils.addMonths(now, -1)
-        )
-        PeriodKind.LAST_30_DAYS -> TimePeriodUtils.getLastNCalendarDaysRange(now, 30)
-        PeriodKind.THIS_QUARTER -> TimePeriodUtils.getQuarterRange(now)
-        PeriodKind.LAST_QUARTER -> {
-            val lastQuarterStart = TimePeriodUtils.getStartOfQuarter(
-                TimePeriodUtils.addMonths(now, -3)
-            )
-            val lastQuarterEnd = TimePeriodUtils.getEndOfQuarter(
-                TimePeriodUtils.addMonths(now, -3)
-            )
-            lastQuarterStart to lastQuarterEnd
-        }
-        PeriodKind.THIS_YEAR -> TimePeriodUtils.getYearRange(now)
-        PeriodKind.LAST_YEAR -> {
-            val lastYearStart = TimePeriodUtils.getStartOfYear(
-                TimePeriodUtils.addYears(now, -1)
-            )
-            val lastYearEnd = TimePeriodUtils.getStartOfYear(now)
-            lastYearStart to lastYearEnd
-        }
-        PeriodKind.CUSTOM -> {
-            val s = customStart ?: throw IllegalArgumentException(
-                "PeriodKind.CUSTOM requires explicit customStart"
-            )
-            val e = customEnd ?: throw IllegalArgumentException(
-                "PeriodKind.CUSTOM requires explicit customEnd"
-            )
-            s to e
-        }
-    }
-    return PeriodRange(
-        kind = this,
-        startInclusiveMillis = start,
-        endExclusiveMillis = end,
-        zoneId = zoneId,
-        label = name
-    )
+    // M04-FIXED: Delegates to zone-aware java.time implementation.
+    return toPeriodRangeZoned(now, zoneId)
 }
 
 // M04-FIXED: Zone-aware toPeriodRange using java.time.
@@ -214,8 +168,10 @@ fun PeriodKind.toPeriodRangeZoned(nowMillis: Long, zoneId: java.time.ZoneId = ja
             val end = today.with(java.time.DayOfWeek.MONDAY).atStartOfDay(zoneId).toInstant().toEpochMilli()
             PeriodRange(this, start, end, zoneId, "Last week")
         }
+        // M12-FIXED: LAST_7_DAYS includes today (end = tomorrow 00:00).
+        // This gives 7 full calendar days: [today-7d, today+1d).
         PeriodKind.LAST_7_DAYS -> {
-            val end = today.atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = today.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli() // tomorrow start = today inclusive
             val start = today.minusDays(7).atStartOfDay(zoneId).toInstant().toEpochMilli()
             PeriodRange(this, start, end, zoneId, "Last 7 days")
         }
@@ -231,7 +187,7 @@ fun PeriodKind.toPeriodRangeZoned(nowMillis: Long, zoneId: java.time.ZoneId = ja
             PeriodRange(this, start, end, zoneId, "Last month")
         }
         PeriodKind.LAST_30_DAYS -> {
-            val end = today.atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = today.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
             val start = today.minusDays(30).atStartOfDay(zoneId).toInstant().toEpochMilli()
             PeriodRange(this, start, end, zoneId, "Last 30 days")
         }

@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.domain.bank
 
+import androidx.annotation.VisibleForTesting
+import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.entity.BankConnection
 import com.yourname.expensetracker.data.database.entity.SyncFrequency
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -57,7 +60,8 @@ data class SyncResult(
 @Singleton
 class BankApiIntegration @Inject constructor(
     private val timeProvider: TimeProvider,
-    private val coordinator: TransactionLifecycleCoordinator
+    private val coordinator: TransactionLifecycleCoordinator,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     
     companion object {
@@ -90,38 +94,25 @@ class BankApiIntegration @Inject constructor(
     @StubForDemo
     suspend fun initiateConnection(bankId: String): String? = withContext(Dispatchers.IO) {
         requireStubMode()
+        writeBarrier.checkWritesAllowed("BankApiIntegration.initiateConnection")
 
-        // In real implementation, this would:
-        // 1. Generate OAuth state parameter
-        // 2. Build authorization URL
-        // 3. Return URL for WebView/browser
-        
         val bank = SUPPORTED_BANKS.find { it.id == bankId }
         if (bank == null) {
             Timber.e("Bank not supported: $bankId")
             return@withContext null
         }
         
-        // Placeholder return - would be actual OAuth URL
         "https://oauth.${bank.id}.example.com/auth?client_id=demo&response_type=code"
     }
     
-    /**
-     * Complete connection after OAuth callback (placeholder).
-     */
     @StubForDemo
     suspend fun completeConnection(
         bankId: String,
         authCode: String
     ): BankConnection? = withContext(Dispatchers.IO) {
         requireStubMode()
+        writeBarrier.checkWritesAllowed("BankApiIntegration.completeConnection")
 
-        // In real implementation, this would:
-        // 1. Exchange auth code for access token
-        // 2. Get refresh token
-        // 3. Fetch account information
-        // 4. Create BankConnection entity
-        
         val bank = SUPPORTED_BANKS.find { it.id == bankId } ?: return@withContext null
         
         BankConnection(
@@ -130,22 +121,20 @@ class BankApiIntegration @Inject constructor(
             countryCode = bank.countryCode,
             isConnected = true,
             isActive = true,
-            accessToken = BankTokenCipher.encryptIfNeeded("demo_token_$bankId"), // Would be real token
+            accessToken = BankTokenCipher.encryptIfNeeded("demo_token_$bankId"),
             refreshToken = BankTokenCipher.encryptIfNeeded("demo_refresh_$bankId"),
             tokenEncryptionVersion = 1,
-            tokenExpiry = timeProvider.now() + (30 * 24 * 60 * 60 * 1000L) // 30 days
+            tokenExpiry = timeProvider.now() + (30 * 24 * 60 * 60 * 1000L)
         )
     }
     
-    /**
-     * Sync transactions from bank (placeholder).
-     */
     @StubForDemo
     suspend fun syncTransactions(
         connection: BankConnection,
         since: Long? = null
     ): SyncResult = withContext(Dispatchers.IO) {
         requireStubMode()
+        writeBarrier.checkWritesAllowed("BankApiIntegration.syncTransactions")
 
         // In real implementation, this would:
         // 1. Check token validity and refresh if needed
@@ -301,8 +290,9 @@ class BankApiIntegration @Inject constructor(
     /**
      * Generate mock transactions for demonstration.
      */
+    @VisibleForTesting
     @StubForDemo
-    private fun generateMockTransactions(bankId: String, since: Long?): List<BankTransaction> {
+    fun generateMockTransactions(bankId: String, since: Long?): List<BankTransaction> {
         requireStubMode()
 
         val transactions = mutableListOf<BankTransaction>()
@@ -334,7 +324,10 @@ class BankApiIntegration @Inject constructor(
     }
 
     private fun requireStubMode() {
-        require(!BankApiConfig.isProduction) { "Bank integration not implemented" }
+        if (!BuildConfig.DEBUG) {
+            error("Bank integration is demo-only and disabled in release builds")
+        }
+        require(BankApiConfig.isStubMode) { "Bank integration not implemented — set BankApiConfig.isStubMode = true for demo" }
     }
 }
 

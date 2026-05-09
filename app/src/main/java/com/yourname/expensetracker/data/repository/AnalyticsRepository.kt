@@ -21,8 +21,9 @@ import javax.inject.Singleton
  * Summary of spending for a given time period, used by the analytics screen
  * and the dashboard to display trends and comparisons.
  *
- * TODO (A05): Add dataQuality: DataQualityReport? and isPartial: Boolean to SpendingSummary.
- * Populate from currentAggregate.conversionFailures.
+ * A05: SpendingSummary now carries [aggregate] for multi-currency safety and
+ * [isPartial] for conversion-failure awareness. DataQualityReport can be
+ * derived from aggregate.conversionFailures when needed.
  */
 data class SpendingSummary(
     val totalSpent: Double,

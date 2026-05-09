@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.recurring.lifecycle
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
 import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
@@ -40,7 +41,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
     private val manualRecurringExpenseDao: ManualRecurringExpenseDao,
     private val reminderDeliveryDao: RecurringReminderDeliveryDao,
     private val lifecycleEventDao: RecurringLifecycleEventDao,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val plannedExpenseDao: PlannedExpenseDao
 ) {
     companion object {
         /** Source type used for manual recurring rules. */
@@ -114,6 +116,11 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * @return `true` if a matching occurrence was found and linked.
      */
     suspend fun linkExpenseToOccurrence(expenseId: Long): Boolean {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+
         val expense = expenseDao.getById(expenseId) ?: return false
 
         // Exclude non-ownership and non-spending types
@@ -169,6 +176,31 @@ class RecurringLifecycleCoordinator @Inject constructor(
             )
         )
 
+        // P4-P0-01: Fulfil the PlannedExpense row (PLANNED → FULFILLED) that
+        // corresponds to this occurrence, so the planned-expense pipeline stays
+        // in sync with the recurring-occurrence pipeline.
+        runCatching {
+            val planned = plannedExpenseDao.getBySourceOccurrenceKey(match.occurrenceKey)
+            if (planned != null) {
+                plannedExpenseDao.linkToActualExpense(planned.id, expenseId, now)
+                Timber.d(
+                    "P4-P0-01: PlannedExpense %d fulfilled by expense %d (occurrenceKey=%s)",
+                    planned.id, expenseId, match.occurrenceKey
+                )
+            }
+        }.onFailure { e ->
+            Timber.w(e, "P4-P0-01: Failed to fulfil PlannedExpense for occurrence %d", match.id)
+        }
+
+        // P4-P0-02: Cancel any outstanding SCHEDULED/SNOOZED reminder deliveries
+        // for this occurrence — the bill has been paid, no reminder should fire.
+        runCatching {
+            reminderDeliveryDao.suppressOpenDeliveriesForOccurrence(match.id)
+            Timber.d("P4-P0-02: Suppressed open reminders for paid occurrence %d", match.id)
+        }.onFailure { e ->
+            Timber.w(e, "P4-P0-02: Failed to suppress reminders for occurrence %d", match.id)
+        }
+
         return true
     }
 
@@ -195,6 +227,11 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * @param expenseId The ID of the expense being deleted.
      */
     suspend fun unlinkExpenseFromOccurrence(expenseId: Long) {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+
         val now = timeProvider.now()
 
         // Direct lookup by linkedExpenseId — handles any date range (historical, backdated, restored)
@@ -301,6 +338,11 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * Called by [BillReminderWorker] after dispatching the notification.
      */
     suspend fun markReminderSent(deliveryId: Long) {
+        // Guard: block writes during restore maintenance mode
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+
         val now = timeProvider.now()
         val existing = reminderDeliveryDao.getById(deliveryId) ?: return
         reminderDeliveryDao.update(

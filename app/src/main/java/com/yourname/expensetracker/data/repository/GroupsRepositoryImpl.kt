@@ -22,10 +22,12 @@ import com.yourname.expensetracker.domain.groups.Result
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 @Singleton
 class GroupsRepositoryImpl @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val database: AppDatabase,
     private val groupDao: ExpenseGroupDao,
     private val memberDao: GroupMemberDao,
@@ -77,7 +79,9 @@ class GroupsRepositoryImpl @Inject constructor(
         description: String?,
         currency: String,
         currentUserName: String
-    ): GroupCreationResult = withContext(ioDispatcher) {
+    ): GroupCreationResult {
+        writeBarrier.checkWritesAllowed("GroupsRepositoryImpl.createGroup")
+        return withContext(ioDispatcher) {
         coordinator.createGroupWithMembers(
             name = name,
             description = description,
@@ -90,6 +94,7 @@ class GroupsRepositoryImpl @Inject constructor(
                 )
             )
         )
+        }
     }
 
     override suspend fun addMember(
@@ -97,13 +102,16 @@ class GroupsRepositoryImpl @Inject constructor(
         name: String,
         email: String?,
         isCurrentUser: Boolean
-    ): Result<Unit, GroupValidationError> = withContext(ioDispatcher) {
+    ): Result<Unit, GroupValidationError> {
+        writeBarrier.checkWritesAllowed("GroupsRepositoryImpl.addMember")
+        return withContext(ioDispatcher) {
         coordinator.addMemberToGroup(
             groupId = groupId,
             name = name,
             email = email,
             isCurrentUser = isCurrentUser
         )
+        }
     }
 
     override suspend fun addExpenseWithLink(
@@ -115,7 +123,9 @@ class GroupsRepositoryImpl @Inject constructor(
         splitType: SplitType,
         customSplitsJson: String?,
         date: Long
-    ): GroupExpenseCreationResult = withContext(ioDispatcher) {
+    ): GroupExpenseCreationResult {
+        writeBarrier.checkWritesAllowed("GroupsRepositoryImpl.addExpenseWithLink")
+        return withContext(ioDispatcher) {
         val homeCurrency = try { currencySettingsRepository.homeCurrency().first() } catch (_: Exception) { "EUR" }
         val groupCurrency = groupDao.getById(groupId)?.defaultCurrency ?: homeCurrency
 
@@ -130,6 +140,7 @@ class GroupsRepositoryImpl @Inject constructor(
             customSplitsJson = customSplitsJson,
             date = date
         )
+        }
     }
 
     /**
@@ -147,7 +158,9 @@ class GroupsRepositoryImpl @Inject constructor(
         date: Long,
         transactionType: TransactionType,
         notes: String?
-    ): GroupExpenseCreationResult = withContext(ioDispatcher) {
+    ): GroupExpenseCreationResult {
+        writeBarrier.checkWritesAllowed("GroupsRepositoryImpl.createSystemExpenseAndLinkToGroup")
+        return withContext(ioDispatcher) {
         coordinator.createSystemExpenseAndLinkToGroup(
             groupId = groupId,
             description = description,
@@ -160,17 +173,23 @@ class GroupsRepositoryImpl @Inject constructor(
             transactionType = transactionType,
             notes = notes
         )
+        }
     }
 
-    override suspend fun deleteGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
+    override suspend fun deleteGroup(groupId: Long): Boolean {
+        writeBarrier.checkWritesAllowed("GroupsRepositoryImpl.deleteGroup")
+        return withContext(ioDispatcher) {
         coordinator.deleteGroup(groupId)
+        }
     }
 
     // TODO (G09): Keep deletion validation in one coordinator/use case, not in optional caller code.
     //             The pre-flight checks and the actual deletion are currently split between
     //             this repository method and the SharedExpenseManager, making it possible
     //             for callers to bypass validation by calling this method directly.
-    override suspend fun deleteMember(groupId: Long, memberId: Long): DeleteGroupMemberResult = withContext(ioDispatcher) {
+    override suspend fun deleteMember(groupId: Long, memberId: Long): DeleteGroupMemberResult {
+        writeBarrier.checkWritesAllowed("GroupsRepositoryImpl.deleteMember")
+        return withContext(ioDispatcher) {
         try {
             val preflightMember = memberDao.getById(memberId)
                 ?: return@withContext DeleteGroupMemberResult.Error("Member not found")
@@ -220,6 +239,7 @@ class GroupsRepositoryImpl @Inject constructor(
             }
         } catch (e: Exception) {
             DeleteGroupMemberResult.Error(e.message ?: "Failed to delete member")
+        }
         }
     }
 

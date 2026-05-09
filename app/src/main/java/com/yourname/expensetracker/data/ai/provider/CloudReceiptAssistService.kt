@@ -106,12 +106,6 @@ class CloudReceiptAssistService @Inject constructor(
 
         val settings = aiSettingsRepository.settings().first()
 
-        // PRIVACY GUARD: Cloud must not be used if user has disabled it
-        if (!settings.allowCloudAi) {
-            Timber.d("CloudReceiptAssistService: Cloud AI disabled in settings, skipping.")
-            return AiServiceResult.Failure(AiServiceError.Disabled("Cloud AI is disabled in settings"))
-        }
-
         val allowImage = input.isImageAnalysisMode && settings.receiptImageCloudEnabled
         val shouldRedact = settings.redactBeforeCloud
         val requestPayload = buildRequestPayload(input, allowImage, shouldRedact)

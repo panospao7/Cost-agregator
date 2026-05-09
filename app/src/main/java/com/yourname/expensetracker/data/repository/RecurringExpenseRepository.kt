@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 /**
@@ -22,6 +23,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class RecurringExpenseRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val dao: ManualRecurringExpenseDao
 ) {
     companion object {
@@ -98,6 +100,7 @@ class RecurringExpenseRepository @Inject constructor(
         currency: String = "EUR",
         note: String? = null
     ): Long {
+        writeBarrier.checkWritesAllowed("RecurringExpenseRepository.addRecurringExpense")
         val expense = createRecurringExpenseEntity(
             merchant = merchant,
             amount = amount,
@@ -109,12 +112,24 @@ class RecurringExpenseRepository @Inject constructor(
         return dao.insert(expense)
     }
 
-    suspend fun insert(expense: ManualRecurringExpense) = dao.insert(expense)
+    suspend fun insert(expense: ManualRecurringExpense): Long {
+        writeBarrier.checkWritesAllowed("RecurringExpenseRepository.insert")
+        return dao.insert(expense)
+    }
 
-    suspend fun delete(expense: ManualRecurringExpense) = dao.delete(expense)
+    suspend fun delete(expense: ManualRecurringExpense) {
+        writeBarrier.checkWritesAllowed("RecurringExpenseRepository.delete")
+        dao.delete(expense)
+    }
     
-    suspend fun deleteById(id: Long) = dao.deleteById(id)
+    suspend fun deleteById(id: Long) {
+        writeBarrier.checkWritesAllowed("RecurringExpenseRepository.deleteById")
+        dao.deleteById(id)
+    }
 
-    suspend fun update(expense: ManualRecurringExpense) = dao.update(expense)
+    suspend fun update(expense: ManualRecurringExpense) {
+        writeBarrier.checkWritesAllowed("RecurringExpenseRepository.update")
+        dao.update(expense)
+    }
 
 }

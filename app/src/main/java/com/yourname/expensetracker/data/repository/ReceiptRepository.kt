@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import android.net.Uri
 import androidx.room.withTransaction
 import java.time.Instant
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -71,7 +72,8 @@ class ReceiptRepository @Inject constructor(
     private val receiptLinkService: ReceiptLinkService,
     private val assetStore: ReceiptAssetStore,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val receiptLifecycleCoordinator: Lazy<ReceiptLifecycleCoordinator>
+    private val receiptLifecycleCoordinator: Lazy<ReceiptLifecycleCoordinator>,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     private companion object {
         // Use the canonical policy for all duplicate detection constants.
@@ -503,20 +505,23 @@ class ReceiptRepository @Inject constructor(
      * [WarrantyTrackerRepository.createManualPlaceholderReceipt]).
      */
     suspend fun insertReceipt(receipt: ScannedReceipt): Long {
+        writeBarrier.checkWritesAllowed("ReceiptRepository.insertReceipt")
         return scannedReceiptDao.insert(receipt)
     }
 
-    suspend fun getRecentReceipts(since: Long, limit: Int = Int.MAX_VALUE): List<ScannedReceipt> {
-        return scannedReceiptDao.getRecentReceipts(since, limit)
-    }
-
     suspend fun updateCategorizationStatus(receiptId: Long, status: CategorizationStatus) {
+        writeBarrier.checkWritesAllowed("ReceiptRepository.updateCategorizationStatus")
         scannedReceiptDao.updateCategorizationStatus(receiptId, status.name)
     }
 
     suspend fun deleteReceipt(receipt: ScannedReceipt) {
+        writeBarrier.checkWritesAllowed("ReceiptRepository.deleteReceipt")
         receipt.imagePath?.let { ocrService.deleteImage(it) }
         scannedReceiptDao.delete(receipt)
+    }
+
+    suspend fun getRecentReceipts(since: Long, limit: Int = Int.MAX_VALUE): List<ScannedReceipt> {
+        return scannedReceiptDao.getRecentReceipts(since, limit)
     }
 
     suspend fun getReceiptCount(): Int {
@@ -884,6 +889,7 @@ class ReceiptRepository @Inject constructor(
     }
 
     suspend fun clearAllScannedReceipts() {
+        writeBarrier.checkWritesAllowed("ReceiptRepository.clearAllScannedReceipts")
         val receipts = scannedReceiptDao.getAll()
         receipts.forEach { receipt ->
             receipt.imagePath?.let { path -> ocrService.deleteImage(path) }

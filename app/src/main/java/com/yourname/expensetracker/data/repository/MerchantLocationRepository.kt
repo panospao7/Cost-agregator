@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.MerchantLocationCorrecti
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.MerchantLocationGrid
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
@@ -26,6 +27,7 @@ import kotlin.math.sqrt
  */
 @Singleton
 class MerchantLocationRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val dao: MerchantLocationDao,
     private val timeProvider: TimeProvider
 ) {
@@ -33,6 +35,7 @@ class MerchantLocationRepository @Inject constructor(
     // ── Cache lookups ─────────────────────────────────────────────────────────
 
     suspend fun getCachedLocation(merchantName: String): MerchantLocation? {
+        writeBarrier.checkWritesAllowed("MerchantLocationRepository.getCachedLocation")
         val key = normalizeKey(merchantName)
         val cached = dao.getGlobalByNormalizedName(key) ?: return null
         // Evict if stale
@@ -47,6 +50,7 @@ class MerchantLocationRepository @Inject constructor(
      * Area-scoped cache lookup (v30). Looks up by normalized name + area key.
      */
     suspend fun getCachedLocationForArea(merchantName: String, areaKey: String): MerchantLocation? {
+        writeBarrier.checkWritesAllowed("MerchantLocationRepository.getCachedLocationForArea")
         val key = normalizeKey(merchantName)
         val cached = dao.getByNormalizedNameAndArea(key, areaKey) ?: return null
         if (timeProvider.now() - cached.lastResolvedAt > AppConfig.Location.CACHE_TTL_MS) {
@@ -76,6 +80,7 @@ class MerchantLocationRepository @Inject constructor(
         result: LocationResolutionResult.Resolved,
         areaKey: String = "global"
     ) {
+        writeBarrier.checkWritesAllowed("MerchantLocationRepository.saveLocation")
         val key = normalizeKey(merchantName)
         dao.upsertLocation(
             MerchantLocation(
@@ -122,6 +127,7 @@ class MerchantLocationRepository @Inject constructor(
     }
 
     suspend fun saveCorrection(correction: MerchantLocationCorrection): Long {
+        writeBarrier.checkWritesAllowed("MerchantLocationRepository.saveCorrection")
         val id = dao.upsertCorrection(correction)
         if (id <= 0) return id // W13: silently skipped — conflict; caller should handle
         // Also update the main cache to reflect the user's fix immediately.
@@ -149,6 +155,7 @@ class MerchantLocationRepository @Inject constructor(
     // ── Maintenance ───────────────────────────────────────────────────────────
 
     suspend fun evictStaleCache() {
+        writeBarrier.checkWritesAllowed("MerchantLocationRepository.evictStaleCache")
         val cutoff = timeProvider.now() - AppConfig.Location.CACHE_TTL_MS
         dao.deleteStaleEntries(cutoff)
     }

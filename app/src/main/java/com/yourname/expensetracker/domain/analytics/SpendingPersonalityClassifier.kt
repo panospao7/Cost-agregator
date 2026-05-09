@@ -104,7 +104,8 @@ class SpendingPersonalityClassifier @Inject constructor(
             // Determine personality type based on feature scores
             val personalityType = determinePersonalityType(featureScores)
             
-            // A09: No dataQuality available for raw-query path; default to moderate confidence
+            // A09: Raw-query path has no NormalizedAnalyticsInput.dataQuality;
+            // default to moderate confidence. The normalized path uses full dataQuality.
             val confidence = 0.6
             
             // Generate explanation

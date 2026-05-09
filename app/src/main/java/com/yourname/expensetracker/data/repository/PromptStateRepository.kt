@@ -5,10 +5,12 @@ import com.yourname.expensetracker.data.database.entity.PromptState
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
 @Singleton
 class PromptStateRepository @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val promptStateDao: PromptStateDao,
     private val timeProvider: TimeProvider
 ) {
@@ -26,6 +28,7 @@ class PromptStateRepository @Inject constructor(
      * Record that a prompt was shown to the user.
      */
     suspend fun recordPrompt(promptType: String): Long {
+        writeBarrier.checkWritesAllowed("PromptStateRepository.recordPrompt")
         val promptState = PromptState(
             promptType = promptType,
             createdAt = timeProvider.now()
@@ -37,6 +40,7 @@ class PromptStateRepository @Inject constructor(
      * Record how the user responded to a prompt.
      */
     suspend fun recordAcknowledgment(promptType: String, action: String, details: String? = null) {
+        writeBarrier.checkWritesAllowed("PromptStateRepository.recordAcknowledgment")
         val promptState = PromptState(
             promptType = promptType,
             userAction = action,
@@ -73,6 +77,7 @@ class PromptStateRepository @Inject constructor(
      * Clean up old prompt records (older than 1 year).
      */
     suspend fun cleanupOldRecords() {
+        writeBarrier.checkWritesAllowed("PromptStateRepository.cleanupOldRecords")
         val cutoffTime = timeProvider.now() - (365 * 24 * 60 * 60 * 1000L)
         promptStateDao.deleteOldPrompts(cutoffTime)
     }

@@ -459,12 +459,42 @@ tasks.register("checkDirectTimeCalls") {
     }
 }
 
+// Lifecycle bypass guard: fails if ExpenseDao mutation methods are called outside allowlist
+tasks.register("checkLifecycleBypass") {
+    group = "verification"
+    description = "Fails if ExpenseDao.insert/update/delete called outside TransactionLifecycleCoordinator"
+    doLast {
+        val srcDir = file("$projectDir/src/main/java")
+        val violations = mutableListOf<String>()
+        val allowlist = setOf(
+            "TransactionLifecycleCoordinator", "LocationBackfillWorker", "MerchantKeyBackfillWorker",
+            "GroupTransactionCoordinator", "DebugExpenseRepository", "AppDatabase"
+        )
+        srcDir.walk().forEach { f ->
+            if (!f.name.endsWith(".kt") || f.isDirectory) return@forEach
+            val className = f.name.removeSuffix(".kt")
+            if (allowlist.any { className.contains(it) }) return@forEach
+            val text = f.readText()
+            val patterns = listOf("expenseDao\\.insert", "expenseDao\\.update", "expenseDao\\.delete")
+            for (pattern in patterns) {
+                if (Regex(pattern).containsMatchIn(text)) {
+                    violations.add("${f.path}: matches ${pattern}")
+                }
+            }
+        }
+        if (violations.isNotEmpty()) {
+            throw GradleException("LIFECYCLE BYPASS: Direct ExpenseDao mutations outside allowlist:\n  ${violations.joinToString("\n  ")}")
+        }
+    }
+}
+
 // Wire both new guards into the check lifecycle
 // VERIFIED (PR-E24): Both checkRawMoneyAggregates and checkDirectTimeCalls are
 // registered (above) AND wired to the "check" lifecycle via dependsOn.
 tasks.named("check") {
     dependsOn("checkRawMoneyAggregates")
     dependsOn("checkDirectTimeCalls")
+    dependsOn("checkLifecycleBypass")
 }
 
 // TODO (M10): Add CI guard for direct System.currentTimeMillis/Instant.now/Date()

@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
 import com.yourname.expensetracker.domain.export.ExportTransaction
 import com.yourname.expensetracker.domain.export.toExportTransaction
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -61,7 +62,8 @@ class ExportOptionsViewModel @Inject constructor(
     private val timeProvider: TimeProvider,
     private val xeroExporter: XeroCSVExporter,
     private val quickBooksExporter: QuickBooksIIFExporter,
-    private val freshBooksExporter: FreshBooksExporter
+    private val freshBooksExporter: FreshBooksExporter,
+    private val restoreMaintenanceMode: RestoreMaintenanceMode
 ) : ViewModel() {
 
     companion object {
@@ -145,6 +147,14 @@ class ExportOptionsViewModel @Inject constructor(
                 error = null
             )
 
+            if (!restoreMaintenanceMode.isWritesAllowed()) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = "A restore operation is in progress. Export is unavailable until the app is restarted."
+                )
+                return@launch
+            }
+
             try {
                 val categories = withContext(Dispatchers.IO) { exportDataRepository.getCategoryNameMap() }
                 val extension = extensionFor(_uiState.value.selectedFormat)
@@ -163,14 +173,15 @@ class ExportOptionsViewModel @Inject constructor(
                     throw IllegalArgumentException("No expenses found for selected date range")
                 }
 
-                // Accounting format validation using first page
+                // Accounting format validation: validate full dataset before streaming
+                // to catch data quality issues across all pages, not just the first.
                 if (format.requiresAccountingPolicy()) {
-                    val firstPage = withContext(Dispatchers.IO) {
-                        exportDataRepository.getExpensesPage(startDate, endDate, 2000, null, null)
+                    val allExpenses = withContext(Dispatchers.IO) {
+                        exportDataRepository.getExpensesBetween(startDate, endDate)
                     }
-                    if (firstPage.isNotEmpty()) {
+                    if (allExpenses.isNotEmpty()) {
                         accountingExportPolicy.validateAccountingDataset(
-                            firstPage.map { it.toExportTransaction() },
+                            allExpenses.map { it.toExportTransaction() },
                             format.accountingExportDisplayName()
                         )
                     }
@@ -488,14 +499,6 @@ class ExportOptionsViewModel @Inject constructor(
                 startDate, endDate, pageSize, lastDate, lastId
             )
             if (page.isEmpty()) break
-
-            // BAK-12: Per-page accounting validation (pages 2+ were not validated in the initial check)
-            if (page.isNotEmpty() && format.requiresAccountingPolicy() && pageCount > 0) {
-                accountingExportPolicy.validateAccountingDataset(
-                    page.map { it.toExportTransaction() },
-                    format.accountingExportDisplayName()
-                )
-            }
 
             pageCount++
             writePage(writer, page, categories, format, preview, pageCount, pageSize)

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -49,7 +50,8 @@ class BudgetRepository @Inject constructor(
     private val timeBoundaryTicker: TimeBoundaryTicker,
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val multiCurrencyRepository: MultiCurrencyRepository
+    private val multiCurrencyRepository: MultiCurrencyRepository,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     data class DebugBudgetSnapshot(
         val budgets: List<Budget>
@@ -330,6 +332,7 @@ class BudgetRepository @Inject constructor(
 
     suspend fun addBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Long> {
         return try {
+            writeBarrier.checkWritesAllowed("BudgetRepository.addBudget")
             if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
             if (budget.startDate <= 0) throw IllegalArgumentException("Invalid budget start date")
             val budgetToInsert = if (budget.createdAt == 0L) {
@@ -350,6 +353,7 @@ class BudgetRepository @Inject constructor(
 
     suspend fun updateBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
+            writeBarrier.checkWritesAllowed("BudgetRepository.updateBudget")
             if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
             // Reset notifications when budget is edited so user gets fresh alerts (BUG-7 Fix)
             val resetBudget = budget.copy(
@@ -368,6 +372,7 @@ class BudgetRepository @Inject constructor(
 
     suspend fun deleteBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
+            writeBarrier.checkWritesAllowed("BudgetRepository.deleteBudget")
             budgetDao.delete(budget)
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
@@ -378,8 +383,8 @@ class BudgetRepository @Inject constructor(
 
     suspend fun toggleBudget(id: Long, isActive: Boolean): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
+            writeBarrier.checkWritesAllowed("BudgetRepository.toggleBudget")
             budgetDao.setActiveAndEnforceScope(id, isActive)
-            // budgetMonitor.checkBudgets()
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             Timber.e(e, "Failed to toggle budget $id")
@@ -389,6 +394,7 @@ class BudgetRepository @Inject constructor(
 
     suspend fun deleteAll(): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
+            writeBarrier.checkWritesAllowed("BudgetRepository.deleteAll")
             budgetDao.deleteAll()
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
