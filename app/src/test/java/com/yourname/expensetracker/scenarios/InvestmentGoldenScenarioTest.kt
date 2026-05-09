@@ -163,6 +163,23 @@ class InvestmentGoldenScenarioTest {
         assertThat(dataQuality.isPartial).isFalse()
     }
 
+    // ── investment performance has dataQuality per row ──────────────────────
+
+    @Test
+    fun `investment performance has dataQuality per row`() = runTest {
+        // Seed a holding
+        val investment = Investment(name = "Test", symbol = "TST", type = InvestmentType.STOCK, currency = "EUR", quantity = 10.0, purchasePrice = 100.0, purchaseDate = TEST_DATE)
+        tracker.addHolding(investment)
+        // Get performances
+        val performances = tracker.getInvestmentPerformances()
+        assertThat(performances).isNotEmpty()
+        val perf = performances.first()
+        assertThat(perf.dataQuality).isNotNull()
+        assertThat(perf.dataQuality.isPartial).isFalse() // newly added, price is fresh
+        assertThat(perf.dataQuality.staleHoldingCount).isEqualTo(0)
+        assertThat(perf.dataQuality.lastUpdatedAt).isGreaterThan(0)
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private suspend fun seedHolding(

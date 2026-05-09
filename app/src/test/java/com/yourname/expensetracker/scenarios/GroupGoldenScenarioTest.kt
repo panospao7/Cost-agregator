@@ -92,6 +92,8 @@ class GroupGoldenScenarioTest {
 
         lifecycle = GroupLifecycleCoordinator(
             groupTxCoordinator, groupDao, database.groupExpenseDao(), memberDao, settlementDao,
+            database.groupLifecycleEventDao(),
+            mockk(relaxed = true), // balanceCalculator
             timeProvider, currencySettingsRepository,
             mockk(relaxed = true), // budgetMonitor
             mockk(relaxed = true), // sideEffectDispatcher
@@ -204,6 +206,35 @@ class GroupGoldenScenarioTest {
         val group = groupDao.getGroupById(groupId)
         assertThat(group).isNotNull()
         assertThat(group!!.isActive).isTrue()
+    }
+
+    // ── removeMember blocked when net balance not settled ────────────────────
+
+    @Test
+    fun `removeMember blocked when net balance not settled`() = runTest {
+        val groupId = seedGroup("Balance", "EUR")
+        val aliceId = seedMember(groupId, "Alice", isCurrentUser = true)
+        val bobId = seedMember(groupId, "Bob", isCurrentUser = false)
+        // Bob pays for a group expense → Bob is owed money
+        val result = lifecycle.addExpense(groupId, "Dinner", 50.0, aliceId, "EUR", date = TEST_DATE)
+        assertThat(result).isInstanceOf(GroupExpenseCreationResult.Success::class.java)
+        // Bob should not be removable — he owes his share (25.0) since Alice paid
+        val removeResult = lifecycle.removeMember(groupId, bobId)
+        assertThat(removeResult.isFailure).isTrue()
+    }
+
+    @Test
+    fun `group lifecycle events are persisted`() = runTest {
+        val members = listOf(
+            GroupMember(groupId = 0, name = "Alice", isCurrentUser = true),
+            GroupMember(groupId = 0, name = "Bob", isCurrentUser = false)
+        )
+        val createResult = lifecycle.createGroup("EventGroup", null, "EUR", members)
+        val groupId = (createResult as GroupCreationResult.Success).groupId
+        // Verify events were written
+        val events = database.groupLifecycleEventDao().getEventsForGroup(groupId)
+        assertThat(events).isNotEmpty()
+        assertThat(events.any { it.eventType == "GROUP_CREATED" }).isTrue()
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────

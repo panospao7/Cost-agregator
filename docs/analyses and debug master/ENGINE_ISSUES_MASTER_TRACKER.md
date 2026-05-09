@@ -3,12 +3,13 @@
 > Consolidated P0/P1 issues from 5 engine debug reports.
 > Source: warranty-subscription-location-nlp, analytical, categorization-merchant, groups-investment-tax, money-time-primitives
 > **Last updated: 2026-05-09**
-> **Core engines stabilized (87 fixed with real code). Advanced engines (groups, tax, investment advanced features) are beta/contained — 11 items documented as TODO-only, 12 deferred, 2 deferred-design.**
+> **Core engines stabilized (80 fixed, 7 partial with caveats). Advanced engines (groups, tax, investment advanced features) are beta/contained — 11 items documented as TODO-only, 12 deferred, 2 deferred-design.**
 
 ## Status Legend
 - ⬜ NOT STARTED
 - 🔧 IN PROGRESS  
 - ✅ FIXED
+- ⚠ PARTIAL (real code exists but has documented caveats)
 - ⏭ DEFERRED (needs design/migration)
 - ⏭ DEFERRED_DESIGN (full re-architecture needed, not just migration)
 - 📝 TODO ONLY (documented, not coded)
@@ -107,14 +108,18 @@
 
 # 4. Groups / Investment / Tax Engines
 
+> **Groups:** beta-stable — core flows production-quality, lifecycle audit table exists, hard-delete is contained.
+> **Investment:** beta-stable — add/update/BUY atomic, allocation aggregate-safe, history carries forward, staleness modeled.
+> **Tax:** estimate-only beta — aggregates propagated, fiscal year respected, provider wired, lifecycle implemented.
+
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
 | G01 | P0 | Current-user member inserts violate key invariant | Bug | GroupLifecycleCoordinator.createGroup()/addMember() enforce exactly 1 currentUser + DB currentUserGroupKey unique index | ✅ FIXED |
 | G02 | P0 | Group expense side effects inside outer txn | Bug | GroupLifecycleCoordinator.emitLifecycleEvent() dispatches post-commit side effects (BudgetMonitor + TransactionSideEffectDispatcher) | ✅ FIXED |
-| G03 | P0 | Linked expense normalization bypasses lifecycle | Bug | linked ownership writes route through TransactionLifecycleCoordinator.updateOwnership() with normalizeOwnership() guard | ✅ FIXED |
+| G03 | P0 | Linked expense normalization bypasses lifecycle | Bug | linked ownership writes route through TransactionLifecycleCoordinator.updateOwnership() with normalizeOwnership() guard | ⚠ PARTIAL |
 | G04 | P0 | Mixed-currency settlements labeled wrong | Bug | GroupLifecycleCoordinator.recordSettlement() rejects non-matching currencies (G04); addExpense() enforces single-currency policy (G05) | ✅ FIXED |
 | G05 | P1 | Group currency consistency not enforced | Enhancement | GroupLifecycleCoordinator.addExpense() enforces single-currency policy (G03) | ✅ FIXED |
-| G06 | P1 | Shared budget offsets drop conversion failures | Enhancement | SharedExpenseBudgetOffsetEngine gains MoneyAggregate fields (grossPersonalAggregate, sharedContributionAggregate, adjustedSpendAggregate) | ✅ FIXED |
+| G06 | P1 | Shared budget offsets drop conversion failures | Enhancement | SharedExpenseBudgetOffsetEngine gains MoneyAggregate fields (grossPersonalAggregate, sharedContributionAggregate, adjustedSpendAggregate) | ⚠ PARTIAL |
 | G07 | P1 | Shared offset uses current rates not historical | Bug | convertAsOf used for historical rate conversion in shared offsets | ✅ FIXED |
 | G08 | P1 | Hard delete path bypasses coordinator | Bug | GroupLifecycleCoordinator.deleteGroupPermanently() requires explicit confirmPermanentDelete flag (G08) | ✅ FIXED |
 | G09 | P1 | Direct member delete bypasses validation | Bug | GroupLifecycleCoordinator.removeMember() validates active group, member ownership, and blocks last-currentUser removal (G09) | ✅ FIXED |
@@ -123,19 +128,19 @@
 | I02 | P0 | Price update not atomic with history insert | Bug | withTransaction wrap both operations in updatePrice() | ✅ FIXED |
 | I03 | P0 | Portfolio history undercounts days | Bug | Portfolio history carry-forward with dataQuality.isPartial for missing-price days | ✅ FIXED |
 | I04 | P0 | No lot/transaction ledger | Enhancement | InvestmentTransaction entity + DAO implemented (BUY/SELL/DIVIDEND); ledger wiring deferred | ✅ FIXED |
-| I05 | P1 | UI doesn't show investment performances | Bug | InvestmentPerformance gains currentValueAggregate/costBasisAggregate; getInvestmentPerformances() added | ✅ FIXED |
+| I05 | P1 | UI doesn't show investment performances | Bug | InvestmentPerformance gains currentValueAggregate/costBasisAggregate; getInvestmentPerformances() added | ⚠ PARTIAL |
 | I06 | P1 | DAO aggregates disagree with tracker math | Bug | InvestmentDao raw aggregates deprecated → InvestmentTracker.getPortfolioSummaryAggregate() | ✅ FIXED |
 | I07 | P1 | Investment timestamps not enforced | Bug | addHolding() validates quantity>0, price>0, currency non-blank, createdAt>0 | ✅ FIXED |
 | I08 | P1 | Direct Dispatchers.IO instead of injected | Enhancement | Inject @IoDispatcher | ✅ FIXED |
-| I09 | P1 | Price staleness not modeled | Enhancement | Price staleness model: 7-day stale/30-day very-stale thresholds, staleHoldingCount, missingPriceCount, lastUpdatedAt | ✅ FIXED |
-| T01 | P0 | Tax totals not currency-normalized | Bug | TaxEstimate/TaxYearSummary gain MoneyAggregate fields (deductible/vat/taxable/income/estimatedTax aggregates) | ✅ FIXED |
+| I09 | P1 | Price staleness not modeled | Enhancement | Price staleness model: 7-day stale/30-day very-stale thresholds, staleHoldingCount, missingPriceCount, lastUpdatedAt | ⚠ PARTIAL |
+| T01 | P0 | Tax totals not currency-normalized | Bug | TaxEstimate/TaxYearSummary gain MoneyAggregate fields (deductible/vat/taxable/income/estimatedTax aggregates) | ⚠ PARTIAL |
 | T02 | P0 | Mileage deduction undercounts null values | Bug | Mileage null fallback: distance*rate when calculatedDeduction is null | ✅ FIXED |
 | T03 | P0 | Tax country not persisted | Bug | TaxSettingsRepository gains fiscalYearStartDay, vatEnabled, businessReportCurrencyPolicy | ✅ FIXED |
 | T04 | P1 | VAT estimation assumes standard-rate | Enhancement | Rename to estimatedVatPortion, per-expense fields | ⏭ DEFERRED_DESIGN |
 | T05 | P1 | Business report hardcodes euro formatting | Bug | CsvCellSanitizer extracted from AccountingExporters; formula injection prevention | ✅ FIXED |
-| T06 | P1 | Business report raw-sums mixed currencies | Bug | Tax totals + business reports use MoneyAggregate | ✅ FIXED |
+| T06 | P1 | Business report raw-sums mixed currencies | Bug | Tax totals + business reports use MoneyAggregate | ⚠ PARTIAL |
 | T07 | P1 | Business CSV weak formula safety | Bug | BusinessExpenseReportGenerator no hardcoded euro | ✅ FIXED |
-| T08 | P1 | Tax rates hardcoded | Enhancement | TaxRateProvider interface + DemoTaxRateProvider with static EUR seed data | ✅ FIXED |
+| T08 | P1 | Tax rates hardcoded | Enhancement | TaxRateProvider interface + DemoTaxRateProvider with static EUR seed data | ⚠ PARTIAL |
 | T09 | P1 | Fiscal year assumptions calendar-year only | Enhancement | TaxEstimator.getTaxYearSummary() uses fiscal year start from taxSettings | ✅ FIXED |
 | T10 | P1 | Business/tax updates bypass lifecycle events | Bug | TransactionLifecycleCoordinator.updateBusinessTaxFields() added | ✅ FIXED |
 
@@ -184,7 +189,8 @@ All items from the original Quick Wins list have been resolved:
 
 | Status | Count |
 |--------|-------|
-| ✅ FIXED | 87 |
+| ✅ FIXED | 80 |
+| ⚠ PARTIAL | 7 |
 | 📝 TODO ONLY | 11 |
 | ⏭ DEFERRED | 12 |
 | ⏭ DEFERRED_DESIGN | 2 |
@@ -204,9 +210,11 @@ Final counts: 55 FIXED, 23 TODO ONLY, 15 DEFERRED, 15 DEFERRED_DESIGN.
 - A15: promoted from ⏭ DEFERRED — category name snapshots implemented in Assembler
 - A16–A20: new/completed items — normalization dedup, BudgetVsActualEngine extraction, java.time migration annotations (A17), SpendingPersonalityClassifier java.time switch (A18), ExcludedExpense warning metadata + confidencePenalty (A19), BudgetVsActualResult dataQuality + displayCurrency (A20)
 Final counts: 70 FIXED, 14 TODO ONLY, 13 DEFERRED, 15 DEFERRED_DESIGN.
-**Groups/Investment/Tax GIT-issues implementation (2026-05-09):** 17 items promoted to ✅ FIXED:
-- **Groups (4):** G02, G03, G06, G07 — side-effect dispatch via `emitLifecycleEvent()`, ownership routing through `updateOwnership()` with `normalizeOwnership()` guard, `SharedExpenseBudgetOffsetEngine` MoneyAggregate fields, `convertAsOf` for historical shared offsets.
-- **Investment (4):** I03 — portfolio history carry-forward with `dataQuality.isPartial`; I05 — `InvestmentPerformance` aggregates + `getInvestmentPerformances()`; I06 — `InvestmentDao` raw aggregates deprecated → `getPortfolioSummaryAggregate()`; I09 — price staleness model (7/30-day thresholds, `staleHoldingCount`, `missingPriceCount`, `lastUpdatedAt`).
-- **Tax/Business (9):** T01 — TaxEstimate/TaxYearSummary MoneyAggregate fields; T02 — mileage null fallback; T03 — TaxSettingsRepository expanded; T05 — `CsvCellSanitizer` extracted; T06 — tax totals + business reports use MoneyAggregate; T07 — `BusinessExpenseReportGenerator` no hardcoded euro; T08 — `TaxRateProvider` interface + `DemoTaxRateProvider`; T09 — fiscal year from taxSettings; T10 — `updateBusinessTaxFields()` coordinator method.
+**Groups/Investment/Tax GIT-issues implementation (2026-05-09):** 17 items promoted to ✅ FIXED (7 later re-assessed as ⚠ PARTIAL on 2026-05-09):
+- **Groups (4):** G02, G03, G06, G07 — side-effect dispatch via `emitLifecycleEvent()` (✅), ownership routing through `updateOwnership()` with `normalizeOwnership()` guard (⚠ hard-delete bypass documented), `SharedExpenseBudgetOffsetEngine` MoneyAggregate fields (⚠ different conversion basis documented), `convertAsOf` for historical shared offsets (✅).
+- **Investment (4):** I03 — portfolio history carry-forward with `dataQuality.isPartial` (✅); I05 — `InvestmentPerformance` aggregates + `getInvestmentPerformances()` (⚠ raw summary still exposed); I06 — `InvestmentDao` raw aggregates deprecated → `getPortfolioSummaryAggregate()` (✅); I09 — price staleness model (⚠ thresholds are constants, not settings-driven).
+- **Tax/Business (9):** T01 — TaxEstimate/TaxYearSummary MoneyAggregate fields, categorized deductions partial quality (⚠ partial quality propagation); T02 — mileage null fallback (✅); T03 — TaxSettingsRepository expanded (✅); T05 — `CsvCellSanitizer` extracted (✅); T06 — tax totals + business reports use MoneyAggregate (⚠ category breakdown aggregate map partial); T07 — `BusinessExpenseReportGenerator` no hardcoded euro (✅); T08 — `TaxRateProvider` interface + `DemoTaxRateProvider` (⚠ income tax still TaxConfiguration); T09 — fiscal year from taxSettings (✅); T10 — `updateBusinessTaxFields()` coordinator method (✅).
 - **Deferred items remaining:** W03, W08, W24, C07, C11, C13, G10, T04, M02, M05, M06, M09, M13, M14 (12 deferred, 2 deferred-design).
-Final counts: 87 FIXED, 11 TODO ONLY, 12 DEFERRED, 2 DEFERRED_DESIGN.
+Final counts: 80 FIXED, 7 PARTIAL, 11 TODO ONLY, 12 DEFERRED, 2 DEFERRED_DESIGN.
+
+**Honest-assessment pass (2026-05-09):** 7 items downgraded from ✅ FIXED → ⚠ PARTIAL after rigorous review. Groups: G03 (hard-delete bypass documented), G06 (conversion basis mismatch). Investment: I05 (raw summary endpoint still exposed), I09 (staleness thresholds hardcoded). Tax: T01 (partial quality propagation), T06 (category breakdown aggregate map incomplete), T08 (income tax still on TaxConfiguration). All 7 have real, production-quality code with documented caveats — safe for beta, not yet fully hardened. ⚠ PARTIAL status tracks these honestly without blocking release.
