@@ -188,27 +188,24 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
         val effectiveBudgetSpend = totalPersonalSpend + totalSharedSpend
         val isPartial = failedConversionCount > 0
 
-        // G04: MoneyAggregateBuilder.fromBuckets() uses current/latest exchange rates.
-        // The numeric totals above use convertAsOf(expense.date) for historical accuracy.
-        // These may disagree when rates change between expense.date and now.
-        // For stable periods (rate unchanged), they agree. For volatile periods,
-        // prefer the convertAsOf numeric totals for per-expense accuracy and
-        // the aggregate.displayAmount for overall budget-vs-actual reporting.
-        // Build multi-currency safe MoneyAggregates
-        val grossPersonalAggregate = MoneyAggregateBuilder.fromBuckets(
-            buckets = personalBuckets,
-            homeCurrency = homeCurrency,
-            converter = currencyConverter
+        // G04: Build aggregates from the already-converted per-expense amounts
+        // so that numeric totals and aggregate displayAmount agree.
+        // Each expense was already converted via convertAsOf(expense.date) above,
+        // so we use the same converted amounts for the bucket totals.
+        val grossPersonalAggregate = MoneyAggregate.singleCurrency(
+            amount = totalPersonalSpend,
+            currency = CurrencyCode(homeCurrency),
+            transactionCount = personalBuckets.size
         )
-        val sharedContributionAggregate = MoneyAggregateBuilder.fromBuckets(
-            buckets = sharedBuckets,
-            homeCurrency = homeCurrency,
-            converter = currencyConverter
+        val sharedContributionAggregate = MoneyAggregate.singleCurrency(
+            amount = totalSharedSpend,
+            currency = CurrencyCode(homeCurrency),
+            transactionCount = sharedBuckets.size
         )
-        val adjustedSpendAggregate = MoneyAggregateBuilder.fromBuckets(
-            buckets = personalBuckets + sharedBuckets,
-            homeCurrency = homeCurrency,
-            converter = currencyConverter
+        val adjustedSpendAggregate = MoneyAggregate.singleCurrency(
+            amount = effectiveBudgetSpend,
+            currency = CurrencyCode(homeCurrency),
+            transactionCount = personalBuckets.size + sharedBuckets.size
         )
 
         BudgetSpendBreakdown(

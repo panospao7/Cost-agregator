@@ -300,7 +300,10 @@ class TaxEstimator @Inject constructor(
                 (categorizedDeductions["Uncategorized"] ?: 0.0) + uncategorized
         }
 
-        // PR-T2: Build per-category MoneyAggregates from categorized deductions.
+        // T06 PARTIAL: Category aggregates currently built from pre-summed single-bucket totals.
+        // For true multi-currency safety, build per-row buckets from individual expenses:
+        //   val buckets = deductions.map { Pair(it.effectiveAmount, it.currency) }
+        //   MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter)
         val categorizedDeductionsAggregate = categorizedDeductions.mapValues { (_, total) ->
             val buckets = listOf(Pair(total, filingCurrency))
             MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter)
@@ -348,6 +351,7 @@ data class TaxYearSummary(
     val totalIncome: Double,
     val totalDeductibleExpenses: Double,
     val totalVatPaid: Double,
+    @Deprecated("Use categorizedDeductionsAggregate for currency-safe per-category totals")
     val categorizedDeductions: Map<String, Double>,
     val estimatedTaxOwed: Double,
     val mileageDeduction: Double,

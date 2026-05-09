@@ -321,19 +321,19 @@ class InvestmentTracker @Inject constructor(
      *
      * I01-FIXED: Allocation now computed from MoneyAggregate buckets (not raw Doubles).
      */
+    @Deprecated("Use getPortfolioAllocation() which now converts via CurrencyConverter.convertAsOf()")
     suspend fun getPortfolioAllocation(): Map<InvestmentType, Double> = withContext(ioDispatcher) {
         val holdings = investmentDao.getAllActiveInvestments().first()
         val (_, aggregate, _) = getPortfolioSummaryAggregate(holdings)
         if (aggregate.sourceBuckets.isEmpty()) return@withContext emptyMap()
         val total = aggregate.displayAmount
         if (total <= 0.0) return@withContext emptyMap()
-        // Use a simple type→total mapping from holdings
+        val homeCurrency = aggregate.displayCurrency.code
         val byType = holdings.groupBy { it.type }.mapValues { (_, holds) ->
-            holds.sumOf { h -> 
+            holds.sumOf { h ->
                 val value = investmentValueDao.getLatestValue(h.id)?.totalValue ?: 0.0
-                // Approximate conversion using aggregate's displayCurrency
-                if (h.currency == aggregate.displayCurrency.code) value
-                else value * 1.0 // placeholder — real conversion needs CurrencyConverter
+                if (h.currency == homeCurrency) value
+                else currencyConverter.convertAsOf(value, h.currency, homeCurrency, atMillis = h.lastUpdated)?.convertedAmount ?: 0.0
             }
         }
         byType.mapValues { (_, value) -> value / total }

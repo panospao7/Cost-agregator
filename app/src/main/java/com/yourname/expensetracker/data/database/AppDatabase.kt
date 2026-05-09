@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 120
+const val APP_DATABASE_SCHEMA_VERSION = 121
 
 @Database(
     entities = [
@@ -3524,10 +3524,10 @@ abstract class AppDatabase : RoomDatabase() {
                     database.setTransactionSuccessful()
                 } finally {
                     database.endTransaction()
-                }
             }
+        }
 
-            /**
+        /**
              * Salvatage repair for a corrupted or schema-mismatched table.
              *
              * ## DB-5: Partial salvage limitation
@@ -7620,6 +7620,27 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_120_121 = object : androidx.room.migration.Migration(120, 121) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS group_lifecycle_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId INTEGER NOT NULL,
+                        eventType TEXT NOT NULL,
+                        actorMemberId INTEGER,
+                        relatedExpenseId INTEGER,
+                        relatedSettlementId INTEGER,
+                        payloadJson TEXT,
+                        createdAt INTEGER NOT NULL,
+                        source TEXT NOT NULL DEFAULT 'GROUP_LIFECYCLE'
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_lifecycle_events_groupId ON group_lifecycle_events (groupId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_lifecycle_events_eventType ON group_lifecycle_events (eventType)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_lifecycle_events_createdAt ON group_lifecycle_events (createdAt)")
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -7775,7 +7796,8 @@ MIGRATION_91_92,
         MIGRATION_116_117,
         MIGRATION_117_118,
         MIGRATION_118_119,
-        MIGRATION_119_120
+        MIGRATION_119_120,
+        MIGRATION_120_121
     )
 }
 }
