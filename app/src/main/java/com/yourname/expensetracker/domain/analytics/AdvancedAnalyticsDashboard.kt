@@ -237,6 +237,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         // Iterate with a calendar-month cursor; stop when the cursor reaches endDate
         // (half-open: buckets cover [startDate, endDate), so stop when monthStart >= endDate)
         while (true) {
+            // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
             val calendar = java.util.Calendar.getInstance()
             calendar.set(currentYear, currentMonth, 1, 0, 0, 0)
             calendar.set(java.util.Calendar.MILLISECOND, 0)
@@ -325,6 +326,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             7 to UiText.fromKey(DomainTextKeys.COMMON_DAY_SUNDAY)
         )
         
+        // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
         val calendar = java.util.Calendar.getInstance()
         
         for (expense in expenses) {
@@ -374,6 +376,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         }
 
         // Check weekend spending
+        // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
         val calendar = java.util.Calendar.getInstance()
         var weekendSpending = 0.0
         var weekdaySpending = 0.0

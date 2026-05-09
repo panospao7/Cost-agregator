@@ -207,6 +207,7 @@ class SpendingPersonalityClassifier @Inject constructor(
      * Calculate weekend spend share: % of spending on Saturday and Sunday.
      */
     private fun calculateWeekendSpendShare(purchases: List<ExpenseSnapshot>): Double {
+        // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
         val calendar = Calendar.getInstance()
         
         val weekendSpending = purchases.filter { purchase ->
@@ -226,6 +227,7 @@ class SpendingPersonalityClassifier @Inject constructor(
      * Calculate night spend share: % of spending after 8 PM.
      */
     private fun calculateNightSpendShare(purchases: List<ExpenseSnapshot>): Double {
+        // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
         val calendar = Calendar.getInstance()
         
         val nightSpending = purchases.filter { purchase ->
@@ -649,7 +651,7 @@ class SpendingPersonalityClassifier @Inject constructor(
     }
 
     private fun calculateCategoryDiversityFromNormalized(purchases: List<NormalizedExpense>): Double {
-        val uniqueCategories = purchases.mapNotNull { it.categoryId }.distinct().size
+        val uniqueCategories = purchases.map { it.categoryNameSnapshot ?: it.categoryId?.toString() ?: "unknown" }.distinct().size
         return (uniqueCategories.toDouble() / purchases.size.coerceAtLeast(1)).coerceIn(0.0, 1.0)
     }
 

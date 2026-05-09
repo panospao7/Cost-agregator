@@ -50,7 +50,11 @@ class BudgetVsActualEngine @Inject constructor() {
             val actual = categorySpending[budget.categoryId] ?: 0.0
             val limit = budget.amount
             val percentage = if (limit > 0) actual / limit else 0.0
-            val catName = budget.categoryId?.let { categoryNames[it] } ?: "Unknown"
+            val catName = budget.categoryId?.let { categoryNames[it] }
+                ?: actuals.includedExpenses.firstOrNull { exp ->
+                    exp.categoryId == budget.categoryId && exp.categoryNameSnapshot != null
+                }?.categoryNameSnapshot
+                ?: "Unknown"
             items.add(
                 BudgetVsActualItem(
                     categoryId = budget.categoryId,

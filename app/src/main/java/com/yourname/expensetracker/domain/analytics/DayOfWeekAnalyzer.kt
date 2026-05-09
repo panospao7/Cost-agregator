@@ -26,6 +26,7 @@ class DayOfWeekAnalyzer @Inject constructor() {
         }
 
         val byDayOfWeek = expenses.groupBy { expense ->
+            // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
             val cal = java.util.Calendar.getInstance()
             cal.timeInMillis = expense.date
             // Calendar.DAY_OF_WEEK: Sunday=1, Monday=2, ..., Saturday=7

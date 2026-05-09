@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.analytics.*
 import com.yourname.expensetracker.domain.analytics.AnalyticsInputOptions
 import com.yourname.expensetracker.domain.analytics.toExpenseSnapshot
+import com.yourname.expensetracker.domain.model.BudgetSnapshot
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.core.time.PeriodRange
@@ -123,8 +124,18 @@ class AnalyticsViewModel @Inject constructor(
     private val timeProvider: TimeProvider,
     private val analyticsInputAssembler: AnalyticsInputAssembler,
     private val currencyConverter: CurrencyConverter,
- private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val budgetVsActualEngine: BudgetVsActualEngine
 ) : ViewModel() {
+
+    // A16: The following analytics computations remain in the ViewModel pending extraction
+    // to dedicated analytics engines:
+    // - year-over-year comparison (computeYearOverYear)
+    // - velocity anomalies (computeVelocityAnomalies)
+    // - post-salary pattern (computePostSalaryPattern)
+    // - suspect transactions (detectSuspectTransactions)
+    // - day/hour pattern (inline in computeAnalyticsInternal)
+    // - budget-vs-actual (now in BudgetVsActualEngine, called from ViewModel)
 
     private data class PeriodCacheKey(
         val period: TimePeriod,
@@ -435,7 +446,7 @@ class AnalyticsViewModel @Inject constructor(
         val dailyTotals = insightsEngine.buildDailyTotals(currentExpenseSnapshots, chartDays)
 
         // Insights
-        val budgetChartResult = buildBudgetVsActualItems(homeCurrency, currentExpenseSnapshots)
+        val budgetChartResult = buildBudgetVsActualItems(homeCurrency, currentExpenseSnapshots, categories, currentInput)
         val conversionWarnings = mergeWarnings(allWarnings + budgetChartResult.warnings)
         val latestRateTimestamp = rateTimestamp.takeIf { it > 0L }
         val insightsSnapshot = insightsEngine.generateInsights(
@@ -637,7 +648,7 @@ class AnalyticsViewModel @Inject constructor(
 
         // ── F13: Spending Personality Profile ────────────────────────────────
         val personalityProfile = try {
-            spendingPersonalityClassifier.classify()
+            spendingPersonalityClassifier.classify(currentInput)  // A18: uses java.time, not Calendar
         } catch (e: Exception) {
             null
         }
@@ -1076,41 +1087,46 @@ class AnalyticsViewModel @Inject constructor(
      */
     private suspend fun buildBudgetVsActualItems(
         homeCurrency: String,
-        currentExpenseSnapshots: List<ExpenseSnapshot>
+        currentExpenseSnapshots: List<ExpenseSnapshot>,
+        categories: List<Category>,
+        currentInput: NormalizedAnalyticsInput
     ): BudgetChartResult {
         return try {
-            // SAFE: currentExpenseSnapshots is pre-normalized via AnalyticsCurrencyNormalizer at line 292
-            val actualSpentByCategory = currentExpenseSnapshots
-                .groupBy { it.categoryId }
-                .mapValues { (_, snapshots) -> snapshots.sumOf { it.effectiveAmount } }
-
             val warnings = mutableListOf<AnalyticsConversionWarning>()
-            val items = budgetRepository.getBudgetStatuses().first()
-                .mapNotNull { status ->
-                    val category = status.category ?: return@mapNotNull null
-                    val convertedBudgetAmount = convertBudgetAmountToHomeCurrency(
-                        amount = status.effectiveLimit,
-                        sourceCurrency = status.currency,
-                        homeCurrency = homeCurrency,
-                        warnings = warnings
-                    ) ?: return@mapNotNull null
 
-                    val actualSpent = actualSpentByCategory[category.id] ?: 0.0
-                    BudgetVsActualItem(
-                        categoryName = category.name,
-                        categoryIcon = category.icon,
-                        categoryColor = category.color,
-                        budgetAmount = convertedBudgetAmount,
-                        actualSpent = actualSpent,
-                        percentUsed = if (convertedBudgetAmount > 0.0) {
-                            (actualSpent / convertedBudgetAmount).toFloat()
-                        } else {
-                            0f
-                        },
-                        displayCurrency = homeCurrency
-                    )
-                }
-                .sortedByDescending { it.actualSpent }
+            // Get budget snapshots and convert amounts to home currency
+            val rawSnapshots = budgetRepository.getActiveBudgetSnapshots()
+            val convertedSnapshots = rawSnapshots.mapNotNull { snapshot ->
+                val convertedAmount = convertBudgetAmountToHomeCurrency(
+                    amount = snapshot.amount,
+                    sourceCurrency = snapshot.currency,
+                    homeCurrency = homeCurrency,
+                    warnings = warnings
+                ) ?: return@mapNotNull null
+                BudgetSnapshot(
+                    categoryId = snapshot.categoryId,
+                    amount = convertedAmount,
+                    currency = homeCurrency
+                )
+            }
+
+            // Use BudgetVsActualEngine for the core computation
+            val engineResult = budgetVsActualEngine.compute(currentInput, convertedSnapshots, homeCurrency)
+
+            val categoryEntityMap = categories.associateBy { it.id }
+
+            val items = engineResult.items.map { engineItem ->
+                val category = engineItem.categoryId?.let { categoryEntityMap[it] }
+                BudgetVsActualItem(
+                    categoryName = engineItem.categoryName ?: category?.name ?: "Unknown",
+                    categoryIcon = category?.icon ?: "📊",
+                    categoryColor = category?.color ?: "#9E9E9E",
+                    budgetAmount = engineItem.budgetLimit,
+                    actualSpent = engineItem.actualSpent,
+                    percentUsed = engineItem.percentageUsed.toFloat(),
+                    displayCurrency = homeCurrency
+                )
+            }
 
             BudgetChartResult(items = items, warnings = mergeWarnings(warnings))
         } catch (_: Exception) {

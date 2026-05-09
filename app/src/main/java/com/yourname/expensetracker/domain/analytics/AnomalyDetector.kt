@@ -141,6 +141,7 @@ class AnomalyDetector @Inject constructor(
 
     private fun dayName(timestampMs: Long): String {
         val dow = TimePeriodUtils.getDayOfWeek(timestampMs)
+        // A18: Replace Calendar constants with java.time.DayOfWeek
         return when (dow) {
             java.util.Calendar.MONDAY    -> "Monday"
             java.util.Calendar.TUESDAY   -> "Tuesday"

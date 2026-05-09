@@ -604,6 +604,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
     // ============================================================
     
     private fun calendarDayToIndex(timestamp: Long): Int {
+        // A18: Replace Calendar constants with java.time.DayOfWeek
         return when (TimePeriodUtils.getDayOfWeek(timestamp)) {
             Calendar.MONDAY -> 0
             Calendar.TUESDAY -> 1
@@ -963,6 +964,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         if (weekendTotal / totalSpent > 0.5) {
             val weekendMerchants = purchases.filter { tx ->
                 val dow = TimePeriodUtils.getDayOfWeek(tx.date)
+                // A18: Replace Calendar constants with java.time.DayOfWeek
                 dow == Calendar.SATURDAY || dow == Calendar.SUNDAY
             }.map { it.merchant }.distinct()
             

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.core.money.toCurrencyCodeOrNull
 import com.yourname.expensetracker.domain.core.time.PeriodRange
@@ -26,7 +27,8 @@ class AnalyticsInputAssembler @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val normalizer: AnalyticsCurrencyNormalizer,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val categoryRepository: CategoryRepository
 ) {
 
     /**
@@ -82,13 +84,17 @@ class AnalyticsInputAssembler @Inject constructor(
             true
         }
 
-        // 2. Normalise via AnalyticsCurrencyNormalizer
+        // 2. Fetch categories for name/icon/color snapshot (PR-A11)
+        val categories = categoryRepository.getAll()
+        val categoryNameById = categories.associate { it.id to it.name }
+
+        // 3. Normalise via AnalyticsCurrencyNormalizer
         val result = normalizer.normalizeExpenses(filtered, homeCurrency)
 
-        // 3. Build a set of IDs that were successfully normalised
+        // 4. Build a set of IDs that were successfully normalised
         val normalizedIds = result.normalizedExpenses.mapTo(mutableSetOf()) { it.snapshot.id }
 
-        // 4. Map normalised expenses to the canonical contract
+        // 5. Map normalised expenses to the canonical contract
         val included = result.normalizedExpenses.map { normExp ->
             val snap = normExp.snapshot
             NormalizedExpense(
@@ -102,7 +108,7 @@ class AnalyticsInputAssembler @Inject constructor(
                 merchant = snap.merchant,
                 merchantKey = snap.merchantKey,
                 categoryId = snap.categoryId,
-                categoryNameSnapshot = null,
+                categoryNameSnapshot = categoryNameById[snap.categoryId],
                 transactionType = snap.transactionType.name,
                 isNotMine = snap.isNotMine,
                 isSharedExpense = false, // A16: populate when ExpenseSnapshot carries isSharedExpense
@@ -111,7 +117,7 @@ class AnalyticsInputAssembler @Inject constructor(
             )
         }
 
-        // 5. Build excluded expenses with detailed reasons
+        // 6. Build excluded expenses with detailed reasons
         val excluded = filtered
             .filter { it.id !in normalizedIds }
             .map { exp ->
@@ -133,7 +139,7 @@ class AnalyticsInputAssembler @Inject constructor(
             it.type == AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE
         }
 
-        // PR-A9: Compute confidence penalty & multiplier from data quality.
+        // 7. PR-A9: Compute confidence penalty & multiplier from data quality.
         //   excludedCount/total > 0.1 → penalty up to 0.5
         //   missingRateCount > 0      → multiplier scales down to min 0.8
         val totalCount = filtered.size.coerceAtLeast(1)
