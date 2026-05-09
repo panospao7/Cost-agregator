@@ -33,11 +33,10 @@ import kotlin.math.sqrt
  * 
  * Rule-based v1 (transparent), optional ML later.
  *
- * TODO (A04): Verified SAFE — all monetary values have been normalized via
- * AnalyticsCurrencyNormalizer before reaching this classifier. No code change needed.
- *
- * TODO (PR-E11): Already safe — data is normalized upstream by callers.
- * No changes needed for NormalizedAnalyticsInput migration.
+ * A04 OPEN: classify() currently queries raw ExpenseSnapshot data from the
+ * repository. It must be migrated to consume NormalizedAnalyticsInput before
+ * monetary feature extraction can be considered currency-safe.
+ * TODO: Add classify(input: NormalizedAnalyticsInput) overload.
  */
 @Singleton
 class SpendingPersonalityClassifier @Inject constructor(

@@ -13,6 +13,7 @@ data class NormalizedAnalyticsInput(
 data class NormalizedExpense(
     val id: Long,
     val originalAmount: Double,
+    val originalEffectiveAmount: Double,
     val originalCurrency: String,
     val normalizedAmount: Double,
     val normalizedCurrency: String,
@@ -20,16 +21,24 @@ data class NormalizedExpense(
     val merchant: String,
     val merchantKey: String?,
     val categoryId: Long?,
+    val categoryNameSnapshot: String?,
     val transactionType: String,
     val isNotMine: Boolean,
-    val isSharedExpense: Boolean
+    val isSharedExpense: Boolean,
+    val ownershipMode: String?,
+    val source: String?
 )
 
+/**
+ * A01: Expanded exclusion reason with warning type and message.
+ */
 data class ExcludedExpense(
     val id: Long,
     val originalAmount: Double,
     val originalCurrency: String,
-    val reason: ExclusionReason
+    val reason: ExclusionReason,
+    val warningType: AnalyticsConversionWarningType? = null,
+    val message: String? = null
 )
 
 enum class ExclusionReason {
@@ -42,5 +51,7 @@ data class AnalyticsDataQuality(
     val staleRateCount: Int = 0,
     val missingRateCount: Int = 0,
     val invalidCurrencyCount: Int = 0,
-    val conversionWarnings: List<String> = emptyList()
+    val conversionWarnings: List<String> = emptyList(),
+    val confidencePenalty: Double = 0.0,
+    val confidenceMultiplier: Double = 1.0
 )

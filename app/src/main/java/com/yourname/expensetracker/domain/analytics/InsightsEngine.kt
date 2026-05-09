@@ -33,16 +33,12 @@ import kotlin.coroutines.cancellation.CancellationException
  * Callers should use [AnalyticsCurrencyNormalizer.normalizeSnapshots] before
  * passing expenses to [generateInsights] or [getLegacyInsights].
  *
- * TODO (PR-E11): Accept NormalizedAnalyticsInput instead of querying raw expenses.
- * Engine should not call CurrencyConverter itself unless explicitly responsible.
+ * A07 OPEN: Several methods default `displayCurrency` to `"EUR"`. New callers
+ * must pass explicit currency via [generateInsights(input: NormalizedAnalyticsInput)]
+ * once available. Legacy `generateInsights(displayCurrency = "EUR")` paths are
+ * tolerated for backward compatibility but should be migrated.
  *
- * ## CURRENCY LIMITATION: Hardcoded EUR default
- * Several methods in this engine default `displayCurrency` to `"EUR"` when no
- * currency is provided by the caller. This means insights (formatting, comparison)
- * will be denominated in EUR even when the user's home currency is different.
- * A future migration should wire the user's actual home currency via
- * [com.yourname.expensetracker.domain.currency.CurrencySettingsRepository.homeCurrency]
- * and remove the hardcoded default.
+ * PR-E11: Accept NormalizedAnalyticsInput instead of querying raw expenses.
  *
  * ## AIML-11: Confidence propagation
  * Insights that rely on AI-classified transactions inherit the classifier's
