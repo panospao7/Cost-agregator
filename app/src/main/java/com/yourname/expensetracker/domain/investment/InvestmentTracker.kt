@@ -319,24 +319,29 @@ class InvestmentTracker @Inject constructor(
     /**
      * Calculate portfolio allocation percentages.
      *
-     * I01-FIXED: Allocation now computed from MoneyAggregate buckets (not raw Doubles).
+     * I02-FIXED: Uses currencyConverter.convertAsOf() for real conversion.
+     * Returns PortfolioAllocationResult with isPartial and failedConversionTypes.
      */
-    @Deprecated("Use getPortfolioAllocation() which now converts via CurrencyConverter.convertAsOf()")
-    suspend fun getPortfolioAllocation(): Map<InvestmentType, Double> = withContext(ioDispatcher) {
+    suspend fun getPortfolioAllocation(): PortfolioAllocationResult = withContext(ioDispatcher) {
         val holdings = investmentDao.getAllActiveInvestments().first()
         val (_, aggregate, _) = getPortfolioSummaryAggregate(holdings)
-        if (aggregate.sourceBuckets.isEmpty()) return@withContext emptyMap()
+        if (aggregate.sourceBuckets.isEmpty()) return@withContext PortfolioAllocationResult(emptyMap(), false, emptyList())
         val total = aggregate.displayAmount
-        if (total <= 0.0) return@withContext emptyMap()
+        if (total <= 0.0) return@withContext PortfolioAllocationResult(emptyMap(), false, emptyList())
         val homeCurrency = aggregate.displayCurrency.code
-        val byType = holdings.groupBy { it.type }.mapValues { (_, holds) ->
+        val failedTypes = mutableListOf<InvestmentType>()
+        val byType = holdings.groupBy { it.type }.mapValues { (type, holds) ->
             holds.sumOf { h ->
                 val value = investmentValueDao.getLatestValue(h.id)?.totalValue ?: 0.0
                 if (h.currency == homeCurrency) value
-                else currencyConverter.convertAsOf(value, h.currency, homeCurrency, atMillis = h.lastUpdated)?.convertedAmount ?: 0.0
+                else {
+                    val converted = currencyConverter.convertAsOf(value, h.currency, homeCurrency, atMillis = h.lastUpdated)?.convertedAmount
+                    if (converted == null) { failedTypes.add(type); 0.0 } else converted
+                }
             }
         }
-        byType.mapValues { (_, value) -> value / total }
+        val allocations = byType.mapValues { (_, value) -> if (total > 0.0) value / total else 0.0 }
+        return@withContext PortfolioAllocationResult(allocations, failedTypes.isNotEmpty(), failedTypes)
     }
     
     /**
@@ -558,4 +563,10 @@ data class InvestmentDataQuality(
     val veryStaleHoldingCount: Int = 0,
     val missingPriceCount: Int = 0,
     val lastUpdatedAt: Long = 0L
+)
+
+data class PortfolioAllocationResult(
+    val allocations: Map<InvestmentType, Double>,
+    val isPartial: Boolean,
+    val failedConversionTypes: List<InvestmentType>
 )

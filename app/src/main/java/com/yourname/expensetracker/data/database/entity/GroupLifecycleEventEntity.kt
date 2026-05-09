@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.database.entity
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
@@ -17,5 +18,6 @@ data class GroupLifecycleEventEntity(
     val relatedSettlementId: Long? = null,
     val payloadJson: String? = null,
     val createdAt: Long,
-    val source: String = "GROUP_LIFECYCLE"
+    @ColumnInfo(defaultValue = "GROUP_LIFECYCLE") val source: String = "GROUP_LIFECYCLE"
 )
+

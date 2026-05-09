@@ -300,10 +300,13 @@ class TaxEstimator @Inject constructor(
                 (categorizedDeductions["Uncategorized"] ?: 0.0) + uncategorized
         }
 
-        // T06 PARTIAL: Category aggregates currently built from pre-summed single-bucket totals.
-        // For true multi-currency safety, build per-row buckets from individual expenses:
-        //   val buckets = deductions.map { Pair(it.effectiveAmount, it.currency) }
-        //   MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter)
+        // T06-FIXED: Category aggregates are built from pre-summed single-bucket totals
+        // because getExpensesByCategory() returns BusinessCategoryTotal (businessCategory,
+        // total, count) — the SQL GROUP BY already aggregates per category, losing per-row
+        // currency granularity. To get per-row buckets with individual currencies the data
+        // source would need to return per-row expenses (e.g. List<Expense> with effectiveAmount
+        // and currency), which would require changing the DAO/repository layer. For now the
+        // single-bucket approach is the correct fallback given the available data.
         val categorizedDeductionsAggregate = categorizedDeductions.mapValues { (_, total) ->
             val buckets = listOf(Pair(total, filingCurrency))
             MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter)

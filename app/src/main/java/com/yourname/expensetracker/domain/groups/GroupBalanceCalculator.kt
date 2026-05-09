@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
+import com.yourname.expensetracker.data.database.entity.SplitType
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,14 +35,39 @@ class GroupBalanceCalculator @Inject constructor(
         val settlements = settlementDao.getSettlementsForGroup(groupId)
 
         val paidTotal = expenses.filter { it.paidById == memberId }.sumOf { it.totalAmount }
-        // Equal split: each member owes totalAmount / memberCount
         val memberCount = memberDao.getMemberCount(groupId).coerceAtLeast(1)
-        val owedShareTotal = expenses.sumOf { it.totalAmount / memberCount }
+        // For CUSTOM splits, compute owed share from the split JSON
+        val owedShareTotal = expenses.sumOf { expense ->
+            when (expense.splitType) {
+                SplitType.EQUAL -> expense.totalAmount / memberCount
+                else -> {
+                    // For CUSTOM/UNEQUAL splits, parse customSplitsJson to find this member's share
+                    val json = expense.customSplitsJson
+                    if (json != null) {
+                        try {
+                            // Simple JSON parse: {"memberId": amount}
+                            val share = extractMemberShare(json, memberId.toString())
+                            share ?: (expense.totalAmount / memberCount) // fallback to equal
+                        } catch (e: Exception) {
+                            expense.totalAmount / memberCount // fallback to equal
+                        }
+                    } else {
+                        expense.totalAmount / memberCount // fallback to equal
+                    }
+                }
+            }
+        }
         val settlementsPaid = settlements.filter { it.fromMemberId == memberId }.sumOf { it.amount }
         val settlementsReceived = settlements.filter { it.toMemberId == memberId }.sumOf { it.amount }
         val netBalance = paidTotal - owedShareTotal - settlementsPaid + settlementsReceived
 
         return GroupMemberBalance(groupId, memberId, currency, paidTotal, owedShareTotal, settlementsPaid, settlementsReceived, netBalance)
+    }
+
+    private fun extractMemberShare(customSplitsJson: String, memberIdStr: String): Double? {
+        // Parse simple JSON: {"123": 45.0, "456": 55.0}
+        val pattern = Regex("\"$memberIdStr\"\\s*:\\s*([\\d.]+)")
+        return pattern.find(customSplitsJson)?.groupValues?.get(1)?.toDoubleOrNull()
     }
 
     private companion object {
