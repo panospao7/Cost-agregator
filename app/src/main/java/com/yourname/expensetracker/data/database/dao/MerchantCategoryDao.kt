@@ -49,10 +49,7 @@ interface MerchantCategoryDao {
      * Prefer the repository-level method that handles canonical name normalization
      * and deduplication before inserting.
      */
-    /**
-     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
-     * Verify: Room @Insert already returns Long for single insert.
-     */
+    // Room @Insert(onConflict = IGNORE) returns the new rowId, or -1L if ignored.
     @Deprecated("Use repository-level insert with canonical name normalization instead")
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(merchantCategory: MerchantCategory): Long
@@ -62,10 +59,7 @@ interface MerchantCategoryDao {
      * Prefer the repository-level method that handles canonical name normalization
      * and deduplication before inserting.
      */
-    /**
-     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
-     * Verify: Room @Insert already returns List<Long> for batch insert.
-     */
+    // Room @Insert(onConflict = IGNORE) returns the new rowId, or -1L if ignored.
     @Deprecated("Use repository-level insertAll with canonical name normalization instead")
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(merchantCategories: List<MerchantCategory>): List<Long>

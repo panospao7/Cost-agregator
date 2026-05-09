@@ -1030,6 +1030,30 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * C11-FIXED: Basic bulk category update with lifecycle events.
+     * Moves all expenses from one category to another, writing per-expense
+     * UPDATED events via [updateCategory] so that side effects are dispatched.
+     *
+     * @param categoryId    The source category whose expenses should be reassigned.
+     * @param newCategoryId The target category to assign.
+     * @param source        The source system/component that triggered the update.
+     */
+    suspend fun bulkUpdateCategory(
+        categoryId: Long,
+        newCategoryId: Long,
+        source: String = "CATEGORY_CORRECTION"
+    ) {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+        val expenses = expenseDao.getExpensesByCategory(categoryId, 0L, Long.MAX_VALUE)
+        for (expense in expenses) {
+            updateCategory(expense.id, newCategoryId, source = source)
+        }
+        Timber.d("Bulk category update: %d expenses moved from %d to %d", expenses.size, categoryId, newCategoryId)
+    }
+
+    /**
      * Bulk-updates the merchant for all expenses matching the old merchant key.
      * Writes a single BULK_UPDATED TransactionEvent (not per-row) with
      * JSON metadata describing the operation.

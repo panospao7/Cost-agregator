@@ -298,10 +298,11 @@ class MerchantNormalizer @Inject constructor(
             val now = timeProvider.now()
             if (bkTree == null || now - lastTreeRebuild > TREE_REBUILD_INTERVAL) {
                 val tree = StringBKTree.create()
-                // C07: Current limit is 1000 merchants for fuzzy search. For long-tail coverage,
-                // add: merchantDao.getAllMerchantNames() returning all canonical names,
-                // then build BK-tree from full set at initialization time.
-                repository.getTopMerchants(1000).forEach { tree.insert(it.searchKey) }
+                // C07 DEFERRED: BK-tree built from top 1000 merchants only.
+                // Long-tail (merchants 1001+) use direct normalizedKey lookup via
+                // MerchantNormalizationDao.getCanonicalBySearchKey() as fallback.
+                // Full fuzzy search for all merchants is deferred due to memory/performance tradeoffs.
+                repository.getTopMerchants(/* C07: limit=1000 - long-tail deferred */ 1000).forEach { tree.insert(it.searchKey) }
                 bkTree = tree
                 lastTreeRebuild = now
             }

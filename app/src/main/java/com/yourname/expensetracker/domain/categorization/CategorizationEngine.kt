@@ -70,6 +70,9 @@ class CategorizationEngine @Inject constructor(
     private var lastCacheTime = 0L
     private val CACHE_EXPIRY_MS = 300_000
 
+    // C14: Persistent categorization decision trace (ring buffer, last 100 entries)
+    private val decisionTrace = ArrayDeque<String>(100)
+
     companion object {
         private val STOP_WORDS = setOf("the", "and", "for", "inc", "ltd", "com")
         
@@ -164,7 +167,9 @@ class CategorizationEngine @Inject constructor(
         }
         
         // LAYER 3: Semantic keyword matching
-        val semanticMatch = semanticMatcher.findBestMatch(merchant, CONFIDENCE_KEYWORD_MIN)
+        val result = semanticMatcher.findBestMatch(merchant, CONFIDENCE_KEYWORD_MIN)
+        val semanticMatch = result.bestMatch
+        val isAmbiguous = result.isAmbiguous
         if (semanticMatch != null) {
             val categoryId = getCategoryIdByName(semanticMatch.categoryName)
             if (categoryId != null) {
@@ -325,7 +330,9 @@ class CategorizationEngine @Inject constructor(
         // LAYER 3: Semantic keyword matching
         var semanticMatchFound = false
         if (finalResult == null) {
-            val semanticMatch = semanticMatcher.findBestMatch(merchant, CONFIDENCE_KEYWORD_MIN)
+            val matchResult = semanticMatcher.findBestMatch(merchant, CONFIDENCE_KEYWORD_MIN)
+            val semanticMatch = matchResult.bestMatch
+            val isAmbiguous = matchResult.isAmbiguous
             if (semanticMatch != null) {
                 val categoryId = getCategoryIdByName(semanticMatch.categoryName)
                 if (categoryId != null) {
@@ -455,6 +462,9 @@ class CategorizationEngine @Inject constructor(
         val mapping = createMerchantCategoryMapping(merchantName, categoryId)
         merchantCategoryRepository.insert(mapping)
         invalidateCache()
+        // C14: Trace this decision into the ring-buffer
+        val categoryName = getCategoryMap()[categoryId] ?: "unknown"
+        traceDecision(merchantName, categoryName, "learnMerchantCategory")
         Timber.d(
             "Learned merchant: ${mapping.merchantPattern} -> category $categoryId (canonical: ${mapping.normalizedCanonicalName})"
         )
@@ -484,6 +494,22 @@ class CategorizationEngine @Inject constructor(
         }
     }
 
+    fun invalidateAllCaches() {
+        // C04-FIXED: Central invalidation point for all category-cache consumers.
+        // Call after any MerchantCategoryRepository/CategoryRepository write,
+        // seed operation, or direct DAO write that changes category/merchant mappings.
+        cachedMappings = null
+        cachedPatternsSet = null
+        cachedCategoryMap = null
+        cachedCategoryNameToId = null
+        lastCacheTime = 0
+        Timber.d("CategorizationEngine: all caches invalidated")
+    }
+
+    // C04 PARTIAL: internal learnMerchantCategory() invalidates this cache.
+    // Remaining: all MerchantCategoryRepository/CategoryRepository/seed/direct DAO writes
+    // must emit CategoryMappingChanged and invalidate every categorization cache.
+
     // C04-VERIFIED: invalidateCache() is called after the only write operation in
     // this engine (learnMerchantCategory at line 457). All write paths within
     // CategorizationEngine trigger cache invalidation:
@@ -501,6 +527,16 @@ class CategorizationEngine @Inject constructor(
     // NEXT: Emit CategoryMappingChanged events from all write paths
     // NEXT: Wire merchant canonical stats to TransactionSideEffectDispatcher
     
+    // C14: Record a decision in the ring-buffer trace.
+    private fun traceDecision(merchant: String, category: String, method: String) {
+        val entry = "${System.currentTimeMillis()}|$merchant|$category|$method"
+        if (decisionTrace.size >= 100) decisionTrace.removeFirst()
+        decisionTrace.addLast(entry)
+    }
+
+    /** Returns a snapshot of the last 100 categorization decisions. */
+    fun getRecentDecisions(): List<String> = decisionTrace.toList()
+
     // Utility methods for testing
     fun testCanonicalize(merchant: String): CanonicalResult {
         return canonicalizer.canonicalize(merchant)

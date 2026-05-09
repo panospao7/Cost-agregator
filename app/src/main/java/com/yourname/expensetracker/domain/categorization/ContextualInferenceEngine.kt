@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.categorization
 
+import com.yourname.expensetracker.domain.util.TimeProvider
 import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -11,7 +12,9 @@ data class ContextPrediction(
 )
 
 @Singleton
-class ContextualInferenceEngine @Inject constructor() {
+class ContextualInferenceEngine @Inject constructor(
+    private val timeProvider: TimeProvider
+) {
 
     // TODO (C13): Expand CategorizationContext with additional signals:
     // - Day-of-week (already partially: dayOfWeek param on inferFromContext)
@@ -115,6 +118,8 @@ class ContextualInferenceEngine @Inject constructor() {
         notificationSource: String? = null
     ): ContextPrediction? {
         
+        // C18/A18: Replace Calendar.getInstance() with TimeProvider + ZoneId.
+        // java.time.LocalDateTime + ZoneId.systemDefault() for day-of-week/hour context.
         val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
         val hour = cal.get(Calendar.HOUR_OF_DAY)
         val day = dayOfWeek ?: cal.get(Calendar.DAY_OF_WEEK)

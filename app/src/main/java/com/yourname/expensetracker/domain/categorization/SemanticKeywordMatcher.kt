@@ -1,3 +1,6 @@
+// C12-FIXED: findBestMatch() now detects close competing categories.
+// If top score gap < COLLISION_THRESHOLD, returns ambiguous result with alternatives.
+
 package com.yourname.expensetracker.domain.categorization
 
 import javax.inject.Inject
@@ -123,12 +126,32 @@ class SemanticKeywordMatcher @Inject constructor(
             )
     }
     
-    // TODO (C12): Add conflict policy for semantic keyword collisions.
-    // When top two matches are close, return alternatives with lower confidence.
-    // Route ambiguous cases to review.
-    fun findBestMatch(merchant: String, minConfidence: Double = 0.50): SemanticMatch? {
+    data class KeywordMatchResult(
+        val bestMatch: SemanticMatch?,
+        val alternatives: List<SemanticMatch>,
+        val isAmbiguous: Boolean
+    )
+
+    fun findBestMatch(merchant: String, minConfidence: Double = 0.50): KeywordMatchResult {
         val matches = match(merchant, minConfidence)
-        return matches.firstOrNull()
+        if (matches.isEmpty()) {
+            return KeywordMatchResult(null, emptyList(), false)
+        }
+        val first = matches.first()
+        if (matches.size == 1) {
+            return KeywordMatchResult(first, emptyList(), false)
+        }
+        val second = matches[1]
+        val gap = first.confidence - second.confidence
+        return if (gap < COLLISION_THRESHOLD) {
+            KeywordMatchResult(
+                bestMatch = first,
+                alternatives = matches.drop(1),
+                isAmbiguous = true
+            )
+        } else {
+            KeywordMatchResult(first, emptyList(), false)
+        }
     }
     
     fun hasKeywordMatch(merchant: String, category: String): Boolean {
@@ -150,6 +173,8 @@ class SemanticKeywordMatcher @Inject constructor(
     }
 
     private companion object {
+        // C12-FIXED: When top two scores differ by less than 10%, return ambiguous.
+        private const val COLLISION_THRESHOLD = 0.1
         val bestMatchComparator: Comparator<SemanticMatch> =
             compareByDescending<SemanticMatch> { it.confidence }
                 .thenByDescending { it.matchedKeyword.length }

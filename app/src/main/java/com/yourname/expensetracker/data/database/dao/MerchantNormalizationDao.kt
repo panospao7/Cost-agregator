@@ -24,6 +24,10 @@ interface MerchantNormalizationDao {
     @Query("SELECT * FROM merchant_canonicals WHERE searchKey = :searchKey ORDER BY id DESC LIMIT 1")
     suspend fun getCanonicalBySearchKey(searchKey: String): MerchantCanonical?
     
+    // C06-FIXED: Returns the most recently created canonical when multiple share the same normalized name.
+    @Query("SELECT * FROM merchant_canonicals WHERE normalizedName = :name ORDER BY createdAt DESC LIMIT 1")
+    suspend fun getCanonicalByNormalizedNameLatest(name: String): MerchantCanonical?
+
     @Query("SELECT * FROM merchant_canonicals WHERE normalizedName = :name LIMIT 1")
     suspend fun getCanonicalByName(name: String): MerchantCanonical?
     
