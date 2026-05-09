@@ -80,6 +80,10 @@ data class MoneyAmount(
         fun zero(currency: CurrencyCode): MoneyAmount = MoneyAmount(0.0, currency)
 
         // M06-FIXED: Factory for BigDecimal values (migration path from domain.util.Money).
+        // M06 PARTIAL: Converts BigDecimal to Double — precision may be lost for
+        // values exceeding Double's ~15 significant digits. Full BigDecimal storage
+        // requires a MoneyAmount-v2 schema migration. Current precision is sufficient
+        // for standard currency amounts (< 1 trillion with 2 decimal places).
         fun fromBigDecimal(value: java.math.BigDecimal, currency: CurrencyCode): MoneyAmount {
             return MoneyAmount(value.toDouble(), currency)
         }

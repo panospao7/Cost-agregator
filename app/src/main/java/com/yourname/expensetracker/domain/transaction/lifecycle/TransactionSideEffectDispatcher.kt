@@ -80,7 +80,8 @@ class TransactionSideEffectDispatcher @Inject constructor(
         runSafely("merchant canonical stats for expense $expenseId") {
             // C08-FIXED: Update merchant canonical stats post-commit for every new expense.
             try {
-                val canonical = merchantNormalizationRepository.getCanonicalBySearchKey(expense.merchant)
+                val merchantKey = expense.merchantKey ?: expense.merchant
+                val canonical = merchantNormalizationRepository.getCanonicalBySearchKey(merchantKey)
                 if (canonical != null) {
                     merchantNormalizationRepository.incrementMerchantStats(
                         id = canonical.id,

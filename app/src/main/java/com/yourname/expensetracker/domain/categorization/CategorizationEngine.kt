@@ -27,7 +27,8 @@ data class CategorizationResult(
     val categoryName: String?,
     val confidence: Double,
     val matchType: MatchType,
-    val explanation: String = ""
+    val explanation: String = "",
+    val isAmbiguous: Boolean = false
 )
 
 data class LayerDebugResult(
@@ -70,7 +71,8 @@ class CategorizationEngine @Inject constructor(
     private var lastCacheTime = 0L
     private val CACHE_EXPIRY_MS = 300_000
 
-    // C14: Persistent categorization decision trace (ring buffer, last 100 entries)
+    // C14: In-memory debug ring buffer only. Not persisted, not exported.
+    // Contains raw merchant names — production logging must redact.
     private val decisionTrace = ArrayDeque<String>(100)
 
     companion object {
@@ -167,9 +169,14 @@ class CategorizationEngine @Inject constructor(
         }
         
         // LAYER 3: Semantic keyword matching
+        // C12-FIXED: Semantic ambiguity propagated to result.
         val result = semanticMatcher.findBestMatch(merchant, CONFIDENCE_KEYWORD_MIN)
         val semanticMatch = result.bestMatch
         val isAmbiguous = result.isAmbiguous
+        if (isAmbiguous) {
+            Timber.d("Categorization: ambiguous semantic match for '%s' — alternatives: %s",
+                merchant, result.alternatives.joinToString { it.categoryName })
+        }
         if (semanticMatch != null) {
             val categoryId = getCategoryIdByName(semanticMatch.categoryName)
             if (categoryId != null) {
@@ -178,7 +185,8 @@ class CategorizationEngine @Inject constructor(
                     categoryName = semanticMatch.categoryName,
                     confidence = semanticMatch.confidence,
                     matchType = MatchType.KEYWORD,
-                    explanation = "Keyword match: '${semanticMatch.matchedKeyword}'"
+                    explanation = "Keyword match: '${semanticMatch.matchedKeyword}'",
+                    isAmbiguous = isAmbiguous
                 )
             }
         }
@@ -328,11 +336,16 @@ class CategorizationEngine @Inject constructor(
         }
         
         // LAYER 3: Semantic keyword matching
+        // C12-FIXED: Semantic ambiguity propagated to result.
         var semanticMatchFound = false
         if (finalResult == null) {
             val matchResult = semanticMatcher.findBestMatch(merchant, CONFIDENCE_KEYWORD_MIN)
             val semanticMatch = matchResult.bestMatch
             val isAmbiguous = matchResult.isAmbiguous
+            if (isAmbiguous) {
+                Timber.d("Categorization: ambiguous semantic match for '%s' — alternatives: %s",
+                    merchant, matchResult.alternatives.joinToString { it.categoryName })
+            }
             if (semanticMatch != null) {
                 val categoryId = getCategoryIdByName(semanticMatch.categoryName)
                 if (categoryId != null) {
@@ -342,7 +355,8 @@ class CategorizationEngine @Inject constructor(
                         categoryName = semanticMatch.categoryName,
                         confidence = semanticMatch.confidence,
                         matchType = MatchType.KEYWORD,
-                        explanation = "Keyword match: '${semanticMatch.matchedKeyword}'"
+                        explanation = "Keyword match: '${semanticMatch.matchedKeyword}'",
+                        isAmbiguous = isAmbiguous
                     )
                     layerResults.add(LayerDebugResult("Layer 3: Semantic", true, result.categoryName, result.categoryId, result.confidence, result.matchType, result.explanation))
                     finalResult = result

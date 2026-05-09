@@ -197,13 +197,73 @@ fun PeriodKind.toPeriodRange(
 // M04-FIXED: Zone-aware toPeriodRange using java.time.
 fun PeriodKind.toPeriodRangeZoned(nowMillis: Long, zoneId: java.time.ZoneId = java.time.ZoneId.systemDefault()): com.yourname.expensetracker.domain.core.time.PeriodRange {
     val now = java.time.Instant.ofEpochMilli(nowMillis).atZone(zoneId)
+    val today = now.toLocalDate()
     return when (this) {
-        // ... compute periods using java.time.LocalDate
-        else -> com.yourname.expensetracker.domain.core.time.PeriodRange(
-            kind = this,
-            startInclusiveMillis = nowMillis - 30L * 24 * 60 * 60 * 1000,
-            endExclusiveMillis = nowMillis,
-            zoneId = zoneId
-        )
+        PeriodKind.TODAY -> {
+            val start = today.atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = today.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            PeriodRange(this, start, end, zoneId, "Today")
+        }
+        PeriodKind.THIS_WEEK -> {
+            val start = today.with(java.time.DayOfWeek.MONDAY).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = today.with(java.time.DayOfWeek.MONDAY).plusWeeks(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            PeriodRange(this, start, end, zoneId, "This week")
+        }
+        PeriodKind.LAST_WEEK -> {
+            val start = today.with(java.time.DayOfWeek.MONDAY).minusWeeks(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = today.with(java.time.DayOfWeek.MONDAY).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            PeriodRange(this, start, end, zoneId, "Last week")
+        }
+        PeriodKind.LAST_7_DAYS -> {
+            val end = today.atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val start = today.minusDays(7).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            PeriodRange(this, start, end, zoneId, "Last 7 days")
+        }
+        PeriodKind.THIS_MONTH -> {
+            val start = today.withDayOfMonth(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = today.withDayOfMonth(1).plusMonths(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            PeriodRange(this, start, end, zoneId, "This month")
+        }
+        PeriodKind.LAST_MONTH -> {
+            val firstOfThisMonth = today.withDayOfMonth(1)
+            val start = firstOfThisMonth.minusMonths(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = firstOfThisMonth.atStartOfDay(zoneId).toInstant().toEpochMilli()
+            PeriodRange(this, start, end, zoneId, "Last month")
+        }
+        PeriodKind.LAST_30_DAYS -> {
+            val end = today.atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val start = today.minusDays(30).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            PeriodRange(this, start, end, zoneId, "Last 30 days")
+        }
+        PeriodKind.THIS_QUARTER -> {
+            val quarterStartMonth = ((today.monthValue - 1) / 3) * 3 + 1
+            val startDay = today.withMonth(quarterStartMonth).withDayOfMonth(1)
+            val start = startDay.atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = startDay.plusMonths(3).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            PeriodRange(this, start, end, zoneId, "This quarter")
+        }
+        PeriodKind.LAST_QUARTER -> {
+            val quarterStartMonth = ((today.monthValue - 1) / 3) * 3 + 1
+            val thisQuarterStart = today.withMonth(quarterStartMonth).withDayOfMonth(1).atStartOfDay(zoneId)
+            val start = thisQuarterStart.minusMonths(3).toInstant().toEpochMilli()
+            val end = thisQuarterStart.toInstant().toEpochMilli()
+            PeriodRange(this, start, end, zoneId, "Last quarter")
+        }
+        PeriodKind.THIS_YEAR -> {
+            val start = today.withDayOfYear(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = today.withDayOfYear(1).plusYears(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            PeriodRange(this, start, end, zoneId, "This year")
+        }
+        PeriodKind.LAST_YEAR -> {
+            val start = today.withDayOfYear(1).minusYears(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = today.withDayOfYear(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            PeriodRange(this, start, end, zoneId, "Last year")
+        }
+        PeriodKind.CUSTOM -> {
+            // CUSTOM without explicit bounds defaults to last 30 days from now
+            val start = today.minusDays(30).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            val end = today.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+            PeriodRange(this, start, end, zoneId, this.name)
+        }
     }
 }
