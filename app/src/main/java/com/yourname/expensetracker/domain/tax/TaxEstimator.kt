@@ -119,7 +119,7 @@ class TaxEstimator @Inject constructor(
             displayCurrency = CurrencyCode(filingCurrency),
             sourceBuckets = emptyList(),
             conversionFailures = emptyList(),
-            isPartial = false,
+            isPartial = deductibleAggregate.isPartial,
             warningMessage = null
         )
         val partial = deductibleAggregate.isPartial || vatAggregate.isPartial
@@ -271,8 +271,8 @@ class TaxEstimator @Inject constructor(
             displayAmount = estimate.estimatedIncomeTax,
             displayCurrency = CurrencyCode(filingCurrency),
             sourceBuckets = emptyList(),
-            conversionFailures = emptyList(),
-            isPartial = false,
+            conversionFailures = estimate.deductibleAggregate.conversionFailures,
+            isPartial = estimate.isPartial,  // inherit from source
             warningMessage = null
         )
 
@@ -299,7 +299,13 @@ class TaxEstimator @Inject constructor(
             categorizedDeductions["Uncategorized"] =
                 (categorizedDeductions["Uncategorized"] ?: 0.0) + uncategorized
         }
-        
+
+        // PR-T2: Build per-category MoneyAggregates from categorized deductions.
+        val categorizedDeductionsAggregate = categorizedDeductions.mapValues { (_, total) ->
+            val buckets = listOf(Pair(total, filingCurrency))
+            MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter)
+        }
+
         TaxYearSummary(
             year = year,
             totalIncome = estimate.estimatedIncome,
@@ -311,6 +317,7 @@ class TaxEstimator @Inject constructor(
             incomeAggregate = incomeAggregate,
             deductibleAggregate = estimate.deductibleAggregate,
             estimatedTaxAggregate = estimatedTaxAgg,
+            categorizedDeductionsAggregate = categorizedDeductionsAggregate,
             isPartial = incomeAggregate.isPartial || estimate.isPartial,
             conversionWarnings = (incomeAggregate.conversionFailures.map { it.description } + estimate.conversionWarnings)
         )
@@ -347,6 +354,7 @@ data class TaxYearSummary(
     val incomeAggregate: MoneyAggregate = MoneyAggregate.empty(CurrencyCode("EUR")),
     val deductibleAggregate: MoneyAggregate = MoneyAggregate.empty(CurrencyCode("EUR")),
     val estimatedTaxAggregate: MoneyAggregate = MoneyAggregate.empty(CurrencyCode("EUR")),
+    val categorizedDeductionsAggregate: Map<String, MoneyAggregate> = emptyMap(),
     val isPartial: Boolean = false,
     val conversionWarnings: List<String> = emptyList()
 )

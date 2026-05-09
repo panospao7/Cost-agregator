@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
+import com.yourname.expensetracker.domain.groups.GroupBalanceCalculator
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.GroupSettlementEntity
 import com.yourname.expensetracker.data.database.entity.SplitType
@@ -63,6 +64,7 @@ class GroupLifecycleCoordinator @Inject constructor(
     private val groupExpenseDao: GroupExpenseDao,
     private val memberDao: GroupMemberDao,
     private val settlementDao: GroupSettlementDao,
+    private val balanceCalculator: GroupBalanceCalculator,
     private val timeProvider: TimeProvider,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val budgetMonitor: dagger.Lazy<com.yourname.expensetracker.domain.budget.BudgetMonitor>,
@@ -212,25 +214,12 @@ class GroupLifecycleCoordinator @Inject constructor(
                 "Cannot remove the current user. Transfer ownership to another member first."
             ))
         }
-        // G05: Basic balance gate — check if member has any unpaid group expenses
-        // where they are the payer. Unpaid means settledAt is null.
-        val groupExpenses = groupExpenseDao.getExpensesForGroupOnce(groupId)
-        val unpaidPayerExpenses = groupExpenses.filter { it.paidById == memberId && it.settledAt == null }
-        if (unpaidPayerExpenses.isNotEmpty()) {
+        // G05: Balance gate — check if member has outstanding balance
+        val balance = balanceCalculator.calculateMemberBalance(groupId, memberId)
+        if (!balance.isSettled) {
             return@withContext Result.Error(GroupValidationError.Unknown(
-                "Cannot remove member with outstanding balance. " +
-                "Member has ${unpaidPayerExpenses.size} unpaid expense(s) as payer. " +
-                "Settle all expenses before removal."
-            ))
-        }
-        // G04: Also check settlement records — member may owe money even if not the payer
-        val settlements = settlementDao.getSettlementsForGroup(groupId)
-        val netOwed = settlements.filter { it.toMemberId == memberId }.sumOf { it.amount } -
-            settlements.filter { it.fromMemberId == memberId }.sumOf { it.amount }
-        if (netOwed > 0.01) {
-            return@withContext Result.Error(GroupValidationError.Unknown(
-                "Cannot remove member with outstanding balance. " +
-                "Member is owed %.2f %s in unsettled payments.".format(netOwed, group.defaultCurrency)
+                "Cannot remove member with outstanding balance of %.2f %s (paid %.2f - owed %.2f)"
+                    .format(balance.netBalance, balance.currency, balance.paidTotal, balance.owedShareTotal)
             ))
         }
 

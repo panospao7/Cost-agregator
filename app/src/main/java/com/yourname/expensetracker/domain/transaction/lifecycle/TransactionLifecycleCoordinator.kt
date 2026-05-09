@@ -611,6 +611,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
     /**
      * T10-FIXED: Updates business/tax fields on an expense through the lifecycle coordinator.
      * Side effects are deferred until after the DB transaction commits.
+     *
+     * PR-T1: Real implementation — loads expense from DB, applies field copies,
+     * persists via expenseDao.update(), and writes a UPDATED TransactionEvent.
+     * Fields that do not exist on the Expense entity (businessUsePercent, taxCategory, vatEligible)
+     * are accepted as no-op parameters for API compatibility.
      */
     suspend fun updateBusinessTaxFields(
         expenseId: Long,
@@ -621,10 +626,44 @@ class TransactionLifecycleCoordinator @Inject constructor(
         receiptRequired: Boolean? = null,
         source: String = "BUSINESS_TAX_UPDATE"
     ) {
-        // Delegate to the existing expenseDao for the update, then dispatch side effects
-        // (The exact DAO method depends on what fields exist on Expense)
+        val existing = expenseDao.getById(expenseId) ?: return
+        val now = timeProvider.now()
+        val beforeSnapshot = expenseToSnapshot(existing)
+
+        // Map receiptRequired → requiresReceipt (the actual Expense field name)
+        val updated = existing.copy(
+            isBusinessExpense = isBusinessExpense ?: existing.isBusinessExpense,
+            requiresReceipt = receiptRequired ?: existing.requiresReceipt
+        )
+
+        database.withTransaction {
+            expenseDao.update(updated)
+            val afterSnapshot = expenseToSnapshot(expenseId, updated)
+            transactionEventDao.insert(
+                TransactionEvent(
+                    expenseId = expenseId,
+                    eventType = LifecycleEventType.UPDATED.name,
+                    source = source,
+                    actor = null,
+                    occurredAt = now,
+                    dedupeKey = existing.dedupeKey,
+                    duplicateExpenseId = null,
+                    beforeSnapshot = beforeSnapshot,
+                    afterSnapshot = afterSnapshot,
+                    metadata = null,
+                    reason = null
+                )
+            )
+        }
+
+        // Post-update side effects (best-effort)
+        try {
+            sideEffectDispatcher.dispatchOnUpdated(expenseId, source)
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: side effects failed after updating business/tax fields for expense %d", expenseId)
+        }
+
         Timber.d("T10: Business/tax fields updated for expense %d", expenseId)
-        // Actual implementation: call expenseDao.updateBusinessTaxFields(...) if exists
     }
 
     /**
