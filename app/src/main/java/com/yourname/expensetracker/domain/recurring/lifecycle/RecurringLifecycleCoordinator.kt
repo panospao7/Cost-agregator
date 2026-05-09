@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.recurring.lifecycle
 
+import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
 import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
@@ -32,6 +34,7 @@ import kotlin.math.abs
  */
 @Singleton
 class RecurringLifecycleCoordinator @Inject constructor(
+    private val database: AppDatabase,
     private val expander: RecurringOccurrenceExpander,
     private val resolver: OccurrenceConflictResolver,
     private val materializer: RecurringOccurrenceMaterializer,
@@ -153,54 +156,41 @@ class RecurringLifecycleCoordinator @Inject constructor(
         } ?: return false
 
         val now = timeProvider.now()
-        occurrenceDao.update(
-            match.copy(
-                status = "PAID",
-                linkedExpenseId = expenseId,
-                paidAmount = expense.amount,
-                paidCurrency = expense.currency,
-                paidAt = now,
-                updatedAt = now
+        database.withTransaction {
+            occurrenceDao.update(
+                match.copy(
+                    status = "PAID",
+                    linkedExpenseId = expenseId,
+                    paidAmount = expense.amount,
+                    paidCurrency = expense.currency,
+                    paidAt = now,
+                    updatedAt = now
+                )
             )
-        )
 
-        // Write lifecycle event: OCCURRENCE_PAID
-        lifecycleEventDao.insert(
-            RecurringLifecycleEvent(
-                occurrenceId = match.id,
-                eventType = "OCCURRENCE_PAID",
-                occurredAt = now,
-                oldStatus = "PLANNED",
-                newStatus = "PAID",
-                metadata = """{"expenseId":$expenseId,"amount":${expense.amount},"currency":"${expense.currency}"}"""
+            lifecycleEventDao.insert(
+                RecurringLifecycleEvent(
+                    occurrenceId = match.id,
+                    eventType = "OCCURRENCE_PAID",
+                    occurredAt = now,
+                    oldStatus = "PLANNED",
+                    newStatus = "PAID",
+                    metadata = """{"expenseId":$expenseId,"amount":${expense.amount},"currency":"${expense.currency}"}"""
+                )
             )
-        )
 
-        // P4-P0-01: Fulfil the PlannedExpense row (PLANNED → FULFILLED) that
-        // corresponds to this occurrence, so the planned-expense pipeline stays
-        // in sync with the recurring-occurrence pipeline.
-        runCatching {
             val planned = plannedExpenseDao.getBySourceOccurrenceKey(match.occurrenceKey)
             if (planned != null) {
                 plannedExpenseDao.linkToActualExpense(planned.id, expenseId, now)
-                Timber.d(
-                    "P4-P0-01: PlannedExpense %d fulfilled by expense %d (occurrenceKey=%s)",
-                    planned.id, expenseId, match.occurrenceKey
-                )
             }
-        }.onFailure { e ->
-            Timber.w(e, "P4-P0-01: Failed to fulfil PlannedExpense for occurrence %d", match.id)
-        }
 
-        // P4-P0-02: Cancel any outstanding SCHEDULED/SNOOZED reminder deliveries
-        // for this occurrence — the bill has been paid, no reminder should fire.
-        runCatching {
             reminderDeliveryDao.suppressOpenDeliveriesForOccurrence(match.id)
-            Timber.d("P4-P0-02: Suppressed open reminders for paid occurrence %d", match.id)
-        }.onFailure { e ->
-            Timber.w(e, "P4-P0-02: Failed to suppress reminders for occurrence %d", match.id)
         }
 
+        Timber.d(
+            "Recurring: expense %d linked to occurrence %d (occurrenceKey=%s) — PAID, planned fulfilled, reminders suppressed",
+            expenseId, match.id, match.occurrenceKey
+        )
         return true
     }
 
@@ -330,9 +320,17 @@ class RecurringLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Marks a reminder delivery as SENT and records the timestamp.
-     * Called by [BillReminderWorker] after dispatching the notification.
+     * Atomically claim a reminder delivery for processing.
+     * Returns true if the claim succeeded, false if another worker already claimed it.
+     * The caller should only dispatch a notification after a successful claim.
      */
+    suspend fun claimReminderDelivery(deliveryId: Long): Boolean {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+        return reminderDeliveryDao.claimDelivery(deliveryId) > 0
+    }
+
     /**
      * Marks a reminder delivery as SENT and records the timestamp.
      * Called by [BillReminderWorker] after dispatching the notification.

@@ -41,4 +41,17 @@ interface RecurringReminderDeliveryDao {
           AND status IN ('SCHEDULED', 'SNOOZED')
     """)
     suspend fun suppressOpenDeliveriesForOccurrence(occurrenceId: Long)
+
+    /**
+     * Atomically claim a reminder delivery for processing.
+     * Only succeeds if the delivery is currently SCHEDULED or SNOOZED.
+     * Returns 1 if the claim was successful, 0 if another worker already claimed it.
+     */
+    @Query("""
+        UPDATE recurring_reminder_deliveries
+        SET status = 'CLAIMED'
+        WHERE id = :id
+          AND status IN ('SCHEDULED', 'SNOOZED')
+    """)
+    suspend fun claimDelivery(id: Long): Int
 }

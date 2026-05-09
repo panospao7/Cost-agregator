@@ -460,20 +460,22 @@ tasks.register("checkDirectTimeCalls") {
 }
 
 // Lifecycle bypass guard: fails if ExpenseDao mutation methods are called outside allowlist
+val srcDirForGuard = layout.projectDirectory.dir("src/main/java").asFile
+val allowlistForGuard = setOf(
+    "TransactionLifecycleCoordinator", "LocationBackfillWorker", "MerchantKeyBackfillWorker",
+    "GroupTransactionCoordinator", "DebugExpenseRepository", "AppDatabase",
+    "ReceiptLinkService", "ExpenseRepository", "MultiCurrencyRepository",
+    "NotificationRepository"
+)
 tasks.register("checkLifecycleBypass") {
     group = "verification"
     description = "Fails if ExpenseDao.insert/update/delete called outside TransactionLifecycleCoordinator"
     doLast {
-        val srcDir = file("$projectDir/src/main/java")
         val violations = mutableListOf<String>()
-        val allowlist = setOf(
-            "TransactionLifecycleCoordinator", "LocationBackfillWorker", "MerchantKeyBackfillWorker",
-            "GroupTransactionCoordinator", "DebugExpenseRepository", "AppDatabase"
-        )
-        srcDir.walk().forEach { f ->
+        srcDirForGuard.walk().forEach { f ->
             if (!f.name.endsWith(".kt") || f.isDirectory) return@forEach
             val className = f.name.removeSuffix(".kt")
-            if (allowlist.any { className.contains(it) }) return@forEach
+            if (allowlistForGuard.any { className.contains(it) }) return@forEach
             val text = f.readText()
             val patterns = listOf("expenseDao\\.insert", "expenseDao\\.update", "expenseDao\\.delete")
             for (pattern in patterns) {

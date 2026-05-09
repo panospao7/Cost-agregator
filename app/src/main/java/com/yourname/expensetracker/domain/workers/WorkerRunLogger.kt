@@ -24,19 +24,21 @@ class WorkerRunLoggerImpl @Inject constructor(
 ) : WorkerRunLogger {
 
     override suspend fun start(workerName: String): WorkerRunHandle {
+        val startedAt = timeProvider.now()
         val id = dao.insert(
             BackgroundJobRun(
                 workerName = workerName,
-                startedAt = timeProvider.now(),
+                startedAt = startedAt,
                 status = "RUNNING"
             )
         )
-        return Handle(id, workerName, timeProvider, dao)
+        return Handle(id, workerName, startedAt, timeProvider, dao)
     }
 
     private class Handle(
         private val runId: Long,
         private val workerName: String,
+        private val startedAt: Long,
         private val timeProvider: TimeProvider,
         private val dao: BackgroundJobRunDao
     ) : WorkerRunHandle {
@@ -45,7 +47,7 @@ class WorkerRunLoggerImpl @Inject constructor(
                 BackgroundJobRun(
                     id = runId,
                     workerName = workerName,
-                    startedAt = 0L,
+                    startedAt = startedAt,
                     finishedAt = timeProvider.now(),
                     status = "SUCCESS",
                     rowsScanned = rowsScanned,
@@ -62,7 +64,7 @@ class WorkerRunLoggerImpl @Inject constructor(
                 BackgroundJobRun(
                     id = runId,
                     workerName = workerName,
-                    startedAt = 0L,
+                    startedAt = startedAt,
                     finishedAt = timeProvider.now(),
                     status = "SKIPPED_$reason",
                     rowsScanned = 0,
@@ -79,7 +81,7 @@ class WorkerRunLoggerImpl @Inject constructor(
                 BackgroundJobRun(
                     id = runId,
                     workerName = workerName,
-                    startedAt = 0L,
+                    startedAt = startedAt,
                     finishedAt = timeProvider.now(),
                     status = "RETRY",
                     rowsScanned = 0,
@@ -96,7 +98,7 @@ class WorkerRunLoggerImpl @Inject constructor(
                 BackgroundJobRun(
                     id = runId,
                     workerName = workerName,
-                    startedAt = 0L,
+                    startedAt = startedAt,
                     finishedAt = timeProvider.now(),
                     status = "FAILED",
                     rowsScanned = 0,

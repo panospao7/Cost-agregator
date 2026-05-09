@@ -54,6 +54,12 @@ class BillReminderWorker @AssistedInject constructor(
                 for (reminder in dueReminders) {
                     if (isStopped) break
 
+                    // Atomic claim: only one worker can claim each delivery
+                    if (!coordinator.claimReminderDelivery(reminder.id)) {
+                        Log.d(TAG, "Reminder ${reminder.id} already claimed by another worker, skipping")
+                        continue
+                    }
+
                     val title = "Bill due"
                     val body = buildNotificationBody(reminder)
                     val delivered = sendNotification(reminder, title, body)
@@ -62,7 +68,7 @@ class BillReminderWorker @AssistedInject constructor(
                         coordinator.markReminderSent(reminder.id)
                         sentCount++
                     } else {
-                        Log.w(TAG, "Notification not delivered for reminder ${reminder.id}, leaving status unchanged")
+                        Log.w(TAG, "Notification delivery failed for reminder ${reminder.id}")
                     }
                 }
 
