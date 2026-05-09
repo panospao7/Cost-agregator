@@ -1,6 +1,10 @@
 package com.yourname.expensetracker.domain.location
 
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -53,6 +57,13 @@ class AreaSpendingEngine @Inject constructor() {
         val areaCandidates: MutableMap<String, AreaNameStats> = linkedMapOf()
     )
 
+    @Deprecated(
+        "Use computeNormalized() which returns MoneyAggregate-based results for multi-currency safety",
+        ReplaceWith(
+            "computeNormalized(expenses.map { it.toLocatedMoneyExpense(homeCurrency) }, homeCurrency, converter)",
+            "com.yourname.expensetracker.domain.location.LocatedMoneyExpense"
+        )
+    )
     fun compute(expenses: List<Expense>): List<AreaSpending> {
         // Only consider expenses that have a lat/lon AND a resolved address
         val located = expenses.filter {
@@ -109,6 +120,47 @@ class AreaSpendingEngine @Inject constructor() {
                 )
             }
             .sortedByDescending { it.totalSpend }
+    }
+
+    /**
+     * Currency-safe area spending using [LocatedMoneyExpense].
+     *
+     * Groups expenses by grid cell (~1 km) and builds a [MoneyAggregate] per cell
+     * via [MoneyAggregateBuilder.fromBuckets]. Skips expenses with failed conversion.
+     * Results use grid-cell coordinate keys since [LocatedMoneyExpense] does not
+     * carry a resolved address for human-readable area names.
+     *
+     * @param expenses  Located expenses (caller must ensure they are pre-filtered
+     *                  to spending-only transaction types).
+     * @param homeCurrency  User's home currency code (e.g. "EUR").
+     * @param converter  CurrencyConverter for multi-currency aggregation.
+     * @return Map of grid-cell label → [MoneyAggregate] for that area.
+     */
+    suspend fun computeNormalized(
+        expenses: List<LocatedMoneyExpense>,
+        homeCurrency: String,
+        converter: CurrencyConverter
+    ): Map<String, MoneyAggregate> {
+        val validExpenses = expenses.filter {
+            it.conversionStatus == ConversionStatus.HOME_CURRENCY ||
+            it.conversionStatus == ConversionStatus.CONVERTED
+        }
+        if (validExpenses.isEmpty()) return emptyMap()
+
+        val byCell = HashMap<GridCell, MutableList<LocatedMoneyExpense>>()
+        for (expense in validExpenses) {
+            val latBucket = (expense.latitude / GRID_DEG).toLong()
+            val lonBucket = (expense.longitude / GRID_DEG).toLong()
+            val cell = GridCell(latBucket, lonBucket)
+            byCell.getOrPut(cell) { mutableListOf() }.add(expense)
+        }
+
+        return byCell.mapValues { (cell, cellExpenses) ->
+            val buckets = cellExpenses.map { exp ->
+                Pair(exp.normalizedAmount ?: exp.originalAmount, exp.normalizedCurrency)
+            }
+            MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, converter)
+        }.mapKeys { "${it.key.latBucket}_${it.key.lonBucket}" }
     }
 
     /**

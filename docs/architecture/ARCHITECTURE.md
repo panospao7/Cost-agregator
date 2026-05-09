@@ -53,6 +53,13 @@
 - `BackupVerifier` verification strictness was increased: critical lifecycle/event tables (`transaction_events`, `receipt_events`, `receipt_expense_links`, `recurring_occurrences`, `recurring_reminder_deliveries`, `recurring_lifecycle_events`) are now treated as `TIER_1_EXACT`.
 - Generic exports in `ExportOptionsViewModel` now use `effectiveAmount` for CSV/JSON generation (preview + streaming), aligning exports with ownership-adjusted accounting semantics.
 
+### Architecture Drift Updates (2026-05-09)
+- **GroupLifecycleCoordinator** implemented (`domain/groups/GroupLifecycleCoordinator.kt`) — a `@Singleton @Inject` domain-level coordinator wrapping the domain `GroupTransactionCoordinator` interface. Enforces 7 business rules: member count/currentUser/duplicate validation (createGroup), active-group/duplicate/single-currentUser checks (addMember), last-currentUser gate (removeMember), single-currency policy (addExpense), soft-delete (archiveGroup), explicit-confirmation guard (deleteGroupPermanently), and currency-match/member-ownership validation (recordSettlement). No Dagger cycle — depends on domain interface, not data-layer implementation.
+- **[Dagger/DependencyCycle] FIXED:** Deleted `SubscriptionModule.kt` — its pass-through `@Provides` method was the sole cause of the cycle involving `SubscriptionManagerEngine`. `SubscriptionManagerEngine` is already auto-provided by its `@Singleton @Inject constructor`.
+- **DaoModule FIXED:** Added 3 missing `@Provides` bindings (`WarrantyLifecycleEventDao`, `GroupSettlementDao`, `InvestmentTransactionDao`) resolving `[Dagger/MissingBinding]` errors.
+- **CloudPayloadRedactor Stage 2 COMPLETE:** Migrated 6 cloud providers from direct `CloudPiiSanitizer` calls to `CloudPayloadRedactor`. Affected: `CloudReviewExplanationService`, `CloudReceiptAssistService`, `CloudCategorizationAssistService`, `CloudDedupeJudgeService`, `CloudReceiptItemCategorizationService`, `CloudWarrantyExtractionService`. Removed `shouldRedact` extra argument from `redactor.redactMerchant()` calls. `DashboardBriefingPromptFormatter` intentionally remains on `CloudPiiSanitizer` (it is a prompt formatter, not a cloud service; `DefaultCloudPayloadRedactor` wraps `CloudPiiSanitizer` anyway).
+- **GroupLifecycleScenarioTest** created with 21 tests covering all 7 lifecycle methods + end-to-end scenario. 3 pre-existing test compilation errors fixed (`ExchangeRateDaoTest`, `PendingReviewDaoTest`, `WarrantyDaoTest`). Production + test compilation: BUILD SUCCESSFUL.
+
 ---
 
 ## Architecture Overview
@@ -367,6 +374,7 @@ FinancialWeatherRepository
 | AI Follow-Through | `domain/ai/...` | Recommendation, assistant, and receipt intelligence flows |
 | Transaction Lifecycle | `domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` | Single entry point for ALL expense CUD |
 | Receipt Lifecycle | `domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt` | Single entry point for ALL receipt processing |
+| Group Lifecycle | `domain/groups/GroupLifecycleCoordinator.kt` | Domain-level coordinator for group lifecycle: create, add/remove member, add expense, archive, permanent-delete, record settlement (7 methods, 8 invariants) |
 | Privacy Gate | `domain/privacy/CompositePrivacyGate.kt` | Chains 4 privacy sub-gates |
 
 ### New Categorization Components (Feb 2026)
@@ -1304,6 +1312,13 @@ Cross-cutting fixes applied after architecture review tightened correctness, con
 - CI guard: scripts/guards/check_lifecycle_bypasses.kts
 - WorkerContractTest verifying all 7 default workers
 
+### Stage 2 — CloudPayloadRedactor Migration Complete (2026-05-09)
+- Migrated 6 cloud providers from direct `CloudPiiSanitizer` calls to `CloudPayloadRedactor`:
+  `CloudReviewExplanationService`, `CloudReceiptAssistService`, `CloudCategorizationAssistService`,
+  `CloudDedupeJudgeService`, `CloudReceiptItemCategorizationService`, `CloudWarrantyExtractionService`.
+- Removed extra `shouldRedact` argument from `redactor.redactMerchant()` calls.
+- `DashboardBriefingPromptFormatter` intentionally left on `CloudPiiSanitizer` (prompt formatter, not cloud service; `DefaultCloudPayloadRedactor` wraps `CloudPiiSanitizer`).
+
 ## Quick Reference
 
 ### Add New Parser
@@ -1532,7 +1547,7 @@ After the initial feature-wave rollout, the codebase underwent 12 structured har
 
 - ~178 issues resolved across 12 batches
 - ~120 files modified or added
-- 6 lifecycle coordinators introduced
+- 7 lifecycle coordinators introduced (transaction, receipt, recurring, group, plus 3 domain-use-case coordinators)
 - 3 normalizer/validator middleware services added (currency, privacy, AI-output)
 - 15+ materialized-key constraints deployed
 - Database version advanced from v68 to v120

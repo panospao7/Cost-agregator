@@ -97,7 +97,7 @@ class ExchangeRateDaoTest {
             )
         )
 
-        val ratesForEurBase = dao.getAllRatesForBase("EUR").first()
+        val ratesForEurBase = dao.getRatesToCurrency("EUR").first()
 
         assertEquals(3, ratesForEurBase.size)
         assertEquals(listOf("AUD", "JPY", "USD"), ratesForEurBase.map { it.fromCurrency })

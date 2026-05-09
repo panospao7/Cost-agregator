@@ -113,12 +113,11 @@ interface MerchantLocationDao {
     suspend fun getLatestGlobalCorrection(merchantKey: String): MerchantLocationCorrection?
 
     /**
-     * Uses IGNORE to prevent silent data loss on conflict. Callers should check return value (0 = skipped).
+     * W13-FIXED: Returns the inserted row ID, or 0 if skipped due to conflict.
+     * Callers must check the return value to detect silent failures.
      */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun upsertCorrection(correction: MerchantLocationCorrection)
-    // TODO (W13): Change return type from Unit to Long so callers can detect
-    // silent failures (0 = skipped due to conflict).
+    suspend fun upsertCorrection(correction: MerchantLocationCorrection): Long
 
     @Delete
     suspend fun deleteCorrection(correction: MerchantLocationCorrection)

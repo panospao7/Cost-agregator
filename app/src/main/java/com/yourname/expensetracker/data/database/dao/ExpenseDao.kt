@@ -1099,6 +1099,49 @@ AND LENGTH(:merchantKey) >= 8
         lastId: Long? = null
     ): List<Expense>
 
+    /**
+     * W30+W31: Filtered, keyset-paginated query for legacy NL search.
+     *
+     * Pushes category, transaction type, and merchant-name filters down to SQL
+     * to avoid loading all expenses in memory. Keyset pagination is immune to
+     * insertions/deletions between pages.
+     *
+     * @param startDate    Start of date range (inclusive).
+     * @param endDate      End of date range (exclusive).
+     * @param categoryIds  Category IDs to filter by (ignored when categoryFilterEnabled = false).
+     * @param categoryFilterEnabled Whether to apply the category filter IN clause.
+     * @param merchantLike LIKE pattern for merchant name (no filter when null).
+     * @param transactionType Transaction type filter (no filter when null).
+     * @param keywordLike Free-text LIKE pattern for merchant (no filter when null).
+     * @param limit        Max rows to return.
+     * @param cursorDate   Date of last row from previous page (null for first page).
+     * @param cursorId     Id of last row from previous page (null for first page).
+     */
+    @Query("""
+        SELECT * FROM expenses
+        WHERE date >= :startDate AND date < :endDate
+        AND isNotMine = 0
+        AND (:cursorDate IS NULL OR date < :cursorDate OR (date = :cursorDate AND id < :cursorId))
+        AND (:transactionType IS NULL OR transactionType = :transactionType)
+        AND (:merchantLike IS NULL OR merchant LIKE :merchantLike)
+        AND (:keywordLike IS NULL OR merchant LIKE :keywordLike)
+        AND (:categoryFilterEnabled = 0 OR categoryId IN (:categoryIds))
+        ORDER BY date DESC, id DESC
+        LIMIT :limit
+    """)
+    suspend fun getExpensesFilteredKeyset(
+        startDate: Long,
+        endDate: Long,
+        categoryIds: List<Long>,
+        categoryFilterEnabled: Int,
+        merchantLike: String?,
+        transactionType: String?,
+        keywordLike: String?,
+        limit: Int,
+        cursorDate: Long?,
+        cursorId: Long?
+    ): List<Expense>
+
     @Query("SELECT COUNT(*) FROM expenses WHERE date >= :startDate AND date < :endDate AND isNotMine = 0")
     suspend fun countExpensesBetween(startDate: Long, endDate: Long): Int
 

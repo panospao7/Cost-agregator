@@ -15,6 +15,9 @@ import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
+import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import kotlinx.coroutines.Dispatchers
@@ -40,11 +43,12 @@ import javax.inject.Singleton
 class CloudReceiptItemCategorizationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
-    private val privacyGate: PrivacyGate
+    private val privacyGate: PrivacyGate,
+    private val redactor: CloudPayloadRedactor
 ) : ReceiptItemCategorizationService {
 
     // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList()))
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList()), DefaultCloudPayloadRedactor())
     
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     
@@ -181,9 +185,9 @@ class CloudReceiptItemCategorizationService @Inject constructor(
     
     private fun buildPrompt(input: ReceiptItemCategorizationInput): String {
         val safeMerchant = if (input.redactBeforeCloud) {
-            sanitizeCloudText(input.merchant, 80, "merchant")
+            redactor.redactText(input.merchant ?: "", CloudPayloadPurpose.ITEM_CATEGORIZATION).text
         } else {
-            input.merchant
+            input.merchant ?: "Unknown"
         }
 
         val cloudOptions = cloudCategoryOptionsForPrompt(input)
@@ -195,9 +199,9 @@ class CloudReceiptItemCategorizationService @Inject constructor(
         
         val itemsList = input.lineItems.joinToString("\n") { item ->
             val safeDescription = if (input.redactBeforeCloud) {
-                sanitizeCloudText(item.description, 80, "item")
+                redactor.redactText(item.description ?: "", CloudPayloadPurpose.ITEM_CATEGORIZATION).text
             } else {
-                item.description
+                item.description ?: "unknown item"
             }
             "- $safeDescription: ${CurrencyFormatter.format(item.totalPrice, input.currency)}"
         }

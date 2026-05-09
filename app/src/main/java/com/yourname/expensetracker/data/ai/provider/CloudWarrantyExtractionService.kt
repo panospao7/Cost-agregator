@@ -8,6 +8,9 @@ import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionInput
 import com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
+import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
@@ -37,11 +40,12 @@ import javax.inject.Singleton
 class CloudWarrantyExtractionService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
-    private val privacyGate: PrivacyGate
+    private val privacyGate: PrivacyGate,
+    private val redactor: CloudPayloadRedactor
 ) {
     private var apiKeyOverride: String? = null
 
-    internal constructor(apiKeyOverride: String, secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList())) {
+    internal constructor(apiKeyOverride: String, secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList()), DefaultCloudPayloadRedactor()) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -173,8 +177,8 @@ class CloudWarrantyExtractionService @Inject constructor(
     }
 
     private fun buildPrompt(input: WarrantyExtractionInput, shouldRedactBeforeCloud: Boolean): String {
-        val safeReceiptText = sanitizeReceiptText(input.receiptText, shouldRedactBeforeCloud)
-        val safeMerchant = sanitizeMerchant(input.merchant, shouldRedactBeforeCloud)
+        val safeReceiptText = if (shouldRedactBeforeCloud) redactor.redactText(input.receiptText, CloudPayloadPurpose.WARRANTY_EXTRACTION).text else input.receiptText
+        val safeMerchant = if (shouldRedactBeforeCloud) redactor.redactMerchant(input.merchant).value ?: "Unknown" else input.merchant ?: "Unknown"
 
         return """
             Analyze this receipt and extract warranty information.

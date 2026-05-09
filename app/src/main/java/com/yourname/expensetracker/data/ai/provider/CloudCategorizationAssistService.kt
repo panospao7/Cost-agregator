@@ -5,7 +5,9 @@ import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudJsonParser
-import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
+import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.domain.ai.model.CategorizationAssistInput
 import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
@@ -36,7 +38,8 @@ class CloudCategorizationAssistService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val aiSettingsRepository: AiSettingsRepository? = null,
-    private val privacyGate: PrivacyGate
+    private val privacyGate: PrivacyGate,
+    private val redactor: CloudPayloadRedactor
 ) : CategorizationAssistService {
 
     // Secondary constructor for tests
@@ -47,7 +50,8 @@ class CloudCategorizationAssistService @Inject constructor(
         object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.Allowed
-        }
+        },
+        DefaultCloudPayloadRedactor()
     )
 
     // Secondary constructor for tests with client override
@@ -58,7 +62,8 @@ class CloudCategorizationAssistService @Inject constructor(
         object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.Allowed
-        }
+        },
+        DefaultCloudPayloadRedactor()
     )
 
     private val apiKey: String
@@ -195,16 +200,12 @@ class CloudCategorizationAssistService @Inject constructor(
 
         // PRIVACY FIX: Sanitize PII before sending to cloud
         val safeMerchant = if (shouldRedact) {
-            CloudPiiSanitizer.sanitizeMerchant(input.merchant, shouldRedact = true)
+            redactor.redactMerchant(input.merchant).value ?: "Unknown"
         } else {
             input.merchant
         }
         val safeSupportingText = if (shouldRedact && input.supportingText != null) {
-            CloudPiiSanitizer.sanitizeText(
-                raw = input.supportingText,
-                maxChars = AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS,
-                fallbackPrefix = "supporting_text"
-            )
+            redactor.redactText(input.supportingText, CloudPayloadPurpose.ITEM_CATEGORIZATION).text
         } else {
             input.supportingText ?: "none"
         }

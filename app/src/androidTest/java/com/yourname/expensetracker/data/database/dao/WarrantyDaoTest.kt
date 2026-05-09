@@ -134,7 +134,7 @@ class WarrantyDaoTest {
         )
 
         val newUpdatedAt = now + 5_000
-        warrantyDao.updateWarrantyStatus(warrantyId, WarrantyStatus.CLAIMED, newUpdatedAt)
+        warrantyDao.updateWarrantyStatus(warrantyId, WarrantyStatus.CLAIMED, claimedAt = null, updatedAt = newUpdatedAt)
 
         val updated = warrantyDao.getWarrantyByReceiptId(receiptId)
         assertNotNull(updated)

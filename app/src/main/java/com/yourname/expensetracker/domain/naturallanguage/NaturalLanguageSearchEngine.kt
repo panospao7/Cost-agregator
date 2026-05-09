@@ -90,7 +90,8 @@ class NaturalLanguageSearchEngine @Inject constructor(
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val merchantNormalizationRepository: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
 ) {
     
     private val amountPattern = Regex("""
@@ -244,7 +245,8 @@ class NaturalLanguageSearchEngine @Inject constructor(
             categories = categories,
             merchants = merchants,
             searchFilter = filter,
-            confidence = calculateConfidence(query, amounts, dateRange, categories, merchants)
+            confidence = calculateConfidence(query, amounts, dateRange, categories, merchants),
+            dataQuality = QueryDataQuality(unsupportedLocations = locations != null)
         )
     }
     
@@ -303,21 +305,10 @@ class NaturalLanguageSearchEngine @Inject constructor(
         val (startMs, endMs) = resolveDateRangeMillis(interpretation.dateRange)
         val homeCurrency = currencySettingsRepository.homeCurrency().first()
 
-        // Extract simple filters from interpretation to push down
         val merchants = interpretation.merchants
         val categories = interpretation.categories
-        val minAmount = interpretation.extractedAmounts
-            ?.firstOrNull { it.comparison == AmountComparison.OVER || it.comparison == AmountComparison.EXACTLY }
-            ?.let {
-                if (it.comparison == AmountComparison.OVER) it.value
-                else if (it.comparison == AmountComparison.EXACTLY) it.value
-                else null
-            }
-        val maxAmount = interpretation.extractedAmounts
-            ?.firstOrNull { it.comparison == AmountComparison.UNDER }
-            ?.value
 
-        // Resolve parsed category names to category IDs for in-memory filtering
+        // Resolve parsed category names to category IDs for DAO push-down (W15)
         val targetCategoryIds: Set<Long> = if (categories.isNullOrEmpty()) {
             emptySet()
         } else {
@@ -329,114 +320,152 @@ class NaturalLanguageSearchEngine @Inject constructor(
         }
         val hasCategoryFilter = targetCategoryIds.isNotEmpty()
 
-        // TODO (W16): Use currency-aware amount filter (see PR-E8 ExtractedAmountFilter).
-        // Current minAmount/maxAmount compare raw effectiveAmount regardless of currency.
+        // W16: Never pass minAmount/maxAmount to repository.
+        // Amount filtering is done in-memory after currency normalization.
+        var failedConversions = 0
+        val dataQuality = QueryDataQuality(
+            unsupportedLocations = interpretation.locations != null
+        )
 
-        // TODO (W30): Use filtered DAO query instead of broad date-only paging + in-memory filter.
-
-        return when (interpretation.queryType) {
+        val preFiltered: List<NaturalLanguageExpense> = when (interpretation.queryType) {
             QueryType.TOTAL_AMOUNT -> {
-                expenseQueryRepository.getExpensesBetweenFiltered(
-                    startMs, endMs,
+                expenseQueryRepository.getExpensesBetweenFilteredKeyset(
+                    startMs = startMs, endMs = endMs,
+                    categoryIds = targetCategoryIds.takeIf { it.isNotEmpty() },
                     merchants = merchants,
-                    categories = categories,
-                    minAmount = minAmount,
-                    maxAmount = maxAmount
-                ).filter { expense ->
-                    // Apply category filter in-memory (DAO doesn't support it yet)
-                    !hasCategoryFilter || expense.categoryId in targetCategoryIds
-                }.map { SearchResult(it, MatchType.EXACT) }
+                    transactionType = null,
+                    keywordSearch = null,
+                    limit = PAGE_SIZE_LARGE,
+                    cursor = null
+                )
             }
             QueryType.FIND_TRANSACTIONS -> {
-                val preFiltered = expenseQueryRepository.getExpensesBetweenFiltered(
-                    startMs, endMs,
+                expenseQueryRepository.getExpensesBetweenFilteredKeyset(
+                    startMs = startMs, endMs = endMs,
+                    categoryIds = targetCategoryIds.takeIf { it.isNotEmpty() },
                     merchants = merchants,
-                    categories = categories,
-                    minAmount = minAmount,
-                    maxAmount = maxAmount
-                ).filter { expense ->
-                    // Apply category filter in-memory (DAO doesn't support it yet)
-                    !hasCategoryFilter || expense.categoryId in targetCategoryIds
-                }
-                val hasAmountFilter = interpretation.extractedAmounts != null
-                val hasMerchantFilter = interpretation.merchants != null
-
-                // Apply currency-aware amount matching on the pre-filtered results
-                val matched = if (hasAmountFilter) {
-                    preFiltered.filter { expense ->
-                        val normalizedAmount = if (expense.currency != homeCurrency) {
-                            currencyConverter.convert(
-                                amount = expense.amount,
-                                fromCurrency = expense.currency,
-                                toCurrency = homeCurrency
-                            )?.convertedAmount ?: expense.amount.also {
-                                Timber.w(
-                                    "Currency conversion failed for %s from %s to %s — using raw amount %.2f",
-                                    expense.merchant, expense.currency, homeCurrency, expense.amount
-                                )
-                            }
-                        } else {
-                            expense.amount
-                        }
-
-                        interpretation.extractedAmounts.any { amount ->
-                            when (amount.comparison) {
-                                AmountComparison.EXACTLY -> normalizedAmount == amount.value
-                                AmountComparison.OVER -> normalizedAmount > amount.value
-                                AmountComparison.UNDER -> normalizedAmount < amount.value
-                                AmountComparison.BETWEEN -> {
-                                    val other = interpretation.extractedAmounts.find { it != amount }
-                                    other?.let { normalizedAmount in amount.value..it.value } ?: true
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    preFiltered
-                }
-
-                // Label each result with match quality
-                matched.map { expense ->
-                    val matchedAmount = hasAmountFilter && interpretation.extractedAmounts.any { amount ->
-                        val normalizedAmount = if (expense.currency != homeCurrency) {
-                            currencyConverter.convert(
-                                amount = expense.amount,
-                                fromCurrency = expense.currency,
-                                toCurrency = homeCurrency
-                            )?.convertedAmount ?: expense.amount
-                        } else {
-                            expense.amount
-                        }
-                        when (amount.comparison) {
-                            AmountComparison.EXACTLY -> normalizedAmount == amount.value
-                            AmountComparison.OVER -> normalizedAmount > amount.value
-                            AmountComparison.UNDER -> normalizedAmount < amount.value
-                            AmountComparison.BETWEEN -> normalizedAmount in amount.value..(amount.value + 1_000_000)
-                        }
-                    }
-                    val matchedMerchant = hasMerchantFilter && interpretation.merchants.any {
-                        expense.merchant.contains(it, ignoreCase = true)
-                    }
-                    val matchedCategory = !hasCategoryFilter || expense.categoryId in targetCategoryIds
-                    val isExact = (!hasAmountFilter || matchedAmount) &&
-                        (!hasMerchantFilter || matchedMerchant) &&
-                        matchedCategory
-                    SearchResult(expense, if (isExact) MatchType.EXACT else MatchType.PARTIAL)
-                }
+                    transactionType = null,
+                    keywordSearch = null,
+                    limit = PAGE_SIZE_LARGE,
+                    cursor = null
+                )
             }
             QueryType.SPENDING_BY_CATEGORY -> {
-                expenseQueryRepository.getExpensesBetweenFiltered(
-                    startMs, endMs,
+                expenseQueryRepository.getExpensesBetweenFilteredKeyset(
+                    startMs = startMs, endMs = endMs,
+                    categoryIds = targetCategoryIds.takeIf { it.isNotEmpty() },
                     merchants = merchants,
-                    categories = categories,
-                    minAmount = minAmount,
-                    maxAmount = maxAmount
-                ).filter { expense ->
-                    // Apply category filter in-memory (DAO doesn't support it yet)
-                    !hasCategoryFilter || expense.categoryId in targetCategoryIds
-                }.map { SearchResult(it, MatchType.EXACT) }
+                    transactionType = null,
+                    keywordSearch = null,
+                    limit = PAGE_SIZE_LARGE,
+                    cursor = null
+                )
             }
-            else -> emptyList()
+            else -> {
+                expenseQueryRepository.getExpensesBetweenFilteredKeyset(
+                    startMs = startMs, endMs = endMs,
+                    categoryIds = targetCategoryIds.takeIf { it.isNotEmpty() },
+                    merchants = merchants,
+                    transactionType = null,
+                    keywordSearch = null,
+                    limit = PAGE_SIZE_LARGE,
+                    cursor = null
+                )
+            }
+        }
+
+        // W16: Apply currency-safe amount filtering.
+        // Normalize each row to home currency via convertAsOf(expense.date).
+        // Exclude failed conversions — no raw fallback.
+        val hasAmountFilter = interpretation.extractedAmounts != null &&
+            interpretation.extractedAmounts.isNotEmpty()
+
+        val normalizedRows: List<Pair<NaturalLanguageExpense, Double>> = preFiltered.mapNotNull { expense ->
+            val normalizedAmount = if (expense.currency == homeCurrency) {
+                expense.effectiveAmount
+            } else {
+                currencyConverter.convertAsOf(
+                    amount = expense.effectiveAmount,
+                    fromCurrency = expense.currency,
+                    toCurrency = homeCurrency,
+                    atMillis = expense.date
+                )?.convertedAmount
+            }
+            if (normalizedAmount == null) {
+                failedConversions++
+                Timber.w("W16: Excluding expense %d (%s %.2f %s) — no rate for %s→%s as of %d",
+                    expense.id, expense.merchant, expense.effectiveAmount, expense.currency,
+                    expense.currency, homeCurrency, expense.date)
+                null
+            } else {
+                expense to normalizedAmount
+            }
+        }
+
+        // Apply amount filter if present
+        val matched = if (hasAmountFilter) {
+            normalizedRows.filter { (_, normalizedAmount) ->
+                interpretation.extractedAmounts!!.any { amount ->
+                    when (amount.comparison) {
+                        AmountComparison.EXACTLY -> normalizedAmount == amount.value
+                        AmountComparison.OVER -> normalizedAmount > amount.value
+                        AmountComparison.UNDER -> normalizedAmount < amount.value
+                        AmountComparison.BETWEEN -> {
+                            val other = interpretation.extractedAmounts.find { it != amount }
+                            other?.let { normalizedAmount in amount.value..it.value } ?: true
+                        }
+                    }
+                }
+            }
+        } else {
+            normalizedRows
+        }
+
+        val dataQualityFinal = dataQuality.copy(
+            failedCurrencyConversions = failedConversions
+        )
+
+        // Label each result with match quality
+        val hasMerchantFilter = interpretation.merchants != null
+        val needsAmountMatch = hasAmountFilter && !hasCategoryFilter && !hasMerchantFilter
+        val needsMerchantMatch = hasMerchantFilter
+
+        return matched.map { (expense, _) ->
+            val matchedMerchant = if (needsMerchantMatch) {
+                interpretation.merchants!!.any { expense.merchant.contains(it, ignoreCase = true) }
+            } else {
+                !hasMerchantFilter  // exact when no merchant filter
+            }
+            val matchedAmount = if (needsAmountMatch) {
+                normalizedRows.any { (e, norm) ->
+                    e == expense && interpretation.extractedAmounts!!.any { amount ->
+                        when (amount.comparison) {
+                            AmountComparison.EXACTLY -> norm == amount.value
+                            AmountComparison.OVER -> norm > amount.value
+                            AmountComparison.UNDER -> norm < amount.value
+                            AmountComparison.BETWEEN -> {
+                                val other = interpretation.extractedAmounts.find { it != amount }
+                                other?.let { norm in amount.value..it.value } ?: true
+                            }
+                        }
+                    }
+                }
+            } else {
+                !hasAmountFilter  // exact when no amount filter
+            }
+            val matchedCategory = !hasCategoryFilter || expense.categoryId in targetCategoryIds
+
+            SearchResult(
+                expense = expense,
+                matchType = if (matchedMerchant && matchedAmount && matchedCategory)
+                    MatchType.EXACT else MatchType.PARTIAL
+            )
+        }.also {
+            // W15+W16: Attach dataQuality to interpretation for caller consumption
+            interpretation.dataQuality = dataQualityFinal
+            if (dataQualityFinal.hasWarnings) {
+                Timber.w("Legacy NL search completed with dataQuality warnings: %s", dataQualityFinal)
+            }
         }
     }
 
@@ -470,6 +499,9 @@ class NaturalLanguageSearchEngine @Inject constructor(
     }
 
     companion object {
+        /** W30+W31: Max rows per keyset page for legacy NL queries. */
+        private const val PAGE_SIZE_LARGE = 500
+
         /**
          * Default search window: 3 months before [now].
          * Used when no explicit date range is specified in the query.
@@ -549,16 +581,49 @@ class NaturalLanguageSearchEngine @Inject constructor(
         return if (foundCategories.isNotEmpty()) foundCategories else null
     }
     
-    private fun extractMerchants(query: String, originalQuery: String): List<String>? {
-        // In production, this would use a database of known merchants
-        // For now, we'll extract words that might be merchant names
-        // Extract from original (case-preserving) query to preserve merchant name casing
-        val merchantPattern = Regex("""(?:at|from)\s+([A-Za-z][a-zA-Z]+)""", RegexOption.IGNORE_CASE)
-        val rawMatches = merchantPattern.findAll(originalQuery).map { it.groupValues[1] }.toList()
-        // Normalize for comparison/dedup
-        val merchants = rawMatches.distinctBy { it.lowercase().trim() }
-        
-        return if (merchants.isNotEmpty()) merchants else null
+    // W14: Improved merchant extraction with multi-word capture + alias lookup.
+    // Captures multi-word names after "at"/"from", stopping before known filter keywords.
+    private val merchantStopWords = setOf(
+        "in", "on", "for", "with", "last", "this", "over", "under",
+        "yesterday", "today", "january", "february", "march", "april",
+        "may", "june", "july", "august", "september", "october",
+        "november", "december", "near", "around", "between"
+    )
+    private val merchantPattern = Regex(
+        """(?:at|from)\s+([A-Za-z][A-Za-z\s&]*?)(?=\s*(?:${merchantStopWords.joinToString("|")})\b|$)""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private suspend fun extractMerchants(query: String, originalQuery: String): List<String>? {
+        // Step 1: Multi-word regex extraction from original (case-preserving) query
+        val rawMatches = merchantPattern.findAll(originalQuery)
+            .map { it.groupValues[1].trim() }
+            .filter { it.length >= 2 && !it.all { c -> c.isDigit() } }
+            .distinctBy { it.lowercase() }
+            .toList()
+
+        // Step 2: Look up each raw match against known aliases
+        val resolved = rawMatches.flatMap { raw ->
+            val alias = merchantNormalizationRepository.getAliasByRawName(raw)
+                ?: merchantNormalizationRepository.getAliasByNormalizedKey(
+                    com.yourname.expensetracker.domain.util.MerchantKeyGenerator.generate(raw)
+                )
+            if (alias != null) listOf(alias.rawName) else listOf(raw)
+        }.distinctBy { it.lowercase() }
+
+        // Step 3: Supplementary lookup — known merchant names appearing anywhere in query
+        val topMerchants = merchantNormalizationRepository.getTopMerchants(100)
+        val knownFromQuery = topMerchants
+            .filter { canonical ->
+                originalQuery.contains(canonical.normalizedName, ignoreCase = true) ||
+                    originalQuery.contains(canonical.searchKey, ignoreCase = true)
+            }
+            .map { it.normalizedName }
+
+        val allMerchants = (resolved + knownFromQuery)
+            .distinctBy { it.lowercase() }
+
+        return if (allMerchants.isNotEmpty()) allMerchants else null
     }
     
     private fun determineQueryType(query: String): QueryType {
@@ -669,8 +734,22 @@ class NaturalLanguageSearchEngine @Inject constructor(
         val categories: List<String>?,
         val merchants: List<String>?,
         val searchFilter: SearchFilter,
-        val confidence: Double
+        val confidence: Double,
+        var dataQuality: QueryDataQuality = QueryDataQuality()
     )
+
+    /**
+     * W15+W16: Carries data-quality metadata about the search — e.g. whether
+     * parsed location filters are unsupported, or how many rows had failed
+     * currency conversions.
+     */
+    data class QueryDataQuality(
+        val unsupportedLocations: Boolean = false,
+        val failedCurrencyConversions: Int = 0
+    ) {
+        val hasWarnings: Boolean
+            get() = unsupportedLocations || failedCurrencyConversions > 0
+    }
     
     enum class QueryType {
         TOTAL_AMOUNT,

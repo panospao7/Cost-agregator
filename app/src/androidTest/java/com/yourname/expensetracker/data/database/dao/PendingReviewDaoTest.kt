@@ -174,7 +174,7 @@ class PendingReviewDaoTest {
         val all = pendingReviewDao.getAllFlow().first()
         assertEquals(firstId, replacementId)
         assertEquals(1, all.size)
-        assertEquals(42.0, all.single().suggestedAmount, 0.001)
+        assertEquals(42.0, all.single().suggestedAmount!!, 0.001)
         assertEquals("Updated text", all.single().notificationText)
     }
 }

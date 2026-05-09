@@ -5,7 +5,9 @@ import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
 import com.yourname.expensetracker.data.ai.provider.internal.CloudJsonParser
-import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
+import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistSuggestion
@@ -45,7 +47,8 @@ class CloudReceiptAssistService @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
-    private val privacyGate: PrivacyGate
+    private val privacyGate: PrivacyGate,
+    private val redactor: CloudPayloadRedactor
 ) : ReceiptAssistService {
 
     private var apiKeyOverride: String? = null
@@ -59,7 +62,8 @@ class CloudReceiptAssistService @Inject constructor(
         object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.Allowed
-        })
+        },
+        DefaultCloudPayloadRedactor())
 
     // Secondary constructor for testing
     constructor(
@@ -70,7 +74,8 @@ class CloudReceiptAssistService @Inject constructor(
         object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.Allowed
-        }) {
+        },
+        DefaultCloudPayloadRedactor()) {
         this.apiKeyOverride = apiKeyOverride
     }
 
@@ -373,27 +378,19 @@ class CloudReceiptAssistService @Inject constructor(
 
     private fun buildPrompt(input: ReceiptAssistInput, hasAttachedImage: Boolean, shouldRedact: Boolean): String {
         val safeParsedMerchant = if (shouldRedact) {
-            input.parsedMerchant?.let { CloudPiiSanitizer.sanitizeMerchant(it, shouldRedact = true) }
+            input.parsedMerchant?.let { redactor.redactMerchant(it).value ?: "Unknown" }
         } else {
             input.parsedMerchant
         }
         val safeLineItemsJson = if (shouldRedact) {
             input.lineItemsJson?.let {
-                CloudPiiSanitizer.sanitizeText(
-                    raw = it,
-                    maxChars = AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS,
-                    fallbackPrefix = "line_items"
-                )
+                redactor.redactText(it, CloudPayloadPurpose.RECEIPT_ASSIST).text
             }
         } else {
             input.lineItemsJson
         }
         val safeRawOcrText = if (shouldRedact) {
-            CloudPiiSanitizer.sanitizeText(
-                raw = input.rawOcrText,
-                maxChars = AppConfig.Ai.MAX_RECEIPT_OCR_CHARS_FOR_AI,
-                fallbackPrefix = "ocr"
-            )
+            redactor.redactText(input.rawOcrText, CloudPayloadPurpose.RECEIPT_ASSIST).text
         } else {
             input.rawOcrText
         }

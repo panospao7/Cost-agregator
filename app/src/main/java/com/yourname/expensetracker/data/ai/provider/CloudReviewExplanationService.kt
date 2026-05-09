@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
-import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
+import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
 import com.yourname.expensetracker.di.CloudAiHttpClient
@@ -40,7 +42,8 @@ class CloudReviewExplanationService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val aiSettingsRepository: AiSettingsRepository? = null,
-    private val privacyGate: PrivacyGate
+    private val privacyGate: PrivacyGate,
+    private val redactor: CloudPayloadRedactor
 ) : ReviewExplanationService {
 
     private var apiKeyOverride: String? = null
@@ -53,7 +56,8 @@ class CloudReviewExplanationService @Inject constructor(
         object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.Allowed
-        }
+        },
+        DefaultCloudPayloadRedactor()
     )
 
     // Secondary constructor for testing
@@ -64,7 +68,8 @@ class CloudReviewExplanationService @Inject constructor(
         object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.Allowed
-        }
+        },
+        DefaultCloudPayloadRedactor()
     ) {
         this.apiKeyOverride = apiKeyOverride
     }
@@ -220,25 +225,17 @@ class CloudReviewExplanationService @Inject constructor(
     private fun buildPrompt(input: ReviewExplanationInput, shouldRedact: Boolean): String {
         // PRIVACY FIX: Sanitize PII before sending to cloud
         val safeMerchant = if (shouldRedact) {
-            CloudPiiSanitizer.sanitizeMerchant(input.merchant, shouldRedact = true)
+            redactor.redactMerchant(input.merchant).value ?: "Unknown"
         } else {
             input.merchant
         }
         val safeNotificationTitle = if (shouldRedact && input.notificationTitle != null) {
-            CloudPiiSanitizer.sanitizeText(
-                raw = input.notificationTitle,
-                maxChars = AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS,
-                fallbackPrefix = "title"
-            )
+            redactor.redactText(input.notificationTitle, CloudPayloadPurpose.REVIEW_EXPLANATION).text
         } else {
             input.notificationTitle ?: "none"
         }
         val safeNotificationText = if (shouldRedact && input.notificationText != null) {
-            CloudPiiSanitizer.sanitizeText(
-                raw = input.notificationText,
-                maxChars = AppConfig.Ai.MAX_CAPTURE_SUPPORTING_TEXT_CHARS,
-                fallbackPrefix = "text"
-            )
+            redactor.redactText(input.notificationText, CloudPayloadPurpose.REVIEW_EXPLANATION).text
         } else {
             input.notificationText ?: "none"
         }

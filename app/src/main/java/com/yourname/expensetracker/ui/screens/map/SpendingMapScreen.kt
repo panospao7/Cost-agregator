@@ -351,7 +351,11 @@ fun SpendingMapScreen(
                     state.deviceLatitude != null && state.deviceLongitude != null) {
                     val centerLocationCd = stringResource(R.string.map_center_my_location_cd)
                     FloatingActionButton(
-                        onClick = { centreOnDeviceRequest = true },
+                        onClick = {
+                            // W27: Fetch device location on explicit user request
+                            viewModel.onCenterOnMeRequested()
+                            centreOnDeviceRequest = true
+                        },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(12.dp)

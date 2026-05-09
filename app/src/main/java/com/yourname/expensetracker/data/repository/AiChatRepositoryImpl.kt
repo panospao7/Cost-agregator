@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.AiChatMessageEntity
 import com.yourname.expensetracker.data.database.entity.AiChatSessionEntity
 import com.yourname.expensetracker.domain.ai.model.AiChatMessage
 import com.yourname.expensetracker.domain.ai.model.AiChatSession
+import com.yourname.expensetracker.domain.ai.model.AssistantHistorySettings
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.service.AiChatRepository
@@ -27,6 +28,13 @@ class AiChatRepositoryImpl @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val timeProvider: TimeProvider
 ) : AiChatRepository {
+
+    /** W34: Controls history persistence mode. Defaults to REDACTED. */
+    private var historySettings: AssistantHistorySettings = AssistantHistorySettings.REDACTED
+
+    fun setHistorySettings(settings: AssistantHistorySettings) {
+        historySettings = settings
+    }
 
     override fun observeSessions(): Flow<List<AiChatSession>> =
         sessionDao.observeAll().map { sessions ->
@@ -62,6 +70,10 @@ class AiChatRepositoryImpl @Inject constructor(
         payloadJson: String?
     ): Long? {
         if (!shouldPersistHistory()) return null
+        if (historySettings == AssistantHistorySettings.OFF) return null
+
+        // W34 redaction: strip payloadJson when not in RAW mode
+        val storedPayloadJson = if (historySettings.storePayloadJson) payloadJson else null
 
         val now = timeProvider.now()
         return database.withTransaction {
@@ -71,7 +83,7 @@ class AiChatRepositoryImpl @Inject constructor(
                     role = role,
                     kind = kind,
                     text = text,
-                    payloadJson = payloadJson,
+                    payloadJson = storedPayloadJson,
                     createdAt = now
                 )
             )
@@ -86,6 +98,11 @@ class AiChatRepositoryImpl @Inject constructor(
 
     override suspend fun clearAllHistory() {
         sessionDao.deleteAll()
+    }
+
+    /** W34: Delete messages older than [cutoff] (epoch millis). */
+    suspend fun purgeOldMessages(cutoff: Long) {
+        messageDao.deleteOlderThan(cutoff)
     }
 
     private suspend fun shouldPersistHistory(): Boolean =

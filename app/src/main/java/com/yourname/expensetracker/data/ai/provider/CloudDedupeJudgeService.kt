@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.ai.provider.internal.CloudCorrelation
-import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
+import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.data.ai.provider.internal.CloudRetryPolicy
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.data.security.getGeminiKey
@@ -53,7 +55,8 @@ class CloudDedupeJudgeService @Inject constructor(
     private val secureKeyStorage: SecureKeyStorage,
     @CloudAiHttpClient private val client: OkHttpClient,
     private val aiSettingsRepository: AiSettingsRepository? = null,
-    private val privacyGate: PrivacyGate
+    private val privacyGate: PrivacyGate,
+    private val redactor: CloudPayloadRedactor
 ) : DedupeJudgeService {
 
     // Secondary constructor for tests
@@ -64,7 +67,8 @@ class CloudDedupeJudgeService @Inject constructor(
         object : PrivacyGate {
             override suspend fun check(capability: PrivacyCapability, context: Map<String, String>): PrivacyDecision =
                 PrivacyDecision.Allowed
-        }
+        },
+        DefaultCloudPayloadRedactor()
     )
 
     /**
@@ -221,13 +225,13 @@ class CloudDedupeJudgeService @Inject constructor(
 
     private fun buildPrompt(input: DedupeJudgeInput, shouldRedact: Boolean): String {
         val candidates = input.candidates.joinToString("\n") { candidate ->
-            val merchant = CloudPiiSanitizer.sanitizeMerchant(candidate.merchant, shouldRedact)
-            val preview = candidate.textPreview?.let { CloudPiiSanitizer.sanitizeText(it, 120, "preview") } ?: "none"
+            val merchant = redactor.redactMerchant(candidate.merchant).value ?: "Unknown"
+            val preview = candidate.textPreview?.let { redactor.redactText(it, CloudPayloadPurpose.DEDUPE_JUDGE).text } ?: "none"
             "- targetType=${candidate.targetType}, targetId=${candidate.targetId}, merchant=$merchant, amount=${candidate.amount} ${candidate.currency}, date=${candidate.date}, txType=${candidate.transactionType ?: "UNKNOWN"}, source=${candidate.sourceLabel}, preview=$preview"
         }
 
-        val subjectMerchant = CloudPiiSanitizer.sanitizeMerchant(input.subject.merchant, shouldRedact)
-        val subjectPreview = input.subject.textPreview?.let { CloudPiiSanitizer.sanitizeText(it, 120, "preview") } ?: "none"
+        val subjectMerchant = redactor.redactMerchant(input.subject.merchant).value ?: "Unknown"
+        val subjectPreview = input.subject.textPreview?.let { redactor.redactText(it, CloudPayloadPurpose.DEDUPE_JUDGE).text } ?: "none"
 
         return """
 You are helping judge whether a pending finance review is likely a duplicate of one bounded candidate set.

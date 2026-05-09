@@ -111,6 +111,11 @@ object DaoModule {
 
     @Provides
     @Singleton
+    fun provideWarrantyLifecycleEventDao(database: AppDatabase): WarrantyLifecycleEventDao =
+        database.warrantyLifecycleEventDao()
+
+    @Provides
+    @Singleton
     fun provideSubscriptionPriceHistoryDao(database: AppDatabase): SubscriptionPriceHistoryDao = 
         database.subscriptionPriceHistoryDao()
 
@@ -146,6 +151,11 @@ object DaoModule {
 
     @Provides
     @Singleton
+    fun provideGroupSettlementDao(database: AppDatabase): GroupSettlementDao =
+        database.groupSettlementDao()
+
+    @Provides
+    @Singleton
     fun provideBudgetForecastDao(database: AppDatabase): BudgetForecastDao = 
         database.budgetForecastDao()
 
@@ -158,6 +168,11 @@ object DaoModule {
     @Singleton
     fun provideInvestmentValueDao(database: AppDatabase): InvestmentValueDao = 
         database.investmentValueDao()
+
+    @Provides
+    @Singleton
+    fun provideInvestmentTransactionDao(database: AppDatabase): InvestmentTransactionDao =
+        database.investmentTransactionDao()
 
     @Provides
     @Singleton

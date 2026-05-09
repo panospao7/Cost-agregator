@@ -121,8 +121,9 @@ class MerchantLocationRepository @Inject constructor(
         }
     }
 
-    suspend fun saveCorrection(correction: MerchantLocationCorrection) {
-        dao.upsertCorrection(correction)
+    suspend fun saveCorrection(correction: MerchantLocationCorrection): Long {
+        val id = dao.upsertCorrection(correction)
+        if (id <= 0) return id // W13: silently skipped — conflict; caller should handle
         // Also update the main cache to reflect the user's fix immediately.
         // Bug #12 fix: correction.normalizedMerchantName is already the normalized
         // key — do NOT call normalizeKey() on it again (that would double-normalize).
@@ -142,6 +143,7 @@ class MerchantLocationRepository @Inject constructor(
                 lastResolvedAt = timeProvider.now()
             )
         )
+        return id
     }
 
     // ── Maintenance ───────────────────────────────────────────────────────────

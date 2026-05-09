@@ -159,12 +159,20 @@ class SpendingMapViewModel @Inject constructor(
 
     // ── Public API ────────────────────────────────────────────────────────────
 
+    /**
+     * W27: Permission grant now only updates state — GPS is no longer fetched
+     * automatically. Call [onCenterOnMeRequested] to request device location.
+     */
     fun onPermissionResult(granted: Boolean) {
-        // Bug #1 fix: use _state.update for CAS safety
         _state.update { it.copy(locationPermissionGranted = granted) }
-        if (granted) {
-            viewModelScope.launch(Dispatchers.IO) { fetchDeviceLocation() }
-        }
+    }
+
+    /**
+     * W27: Explicitly request device location (e.g., center-on-me button).
+     * Checks the privacy gate before fetching GPS.
+     */
+    fun onCenterOnMeRequested() {
+        viewModelScope.launch(Dispatchers.IO) { fetchDeviceLocation() }
     }
 
     fun onShowPermissionRationale(show: Boolean) {

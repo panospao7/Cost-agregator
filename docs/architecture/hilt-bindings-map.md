@@ -1,6 +1,6 @@
 # Hilt Module Bindings Map
 
-> Complete interface → implementation binding map for all 28 Hilt @Module files (+ 1 @EntryPoint).
+> Complete interface → implementation binding map for all 27 Hilt @Module files (+ 1 @EntryPoint).
 
 ---
 
@@ -18,15 +18,19 @@ Dependencies:
 
 ### `DaoModule` — `di/DaoModule.kt`
 ```
-Provides (55 DAOs):
+Provides (58 DAOs):
   PlannedExpenseDao, SavingsGoalDao, RawNotificationDao, BlockedPackageDao,
   ExpenseDao, BudgetDao, ScannedReceiptDao, CategoryDao, MerchantCategoryDao,
   PendingReviewDao, UserCorrectionDao, SourceStatsDao, SourceStatsEventDao, RecurringExpenseDao,
   ManualRecurringExpenseDao, MerchantNormalizationDao, MerchantLocationDao,
   RecommendationDao, ReceiptItemCategorizationDao, WarrantyDao, ReturnWindowDao,
+  WarrantyLifecycleEventDao,
   SubscriptionPriceHistoryDao, SubscriptionUsageDao, MileageTrackingDao,
   ExchangeRateDao, ExpenseGroupDao, GroupMemberDao, GroupExpenseDao,
-  BudgetForecastDao, InvestmentDao, InvestmentValueDao, BankConnectionDao, BackgroundJobRunDao,
+  GroupSettlementDao,
+  BudgetForecastDao, InvestmentDao, InvestmentValueDao,
+  InvestmentTransactionDao,
+  BankConnectionDao, BackgroundJobRunDao,
   SplitTemplateDao, SplitItemAssignmentDao, SubscriptionCandidateDao,
   BudgetAdjustmentDao, EmailReceiptDao, AnomalyAlertDao, HealthScoreHistoryDao,
   PromptStateDao, SpendingPersonalityProfileDao, StressForecastSnapshotDao,
@@ -120,8 +124,8 @@ Provides:
   AiChatSessionDao                            → database.aiChatSessionDao()
   AiChatMessageDao                            → database.aiChatMessageDao()
   OnDeviceReceiptItemCategorizationService    → new instance
-  CloudReceiptItemCategorizationService       → SecureKeyStorage + OkHttpClient + PrivacyGate
-  CloudWarrantyExtractionService              → SecureKeyStorage + OkHttpClient + PrivacyGate
+  CloudReceiptItemCategorizationService       → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadRedactor
+  CloudWarrantyExtractionService              → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadRedactor
 ```
 
 ### `OcrImprovementsModule` — `di/OcrImprovementsModule.kt`
@@ -206,12 +210,9 @@ Provides:
   DeleteGroupMemberUseCase                    → DeleteGroupMemberUseCase(repository)
   DeleteGroupUseCase                          → DeleteGroupUseCase(repository)
   AddGroupExpenseUseCase                      → AddGroupExpenseUseCase(repository, timeProvider)
-```
 
-### `SubscriptionModule` — `di/SubscriptionModule.kt`
-```
-Provides:
-  SubscriptionManagerEngine                   → SubscriptionManagerEngine
+Auto-provided via @Inject constructor:
+  GroupLifecycleCoordinator                   → @Singleton @Inject constructor (no Dagger module needed)
 ```
 
 ### `TaxModule` — `di/TaxModule.kt`
@@ -339,4 +340,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 28 Hilt @Module files · 65 repositories (52 data + 13 domain) · 58 DAOs · 62 entities
+**Stats:** 27 Hilt @Module files · 65 repositories (52 data + 13 domain) · 58 DAOs · 62 entities
