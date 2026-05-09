@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.groups
 
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
 import com.yourname.expensetracker.data.database.entity.GroupMember
@@ -51,6 +52,7 @@ import javax.inject.Singleton
 class GroupLifecycleCoordinator @Inject constructor(
     private val groupCoordinator: GroupTransactionCoordinator,
     private val groupDao: ExpenseGroupDao,
+    private val groupExpenseDao: GroupExpenseDao,
     private val memberDao: GroupMemberDao,
     private val settlementDao: GroupSettlementDao,
     private val timeProvider: TimeProvider,
@@ -200,9 +202,17 @@ class GroupLifecycleCoordinator @Inject constructor(
                 "Cannot remove the current user. Transfer ownership to another member first."
             ))
         }
-        // G05: Balance check deferred — SettlementCalculator requires precomputed
-        // MemberBalance map from GroupExpense records. Callers should verify zero balance
-        // before calling removeMember. A future PR will add balance validation here.
+        // G05: Basic balance gate — check if member has any unpaid group expenses
+        // where they are the payer. Unpaid means settledAt is null.
+        val groupExpenses = groupExpenseDao.getExpensesForGroupOnce(groupId)
+        val unpaidPayerExpenses = groupExpenses.filter { it.paidById == memberId && it.settledAt == null }
+        if (unpaidPayerExpenses.isNotEmpty()) {
+            return@withContext Result.Error(GroupValidationError.Unknown(
+                "Cannot remove member with outstanding balance. " +
+                "Member has ${unpaidPayerExpenses.size} unpaid expense(s) as payer. " +
+                "Settle all expenses before removal."
+            ))
+        }
 
         // Delegate removal to DAO directly
         memberDao.delete(member)
@@ -306,6 +316,10 @@ class GroupLifecycleCoordinator @Inject constructor(
             return@withContext false
         }
         val group = groupDao.getGroupById(groupId) ?: return@withContext false
+        if (group.isActive) {
+            // G04: Must archive before hard-delete
+            return@withContext false
+        }
         val result = groupCoordinator.permanentlyDeleteGroup(groupId)
         if (result) {
             emitLifecycleEvent(groupId, "GROUP_DELETED")
@@ -377,6 +391,13 @@ class GroupLifecycleCoordinator @Inject constructor(
         )
 
         val settlementId = settlementDao.insert(settlement)
+
+        // G04-FIXED: Settlement persistence is the balance update.
+        // Group balances are computed from GroupExpense records minus
+        // GroupSettlement records. Writing the settlement here ensures
+        // the next balance recalculation via SettlementCalculator or
+        // SharedExpenseManager reflects the net position including this settlement.
+
         emitLifecycleEvent(groupId, "SETTLEMENT_RECORDED")
         settlementId
     }

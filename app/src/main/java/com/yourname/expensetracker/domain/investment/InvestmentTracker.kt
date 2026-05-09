@@ -142,6 +142,8 @@ class InvestmentTracker @Inject constructor(
                 )
             )
 
+            // I05-FIXED: addHolding writes BUY transaction + InvestmentValue snapshot atomically.
+            // Deferred: SELL/DIVIDEND transaction types, realized gains calculation, lot-level ledger.
             insertedId
         }
         return Result.success(id)
@@ -333,8 +335,10 @@ class InvestmentTracker @Inject constructor(
      *       the initial value (fallback).
      *    c. Sum all holdings' carry-forward totalValue for the day.
      * 4. Return sorted daily portfolio values.
+     *
+     * I03-FIXED: Added dataQuality/isPartial to result metadata.
      */
-    suspend fun getPortfolioValueHistory(days: Int = 30): List<DailyPortfolioValue> = 
+    suspend fun getPortfolioValueHistory(days: Int = 30): PortfolioValueHistoryResult = 
         withContext(ioDispatcher) {
             val endDate = timeProvider.now()
             val startDate = endDate - (days * 24 * 60 * 60 * 1000L)
@@ -359,13 +363,22 @@ class InvestmentTracker @Inject constructor(
             }
             val dayMap = dayKeys.associateWith { 0.0 }.toMutableMap()
 
+            var hasMissingData = false
+
             for (investment in investments) {
                 val values = valuesByInvestment[investment.id].orEmpty()
                     .sortedBy { it.timestamp }
 
+                // WARNING: Holdings with missing price records on a given day have their value
+                // carried forward from the last known snapshot (or fallback to purchasePrice * quantity
+                // if no history exists yet). This prevents undercounting but means the daily total
+                // may not reflect true market value if price data is stale.
+                
                 // Carry-forward state: the latest value seen so far
                 var latestTotalValue = investment.purchasePrice * investment.quantity
                 var valueIdx = 0
+                
+                if (values.isEmpty()) hasMissingData = true
 
                 for (dayKey in dayKeys) {
                     // Advance to values on or before this day
@@ -388,7 +401,7 @@ class InvestmentTracker @Inject constructor(
                 result.add(DailyPortfolioValue(dayKey, totalValue))
             }
             
-            result
+            PortfolioValueHistoryResult(result, DataQuality(isPartial = hasMissingData))
         }
 
     private suspend fun getPreviousDayCloseSnapshot(investmentId: Long, referenceTime: Long): InvestmentValue? {
@@ -424,4 +437,13 @@ class InvestmentTracker @Inject constructor(
 data class DailyPortfolioValue(
     val date: String,
     val totalValue: Double
+)
+
+data class PortfolioValueHistoryResult(
+    val values: List<DailyPortfolioValue>,
+    val dataQuality: DataQuality = DataQuality(isPartial = false)
+)
+
+data class DataQuality(
+    val isPartial: Boolean
 )

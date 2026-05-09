@@ -205,8 +205,11 @@ class TaxEstimator @Inject constructor(
     }
 
     private fun startOfYear(year: Int): Long {
+        // T03/T09-FIXED: Use configured fiscal year start day/month instead of hardcoded Jan 1.
+        val month = taxSettings.getFiscalYearStartMonth() - 1 // Calendar month is 0-based
+        val day = taxSettings.getFiscalYearStartDay()
         return Calendar.getInstance().apply {
-            set(year, Calendar.JANUARY, 1, 0, 0, 0)
+            set(year, month, day, 0, 0, 0)
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
     }
@@ -253,6 +256,8 @@ class TaxEstimator @Inject constructor(
         year: Int,
         taxConfig: TaxConfiguration = TaxConfigurationFactory.getConfiguration(taxSettings.getTaxCountry())
     ): TaxYearSummary = withContext(ioDispatcher) {
+        // T03/T09-FIXED: Fiscal year start uses taxSettings.fiscalYearStartMonth/Day
+        // instead of hardcoded January 1st.
         val yearStart = startOfYear(year)
         val yearEnd = startOfYear(year + 1)
         val incomeAggregate = buildIncomeAggregate(yearStart, yearEnd)

@@ -104,9 +104,16 @@ class BusinessExpenseRepository @Inject constructor(
     
     /**
      * Get total mileage deduction for a period.
+     *
+     * PR-T3: Per-row fallback — if [MileageTracking.calculatedDeduction] is null,
+     * computes [MileageTracking.distanceKm] * [MileageTracking.deductionRatePerKm].
+     * Filters business trips only (isBusinessTrip = 1), positive distance,
+     * and non-negative rate.
      */
     suspend fun getTotalMileageDeduction(startDate: Long, endDate: Long): Double {
-        return mileageDao.getTotalDeductionBetween(startDate, endDate) ?: 0.0
+        return getBusinessMileageBetween(startDate, endDate)
+            .filter { it.distanceKm > 0.0 && it.deductionRatePerKm >= 0.0 }
+            .sumOf { it.calculatedDeduction ?: (it.distanceKm * it.deductionRatePerKm) }
     }
 
     // Boundary mapper: data-layer TransactionType -> domain DomainTransactionType

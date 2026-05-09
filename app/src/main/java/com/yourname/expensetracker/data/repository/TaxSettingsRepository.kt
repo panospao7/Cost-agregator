@@ -44,6 +44,30 @@ class TaxSettingsRepository @Inject constructor(
     fun getFiscalYearStartMonth(): Int =
         prefs.getInt(KEY_FISCAL_YEAR_START, DEFAULT_FISCAL_YEAR_START)
 
+    /**
+     * Returns the day of month (1-31) on which the fiscal year starts.
+     * Defaults to 1.
+     */
+    fun getFiscalYearStartDay(): Int =
+        prefs.getInt(KEY_FISCAL_YEAR_START_DAY, DEFAULT_FISCAL_YEAR_START_DAY)
+
+    /**
+     * Returns whether VAT tracking/reporting is enabled.
+     * Defaults to false.
+     */
+    fun isVatEnabled(): Boolean =
+        prefs.getBoolean(KEY_VAT_ENABLED, DEFAULT_VAT_ENABLED)
+
+    /**
+     * Returns the currency policy for business reports.
+     * "HOME" = convert all amounts to home currency.
+     * "FILING" = use filing currency as-is.
+     * Defaults to "HOME".
+     */
+    fun getBusinessReportCurrencyPolicy(): String =
+        prefs.getString(KEY_BUSINESS_REPORT_CURRENCY_POLICY, DEFAULT_BUSINESS_REPORT_CURRENCY_POLICY)
+            ?: DEFAULT_BUSINESS_REPORT_CURRENCY_POLICY
+
     // ── Setters ──────────────────────────────────────────────────────────────
 
     /** Sets the tax filing country code. */
@@ -61,15 +85,42 @@ class TaxSettingsRepository @Inject constructor(
         prefs.edit().putInt(KEY_FISCAL_YEAR_START, month.coerceIn(1, 12)).apply()
     }
 
+    /** Sets the fiscal year start day (1-31). */
+    fun setFiscalYearStartDay(day: Int) {
+        prefs.edit().putInt(KEY_FISCAL_YEAR_START_DAY, day.coerceIn(1, 31)).apply()
+    }
+
+    /** Enables or disables VAT tracking/reporting. */
+    fun setVatEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_VAT_ENABLED, enabled).apply()
+    }
+
+    /**
+     * Sets the currency policy for business reports.
+     * @param policy Must be "HOME" or "FILING".
+     */
+    fun setBusinessReportCurrencyPolicy(policy: String) {
+        require(policy == "HOME" || policy == "FILING") {
+            "businessReportCurrencyPolicy must be HOME or FILING, got: $policy"
+        }
+        prefs.edit().putString(KEY_BUSINESS_REPORT_CURRENCY_POLICY, policy).apply()
+    }
+
     companion object {
         private const val PREFS_NAME = "tax_settings"
 
         private const val KEY_TAX_COUNTRY = "tax_country"
         private const val KEY_FILING_CURRENCY = "tax_filing_currency"
         private const val KEY_FISCAL_YEAR_START = "tax_fiscal_year_start"
+        private const val KEY_FISCAL_YEAR_START_DAY = "tax_fiscal_year_start_day"
+        private const val KEY_VAT_ENABLED = "vat_enabled"
+        private const val KEY_BUSINESS_REPORT_CURRENCY_POLICY = "business_report_currency_policy"
 
         private const val DEFAULT_TAX_COUNTRY = "GR"
         private const val DEFAULT_FILING_CURRENCY = "EUR"
         private const val DEFAULT_FISCAL_YEAR_START = 1
+        private const val DEFAULT_FISCAL_YEAR_START_DAY = 1
+        private const val DEFAULT_VAT_ENABLED = false
+        private const val DEFAULT_BUSINESS_REPORT_CURRENCY_POLICY = "HOME"
     }
 }

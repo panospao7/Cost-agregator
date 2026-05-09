@@ -16,6 +16,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 
 /**
  * Calculates effective budget spend on an accrual basis.
@@ -109,6 +112,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
         var totalPersonalSpend = 0.0
         var failedConversionCount = 0
         val conversionWarnings = mutableListOf<String>()
+        val personalBuckets = mutableListOf<Pair<Double, String>>()
         for (expense in personalExpenses) {
             val conversion = currencyConverter.convertAsOf(
                 amount = expense.effectiveAmount,
@@ -116,6 +120,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                 toCurrency = homeCurrency,
                 atMillis = expense.date
             )
+            personalBuckets.add(expense.effectiveAmount to expense.currency)
             if (conversion != null) {
                 totalPersonalSpend += conversion.convertedAmount
             } else {
@@ -128,6 +133,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
         // G07: Use convertAsOf per expense for historical accuracy instead of latest rate.
         var totalSharedSpend = 0.0
         var totalReimbursed = 0.0
+        val sharedBuckets = mutableListOf<Pair<Double, String>>()
 
         for (scope in inScopeGroupExpenses) {
             for (groupExpense in scope.expenses) {
@@ -141,6 +147,7 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
                         members = scope.members,
                         memberId = scope.currentUserMember.id
                     )
+                    sharedBuckets.add(share to groupExpense.currency)
                     val conversion = currencyConverter.convertAsOf(
                         amount = share,
                         fromCurrency = groupExpense.currency,
@@ -181,6 +188,23 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
         val effectiveBudgetSpend = totalPersonalSpend + totalSharedSpend
         val isPartial = failedConversionCount > 0
 
+        // Build multi-currency safe MoneyAggregates
+        val grossPersonalAggregate = MoneyAggregateBuilder.fromBuckets(
+            buckets = personalBuckets,
+            homeCurrency = homeCurrency,
+            converter = currencyConverter
+        )
+        val sharedContributionAggregate = MoneyAggregateBuilder.fromBuckets(
+            buckets = sharedBuckets,
+            homeCurrency = homeCurrency,
+            converter = currencyConverter
+        )
+        val adjustedSpendAggregate = MoneyAggregateBuilder.fromBuckets(
+            buckets = personalBuckets + sharedBuckets,
+            homeCurrency = homeCurrency,
+            converter = currencyConverter
+        )
+
         BudgetSpendBreakdown(
             totalPersonalSpend = totalPersonalSpend,
             totalSharedSpend = totalSharedSpend,
@@ -190,7 +214,10 @@ class SharedExpenseBudgetOffsetEngine @Inject constructor(
             displayCurrency = homeCurrency,
             isPartial = isPartial,
             conversionWarnings = conversionWarnings,
-            failedConversionCount = failedConversionCount
+            failedConversionCount = failedConversionCount,
+            grossPersonalAggregate = grossPersonalAggregate,
+            sharedContributionAggregate = sharedContributionAggregate,
+            adjustedSpendAggregate = adjustedSpendAggregate
         )
     }
 
@@ -237,6 +264,9 @@ data class BudgetSpendBreakdown(
     val netSharedLiability: Double,      // Accrual liability used for budgeting (equals sharedSpend)
     val effectiveBudgetSpend: Double,     // Personal + sharedSpend (what counts against budget)
     val displayCurrency: String = "EUR",
+    val grossPersonalAggregate: MoneyAggregate = MoneyAggregate.empty(CurrencyCode("EUR")),
+    val sharedContributionAggregate: MoneyAggregate = MoneyAggregate.empty(CurrencyCode("EUR")),
+    val adjustedSpendAggregate: MoneyAggregate = MoneyAggregate.empty(CurrencyCode("EUR")),
     val isPartial: Boolean = false,           // PR 3: true when any conversions failed
     val conversionWarnings: List<String> = emptyList(),  // PR 3: per-currency warning messages
     val failedConversionCount: Int = 0         // PR 3: number of conversion failures

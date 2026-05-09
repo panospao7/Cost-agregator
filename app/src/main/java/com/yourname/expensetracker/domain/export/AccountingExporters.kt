@@ -85,47 +85,22 @@ class XeroCSVExporter {
 
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
-        val description = escapeCsvField(expense.merchant)
-        val amount = escapeCsvField(CurrencyFormatter.formatForExport(expense.amount))
-        val account = escapeCsvField(categories[expense.categoryId] ?: "Uncategorized")
+        val description = CsvCellSanitizer.sanitize(expense.merchant)
+        val amount = CsvCellSanitizer.sanitize(CurrencyFormatter.formatForExport(expense.amount))
+        val account = CsvCellSanitizer.sanitize(categories[expense.categoryId] ?: "Uncategorized")
         val reference = expense.id.toString()
         val conversionRate = expense.conversionRateUsed?.let { CurrencyFormatter.formatForExport(it) } ?: ""
         val originalAmount = expense.originalAmount?.let { CurrencyFormatter.formatForExport(it) } ?: ""
 
         writer.append(
-            "${escapeCsvField(date)},$description,$amount,${escapeCsvField(expense.currency)}," +
+            "${CsvCellSanitizer.sanitize(date)},$description,$amount,${CsvCellSanitizer.sanitize(expense.currency)}," +
                 "$account,$reference," +
-                "${escapeCsvField(expense.originalCurrency)}," +
-                "${escapeCsvField(expense.homeCurrency)}," +
+                "${CsvCellSanitizer.sanitize(expense.originalCurrency)}," +
+                "${CsvCellSanitizer.sanitize(expense.homeCurrency)}," +
                 "$conversionRate,$originalAmount\n"
         )
     }
 
-    private fun escapeCsvField(field: String): String {
-        val trimmed = field.trim()
-        if (trimmed.isEmpty()) return field
-
-        val firstChar = trimmed.first()
-        val neutralizedField = if (
-            firstChar == '=' || firstChar == '+' ||
-            firstChar == '-' || firstChar == '@'
-        ) {
-            "'$field"
-        } else {
-            field
-        }
-
-        val needsQuoting = neutralizedField.contains(",") ||
-            neutralizedField.contains("\"") ||
-            neutralizedField.contains("\n") ||
-            neutralizedField.contains("\r")
-
-        return if (needsQuoting) {
-            "\"" + neutralizedField.replace("\"", "\"\"") + "\""
-        } else {
-            neutralizedField
-        }
-    }
 }
 
 class FreshBooksExporter {
@@ -144,45 +119,20 @@ class FreshBooksExporter {
 
     fun writeExpense(writer: Appendable, expense: ExportTransaction, categories: Map<Long, String>) {
         val date = Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).format(dateFormat)
-        val description = escapeCsvField(expense.merchant)
-        val amount = escapeCsvField(CurrencyFormatter.formatForExport(expense.amount))
-        val category = escapeCsvField(categories[expense.categoryId] ?: "Uncategorized")
-        val vendor = escapeCsvField(expense.merchant)
+        val description = CsvCellSanitizer.sanitize(expense.merchant)
+        val amount = CsvCellSanitizer.sanitize(CurrencyFormatter.formatForExport(expense.amount))
+        val category = CsvCellSanitizer.sanitize(categories[expense.categoryId] ?: "Uncategorized")
+        val vendor = CsvCellSanitizer.sanitize(expense.merchant)
         val conversionRate = expense.conversionRateUsed?.let { CurrencyFormatter.formatForExport(it) } ?: ""
         val originalAmount = expense.originalAmount?.let { CurrencyFormatter.formatForExport(it) } ?: ""
 
         writer.append(
-            "${escapeCsvField(date)},$description,$amount,${escapeCsvField(expense.currency)}," +
+            "${CsvCellSanitizer.sanitize(date)},$description,$amount,${CsvCellSanitizer.sanitize(expense.currency)}," +
                 "$category,$vendor," +
-                "${escapeCsvField(expense.originalCurrency)}," +
-                "${escapeCsvField(expense.homeCurrency)}," +
+                "${CsvCellSanitizer.sanitize(expense.originalCurrency)}," +
+                "${CsvCellSanitizer.sanitize(expense.homeCurrency)}," +
                 "$conversionRate,$originalAmount\n"
         )
     }
 
-    private fun escapeCsvField(field: String): String {
-        val trimmed = field.trim()
-        if (trimmed.isEmpty()) return field
-
-        val firstChar = trimmed.first()
-        val neutralizedField = if (
-            firstChar == '=' || firstChar == '+' ||
-            firstChar == '-' || firstChar == '@'
-        ) {
-            "'$field"
-        } else {
-            field
-        }
-
-        val needsQuoting = neutralizedField.contains(",") ||
-            neutralizedField.contains("\"") ||
-            neutralizedField.contains("\n") ||
-            neutralizedField.contains("\r")
-
-        return if (needsQuoting) {
-            "\"" + neutralizedField.replace("\"", "\"\"") + "\""
-        } else {
-            neutralizedField
-        }
-    }
 }
