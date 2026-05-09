@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.core.money.ConversionFailure
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
 import com.yourname.expensetracker.domain.core.money.MoneyBucket
 import com.yourname.expensetracker.domain.core.money.toConversionFailure
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
@@ -408,6 +409,54 @@ class MultiCurrencyRepository @Inject constructor(
         return result
     }
 
+    /**
+     * Get weekly totals in home currency.
+     * Groups expenses by ISO week using [TimePeriodUtils.getStartOfWeek].
+     * Uses [MoneyAggregateBuilder.fromBuckets] for safe multi-currency conversion.
+     * Returns list of [PeriodMoneyAggregate] sorted by week ascending.
+     */
+    suspend fun getHomeCurrencyWeeklyTotals(
+        startDate: Long,
+        endDate: Long
+    ): List<PeriodMoneyAggregate> {
+        val homeCurrency = resolveHomeCurrency()
+        val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+        if (expenses.isEmpty()) return emptyList()
+
+        val byWeek = expenses.groupBy { TimePeriodUtils.getStartOfWeek(it.date) }
+        val result = mutableListOf<PeriodMoneyAggregate>()
+        for ((weekStart, group) in byWeek.toSortedMap()) {
+            val buckets = group.map { Pair(it.effectiveAmount, it.currency) }
+            val aggregate = MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter)
+            result.add(PeriodMoneyAggregate(periodKey = getWeekKey(weekStart), aggregate = aggregate))
+        }
+        return result
+    }
+
+    /**
+     * Get daily totals in home currency.
+     * Groups expenses by calendar day using [TimePeriodUtils.getStartOfDay].
+     * Uses [MoneyAggregateBuilder.fromBuckets] for safe multi-currency conversion.
+     * Returns list of [PeriodMoneyAggregate] sorted by day ascending.
+     */
+    suspend fun getHomeCurrencyDailyTotals(
+        startDate: Long,
+        endDate: Long
+    ): List<PeriodMoneyAggregate> {
+        val homeCurrency = resolveHomeCurrency()
+        val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+        if (expenses.isEmpty()) return emptyList()
+
+        val byDay = expenses.groupBy { TimePeriodUtils.getStartOfDay(it.date) }
+        val result = mutableListOf<PeriodMoneyAggregate>()
+        for ((dayStart, group) in byDay.toSortedMap()) {
+            val buckets = group.map { Pair(it.effectiveAmount, it.currency) }
+            val aggregate = MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter)
+            result.add(PeriodMoneyAggregate(periodKey = getDayKey(dayStart), aggregate = aggregate))
+        }
+        return result
+    }
+
     // ── PURCHASE-only variants ─────────────────────────────────────────────
 
     /**
@@ -581,6 +630,27 @@ class MultiCurrencyRepository @Inject constructor(
         return "$year-${month.toString().padStart(2, '0')}"
     }
 
+    /**
+     * Format a week key from a timestamp using ISO week-based year.
+     * Always use [TimePeriodUtils.getWeekBasedYear] with [TimePeriodUtils.getWeekOfYear]
+     * to avoid year-boundary mismatches (e.g. 2021-01-01 → "2020-W53").
+     */
+    private fun getWeekKey(timestamp: Long): String {
+        val year = TimePeriodUtils.getWeekBasedYear(timestamp)
+        val week = TimePeriodUtils.getWeekOfYear(timestamp)
+        return "$year-W${week.toString().padStart(2, '0')}"
+    }
+
+    /**
+     * Format a day key from a timestamp as "yyyy-MM-dd".
+     */
+    private fun getDayKey(timestamp: Long): String {
+        val year = TimePeriodUtils.getYear(timestamp)
+        val month = TimePeriodUtils.getMonth(timestamp) + 1
+        val day = TimePeriodUtils.getDayOfMonth(timestamp)
+        return "$year-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}"
+    }
+
     private fun classifyErrorMessage(throwable: Throwable): String {
         return when {
             throwable is MissingExchangeRateException ->
@@ -634,5 +704,18 @@ data class MonthTotal(
 
 data class MonthMoneyAggregate(
     val monthKey: String,
+    val aggregate: MoneyAggregate
+)
+
+/**
+ * Aggregate for a time period (week or day) with home-currency conversion.
+ * Used by [MultiCurrencyRepository.getHomeCurrencyWeeklyTotals] and
+ * [MultiCurrencyRepository.getHomeCurrencyDailyTotals].
+ *
+ * @param periodKey Human-readable key (e.g. "2026-W19" for week, "2026-05-09" for day).
+ * @param aggregate The converted money aggregate for this period.
+ */
+data class PeriodMoneyAggregate(
+    val periodKey: String,
     val aggregate: MoneyAggregate
 )
