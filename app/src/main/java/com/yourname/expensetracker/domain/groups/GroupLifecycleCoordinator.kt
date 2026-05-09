@@ -14,6 +14,10 @@ import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
+import com.yourname.expensetracker.domain.budget.BudgetMonitor
+import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher
+import dagger.Lazy
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -57,6 +61,8 @@ class GroupLifecycleCoordinator @Inject constructor(
     private val settlementDao: GroupSettlementDao,
     private val timeProvider: TimeProvider,
     private val currencySettingsRepository: CurrencySettingsRepository,
+    private val budgetMonitor: dagger.Lazy<com.yourname.expensetracker.domain.budget.BudgetMonitor>,
+    private val sideEffectDispatcher: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
 
@@ -274,7 +280,8 @@ class GroupLifecycleCoordinator @Inject constructor(
         )
 
         if (result is GroupExpenseCreationResult.Success) {
-            emitLifecycleEvent(groupId, "GROUP_EXPENSE_ADDED")
+            val expenseId = result.expenseId
+            emitLifecycleEvent(groupId, "GROUP_EXPENSE_ADDED", expenseId = expenseId)
         }
         result
     }
@@ -409,9 +416,25 @@ class GroupLifecycleCoordinator @Inject constructor(
      * `group_lifecycle_events` audit table. Currently deferred
      * (post-commit logging via side-effect dispatcher).
      */
-    private fun emitLifecycleEvent(groupId: Long, eventType: String) {
-        // Lifecycle events are deferred to post-commit side-effect dispatch.
-        // A future audit table `group_lifecycle_events(groupId, eventType, timestamp)`
-        // will receive these events when implemented.
+    private suspend fun emitLifecycleEvent(
+        groupId: Long,
+        eventType: String,
+        expenseId: Long = 0L
+    ) {
+        Timber.d("GroupLifecycleEvent: groupId=%d, event=%s", groupId, eventType)
+        try {
+            budgetMonitor.get().checkBudgets()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w(e, "Budget check failed for group %d event %s", groupId, eventType)
+        }
+        if (expenseId > 0L) {
+            try {
+                sideEffectDispatcher.dispatchOnCreated(expenseId, ExpenseSource.GROUP_EXPENSE)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Timber.w(e, "Side effects failed for expense %d (group %d)", expenseId, groupId)
+            }
+        }
     }
 }
