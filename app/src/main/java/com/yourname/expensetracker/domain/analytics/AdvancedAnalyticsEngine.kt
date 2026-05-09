@@ -159,6 +159,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
     /**
      * Generates enhanced analytics for all categories within the specified period.
      */
+    // A10 PARTIAL: Budget amounts may not be normalized. Use BudgetVsActualEngine for canonical comparison.
+    @Deprecated("Use BudgetVsActualEngine.compute() for normalized budget comparison")
     suspend fun getCategoryAnalytics(period: AnalyticsPeriodRange, displayCurrency: String): Pair<List<EnhancedCategoryAnalytics>, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
         coroutineScope {
         // Fetch all required data in parallel
@@ -275,8 +277,9 @@ class AdvancedAnalyticsEngine @Inject constructor(
             expenseRepository.getExpenseSnapshotsBetween(period.startMs, period.endMs) 
         }
         
-        // Get historical data for price trends (6 calendar months back)
-        val historicalStart = TimePeriodUtils.addMonths(period.startMs, -6)
+        // A12-FIXED: 12-month merchant lookback for anomaly baseline
+        // Get historical data for price trends (12 calendar months back)
+        val historicalStart = TimePeriodUtils.addMonths(period.startMs, -12)
         val historicalExpensesDeferred = async(ioDispatcher) { 
             expenseRepository.getExpenseSnapshotsBetween(historicalStart, period.endMs)
         }

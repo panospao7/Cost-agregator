@@ -135,6 +135,10 @@ class TotalsAggregationEngine @Inject constructor(
      * → multiCurrencyRepository.getHomeCurrencyWeeklyTotals(monthStartMs, monthEndMs)
      * ```
      */
+    // A02 PARTIAL: This method raw-sums across potentially mixed currencies.
+    // Use MultiCurrencyRepository.getHomeCurrencyWeeklyTotals() for currency-safe aggregation,
+    // or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.
+    @Deprecated("Use MultiCurrencyRepository.getHomeCurrencyWeeklyTotals() for currency-safe weekly aggregation, or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.")
     fun getWeeklyTotals(year: Int, month: Int): Flow<List<PeriodTotal>> = reactiveFlow {
         val (monthStartMs, monthEndMs) = getMonthRange(year, month)
         val weeklyTotals = expenseRepository.getWeeklyTotalsForPeriod(monthStartMs, monthEndMs)
@@ -196,6 +200,10 @@ class TotalsAggregationEngine @Inject constructor(
      * ```
      * and use [MoneyAggregate.displayAmount] / [MoneyAggregate.totalTransactionCount].
      */
+    // A02 PARTIAL: This method raw-sums across potentially mixed currencies.
+    // Use MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe aggregation,
+    // or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.
+    @Deprecated("Use MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe daily aggregation, or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.")
     fun getDailyTotals(year: Int, weekOfYear: Int): Flow<List<PeriodTotal>> = reactiveFlow {
         val (startMs, endMs) = getWeekRange(year, weekOfYear)
 
@@ -227,6 +235,10 @@ class TotalsAggregationEngine @Inject constructor(
      * `getHomeCurrencyDailyTotals()` method. Once available, replace the call and
      * use [MoneyAggregate.displayAmount] / [MoneyAggregate.totalTransactionCount].
      */
+    // A02 PARTIAL: This method raw-sums across potentially mixed currencies.
+    // Use MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe aggregation,
+    // or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.
+    @Deprecated("Use MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe daily aggregation, or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.")
     fun getDailyTotalsForRange(startMs: Long, endMs: Long): Flow<List<PeriodTotal>> = reactiveFlow {
         val dailyTotals = expenseRepository.getDailyTotalsWithDatesForPeriod(startMs, endMs)
         val average = getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
@@ -551,6 +563,38 @@ class TotalsAggregationEngine @Inject constructor(
                          else defaultStatus
             )
         }.sortedBy { it.periodKey }
+    }
+
+    /**
+     * Safe summary computed from pre-normalized input (already converted to home currency).
+     *
+     * This is the preferred entry point for callers that have a [NormalizedAnalyticsInput]
+     * available, as it avoids the raw DAO sum pitfalls of the deprecated methods.
+     */
+    data class TotalsSummary(
+        val total: Double,
+        val count: Int,
+        val avgPerDay: Double,
+        val avgPerWeek: Double,
+        val currency: String
+    )
+
+    fun summarize(input: NormalizedAnalyticsInput): TotalsSummary {
+        val expenses = input.includedExpenses.filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+        val total = expenses.sumOf { it.normalizedAmount }
+        val count = expenses.size
+        val days = input.period?.let { period ->
+            java.time.Duration.between(
+                java.time.Instant.ofEpochMilli(period.startInclusiveMillis),
+                java.time.Instant.ofEpochMilli(period.endExclusiveMillis)
+            ).toDays().coerceAtLeast(1)
+        } ?: 30
+        return TotalsSummary(
+            total = total, count = count,
+            avgPerDay = total / days,
+            avgPerWeek = total / (days / 7.0).coerceAtLeast(1.0),
+            currency = input.homeCurrency
+        )
     }
 
     private fun systemZoneId(): ZoneId = ZoneId.systemDefault()

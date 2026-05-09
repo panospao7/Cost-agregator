@@ -483,12 +483,14 @@ class InsightsEngine @Inject constructor(
         allExpenses: List<ExpenseSnapshot>,
         displayCurrency: String
     ): SpendingPace {
+        val referenceNowMs = minOf(timeProvider.now(), currentMonth.endMs)
         val canonicalPace = spendingPaceCalculator.calculate(
             currentMonthStart = currentMonth.startMs,
             previousMonthStart = previousMonth.startMs,
             previousMonthEnd = previousMonth.endMs,
             allExpenses = allExpenses,
-            displayCurrency = displayCurrency
+            displayCurrency = displayCurrency,
+            referenceNowMs = referenceNowMs
         )
 
         // Preserve Insights-specific enrichment while delegating pace math.

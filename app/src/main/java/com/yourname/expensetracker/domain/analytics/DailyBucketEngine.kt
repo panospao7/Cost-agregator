@@ -28,26 +28,26 @@ class DailyBucketEngine @Inject constructor() {
         period: PeriodRange,
         zoneId: ZoneId = ZoneId.systemDefault()
     ): List<DailyBucket> {
-        val startDate = Instant.ofEpochMilli(period.startInclusiveMillis).atZone(zoneId)
+        val startDay = Instant.ofEpochMilli(period.startInclusiveMillis).atZone(zoneId)
             .truncatedTo(ChronoUnit.DAYS)
-        val endDate = Instant.ofEpochMilli(period.endExclusiveMillis).atZone(zoneId)
+        val endDay = Instant.ofEpochMilli(period.endExclusiveMillis).atZone(zoneId)
             .truncatedTo(ChronoUnit.DAYS)
-        val days = ChronoUnit.DAYS.between(startDate, endDate).toInt().coerceAtLeast(0)
 
         // Aggregate normalized amounts per day
         val byDay = input.includedExpenses
             .filter { it.date >= period.startInclusiveMillis && it.date < period.endExclusiveMillis }
             .groupBy { dayStart(it.date, zoneId) }
 
-        return (0..days).map { dayOffset ->
-            val dayStart = startDate.plusDays(dayOffset.toLong()).toInstant().toEpochMilli()
-            val dayExpenses = byDay[dayStart].orEmpty()
-            DailyBucket(
-                date = dayStart,
-                total = dayExpenses.sumOf { it.normalizedAmount },
-                count = dayExpenses.size
-            )
+        val buckets = mutableListOf<DailyBucket>()
+        var current = startDay
+        while (current < endDay || current == startDay) {  // include start day
+            val dayEpoch = current.toInstant().toEpochMilli()
+            val dayExpenses = byDay[dayEpoch].orEmpty()
+            buckets.add(DailyBucket(dayEpoch, dayExpenses.sumOf { it.normalizedAmount }, dayExpenses.size))
+            current = current.plusDays(1)
+            if (current > endDay) break
         }
+        return buckets
     }
 
     private fun dayStart(epochMillis: Long, zoneId: ZoneId): Long {
