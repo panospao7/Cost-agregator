@@ -223,6 +223,18 @@ Auto-provided via @Inject constructor:
 
 Note: `MarketRateProvider` interface is consumed by `SmartBillNegotiationEngine`; `StaticMarketRateProvider` is the single `@Inject`-constructor implementation, satisfying Hilt's auto-binding rules for single-implementation interfaces.
 
+### Analytics Engines — Auto-provided (no module needed)
+
+Both engines are `@Singleton @Inject` with empty/no-arg constructors — Hilt auto-discovers them without a `@Module`:
+
+```
+Auto-provided:
+  DailyBucketEngine                           → @Singleton @Inject constructor (domain/analytics/DailyBucketEngine.kt)
+  BudgetVsActualEngine                        → @Singleton @Inject constructor (domain/analytics/BudgetVsActualEngine.kt)
+```
+
+`AnalyticsInputAssembler` is also `@Singleton @Inject` with constructor-injected dependencies (`ExpenseRepository`, `AnalyticsCurrencyNormalizer`, `CurrencySettingsRepository`, `TimeProvider`, `CategoryRepository`) — no module needed, Hilt satisfies all dependencies automatically.
+
 ### `TaxModule` — `di/TaxModule.kt`
 ```
 Provides:

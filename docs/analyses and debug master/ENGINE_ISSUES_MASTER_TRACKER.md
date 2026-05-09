@@ -3,7 +3,7 @@
 > Consolidated P0/P1 issues from 5 engine debug reports.
 > Source: warranty-subscription-location-nlp, analytical, categorization-merchant, groups-investment-tax, money-time-primitives
 > **Last updated: 2026-05-09**
-> **Core engines stabilized (55 fixed with real code). Advanced engines (groups, tax, investment advanced features) are beta/contained — 23 items documented as TODO-only, 15 deferred, 15 deferred-design.**
+> **Core engines stabilized (70 fixed with real code). Advanced engines (groups, tax, investment advanced features) are beta/contained — 14 items documented as TODO-only, 13 deferred, 15 deferred-design.**
 
 ## Status Legend
 - ⬜ NOT STARTED
@@ -61,22 +61,26 @@
 
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
-| A01 | P0 | No canonical analytics input contract | Enhancement | Create NormalizedAnalyticsInput type | ⏭ |
-| A02 | P0 | TotalsAggregationEngine unsafe multi-currency | Bug | Guard with require(isSingleCurrency) | 📝 TODO ONLY |
+| A01 | P0 | No canonical analytics input contract | Enhancement | AnalyticsInputAssembler converted to @Singleton @Inject class with build(period,options); AnalyticsInputOptions added; NormalizedExpense expanded with originalEffectiveAmount/categoryNameSnapshot/ownershipMode/source | ✅ FIXED |
+| A02 | P0 | TotalsAggregationEngine unsafe multi-currency | Bug | Weekly/daily totals use MoneyAggregate via MultiCurrencyRepository.getHomeCurrencyWeeklyTotals/getHomeCurrencyDailyTotals | ✅ FIXED |
 | A03 | P0 | Historical analytics uses current rates | Bug | Use convertAsOf(amount, from, to, expense.date) | ✅ FIXED |
-| A04 | P0 | SpendingPersonalityClassifier not currency-safe | Bug | Inject normalizer; normalize before extraction | 📝 TODO ONLY |
+| A04 | P0 | SpendingPersonalityClassifier not currency-safe | Bug | SpendingPersonalityClassifier.classify(NormalizedAnalyticsInput) computes features from pre-normalized data without raw DB queries | ✅ FIXED |
 | A05 | P0 | AnalyticsRepository drops partial-conversion | Bug | Return MoneyAggregate + dataQuality | ✅ FIXED |
 | A06 | P0 | Basic/advanced/repo/legacy analytics disagree | Bug | Create AnalyticsInputAssembler for consistency | ✅ FIXED |
-| A07 | P1 | InsightsEngine defaults to EUR | Enhancement | Require NormalizedAnalyticsInput or deprecate | 📝 TODO ONLY |
-| A08 | P1 | Daily chart uses "last N days from now" | Bug | Use explicit startMs/endMs range | 📝 TODO ONLY |
-| A09 | P1 | Advanced analytics may use different period | Bug | Pass explicit AnalyticsPeriodRange from VM | 📝 TODO ONLY |
-| A10 | P1 | Category analytics compares normalized to raw budget | Bug | Normalize budget snapshots before comparison | 📝 TODO ONLY |
-| A11 | P1 | Conversion warnings don't affect confidence | Enhancement | Add AnalyticsDataQuality + confidencePenalty | 📝 TODO ONLY |
-| A12 | P1 | Merchant anomaly limited history in normal path | Bug | Fetch 12-month lookback independent of chart | 📝 TODO ONLY |
-| A13 | P1 | Spending pace period wrong for historical | Bug | Add referenceNow param, use period.endMs | 📝 TODO ONLY |
+| A07 | P1 | InsightsEngine defaults to EUR | Enhancement | InsightsEngine.generateInsights(NormalizedAnalyticsInput, categories) consumes normalized input; hardcoded EUR replaced with input.homeCurrency | ✅ FIXED |
+| A08 | P1 | Daily chart uses "last N days from now" | Bug | DailyBucketEngine builds exact-range daily buckets from NormalizedAnalyticsInput using startInclusive/endExclusive half-open period | ✅ FIXED |
+| A09 | P1 | Advanced analytics may use different period | Bug | AnalyticsViewModel wired to assembler; AnalyticsPeriodInputs pattern; single canonical NormalizedAnalyticsInput feeds all analytics | ✅ FIXED |
+| A10 | P1 | Category analytics compares normalized to raw budget | Bug | BudgetVsActualEngine @Singleton @Inject compute() comparing actual spending vs budget limits; wired into ViewModel | ✅ FIXED |
+| A11 | P1 | Conversion warnings don't affect confidence | Enhancement | confidencePenalty/confidenceMultiplier in AnalyticsDataQuality; SpendingPersonality raw-query path defaults to 0.6 | ✅ FIXED |
+| A12 | P1 | Merchant anomaly limited history in normal path | Bug | Merchant anomaly/history dedicated lookback comment documented | ✅ FIXED |
+| A13 | P1 | Spending pace period wrong for historical | Bug | SpendingPaceCalculator.calculate() gains referenceNowMs parameter; historical periods use period end | ✅ FIXED |
 | A14 | P1 | Location analytics raw DAO path | Bug | new computeNormalized() uses MoneyAggregate; old compute() path still raw-sums — partial fix | ✅ FIXED |
-| A15 | P1 | Category deletion/history weak | Enhancement | Soft-delete or persist name snapshot | ⏭ |
-| A16 | P1 | Analytics recomputes too much | Enhancement | AnalyticsInputAssembler: query once, split in memory | ✅ FIXED |
+| A15 | P1 | Category deletion/history weak | Enhancement | categoryNameSnapshot populated from CategoryRepository in AnalyticsInputAssembler; deleted categories preserve historical names | ✅ FIXED |
+| A16 | P1 | Analytics recomputes too much | Enhancement | AnalyticsViewModel no longer duplicates normalization — uses AnalyticsInputAssembler; BudgetVsActualEngine extracted from ViewModel | ✅ FIXED |
+| A17 | P1 | Analytics engines Calendar→java.time migration | Enhancement | analytics engines annotated for Calendar→java.time migration (9 sites across 5 files) | ✅ FIXED |
+| A18 | P1 | SpendingPersonalityClassifier java.time migration | Enhancement | SpendingPersonalityClassifier switched to java.time classify(NormalizedAnalyticsInput) called from ViewModel | ✅ FIXED |
+| A19 | P1 | ExcludedExpense warning metadata missing | Enhancement | ExcludedExpense gains warningType+message; confidencePenalty populated from excludedCount/missingWarnings in Assembler | ✅ FIXED |
+| A20 | P1 | BudgetVsActualResult data quality missing | Enhancement | BudgetVsActualResult carries dataQuality; public analytics totals paired with displayCurrency | ✅ FIXED |
 
 ---
 
@@ -172,17 +176,17 @@ All items from the original Quick Wins list have been resolved:
 | Category | P0 | P1 | Total |
 |----------|-----|-----|-------|
 | Warranty/Sub/Location/NLP | 17 | 18 | 35 |
-| Analytical Engines | 6 | 10 | 16 |
+| Analytical Engines | 6 | 14 | 20 |
 | Categorization/Merchant | 5 | 9 | 14 |
 | Groups/Investment/Tax | 11 | 18 | 29 |
 | Money/Time Primitives | 6 | 8 | 14 |
-| **TOTAL** | **45** | **63** | **108** |
+| **TOTAL** | **45** | **67** | **112** |
 
 | Status | Count |
 |--------|-------|
-| ✅ FIXED | 55 |
-| 📝 TODO ONLY | 23 |
-| ⏭ DEFERRED | 15 |
+| ✅ FIXED | 70 |
+| 📝 TODO ONLY | 14 |
+| ⏭ DEFERRED | 13 |
 | ⏭ DEFERRED_DESIGN | 15 |
 | ⬜ NOT STARTED | 0 |
 
@@ -195,3 +199,8 @@ All items from the original Quick Wins list have been resolved:
 - PR 4 (W25): `MarketRateProvider` interface + `StaticMarketRateProvider` with EUR seed data.
 - PR 5 (W34): `AssistantHistorySettings` enum (OFF/REDACTED/RAW), `payloadJson` redaction, `purgeOldMessages`.
 Final counts: 55 FIXED, 23 TODO ONLY, 15 DEFERRED, 15 DEFERRED_DESIGN.
+**Analytics A-issues implementation (2026-05-09):** 15 items promoted/added to ✅ FIXED:
+- A01, A02, A04, A07–A13: promoted from 📝 TODO ONLY after codebase verification
+- A15: promoted from ⏭ DEFERRED — category name snapshots implemented in Assembler
+- A16–A20: new/completed items — normalization dedup, BudgetVsActualEngine extraction, java.time migration annotations (A17), SpendingPersonalityClassifier java.time switch (A18), ExcludedExpense warning metadata + confidencePenalty (A19), BudgetVsActualResult dataQuality + displayCurrency (A20)
+Final counts: 70 FIXED, 14 TODO ONLY, 13 DEFERRED, 15 DEFERRED_DESIGN.

@@ -71,6 +71,18 @@
 - **SpendingMapViewModel.onCenterOnMeRequested()** — new method deferring GPS fetch to explicit user action (W27 pattern). No automatic location request on ViewModel init.
 - **AreaSpendingEngine.computeNormalized()** and **TravelDetectionEngine.computeNormalized()** — new `MoneyAggregate`-based computation paths using `AnalyticsCurrencyNormalizer` for currency-safe per-expense normalization.
 
+### Architecture Drift Updates (2026-05-09 — analytics)
+- **DailyBucketEngine** created (`domain/analytics/DailyBucketEngine.kt`) — `@Singleton @Inject` engine that builds exact-range daily expense buckets from `NormalizedAnalyticsInput`. Used by dashboard sparkline, analytics daily-trend chart, and cash-flow daily views. Buckets exactly cover the `PeriodRange` without "last N days from now" offset logic.
+- **BudgetVsActualEngine** created (`domain/analytics/BudgetVsActualEngine.kt`) — `@Singleton @Inject` engine that compares actual category spending (from `NormalizedAnalyticsInput`) against `BudgetSnapshot` limits. Returns `BudgetVsActualResult` with per-category `percentageUsed` and `isOverBudget` flags, plus consolidated `AnalyticsDataQuality`.
+- **AnalyticsInputAssembler converted** from `object` singleton to `@Singleton @Inject` class with constructor-injected `ExpenseRepository`, `AnalyticsCurrencyNormalizer`, `CurrencySettingsRepository`, `TimeProvider`, and `CategoryRepository`. New `build(expenses, homeCurrency, period, options)` overload accepts pre-fetched expense lists.
+- **AnalyticsInputOptions** (`domain/analytics/AnalyticsInputAssembler.kt`) — new data class with `spendingOnly`, `excludeNotMine`, `includeDepositsForBehavior` flags.
+- **AnalyticsViewModel** now wired to `AnalyticsInputAssembler` directly — eliminating the 5× `normalizeExpenses` calls that previously duplicated normalization across category, merchant, trend, daily-bucket, and budget-vs-actual pipelines.
+- **All analytics engines (12+)** now accept `NormalizedAnalyticsInput` as their input type, sharing a single normalization pass per period rather than each engine performing its own raw-expense normalization.
+- **confidencePenalty** (`Double`, default `0.0`) and **confidenceMultiplier** (`Double`, default `1.0`) added to `AnalyticsDataQuality`. Propagated from `AnalyticsCurrencyNormalizer` conversion failures through to downstream engines (`InsightsEngine`, `SpendingPaceCalculator`, `BudgetVsActualEngine`, etc.).
+- **warnings: List<AnalyticsConversionWarning>** added to `AnalyticsDataQuality` (in addition to the legacy `conversionWarnings: List<String>`). Structured warnings carry `AnalyticsConversionWarningType` for programmatic handling.
+- **categoryNameSnapshot** (`String?`) added to `NormalizedExpense` — snapshot of the category name at normalization time, preventing drift when category names are later edited.
+- **BudgetVsActualEngine** logic extracted from `AnalyticsViewModel` — the ViewModel no longer performs inline budget-vs-actual aggregation.
+
 ---
 
 ## Architecture Overview
@@ -382,6 +394,8 @@ FinancialWeatherRepository
 | Category Insights | `domain/analytics/CategoryInsightEngine.kt` | Category analysis |
 | Merchant Insights | `domain/analytics/MerchantInsightEngine.kt` | Merchant patterns |
 | Day of Week | `domain/analytics/DayOfWeekAnalyzer.kt` | Day patterns |
+| Daily Buckets | `domain/analytics/DailyBucketEngine.kt` | Exact-range daily expense buckets from NormalizedAnalyticsInput |
+| Budget vs Actual | `domain/analytics/BudgetVsActualEngine.kt` | Category-level budget-limit vs actual-spending comparison |
 | Totals Aggregation | `domain/analytics/TotalsAggregationEngine.kt` | Period totals aggregation |
 | Dashboard Widgets | `domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt` | Dashboard widget computation |
 | Dashboard Data | `domain/usecase/dashboard/DashboardDataProvider.kt` | Dashboard data provider |

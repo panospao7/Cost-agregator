@@ -198,8 +198,10 @@ Owns statistical analysis, anomaly detection, category insights, and merchant in
 - `domain/analytics/InsightsEngine.kt`
 - `domain/analytics/AnomalyDetector.kt`
 - `domain/analytics/AdvancedAnalyticsEngine.kt`
-- `domain/analytics/NormalizedAnalyticsInput.kt` — Canonical analytics input with per-expense normalization + data quality (PR-E11)
-- `domain/analytics/AnalyticsInputAssembler.kt` — Assembles `NormalizedAnalyticsInput` from raw expense data
+- `domain/analytics/NormalizedAnalyticsInput.kt` — Canonical analytics input with per-expense normalization + data quality (PR-E11); houses `AnalyticsDataQuality` (with `confidencePenalty`, `confidenceMultiplier`, `warnings`) and `NormalizedExpense` (with `categoryNameSnapshot`)
+- `domain/analytics/AnalyticsInputAssembler.kt` — Assembles `NormalizedAnalyticsInput` from raw expense data; houses `AnalyticsInputOptions` data class
+- `domain/analytics/DailyBucketEngine.kt` — Builds exact-range daily expense buckets from `NormalizedAnalyticsInput`
+- `domain/analytics/BudgetVsActualEngine.kt` — Compares actual category spending vs budget limits from `NormalizedAnalyticsInput`
 - `data/repository/AnalyticsRepository.kt`
 - `ui/screens/analytics/AnalyticsScreen.kt`
 - `ui/components/analytics/StatisticalVisualizations.kt`
