@@ -40,21 +40,22 @@ class GroupBalanceCalculator @Inject constructor(
         val owedShareTotal = expenses.sumOf { expense ->
             when (expense.splitType) {
                 SplitType.EQUAL -> expense.totalAmount / memberCount
-                else -> {
-                    // For CUSTOM/UNEQUAL splits, parse customSplitsJson to find this member's share
+                SplitType.CUSTOM_PERCENT -> {
                     val json = expense.customSplitsJson
                     if (json != null) {
-                        try {
-                            // Simple JSON parse: {"memberId": amount}
-                            val share = extractMemberShare(json, memberId.toString())
-                            share ?: (expense.totalAmount / memberCount) // fallback to equal
-                        } catch (e: Exception) {
-                            expense.totalAmount / memberCount // fallback to equal
-                        }
-                    } else {
-                        expense.totalAmount / memberCount // fallback to equal
-                    }
+                        val percent = extractMemberShare(json, memberId.toString())
+                        if (percent != null) expense.totalAmount * percent / 100.0
+                        else expense.totalAmount / memberCount // missing member = equal share fallback
+                    } else expense.totalAmount / memberCount
                 }
+                SplitType.CUSTOM_AMOUNT, SplitType.UNEQUAL -> {
+                    val json = expense.customSplitsJson
+                    if (json != null) {
+                        val share = extractMemberShare(json, memberId.toString())
+                        share ?: 0.0 // missing member in custom split = 0 (they owe nothing)
+                    } else expense.totalAmount / memberCount
+                }
+                else -> expense.totalAmount / memberCount
             }
         }
         val settlementsPaid = settlements.filter { it.fromMemberId == memberId }.sumOf { it.amount }

@@ -276,40 +276,17 @@ class TaxEstimator @Inject constructor(
             warningMessage = null
         )
 
-        // A.9: Grouped aggregate SQL replaces capped row scan for per-category
-        // deduction breakdown.  getExpensesByCategory uses GROUP BY via
-        // ExpenseDao.getBusinessExpensesByCategory (SUM + GROUP BY businessCategory).
-        // That SQL excludes NULL-category rows (AND businessCategory IS NOT NULL),
-        // so we compute the "Uncategorized" bucket as the difference between the
-        // aggregate total and the sum of categorized totals, preserving the original
-        // null-category → "Uncategorized" semantics.
-        val categoryTotals = businessExpenseRepository.getExpensesByCategory(yearStart, yearEnd)
+        // T06-FIXED: category+currency DAO query now provides per-row buckets.
+        val categoryRows = expenseDao.getBusinessCategoryCurrencyTotals(yearStart, yearEnd)
         val categorizedDeductions = mutableMapOf<String, Double>()
-        var categorizedSum = 0.0
-        for (ct in categoryTotals) {
-            categorizedDeductions[ct.businessCategory] = ct.total
-            categorizedSum += ct.total
+        for (row in categoryRows) {
+            categorizedDeductions[row.businessCategory] =
+                (categorizedDeductions[row.businessCategory] ?: 0.0) + row.total
         }
-        val totalBusiness = businessExpenseRepository.getTotalBusinessExpenses(yearStart, yearEnd)
-        val uncategorized = totalBusiness - categorizedSum
-        if (uncategorized > 0.0) {
-            // Merge into any existing "Uncategorized" grouped total rather
-            // than overwriting it — an explicit businessCategory="Uncategorized"
-            // may already be present from the grouped SQL query.
-            categorizedDeductions["Uncategorized"] =
-                (categorizedDeductions["Uncategorized"] ?: 0.0) + uncategorized
-        }
-
-        // T06-FIXED: Category aggregates are built from pre-summed single-bucket totals
-        // because getExpensesByCategory() returns BusinessCategoryTotal (businessCategory,
-        // total, count) — the SQL GROUP BY already aggregates per category, losing per-row
-        // currency granularity. To get per-row buckets with individual currencies the data
-        // source would need to return per-row expenses (e.g. List<Expense> with effectiveAmount
-        // and currency), which would require changing the DAO/repository layer. For now the
-        // single-bucket approach is the correct fallback given the available data.
-        val categorizedDeductionsAggregate = categorizedDeductions.mapValues { (_, total) ->
-            val buckets = listOf(Pair(total, filingCurrency))
-            MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter)
+        val categorizedDeductionsAggregate = categoryRows.groupBy { it.businessCategory }.mapValues { (_, rows) ->
+            val buckets = rows.map { it.total to it.currency }
+            val counts = rows.map { it.txCount }
+            MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter, counts)
         }
 
         TaxYearSummary(

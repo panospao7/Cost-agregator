@@ -56,10 +56,9 @@ import javax.inject.Singleton
  * 7. recordSettlement – persists settlement record with lifecycle event
  */
 @Singleton
-// G02 DOCUMENTED: emitLifecycleEvent() dispatches budget checks + side effects
-// as best-effort post-commit dispatch. Group lifecycle audit events are NOT
-// persisted to a dedicated table — this is an intentional deferral. If audit
-// events are needed, add a group_lifecycle_events table in a future PR.
+// G02-FIXED: Group lifecycle events ARE persisted via GroupLifecycleEventDao.
+// Each mutation writes a GroupLifecycleEventEntity to the group_lifecycle_events table.
+// Side effects (budget check, anomaly detection) run post-commit as best-effort.
 class GroupLifecycleCoordinator @Inject constructor(
     private val groupCoordinator: GroupTransactionCoordinator,
     private val groupDao: ExpenseGroupDao,

@@ -321,15 +321,19 @@ class InvestmentTracker @Inject constructor(
      *
      * I02-FIXED: Uses currencyConverter.convertAsOf() for real conversion.
      * Returns PortfolioAllocationResult with isPartial and failedConversionTypes.
+     *
+     * Allocations are percentages of CONVERTED_KNOWN_TOTAL (not full portfolio).
+     * Failed conversions are tracked in failedConversionTypes. If isPartial=true,
+     * the displayed percentages represent only the successfully-converted portion.
      */
     suspend fun getPortfolioAllocation(): PortfolioAllocationResult = withContext(ioDispatcher) {
         val holdings = investmentDao.getAllActiveInvestments().first()
         val (_, aggregate, _) = getPortfolioSummaryAggregate(holdings)
-        if (aggregate.sourceBuckets.isEmpty()) return@withContext PortfolioAllocationResult(emptyMap(), false, emptyList())
+        if (aggregate.sourceBuckets.isEmpty()) return@withContext PortfolioAllocationResult(emptyMap(), false, emptySet())
         val total = aggregate.displayAmount
-        if (total <= 0.0) return@withContext PortfolioAllocationResult(emptyMap(), false, emptyList())
+        if (total <= 0.0) return@withContext PortfolioAllocationResult(emptyMap(), false, emptySet())
         val homeCurrency = aggregate.displayCurrency.code
-        val failedTypes = mutableListOf<InvestmentType>()
+        val failedTypes = mutableSetOf<InvestmentType>()
         val byType = holdings.groupBy { it.type }.mapValues { (type, holds) ->
             holds.sumOf { h ->
                 val value = investmentValueDao.getLatestValue(h.id)?.totalValue ?: 0.0
@@ -568,5 +572,5 @@ data class InvestmentDataQuality(
 data class PortfolioAllocationResult(
     val allocations: Map<InvestmentType, Double>,
     val isPartial: Boolean,
-    val failedConversionTypes: List<InvestmentType>
+    val failedConversionTypes: Set<InvestmentType>
 )

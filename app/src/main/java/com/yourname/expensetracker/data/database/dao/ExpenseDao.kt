@@ -2166,6 +2166,26 @@ AND LENGTH(:merchantKey) >= 8
     suspend fun getBusinessExpensesByProject(startDate: Long, endDate: Long): List<BusinessProjectTotal>
     
     /**
+     * Per-category per-currency business expense totals for a date range.
+     * Includes rows with NULL businessCategory, coalesced to 'Uncategorized'.
+     * Provides per-currency buckets so [TaxEstimator] can build currency-aware
+     * category aggregates without raw-summing across currencies.
+     */
+    @Query("""
+        SELECT COALESCE(businessCategory, 'Uncategorized') AS businessCategory,
+               currency,
+               SUM(${EFFECTIVE_AMOUNT_SQL}) AS total,
+               COUNT(*) AS txCount
+        FROM expenses
+        WHERE isBusinessExpense = 1
+          AND ${SPENDING_TYPE_SQL}
+          AND date >= :startDate AND date < :endDate
+        GROUP BY COALESCE(businessCategory, 'Uncategorized'), currency
+        ORDER BY businessCategory ASC
+    """)
+    suspend fun getBusinessCategoryCurrencyTotals(startDate: Long, endDate: Long): List<BusinessCategoryCurrencyTotal>
+    
+    /**
      * Business expenses that require a receipt but have none attached.
      *
      * Receipt linkage is tracked via `scanned_receipts.expenseId`, NOT via
@@ -2298,6 +2318,18 @@ data class BusinessProjectTotal(
     val businessProject: String,
     val total: Double,
     val count: Int
+)
+
+/**
+ * Per-category per-currency business expense total.
+ * Each row represents one (businessCategory, currency) bucket.
+ * Used by [TaxEstimator] to build currency-aware category aggregates.
+ */
+data class BusinessCategoryCurrencyTotal(
+    val businessCategory: String,
+    val currency: String,
+    val total: Double,
+    val txCount: Int
 )
 
 // === A.9 Aggregate Query Results ===
