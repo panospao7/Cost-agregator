@@ -260,6 +260,8 @@ private suspend fun applyVisualSplitToExpense(
         .joinToString(", ") { it.participantName }
         .takeIf { it.isNotBlank() }
 
+    // G02-FIXED: Route shared ownership writes through normalizeOwnership()
+    // to enforce mutual exclusivity (isNotMine vs isSharedExpense).
     val updatedExpense = expense.copy(
         isNotMine = false,
         ownerName = null,
@@ -277,7 +279,7 @@ private suspend fun applyVisualSplitToExpense(
                 shares = sanitizedShares
             )
         )
-    )
+    ).normalizeOwnership()  // G02: enforce ownership invariants before persistence
 
     expenseRepository.updateExpense(updatedExpense)
     return true

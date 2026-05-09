@@ -40,7 +40,9 @@ data class InvestmentPerformance(
     val dayChange: Double?,
     val dayChangePercent: Double?,
     val allTimeHigh: Double?,
-    val allTimeLow: Double?
+    val allTimeLow: Double?,
+    val currentValueAggregate: MoneyAggregate? = null,
+    val costBasisAggregate: MoneyAggregate? = null
 )
 
 @Singleton
@@ -316,7 +318,57 @@ class InvestmentTracker @Inject constructor(
             
             Pair(topPerformers, worstPerformers)
         }
-    
+
+    /**
+     * Returns a list of [InvestmentPerformance] for all active investments,
+     * with per-currency aggregate breakdowns populated via [MoneyAggregateBuilder.fromBuckets].
+     *
+     * PR-I2: Exposes [InvestmentPerformance.currentValueAggregate] and
+     * [InvestmentPerformance.costBasisAggregate] so callers can display
+     * multi-currency totals safely without raw-summing across currencies.
+     */
+    suspend fun getInvestmentPerformances(): List<InvestmentPerformance> = withContext(ioDispatcher) {
+        val investments = investmentDao.getAllActiveInvestments().first()
+
+        // Build per-currency buckets for current value and cost basis
+        val currentValueBuckets = investments.map { inv ->
+            Pair(inv.currentPrice * inv.quantity, inv.currency.uppercase())
+        }
+        val costBasisBuckets = investments.map { inv ->
+            Pair((inv.purchasePrice * inv.quantity) + inv.purchaseFees, inv.currency.uppercase())
+        }
+
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
+
+        val currentValueAggregate = MoneyAggregateBuilder.fromBuckets(
+            currentValueBuckets, homeCurrency, currencyConverter
+        )
+        val costBasisAggregate = MoneyAggregateBuilder.fromBuckets(
+            costBasisBuckets, homeCurrency, currencyConverter
+        )
+
+        investments.map { investment ->
+            val currentValue = investment.currentPrice * investment.quantity
+            val investedValue = (investment.purchasePrice * investment.quantity) + investment.purchaseFees
+            val gainLoss = currentValue - investedValue
+            val gainLossPercent = if (investedValue > 0) (gainLoss / investedValue) * 100 else 0.0
+
+            InvestmentPerformance(
+                investment = investment,
+                currentValue = currentValue,
+                gainLoss = gainLoss,
+                gainLossPercent = gainLossPercent,
+                dayChange = null,
+                dayChangePercent = null,
+                allTimeHigh = null,
+                allTimeLow = null,
+                currentValueAggregate = currentValueAggregate,
+                costBasisAggregate = costBasisAggregate
+            )
+        }
+    }
+
     /**
      * Get portfolio value history over time.
      *
@@ -446,4 +498,11 @@ data class PortfolioValueHistoryResult(
 
 data class DataQuality(
     val isPartial: Boolean
+)
+
+data class InvestmentDataQuality(
+    val isPartial: Boolean = false,
+    val staleHoldingCount: Int = 0,
+    val missingPriceCount: Int = 0,
+    val lastUpdatedAt: Long = 0L
 )
