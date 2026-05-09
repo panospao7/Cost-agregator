@@ -79,7 +79,7 @@ srcDir.walkTopDown().filter { it.extension == "kt" }.forEach { file ->
 }
 
 if (violations > 0) {
-    println("\nFound $violations raw money aggregate violation(s). Use MoneyAggregateBuilder instead.")
+    println("\nFound $violations raw money aggregate violation(s). Use MoneyAggregate or MoneyAmount for all public financial APIs. Raw Double totals are deprecated.")
     System.exit(1)
 } else {
     println("OK: No raw money aggregate violations found")

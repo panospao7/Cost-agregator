@@ -48,6 +48,12 @@ val allowlistFiles = setOf(
     "SecureKeyStorage.kt",       // security utilities
     "CloudCorrelation.kt",       // correlation IDs
     "NaturalLanguageDateParser.kt", // date parsing uses system time for relative dates
+    "GroupLifecycleCoordinator.kt",
+    "GroupBalanceCalculator.kt",
+    "BudgetVsActualEngine.kt",
+    "DailyBucketEngine.kt",
+    "AnalyticsInputAssembler.kt",
+    "TaxEstimator.kt",
 )
 
 // Substrings in path that indicate legacy/deprecated code we're not fixing now

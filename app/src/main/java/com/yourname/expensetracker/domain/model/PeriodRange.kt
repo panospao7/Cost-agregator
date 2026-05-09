@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.model
 
+// M05 PARTIAL: Use domain.core.time.PeriodRange for new code.
+// This type is deprecated and will be removed once all callers migrate.
 @Deprecated(
     "Use com.yourname.expensetracker.domain.core.time.PeriodRange instead. " +
     "core.time.PeriodRange provides zone-aware, half-open [startInclusive, endExclusive) semantics.",

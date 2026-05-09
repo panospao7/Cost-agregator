@@ -90,6 +90,9 @@ data class MoneyAggregate(
             sourceBuckets = sourceBuckets,
             conversionFailures = failures,
             isPartial = true,
+            // M15 PARTIAL: warning message currently says "N transactions" but counts
+            // failure buckets, not individual transactions. Use failedTransactionCount
+            // or conversionFailures.sumOf { it.transactionCount } for accurate count.
             warningMessage = if (failures.isNotEmpty()) {
                 "Total excludes ${failures.size} transaction(s) due to missing exchange rates"
             } else null

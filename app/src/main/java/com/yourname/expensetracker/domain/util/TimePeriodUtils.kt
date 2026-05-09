@@ -9,8 +9,10 @@ import java.util.Calendar
 import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.core.time.PeriodRange
 
-// TODO (M11): Create separate getIsoWeekNumber() and getAppCalendarWeekNumber() methods.
-// Currently returns ISO week numbers which may disagree with calendar-app week displays.
+// M11 OPEN: Week helpers are currently mixed — some use ISO-8601 week definition
+// (Monday start, Week 1 = first week with 4+ days in new year), others use
+// app-configured calendar week (Sunday/Monday start depending on locale).
+// All public week APIs must specify which week definition they use.
 
 /**
  * Canonical owner of all shared calendar boundary math for the ExpenseTracker app.

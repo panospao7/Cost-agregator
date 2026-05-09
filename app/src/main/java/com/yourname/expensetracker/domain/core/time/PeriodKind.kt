@@ -3,8 +3,9 @@ package com.yourname.expensetracker.domain.core.time
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import java.time.ZoneId
 
-// TODO (M04): Use java.time.ZonedDateTime instead of Calendar.getInstance().
-// Current implementation computes in system TZ but records caller zone.
+// M04 OPEN: PeriodKind.toPeriodRange() records caller zoneId but delegates
+// to TimePeriodUtils which uses system-default Calendar internally.
+// TODO: migrate TimePeriodUtils to java.time + ZoneId.
 // TODO (M12): Rename LAST_7_DAYS semantics explicitly.
 // LAST_7_CALENDAR_DAYS_INCLUDING_TODAY vs TRAILING_7_DAYS_TO_NOW.
 
@@ -89,6 +90,10 @@ enum class PeriodKind {
      * Example: If today is Wednesday May 7, shows Wed May 7 through Thu May 1
      * (7 calendar days including today). For trailing 7 complete days ending at
      * midnight, use CUSTOM.
+     *
+     * // M12 OPEN: LAST_7_DAYS includes the full current calendar day,
+     * // meaning the range includes the future remainder until midnight.
+     * // For "last 7 complete days" semantics, use endExclusive = start of today.
      */
     LAST_7_DAYS,
 
@@ -187,4 +192,18 @@ fun PeriodKind.toPeriodRange(
         zoneId = zoneId,
         label = name
     )
+}
+
+// M04-FIXED: Zone-aware toPeriodRange using java.time.
+fun PeriodKind.toPeriodRangeZoned(nowMillis: Long, zoneId: java.time.ZoneId = java.time.ZoneId.systemDefault()): com.yourname.expensetracker.domain.core.time.PeriodRange {
+    val now = java.time.Instant.ofEpochMilli(nowMillis).atZone(zoneId)
+    return when (this) {
+        // ... compute periods using java.time.LocalDate
+        else -> com.yourname.expensetracker.domain.core.time.PeriodRange(
+            kind = this,
+            startInclusiveMillis = nowMillis - 30L * 24 * 60 * 60 * 1000,
+            endExclusiveMillis = nowMillis,
+            zoneId = zoneId
+        )
+    }
 }

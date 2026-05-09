@@ -9,6 +9,10 @@ import java.util.Locale
  * Supports multiple currencies, compact notation, and signed amounts.
  */
 object CurrencyFormatter {
+    // M09 OPEN: CurrencyFormatter uses locale-sensitive String.format which can
+    // produce different decimal separators (1.234,56 vs 1,234.56) depending on device locale.
+    // For UI display, this is desired. For machine-readable output (CSV, API), use
+    // String.format(Locale.US, "%.2f", amount) to enforce period-as-decimal.
     private const val DEFAULT_CURRENCY = "EUR"
     private val DEFAULT_SYMBOL = "€"
 
