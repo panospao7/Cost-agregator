@@ -42,7 +42,8 @@ data class InvestmentPerformance(
     val allTimeHigh: Double?,
     val allTimeLow: Double?,
     val currentValueAggregate: MoneyAggregate? = null,
-    val costBasisAggregate: MoneyAggregate? = null
+    val costBasisAggregate: MoneyAggregate? = null,
+    val isPriceStale: Boolean = false
 )
 
 @Singleton
@@ -160,7 +161,7 @@ class InvestmentTracker @Inject constructor(
      *
      * I01: Now converts all currencies to home currency using CurrencyConverter.
      */
-    suspend fun getPortfolioSummaryAggregate(holdings: List<Investment>): Pair<PortfolioSummary, MoneyAggregate> {
+    suspend fun getPortfolioSummaryAggregate(holdings: List<Investment>): Triple<PortfolioSummary, MoneyAggregate, InvestmentDataQuality> {
         var totalValue = 0.0
         var totalInvested = 0.0
         
@@ -197,7 +198,19 @@ class InvestmentTracker @Inject constructor(
             .getOrDefault("EUR")
         val buckets = byCurrency.map { Pair(it.value, it.key) }
         val aggregate = MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter)
-        return Pair(summary, aggregate)
+
+        // I09-FIXED: Price staleness thresholds — 7 days stale, 30 days very stale
+        val staleThresholdMs = 7 * 24 * 60 * 60 * 1000L
+        val veryStaleThresholdMs = 30 * 24 * 60 * 60 * 1000L
+        val now = timeProvider.now()
+        val staleHoldings = holdings.filter { (now - it.lastUpdated) > staleThresholdMs }
+        val dataQuality = InvestmentDataQuality(
+            isPartial = staleHoldings.isNotEmpty(),
+            staleHoldingCount = staleHoldings.size,
+            missingPriceCount = holdings.count { it.lastUpdated == 0L },
+            lastUpdatedAt = if (holdings.isEmpty()) 0L else holdings.maxOf { it.lastUpdated }
+        )
+        return Triple(summary, aggregate, dataQuality)
     }
     
     /**
@@ -348,6 +361,10 @@ class InvestmentTracker @Inject constructor(
             costBasisBuckets, homeCurrency, currencyConverter
         )
 
+        // I09-FIXED: Mark price as stale if not updated within 7 days
+        val staleThresholdMs = 7 * 24 * 60 * 60 * 1000L
+        val now = timeProvider.now()
+
         investments.map { investment ->
             val currentValue = investment.currentPrice * investment.quantity
             val investedValue = (investment.purchasePrice * investment.quantity) + investment.purchaseFees
@@ -364,7 +381,8 @@ class InvestmentTracker @Inject constructor(
                 allTimeHigh = null,
                 allTimeLow = null,
                 currentValueAggregate = currentValueAggregate,
-                costBasisAggregate = costBasisAggregate
+                costBasisAggregate = costBasisAggregate,
+                isPriceStale = (now - investment.lastUpdated) > staleThresholdMs
             )
         }
     }

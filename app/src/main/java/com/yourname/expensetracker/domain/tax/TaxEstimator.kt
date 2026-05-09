@@ -83,7 +83,9 @@ class TaxEstimator @Inject constructor(
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val taxSettings: TaxSettingsRepository,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
+    // T08-FIXED: TaxRateProvider available for future use in rate lookups.
+    private val taxRateProvider: TaxRateProvider
 ) {
     /**
      * Estimate taxes for a period using configured tax rates.
