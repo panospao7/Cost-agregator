@@ -55,7 +55,7 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, taxConfig)
 
         val expectedVat = 1240.0 * (0.24 / 1.24)
-        assertApproxEquals(expectedVat, estimate.estimatedVatPaid, 0.01)
+        assertApproxEquals(expectedVat, estimate.estimatedVatPortion, 0.01)
         coVerify(exactly = 0) { expenseDao.getTotalSpentBetween(any(), any()) }
     }
 
@@ -68,7 +68,7 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
 
         val estimate = taxEstimator.estimateTaxes(start, end, 30000.0)
 
-        assertApproxEquals(0.0, estimate.estimatedVatPaid, 0.001)
+        assertApproxEquals(0.0, estimate.estimatedVatPortion, 0.001)
     }
 
     @Test
@@ -81,7 +81,7 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         val usConfig = UsTaxConfiguration() // 0% VAT
         val estimate = taxEstimator.estimateTaxes(start, end, 30000.0, usConfig)
 
-        assertApproxEquals(0.0, estimate.estimatedVatPaid, 0.001)
+        assertApproxEquals(0.0, estimate.estimatedVatPortion, 0.001)
     }
 
     // =========================================================================
@@ -282,11 +282,11 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
         val estimate1 = taxEstimator.estimateTaxes(start, end, 25000.0)
         val estimate2 = taxEstimator.estimateTaxes(start, end, 25000.0)
 
-        assertApproxEquals(estimate1.estimatedVatPaid, estimate2.estimatedVatPaid, 0.001)
+        assertApproxEquals(estimate1.estimatedVatPortion, estimate2.estimatedVatPortion, 0.001)
         assertApproxEquals(estimate1.deductibleExpenses, estimate2.deductibleExpenses, 0.001)
         assertApproxEquals(estimate1.estimatedIncomeTax, estimate2.estimatedIncomeTax, 0.001)
         assertApproxEquals(estimate1.effectiveTaxRate, estimate2.effectiveTaxRate, 0.001)
-        assertApproxEquals(1000.0 * (0.24 / 1.24), estimate1.estimatedVatPaid, 0.01)
+        assertApproxEquals(1000.0 * (0.24 / 1.24), estimate1.estimatedVatPortion, 0.01)
         coVerify(exactly = 0) { expenseDao.getTotalSpentBetween(any(), any()) }
     }
 

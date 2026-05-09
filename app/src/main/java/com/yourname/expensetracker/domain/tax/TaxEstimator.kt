@@ -120,6 +120,7 @@ class TaxEstimator @Inject constructor(
         // Filing currency for display purposes
         val filingCurrency = taxSettings.getFilingCurrency()
 
+        // T04-FIXED: VAT fields renamed for clarity; confidence marked LOW when estimated from standard rate.
         // HIGH FIX: Use configured VAT rate
         val vatRate = taxConfig.getVatRate()
 
@@ -132,7 +133,28 @@ class TaxEstimator @Inject constructor(
             taxConfig = taxConfig,
             periodYearFraction = periodYearFraction
         )
-        
+
+        // Build VAT aggregate from deductible
+        val vatAggregate = if (vatRate > 0.0) {
+            val factor = vatRate / (1.0 + vatRate)
+            val buckets = deductibleAggregate.sourceBuckets.map {
+                Pair(it.amount * factor, it.currency.code)
+            }
+            MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter)
+        } else {
+            MoneyAggregate.empty(CurrencyCode(filingCurrency))
+        }
+        val taxableIncomeAggregate = MoneyAggregate(
+            displayAmount = taxableIncome,
+            displayCurrency = CurrencyCode(filingCurrency),
+            sourceBuckets = emptyList(),
+            conversionFailures = emptyList(),
+            isPartial = false,
+            warningMessage = null
+        )
+        val partial = deductibleAggregate.isPartial || vatAggregate.isPartial
+        val warnings = deductibleAggregate.conversionFailures.map { it.description }
+
         TaxEstimate(
             startDate = startDate,
             endDate = endDate,
@@ -140,9 +162,16 @@ class TaxEstimator @Inject constructor(
             deductibleExpenses = totalDeductible,
             taxableIncome = taxableIncome,
             estimatedIncomeTax = estimatedIncomeTax,
-            estimatedVatPaid = vatPaid,
+            estimatedVatPortion = vatPaid,
+            estimatedRecoverableVat = 0.0,
+            vatConfidence = "LOW",
             effectiveTaxRate = if (periodIncome > 0) (estimatedIncomeTax / periodIncome) * 100 else 0.0,
-            notes = "Estimate using ${taxConfig.getCountryCode()} tax rates (filing currency: $filingCurrency). Consult tax professional for accurate filing."
+            notes = "Estimate using ${taxConfig.getCountryCode()} tax rates (filing currency: $filingCurrency). Consult tax professional for accurate filing.",
+            deductibleAggregate = deductibleAggregate,
+            vatAggregate = vatAggregate,
+            taxableIncomeAggregate = taxableIncomeAggregate,
+            isPartial = partial,
+            conversionWarnings = warnings
         )
     }
     
@@ -264,9 +293,19 @@ class TaxEstimator @Inject constructor(
         val yearEnd = startOfYear(year + 1)
         val incomeAggregate = buildIncomeAggregate(yearStart, yearEnd)
         val totalIncome = incomeAggregate.displayAmount
+        val filingCurrency = taxSettings.getFilingCurrency()
 
         val estimate = estimateTaxes(yearStart, yearEnd, totalIncome, taxConfig)
-        
+
+        val estimatedTaxAgg = MoneyAggregate(
+            displayAmount = estimate.estimatedIncomeTax,
+            displayCurrency = CurrencyCode(filingCurrency),
+            sourceBuckets = emptyList(),
+            conversionFailures = emptyList(),
+            isPartial = false,
+            warningMessage = null
+        )
+
         // A.9: Grouped aggregate SQL replaces capped row scan for per-category
         // deduction breakdown.  getExpensesByCategory uses GROUP BY via
         // ExpenseDao.getBusinessExpensesByCategory (SUM + GROUP BY businessCategory).
@@ -295,10 +334,15 @@ class TaxEstimator @Inject constructor(
             year = year,
             totalIncome = estimate.estimatedIncome,
             totalDeductibleExpenses = estimate.deductibleExpenses,
-            totalVatPaid = estimate.estimatedVatPaid,
+            totalVatPaid = estimate.estimatedVatPortion,
             categorizedDeductions = categorizedDeductions,
             estimatedTaxOwed = estimate.estimatedIncomeTax,
-            mileageDeduction = businessExpenseRepository.getTotalMileageDeduction(yearStart, yearEnd)
+            mileageDeduction = businessExpenseRepository.getTotalMileageDeduction(yearStart, yearEnd),
+            incomeAggregate = incomeAggregate,
+            deductibleAggregate = estimate.deductibleAggregate,
+            estimatedTaxAggregate = estimatedTaxAgg,
+            isPartial = incomeAggregate.isPartial || estimate.isPartial,
+            conversionWarnings = (incomeAggregate.conversionFailures.map { it.description } + estimate.conversionWarnings)
         )
     }
 }
@@ -310,9 +354,16 @@ data class TaxEstimate(
     val deductibleExpenses: Double,
     val taxableIncome: Double,
     val estimatedIncomeTax: Double,
-    val estimatedVatPaid: Double,
+    val estimatedVatPortion: Double,
+    val estimatedRecoverableVat: Double = 0.0,
+    val vatConfidence: String = "LOW",
     val effectiveTaxRate: Double,
-    val notes: String
+    val notes: String,
+    val deductibleAggregate: MoneyAggregate = MoneyAggregate.empty(CurrencyCode("EUR")),
+    val vatAggregate: MoneyAggregate = MoneyAggregate.empty(CurrencyCode("EUR")),
+    val taxableIncomeAggregate: MoneyAggregate = MoneyAggregate.empty(CurrencyCode("EUR")),
+    val isPartial: Boolean = false,
+    val conversionWarnings: List<String> = emptyList()
 )
 
 data class TaxYearSummary(
@@ -322,5 +373,19 @@ data class TaxYearSummary(
     val totalVatPaid: Double,
     val categorizedDeductions: Map<String, Double>,
     val estimatedTaxOwed: Double,
-    val mileageDeduction: Double
+    val mileageDeduction: Double,
+    val incomeAggregate: MoneyAggregate = MoneyAggregate.empty(CurrencyCode("EUR")),
+    val deductibleAggregate: MoneyAggregate = MoneyAggregate.empty(CurrencyCode("EUR")),
+    val estimatedTaxAggregate: MoneyAggregate = MoneyAggregate.empty(CurrencyCode("EUR")),
+    val isPartial: Boolean = false,
+    val conversionWarnings: List<String> = emptyList()
 )
+
+/** Backward-compat accessor for renamed field [TaxEstimate.estimatedVatPortion]. */
+@Deprecated(
+    message = "Renamed to estimatedVatPortion for clarity",
+    replaceWith = ReplaceWith("estimatedVatPortion"),
+    level = DeprecationLevel.WARNING
+)
+val TaxEstimate.estimatedVatPaid: Double
+    get() = estimatedVatPortion

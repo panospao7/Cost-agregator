@@ -420,7 +420,7 @@ private fun SampleCalculatorCard(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = CurrencyFormatter.format(it.estimatedVatPaid, currency),
+                            text = CurrencyFormatter.format(it.estimatedVatPortion, currency),
                             color = Color(0xFFF44336),
                             fontWeight = FontWeight.Bold
                         )
@@ -443,7 +443,7 @@ private fun SampleCalculatorCard(
                     
                     Divider(modifier = Modifier.padding(vertical = 8.dp))
                     
-                    val netIncome = it.estimatedIncome - it.estimatedIncomeTax - it.estimatedVatPaid
+                    val netIncome = it.estimatedIncome - it.estimatedIncomeTax - it.estimatedVatPortion
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
