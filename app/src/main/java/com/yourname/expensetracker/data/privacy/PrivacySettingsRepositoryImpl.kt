@@ -8,10 +8,12 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.work.WorkManager
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
@@ -61,6 +63,8 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         val RAW_NOTIFICATION_RETENTION_DAYS = intPreferencesKey("raw_notification_retention_days")
         val RAW_OCR_RETENTION_DAYS = intPreferencesKey("raw_ocr_retention_days")
         val DEBUG_DATA_PERSISTENCE_ENABLED = booleanPreferencesKey("debug_data_persistence_enabled")
+        val RAW_NOTIFICATION_STORAGE_MODE = stringPreferencesKey("raw_notification_storage_mode")
+        val RAW_OCR_STORAGE_MODE = stringPreferencesKey("raw_ocr_storage_mode")
     }
 
     override fun observeSettings(): Flow<PrivacySettings> =
@@ -96,6 +100,8 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
             prefs[Keys.RAW_NOTIFICATION_RETENTION_DAYS] = updated.rawNotificationRetentionDays
             prefs[Keys.RAW_OCR_RETENTION_DAYS] = updated.rawOcrRetentionDays
             prefs[Keys.DEBUG_DATA_PERSISTENCE_ENABLED] = updated.debugDataPersistenceEnabled
+            prefs[Keys.RAW_NOTIFICATION_STORAGE_MODE] = updated.rawNotificationStorageMode.name
+            prefs[Keys.RAW_OCR_STORAGE_MODE] = updated.rawOcrStorageMode.name
         }
         // P8-P1-4: Apply privacy changes immediately — cancel affected workers at runtime.
         applyPrivacyChange(old, transform(old))
@@ -128,6 +134,10 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         encryptedBackupEnabled = this[Keys.ENCRYPTED_BACKUP_ENABLED] ?: true,
         rawNotificationRetentionDays = this[Keys.RAW_NOTIFICATION_RETENTION_DAYS] ?: 30,
         rawOcrRetentionDays = this[Keys.RAW_OCR_RETENTION_DAYS] ?: 30,
-        debugDataPersistenceEnabled = this[Keys.DEBUG_DATA_PERSISTENCE_ENABLED] ?: false
+        debugDataPersistenceEnabled = this[Keys.DEBUG_DATA_PERSISTENCE_ENABLED] ?: false,
+        rawNotificationStorageMode = this[Keys.RAW_NOTIFICATION_STORAGE_MODE]
+            ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_RAW,
+        rawOcrStorageMode = this[Keys.RAW_OCR_STORAGE_MODE]
+            ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_RAW
     )
 }

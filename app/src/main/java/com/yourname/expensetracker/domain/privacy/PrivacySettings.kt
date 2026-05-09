@@ -12,5 +12,7 @@ data class PrivacySettings(
     val encryptedBackupEnabled: Boolean = true,
     val rawNotificationRetentionDays: Int = 30,
     val rawOcrRetentionDays: Int = 30,
+    val rawNotificationStorageMode: RawStorageMode = RawStorageMode.STORE_RAW,
+    val rawOcrStorageMode: RawStorageMode = RawStorageMode.STORE_RAW,
     val debugDataPersistenceEnabled: Boolean = false
 )

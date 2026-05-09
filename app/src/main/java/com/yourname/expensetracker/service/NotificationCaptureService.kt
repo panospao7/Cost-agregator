@@ -22,6 +22,8 @@ import com.yourname.expensetracker.domain.notification.RawNotificationFingerprin
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.receiver.ServiceRestartReceiver
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -175,6 +177,9 @@ class NotificationCaptureService : NotificationListenerService() {
 
     @Inject
     lateinit var restoreMaintenanceMode: com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+
+    @Inject
+    lateinit var privacySettingsRepository: PrivacySettingsRepository
 
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
@@ -424,24 +429,63 @@ class NotificationCaptureService : NotificationListenerService() {
             null
         }
 
-        val rawNotification = RawNotification(
-            packageName = packageName,
-            appName = appName,
-            title = parts.title,
-            text = parts.text,
-            bigText = parts.effectiveBigText,
-            subText = parts.subText,
-            extrasJson = extrasJson,
-            timestamp = sbn.postTime,
-            capturedAt = timeProvider.now(),
-            dedupeFingerprint = RawNotificationFingerprint.compute(
+        val settings = privacySettingsRepository.getSettings()
+
+        val rawNotification = if (settings.rawNotificationStorageMode == RawStorageMode.STORE_METADATA_ONLY) {
+            RawNotification(
                 packageName = packageName,
+                appName = appName,
+                title = null,
+                text = null,
+                timestamp = sbn.postTime,
+                capturedAt = timeProvider.now(),
+                dedupeFingerprint = RawNotificationFingerprint.compute(
+                    packageName = packageName,
+                    title = parts.title,
+                    text = parts.text,
+                    bigText = parts.effectiveBigText,
+                    timestamp = sbn.postTime
+                )
+            )
+        } else if (settings.rawNotificationStorageMode == RawStorageMode.STORE_REDACTED) {
+            RawNotification(
+                packageName = packageName,
+                appName = appName,
+                title = "[REDACTED]",
+                text = "[REDACTED]",
+                bigText = "[REDACTED]",
+                subText = "[REDACTED]",
+                extrasJson = """{"redacted":true}""",
+                timestamp = sbn.postTime,
+                capturedAt = timeProvider.now(),
+                dedupeFingerprint = RawNotificationFingerprint.compute(
+                    packageName = packageName,
+                    title = parts.title,
+                    text = parts.text,
+                    bigText = parts.effectiveBigText,
+                    timestamp = sbn.postTime
+                )
+            )
+        } else {
+            RawNotification(
+                packageName = packageName,
+                appName = appName,
                 title = parts.title,
                 text = parts.text,
                 bigText = parts.effectiveBigText,
-                timestamp = sbn.postTime
+                subText = parts.subText,
+                extrasJson = extrasJson,
+                timestamp = sbn.postTime,
+                capturedAt = timeProvider.now(),
+                dedupeFingerprint = RawNotificationFingerprint.compute(
+                    packageName = packageName,
+                    title = parts.title,
+                    text = parts.text,
+                    bigText = parts.effectiveBigText,
+                    timestamp = sbn.postTime
+                )
             )
-        )
+        }
 
         try {
             repository.processAndSave(rawNotification)
