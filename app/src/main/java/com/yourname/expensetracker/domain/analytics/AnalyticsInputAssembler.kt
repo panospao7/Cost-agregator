@@ -106,6 +106,17 @@ class AnalyticsInputAssembler @Inject constructor(
             it.type == AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE
         }
 
+        // PR-A9: Compute confidence penalty & multiplier from data quality.
+        //   excludedCount/total > 0.1 → penalty up to 0.5
+        //   missingRateCount > 0      → multiplier scales down to min 0.8
+        val totalCount = expenses.size.coerceAtLeast(1)
+        val confidencePenalty = if (excludedCount > 0) {
+            (excludedCount.toDouble() / totalCount).coerceAtMost(0.5)
+        } else 0.0
+        val confidenceMultiplier = if (missingWarnings > 0) {
+            maxOf(0.8, 1.0 - missingWarnings * 0.02)
+        } else 1.0
+
         return NormalizedAnalyticsInput(
             period = period,
             homeCurrency = homeCurrency,
@@ -119,7 +130,9 @@ class AnalyticsInputAssembler @Inject constructor(
                 invalidCurrencyCount = result.severeWarnings.count {
                     it.type == AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY
                 },
-                conversionWarnings = result.warnings.map { it.message }
+                conversionWarnings = result.warnings.map { it.message },
+                confidencePenalty = confidencePenalty,
+                confidenceMultiplier = confidenceMultiplier
             )
         )
     }

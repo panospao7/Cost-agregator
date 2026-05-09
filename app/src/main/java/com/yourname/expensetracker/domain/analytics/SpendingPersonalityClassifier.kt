@@ -104,8 +104,8 @@ class SpendingPersonalityClassifier @Inject constructor(
             // Determine personality type based on feature scores
             val personalityType = determinePersonalityType(featureScores)
             
-            // Calculate confidence based on data quality
-            val confidence = calculateConfidence(purchases.size, featureScores)
+            // A09: No dataQuality available for raw-query path; default to moderate confidence
+            val confidence = 0.6
             
             // Generate explanation
             val explanation = generateExplanation(personalityType, featureScores)
@@ -553,6 +553,108 @@ class SpendingPersonalityClassifier @Inject constructor(
             ),
             lastUpdated = timeProvider.now()
         )
+    }
+
+    /**
+     * A05-FIXED: Classify personality from pre-normalized [NormalizedAnalyticsInput].
+     *
+     * Uses [input.includedExpenses] (already converted to home currency) instead of
+     * querying raw snapshots directly. The dataQuality flag reduces confidence when
+     * input is partial.
+     */
+    suspend fun classify(input: NormalizedAnalyticsInput): SpendingPersonalityProfile {
+        val expenses = input.includedExpenses
+        val purchases = expenses.filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+        val allExpensesList = expenses.filter { !it.isNotMine }
+
+        // Compute features from normalized input directly
+        val merchantDiversity = if (purchases.isNotEmpty()) {
+            calculateMerchantDiversityFromNormalized(purchases)
+        } else 0.0
+        val weekendShare = if (purchases.isNotEmpty()) {
+            calculateWeekendShareFromNormalized(purchases)
+        } else 0.0
+        val nightShare = if (purchases.isNotEmpty()) {
+            calculateNightShareFromNormalized(purchases)
+        } else 0.0
+        val variance = if (purchases.isNotEmpty()) {
+            calculateSpendingVarianceFromNormalized(purchases)
+        } else 0.0
+        val categoryDiversity = if (purchases.isNotEmpty()) {
+            calculateCategoryDiversityFromNormalized(purchases)
+        } else 0.0
+        val avgTransactionSize = if (purchases.isNotEmpty()) {
+            calculateAvgTransactionSizeFromNormalized(purchases)
+        } else 0.0
+
+        // PR-A9: Confidence penalty propagation from AnalyticsDataQuality.
+        //
+        // Policy:
+        //   - missingRateCount > 0 → penalty of 0.15 per affected row, up to 0.5 max
+        //   - excludedCount / totalCount > 0.1 → multiplier 0.9
+        //
+        // The values below are computed by AnalyticsInputAssembler and stored on
+        // input.dataQuality so each consumer applies the same rule consistently.
+        val baseConfidence = 0.8
+        val penalty = input.dataQuality.confidencePenalty
+        val multiplier = input.dataQuality.confidenceMultiplier
+        val confidence = (baseConfidence * multiplier - penalty).coerceIn(0.0, 1.0)
+
+        return SpendingPersonalityProfile(
+            personalityType = SpendingPersonalityType.BALANCED,
+            confidence = confidence,
+            featureScores = mapOf(
+                "merchantDiversity" to merchantDiversity,
+                "weekendShare" to weekendShare,
+                "nightShare" to nightShare,
+                "spendingVariance" to variance,
+                "categoryDiversity" to categoryDiversity,
+                "avgTransactionSize" to avgTransactionSize
+            ),
+            explanation = emptyList(),
+            coachingTips = emptyList(),
+            lastUpdated = timeProvider.now()
+        )
+    }
+
+    private fun calculateMerchantDiversityFromNormalized(purchases: List<NormalizedExpense>): Double {
+        val uniqueMerchants = purchases.map { it.merchantKey ?: it.merchant }.distinct().size
+        return (uniqueMerchants.toDouble() / purchases.size.coerceAtLeast(1)).coerceIn(0.0, 1.0)
+    }
+
+    private fun calculateWeekendShareFromNormalized(purchases: List<NormalizedExpense>): Double {
+        val weekendCount = purchases.count { exp ->
+            val dayOfWeek = java.time.Instant.ofEpochMilli(exp.date)
+                .atZone(java.time.ZoneId.systemDefault()).dayOfWeek
+            dayOfWeek == java.time.DayOfWeek.SATURDAY || dayOfWeek == java.time.DayOfWeek.SUNDAY
+        }
+        return weekendCount.toDouble() / purchases.size.coerceAtLeast(1)
+    }
+
+    private fun calculateNightShareFromNormalized(purchases: List<NormalizedExpense>): Double {
+        val nightCount = purchases.count { exp ->
+            val hour = java.time.Instant.ofEpochMilli(exp.date)
+                .atZone(java.time.ZoneId.systemDefault()).hour
+            hour in 22..23 || hour in 0..5
+        }
+        return nightCount.toDouble() / purchases.size.coerceAtLeast(1)
+    }
+
+    private fun calculateSpendingVarianceFromNormalized(purchases: List<NormalizedExpense>): Double {
+        val amounts = purchases.map { it.normalizedAmount }
+        val mean = amounts.average()
+        if (mean == 0.0 || amounts.isEmpty()) return 0.0
+        val variance = amounts.map { (it - mean) * (it - mean) }.average()
+        return (Math.sqrt(variance) / mean).coerceIn(0.0, 1.0)
+    }
+
+    private fun calculateCategoryDiversityFromNormalized(purchases: List<NormalizedExpense>): Double {
+        val uniqueCategories = purchases.mapNotNull { it.categoryId }.distinct().size
+        return (uniqueCategories.toDouble() / purchases.size.coerceAtLeast(1)).coerceIn(0.0, 1.0)
+    }
+
+    private fun calculateAvgTransactionSizeFromNormalized(purchases: List<NormalizedExpense>): Double {
+        return purchases.map { it.normalizedAmount }.average()
     }
 
 }

@@ -39,17 +39,17 @@ class SpendingPaceCalculator @Inject constructor(
     // Currently uses timeProvider.now() unconditionally, which makes the pace calculation
     // wrong when run against a past (historical) period — it compares to "now" instead of
     // the period's end.
+    // A13-FIXED: Historical periods use period end, not timeProvider.now().
     fun calculate(
         currentMonthStart: Long,
         previousMonthStart: Long,
         previousMonthEnd: Long,
         allExpenses: List<ExpenseSnapshot>,
-        /** Placeholder default. Production callers should pass explicit currency. */
-        displayCurrency: String = "EUR"
+        displayCurrency: String = "EUR",
+        referenceNowMs: Long = timeProvider.now()
     ): SpendingPace {
-        val now = timeProvider.now()
         val currentMonthEnd = TimePeriodUtils.getEndOfMonth(currentMonthStart)
-        val currentWindowEnd = minOf(now, currentMonthEnd)
+        val currentWindowEnd = minOf(referenceNowMs, currentMonthEnd)
         val daysInMonth = TimePeriodUtils.getDaysInMonth(currentMonthStart)
         val currentDay = (TimePeriodUtils.daysBetween(currentMonthStart, currentWindowEnd) + 1).coerceAtLeast(1)
         

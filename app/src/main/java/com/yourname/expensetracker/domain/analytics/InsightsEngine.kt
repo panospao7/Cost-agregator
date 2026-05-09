@@ -78,6 +78,83 @@ class InsightsEngine @Inject constructor(
     /**
      * Generate insights for an explicit [PeriodRange] instead of the current month.
      *
+     * ## A06-FIXED: Normalized input overload
+     * This overload consumes [NormalizedAnalyticsInput] instead of raw
+     * [ExpenseSnapshot] list. The home currency is resolved from
+     * [input.homeCurrency] — no more hardcoded EUR.
+     */
+    suspend fun generateInsights(
+        input: NormalizedAnalyticsInput,
+        categories: List<AnalyticsCategoryRef>
+    ): InsightsSnapshot {
+        val period = input.period ?: return InsightsSnapshot(
+            generatedAt = 0L,
+            currentMonth = MonthPeriod(0, 0, 0L, 0L),
+            monthlyComparison = MonthlyComparison(
+                currentMonth = MonthPeriod(0, 0, 0L, 0L),
+                previousMonth = null,
+                currentTotal = 0.0,
+                previousTotal = null,
+                changeAmount = null,
+                changePercentage = null,
+                currentCount = 0,
+                previousCount = null,
+                displayCurrency = input.homeCurrency
+            ),
+            categoryInsights = emptyList(),
+            topMerchants = emptyList(),
+            spendingPace = SpendingPace(
+                currentMonthSpent = 0.0,
+                daysElapsed = 0,
+                daysInMonth = 30,
+                projectedTotal = 0.0,
+                previousMonthTotal = null,
+                averageMonthlyTotal = null,
+                pacePercentage = 0f,
+                paceStatus = PaceStatus.NO_BASELINE,
+                displayCurrency = input.homeCurrency
+            ),
+            anomalies = emptyList(),
+            recurringExpenses = emptyList(),
+            dayOfWeekPattern = emptyList(),
+            largestTransaction = null,
+            averageTransactionSize = 0.0,
+            medianTransactionSize = 0.0,
+            totalMonthsOfData = 0,
+            displayCurrency = input.homeCurrency
+        )
+        val currentMonth = MonthPeriod(
+            year = TimePeriodUtils.getYear(period.startInclusiveMillis),
+            month = TimePeriodUtils.getMonth(period.startInclusiveMillis),
+            startMs = period.startInclusiveMillis,
+            endMs = period.endExclusiveMillis
+        )
+        val durationMs = period.endExclusiveMillis - period.startInclusiveMillis
+        val previousMonth = MonthPeriod(
+            year = TimePeriodUtils.getYear(period.startInclusiveMillis - durationMs),
+            month = TimePeriodUtils.getMonth(period.startInclusiveMillis - durationMs),
+            startMs = period.startInclusiveMillis - durationMs,
+            endMs = period.startInclusiveMillis
+        )
+        // Map NormalizedExpense to ExpenseSnapshot for legacy engine consumption
+        val snapshots = input.includedExpenses.map { it.toExpenseSnapshot() }
+        return generateInsightsForPeriods(
+            currentMonth = currentMonth,
+            previousMonth = previousMonth,
+            categories = categories,
+            allExpenses = snapshots,
+            displayCurrency = input.homeCurrency,
+            conversionWarnings = input.dataQuality.conversionWarnings.map { msg ->
+                AnalyticsConversionWarning(
+                    type = AnalyticsConversionWarningType.MISSING_EXCHANGE_RATE,
+                    message = msg,
+                    affectedTransactionCount = 0
+                )
+            }
+        )
+    }
+
+    /**
      * ## AI-1: Explicit period support
      * This overload allows callers to specify an arbitrary time range, enabling
      * historical or custom-period insight generation. The range is decomposed
