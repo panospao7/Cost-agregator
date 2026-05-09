@@ -1,8 +1,10 @@
 package com.yourname.expensetracker.domain.tax
 
 /**
- * T08-FIXED: Provides tax-rate data for TaxEstimator.
- * Separates the rate source from the estimation logic.
+ * T04-FIXED: VAT rate provider interface.
+ * Currently used only for VAT rate lookup in TaxEstimator.estimateTaxes().
+ * Income tax brackets still come from TaxConfiguration — this provider
+ * does not (yet) cover full income tax rate tables.
  */
 interface TaxRateProvider {
     suspend fun getRate(

@@ -43,8 +43,15 @@ data class InvestmentPerformance(
     val allTimeLow: Double?,
     val currentValueAggregate: MoneyAggregate? = null,
     val costBasisAggregate: MoneyAggregate? = null,
-    val isPriceStale: Boolean = false
+    val isPriceStale: Boolean = false,
+    val dataQuality: InvestmentDataQuality = InvestmentDataQuality()
 )
+
+// I09-FIXED: Price staleness thresholds
+// - STALE_PRICE_DAYS = 7 (price older than 7 days → isPriceStale)
+// - VERY_STALE_PRICE_DAYS = 30 (price older than 30 days → warning)
+private const val STALE_PRICE_DAYS = 7L
+private const val VERY_STALE_PRICE_DAYS = 30L
 
 @Singleton
 class InvestmentTracker @Inject constructor(
@@ -62,6 +69,9 @@ class InvestmentTracker @Inject constructor(
         "Raw Double portfolio summary may mix currencies. Use getPortfolioSummaryAggregate() for multi-currency safety.",
         ReplaceWith("getPortfolioSummaryAggregate(investmentDao.getAllActiveInvestments().first())")
     )
+    // Migration path: All UI consumers should migrate to getPortfolioSummaryAggregate()
+    // which returns per-currency MoneyAggregate and InvestmentDataQuality.
+    // Remove this method once no callers remain.
     /**
      * Get complete portfolio summary.
      */
@@ -200,13 +210,15 @@ class InvestmentTracker @Inject constructor(
         val aggregate = MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter)
 
         // I09-FIXED: Price staleness thresholds — 7 days stale, 30 days very stale
-        val staleThresholdMs = 7 * 24 * 60 * 60 * 1000L
-        val veryStaleThresholdMs = 30 * 24 * 60 * 60 * 1000L
+        val staleThresholdMs = STALE_PRICE_DAYS * 24 * 60 * 60 * 1000L
+        val veryStaleThresholdMs = VERY_STALE_PRICE_DAYS * 24 * 60 * 60 * 1000L
         val now = timeProvider.now()
         val staleHoldings = holdings.filter { (now - it.lastUpdated) > staleThresholdMs }
+        val veryStaleHoldings = holdings.filter { (now - it.lastUpdated) > veryStaleThresholdMs }
         val dataQuality = InvestmentDataQuality(
             isPartial = staleHoldings.isNotEmpty(),
             staleHoldingCount = staleHoldings.size,
+            veryStaleHoldingCount = veryStaleHoldings.size,
             missingPriceCount = holdings.count { it.lastUpdated == 0L },
             lastUpdatedAt = if (holdings.isEmpty()) 0L else holdings.maxOf { it.lastUpdated }
         )
@@ -382,6 +394,7 @@ class InvestmentTracker @Inject constructor(
             val gainLoss = currentValue - investedValue
             val gainLossPercent = if (investedValue > 0) (gainLoss / investedValue) * 100 else 0.0
 
+            val isPriceStale = (now - investment.lastUpdated) > staleThresholdMs
             InvestmentPerformance(
                 investment = investment,
                 currentValue = currentValue,
@@ -393,7 +406,13 @@ class InvestmentTracker @Inject constructor(
                 allTimeLow = null,
                 currentValueAggregate = currentValueAggregate,
                 costBasisAggregate = costBasisAggregate,
-                isPriceStale = (now - investment.lastUpdated) > staleThresholdMs
+                isPriceStale = isPriceStale,
+                dataQuality = InvestmentDataQuality(
+                    isPartial = isPriceStale || investment.lastUpdated == 0L,
+                    staleHoldingCount = if (isPriceStale) 1 else 0,
+                    missingPriceCount = if (investment.lastUpdated == 0L) 1 else 0,
+                    lastUpdatedAt = investment.lastUpdated
+                )
             )
         }
     }
@@ -522,7 +541,11 @@ data class DailyPortfolioValue(
 
 data class PortfolioValueHistoryResult(
     val values: List<DailyPortfolioValue>,
-    val dataQuality: DataQuality = DataQuality(isPartial = false)
+    val dataQuality: DataQuality = DataQuality(isPartial = false),
+    // PR-I3: Per-day aggregate breakdown by currency.
+    // Populated once MoneyAggregateBuilder supports batch construction per day.
+    // Currently reserved for future implementation.
+    val dailyAggregates: List<MoneyAggregate> = emptyList()
 )
 
 data class DataQuality(
@@ -532,6 +555,7 @@ data class DataQuality(
 data class InvestmentDataQuality(
     val isPartial: Boolean = false,
     val staleHoldingCount: Int = 0,
+    val veryStaleHoldingCount: Int = 0,
     val missingPriceCount: Int = 0,
     val lastUpdatedAt: Long = 0L
 )

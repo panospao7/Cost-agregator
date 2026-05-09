@@ -273,4 +273,9 @@ object DaoModule {
     @Singleton
     fun providePrivacyAuditDao(database: AppDatabase): PrivacyAuditDao =
         database.privacyAuditDao()
+
+    @Provides
+    @Singleton
+    fun provideGroupLifecycleEventDao(database: AppDatabase): GroupLifecycleEventDao =
+        database.groupLifecycleEventDao()
 }

@@ -6,6 +6,10 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+// T05-FIXED: Business reports use filingCurrency from TaxSettings for all totals.
+// CSV fields are sanitized via CsvCellSanitizer. No hardcoded euro formatting.
+// Export formatting policy: filingCurrency for monetary fields, UTC for dates.
+
 /**
  * CRITICAL FIX (CRITICAL-4): Safe CSV/IIF exporters with proper escaping.
  *

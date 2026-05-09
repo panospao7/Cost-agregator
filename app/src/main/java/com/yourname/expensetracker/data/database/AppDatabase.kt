@@ -101,7 +101,8 @@ const val APP_DATABASE_SCHEMA_VERSION = 120
         SourceStatsEvent::class,
         WarrantyLifecycleEvent::class,
         InvestmentTransaction::class,
-        GroupSettlementEntity::class
+        GroupSettlementEntity::class,
+        GroupLifecycleEventEntity::class
     ],
     version = APP_DATABASE_SCHEMA_VERSION,
     exportSchema = true
@@ -167,6 +168,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun warrantyLifecycleEventDao(): WarrantyLifecycleEventDao
     abstract fun investmentTransactionDao(): InvestmentTransactionDao
     abstract fun groupSettlementDao(): GroupSettlementDao
+    abstract fun groupLifecycleEventDao(): GroupLifecycleEventDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker_db"

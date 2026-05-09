@@ -2,8 +2,10 @@ package com.yourname.expensetracker.domain.groups
 
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+import com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
+import com.yourname.expensetracker.data.database.entity.GroupLifecycleEventEntity
 import com.yourname.expensetracker.domain.groups.GroupBalanceCalculator
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.GroupSettlementEntity
@@ -64,6 +66,7 @@ class GroupLifecycleCoordinator @Inject constructor(
     private val groupExpenseDao: GroupExpenseDao,
     private val memberDao: GroupMemberDao,
     private val settlementDao: GroupSettlementDao,
+    private val lifecycleEventDao: GroupLifecycleEventDao,
     private val balanceCalculator: GroupBalanceCalculator,
     private val timeProvider: TimeProvider,
     private val currencySettingsRepository: CurrencySettingsRepository,
@@ -330,6 +333,9 @@ class GroupLifecycleCoordinator @Inject constructor(
             // G04: Must archive before hard-delete
             return@withContext false
         }
+        // G03: Hard delete is lifecycle-contained — requires archive first (G04 gate).
+        // For emergency admin cleanup, use the direct data-layer path bypassing the coordinator.
+        // All user-facing deletions must go through this method which enforces archive-then-delete.
         val result = groupCoordinator.permanentlyDeleteGroup(groupId)
         if (result) {
             emitLifecycleEvent(groupId, "GROUP_DELETED")
@@ -408,23 +414,33 @@ class GroupLifecycleCoordinator @Inject constructor(
         // the next balance recalculation via SettlementCalculator or
         // SharedExpenseManager reflects the net position including this settlement.
 
-        emitLifecycleEvent(groupId, "SETTLEMENT_RECORDED")
+        emitLifecycleEvent(groupId, "SETTLEMENT_RECORDED", settlementId = settlementId)
         settlementId
     }
 
     /**
      * Emits a group lifecycle event for audit trail.
      *
-     * In a full implementation, this would write to a dedicated
-     * `group_lifecycle_events` audit table. Currently deferred
-     * (post-commit logging via side-effect dispatcher).
+     * Persists the event to the `group_lifecycle_events` audit table and
+     * triggers best-effort post-commit side effects (budget check, expense
+     * side-effect dispatch).
      */
     private suspend fun emitLifecycleEvent(
         groupId: Long,
         eventType: String,
-        expenseId: Long = 0L
+        expenseId: Long = 0L,
+        settlementId: Long = 0L
     ) {
         Timber.d("GroupLifecycleEvent: groupId=%d, event=%s", groupId, eventType)
+        val event = GroupLifecycleEventEntity(
+            groupId = groupId,
+            eventType = eventType,
+            relatedExpenseId = expenseId.takeIf { it > 0L },
+            relatedSettlementId = settlementId.takeIf { it > 0L },
+            createdAt = timeProvider.now()
+        )
+        lifecycleEventDao.insert(event)
+        // Budget check + side effects (best-effort)
         try {
             budgetMonitor.get().checkBudgets()
         } catch (e: Exception) {
