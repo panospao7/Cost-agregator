@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.analytics
 
+import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.core.money.toCurrencyCodeOrNull
@@ -42,26 +43,52 @@ class AnalyticsInputAssembler @Inject constructor(
             currencySettingsRepository.homeCurrency().first()
         }.getOrDefault("EUR")
 
-        // 1. Fetch expenses once
         val rawExpenses = expenseRepository.getExpensesBetween(
             period.startInclusiveMillis,
             period.endExclusiveMillis
         )
 
-        // 2. Apply pre-filters (spending-only = PURCHASE only, not-mine exclusion)
-        val expenses = rawExpenses.filter { exp ->
+        return buildNormalizedInput(rawExpenses, homeCurrency, period, options)
+    }
+
+    /**
+     * Build a [NormalizedAnalyticsInput] from pre-fetched [expenses].
+     *
+     * Skips the expense-fetch step; all filtering and normalisation logic
+     * is identical to [build(period, options)].
+     */
+    suspend fun build(
+        expenses: List<Expense>,
+        homeCurrency: String,
+        period: PeriodRange,
+        options: AnalyticsInputOptions = AnalyticsInputOptions()
+    ): NormalizedAnalyticsInput {
+        return buildNormalizedInput(expenses, homeCurrency, period, options)
+    }
+
+    /**
+     * Shared normalisation logic used by both [build] overloads.
+     */
+    private suspend fun buildNormalizedInput(
+        expenses: List<Expense>,
+        homeCurrency: String,
+        period: PeriodRange,
+        options: AnalyticsInputOptions
+    ): NormalizedAnalyticsInput {
+        // 1. Apply pre-filters (spending-only = PURCHASE only, not-mine exclusion)
+        val filtered = expenses.filter { exp ->
             if (options.spendingOnly && exp.transactionType != TransactionType.PURCHASE) return@filter false
             if (options.excludeNotMine && exp.isNotMine) return@filter false
             true
         }
 
-        // 3. Normalise via AnalyticsCurrencyNormalizer
-        val result = normalizer.normalizeExpenses(expenses, homeCurrency)
+        // 2. Normalise via AnalyticsCurrencyNormalizer
+        val result = normalizer.normalizeExpenses(filtered, homeCurrency)
 
-        // 4. Build a set of IDs that were successfully normalised
+        // 3. Build a set of IDs that were successfully normalised
         val normalizedIds = result.normalizedExpenses.mapTo(mutableSetOf()) { it.snapshot.id }
 
-        // 5. Map normalised expenses to the canonical contract
+        // 4. Map normalised expenses to the canonical contract
         val included = result.normalizedExpenses.map { normExp ->
             val snap = normExp.snapshot
             NormalizedExpense(
@@ -84,8 +111,8 @@ class AnalyticsInputAssembler @Inject constructor(
             )
         }
 
-        // 6. Build excluded expenses with detailed reasons
-        val excluded = expenses
+        // 5. Build excluded expenses with detailed reasons
+        val excluded = filtered
             .filter { it.id !in normalizedIds }
             .map { exp ->
                 val reason = if (exp.currency.toCurrencyCodeOrNull() == null) {
@@ -109,7 +136,7 @@ class AnalyticsInputAssembler @Inject constructor(
         // PR-A9: Compute confidence penalty & multiplier from data quality.
         //   excludedCount/total > 0.1 → penalty up to 0.5
         //   missingRateCount > 0      → multiplier scales down to min 0.8
-        val totalCount = expenses.size.coerceAtLeast(1)
+        val totalCount = filtered.size.coerceAtLeast(1)
         val confidencePenalty = if (excludedCount > 0) {
             (excludedCount.toDouble() / totalCount).coerceAtMost(0.5)
         } else 0.0
@@ -132,7 +159,8 @@ class AnalyticsInputAssembler @Inject constructor(
                 },
                 conversionWarnings = result.warnings.map { it.message },
                 confidencePenalty = confidencePenalty,
-                confidenceMultiplier = confidenceMultiplier
+                confidenceMultiplier = confidenceMultiplier,
+                warnings = result.warnings
             )
         )
     }

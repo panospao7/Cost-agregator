@@ -9,7 +9,11 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.analytics.*
+import com.yourname.expensetracker.domain.analytics.AnalyticsInputOptions
+import com.yourname.expensetracker.domain.analytics.toExpenseSnapshot
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.time.PeriodKind
+import com.yourname.expensetracker.domain.core.time.PeriodRange
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.DomainTransactionType
@@ -116,8 +120,9 @@ class AnalyticsViewModel @Inject constructor(
     private val areaSpendingEngine: AreaSpendingEngine,
  private val travelDetectionEngine: TravelDetectionEngine,
  private val spendingPersonalityClassifier: SpendingPersonalityClassifier,
- private val timeProvider: TimeProvider,
- private val currencyConverter: CurrencyConverter,
+    private val timeProvider: TimeProvider,
+    private val analyticsInputAssembler: AnalyticsInputAssembler,
+    private val currencyConverter: CurrencyConverter,
  private val currencySettingsRepository: CurrencySettingsRepository
 ) : ViewModel() {
 
@@ -313,23 +318,34 @@ class AnalyticsViewModel @Inject constructor(
             .filter { it.transactionType == TransactionType.PURCHASE }
             .toList()
 
-        val currentNormalization = analyticsCurrencyNormalizer.normalizeExpenses(purchases, homeCurrency)
-        val previousNormalization = analyticsCurrencyNormalizer.normalizeExpenses(previousExpenses, homeCurrency)
-        val allNormalization = analyticsCurrencyNormalizer.normalizeExpenses(allExpenses, homeCurrency)
-
         val yearOverYearLookbackStart = TimePeriodUtils.getYearRange(TimePeriodUtils.getYear(now) - 1).first
         val yearOverYearExpenses = expenseRepository.getExpensesBetween(yearOverYearLookbackStart, currentEnd)
             .asSequence()
             .filter { it.transactionType == TransactionType.PURCHASE }
             .toList()
-        val yearOverYearNormalization = analyticsCurrencyNormalizer.normalizeExpenses(yearOverYearExpenses, homeCurrency)
-        val warningNormalization = analyticsCurrencyNormalizer.normalizeExpenses(
-            (purchases + previousExpenses + allExpenses + yearOverYearExpenses)
-                .associateBy { it.id }
-                .values
-                .toList(),
-            homeCurrency
-        )
+
+        val currentInput = analyticsInputAssembler.build(
+            expenses = purchases, homeCurrency = homeCurrency,
+            period = PeriodRange(PeriodKind.CUSTOM, startInclusiveMillis = currentStart, endExclusiveMillis = currentEnd, label = period.name))
+        val previousInput = analyticsInputAssembler.build(
+            expenses = previousExpenses, homeCurrency = homeCurrency,
+            period = PeriodRange(PeriodKind.CUSTOM, startInclusiveMillis = previousStart, endExclusiveMillis = previousEnd, label = "PREVIOUS_${period.name}"))
+        val allInput = analyticsInputAssembler.build(
+            expenses = allExpenses, homeCurrency = homeCurrency,
+            period = PeriodRange(PeriodKind.CUSTOM, startInclusiveMillis = fullWindowStart, endExclusiveMillis = currentEnd, label = "ALL_${period.name}"),
+            options = AnalyticsInputOptions(spendingOnly = false))
+        val yoyInput = analyticsInputAssembler.build(
+            expenses = yearOverYearExpenses, homeCurrency = homeCurrency,
+            period = PeriodRange(PeriodKind.CUSTOM, startInclusiveMillis = yearOverYearLookbackStart, endExclusiveMillis = currentEnd, label = "YOY_${period.name}"))
+
+        // Collect warnings from all inputs
+        val allWarnings = (currentInput.dataQuality.warnings + previousInput.dataQuality.warnings +
+            allInput.dataQuality.warnings + yoyInput.dataQuality.warnings).distinct()
+
+        // Convert to ExpenseSnapshot for downstream consumers
+        val currentExpenseSnapshots = currentInput.includedExpenses.map { it.toExpenseSnapshot() }
+        val allExpenseSnapshots = allInput.includedExpenses.map { it.toExpenseSnapshot() }
+        val previousExpenseSnapshots = previousInput.includedExpenses.map { it.toExpenseSnapshot() }
 
         val categoryEntityMap = categories.associateBy { it.id }
         val analyticsCategories = categories.map {
@@ -340,11 +356,6 @@ class AnalyticsViewModel @Inject constructor(
                 color = it.color
             )
         }
-
-        // Current/previous period expenses
-        val currentExpenseSnapshots = currentNormalization.includedExpenses
-        val allExpenseSnapshots = allNormalization.includedExpenses
-        val previousExpenseSnapshots = previousNormalization.includedExpenses
 
         // SAFE: currentExpenseSnapshots is pre-normalized via AnalyticsCurrencyNormalizer at line 292
         val currentTotal = currentExpenseSnapshots.sumOf { it.effectiveAmount }
@@ -425,15 +436,8 @@ class AnalyticsViewModel @Inject constructor(
 
         // Insights
         val budgetChartResult = buildBudgetVsActualItems(homeCurrency, currentExpenseSnapshots)
-        val conversionWarnings = mergeWarnings(warningNormalization.warnings + budgetChartResult.warnings)
-        val latestRateTimestamp = listOfNotNull(
-            currentNormalization.latestRateTimestamp,
-            previousNormalization.latestRateTimestamp,
-            allNormalization.latestRateTimestamp,
-            yearOverYearNormalization.latestRateTimestamp,
-            warningNormalization.latestRateTimestamp,
-            rateTimestamp.takeIf { it > 0L }
-        ).maxOrNull()
+        val conversionWarnings = mergeWarnings(allWarnings + budgetChartResult.warnings)
+        val latestRateTimestamp = rateTimestamp.takeIf { it > 0L }
         val insightsSnapshot = insightsEngine.generateInsights(
             analyticsCategories,
             allExpenseSnapshots,
@@ -488,13 +492,13 @@ class AnalyticsViewModel @Inject constructor(
         }
 
         // ── Year-over-Year Comparison ──────────────────────────────────────────
-        val yearOverYear = computeYearOverYear(yearOverYearNormalization.includedExpenses, now, homeCurrency)
+        val yearOverYear = computeYearOverYear(yoyInput.includedExpenses.map { it.toExpenseSnapshot() }, now, homeCurrency)
 
         // ── Spending Velocity Anomalies ──────────────────────────────────
         val velocityAnomalies = computeVelocityAnomalies(currentExpenseSnapshots, homeCurrency)
 
         // ── Post-Salary Sequential Pattern ─────────────────────────────────
-        val postSalaryPattern = computePostSalaryPattern(allNormalization.includedExpenses, categories, homeCurrency)
+        val postSalaryPattern = computePostSalaryPattern(allExpenseSnapshots, categories, homeCurrency)
 
         // ── Duplicate/Error Detection ──────────────────────────────────────
         val suspectTransactions = detectSuspectTransactions(currentExpenseSnapshots, homeCurrency)
@@ -604,12 +608,12 @@ class AnalyticsViewModel @Inject constructor(
         val locatedExpenses = purchases.mapNotNull { exp ->
             val lat = exp.latitude ?: return@mapNotNull null
             val lon = exp.longitude ?: return@mapNotNull null
-            val normalized = currentNormalization.normalizedExpenses.firstOrNull { it.snapshot.id == exp.id } ?: return@mapNotNull null
+            val normalized = currentInput.includedExpenses.firstOrNull { it.id == exp.id } ?: return@mapNotNull null
             LocatedExpense(
                 expenseId = exp.id,
                 latitude = lat,
                 longitude = lon,
-                amount = normalized.normalizedEffectiveAmount,
+                amount = normalized.normalizedAmount,
                 merchant = exp.merchant,
                 date = exp.date,
                 locationSource = exp.locationSource,
@@ -619,9 +623,9 @@ class AnalyticsViewModel @Inject constructor(
 
         val locationInsights = locationInsightsEngine.compute(locatedExpenses).take(10)
         val normalizedPurchases = purchases.mapNotNull { purchase ->
-            val normalized = currentNormalization.normalizedExpenses.firstOrNull { it.snapshot.id == purchase.id } ?: return@mapNotNull null
+            val normalized = currentInput.includedExpenses.firstOrNull { it.id == purchase.id } ?: return@mapNotNull null
             purchase.copy(
-                amount = normalized.normalizedEffectiveAmount,
+                amount = normalized.normalizedAmount,
                 currency = homeCurrency,
                 isSharedExpense = false,
                 myShareAmount = null,
@@ -1163,6 +1167,17 @@ class AnalyticsViewModel @Inject constructor(
                     sourceCurrencies = groupedWarnings.flatMap { it.sourceCurrencies }.distinct().sorted()
                 )
             }
+    }
+
+    /**
+     * A2: Builds a canonical NormalizedAnalyticsInput for the given period.
+     * This is the future upgrade path — all analytics engines will consume this input
+     * instead of manually-normalized snapshots.
+     */
+    suspend fun buildNormalizedInput(
+        period: com.yourname.expensetracker.domain.core.time.PeriodRange
+    ): com.yourname.expensetracker.domain.analytics.NormalizedAnalyticsInput {
+        return analyticsInputAssembler.build(period)
     }
 
 }

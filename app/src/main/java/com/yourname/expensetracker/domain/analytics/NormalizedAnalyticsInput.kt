@@ -53,7 +53,8 @@ data class AnalyticsDataQuality(
     val invalidCurrencyCount: Int = 0,
     val conversionWarnings: List<String> = emptyList(),
     val confidencePenalty: Double = 0.0,
-    val confidenceMultiplier: Double = 1.0
+    val confidenceMultiplier: Double = 1.0,
+    val warnings: List<AnalyticsConversionWarning> = emptyList()
 )
 
 /**
