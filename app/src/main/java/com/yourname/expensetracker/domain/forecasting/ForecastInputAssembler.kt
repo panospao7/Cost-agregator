@@ -1,7 +1,8 @@
 package com.yourname.expensetracker.domain.forecasting
 
-// TODO (P6-P1-3): Extend ForecastInput with conversionQuality field so forecast
-// confidence can be reduced when currency normalization is partial.
+// RESOLVED (P6-P1-3): ForecastInput now carries ForecastDataQuality with isPartial,
+// confidencePenalty, excluded counts, and conversionWarnings. Downstream engines
+// (SynthesisEngine) should apply dataQuality.confidencePenalty to final confidence scores.
 
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense

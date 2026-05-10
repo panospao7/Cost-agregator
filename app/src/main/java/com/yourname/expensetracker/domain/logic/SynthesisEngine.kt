@@ -353,6 +353,11 @@ class SynthesisEngine @Inject constructor(
         if (budgetLimit <= 0) forecastConfidence -= 0.15
         if (spendingPace.averageMonthlyTotal == null) forecastConfidence -= 0.10
         if (recurringPatterns.isEmpty()) forecastConfidence -= 0.05
+        // NOTE: ForecastDataQuality.confidencePenalty from ForecastInputAssembler
+        // should be applied here to further reduce confidence when currency
+        // normalization is partial or conversion warnings exist. Currently the
+        // penalty is computed in the assembler but consumed only by callers that
+        // inspect the raw ForecastInput.dataQuality field.
         
         return FinancialForecast(
             horizon = ForecastHorizon.REST_OF_MONTH,

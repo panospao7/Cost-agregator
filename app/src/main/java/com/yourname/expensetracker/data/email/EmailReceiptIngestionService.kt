@@ -158,9 +158,10 @@ class EmailReceiptIngestionService(
         receivedAt: Long,
         messageId: String
     ): EmailReceiptResult = ingestionMutex.withLock {
-        // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            return@withLock EmailReceiptResult.ParseError("Database writes blocked during restore")
+        try {
+            writeBarrier.checkWritesAllowed("EmailReceiptIngestionService.processEmailReceipt")
+        } catch (e: IllegalStateException) {
+            return@withLock EmailReceiptResult.ParseError(e.message ?: "Database writes blocked during restore")
         }
         try {
             // Step 1: Detect provider

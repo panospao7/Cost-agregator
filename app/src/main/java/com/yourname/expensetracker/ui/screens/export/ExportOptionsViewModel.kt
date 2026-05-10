@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
 import com.yourname.expensetracker.domain.export.ExportTransaction
 import com.yourname.expensetracker.domain.export.toExportTransaction
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -63,7 +64,8 @@ class ExportOptionsViewModel @Inject constructor(
     private val xeroExporter: XeroCSVExporter,
     private val quickBooksExporter: QuickBooksIIFExporter,
     private val freshBooksExporter: FreshBooksExporter,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val readBarrier: DatabaseReadBarrier
 ) : ViewModel() {
 
     companion object {
@@ -133,8 +135,13 @@ class ExportOptionsViewModel @Inject constructor(
      * the output file immediately, so memory usage stays O(pageSize) rather than
      * O(totalExpenses). The cursor (date, id) of the last row on each page drives
      * the next query.
+     *
+     * @param encryptExport When true, the output file will be encrypted via
+     *   [com.yourname.expensetracker.domain.export.ExportUtils.encryptExportFile].
+     *   Hardcoded to false pending a user-facing UI toggle (encryption is available
+     *   but not yet wired to the settings screen).
      */
-    fun generateExport() {
+    fun generateExport(encryptExport: Boolean = false) {
         exportJob?.cancel()
         val generation = ++exportGeneration
         exportJob = viewModelScope.launch {
@@ -154,14 +161,25 @@ class ExportOptionsViewModel @Inject constructor(
                 )
                 return@launch
             }
+            try {
+                readBarrier.checkReadAllowed("export_generate")
+            } catch (e: IllegalStateException) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = "Reads are blocked during restart-required maintenance mode."
+                )
+                return@launch
+            }
 
             try {
-                val categories = withContext(Dispatchers.IO) { exportDataRepository.getCategoryNameMap() }
-                val extension = extensionFor(_uiState.value.selectedFormat)
-                val exportFile = exportDataRepository.createExportFile(extension, timeProvider.now())
                 val format = _uiState.value.selectedFormat
                 val startDate = _uiState.value.startDate
                 val endDate = _uiState.value.endDate
+                Timber.i("Export started: format=%s, startDate=%d, endDate=%d", format, startDate, endDate)
+
+                val categories = withContext(Dispatchers.IO) { exportDataRepository.getCategoryNameMap() }
+                val extension = extensionFor(format)
+                val exportFile = exportDataRepository.createExportFile(extension, timeProvider.now())
 
                 val previewCollector = PreviewCollector(PREVIEW_MAX_CHARS)
 
@@ -236,6 +254,7 @@ class ExportOptionsViewModel @Inject constructor(
                     exportSuccess = true,
                     error = null
                 )
+                Timber.i("Export finished: format=%s, path=%s, previewChars=%d", format, exportFile.absolutePath, previewCollector.value.length)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 if (exportGeneration != generation) return@launch
                 _uiState.value = _uiState.value.copy(

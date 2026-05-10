@@ -6,11 +6,13 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
+import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
+import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
 import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -30,6 +32,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
@@ -92,7 +95,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
-    private val privacySettingsRepository: PrivacySettingsRepository
+    private val privacySettingsRepository: PrivacySettingsRepository,
+    private val diagnosticEventDao: PipelineDiagnosticEventDao
 ) {
 
     companion object {
@@ -282,12 +286,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // pipeline creates a ScannedReceipt without setting a timestamp.
             val repairedCreatedAt = if (receipt.createdAt == 0L) now else receipt.createdAt
             val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
-            val sanitizedOcrText = when (ocrStorageMode) {
-                RawStorageMode.STORE_RAW -> receipt.rawOcrText
-                RawStorageMode.STORE_REDACTED -> "[REDACTED]"
-                RawStorageMode.STORE_METADATA_ONLY -> ""
-                RawStorageMode.DO_NOT_STORE -> ""
-            }
+            val sanitizedOcrText = RawContentSanitizer.sanitizeRawOcr(receipt.rawOcrText, ocrStorageMode)
             val updated = receipt.copy(
                 imagePath = receipt.imagePath,
                 imageHash = fileHash ?: receipt.imageHash,
@@ -442,17 +441,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      * @return The auto-generated receipt ID.
      */
     suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.saveEmailReceipt")
         val now = timeProvider.now()
         val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
-        val sanitizedOcrText = when (ocrStorageMode) {
-            RawStorageMode.STORE_RAW -> receipt.rawOcrText
-            RawStorageMode.STORE_REDACTED -> "[REDACTED]"
-            RawStorageMode.STORE_METADATA_ONLY -> ""
-            RawStorageMode.DO_NOT_STORE -> ""
-        }
+        val sanitizedOcrText = RawContentSanitizer.sanitizeRawOcr(receipt.rawOcrText, ocrStorageMode)
         val updated = receipt.copy(
             sourceType = ReceiptSourceType.EMAIL.name,
             documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
@@ -528,6 +520,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         provider: String
     ): EmailReceiptProcessResult {
         if (!restoreMaintenanceMode.isWritesAllowed()) {
+            emitEmailReceiptDiagnostic("validate", "ERROR", "writes_blocked", null, null)
             return EmailReceiptProcessResult.Error("Database writes blocked during restore")
         }
 
@@ -535,6 +528,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         if (messageId.isNotBlank()) {
             val existing = scannedReceiptDao.getBySourceFingerprint(messageId)
             if (existing != null) {
+                emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "messageId_duplicate", "ScannedReceipt", existing.id)
                 return EmailReceiptProcessResult.Duplicate(existing.id)
             }
         }
@@ -542,20 +536,17 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         if (fingerprint.isNotBlank()) {
             val existing = emailReceiptDao.getByFingerprint(fingerprint)
             if (existing != null) {
+                emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "fingerprint_duplicate", "EmailReceiptSource", existing.receiptId)
                 return EmailReceiptProcessResult.Duplicate(existing.receiptId)
             }
         }
 
         val now = timeProvider.now()
         val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
-        val effectiveOcrText = when (ocrStorageMode) {
-            RawStorageMode.STORE_RAW -> rawEmailBody
-            RawStorageMode.STORE_REDACTED -> "[REDACTED]"
-            RawStorageMode.STORE_METADATA_ONLY -> ""
-            RawStorageMode.DO_NOT_STORE -> ""
-        }
+        val effectiveOcrText = RawContentSanitizer.sanitizeRawOcr(rawEmailBody, ocrStorageMode)
         var savedId = 0L
         var expenseIds = mutableListOf<Long>()
+        var capturedDuplicate: EmailReceiptProcessResult.Duplicate? = null
 
         database.withTransaction {
             val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
@@ -591,7 +582,14 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 confidence = 1.0,
                 fingerprint = fingerprint
             )
-            emailReceiptDao.insertOrIgnore(emailSource)
+            val sourceId = emailReceiptDao.insertOrIgnore(emailSource)
+            if (sourceId == -1L) {
+                val existing = emailReceiptDao.getByFingerprint(fingerprint)
+                if (existing != null) {
+                    capturedDuplicate = EmailReceiptProcessResult.Duplicate(existing.receiptId)
+                    return@withTransaction
+                }
+            }
 
             receiptEventDao.insert(ReceiptEvent(
                 receiptId = savedId,
@@ -626,12 +624,18 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 when (val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created -> {
                         expenseIds.add(result.expenseId)
-                        receiptLinkService.linkReceiptToExpense(savedId, result.expenseId, "EMAIL_RECEIPT", source = ExpenseSource.EMAIL_RECEIPT.name)
+                        val linkResult = receiptLinkService.linkReceiptToExpense(savedId, result.expenseId, "EMAIL_RECEIPT", source = ExpenseSource.EMAIL_RECEIPT.name)
+                        if (linkResult.isFailure) {
+                            throw IllegalStateException("Link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
+                        }
                     }
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped -> {
                         Timber.d("Email receipt %d matched existing expense %d", savedId, result.existingExpenseId)
                         expenseIds.add(result.existingExpenseId)
-                        receiptLinkService.linkReceiptToExpense(savedId, result.existingExpenseId, "EMAIL_RECEIPT", source = ExpenseSource.EMAIL_RECEIPT.name)
+                        val linkResult = receiptLinkService.linkReceiptToExpense(savedId, result.existingExpenseId, "EMAIL_RECEIPT", source = ExpenseSource.EMAIL_RECEIPT.name)
+                        if (linkResult.isFailure) {
+                            throw IllegalStateException("Link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
+                        }
                     }
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed -> {
                         Timber.w("Email receipt %d validation failed: %s", savedId, result.errors)
@@ -639,6 +643,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     else -> {}
                 }
             }
+        }
+
+        // Handle duplicate captured inside the transaction
+        if (capturedDuplicate != null) {
+            emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "in_transaction_duplicate", "EmailReceiptSource", capturedDuplicate!!.existingReceiptId)
+            return capturedDuplicate!!
         }
 
         // Post-commit side effects (best-effort)
@@ -655,6 +665,30 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         }
 
         return EmailReceiptProcessResult.Success(receiptId = savedId, expenseIds = expenseIds)
+    }
+
+    private suspend fun emitEmailReceiptDiagnostic(
+        stage: String,
+        outcome: String,
+        reason: String,
+        entityType: String? = null,
+        entityId: Long? = null
+    ) {
+        try {
+            diagnosticEventDao.insert(
+                PipelineDiagnosticEvent(
+                    pipeline = "email_receipt",
+                    stage = stage,
+                    outcome = outcome,
+                    message = reason,
+                    entityType = entityType,
+                    entityId = entityId,
+                    timestamp = timeProvider.now()
+                )
+            )
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to write email receipt diagnostic event")
+        }
     }
 
     suspend fun deleteReceipt(receiptId: Long): Result<Unit> {

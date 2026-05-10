@@ -5,8 +5,12 @@ import androidx.room.withTransaction
 import java.time.Instant
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
+import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.PendingReview
@@ -73,7 +77,8 @@ class ReceiptRepository @Inject constructor(
     private val assetStore: ReceiptAssetStore,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val receiptLifecycleCoordinator: Lazy<ReceiptLifecycleCoordinator>,
-    private val writeBarrier: DatabaseWriteBarrier
+    private val writeBarrier: DatabaseWriteBarrier,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
     private companion object {
         // Use the canonical policy for all duplicate detection constants.
@@ -100,6 +105,11 @@ class ReceiptRepository @Inject constructor(
     }
 
     val allReceipts: Flow<List<ScannedReceipt>> = scannedReceiptDao.getAllFlow()
+
+    private suspend fun sanitizeOcrBeforeInsert(rawOcrText: String?): String {
+        val mode = privacySettingsRepository.getSettings().rawOcrStorageMode
+        return RawContentSanitizer.sanitizeRawOcr(rawOcrText, mode)
+    }
 
     /**
      * Process an image URI: run OCR, parse receipt, save to DB
@@ -152,7 +162,7 @@ class ReceiptRepository @Inject constructor(
                 // 4. Save scanned receipt record
                 val receipt = ScannedReceipt(
                     imagePath = ocrResult.savedImagePath,
-                    rawOcrText = ocrResult.fullText,
+                    rawOcrText = sanitizeOcrBeforeInsert(ocrResult.fullText),
                     parsedTotal = parsed.total,
                     parsedMerchant = normalizedMerchant ?: parsed.merchantName,
                     parsedDate = parsed.date,
@@ -209,7 +219,7 @@ class ReceiptRepository @Inject constructor(
                 
                 val failedReceipt = ScannedReceipt(
                     imagePath = ocrResult.savedImagePath,
-                    rawOcrText = ocrResult.fullText, // PRESERVED!
+                    rawOcrText = sanitizeOcrBeforeInsert(ocrResult.fullText), // PRESERVED!
                     parsedTotal = null,
                     parsedMerchant = null,
                     parsedDate = null, 
@@ -645,7 +655,7 @@ class ReceiptRepository @Inject constructor(
             // 3. Save common scanned receipt record
             val receiptRecord = ScannedReceipt(
                 imagePath = ocrResult.savedImagePath,
-                rawOcrText = ocrResult.fullText,
+                rawOcrText = sanitizeOcrBeforeInsert(ocrResult.fullText),
                 parsedTotal = null, // Varies per transaction
                 parsedMerchant = "Bank Statement",
                 parsedDate = timeProvider.now(),

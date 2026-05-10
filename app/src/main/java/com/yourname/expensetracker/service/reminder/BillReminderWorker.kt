@@ -11,6 +11,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
+import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
@@ -31,7 +33,8 @@ class BillReminderWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val coordinator: RecurringLifecycleCoordinator,
-    private val executionGuard: WorkerExecutionGuard
+    private val executionGuard: WorkerExecutionGuard,
+    private val diagnosticEventDao: PipelineDiagnosticEventDao
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -67,6 +70,21 @@ class BillReminderWorker @AssistedInject constructor(
                     if (delivered) {
                         coordinator.markReminderSent(reminder.id)
                         sentCount++
+                        try {
+                            diagnosticEventDao.insert(
+                                PipelineDiagnosticEvent(
+                                    pipeline = "bill_reminder",
+                                    stage = "dispatch",
+                                    outcome = "SENT",
+                                    entityType = "RecurringReminderDelivery",
+                                    entityId = reminder.id,
+                                    message = "Reminder successfully delivered",
+                                    timestamp = System.currentTimeMillis()
+                                )
+                            )
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to write reminder diagnostic event", e)
+                        }
                     } else {
                         Log.w(TAG, "Notification delivery failed for reminder ${reminder.id}")
                         coordinator.markReminderFailed(reminder.id, "permission_denied")

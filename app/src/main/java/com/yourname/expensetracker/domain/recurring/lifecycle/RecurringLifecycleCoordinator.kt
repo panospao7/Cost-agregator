@@ -71,10 +71,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
         endDate: Long,
         reminderWindows: List<String> = emptyList()
     ): MaterializationResult {
-        // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.generateOccurrences")
 
         val rule = manualRecurringExpenseDao.getById(ruleId)
             ?: throw IllegalArgumentException("Recurring rule not found: id=$ruleId")
@@ -121,10 +118,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * @return `true` if a matching occurrence was found and linked.
      */
     suspend fun linkExpenseToOccurrence(expenseId: Long): Boolean {
-        // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.linkExpenseToOccurrence")
 
         val expense = expenseDao.getById(expenseId) ?: return false
 
@@ -219,10 +213,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * @param expenseId The ID of the expense being deleted.
      */
     suspend fun unlinkExpenseFromOccurrence(expenseId: Long) {
-        // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence")
 
         val now = timeProvider.now()
 
@@ -276,10 +267,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * @param newStatus The new status value.
      */
     suspend fun updateOccurrenceStatus(occurrenceId: Long, newStatus: String) {
-        // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.updateOccurrenceStatus")
 
         val now = timeProvider.now()
         // Load the current occurrence to get the old status
@@ -327,9 +315,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * The caller should only dispatch a notification after a successful claim.
      */
     suspend fun claimReminderDelivery(deliveryId: Long): Boolean {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.claimReminderDelivery")
         return reminderDeliveryDao.claimDelivery(deliveryId) > 0
     }
 
@@ -338,10 +324,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * Called by [BillReminderWorker] after dispatching the notification.
      */
     suspend fun markReminderSent(deliveryId: Long) {
-        // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.markReminderSent")
 
         val now = timeProvider.now()
         val existing = reminderDeliveryDao.getById(deliveryId) ?: return
@@ -370,9 +353,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
     }
 
     suspend fun markReminderFailed(deliveryId: Long, reason: String) {
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            throw IllegalStateException("Database writes blocked during restore")
-        }
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.markReminderFailed")
         val existing = reminderDeliveryDao.getById(deliveryId) ?: return
         val status = if (reason.contains("permission", ignoreCase = true)) "FAILED_PERMISSION" else "FAILED_TRANSIENT"
         val now = timeProvider.now()

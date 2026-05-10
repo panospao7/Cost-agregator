@@ -7655,7 +7655,12 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
                         sourceId INTEGER,
                         dropReason TEXT,
                         message TEXT,
-                        timestamp INTEGER NOT NULL
+                        timestamp INTEGER NOT NULL,
+                        entityType TEXT,
+                        entityId INTEGER,
+                        exceptionClass TEXT,
+                        exceptionMessage TEXT,
+                        metadataJson TEXT
                     )
                 """.trimIndent())
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_pipeline_diagnostic_events_pipeline_stage ON pipeline_diagnostic_events (pipeline, stage)")

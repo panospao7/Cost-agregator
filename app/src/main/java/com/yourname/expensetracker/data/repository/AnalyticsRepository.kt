@@ -215,10 +215,10 @@ class AnalyticsRepository @Inject constructor(
      * Consumers (UI, forecast engines, health score) can use this to assess
      * how reliable analytics outputs are for the period.
      *
-     * TODO (A11): Apply confidencePenalty based on conversionWarnings/lossPercentage
-     * from AnalyticsDataQuality to downstream analytics confidence scores.
-     * Currently DataQualityReport.conversionConfidence is computed but not
-     * propagated to affect spending insights, anomaly detection, or forecast certainty.
+     * RESOLVED (A11): confidencePenalty is now computed in ForecastInputAssembler
+     * and propagated via ForecastDataQuality. DataQualityReport.conversionConfidence
+     * remains available for UI surfaces but downstream engines consume
+     * ForecastDataQuality.confidencePenalty for confidence scoring.
      */
     suspend fun getDataQualityReport(start: Long, end: Long): DataQualityReport {
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }

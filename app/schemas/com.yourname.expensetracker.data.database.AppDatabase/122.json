@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 122,
-    "identityHash": "5a54d07a82de106e40a6695d31f13863",
+    "identityHash": "f0200801ce74b884ffc20a50e7324ecc",
     "entities": [
       {
         "tableName": "raw_notifications",
@@ -7808,7 +7808,7 @@
       },
       {
         "tableName": "pipeline_diagnostic_events",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `pipeline` TEXT NOT NULL, `stage` TEXT NOT NULL, `outcome` TEXT NOT NULL, `packageName` TEXT, `sourceId` INTEGER, `dropReason` TEXT, `message` TEXT, `timestamp` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `pipeline` TEXT NOT NULL, `stage` TEXT NOT NULL, `outcome` TEXT NOT NULL, `packageName` TEXT, `sourceId` INTEGER, `dropReason` TEXT, `message` TEXT, `timestamp` INTEGER NOT NULL, `entityType` TEXT, `entityId` INTEGER, `exceptionClass` TEXT, `exceptionMessage` TEXT, `metadataJson` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -7859,6 +7859,31 @@
             "columnName": "timestamp",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "entityType",
+            "columnName": "entityType",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "entityId",
+            "columnName": "entityId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "exceptionClass",
+            "columnName": "exceptionClass",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "exceptionMessage",
+            "columnName": "exceptionMessage",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "metadataJson",
+            "columnName": "metadataJson",
+            "affinity": "TEXT"
           }
         ],
         "primaryKey": {
@@ -7892,7 +7917,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '5a54d07a82de106e40a6695d31f13863')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f0200801ce74b884ffc20a50e7324ecc')"
     ]
   }
 }

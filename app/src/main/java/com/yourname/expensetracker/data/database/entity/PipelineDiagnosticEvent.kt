@@ -20,5 +20,10 @@ data class PipelineDiagnosticEvent(
     val sourceId: Long? = null,
     val dropReason: String? = null,
     val message: String? = null,
-    val timestamp: Long
+    val timestamp: Long,
+    val entityType: String? = null,
+    val entityId: Long? = null,
+    val exceptionClass: String? = null,
+    val exceptionMessage: String? = null,
+    val metadataJson: String? = null
 )
