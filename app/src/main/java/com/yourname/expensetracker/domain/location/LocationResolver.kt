@@ -338,6 +338,7 @@ class LocationResolver @Inject constructor(
                 return GeocodeAttempt.NoMatch
             }
             is PrivacyDecision.Allowed -> { /* proceed */ }
+            else -> { Log.d(TAG, "EXTERNAL_GEOCODING privacy check inconclusive — skipping geocoding"); return GeocodeAttempt.NoMatch }
         }
         return when (val result = geocodingService.search(name, biasLat, biasLon, cityHint, bounded)) {
             is GeocodingLookupResult.Success -> result.result

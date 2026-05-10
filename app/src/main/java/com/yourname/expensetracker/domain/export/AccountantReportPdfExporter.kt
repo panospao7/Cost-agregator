@@ -110,12 +110,9 @@ class AccountantReportPdfExporter @Inject constructor(
                 )
                 writer.writeBody("$currency Transaction Count: ${currencyExpenses.size}")
             }
-            // Home-currency summary line
             if (expensesByCurrency.size > 1) {
-                val homeCurrency = expensesByCurrency.keys.firstOrNull() ?: "EUR"
-                // SAFE: intentional raw sum across currencies — labeled as "base" (not converted)
-                val grandTotal = expensesByCurrency.values.flatten().sumOf { it.effectiveAmount }
-                writer.writeBody("Combined Total (base): ${formatAmount(grandTotal, homeCurrency, formatters)}")
+                writer.writeBody("Note: Multi-currency report. Totals are shown per-currency only.")
+                writer.writeBody("A combined total across currencies is not shown because conversion rates may vary.")
             }
 
             expensesByCurrency.forEach { (currency, currencyExpenses) ->

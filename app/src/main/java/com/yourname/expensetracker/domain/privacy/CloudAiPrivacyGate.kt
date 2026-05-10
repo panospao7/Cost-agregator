@@ -67,12 +67,10 @@ class CloudAiPrivacyGate @Inject constructor(
             }
 
             else -> {
-                // Delegate to a default "allow" for capabilities this gate doesn't handle
-                PrivacyDecision.Allowed
+                PrivacyDecision.NotApplicable
             }
         }
 
-        auditLogger.logDecision(capability, decision, context)
         if (decision is PrivacyDecision.Denied) {
             Timber.d("Cloud AI gate denied: ${decision.reason} (capability=$capability)")
         }

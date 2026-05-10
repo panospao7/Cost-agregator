@@ -139,8 +139,19 @@ class ReceiptMatchingWorker @AssistedInject constructor(
         }
 
         fun runOnce(context: Context) {
-            val request = OneTimeWorkRequestBuilder<ReceiptMatchingWorker>().build()
-            WorkManager.getInstance(context).enqueue(request)
+            val spec = com.yourname.expensetracker.domain.workers.WorkerSpec.DEFAULTS[WORK_NAME]
+            val constraints = spec?.constraints ?: Constraints.NONE
+            val backoffPolicy = spec?.backoffPolicy ?: BackoffPolicy.EXPONENTIAL
+            val backoffDelay = spec?.backoffDelaySeconds ?: 600L
+            val request = OneTimeWorkRequestBuilder<ReceiptMatchingWorker>()
+                .setConstraints(constraints)
+                .setBackoffCriteria(backoffPolicy, backoffDelay, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "${WORK_NAME}_run_once",
+                ExistingWorkPolicy.KEEP,
+                request
+            )
         }
     }
 }

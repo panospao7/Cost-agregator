@@ -43,9 +43,10 @@ abstract class PrivacyModule {
             notificationGate: NotificationPrivacyGate,
             locationGate: LocationPrivacyGate,
             cloudAiGate: CloudAiPrivacyGate,
-            backupGate: BackupPrivacyGate
+            backupGate: BackupPrivacyGate,
+            auditLogger: PrivacyAuditLogger
         ): PrivacyGate {
-            return CompositePrivacyGate(listOf(notificationGate, locationGate, cloudAiGate, backupGate))
+            return CompositePrivacyGate(listOf(notificationGate, locationGate, cloudAiGate, backupGate), auditLogger)
         }
 
         @Provides

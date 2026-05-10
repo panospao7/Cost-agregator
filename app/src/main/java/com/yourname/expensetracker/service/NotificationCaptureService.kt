@@ -439,6 +439,9 @@ class NotificationCaptureService : NotificationListenerService() {
                         return@launch
                     }
                     is PrivacyDecision.Allowed -> { /* proceed */ }
+                    else -> {
+                        Timber.d("Privacy check inconclusive for $packageName — proceeding with capture")
+                    }
                 }
                 processNotification(sbn, packageName, parts, extras)
             } finally {
@@ -603,6 +606,7 @@ class NotificationCaptureService : NotificationListenerService() {
                     return@launch
                 }
                 is PrivacyDecision.Allowed -> { /* proceed */ }
+                else -> { /* NotApplicable/FailClosed — proceed with capture */ }
             }
             processNotification(sbn, packageName, parts, extras)
         }

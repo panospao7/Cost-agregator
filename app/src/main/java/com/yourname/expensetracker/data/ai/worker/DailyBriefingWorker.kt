@@ -60,6 +60,7 @@ class DailyBriefingWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         Timber.d("DailyBriefingWorker: starting.")
+        var shouldScheduleNext = true
 
         val guardResult = executionGuard.runGuarded(
             WorkerGuardRequest(
@@ -96,8 +97,13 @@ class DailyBriefingWorker @AssistedInject constructor(
                     notificationId = notificationId
                 )
             }
+            shouldScheduleNext = false
             Timber.d("DailyBriefingWorker: completed successfully.")
             aiWorkScheduler.scheduleDailyBriefing()
+        }
+
+        if (shouldScheduleNext) {
+            runCatching { aiWorkScheduler.scheduleDailyBriefing() }
         }
 
         return guardResult.toWorkerResult()

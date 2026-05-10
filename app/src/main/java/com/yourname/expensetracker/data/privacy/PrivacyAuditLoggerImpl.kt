@@ -16,24 +16,48 @@ class PrivacyAuditLoggerImpl @Inject constructor(
     private val timeProvider: TimeProvider
 ) : PrivacyAuditLogger {
 
+    private val allowedContextKeys = setOf(
+        "operation", "caller", "entityType", "entityId",
+        "provider", "modelId", "payloadHash", "receiptId"
+    )
+
     override suspend fun logDecision(
         capability: PrivacyCapability,
         decision: PrivacyDecision,
         context: Map<String, String>
     ) {
         val now = timeProvider.now()
-        // TODO (P8-P1-2): Extend audit records with provider name, model ID, routing decision,
-        // redactionApplied flag, payloadHash, rawImageUploaded, and rawTextIncluded fields
-        // for cloud AI debugging and compliance.
+        val decisionStr = when (decision) {
+            is PrivacyDecision.Allowed -> "ALLOWED"
+            is PrivacyDecision.Denied -> "DENIED"
+            is PrivacyDecision.NotApplicable -> "NOT_APPLICABLE"
+            is PrivacyDecision.FailClosed -> "DENIED_FAIL_CLOSED"
+        }
+        val reason = when (decision) {
+            is PrivacyDecision.Denied -> decision.reason
+            is PrivacyDecision.FailClosed -> decision.reason
+            else -> null
+        }
+        val sanitizedContext = sanitizeContext(context)
         dao.insert(
             PrivacyAuditEvent(
                 capability = capability.name,
-                decision = if (decision is PrivacyDecision.Allowed) "ALLOWED" else "DENIED",
-                reason = (decision as? PrivacyDecision.Denied)?.reason,
-                context = JSONObject(context).toString(),
+                decision = decisionStr,
+                reason = reason,
+                context = JSONObject(sanitizedContext).toString(),
                 timestampMs = now,
                 caller = "privacy-gate"
             )
         )
+    }
+
+    private fun sanitizeContext(context: Map<String, String>): Map<String, String> {
+        val sanitized = mutableMapOf<String, String>()
+        for ((key, value) in context) {
+            if (key in allowedContextKeys && value.length <= 200) {
+                sanitized[key] = value
+            }
+        }
+        return sanitized
     }
 }

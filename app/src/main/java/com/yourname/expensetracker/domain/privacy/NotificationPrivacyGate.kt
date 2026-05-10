@@ -26,22 +26,16 @@ class NotificationPrivacyGate @Inject constructor(
                 if (!settings.notificationCaptureEnabled) {
                     val reason = "Notification capture is disabled by master toggle"
                     val decision = PrivacyDecision.Denied(reason)
-                    auditLogger.logDecision(capability, decision, context)
                     Timber.d("$reason (capability=$capability)")
                     decision
                 } else {
-                    val decision = PrivacyDecision.Allowed
-                    auditLogger.logDecision(capability, decision, context)
                     Timber.d("Notification capture allowed (capability=$capability)")
-                    decision
+                    PrivacyDecision.Allowed
                 }
             }
 
             else -> {
-                // Delegate to a default "allow" for capabilities this gate doesn't handle
-                val decision = PrivacyDecision.Allowed
-                auditLogger.logDecision(capability, decision, context)
-                decision
+                PrivacyDecision.NotApplicable
             }
         }
     }

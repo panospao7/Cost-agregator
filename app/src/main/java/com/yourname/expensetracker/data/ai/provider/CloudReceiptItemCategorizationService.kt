@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import kotlinx.coroutines.Dispatchers
@@ -48,7 +49,7 @@ class CloudReceiptItemCategorizationService @Inject constructor(
 ) : ReceiptItemCategorizationService {
 
     // Secondary constructor for tests
-    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList()), DefaultCloudPayloadRedactor())
+    constructor(secureKeyStorage: SecureKeyStorage) : this(secureKeyStorage, OkHttpClient(), CompositePrivacyGate(emptyList(), PrivacyAuditLogger.NO_OP), DefaultCloudPayloadRedactor())
     
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     

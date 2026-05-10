@@ -61,9 +61,16 @@ class WorkerExecutionGuard @Inject constructor(
 
             for (capability in request.requiredCapabilities) {
                 val decision = privacyGate.check(capability)
-                if (decision is com.yourname.expensetracker.domain.privacy.PrivacyDecision.Denied) {
-                    run.skipped("PRIVACY_$capability")
-                    return WorkerGuardResult.Skipped("Privacy blocked: $capability - ${decision.reason}")
+                when (decision) {
+                    is com.yourname.expensetracker.domain.privacy.PrivacyDecision.Denied -> {
+                        run.skipped("PRIVACY_$capability")
+                        return WorkerGuardResult.Skipped("Privacy blocked: $capability - ${decision.reason}")
+                    }
+                    is com.yourname.expensetracker.domain.privacy.PrivacyDecision.FailClosed -> {
+                        run.skipped("PRIVACY_FAIL_CLOSED_$capability")
+                        return WorkerGuardResult.Skipped("Privacy check failed (fail-closed): $capability - ${decision.reason}")
+                    }
+                    else -> { }
                 }
             }
 

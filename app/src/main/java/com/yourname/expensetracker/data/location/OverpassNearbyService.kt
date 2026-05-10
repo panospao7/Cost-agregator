@@ -50,6 +50,7 @@ class OverpassNearbyService @Inject constructor(
                 return NearbyPoiResult.Failure(GeocodingError.Disabled)
             }
             is PrivacyDecision.Allowed -> { /* proceed */ }
+            else -> { Log.w(TAG, "OVERPASS_API privacy check inconclusive — proceeding fail-safe"); return NearbyPoiResult.Failure(GeocodingError.Disabled) }
         }
 
         val query = buildOverpassQuery(lat, lon, radiusMetres)

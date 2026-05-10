@@ -51,11 +51,10 @@ class BackupPrivacyGate @Inject constructor(
             }
 
             else -> {
-                PrivacyDecision.Allowed
+                PrivacyDecision.NotApplicable
             }
         }
 
-        auditLogger.logDecision(capability, decision, context)
         if (decision is PrivacyDecision.Denied) {
             Timber.d("Backup gate denied: ${decision.reason} (capability=$capability)")
         }
