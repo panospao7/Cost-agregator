@@ -118,7 +118,14 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         }
         if (old.notificationCaptureEnabled && !updated.notificationCaptureEnabled) {
             workManager.cancelUniqueWork("data_retention")
-            Timber.i("P8: Cancelled data_retention — notification capture disabled")
+            workManager.cancelUniqueWork("receipt_matching")
+            workManager.cancelUniqueWork("warranty_expiration_check")
+            workManager.cancelUniqueWork("bill_reminder_periodic")
+            Timber.i("P8: Cancelled notification-dependent workers — notification capture disabled")
+        }
+        if (old.backgroundLocationBackfillEnabled && !updated.backgroundLocationBackfillEnabled) {
+            workManager.cancelUniqueWork("merchant_key_backfill")
+            Timber.i("P8: Cancelled merchant_key_backfill — background location disabled")
         }
     }
 

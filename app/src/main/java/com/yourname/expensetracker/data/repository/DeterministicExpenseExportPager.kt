@@ -20,6 +20,12 @@ import javax.inject.Singleton
  *   every expense is visited exactly once.
  * - **No offset scan penalty** — SQLite does not need to skip past previously-returned
  *   rows on each page, making large exports O(n) instead of O(n²).
+ *
+ * ## Snapshot limitation
+ * Keyset pagination is not a true atomic snapshot — concurrent inserts may be
+ * partially visible depending on when they commit relative to the cursor position.
+ * A true snapshot table (CREATE TABLE export_snapshot AS SELECT ...) is planned
+ * for future export passes to guarantee point-in-time consistency.
  */
 @Singleton
 class DeterministicExpenseExportPager @Inject constructor(

@@ -126,6 +126,9 @@ class RestoreMaintenanceMode @Inject constructor(
      * BAK-NE: This ensures critical jobs resume without waiting for the next
      * app start. Each worker's schedule() companion method reads its interval
      * and constraints from [WorkerSpec.DEFAULTS].
+     *
+     * TODO: WorkerRegistry — Replace this hardcoded list with a WorkerRegistry
+     * that discovers and schedules all registered workers automatically.
      */
     private fun scheduleAllWorkers() {
         // Workers that provide a companion schedule() method are called here.

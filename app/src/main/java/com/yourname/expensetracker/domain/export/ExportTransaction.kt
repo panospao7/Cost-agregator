@@ -52,5 +52,9 @@ data class ExportTransaction(
     val businessPurpose: String? = null,
     val businessCategory: String? = null,
     val businessProject: String? = null,
-    val requiresReceipt: Boolean = false
+    val requiresReceipt: Boolean = false,
+    // TODO: receiptLinks: List<ReceiptLinkExportRef> — Add receipt-to-expense
+    // link references for roundtrip export/import completeness. Currently
+    // receipt links are not exported, so restored databases may lose the
+    // association between scanned receipts and their expenses.
 )

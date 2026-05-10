@@ -15,6 +15,12 @@ import timber.log.Timber
  * - **Tier 2 (VALIDITY):** Derived, cached, or event-log tables. Row count may
  *   differ but must pass integrity and FK checks.
  * - **Tier 3 (OPTIONAL):** Cache/external data tables. May be absent entirely.
+ *
+ * ## Future verification
+ * Full semantic equivalence checks (dashboard totals, analytics, budget
+ * projections, receipt-to-expense links) are planned for a future verification
+ * pass. Current verification covers: table existence, row counts (Tier 1),
+ * PRAGMA integrity_check, and PRAGMA foreign_key_check.
  */
 object BackupVerifier {
 
@@ -83,7 +89,7 @@ object BackupVerifier {
         "spending_personality_profiles"  to VerificationTier.TIER_3_OPTIONAL,
         "stress_forecast_snapshots"      to VerificationTier.TIER_3_OPTIONAL,
         "email_receipt_sources"          to VerificationTier.TIER_3_OPTIONAL,
-        "privacy_audit_events"           to VerificationTier.TIER_3_OPTIONAL,
+        "privacy_audit_events"           to VerificationTier.TIER_1_EXACT,
         "background_job_runs"            to VerificationTier.TIER_3_OPTIONAL
     )
 

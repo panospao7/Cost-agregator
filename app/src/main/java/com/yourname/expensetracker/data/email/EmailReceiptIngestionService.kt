@@ -159,6 +159,16 @@ class EmailReceiptIngestionService(
      * @param messageId Unique message ID for deduplication
      * @return EmailReceiptResult indicating success, duplicate, or error
      */
+    /**
+     * TODO: Delegate to [ReceiptLifecycleCoordinator.processEmailReceipt]
+     * once the coordinator fully owns the email receipt ingestion lifecycle.
+     * Currently this service handles the full pipeline inline; the coordinator
+     * should become the single entry point for all receipt processing paths.
+     *
+     * TODO: Confidence threshold routing — uncertain parses (confidence below
+     * a configurable threshold) should be routed to PendingReview instead of
+     * auto-creating expenses, similar to the bank statement pipeline.
+     */
     suspend fun processEmailReceipt(
         emailBody: String,
         sender: String,
@@ -283,7 +293,14 @@ class EmailReceiptIngestionService(
                     fingerprint = fingerprint
                 )
                 val sourceId = emailReceiptDao.insertOrIgnore(emailSource)
-                if (sourceId == -1L) Timber.w("EmailReceiptSource insert conflict for receipt %d", receiptId)
+                if (sourceId == -1L) {
+                    val existingByFp = emailReceiptDao.getByFingerprint(fingerprint)
+                    if (existingByFp != null) {
+                        Timber.d("EmailReceiptSource insert conflict, returning duplicate for receipt %d", existingByFp.receiptId)
+                        return@transactionRunner EmailReceiptResult.Duplicate(existingByFp.receiptId)
+                    }
+                    Timber.w("EmailReceiptSource insert conflict for receipt %d", receiptId)
+                }
 
                 // Step 8: Route email receipts through the shared receipt processing pipeline
                 val processedReceipt = processReceiptUseCase(

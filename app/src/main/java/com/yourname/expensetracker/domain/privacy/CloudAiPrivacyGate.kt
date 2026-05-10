@@ -15,6 +15,11 @@ import javax.inject.Singleton
  * Returns [PrivacyDecision.Denied] with a specific reason when the
  * corresponding setting disables the capability. Capabilities not handled
  * by this gate default to [PrivacyDecision.Allowed].
+ *
+ * TODO: Use [EffectiveCloudAiPolicyResolver] to resolve the effective cloud AI
+ * policy from both [PrivacySettingsRepository] and [AiSettingsRepository]
+ * instead of reading privacy settings directly. This would unify the privacy
+ * and AI settings layers into a single policy result.
  */
 @Singleton
 class CloudAiPrivacyGate @Inject constructor(

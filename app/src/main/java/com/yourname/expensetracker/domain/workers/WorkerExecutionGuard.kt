@@ -91,6 +91,17 @@ class WorkerExecutionGuard @Inject constructor(
         }
     }
 
+    /**
+     * Checkpoint that long-running workers should call before each database write.
+     *
+     * Verifies that writes are still allowed (i.e. no restore/maintenance mode is
+     * active) and that the worker has not been cancelled. This is a lightweight
+     * check — call it periodically in long-running worker loops.
+     */
+    suspend fun checkpoint(operation: String) {
+        writeBarrier.checkWritesAllowed(operation)
+    }
+
     private fun classifyTransient(e: Exception): Boolean {
         val message = e.message ?: ""
         return when {

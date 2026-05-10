@@ -77,9 +77,9 @@ data class BankStatementResult(
  *    is checked via [ReceiptDuplicateDetector.checkDuplicate]. If the same
  *    file was already processed, the entire statement is rejected.
  *
- * Note: A shared `StatementTransactionDeduper` could be created in future
- * to extract this three-layer dedupe logic and reuse it across statement
- * import paths (bank screenshots, PDF statements, CSV imports).
+ * Note: A shared `BankTransactionDeduper` is planned to extract this
+ * three-layer dedupe logic and reuse it across all statement import paths
+ * (bank screenshots, PDF statements, CSV imports, and direct bank API sync).
  */
 @Singleton
 class BankStatementLifecycleProcessor @Inject constructor(

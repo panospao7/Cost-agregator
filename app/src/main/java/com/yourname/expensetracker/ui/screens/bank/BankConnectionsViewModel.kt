@@ -12,7 +12,9 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
-class BankConnectionsViewModel @Inject constructor() : ViewModel() {
+class BankConnectionsViewModel @Inject constructor(
+    // TODO: Inject real BankRepository when available
+) : ViewModel() {
     
     private val _connections = MutableStateFlow<List<BankConnection>>(emptyList())
     val connections: StateFlow<List<BankConnection>> = _connections.asStateFlow()
@@ -21,14 +23,27 @@ class BankConnectionsViewModel @Inject constructor() : ViewModel() {
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
     
     init {
-        loadConnections()
+        // P0-02: Load connections from stub list until real repository injection is wired
+        _connections.value = com.yourname.expensetracker.domain.bank.BankApiIntegration.SUPPORTED_BANKS.map { bank ->
+            BankConnection(
+                bankId = bank.id,
+                bankName = bank.name,
+                countryCode = bank.countryCode,
+                isConnected = false,
+                isActive = false,
+                accessToken = null,
+                refreshToken = null,
+                tokenEncryptionVersion = 0,
+                tokenExpiry = null,
+                createdAt = 0L
+            )
+        }
     }
     
     private fun loadConnections() {
         viewModelScope.launch {
             _isLoading.value = true
-            // Would load from repository
-            _connections.value = emptyList()
+            // TODO: Load from real repository once injected
             _isLoading.value = false
         }
     }

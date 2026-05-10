@@ -1,5 +1,13 @@
 package com.yourname.expensetracker.domain.privacy
 
+/**
+ * Standardized privacy-denied states for UI messaging.
+ *
+ * Each subclass maps to a specific [PrivacyCapability] that was denied, with a
+ * human-readable [reason] string. UI components should use these classes for
+ * consistent privacy-denied messaging across all screens rather than
+ * constructing ad-hoc error strings.
+ */
 sealed interface PrivacyBlocked {
     val capability: PrivacyCapability
     val reason: String

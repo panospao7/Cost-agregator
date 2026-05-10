@@ -143,6 +143,10 @@ class BankApiIntegration @Inject constructor(
         // 3. Map API response to BankTransaction objects
         // 4. Convert to Expense entities
         // 5. Handle duplicates
+        // TODO: BankTransactionClassifier — Route low-confidence transactions
+        // to PendingReview instead of auto-creating expenses. A classifier
+        // should evaluate merchant name match quality, amount plausibility,
+        // and description coherence before auto-import.
         
         try {
             // Check if token is expired

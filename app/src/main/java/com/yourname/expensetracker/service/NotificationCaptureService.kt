@@ -412,8 +412,10 @@ class NotificationCaptureService : NotificationListenerService() {
         cleanupCacheIfNeeded()
 
         // P1-05: Fast privacy gate check BEFORE extracting text from extras.
-        // Only packageName is read at this point; privacy decision is determined
-        // from the cached PrivacyGate state (no suspend call on the main thread).
+        // Uses a cached @Volatile flag updated reactively from the privacy
+        // settings Flow — avoids calling the suspend PrivacyGate.check() on
+        // the main thread and allows rejecting notifications before any text
+        // extraction from extras (zero PII read).
         if (isPrivacyDeniedFast()) {
             Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction)")
             return

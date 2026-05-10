@@ -12,6 +12,9 @@ import com.yourname.expensetracker.domain.export.ExportTransaction
 import com.yourname.expensetracker.domain.export.toExportTransaction
 import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -65,7 +68,8 @@ class ExportOptionsViewModel @Inject constructor(
     private val quickBooksExporter: QuickBooksIIFExporter,
     private val freshBooksExporter: FreshBooksExporter,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
-    private val readBarrier: DatabaseReadBarrier
+    private val readBarrier: DatabaseReadBarrier,
+    private val privacyGate: PrivacyGate
 ) : ViewModel() {
 
     companion object {
@@ -153,6 +157,19 @@ class ExportOptionsViewModel @Inject constructor(
                 exportSuccess = false,
                 error = null
             )
+
+            // P1-06: Privacy gate check for raw/plaintext export
+            val privacyDecision = privacyGate.check(
+                PrivacyCapability.RAWBACKUP_EXPORT,
+                mapOf("operation" to "export")
+            )
+            if (privacyDecision is PrivacyDecision.Denied) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = "Export denied by privacy settings: ${privacyDecision.reason}"
+                )
+                return@launch
+            }
 
             if (!restoreMaintenanceMode.isWritesAllowed()) {
                 _uiState.value = _uiState.value.copy(

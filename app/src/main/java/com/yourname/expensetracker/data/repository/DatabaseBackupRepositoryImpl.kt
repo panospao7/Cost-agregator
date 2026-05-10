@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.os.Environment
+import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.backup.BackupVerifier
 import com.yourname.expensetracker.data.backup.CostbackupBundle
 import com.yourname.expensetracker.data.backup.RestoreJournal
@@ -308,6 +309,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     
     @Deprecated("Use createCostBackup() for production. Raw DB export is debug-only.")
     override suspend fun exportDatabase(): Result<File> = withContext(ioDispatcher) {
+        // P1-11: Raw DB export is disabled in release builds
+        if (!BuildConfig.DEBUG) throw UnsupportedOperationException("Raw DB export disabled in release")
         try {
             val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
             if (!dbFile.exists()) {
@@ -457,9 +460,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
             }
 
+            // P1-05: Enter backup maintenance mode for point-in-time consistency
+            restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.BACKUP_EXPORTING)
+            Timber.d("BackupOperationEvent.BACKUP_STARTED: entering BACKUP_EXPORTING mode")
+
             // WAL checkpoint
             val checkpointResult = checkpointWal()
             if (checkpointResult.isFailure) {
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(
                     checkpointResult.exceptionOrNull() ?: Exception("Failed to checkpoint WAL")
                 )
@@ -467,6 +475,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
             val dbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
             if (!dbFile.exists()) {
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(Exception("Database file not found"))
             }
 
@@ -530,18 +539,22 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
 
                 if (result.isFailure) {
+                    restoreMaintenanceMode.exit(forceRestartRequired = false)
                     return@withContext Result.failure(
                         result.exceptionOrNull() ?: Exception("Failed to create .costbackup bundle")
                     )
                 }
 
                 Timber.d("Created .costbackup: %s", outputFile.absolutePath)
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
+                Timber.d("BackupOperationEvent.BACKUP_COMPLETED: backup finished successfully")
                 Result.success(outputFile)
             } finally {
                 tempDb.delete()
             }
         } catch (e: Exception) {
             Timber.e(e, "Failed to create .costbackup bundle")
+            restoreMaintenanceMode.exit(forceRestartRequired = false)
             Result.failure(e)
         }
     }
@@ -868,6 +881,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      *
      * Backup files are named as "{receiptId}_{originalFilename}", so we parse the
      * receipt ID from the filename to locate the corresponding DB record.
+     *
+     * ## Idempotency
+     * Asset restore is best-effort. If the DB transaction that updates image paths
+     * is rolled back, the DB remains consistent — orphan asset files left on disk
+     * are cleaned up by the periodic receipt asset cleanup job.
      *
      * @return list of warning messages for any files that could not be restored.
      */
