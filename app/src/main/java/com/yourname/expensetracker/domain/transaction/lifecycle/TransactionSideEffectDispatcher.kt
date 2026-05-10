@@ -159,6 +159,25 @@ class TransactionSideEffectDispatcher @Inject constructor(
         // No merchant pattern learning on delete — the pattern may still be valid
     }
 
+    /**
+     * P2-07: Dispatch aggregate post-commit side effects for bulk operations.
+     *
+     * Instead of N per-row budget checks / anomaly evaluations, runs a single
+     * holistic recalculation. This prevents side-effect storms while still
+     * ensuring cache/budget/anomaly state is fresh after bulk mutations.
+     *
+     * @param source       The source/origin of the bulk update.
+     * @param affectedCount Number of rows affected (for logging).
+     */
+    suspend fun dispatchOnBulkUpdated(source: String, affectedCount: Int) {
+        Timber.d("TransactionSideEffectDispatcher: bulk update recalculation (source=%s, affected=%d)", source, affectedCount)
+
+        // Single budget re-check for overall state after bulk mutation
+        runSafely("bulk budget check (source=$source, affected=$affectedCount)") {
+            budgetMonitor.get().checkBudgets()
+        }
+    }
+
     private suspend fun runSafely(action: String, block: suspend () -> Unit) {
         try {
             block()

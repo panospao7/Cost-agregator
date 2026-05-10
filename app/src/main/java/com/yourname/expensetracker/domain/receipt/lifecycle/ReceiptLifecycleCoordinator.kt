@@ -123,6 +123,19 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * Options that control receipt processing behaviour.
+     *
+     * @param createReview When true, a [PendingReview] is created so the receipt
+     *                     appears in the review queue for user confirmation.
+     * @param autoMatchExistingExpense When true, the matching side effect may
+     *                                 auto-link to existing expenses.
+     */
+    data class ReceiptProcessingOptions(
+        val createReview: Boolean = false,
+        val autoMatchExistingExpense: Boolean = true
+    )
+
+    /**
      * Processes a receipt input URI through the full lifecycle.
      *
      * Full implementation (PR 4):
@@ -138,10 +151,14 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      *    writes an OCR_FAILED event.
      *
      * @param uri The content URI of the receipt image / PDF.
+     * @param options Processing options controlling review creation and auto-matching.
      * @return [Result.success] with the saved [ScannedReceipt] on success,
      *         [Result.failure] on validation or processing error.
      */
-    suspend fun processReceiptInput(uri: Uri): Result<ScannedReceipt> {
+    suspend fun processReceiptInput(
+        uri: Uri,
+        options: ReceiptProcessingOptions = ReceiptProcessingOptions()
+    ): Result<ScannedReceipt> {
         // Guard: block writes during restore maintenance mode
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             return Result.failure(IllegalStateException("Database writes blocked during restore"))
@@ -161,7 +178,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         return try {
             val (receipt, parsed) = receiptRepository.processReceipt(
                 imageUri = uri,
-                autoCreateReview = false
+                autoCreateReview = options.createReview
             )
 
             // RCP-14 / RCP-6: Capture taxInclusive from the parser result for
@@ -207,11 +224,15 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 }
             }
 
-            // Determine processing status based on receipt content
+            // Determine processing status based on receipt content.
+            // P3-P1-09: Respect PARSE_FAILED status set by the repository when
+            // OCR succeeds but the parser throws an exception. Previously the
+            // coordinator would reclassify these as OCR_COMPLETED.
             val isOcrFailure = receipt.rawOcrText == "[OCR Failed or Skipped]" ||
                 receipt.rawOcrText.startsWith("Scan Failed:")
             val processingStatus = when {
                 isOcrFailure -> ReceiptProcessingStatus.OCR_FAILED.name
+                receipt.processingStatus == ReceiptProcessingStatus.PARSE_FAILED.name -> ReceiptProcessingStatus.PARSE_FAILED.name
                 receipt.parsedMerchant != null -> ReceiptProcessingStatus.PARSED.name
                 else -> ReceiptProcessingStatus.OCR_COMPLETED.name
             }

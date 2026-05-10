@@ -27,6 +27,7 @@ import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.OcrResult
 import com.yourname.expensetracker.domain.receipt.ReceiptOcrService
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
+import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAssetStore
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
@@ -150,8 +151,9 @@ class ReceiptRepository @Inject constructor(
             }
 
             try {
-                // 2. Parse the OCR text
-                val parsed = receiptParser.parse(ocrResult.fullText)
+                // 2. Parse the OCR text with the user's home currency as fallback
+                val homeCur = homeCurrency()
+                val parsed = receiptParser.parse(ocrResult.fullText, homeCurrency = homeCur)
 
                 // 3. Normalize merchant if found
                 val lookupResult = parsed.merchantName?.let {
@@ -170,7 +172,8 @@ class ReceiptRepository @Inject constructor(
                         receiptParser.lineItemsToJson(parsed.lineItems) else null,
                     parsedTaxAmount = parsed.tax,
                     currency = parsed.currency,
-                    confidence = parsed.confidence
+                    confidence = parsed.confidence,
+                    createdAt = timeProvider.now()
                 )
 
                 val receiptId = database.withTransaction {
@@ -227,7 +230,8 @@ class ReceiptRepository @Inject constructor(
                     parsedItems = null,
                     parsedTaxAmount = null, // Explicitly null for failed parse
                     currency = homeCurrency(),
-                    confidence = 0f
+                    confidence = 0f,
+                    processingStatus = ReceiptProcessingStatus.PARSE_FAILED.name
                 )
                 val receiptId = scannedReceiptDao.insert(failedReceipt)
                 require(receiptId > 0) { "Receipt insert failed (conflict): imagePath=${failedReceipt.imagePath}" }
@@ -585,7 +589,12 @@ class ReceiptRepository @Inject constructor(
                         semaphore.withPermit {
                             try {
                                 // Route through the lifecycle coordinator for full lifecycle coverage
-                                val outcome = receiptLifecycleCoordinator.get().processReceiptInput(uri)
+                                val outcome = receiptLifecycleCoordinator.get().processReceiptInput(
+                                    uri,
+                                    options = ReceiptLifecycleCoordinator.ReceiptProcessingOptions(
+                                        createReview = true
+                                    )
+                                )
                                 BatchItemResult(
                                     success = outcome.isSuccess,
                                     error = outcome.exceptionOrNull()?.message

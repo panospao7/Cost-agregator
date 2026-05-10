@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
+import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
@@ -10,6 +11,7 @@ import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.toDbTransactionType
+import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.ai.usecase.CleanTransaction
@@ -68,6 +70,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
     private val timeProvider: TimeProvider,
     private val bankStatementParser: BankStatementParser,
     private val pendingReviewDao: PendingReviewDao,
+    private val expenseDao: ExpenseDao,
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val duplicateDetector: ReceiptDuplicateDetector,
@@ -282,18 +285,59 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         }
                     }
 
-                    // ── Deduplication check ────────────────────────────────────
-                    val existingPending = pendingReviewDao.getPendingByMerchant(
+                    // P3-P1-11: Strengthened deduplication — check both existing
+                    // expenses AND pending reviews with date window, amount tolerance,
+                    // currency, and transaction type.  Previously only checked pending
+                    // reviews by merchant with a tight 0.01 amount diff, missing
+                    // existing approved expenses entirely.
+                    val txType = tx.type.toDbTransactionType()
+                    val dedupWindow = DuplicateDetectionPolicy.DUPLICATE_WINDOW_MS
+                    val amountTolerance = DuplicateDetectionPolicy.AMOUNT_TOLERANCE
+                    val startDate = transactionDate - dedupWindow
+                    val endDate = DuplicateDetectionPolicy.windowEndExclusive(transactionDate)
+                    val minAmount = tx.amount - amountTolerance
+                    val maxAmount = tx.amount + amountTolerance
+
+                    // Check existing approved expenses
+                    val hasExpenseDuplicate = expenseDao.existsByMerchantKeyInRangeCurrencyAware(
                         merchantKey = merchantKey,
-                        merchantName = normalizedMerchant
-                    ).firstOrNull { review ->
-                        val amountDiff = kotlin.math.abs((review.suggestedAmount ?: 0.0) - tx.amount)
-                        amountDiff < 0.01 && review.suggestedCurrency == tx.currency
+                        startDate = startDate,
+                        endDate = endDate,
+                        minAmount = minAmount,
+                        maxAmount = maxAmount,
+                        currency = tx.currency,
+                        transactionType = txType.name
+                    ) || expenseDao.existsByMerchantInRangeCurrencyAware(
+                        merchant = normalizedMerchant,
+                        startDate = startDate,
+                        endDate = endDate,
+                        minAmount = minAmount,
+                        maxAmount = maxAmount,
+                        currency = tx.currency,
+                        transactionType = txType.name
+                    )
+
+                    if (hasExpenseDuplicate) {
+                        duplicatesSkipped++
+                        parsingLogs.add("SKIP: Existing expense duplicate for ${tx.merchant} ${"%.2f".format(tx.amount)} $tx.currency")
+                        continue
                     }
 
-                    if (existingPending != null) {
+                    // Check existing pending reviews with proper tolerance window
+                    val duplicateReview = pendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware(
+                        merchantKey = merchantKey,
+                        merchantName = normalizedMerchant,
+                        startDate = startDate,
+                        endDate = endDate,
+                        minAmount = minAmount,
+                        maxAmount = maxAmount,
+                        currency = tx.currency,
+                        transactionType = txType.name
+                    )
+
+                    if (duplicateReview != null) {
                         duplicatesSkipped++
-                        parsingLogs.add("SKIP: Pending review already exists for ${tx.merchant} €${tx.amount}")
+                        parsingLogs.add("SKIP: Pending review already exists for ${tx.merchant} ${"%.2f".format(tx.amount)} $tx.currency (reviewId=${duplicateReview.id})")
                         continue
                     }
 

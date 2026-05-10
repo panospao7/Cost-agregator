@@ -276,10 +276,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
                             dedupeKey = expense.dedupeKey
                         )
                         // Write duplicate resolution event
-                        writeDuplicateEvent(expense, request, now, duplicateId, "Bulk import duplicate")
+                        val eventLogged = writeDuplicateEvent(expense, request, now, duplicateId, "Bulk import duplicate")
                         return CreateExpenseResult.DuplicateSkipped(
                             existingExpenseId = duplicateId ?: -1L,
-                            reason = "Bulk import duplicate: amount=${expense.amount}, merchant=${expense.merchant}, date=${expense.date}"
+                            reason = "Bulk import duplicate: amount=${expense.amount}, merchant=${expense.merchant}, date=${expense.date}",
+                            eventLogged = eventLogged
                         )
                     }
                 }
@@ -310,10 +311,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
                             dedupeKey = expense.dedupeKey
                         )
                         // Write duplicate resolution event with metadata
-                        writeDuplicateEvent(expense, request, now, duplicateId, "Standard duplicate")
+                        val eventLogged = writeDuplicateEvent(expense, request, now, duplicateId, "Standard duplicate")
                         return CreateExpenseResult.DuplicateSkipped(
                             existingExpenseId = duplicateId ?: -1L,
-                            reason = "Duplicate expense detected: amount=${expense.amount}, merchant=${expense.merchant}, date=${expense.date}"
+                            reason = "Duplicate expense detected: amount=${expense.amount}, merchant=${expense.merchant}, date=${expense.date}",
+                            eventLogged = eventLogged
                         )
                     }
                 }
@@ -374,7 +376,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             if (dedupMode == DeduplicationMode.STRICT_EXTERNAL_ID && expense.dedupeKey != null) {
                 val existingId = expenseDao.findIdByDedupeKey(expense.dedupeKey!!)
                 if (existingId != null) {
-                    runCatching {
+                    val eventLogged = runCatching {
                         transactionEventDao.insert(
                             TransactionEvent(
                                 expenseId = existingId,
@@ -393,10 +395,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
                                 reason = "STRICT_EXTERNAL_ID idempotent retry resolved to existing expense"
                             )
                         )
-                    }
+                        true
+                    }.getOrDefault(false)
                     return CreateExpenseResult.DuplicateSkipped(
                         existingExpenseId = existingId,
-                        reason = "Idempotent STRICT_EXTERNAL_ID duplicate resolved"
+                        reason = "Idempotent STRICT_EXTERNAL_ID duplicate resolved",
+                        eventLogged = eventLogged
                     )
                 }
             }
@@ -1113,9 +1117,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
         val merchantKey = MerchantKeyGenerator.generate(merchant)
         val now = timeProvider.now()
+        var affectedCount = 0
 
         database.withTransaction {
-            expenseDao.updateCategoryForMerchant(merchantKey, newCategoryId)
+            affectedCount = expenseDao.updateCategoryForMerchant(merchantKey, newCategoryId)
             transactionEventDao.insert(TransactionEvent(
                 expenseId = null,
                 eventType = LifecycleEventType.BULK_UPDATED.name,
@@ -1126,14 +1131,31 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     put("merchant", merchant)
                     put("merchantKey", merchantKey)
                     put("newCategoryId", newCategoryId)
+                    put("affectedCount", affectedCount)
                 }.toString(),
                 reason = reason
             ))
         }
 
-        // Side effects intentionally skipped for bulk update — touching many rows
-        // would flood the system. Budget/anomaly/merchant state should be
-        // re-evaluated holistically, not per-row.
+        // P2-07: Dispatch single aggregate post-commit recalculation for bulk updates.
+        if (affectedCount > 0) {
+            dispatchBulkPostCommitSideEffects(source, affectedCount)
+        }
+    }
+
+    /**
+     * P2-07: Aggregate post-commit recalculation for bulk operations.
+     * Instead of per-row side effects flooded across N expenses, dispatch a
+     * single budget recheck and cache invalidation. This prevents storms while
+     * still ensuring holistic state freshness.
+     */
+    private suspend fun dispatchBulkPostCommitSideEffects(source: String, affectedCount: Int) {
+        try {
+            sideEffectDispatcher.dispatchOnBulkUpdated(source, affectedCount)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w(e, "Non-critical: aggregate bulk side effects failed (affectedCount=%d)", affectedCount)
+        }
     }
 
     /**
@@ -1183,11 +1205,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
         val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
         val now = timeProvider.now()
+        var affectedCount = 0
 
         database.withTransaction {
             // Fetch affected rows inside transaction to prevent TOCTOU race
             val affectedExpenses = expenseDao.getExpensesByMerchantKey(oldMerchantKey)
             if (affectedExpenses.isEmpty()) return@withTransaction
+            affectedCount = affectedExpenses.size
+            val affectedCount = affectedExpenses.size
 
             for (expense in affectedExpenses) {
                 val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
@@ -1200,7 +1225,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 put("newMerchant", newMerchant)
                 put("oldMerchantKey", oldMerchantKey)
                 put("newMerchantKey", newMerchantKey)
-                put("affectedCount", affectedExpenses.size)
+                put("affectedCount", affectedCount)
             }.toString()
             transactionEventDao.insert(TransactionEvent(
                 expenseId = null,
@@ -1213,9 +1238,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
             ))
         }
 
-        // Side effects intentionally skipped for bulk update — touching many rows
-        // would flood the system. Budget/anomaly/merchant state should be
-        // re-evaluated holistically, not per-row.
+        // P2-07: Dispatch single aggregate post-commit recalculation for bulk updates.
+        dispatchBulkPostCommitSideEffects(source, affectedCount)
     }
 
     /**
@@ -1235,13 +1259,51 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         actor: String? = null
     ): Result<Unit> {
-        // Guard: block writes during restore maintenance mode
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             return Result.failure(IllegalStateException("Database writes blocked during restore"))
         }
-        val expense = expenseDao.getById(expenseId)
-            ?: return Result.failure(IllegalArgumentException("Expense not found: $expenseId"))
-        return deleteExpense(expense, source, reason, actor)
+        // P2-08: Load snapshot inside the transaction to prevent TOCTOU stale snapshots.
+        val now = timeProvider.now()
+        return try {
+            var loadedExpense: Expense? = null
+            database.withTransaction {
+                loadedExpense = expenseDao.getById(expenseId)
+                    ?: return@withTransaction
+                val snapshot = expenseToSnapshot(loadedExpense!!)
+                transactionEventDao.insert(
+                    TransactionEvent(
+                        expenseId = expenseId,
+                        eventType = LifecycleEventType.DELETED.name,
+                        source = source,
+                        actor = actor,
+                        occurredAt = now,
+                        dedupeKey = loadedExpense!!.dedupeKey,
+                        duplicateExpenseId = null,
+                        beforeSnapshot = snapshot,
+                        afterSnapshot = null,
+                        metadata = null,
+                        reason = reason
+                    )
+                )
+                expenseDao.delete(loadedExpense!!)
+            }
+            if (loadedExpense == null) {
+                return Result.failure(IllegalArgumentException("Expense not found: $expenseId"))
+            }
+            try {
+                sideEffectDispatcher.dispatchOnDeleted(expenseId, source)
+            } catch (e: Exception) {
+                Timber.w(e, "Non-critical: side effects failed after deleting expense %d", expenseId)
+            }
+            try {
+                recurringLifecycleCoordinator.unlinkExpenseFromOccurrence(expenseId)
+            } catch (e: Exception) {
+                Timber.w(e, "Non-critical: failed to unlink expense %d from recurring occurrence", expenseId)
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     /**
@@ -1424,7 +1486,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         occurredAt: Long,
         duplicateExpenseId: Long?,
         reason: String
-    ) {
+    ): Boolean {
         val metadata = JSONObject().apply {
             put("reason", reason)
             put("existingExpenseId", duplicateExpenseId ?: -1L)
@@ -1435,10 +1497,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
             put("attemptedMerchantKey", expense.merchantKey)
         }.toString()
 
-        try {
+        return try {
             transactionEventDao.insert(
                 TransactionEvent(
-                    expenseId = duplicateExpenseId,  // Reference the existing expense
+                    expenseId = duplicateExpenseId,
                     eventType = LifecycleEventType.CREATE_DUPLICATE_SKIPPED.name,
                     source = request.source.name,
                     actor = null,
@@ -1451,9 +1513,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     reason = reason
                 )
             )
+            true
         } catch (error: Exception) {
             if (error is kotlinx.coroutines.CancellationException) throw error
             Timber.w(error, "Failed to write duplicate-skip event for expense")
+            false
         }
     }
 

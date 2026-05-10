@@ -124,7 +124,8 @@ class BankApiIntegration @Inject constructor(
             accessToken = BankTokenCipher.encryptIfNeeded("demo_token_$bankId"),
             refreshToken = BankTokenCipher.encryptIfNeeded("demo_refresh_$bankId"),
             tokenEncryptionVersion = 1,
-            tokenExpiry = timeProvider.now() + (30 * 24 * 60 * 60 * 1000L)
+            tokenExpiry = timeProvider.now() + (30 * 24 * 60 * 60 * 1000L),
+            createdAt = timeProvider.now()
         )
     }
     

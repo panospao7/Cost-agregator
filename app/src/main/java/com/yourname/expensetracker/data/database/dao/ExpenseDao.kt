@@ -280,7 +280,7 @@ interface ExpenseDao {
     suspend fun updateCategoryNullable(expenseId: Long, categoryId: Long?)
 
     @Query("UPDATE expenses SET categoryId = :categoryId WHERE merchantKey = :merchantKey")
-    suspend fun updateCategoryForMerchant(merchantKey: String, categoryId: Long)
+    suspend fun updateCategoryForMerchant(merchantKey: String, categoryId: Long): Int
 
 @Query("UPDATE expenses SET merchant = :newMerchant, merchantKey = :newMerchantKey, dedupeKey = NULL WHERE merchantKey = :oldMerchantKey")
 suspend fun updateMerchantForMerchant(oldMerchantKey: String, newMerchant: String, newMerchantKey: String)

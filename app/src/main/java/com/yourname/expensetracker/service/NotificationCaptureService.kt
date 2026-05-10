@@ -51,7 +51,13 @@ internal data class NotificationTextParts(
     val infoText: String?,
     val summaryText: String?,
     /** Resolved bigText with infoText/summaryText fallback. */
-    val effectiveBigText: String?
+    val effectiveBigText: String?,
+    /** Lines from `Notification.EXTRA_TEXT_LINES` — many bank/SMS notifications place transaction details here. */
+    val textLines: List<String>,
+    /** Messages from `Notification.EXTRA_MESSAGES` — messaging-style extras. */
+    val messages: List<String>,
+    /** All unique non-blank text joined into a single body for filter/hash/parser. */
+    val combinedBody: String
 ) {
     companion object {
         fun extract(extras: android.os.Bundle): NotificationTextParts {
@@ -64,6 +70,25 @@ internal data class NotificationTextParts(
             val effectiveBigText = bigText?.takeIf { it.isNotBlank() }
                 ?: infoText?.takeIf { it.isNotBlank() }
                 ?: summaryText?.takeIf { it.isNotBlank() }
+
+            val textLines = try {
+                extras.getCharSequenceArray(android.app.Notification.EXTRA_TEXT_LINES)
+                    ?.mapNotNull { it?.toString()?.takeIf { s -> s.isNotBlank() } }
+                    ?: emptyList()
+            } catch (_: Exception) { emptyList() }
+
+            val messages = try {
+                extras.getParcelableArray(android.app.Notification.EXTRA_MESSAGES)
+                    ?.mapNotNull { it?.toString()?.takeIf { s -> s.isNotBlank() } }
+                    ?: emptyList()
+            } catch (_: Exception) { emptyList() }
+
+            val uniqueParts = linkedSetOf<String>()
+            listOfNotNull(title, text, bigText, subText, infoText, summaryText).forEach { uniqueParts += it }
+            textLines.forEach { uniqueParts += it }
+            messages.forEach { uniqueParts += it }
+            val combinedBody = uniqueParts.joinToString(" ")
+
             return NotificationTextParts(
                 title = title,
                 text = text,
@@ -71,17 +96,17 @@ internal data class NotificationTextParts(
                 subText = subText,
                 infoText = infoText,
                 summaryText = summaryText,
-                effectiveBigText = effectiveBigText
+                effectiveBigText = effectiveBigText,
+                textLines = textLines,
+                messages = messages,
+                combinedBody = combinedBody
             )
         }
     }
 }
 
-internal fun computeNotificationContentHash(
-    title: String?,
-    text: String?,
-    effectiveBigText: String?
-): Int = (title.orEmpty() + text.orEmpty() + effectiveBigText.orEmpty()).hashCode()
+internal fun computeNotificationContentHash(parts: NotificationTextParts): Int =
+    parts.combinedBody.hashCode()
 
 internal class NotificationServiceWorkTracker {
     private val lock = Any()
@@ -196,6 +221,13 @@ class NotificationCaptureService : NotificationListenerService() {
 
     @Volatile
     private var isShuttingDown = false
+
+    /**
+     * P1-05: Cached privacy gate for fast pre-extraction denial.
+     * Updated reactively from [PrivacySettingsRepository] settings flow.
+     */
+    @Volatile
+    private var capturePrivacyDenied = false
     
     // Thread-safe, bounded deduplication cache (INS-005)
     private val processedNotifications = java.util.Collections.synchronizedMap(
@@ -230,6 +262,20 @@ class NotificationCaptureService : NotificationListenerService() {
             scheduleRestartAlarm()
         } catch (e: Exception) {
             Timber.e(e, "Failed to schedule restart alarm, continuing without")
+        }
+        observePrivacySettings()
+    }
+
+    private fun observePrivacySettings() {
+        serviceScope.launch {
+            try {
+                privacySettingsRepository.observeSettings().collect { settings ->
+                    capturePrivacyDenied = !settings.notificationCaptureEnabled
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to observe privacy settings, defaulting to allowed")
+                capturePrivacyDenied = false
+            }
         }
     }
 
@@ -348,50 +394,59 @@ class NotificationCaptureService : NotificationListenerService() {
 
         val packageName = sbn.packageName
 
-        // Check maintenance mode — if restore is in progress, drop all notifications
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             Timber.d("Maintenance mode active — dropping notification from %s", packageName)
             return
         }
-        
+
+        if (isShuttingDown) return
+
+        val now = timeProvider.now()
+        val dedupeKeyRaw = sbn.key
+        val coarseDedupeKey = "$dedupeKeyRaw:$now"
+        val lastProcessed = processedNotifications[coarseDedupeKey]
+        if (lastProcessed != null && (now - lastProcessed) < DEDUP_WINDOW_MS) {
+            return
+        }
+        processedNotifications[coarseDedupeKey] = now
+        cleanupCacheIfNeeded()
+
+        // P1-05: Fast privacy gate check BEFORE extracting text from extras.
+        // Only packageName is read at this point; privacy decision is determined
+        // from the cached PrivacyGate state (no suspend call on the main thread).
+        if (isPrivacyDeniedFast()) {
+            Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction)")
+            return
+        }
+
         // Single extraction pass — every downstream consumer (filter, hash,
         // fingerprint, entity, parser) sees the same resolved fields.
         val extras = sbn.notification.extras
         val parts = NotificationTextParts.extract(extras)
 
-        // Filter uses effectiveBigText so notifications with transaction info
-        // in infoText/summaryText are not dropped prematurely (P0-2 fix).
         if (!NotificationFilter.shouldCapture(
                 packageName,
                 parts.title,
                 parts.text,
-                parts.effectiveBigText
+                parts.combinedBody
             )) return
-        
-        // Content hash uses the same resolved fields as the filter so that an
-        // update to infoText/summaryText is seen as new content (P1-3 fix).
-        val contentHash = computeNotificationContentHash(parts.title, parts.text, parts.effectiveBigText)
-        val dedupeKey = "${sbn.key}:$contentHash"
-        val now = timeProvider.now()
-        
-        val lastProcessed = processedNotifications[dedupeKey]
-        if (lastProcessed != null && (now - lastProcessed) < DEDUP_WINDOW_MS) {
-            return
-        }
-        
-        processedNotifications[dedupeKey] = now
-        cleanupCacheIfNeeded()
 
-        if (isShuttingDown) return
         workTracker.launch(serviceScope) {
-            when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
-                is PrivacyDecision.Denied -> {
-                    Timber.d("Privacy gate denied notification capture from $packageName")
-                    return@launch
+            try {
+                when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
+                    is PrivacyDecision.Denied -> {
+                        Timber.d("Privacy gate denied notification capture from $packageName")
+                        return@launch
+                    }
+                    is PrivacyDecision.Allowed -> { /* proceed */ }
                 }
-                is PrivacyDecision.Allowed -> { /* proceed */ }
+                processNotification(sbn, packageName, parts, extras)
+            } finally {
+                // P1-07: Remove dedupe key on cancellation/failure so retry is possible.
+                synchronized(processedNotifications) {
+                    processedNotifications.remove(coarseDedupeKey)
+                }
             }
-            processNotification(sbn, packageName, parts, extras)
         }
     }
     
@@ -404,6 +459,13 @@ class NotificationCaptureService : NotificationListenerService() {
             }
         }
     }
+
+    /**
+     * P1-05: Fast in-memory privacy check using a cached flag.
+     * Avoids calling the suspend [PrivacyGate.check] on the main thread and
+     * allows rejecting notifications BEFORE any text extraction from extras.
+     */
+    private fun isPrivacyDeniedFast(): Boolean = capturePrivacyDenied
 
     private suspend fun processNotification(
         sbn: StatusBarNotification,
@@ -443,7 +505,7 @@ class NotificationCaptureService : NotificationListenerService() {
                     packageName = packageName,
                     title = parts.title,
                     text = parts.text,
-                    bigText = parts.effectiveBigText,
+                    bigText = parts.combinedBody,
                     timestamp = sbn.postTime
                 )
             )
@@ -462,7 +524,7 @@ class NotificationCaptureService : NotificationListenerService() {
                     packageName = packageName,
                     title = parts.title,
                     text = parts.text,
-                    bigText = parts.effectiveBigText,
+                    bigText = parts.combinedBody,
                     timestamp = sbn.postTime
                 )
             )
@@ -472,7 +534,7 @@ class NotificationCaptureService : NotificationListenerService() {
                 appName = appName,
                 title = parts.title,
                 text = parts.text,
-                bigText = parts.effectiveBigText,
+                bigText = parts.combinedBody,
                 subText = parts.subText,
                 extrasJson = extrasJson,
                 timestamp = sbn.postTime,
@@ -481,7 +543,7 @@ class NotificationCaptureService : NotificationListenerService() {
                     packageName = packageName,
                     title = parts.title,
                     text = parts.text,
-                    bigText = parts.effectiveBigText,
+                    bigText = parts.combinedBody,
                     timestamp = sbn.postTime
                 )
             )
@@ -525,7 +587,7 @@ class NotificationCaptureService : NotificationListenerService() {
                 packageName,
                 parts.title,
                 parts.text,
-                parts.effectiveBigText
+                parts.combinedBody
             )) {
             Timber.d("Skipping (shouldCapture=false): $packageName")
             return

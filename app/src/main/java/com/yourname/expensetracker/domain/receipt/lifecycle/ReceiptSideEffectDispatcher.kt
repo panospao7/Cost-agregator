@@ -1,12 +1,19 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
+import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
+import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+import com.yourname.expensetracker.data.database.entity.MatchStatus
+import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.ai.usecase.CategorizeReceiptItemsUseCase
 import com.yourname.expensetracker.domain.price.PriceProtectionTracker
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
+import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
 import com.yourname.expensetracker.domain.usecase.warranty.AutoCreateWarrantyFromReceiptUseCase
+import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -35,7 +42,11 @@ class ReceiptSideEffectDispatcher @Inject constructor(
     private val autoCreateWarrantyUseCase: AutoCreateWarrantyFromReceiptUseCase,
     private val categorizeReceiptItemsUseCase: CategorizeReceiptItemsUseCase,
     private val receiptTransactionMatcher: ReceiptTransactionMatcher,
-    private val priceProtectionTracker: PriceProtectionTracker
+    private val priceProtectionTracker: PriceProtectionTracker,
+    private val receiptLinkService: ReceiptLinkService,
+    private val scannedReceiptDao: ScannedReceiptDao,
+    private val receiptEventDao: ReceiptEventDao,
+    private val timeProvider: TimeProvider
 ) {
 
     /**
@@ -82,9 +93,56 @@ class ReceiptSideEffectDispatcher @Inject constructor(
                         Timber.w("Item categorization failed for receipt %d", receipt.id)
                     }
 
-                    // Transaction matching against recent expenses
+                    // P3-P1-03: Transaction matching against recent expenses — persist results
                     try {
-                        receiptTransactionMatcher.findBestMatch(receipt)
+                        val matchResult = receiptTransactionMatcher.findBestMatch(receipt)
+                        when (matchResult) {
+                            is MatchResult.AutoMatch -> {
+                                // Strong match: auto-link receipt to matched expense
+                                receiptLinkService.linkReceiptToExpense(
+                                    receiptId = receipt.id,
+                                    expenseId = matchResult.transaction.id,
+                                    linkType = "AUTO_MATCH",
+                                    source = "RECEIPT_MATCHER",
+                                    confidence = matchResult.score.toFloat(),
+                                    matchStatus = MatchStatus.AUTO_MATCHED
+                                )
+                                Timber.d("P3-P1-03: Auto-matched receipt %d to expense %d (score=%.3f)",
+                                    receipt.id, matchResult.transaction.id, matchResult.score)
+                            }
+                            is MatchResult.Suggested -> {
+                                // Medium match: save suggestion without automatic linking
+                                val now = timeProvider.now()
+                                scannedReceiptDao.update(
+                                    receipt.copy(
+                                        suggestedExpenseId = matchResult.transaction.id,
+                                        matchStatus = MatchStatus.SUGGESTED,
+                                        matchConfidence = matchResult.score.toFloat(),
+                                        updatedAt = now
+                                    )
+                                )
+                                receiptEventDao.insert(
+                                    ReceiptEvent(
+                                        receiptId = receipt.id,
+                                        sourceType = receipt.sourceType,
+                                        documentType = receipt.documentType,
+                                        eventType = "MATCH_SUGGESTED",
+                                        occurredAt = now,
+                                        oldStatus = receipt.processingStatus,
+                                        newStatus = null,
+                                        actor = "system:receipt_matcher",
+                                        message = "Suggested match to expense ${matchResult.transaction.id} (score=${"%.3f".format(matchResult.score)})",
+                                        metadata = "{\"suggestedExpenseId\":${matchResult.transaction.id},\"score\":${matchResult.score}}",
+                                        errorDetails = null
+                                    )
+                                )
+                                Timber.d("P3-P1-03: Suggested match for receipt %d → expense %d (score=%.3f)",
+                                    receipt.id, matchResult.transaction.id, matchResult.score)
+                            }
+                            is MatchResult.NoMatch -> {
+                                // No match found — nothing to do
+                            }
+                        }
                     } catch (_: Exception) {
                         Timber.w("Transaction matching failed for receipt %d", receipt.id)
                     }
