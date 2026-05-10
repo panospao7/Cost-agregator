@@ -53,6 +53,15 @@ class BillReminderManager @Inject constructor(
 ) {
     companion object {
         const val DEFAULT_REMINDER_DAYS = 3 // Days before due date
+
+        /**
+         * Scheduling note: future reminder scheduling should use
+         * [WorkerSpecScheduler] (e.g. [WorkerSpecScheduler.scheduleFromSpec]
+         * or [WorkerSpecScheduler.scheduleAtMidnight]) to register
+         * recurring [WorkManager] workers for periodic dispatch.
+         * The existing [getNotificationsDue] is a pull-based fallback and
+         * does NOT self-schedule.
+         */
     }
     
     /**

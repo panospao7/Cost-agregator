@@ -192,8 +192,8 @@ class SynthesisEngine @Inject constructor(
         val committedPlannedByCurrency = filteredPlannedExpenses.filter {
             it.priority == PlannedExpensePriority.MUST && it.date >= startOfToday && it.date < endOfMonthExclusive
         }.groupBy { it.currency }.mapValues { (_, exps) -> exps.sumOf { it.amount } }
-        if (committedPlannedByCurrency.size > 1) {
-            Timber.w("$TAG: Multiple currencies in committed planned expenses: $committedPlannedByCurrency")
+        require(committedPlannedByCurrency.size <= 1) {
+            "Multiple currencies in committed planned expenses — callers must pre-normalize: $committedPlannedByCurrency"
         }
         val committedPlanned = committedPlannedByCurrency.values.sum()
 
@@ -226,8 +226,8 @@ class SynthesisEngine @Inject constructor(
         val likelyPlannedByCurrency = filteredPlannedExpenses.filter {
             it.priority == PlannedExpensePriority.LIKELY && it.date >= startOfToday && it.date < endOfMonthExclusive
         }.groupBy { it.currency }.mapValues { (_, exps) -> exps.sumOf { it.amount } }
-        if (likelyPlannedByCurrency.size > 1) {
-            Timber.w("$TAG: Multiple currencies in likely planned expenses: $likelyPlannedByCurrency")
+        require(likelyPlannedByCurrency.size <= 1) {
+            "Multiple currencies in likely planned expenses — callers must pre-normalize: $likelyPlannedByCurrency"
         }
         val likelyPlanned = likelyPlannedByCurrency.values.sum() * LIKELY_EXPENSE_WEIGHT
         
@@ -407,8 +407,8 @@ class SynthesisEngine @Inject constructor(
         val thisMonthPlannedByCurrency = thisMonthPlanned
             .filter { it.priority != PlannedExpensePriority.OPTIONAL }
             .groupBy { it.currency }
-        if (thisMonthPlannedByCurrency.size > 1) {
-            Timber.w("$TAG: Multiple currencies in monthly planned expenses: ${thisMonthPlannedByCurrency.keys}")
+        require(thisMonthPlannedByCurrency.size <= 1) {
+            "Multiple currencies in monthly planned expenses — callers must pre-normalize: ${thisMonthPlannedByCurrency.keys}"
         }
         val totalMonthlyPlanned = thisMonthPlannedByCurrency.values.sumOf { exps ->
             exps.sumOf { expense ->

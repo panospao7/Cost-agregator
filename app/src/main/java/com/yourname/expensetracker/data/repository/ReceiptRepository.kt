@@ -1071,7 +1071,14 @@ class ReceiptRepository @Inject constructor(
         timber.log.Timber.d("Saved match suggestion for receipt $receiptId: expense $suggestedExpenseId with confidence $confidence")
     }
 
-    @Deprecated("Use ReceiptLinkService.linkReceiptToExpense() instead")
+    @Deprecated(
+        "Use ReceiptLinkService.linkReceiptToExpense() instead. " +
+            "Migrate to explicit pipeline: 1) ReceiptLinkService for receipt-expense linking, " +
+            "2) ReceiptLifecycleCoordinator for full lifecycle coverage.",
+        replaceWith = ReplaceWith(
+            "receiptLinkService.linkReceiptToExpense(receiptId, suggestedId, linkType = \"MANUAL_MATCH\")"
+        )
+    )
     suspend fun approveMatchSuggestion(receiptId: Long) {
         val receipt = scannedReceiptDao.getById(receiptId) ?: return
         val suggestedId = receipt.suggestedExpenseId ?: return

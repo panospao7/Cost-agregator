@@ -51,6 +51,11 @@ class MultiCurrencyRepository @Inject constructor(
      *
      * This method is intentionally **type-agnostic** (includes all transaction types),
      * preserving pre-A.10 semantics.  Transaction-type narrowing is deferred to A.10.
+     *
+     * **LATEST-RATE:** Uses current exchange rates via [CurrencyConverter.convertMultiple].
+     * For historical accuracy, use the per-row [CurrencyConverter.convertAsOf] approach
+     * with each expense's date. A historical-rate aggregate API is planned for future
+     * (TODO: getTotalExpensesInHomeCurrencyHistorical).
      */
     suspend fun getTotalExpensesInHomeCurrency(
         startDate: Long,
@@ -346,6 +351,11 @@ class MultiCurrencyRepository @Inject constructor(
      * Get total expenses in home currency.
      * Reads home currency from settings automatically.
      * Returns MoneyAggregate with per-currency source buckets and conversion failures.
+     *
+     * **LATEST-RATE:** Uses current exchange rates via [CurrencyConverter.convertMultiple].
+     * For historical accuracy, use the per-row [CurrencyConverter.convertAsOf] approach
+     * with each expense's date. A historical-rate aggregate API is planned for future
+     * (TODO: getHomeCurrencyTotalHistorical).
      */
     suspend fun getHomeCurrencyTotal(
         startDate: Long,

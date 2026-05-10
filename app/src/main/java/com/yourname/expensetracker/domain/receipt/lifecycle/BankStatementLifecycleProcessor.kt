@@ -60,6 +60,26 @@ data class BankStatementResult(
  *   7. Do NOT trigger warranty, return window, price protection, or item
  *      categorization — these are inapplicable for statement-level imports.
  *   8. Return a structured [BankStatementResult].
+ *
+ * ## Dedupe strategy
+ *
+ * Each parsed transaction is checked against the database in three layers:
+ * 1. **Existing approved expenses** — checked via
+ *    [ExpenseDao.existsByMerchantKeyInRangeCurrencyAware] and
+ *    [ExpenseDao.existsByMerchantInRangeCurrencyAware] with a configurable
+ *    date window, amount tolerance, currency, and transaction type. If a
+ *    matching expense already exists, the transaction is skipped.
+ * 2. **Existing pending reviews** — checked via
+ *    [PendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware] using
+ *    the same criteria (merchantKey + amount + currency + date + type).
+ *    If a matching PendingReview is found, the transaction is skipped.
+ * 3. **Pre-OCR hash dedup** — before any OCR runs, the file SHA-256 hash
+ *    is checked via [ReceiptDuplicateDetector.checkDuplicate]. If the same
+ *    file was already processed, the entire statement is rejected.
+ *
+ * Note: A shared `StatementTransactionDeduper` could be created in future
+ * to extract this three-layer dedupe logic and reuse it across statement
+ * import paths (bank screenshots, PDF statements, CSV imports).
  */
 @Singleton
 class BankStatementLifecycleProcessor @Inject constructor(

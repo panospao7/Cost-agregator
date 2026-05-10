@@ -424,6 +424,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 updatedAt = timeProvider.now()
             )
             val savedId = scannedReceiptDao.insert(manualReceipt)
+            require(savedId > 0) { "Manual receipt insert failed during fallback: uri=$uri" }
 
             receiptEventDao.insert(
                 ReceiptEvent(
@@ -500,6 +501,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         var id = 0L
         database.withTransaction {
             id = scannedReceiptDao.insert(updated)
+            require(id > 0) { "Email receipt insert failed (conflict)" }
 
             receiptEventDao.insert(
                 ReceiptEvent(
@@ -638,6 +640,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 updatedAt = now
             )
             savedId = scannedReceiptDao.insert(receipt)
+            require(savedId > 0) { "Email receipt insert failed (conflict): sender=$sender" }
 
             val sanitizedSender = RawContentSanitizer.sanitizeEmailSender(sender, ocrStorageMode) ?: ""
             val sanitizedSubject = RawContentSanitizer.sanitizeEmailSubject(subject, ocrStorageMode) ?: ""

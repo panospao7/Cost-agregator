@@ -206,6 +206,16 @@ class RecurringOccurrenceMaterializer @Inject constructor(
     }
 
     companion object {
+        /**
+         * Terminal statuses that are never auto-transitioned.
+         *
+         * PAID, CANCELLED, SKIPPED, IGNORED, and MISSED are terminal
+         * occurrence statuses. Once an occurrence reaches one of these
+         * statuses, the materializer will never downgrade or overwrite it
+         * during re-materialization — only PLANNED occurrences can be
+         * auto-transitioned (e.g. to PAID when linked to an expense, or
+         * to SKIPPED/MISSED when their due date passes unresolved).
+         */
         private val TERMINAL_STATUSES = setOf("PAID", "CANCELLED", "SKIPPED", "IGNORED", "MISSED")
     }
 }

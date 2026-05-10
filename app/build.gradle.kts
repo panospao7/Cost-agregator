@@ -459,7 +459,7 @@ tasks.register("checkDirectTimeCalls") {
     }
 }
 
-// Lifecycle bypass guard: fails if ExpenseDao mutation methods are called outside allowlist
+// CI guard — fails build on direct ExpenseDao mutations outside allowlist.
 val srcDirForGuard = layout.projectDirectory.dir("src/main/java").asFile
 val allowlistForGuard = setOf(
     "TransactionLifecycleCoordinator", "LocationBackfillWorker", "MerchantKeyBackfillWorker",
