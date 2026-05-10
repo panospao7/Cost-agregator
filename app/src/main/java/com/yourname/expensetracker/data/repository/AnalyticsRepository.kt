@@ -165,6 +165,10 @@ class AnalyticsRepository @Inject constructor(
 
             // ── Normalized per-category totals via MultiCurrencyRepository ──
             val categoryAggregates = multiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals(start, end)
+            // TODO (P2-11): totalSpent sums only displayAmount, ignoring partial aggregates.
+            // If a category aggregate is partial (missing exchange rates), its percentage
+            // is calculated over only successfully converted amounts. The breakdown should
+            // carry isPartial and warningMessage fields so the UI can show caveats.
             val totalSpent = categoryAggregates.values.sumOf { it.displayAmount }
 
             emit(

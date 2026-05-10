@@ -84,7 +84,8 @@ data class ConfirmedOccurrence(
     val expectedAmount: Double,
     val expectedCurrency: String,
     val merchant: String?,
-    val categoryId: Long?
+    val categoryId: Long?,
+    val status: String = "PLANNED"
 )
 
 data class ForecastComponents(

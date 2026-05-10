@@ -1,8 +1,5 @@
 package com.yourname.expensetracker.domain.forecasting
 
-// TODO (P6-P1-6): Expose StressForecastMode (NEUTRAL_BASELINE / USER_BALANCE)
-// and label output as "stress index", not "cash balance forecast".
-
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.repository.BudgetRepository
@@ -157,7 +154,8 @@ class FinancialStressForecastEngine @Inject constructor(
                 overallRiskLevel = overallRiskLevel,
                 earliestCrunchDate = earliestCrunchDate,
                 recommendations = recommendations,
-                displayCurrency = resolvedDisplayCurrency
+                displayCurrency = resolvedDisplayCurrency,
+                mode = StressForecastMode.NET_CASHFLOW_ESTIMATE
             )
             
         } catch (e: Exception) {
@@ -185,7 +183,8 @@ class FinancialStressForecastEngine @Inject constructor(
                     "Stress forecast is temporarily unavailable due to a calculation issue.",
                     "Showing a degraded estimate. Please retry shortly and verify your recent transactions."
                 ),
-                displayCurrency = resolvedDisplayCurrency
+                displayCurrency = resolvedDisplayCurrency,
+                mode = StressForecastMode.ESTIMATED_INDEX
             )
         }
     }
@@ -710,12 +709,29 @@ class FinancialStressForecastEngine @Inject constructor(
 /**
  * Result of financial stress forecast computation.
  */
+/**
+ * Indicates the baseline balance mode used by the stress forecast engine.
+ * The UI should display appropriate labeling based on the mode:
+ * - [ESTIMATED_INDEX]: Label as "Stress Index Estimate" — not a real cash balance.
+ * - [NET_CASHFLOW_ESTIMATE]: Label as "Projected balance estimate based on recent cashflow".
+ *
+ * TODO (P6-P1-13): Implement [AccountBalanceProvider] to support
+ * [USER_ENTERED_BALANCE] and [BANK_BALANCE] modes for real balance sources.
+ */
+enum class StressForecastMode {
+    /** Neutral baseline (0.0) — no balance source available. */
+    ESTIMATED_INDEX,
+    /** 90-day net cashflow estimate (deposits minus expenses). */
+    NET_CASHFLOW_ESTIMATE
+}
+
 data class StressForecastResult(
     val horizons: List<StressHorizon>,
     val overallRiskLevel: StressRiskLevel,
     val earliestCrunchDate: Long?,
     val recommendations: List<String>,
-    val displayCurrency: String = ""
+    val displayCurrency: String = "",
+    val mode: StressForecastMode = StressForecastMode.NET_CASHFLOW_ESTIMATE
 )
 
 /**

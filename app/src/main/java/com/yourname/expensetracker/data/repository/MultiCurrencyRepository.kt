@@ -6,12 +6,9 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MerchantCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.MonthlyCurrencyTotal
 import com.yourname.expensetracker.data.database.entity.Expense
-import com.yourname.expensetracker.domain.core.money.ConversionFailure
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
-import com.yourname.expensetracker.domain.core.money.MoneyBucket
-import com.yourname.expensetracker.domain.core.money.toConversionFailure
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.FailedConversion
@@ -330,6 +327,11 @@ class MultiCurrencyRepository @Inject constructor(
     /**
      * Get the user's current home currency as a String.
      * Falls back to "EUR" if the DataStore hasn't been initialized yet.
+     *
+     * TODO (P2-09): Distinguish first-run default from settings-load failure.
+     * A settings corruption should produce a visible dashboard warning rather
+     * than silently switching to EUR. Consider returning a sealed
+     * [HomeCurrencyResolution] with Resolved/DefaultedFirstRun/Failed variants.
      */
     private suspend fun resolveHomeCurrency(): String {
         return try {
@@ -357,6 +359,14 @@ class MultiCurrencyRepository @Inject constructor(
     /**
      * Get category totals in home currency.
      * Returns map of categoryId -> MoneyAggregate.
+     *
+     * **Rate basis:** Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
+     * Callers needing historical-rate accuracy should use the per-row
+     * [CurrencyConverter.convertAsOf] approach instead. For a future
+     * historical-rate aggregate API, see TODO below.
+     *
+     * TODO (P5-P1-01): Add `getHomeCurrencyCategoryTotalsHistorical()` that
+     * fetches per-row data and converts each row with `convertAsOf(expense.date)`.
      */
     suspend fun getHomeCurrencyCategoryTotals(
         startDate: Long,
@@ -375,6 +385,14 @@ class MultiCurrencyRepository @Inject constructor(
     /**
      * Get merchant totals in home currency.
      * Returns map of merchant -> MoneyAggregate.
+     *
+     * **Rate basis:** Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
+     * Callers needing historical-rate accuracy should use the per-row
+     * [CurrencyConverter.convertAsOf] approach instead. For a future
+     * historical-rate aggregate API, see TODO below.
+     *
+     * TODO (P5-P1-01): Add `getHomeCurrencyMerchantTotalsHistorical()` that
+     * fetches per-row data and converts each row with `convertAsOf(expense.date)`.
      */
     suspend fun getHomeCurrencyMerchantTotals(
         startDate: Long,
@@ -393,6 +411,14 @@ class MultiCurrencyRepository @Inject constructor(
     /**
      * Get monthly totals in home currency.
      * Returns list of MonthMoneyAggregate sorted by monthKey ascending.
+     *
+     * **Rate basis:** Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
+     * Callers needing historical-rate accuracy should use the per-row
+     * [CurrencyConverter.convertAsOf] approach instead. For a future
+     * historical-rate aggregate API, see TODO below.
+     *
+     * TODO (P5-P1-01): Add `getHomeCurrencyMonthlyTotalsHistorical()` that
+     * fetches per-row data and converts each row with `convertAsOf(expense.date)`.
      */
     suspend fun getHomeCurrencyMonthlyTotals(
         startDate: Long,
@@ -462,6 +488,14 @@ class MultiCurrencyRepository @Inject constructor(
     /**
      * Get total PURCHASE spending in home currency.
      * Uses the PURCHASE-filtered DAO variant.
+     *
+     * **Rate basis:** Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
+     * Callers needing historical-rate accuracy should use the per-row
+     * [CurrencyConverter.convertAsOf] approach instead. For a future
+     * historical-rate aggregate API, see TODO below.
+     *
+     * TODO (P5-P1-01): Add `getHomeCurrencyPurchaseTotalHistorical()` that
+     * fetches per-row data and converts each row with `convertAsOf(expense.date)`.
      */
     suspend fun getHomeCurrencyPurchaseTotal(
         startDate: Long,
@@ -507,6 +541,8 @@ class MultiCurrencyRepository @Inject constructor(
 
     /**
      * Convert a list of CurrencyTotal (per-currency totals) into a MoneyAggregate.
+     * Uses [MoneyAggregateBuilder.fromBuckets] for consistent warning messages
+     * that report failed transaction counts, not just bucket counts.
      */
     private suspend fun aggregateToMoneyAggregate(
         currencyTotals: List<CurrencyTotal>,
@@ -515,25 +551,19 @@ class MultiCurrencyRepository @Inject constructor(
         if (currencyTotals.isEmpty()) {
             return MoneyAggregate.empty(CurrencyCode(homeCurrency))
         }
-        val sourceBuckets = currencyTotals.map { MoneyBucket(CurrencyCode(it.currency), it.total, it.txCount) }
-        val amounts = currencyTotals.map { Pair(it.total, it.currency) }
-        val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
-        val failures = aggregate.failedConversions.map { it.toConversionFailure() }
-        return MoneyAggregate(
-            displayAmount = aggregate.total,
-            displayCurrency = CurrencyCode(homeCurrency),
-            sourceBuckets = sourceBuckets,
-            conversionFailures = failures,
-            isPartial = aggregate.hasFailures,
-            warningMessage = if (aggregate.hasFailures) {
-                "Total excludes ${failures.size} currency bucket(s) due to missing exchange rates"
-            } else null
+        return MoneyAggregateBuilder.fromBuckets(
+            buckets = currencyTotals.map { Pair(it.total, it.currency) },
+            homeCurrency = homeCurrency,
+            converter = currencyConverter,
+            transactionCounts = currencyTotals.map { it.txCount }
         )
     }
 
     /**
      * Convert a list of same-dimension currency totals into a MoneyAggregate.
      * Used for category/merchant/month grouping where we have sub-buckets per key.
+     * Uses [MoneyAggregateBuilder.fromBuckets] for consistent warning messages
+     * that report failed transaction counts, not just bucket counts.
      */
     private suspend fun aggregateCurrencyTotalsToMoneyAggregate(
         buckets: List<*>,
@@ -543,38 +573,32 @@ class MultiCurrencyRepository @Inject constructor(
             return MoneyAggregate.empty(CurrencyCode(homeCurrency))
         }
         val amounts = mutableListOf<Pair<Double, String>>()
-        val sourceBuckets = mutableListOf<MoneyBucket>()
+        val counts = mutableListOf<Int>()
         for (bucket in buckets) {
             when (bucket) {
-            is CategoryCurrencyTotal -> {
-                amounts.add(Pair(bucket.total, bucket.currency))
-                sourceBuckets.add(MoneyBucket(CurrencyCode(bucket.currency), bucket.total, bucket.txCount))
-            }
-            is MerchantCurrencyTotal -> {
-                amounts.add(Pair(bucket.total, bucket.currency))
-                sourceBuckets.add(MoneyBucket(CurrencyCode(bucket.currency), bucket.total, bucket.txCount))
-            }
-            is MonthlyCurrencyTotal -> {
-                amounts.add(Pair(bucket.total, bucket.currency))
-                sourceBuckets.add(MoneyBucket(CurrencyCode(bucket.currency), bucket.total, bucket.txCount))
-            }
+                is CategoryCurrencyTotal -> {
+                    amounts.add(Pair(bucket.total, bucket.currency))
+                    counts.add(bucket.txCount)
+                }
+                is MerchantCurrencyTotal -> {
+                    amounts.add(Pair(bucket.total, bucket.currency))
+                    counts.add(bucket.txCount)
+                }
+                is MonthlyCurrencyTotal -> {
+                    amounts.add(Pair(bucket.total, bucket.currency))
+                    counts.add(bucket.txCount)
+                }
                 else -> {
                     Timber.w("Unexpected bucket type in aggregate: ${bucket?.javaClass?.name}")
                     return MoneyAggregate.empty(CurrencyCode(homeCurrency))
                 }
             }
         }
-        val aggregate = currencyConverter.convertMultiple(amounts, homeCurrency)
-        val failures = aggregate.failedConversions.map { it.toConversionFailure() }
-        return MoneyAggregate(
-            displayAmount = aggregate.total,
-            displayCurrency = CurrencyCode(homeCurrency),
-            sourceBuckets = sourceBuckets,
-            conversionFailures = failures,
-            isPartial = aggregate.hasFailures,
-            warningMessage = if (aggregate.hasFailures) {
-                "Total excludes ${failures.size} currency bucket(s) due to missing exchange rates"
-            } else null
+        return MoneyAggregateBuilder.fromBuckets(
+            buckets = amounts,
+            homeCurrency = homeCurrency,
+            converter = currencyConverter,
+            transactionCounts = counts
         )
     }
     suspend fun updateExpenseCurrency(

@@ -415,16 +415,21 @@ class ForecastInputAssembler @Inject constructor(
         } catch (e: Exception) {
             emptyList()
         }
-        val materializedOccurrenceKeys = materializedOccurrences.map { it.occurrenceKey }.toSet()
-        val confirmedOccurrences = materializedOccurrences.map { occ ->
-            ConfirmedOccurrence(
-                dueDate = occ.dueDate,
-                expectedAmount = occ.expectedAmount,
-                expectedCurrency = occ.expectedCurrency,
-                merchant = occ.merchant,
-                categoryId = occ.categoryId
-            )
-        }
+        val materializedOccurrenceKeys = materializedOccurrences
+            .filter { it.status == "PLANNED" }
+            .map { it.occurrenceKey }.toSet()
+        val confirmedOccurrences = materializedOccurrences
+            .filter { it.status == "PLANNED" }
+            .map { occ ->
+                ConfirmedOccurrence(
+                    dueDate = occ.dueDate,
+                    expectedAmount = occ.expectedAmount,
+                    expectedCurrency = occ.expectedCurrency,
+                    merchant = occ.merchant,
+                    categoryId = occ.categoryId,
+                    status = occ.status
+                )
+            }
 
         val deduplicatedPlannedExpenses = plannedExpenses.filterNot { planned ->
             planned.sourceOccurrenceKey != null &&

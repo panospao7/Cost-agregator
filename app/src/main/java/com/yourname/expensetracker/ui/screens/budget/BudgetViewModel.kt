@@ -314,6 +314,11 @@ class BudgetViewModel @Inject constructor(
                 val activeBudgets = budgetRepository.getActiveBudgets()
                 
                 // BUD-21: Wrap the entire bulk update in a database transaction
+                //
+                // TODO (P2-19): updateBudget() catches exceptions internally and returns
+                // Result.Error instead of throwing, so the transaction does NOT actually
+                // roll back on per-budget failure. Replace with a throw-on-failure variant
+                // (e.g. updateBudgetOrThrow) or use DAO-level writes within the transaction.
                 database.withTransaction {
                     for (rec in recommendations) {
                         val budget = activeBudgets.find { 
@@ -327,8 +332,6 @@ class BudgetViewModel @Inject constructor(
                             if (result is com.yourname.expensetracker.domain.model.Result.Error) {
                                 Timber.w(result.exception, "Autopilot update failed for budget ${budget.id}")
                             }
-                            // BUD-21: Within a transaction, a failure will roll back all changes.
-                            // We still track success/failure for the status report.
                         }
                     }
                 }

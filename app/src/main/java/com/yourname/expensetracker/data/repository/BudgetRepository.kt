@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.model.BudgetSnapshot
 import com.yourname.expensetracker.domain.model.PeriodRange
+import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
@@ -69,7 +70,7 @@ class BudgetRepository @Inject constructor(
 
     suspend fun getActiveBudgetSnapshots(): List<BudgetSnapshot> =
         getActiveBudgets().map { budget ->
-            val converted = convertBudgetAmountToHomeCurrency(
+            val converted = convertBudgetAmountToHomeCurrencyLatest(
                 amount = budget.amount,
                 sourceCurrency = budget.currency
             )
@@ -94,6 +95,10 @@ class BudgetRepository @Inject constructor(
         //   1. Day boundary rollovers (timeBoundaryTicker.dayBoundaryTicks())
         //   2. Budget or category table changes (activeBudgetsFlow / getAllFlow())
         // Expense changes were invisible until the next day boundary.
+        //
+        // TODO (P2-18): getTotalSpentFlow() is a deprecated raw aggregate query used
+        // only as an invalidation trigger. Replace with a cheap invalidation-only
+        // query like `SELECT MAX(updatedAt) FROM expenses` to avoid raw-money paths.
         val expenseInvalidationTrigger: Flow<*> = expenseDao.getTotalSpentFlow().map { }
         return timeBoundaryTicker.dayBoundaryTicks().flatMapLatest { _ ->
             combine(
@@ -153,7 +158,7 @@ class BudgetRepository @Inject constructor(
         // Use aggregate SQL queries instead of fetching raw rows.
         // getCategorySpentInPeriod / getTotalForPeriod already filter by
         // transactionType = 'PURCHASE' AND isNotMine = 0 and use effectiveAmount.
-        val initialLimitAggregate = convertBudgetAmountToHomeCurrency(
+        val initialLimitAggregate = convertBudgetAmountToHomeCurrencyLatest(
             amount = budget.amount,
             sourceCurrency = budget.currency
         )
@@ -299,7 +304,15 @@ class BudgetRepository @Inject constructor(
         }
     }
 
-    private suspend fun convertBudgetAmountToHomeCurrency(
+    /**
+     * Converts a budget amount to home currency using the **latest** available exchange rate.
+     *
+     * TODO (P6-P1-06): Historical period reports should use `convertAsOf(amount, from, to, atMillis = periodEnd)`
+     * so budget limits are converted at period-appropriate historical rates consistent with
+     * how expenses are converted. This method is intentionally named `Latest` to make the rate
+     * basis explicit — callers doing historical reporting must not use it.
+     */
+    private suspend fun convertBudgetAmountToHomeCurrencyLatest(
         amount: Double,
         sourceCurrency: String
     ): com.yourname.expensetracker.domain.core.money.MoneyAggregate {
@@ -311,9 +324,6 @@ class BudgetRepository @Inject constructor(
             )
         }
 
-        // TODO (A03/Budget): Use convertAsOf(amount, from, to, atMillis=periodEnd) for
-        // period-specific reports so budget limits are converted at historical rates
-        // consistent with how expenses are converted. Currently uses current rates.
         val conversion = currencyConverter.convert(amount, sourceCurrency, homeCurrency)
         if (conversion != null) {
             return com.yourname.expensetracker.domain.core.money.MoneyAggregate.singleCurrency(
@@ -478,6 +488,7 @@ class BudgetRepository @Inject constructor(
             .filterKeys { it in categoriesWithoutBudget.map { cat -> cat.id } }
 
         val basedOnMonths = Math.round(monthsDivisor).toInt().coerceAtLeast(1)
+        val homeCurrency = resolveHomeCurrency()
 
         return categoriesWithoutBudget
             .mapNotNull { category ->
@@ -492,7 +503,7 @@ class BudgetRepository @Inject constructor(
                     // increase buffer to 20% (LOG-016)
                     suggestedAmount = (monthlyAvg * 1.2).coerceAtLeast(20.0),
                     basedOnMonths = basedOnMonths,
-                    reason = "Based on your €${"%.0f".format(monthlyAvg)} monthly average spend."
+                    reason = "Based on your ${CurrencyFormatter.formatMoney(monthlyAvg, homeCurrency)} monthly average spend."
                 )
             }
             .sortedByDescending { it.suggestedAmount }

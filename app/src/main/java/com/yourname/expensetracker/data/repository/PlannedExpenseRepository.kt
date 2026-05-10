@@ -7,6 +7,15 @@ import javax.inject.Inject
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
+/**
+ * TODO (P2-16): Insert conflict and timestamp gaps.
+ * - [PlannedExpenseDao.insertPlannedExpense] uses OnConflictStrategy.IGNORE;
+ *   the returned insert ID is not checked, so duplicate-silently-skipped bugs
+ *   are possible. Callers should receive a sealed result (Inserted/Duplicate/Error).
+ * - [PlannedExpense.createdAt] and [updatedAt] default to 0L. These should be
+ *   set explicitly at the repository/coordinator boundary.
+ * - Consider introducing a [PlannedExpenseLifecycleCoordinator] for lifecycle-owned writes.
+ */
 @Singleton
 class PlannedExpenseRepository @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
