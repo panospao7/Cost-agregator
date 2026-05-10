@@ -43,6 +43,20 @@ interface RecurringReminderDeliveryDao {
     suspend fun suppressOpenDeliveriesForOccurrence(occurrenceId: Long)
 
     /**
+     * Returns pending deliveries whose associated occurrence is still PLANNED.
+     * Safer than [getPendingDeliveries] because it excludes reminders for
+     * occurrences that have been PAID, SKIPPED, or CANCELLED.
+     */
+    @Query("""
+        SELECT * FROM recurring_reminder_deliveries
+        WHERE ((status = 'SCHEDULED' AND scheduledAt <= :now)
+            OR (status = 'SNOOZED' AND snoozedUntil IS NOT NULL AND snoozedUntil <= :now))
+          AND occurrenceId IN (SELECT id FROM recurring_occurrences WHERE status = 'PLANNED')
+        ORDER BY COALESCE(snoozedUntil, scheduledAt)
+    """)
+    suspend fun getPendingDeliveriesForPlannedOccurrences(now: Long): List<RecurringReminderDelivery>
+
+    /**
      * Atomically claim a reminder delivery for processing.
      * Only succeeds if the delivery is currently SCHEDULED or SNOOZED.
      * Returns 1 if the claim was successful, 0 if another worker already claimed it.

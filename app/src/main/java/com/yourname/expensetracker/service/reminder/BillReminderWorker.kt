@@ -69,6 +69,7 @@ class BillReminderWorker @AssistedInject constructor(
                         sentCount++
                     } else {
                         Log.w(TAG, "Notification delivery failed for reminder ${reminder.id}")
+                        coordinator.markReminderFailed(reminder.id, "permission_denied")
                     }
                 }
 

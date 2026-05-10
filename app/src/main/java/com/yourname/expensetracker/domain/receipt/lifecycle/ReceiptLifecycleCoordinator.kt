@@ -28,6 +28,8 @@ import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
@@ -87,7 +89,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val merchantNormalizer: MerchantNormalizer,
-    private val hybridClassifier: HybridExpenseClassifier
+    private val hybridClassifier: HybridExpenseClassifier,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
 
     companion object {
@@ -433,11 +436,19 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             throw IllegalStateException("Database writes blocked during restore")
         }
         val now = timeProvider.now()
+        val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
+        val sanitizedOcrText = when (ocrStorageMode) {
+            RawStorageMode.STORE_RAW -> receipt.rawOcrText
+            RawStorageMode.STORE_REDACTED -> "[REDACTED]"
+            RawStorageMode.STORE_METADATA_ONLY -> ""
+            RawStorageMode.DO_NOT_STORE -> ""
+        }
         val updated = receipt.copy(
             sourceType = ReceiptSourceType.EMAIL.name,
             documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
             processingStatus = ReceiptProcessingStatus.PARSED.name,
-            createdAt = now,
+            rawOcrText = sanitizedOcrText,
+            createdAt = if (receipt.createdAt == 0L) now else receipt.createdAt,
             updatedAt = now
         )
         val id = scannedReceiptDao.insert(updated)
@@ -523,6 +534,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         }
 
         val now = timeProvider.now()
+        val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
+        val effectiveOcrText = when (ocrStorageMode) {
+            RawStorageMode.STORE_RAW -> rawEmailBody
+            RawStorageMode.STORE_REDACTED -> "[REDACTED]"
+            RawStorageMode.STORE_METADATA_ONLY -> ""
+            RawStorageMode.DO_NOT_STORE -> ""
+        }
         var savedId = 0L
         var expenseIds = mutableListOf<Long>()
 
@@ -532,7 +550,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
             val receipt = ScannedReceipt(
                 imagePath = null,
-                rawOcrText = rawEmailBody,
+                rawOcrText = effectiveOcrText,
                 parsedTotal = emailData.amount,
                 parsedMerchant = emailData.merchant,
                 parsedDate = emailData.date,

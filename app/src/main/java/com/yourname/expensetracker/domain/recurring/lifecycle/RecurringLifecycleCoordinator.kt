@@ -316,7 +316,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * @return The list of pending [RecurringReminderDelivery] items, ordered by scheduledAt.
      */
     suspend fun getDueReminders(): List<RecurringReminderDelivery> {
-        return reminderDeliveryDao.getPendingDeliveries(timeProvider.now())
+        return reminderDeliveryDao.getPendingDeliveriesForPlannedOccurrences(timeProvider.now())
     }
 
     /**
@@ -365,6 +365,19 @@ class RecurringLifecycleCoordinator @Inject constructor(
         } catch (e: Exception) {
             Timber.w(e, "Non-critical: failed to write REMINDER_SENT event for delivery %d", deliveryId)
         }
+    }
+
+    suspend fun markReminderFailed(deliveryId: Long, reason: String) {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            throw IllegalStateException("Database writes blocked during restore")
+        }
+        val existing = reminderDeliveryDao.getById(deliveryId) ?: return
+        val status = if (reason.contains("permission", ignoreCase = true)) "FAILED_PERMISSION" else "FAILED_TRANSIENT"
+        reminderDeliveryDao.update(
+            existing.copy(
+                status = status
+            )
+        )
     }
 
     /**
