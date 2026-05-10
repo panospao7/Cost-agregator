@@ -140,7 +140,7 @@ class ReceiptRepository @Inject constructor(
                 // Fallback: Try to save the image using manual record logic
                 return@withContext saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
                     val failedReceipt = receipt.copy(
-                        rawOcrText = "Scan Failed: ${e.message}",
+                        rawOcrText = sanitizeOcrBeforeInsert("Scan failed"),
                         confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK,
                         updatedAt = timeProvider.now()
                     )
@@ -175,6 +175,7 @@ class ReceiptRepository @Inject constructor(
 
                 val receiptId = database.withTransaction {
                     val insertedReceiptId = scannedReceiptDao.insert(receipt)
+                    require(insertedReceiptId > 0) { "Receipt insert failed (conflict): imagePath=${receipt.imagePath}" }
 
                     // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
                     //
@@ -199,7 +200,7 @@ class ReceiptRepository @Inject constructor(
                             confidence = parsed.confidence,
                             packageName = "receipt.scan",
                             notificationTitle = "Scanned Receipt",
-                            notificationText = ocrResult.fullText.take(200), // Preview snippet
+                            notificationText = sanitizeOcrBeforeInsert(ocrResult.fullText).take(200),
                             suggestedCategoryId = normalizedMerchant?.let {
                                 hybridClassifier.classify(it, suggestedAmount ?: 0.0).categoryId.takeIf { id -> id > 0 }
                             }
@@ -229,6 +230,7 @@ class ReceiptRepository @Inject constructor(
                     confidence = 0f
                 )
                 val receiptId = scannedReceiptDao.insert(failedReceipt)
+                require(receiptId > 0) { "Receipt insert failed (conflict): imagePath=${failedReceipt.imagePath}" }
                 
                 // ── Parse-failure placeholder review (never becomes real expense) ──
                 // When the parser threw an exception (e.g. malformed OCR text) we
@@ -280,6 +282,7 @@ class ReceiptRepository @Inject constructor(
             confidence = 0f
         )
         val receiptId = scannedReceiptDao.insert(receipt)
+        require(receiptId > 0) { "Receipt insert failed (conflict): imagePath=${receipt.imagePath}" }
         
         return Pair(
             receipt.copy(id = receiptId),
@@ -516,7 +519,9 @@ class ReceiptRepository @Inject constructor(
      */
     suspend fun insertReceipt(receipt: ScannedReceipt): Long {
         writeBarrier.checkWritesAllowed("ReceiptRepository.insertReceipt")
-        return scannedReceiptDao.insert(receipt)
+        val receiptId = scannedReceiptDao.insert(receipt)
+        require(receiptId > 0) { "Receipt insert failed (conflict): imageHash=${receipt.imageHash}" }
+        return receiptId
     }
 
     suspend fun updateCategorizationStatus(receiptId: Long, status: CategorizationStatus) {
@@ -665,6 +670,7 @@ class ReceiptRepository @Inject constructor(
                 confidence = 0.8f
             )
             val receiptId = scannedReceiptDao.insert(receiptRecord)
+            require(receiptId > 0) { "Receipt insert failed (conflict): imageHash=${receiptRecord.imageHash}" }
 
             // 4. Create a PendingReview for EACH transaction found
             var successCount = 0

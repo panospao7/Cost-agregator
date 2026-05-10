@@ -437,24 +437,25 @@ class ForecastInputAssembler @Inject constructor(
         val plannedWarnings = mutableListOf<String>()
 
         // Normalize planned expenses: attempt conversion to home currency for each.
-        // Expenses that fail conversion are still included in the forecast (for
-        // transparency) but are counted in excludedPlannedCount so consumers can
-        // adjust confidence.
-        val normalizedPlannedExpenses = deduplicatedPlannedExpenses.map { pe ->
-            val normalizedAmount = if (pe.currency.equals(resolvedHomeCurrency, ignoreCase = true)) {
-                pe.amount
+        // Expenses that fail conversion are excluded from the forecast (they would
+        // produce incorrect amounts in a different currency).
+        val normalizedPlannedExpenses = deduplicatedPlannedExpenses.mapNotNull { pe ->
+            if (pe.currency.equals(resolvedHomeCurrency, ignoreCase = true)) {
+                pe.copy(amount = pe.amount, currency = resolvedHomeCurrency)
             } else {
-                currencyConverter.convert(
+                val normalized = currencyConverter.convert(
                     amount = pe.amount,
                     fromCurrency = pe.currency,
                     toCurrency = resolvedHomeCurrency
-                )?.convertedAmount
+                )
+                if (normalized != null) {
+                    pe.copy(amount = normalized.convertedAmount, currency = resolvedHomeCurrency)
+                } else {
+                    plannedConversionFailures++
+                    plannedWarnings.add("Planned expense '${pe.description}' ${pe.amount} ${pe.currency} excluded — conversion failed")
+                    null
+                }
             }
-            if (normalizedAmount == null && pe.currency.isNotBlank()) {
-                plannedConversionFailures++
-                plannedWarnings.add("Planned expense '${pe.description}' ${pe.amount} ${pe.currency} excluded — conversion failed")
-            }
-            pe // keep the original planned expense (still used in forecast)
         }
 
         val totalPlannedExcluded = plannedDedupExcluded + plannedConversionFailures

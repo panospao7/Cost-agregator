@@ -491,7 +491,7 @@ class ExportOptionsViewModel @Inject constructor(
                 if (tx.notes == null) append("null,")
                 else append("\"").append(escapeJson(tx.notes)).append("\",")
                 append("\"source\":")
-                if (tx.source == null) append("null")
+                if (tx.source == null) append("null,")
                 else append("\"").append(escapeJson(tx.source)).append("\",")
                 append("\"paymentMethod\":\"").append(escapeJson(tx.paymentMethod)).append("\",")
                 append("\"originalCurrency\":\"").append(escapeJson(tx.originalCurrency)).append("\",")

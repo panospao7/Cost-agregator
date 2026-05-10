@@ -89,7 +89,7 @@ class SynthesisEngine @Inject constructor(
     fun synthesize(
         input: ForecastInputAssembler.ForecastInput
     ): FinancialForecast {
-        return synthesize(
+        val forecast = synthesize(
             pastSumDaily = input.pastSumDaily,
             recurringPatterns = input.recurringPatterns,
             plannedExpenses = input.plannedExpenses,
@@ -98,6 +98,8 @@ class SynthesisEngine @Inject constructor(
             spendingPace = input.spendingPace,
             confirmedOccurrences = input.confirmedOccurrences
         )
+        val finalConfidence = (forecast.confidence - input.dataQuality.confidencePenalty).coerceIn(0.0, 1.0)
+        return forecast.copy(confidence = finalConfidence)
     }
 
     fun synthesize(
@@ -353,11 +355,6 @@ class SynthesisEngine @Inject constructor(
         if (budgetLimit <= 0) forecastConfidence -= 0.15
         if (spendingPace.averageMonthlyTotal == null) forecastConfidence -= 0.10
         if (recurringPatterns.isEmpty()) forecastConfidence -= 0.05
-        // NOTE: ForecastDataQuality.confidencePenalty from ForecastInputAssembler
-        // should be applied here to further reduce confidence when currency
-        // normalization is partial or conversion warnings exist. Currently the
-        // penalty is computed in the assembler but consumed only by callers that
-        // inspect the raw ForecastInput.dataQuality field.
         
         return FinancialForecast(
             horizon = ForecastHorizon.REST_OF_MONTH,
