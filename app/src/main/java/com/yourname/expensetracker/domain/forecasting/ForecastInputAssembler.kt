@@ -167,7 +167,7 @@ class ForecastInputAssembler @Inject constructor(
     fun mapPlannedExpenses(
         plannedEntities: List<com.yourname.expensetracker.data.database.entity.PlannedExpense>
     ): List<PlannedExpense> = plannedEntities
-        .filter { entity -> entity.status != "FULFILLED" }
+        .filter { entity -> entity.status == "PLANNED" }
         .map { entity ->
             PlannedExpense(
                 id = entity.id,

@@ -228,6 +228,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     expense.currency, expense.amount, homeCurrency, expense.date
                 )
             }
+        } else {
+            expense = expense.copy(
+                baseAmount = expense.amount,
+                baseCurrency = homeCurrency,
+                exchangeRateUsed = 1.0
+            )
         }
 
         // 4. Deduplication — behaviour depends on mode

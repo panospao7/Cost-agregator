@@ -60,6 +60,10 @@ interface RecurringReminderDeliveryDao {
      * Atomically claim a reminder delivery for processing.
      * Only succeeds if the delivery is currently SCHEDULED or SNOOZED.
      * Returns 1 if the claim was successful, 0 if another worker already claimed it.
+     *
+     * Retry policy:
+     * FAILED_PERMISSION = terminal until permission changes
+     * FAILED_TRANSIENT = manual retry only (no automatic retry yet)
      */
     @Query("""
         UPDATE recurring_reminder_deliveries

@@ -9,8 +9,10 @@ class DatabaseReadBarrier @Inject constructor(
 ) {
     fun checkReadAllowed(operation: String) {
         val mode = restoreMaintenanceMode.currentMode()
-        if (mode == RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED) {
-            throw IllegalStateException("Read blocked during restart-required: $operation")
+        when (mode) {
+            RestoreMaintenanceMode.Mode.NORMAL,
+            RestoreMaintenanceMode.Mode.BACKUP_EXPORTING -> { }
+            else -> throw IllegalStateException("Read blocked during $mode: $operation")
         }
     }
 }

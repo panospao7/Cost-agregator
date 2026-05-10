@@ -221,29 +221,31 @@ class RecurringLifecycleCoordinator @Inject constructor(
         val linked = occurrenceDao.getByLinkedExpenseId(expenseId)
             ?: return // No linked occurrence, nothing to do
 
-        // Reset to PLANNED — the recurring bill is not yet paid
-        occurrenceDao.update(
-            linked.copy(
-                status = "PLANNED",
-                linkedExpenseId = null,
-                paidAmount = null,
-                paidCurrency = null,
-                paidAt = null,
-                updatedAt = now
+        database.withTransaction {
+            // Reset to PLANNED — the recurring bill is not yet paid
+            occurrenceDao.update(
+                linked.copy(
+                    status = "PLANNED",
+                    linkedExpenseId = null,
+                    paidAmount = null,
+                    paidCurrency = null,
+                    paidAt = null,
+                    updatedAt = now
+                )
             )
-        )
 
-        // Write lifecycle event
-        lifecycleEventDao.insert(
-            RecurringLifecycleEvent(
-                occurrenceId = linked.id,
-                eventType = "OCCURRENCE_UNLINKED",
-                occurredAt = now,
-                oldStatus = "PAID",
-                newStatus = "PLANNED",
-                metadata = """{"expenseId":$expenseId,"reason":"expense_deleted"}"""
+            // Write lifecycle event
+            lifecycleEventDao.insert(
+                RecurringLifecycleEvent(
+                    occurrenceId = linked.id,
+                    eventType = "OCCURRENCE_UNLINKED",
+                    occurredAt = now,
+                    oldStatus = "PAID",
+                    newStatus = "PLANNED",
+                    metadata = """{"expenseId":$expenseId,"reason":"expense_deleted"}"""
+                )
             )
-        )
+        }
     }
 
     /**

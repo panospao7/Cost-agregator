@@ -29,10 +29,10 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v120
-- 804+ Kotlin files (~170 net new since last Phase)
-- 58 DAOs, 62 entities (57 registered in AppDatabase)
-- 39 ViewModels
+- Database version: v123
+- 829+ Kotlin source files
+- 59 DAOs (56 in DaoModule + 3 in AiModule), 62 entities registered in AppDatabase
+- 38 ViewModels
 - SimpleDateFormat → DateTimeFormatter: **100% complete** (38 replacements across 21 files, 0 remaining in production code)
 - REPLACE → IGNORE: **14 of 14 DAOs converted** (3 kept with KDoc: ExchangeRateDao ×2, AiArtifactDao ×1)
 - Bank statement AI parsing: **complete** (on-device→cloud→parser 3-tier validation with per-transaction source tracking)
@@ -41,6 +41,8 @@
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
 - Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver`; restore journal checked before any work is scheduled
+- Worker instrumentation: `WorkerRunLogger` (`domain/workers/WorkerRunLogger.kt`) provides per-run success/skipped/retry/failure tracking via `BackgroundJobRunDao`. `WorkerExecutionGuard` (`domain/workers/WorkerExecutionGuard.kt`) provides structured guarded execution with logging, exception handling, and restore-mode gating. Both bound via `WorkerModule` (`di/WorkerModule.kt`).
+- `DatabaseReadBarrier` (`data/backup/DatabaseReadBarrier.kt`) and `DatabaseWriteBarrier` (`data/backup/DatabaseWriteBarrier.kt`) provide operation-level read/write blocking during restore — throw `IllegalStateException` if writes are attempted in non-NORMAL/BACKUP_EXPORTING modes.
 - WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `ReceiptMatchingWorker`, `DataRetentionWorker` (all 7 paused during restore via `RestoreMaintenanceMode`). Each worker individually injects `RestoreMaintenanceMode` and calls `isWritesAllowed()` at the start of `doWork()` to self-pause during restore. All workers use `WorkerSpecScheduler` for centralized scheduling with version-change detection.
 - `HybridRouter` (`domain/ai/HybridRouter.kt`) replaces duplicated cloud/on-device/fallback routing logic across 6 hybrid AI services (AID-4).
 - `AtRestEncryptionService` (`data/privacy/AtRestEncryptionService.kt`): AES-256-GCM via Android Keystore for ML model data at rest.
@@ -82,6 +84,26 @@
 - **warnings: List<AnalyticsConversionWarning>** added to `AnalyticsDataQuality` (in addition to the legacy `conversionWarnings: List<String>`). Structured warnings carry `AnalyticsConversionWarningType` for programmatic handling.
 - **categoryNameSnapshot** (`String?`) added to `NormalizedExpense` — snapshot of the category name at normalization time, preventing drift when category names are later edited.
 - **BudgetVsActualEngine** logic extracted from `AnalyticsViewModel` — the ViewModel no longer performs inline budget-vs-actual aggregation.
+
+### Architecture Drift Updates (2026-05-10 — universal gap closure & hotfix)
+- **Database version upgraded to v123** (from v120) via three incremental migrations (v120→v121→v122→v123). New tables: `group_lifecycle_events`, `pipeline_diagnostic_events`. Various column additions and index optimizations.
+- **GroupLifecycleEventEntity** + **GroupLifecycleEventDao** created (`data/database/entity/GroupLifecycleEventEntity.kt`, `data/database/dao/GroupLifecycleEventDao.kt`) — immutable audit log for group lifecycle transitions (create group, add/remove member, add expense, archive, delete, record settlement). Registered in AppDatabase entities and DaoModule.
+- **PipelineDiagnosticEvent** + **PipelineDiagnosticEventDao** created (`data/database/entity/PipelineDiagnosticEvent.kt`, `data/database/dao/PipelineDiagnosticEventDao.kt`) — diagnostic tracking for all 8+ data pipelines (notification, transaction lifecycle, receipt, recurring, currency, budget/forecast, backup/restore, privacy/AI). Each pipeline writes diagnostic events on success/drop/failure. Used by `NotificationProcessingPipeline.writePipelineDiagnosticEvent()`.
+- **WorkerRunLogger** (`domain/workers/WorkerRunLogger.kt`) + **WorkerRunLoggerImpl** — per-worker-run interface with start/success/skipped/retry/failure lifecycle. Writes to `BackgroundJobRun` table via `BackgroundJobRunDao`. Bound via new **WorkerModule** (`di/WorkerModule.kt`).
+- **WorkerExecutionGuard** (`domain/workers/WorkerExecutionGuard.kt`) — structured guarded execution wrapper for workers: checks `RestoreMaintenanceMode`, creates `WorkerRunLogger` handle, wraps in try-catch, records outcome. Used by all 7 workers (replacing ad-hoc per-worker logging).
+- **DatabaseReadBarrier** (`data/backup/DatabaseReadBarrier.kt`) and **DatabaseWriteBarrier** (`data/backup/DatabaseWriteBarrier.kt`) — `@Singleton` guards that throw `IllegalStateException` when operations are attempted during restore non-NORMAL modes. Provides finer-grained operation-level blocking beyond `RestoreMaintenanceMode`.
+- **RawStorageMode** (`domain/privacy/RawStorageMode.kt`) — enum with 4 values: `STORE_RAW`, `STORE_REDACTED`, `STORE_METADATA_ONLY`, `DO_NOT_STORE`. Controls write-time privacy for raw notification/OCR/email content.
+- **RawContentSanitizer** (`domain/privacy/RawContentSanitizer.kt`) — Kotlin `object` that applies `RawStorageMode` to raw OCR text, email subjects, and email senders at write time. Consumed by `ReceiptLifecycleCoordinator` (OCR) and `EmailReceiptIngestionService`.
+- **EffectiveCloudAiPolicy** / **EffectiveCloudAiPolicyResolver** (`domain/privacy/EffectiveCloudAiPolicy.kt`) — resolves effective cloud AI policy from both `PrivacySettingsRepository` (data-layer privacy toggles) and `AiSettingsRepository` (domain-layer AI settings). Produces `EffectiveCloudAiPolicy` data class with `cloudAllowed`, `redactBeforeCloud`, `receiptImageUploadAllowed`, `bankStatementCloudAllowed` flags. Used by hybrid AI services for pre-flight policy checks.
+- **GroupBalanceCalculator** (`domain/groups/GroupBalanceCalculator.kt`) — `@Singleton @Inject` calculator with `GroupMemberBalance` data class. Computes per-member net balance from paid totals, owed shares, and settlements. Used by `GroupLifecycleCoordinator` for balance-aware operations.
+- **CsvCellSanitizer** enhanced — now also handles single-quote prefix (`'`) injection vector, coordinated with `AccountingExporters` for consistent sanitization across all export paths.
+- **JsonExpenseImporter** (`util/JsonExpenseImporter.kt`) — JSON bulk import engine supporting v1 (flat) and v2 (enriched) row formats. Routes through `TransactionLifecycleCoordinator` with `DeduplicationMode.BULK_IMPORT`. Supports import result reporting with per-row status tracking.
+- **ImportCoordinator** (`util/ImportCoordinator.kt`) — orchestrates CSV/JSON import flows: format detection via content inspection, delegates to `CsvExpenseImporter` or `JsonExpenseImporter`, reports `ImportResult` with summary statistics.
+- **SubscriptionModule deleted** — confirmed removed; `SubscriptionManagerEngine` is auto-provided by `@Singleton @Inject constructor`. No Dagger cycle remaining.
+- **PrivacySettings** — added `receiptImageCloudEnabled` and `bankStatementAiEnabled` boolean fields for fine-grained cloud AI toggles.
+- **Additional CI guard** — `check_direct_time_calls.kts` (`scripts/guards/`) enforces `TimeProvider` usage and flags direct `System.currentTimeMillis()` / `Instant.now()` calls.
+- **MoneyAmount.kt** — `format()` extension now handles zero, negative, and large amounts correctly (M12 fix). `MoneyAggregate.kt` now guards against division by zero in `perDayAverage()` (M11 fix).
+- **ExportOptionsViewModel** — switched CSV/JSON export to use `ExportTransaction` schema fields (7C/7D), aligned with new `ExpenseExportMapper` and `ExportTransaction` domain model.
 
 ### Architecture Drift Updates (2026-05-09 — groups/tax/export/investment)
 - **TaxRateProvider** created (`domain/tax/TaxRateProvider.kt`) — interface for tax-rate data consumed by `TaxEstimator`. Returns `TaxRateResult` with standard/reduced VAT rates per country+region, with `TaxRateMetadata` describing source confidence.
@@ -190,7 +212,7 @@ domain/
 │       ├── ReceiptSideEffectDispatcher.kt   # Document-type-gated downstream effects
 │       └── BankStatementLifecycleProcessor.kt # Statement-specific processing
 ├── split/                       # Split-template and expense splitting logic
-├── privacy/                     # **NEW — Privacy capability gates, audit logger, sanitizer**
+├── privacy/                     # Privacy capability gates, audit logger, sanitizer, storage modes
 │   ├── PrivacyCapability.kt    # Enum of 21 gated capabilities
 │   ├── PrivacyGate.kt          # Interface for capability evaluation
 │   ├── PrivacyDecision.kt      # Sealed: Allowed / Denied(reason)
@@ -202,7 +224,10 @@ domain/
 │   ├── LocationPrivacyGate.kt        # Guards geocoding, GPS, backfill, Overpass
 │   ├── BackupPrivacyGate.kt          # Guards raw/encrypted backup
 │   ├── CompositePrivacyGate.kt       # Chains all gates; first Denied short-circuits
-│   └── RedactionSanitizer.kt         # PII redaction before cloud calls
+│   ├── RedactionSanitizer.kt         # PII redaction before cloud calls
+│   ├── RawStorageMode.kt             # Enum: STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE
+│   ├── RawContentSanitizer.kt        # Applies RawStorageMode to OCR/email content at write time
+│   └── EffectiveCloudAiPolicy.kt     # Resolves effective cloud AI policy from privacy + AI settings
 ├── service/                     # Domain service interfaces
 ├── usecase/                     # Use cases / orchestration
 ├── model/                       # Shared domain models
@@ -236,7 +261,11 @@ domain/
 ├── diagnostics/                 # Database integrity
 ├── dto/                         # Data transfer objects
 ├── util/                        # Shared utilities
-└── workers/                     # Worker specifications
+└── workers/                     # Worker specifications, run logging, and execution guard
+    ├── WorkerSpec.kt            # Worker default specs (interval, constraints, backoff)
+    ├── WorkerSpecScheduler.kt   # Centralized scheduling with version-change detection
+    ├── WorkerRunLogger.kt       # Per-run lifecycle tracking (start/success/skipped/retry/failure)
+    └── WorkerExecutionGuard.kt  # Structured guarded execution wrapper
 ```
 
 ### Data Layer (`data/`)
@@ -270,15 +299,22 @@ data/
 │   ├── ExportAnonymizer.kt               # Strips raw text from exports
 │   └── DataRetentionWorker.kt            # WorkManager purging worker
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v120)
+│   ├── AppDatabase.kt          # Room database (v123) — 62 entities registered
 │   ├── entity/                  # Room entities across finance, AI, groups, location, settings, and privacy
 │   │   ├── RecurringLifecycleEvent.kt   # Phase 5b — audit log for recurring occurrences
-│   │   └── PrivacyAuditEvent.kt         # Phase 6 — privacy gate audit log
+│   │   ├── PrivacyAuditEvent.kt         # Phase 6 — privacy gate audit log
+│   │   ├── GroupLifecycleEventEntity.kt # Group lifecycle events (group_lifecycle_events table)
+│   │   └── PipelineDiagnosticEvent.kt   # Pipeline diagnostic event tracking (pipeline_diagnostic_events table)
 │   ├── dao/                     # Room DAOs
 │   │   ├── RecurringLifecycleEventDao.kt
-│   │   └── PrivacyAuditDao.kt
+│   │   ├── PrivacyAuditDao.kt
+│   │   ├── GroupLifecycleEventDao.kt
+│   │   └── PipelineDiagnosticEventDao.kt
 │   ├── model/                   # Database models
 │   └── converter/               # Type converters
+├── backup/                      # Backup infrastructure additions
+│   ├── DatabaseReadBarrier.kt   # Operation-level read blocking during restore
+│   └── DatabaseWriteBarrier.kt  # Operation-level write blocking during restore
 ├── service/
 │   └── AndroidNotificationService.kt # Android notifications
 └── provider/
@@ -493,11 +529,11 @@ FinancialWeatherRepository
 
 ## Dependency Injection
 
-### Hilt Modules (31 total)
-- **Core:** `DatabaseModule`, `DaoModule`, `DispatchersModule`, `ApplicationScope`, `TimeModule`, `ServiceModule`
+### Hilt Modules (27 total)
+- **Core:** `DatabaseModule`, `DaoModule`, `DispatchersModule`, `ApplicationScope`, `TimeModule`, `ServiceModule`, `WorkerModule`
 - **AI:** `AiModule`, `OcrImprovementsModule`, `NaturalLanguageModule`
 - **Dashboard:** `DashboardContractsModule`, `DashboardAnomalyModule`
-- **Finance:** `CashFlowModule`, `SavingsModule`, `SavingsRepositoryBindingsModule`, `CurrencyModule`, `TaxModule`, `SubscriptionModule`, `ExportModule`
+- **Finance:** `CashFlowModule`, `SavingsModule`, `SavingsRepositoryBindingsModule`, `CurrencyModule`, `TaxModule`, `ExportModule`
 - **Shared expense / groups:** `GroupsModule`, `BackupRepositoryModule`
 - **Location / network:** `LocationResolverPortsModule`, `NetworkModule`
 - **Security & privacy:** `SecurityModule`, `PrivacyModule`, `ParserModule`, `ReceiptParsingModule`, `EmptyStateModule`, `EmptyStatePresentationModule`, `EmailIngestionModule`

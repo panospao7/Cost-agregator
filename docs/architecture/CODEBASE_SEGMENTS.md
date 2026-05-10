@@ -205,6 +205,8 @@ Owns statistical analysis, anomaly detection, category insights, and merchant in
 - `data/repository/AnalyticsRepository.kt`
 - `ui/screens/analytics/AnalyticsScreen.kt`
 - `ui/components/analytics/StatisticalVisualizations.kt`
+- `data/database/entity/PipelineDiagnosticEvent.kt` — Cross-pipeline diagnostic event (table: `pipeline_diagnostic_events`)
+- `data/database/dao/PipelineDiagnosticEventDao.kt` — DAO for pipeline diagnostic events
 
 ## SEGMENT 9: Core Expense Management
 
@@ -231,6 +233,8 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 - `docs/development/DAO_ACCESS_GUARDRAILS.md` — DAO access policy
 - `scripts/guardrails/dao-access-check.kts` — Guardrail enforcement
 - `scripts/guards/check_lifecycle_bypasses.kts` — CI guard for direct DAO bypasses
+- `util/ImportCoordinator.kt` — CSV/JSON import orchestration (format detection, delegation, result reporting)
+- `util/JsonExpenseImporter.kt` — JSON bulk import engine (v1 flat + v2 enriched formats, bulk dedup mode)
 
 **Boundary note:** All expense creation paths now route through `TransactionLifecycleCoordinator`. Direct `insertAtomic` calls are forbidden outside grandfathered files listed in `DAO_ACCESS_GUARDRAILS.md`.
 
@@ -275,6 +279,9 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `data/privacy/DataRetentionWorker.kt`
 - `domain/workers/WorkerSpec.kt`
 - `domain/workers/WorkerSpecScheduler.kt`
+- `domain/workers/WorkerRunLogger.kt` — Per-run lifecycle tracking (start/success/skipped/retry/failure)
+- `domain/workers/WorkerExecutionGuard.kt` — Structured guarded execution with restore check
+- `di/WorkerModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl
 - `service/reminder/BillReminderWorker.kt`
 - `service/receiptmatching/ReceiptMatchingWorker.kt`
 - `service/warranty/WarrantyExpirationWorker.kt`
@@ -373,6 +380,8 @@ Owns export pipelines, backup/restore flows, and file packaging.
 - `data/backup/CostbackupBundle.kt`
 - `data/backup/RestoreJournal.kt`
 - `data/backup/RestoreMaintenanceMode.kt`
+- `data/backup/DatabaseReadBarrier.kt` — Operation-level read blocking during restore
+- `data/backup/DatabaseWriteBarrier.kt` — Operation-level write blocking during restore
 - `domain/backup/BackupPrivacyMode.kt` — enum defining 4 backup privacy levels
 - `domain/backup/DatabaseBackupRepository.kt`
 - `domain/export/AccountingExporters.kt`
@@ -460,10 +469,13 @@ Owns the base group/shared-expense model, membership, and transaction coordinati
 - `data/repository/GroupsRepositoryImpl.kt`
 - `domain/groups/GroupTransactionCoordinator.kt`
 - `domain/groups/GroupLifecycleCoordinator.kt` — @Singleton domain coordinator wrapping GroupTransactionCoordinator (7 methods, 8 invariants)
+- `domain/groups/GroupBalanceCalculator.kt` — @Singleton @Inject per-member net balance calculator (paidTotal, owedShareTotal, settlementsPaid/Received, netBalance)
 - `domain/groups/usecase/AddGroupExpenseUseCase.kt`
 - `domain/groups/SharedExpenseManager.kt`
 - `data/database/dao/GroupSettlementDao.kt`
+- `data/database/dao/GroupLifecycleEventDao.kt` — Group lifecycle event audit log
 - `data/database/entity/GroupSettlementEntity.kt`
+- `data/database/entity/GroupLifecycleEventEntity.kt` — Immutable group lifecycle event log (table: `group_lifecycle_events`)
 - `ui/screens/groups/SharedExpenseGroupsViewModel.kt`
 
 ## SEGMENT 25: Shared Expense Budget Offset
@@ -506,6 +518,9 @@ Owns encrypted key storage and security/network bindings.
 - `di/NetworkQualifiers.kt`
 - `domain/privacy/CloudPayloadRedactor.kt` — unified cloud AI payload redaction interface
 - `data/privacy/DefaultCloudPayloadRedactor.kt` — wraps CloudPiiSanitizer (ARCH-04 Stage 1)
+- `domain/privacy/RawStorageMode.kt` — Enum: STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE
+- `domain/privacy/RawContentSanitizer.kt` — Write-time sanitizer applying RawStorageMode to OCR/email content
+- `domain/privacy/EffectiveCloudAiPolicy.kt` — Resolves effective cloud AI policy from privacy + AI settings, used by hybrid services for pre-flight checks
 
 ## SEGMENT 29: Debug & Diagnostics
 
@@ -531,6 +546,7 @@ Owns Hilt module wiring and app-wide providers.
 - `di/PrivacyModule.kt`
 - `di/ServiceModule.kt`
 - `di/TimeModule.kt`
+- `di/WorkerModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl
 - `MainApplication.kt`
 
 **Boundary note:** `BackupRepositoryModule.kt` is also listed under Segment 18 (Export & Backup) as it cross-cuts DI wiring with backup infrastructure. `PrivacyModule.kt` cross-cuts with Segment 28 (Security & API Key Management).
@@ -650,29 +666,29 @@ File-to-segment mapping for all 38 segments:
 | 5 | AI Receipt Item Categorization | `domain/ai/usecase/CategorizeReceiptItems`, `ReceiptItemCategorization` |
 | 6 | Merchant Categorization | `domain/categorization/`, `MerchantCanonicalizer`, `HybridExpenseClassifier` |
 | 7 | Recurring Expenses | `domain/recurring/`, `recurring_occurrences`, recurring lifecycle |
-| 8 | Analytics & Insights | `domain/analytics/`, `InsightsEngine`, `AnomalyDetector` |
-| 9 | Core Expense Management | `domain/transaction/`, `TransactionLifecycleCoordinator`, `transaction_events`, expense CRUD |
+| 8 | Analytics & Insights | `domain/analytics/`, `InsightsEngine`, `AnomalyDetector`, `PipelineDiagnosticEvent` |
+| 9 | Core Expense Management | `domain/transaction/`, `TransactionLifecycleCoordinator`, `transaction_events`, expense CRUD, `ImportCoordinator`, `JsonExpenseImporter` |
 | 10 | Dashboard Totals & Widgets | `TotalsAggregationEngine`, `DashboardRepository`, totals UI |
 | 11 | Notifications & Alerts | `NotificationService` |
-| 12 | Startup & Background Runtime | `startup/`, workers, `AppStartupCoordinator` |
+| 12 | Startup & Background Runtime | `startup/`, workers, `AppStartupCoordinator`, `WorkerRunLogger`, `WorkerExecutionGuard`, `WorkerModule` |
 | 13 | Cash Flow Planning | `domain/cashflow/`, `CashFlowCalculator` |
 | 14 | Bank Integration | `domain/bank/`, `BankConnection` |
 | 15 | Investment Tracking | `domain/investment/`, `InvestmentTracker`, `InvestmentDataQuality`, `InvestmentPerformance` |
 | 16 | Currency & Exchange | `domain/core/money/`, `CurrencyConverter`, `MultiCurrencyRepository` |
 | 17 | Tax Calculation & Reporting | `domain/tax/`, `TaxEstimator`, `TaxRateProvider`, `DemoTaxRateProvider` |
-| 18 | Export & Backup | `domain/backup/`, `data/backup/`, `AccountingExport`, `CsvCellSanitizer` |
+| 18 | Export & Backup | `domain/backup/`, `data/backup/`, `AccountingExport`, `CsvCellSanitizer`, `DatabaseReadBarrier`, `DatabaseWriteBarrier` |
 | 19 | Location Enrichment | `domain/location/`, `CompositeGeocodingService` |
 | 20 | AI Platform, Assistant & Follow-Through | `domain/ai/policy/`, `AiModule`, assistant, briefing |
 | 21 | Enhanced Split Transactions | `domain/split/`, `VisualSplitEditor`, `SplitTemplate` |
 | 22 | Lifestyle Inflation Detector | `domain/lifestyle/`, `LifestyleInflationDetector` |
 | 23 | Savings Prompts & Nudges | `domain/usecase/savings/`, `PromptState` |
-| 24 | Shared Expense Groups | `domain/groups/`, `GroupsRepository`, `GroupSettlementDao`, `GroupSettlementEntity` |
+| 24 | Shared Expense Groups | `domain/groups/`, `GroupsRepository`, `GroupSettlementDao`, `GroupSettlementEntity`, `GroupLifecycleEventDao`, `GroupLifecycleEventEntity`, `GroupBalanceCalculator` |
 | 25 | Shared Expense Budget Offset | `SharedExpenseBudgetOffsetEngine` |
 | 26 | Natural Language Search | `domain/naturallanguage/` |
 | 27 | Carbon Footprint Tracking | `domain/carbon/` |
-| 28 | Security & API Key Management | `data/security/`, `SecurityModule`, `CloudPayloadRedactor` |
+| 28 | Security & API Key Management | `data/security/`, `SecurityModule`, `CloudPayloadRedactor`, `RawStorageMode`, `RawContentSanitizer`, `EffectiveCloudAiPolicy` |
 | 29 | Debug & Diagnostics | `DebugScreen`, `ServiceDiagnostics` |
-| 30 | Dependency Injection | `di/` modules, `MainApplication.kt` |
+| 30 | Dependency Injection | `di/` modules, `MainApplication.kt`, `WorkerModule` |
 | 31 | Use Cases | `domain/usecase/` |
 | 32 | Utilities & Shared Helpers | `domain/util/`, `domain/core/time/` |
 | 33 | Configuration, Performance & Accessibility | `domain/config/`, accessibility components |

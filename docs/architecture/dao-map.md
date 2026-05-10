@@ -1,8 +1,8 @@
 # DAO ↔ Entity ↔ Repository Map
 
-> Complete mapping of all 58 DAOs to their entities and consuming repositories/services.
+> Complete mapping of all 60 DAOs to their entities and consuming repositories/services.
 >
-> Last updated: 2026-05-07
+> Last updated: 2026-05-10
 
 ---
 
@@ -87,10 +87,11 @@
 
 | DAO | Entity | Repository Consumers | Ultimate Consumers |
 |-----|--------|---------------------|-------------------|
-| `ExpenseGroupDao` | `ExpenseGroup` | `GroupsRepositoryImpl`, `GroupTransactionCoordinator` | SharedExpenseGroupsVM |
-| `GroupMemberDao` | `GroupMember` | `GroupsRepositoryImpl`, `GroupTransactionCoordinator` | SharedExpenseGroupsVM |
-| `GroupExpenseDao` | `GroupExpense` | `GroupsRepositoryImpl`, `GroupTransactionCoordinator` | SharedExpenseGroupsVM |
-| `GroupSettlementDao` | `GroupSettlementEntity` | `GroupTransactionCoordinator` | SharedExpenseGroupsVM |
+| `ExpenseGroupDao` | `ExpenseGroup` | `GroupsRepositoryImpl`, `GroupTransactionCoordinator`, `GroupBalanceCalculator` | SharedExpenseGroupsVM |
+| `GroupMemberDao` | `GroupMember` | `GroupsRepositoryImpl`, `GroupTransactionCoordinator`, `GroupBalanceCalculator` | SharedExpenseGroupsVM |
+| `GroupExpenseDao` | `GroupExpense` | `GroupsRepositoryImpl`, `GroupTransactionCoordinator`, `GroupBalanceCalculator` | SharedExpenseGroupsVM |
+| `GroupSettlementDao` | `GroupSettlementEntity` | `GroupTransactionCoordinator`, `GroupBalanceCalculator` | SharedExpenseGroupsVM |
+| `GroupLifecycleEventDao` | `GroupLifecycleEventEntity` | `GroupLifecycleCoordinator` | Group lifecycle audit log |
 
 ## Investment Domain
 
@@ -156,6 +157,8 @@
 | `RecommendationDao` | `RecommendationEntity` | `RecommendationRepository` | AI recommendations |
 | `StressForecastSnapshotDao` | `StressForecastSnapshot` | `FinancialStressForecastEngine` | Cash flow |
 | `SourceStatsEventDao` | `SourceStatsEvent` | — | Source stats event tracking (event-based, v117+) |
+| `GroupLifecycleEventDao` | `GroupLifecycleEventEntity` | `GroupLifecycleCoordinator` | Group lifecycle audit log |
+| `PipelineDiagnosticEventDao` | `PipelineDiagnosticEvent` | `NotificationProcessingPipeline` | Cross-pipeline diagnostic tracking |
 
 ---
 

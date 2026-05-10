@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated:** 2026-05-07 (snapshot)  
-**Database Version:** 120  
+**Generated:** 2026-05-10 (snapshot)  
+**Database Version:** 123  
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -425,6 +425,8 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 - ReceiptExpenseLink, RecurringLifecycleEvent
 - RecurringOccurrence, RecurringReminderDelivery
 - PrivacyAuditEvent
+- GroupLifecycleEventEntity — Group lifecycle transitions (table: `group_lifecycle_events`)
+- PipelineDiagnosticEvent — Cross-pipeline diagnostics (table: `pipeline_diagnostic_events`)
 
 ### DAOs
 One DAO per entity (mostly 1-to-1 mapping)
@@ -435,9 +437,11 @@ One DAO per entity (mostly 1-to-1 mapping)
 - RecurringOccurrenceDao, RecurringReminderDeliveryDao
 - SpendingChallengeDao, PrivacyAuditDao
 - InvestmentTransactionDao, WarrantyLifecycleEventDao, GroupSettlementDao
+- **GroupLifecycleEventDao** — Group lifecycle event audit log (table: `group_lifecycle_events`)
+- **PipelineDiagnosticEventDao** — Cross-pipeline diagnostic event tracking (table: `pipeline_diagnostic_events`)
 
 ### Migration History
-- Database Version: 120
+- Database Version: 123 (incremental: 120→121→122→123)
 - Migration methods: current chain in `AppDatabase.kt`
 - Export schema: Enabled
 - Type converters: Defined in `converter/Converters.kt`
@@ -467,7 +471,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **OcrImprovementsModule** - OCR & receipts
 - **SavingsModule** - Savings engines
 - **SavingsRepositoryBindingsModule** - Savings repository bindings
-- **SubscriptionModule** - Subscriptions
+- **WorkerModule** - Worker run logging binding (WorkerRunLogger interface → WorkerRunLoggerImpl)
 - **TaxModule** - Tax estimation
 - **NaturalLanguageModule** - Natural language search bindings
 - **EmailIngestionModule** - Email receipt ingestion
@@ -663,7 +667,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Room Database Persistence  
 
 ### Database
-✅ Version 120 with current migration chain  
+✅ Version 123 with current migration chain (120→121→122→123)  
 ✅ Export schema enabled  
 ✅ Type converters defined
 
@@ -690,4 +694,4 @@ One DAO per entity (mostly 1-to-1 mapping)
 
 ## End of Inventory
 
-**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-05-07.**
+**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-05-10.**
