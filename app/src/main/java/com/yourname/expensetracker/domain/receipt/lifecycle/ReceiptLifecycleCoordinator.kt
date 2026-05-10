@@ -17,7 +17,9 @@ import com.yourname.expensetracker.data.repository.ReceiptRepository
 import com.yourname.expensetracker.domain.model.Result as DomainResult
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.EmailReceiptData
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
@@ -396,88 +398,6 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      * @return [Result.success] with the saved [ScannedReceipt] on success,
      *         [Result.failure] on error.
      */
-    suspend fun processEmailReceipt(emailData: EmailReceiptData): Result<ScannedReceipt> {
-        // Guard: block writes during restore maintenance mode
-        if (!restoreMaintenanceMode.isWritesAllowed()) {
-            return Result.failure(IllegalStateException("Database writes blocked during restore"))
-        }
-
-        // 1. Check message ID dedup via sourceFingerprint
-        if (emailData.messageId.isNotBlank()) {
-            val existing = scannedReceiptDao.getBySourceFingerprint(emailData.messageId)
-            if (existing != null) {
-                return Result.success(existing)
-            }
-        }
-
-        // 2. Build receipt
-        val now = timeProvider.now()
-        val receipt = ScannedReceipt(
-            imagePath = null,  // email receipts have no image
-            rawOcrText = emailData.body,
-            parsedTotal = emailData.amount,
-            parsedMerchant = emailData.merchant,
-            parsedDate = emailData.date,
-            parsedItems = emailData.items,
-            parsedTaxAmount = null,
-            currency = emailData.currency ?: run {
-                val homeCurrency = currencySettingsRepository.homeCurrency().first()
-                if (homeCurrency.isNotBlank()) {
-                    Timber.d("Using home currency as fallback for email receipt: %s", homeCurrency)
-                    homeCurrency
-                } else {
-                    return Result.failure(IllegalStateException("Cannot resolve currency for email receipt"))
-                }
-            },
-            confidence = 0.7f,
-            sourceType = ReceiptSourceType.EMAIL.name,
-            documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
-            processingStatus = if (emailData.merchant != null) ReceiptProcessingStatus.PARSED.name
-                               else ReceiptProcessingStatus.CAPTURED.name,
-            sourceFingerprint = emailData.messageId,
-            createdAt = now,
-            updatedAt = now
-        )
-
-        // 3. Save receipt
-        val savedId = scannedReceiptDao.insert(receipt)
-        val saved = receipt.copy(id = savedId)
-
-        // 4. Create EmailReceiptSource record for provider tracking
-        // RCP-6: Track the email source alongside the receipt for full lifecycle.
-        val emailSource = EmailReceiptSource(
-            receiptId = savedId,
-            emailSender = emailData.from,
-            emailSubject = emailData.subject,
-            emailMessageId = emailData.messageId,
-            parsedAt = now,
-            provider = resolveEmailProvider(emailData.from),
-            confidence = 1.0,
-            fingerprint = ""
-        )
-        emailReceiptDao.insertOrIgnore(emailSource)
-
-        // 5. Write event
-        receiptEventDao.insert(ReceiptEvent(
-            receiptId = savedId,
-            sourceType = ReceiptSourceType.EMAIL.name,
-            documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
-            eventType = "RECEIPT_SAVED",
-            occurredAt = now,
-            oldStatus = null,
-            newStatus = saved.processingStatus,
-            actor = "system:email_ingestion",
-            message = "Email receipt saved via lifecycle coordinator",
-            metadata = null,
-            errorDetails = null
-        ))
-
-        // 6. Dispatch side effects
-        sideEffectDispatcher.dispatchAfterSave(saved)
-
-        return Result.success(saved)
-    }
-
     /**
      * Processes a bank statement image and extracts individual transactions.
      *
@@ -560,25 +480,157 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Deletes a receipt and its associated assets.
+     * Full lifecycle owner for email receipt ingestion.
      *
-     * Performs a complete teardown in this order:
-     * 1. Looks up the receipt by ID — returns failure if not found.
-     * 2. Within a database transaction: writes a [ReceiptEvent] with eventType `RECEIPT_DELETED`
-     *    for the audit trail, deletes all [ReceiptExpenseLink] rows, and deletes the database row.
-     * 3. POST-COMMIT: Deletes the physical asset file from app-local storage
-     *    (if [ScannedReceipt.imagePath] is set).
+     * Saves receipt → creates EmailReceiptSource → writes event →
+     * creates Expense → links receipt → dispatches side effects.
      *
-     * @param receiptId The ID of the receipt to delete.
-     * @return [Result.success] on completion, [Result.failure] on error.
+     * @param emailData       Parsed email data with amount/merchant/currency/date.
+     * @param fingerprint     Deduplication fingerprint from the caller.
+     * @param rawEmailBody    Full raw email body text (stored in rawOcrText).
+     * @param sender          Email sender address.
+     * @param subject         Email subject line.
+     * @param messageId       Email message ID for source dedup.
+     * @param provider        Provider name (amazon/uber/apple/unknown).
+     * @return [EmailReceiptProcessResult] sealed result.
      */
+    suspend fun processEmailReceipt(
+        emailData: EmailReceiptData,
+        fingerprint: String,
+        rawEmailBody: String,
+        sender: String,
+        subject: String,
+        messageId: String,
+        provider: String
+    ): EmailReceiptProcessResult {
+        if (!restoreMaintenanceMode.isWritesAllowed()) {
+            return EmailReceiptProcessResult.Error("Database writes blocked during restore")
+        }
+
+        // Check messageId dedup
+        if (messageId.isNotBlank()) {
+            val existing = scannedReceiptDao.getBySourceFingerprint(messageId)
+            if (existing != null) {
+                return EmailReceiptProcessResult.Duplicate(existing.id)
+            }
+        }
+        // Check fingerprint dedup
+        if (fingerprint.isNotBlank()) {
+            val existing = emailReceiptDao.getByFingerprint(fingerprint)
+            if (existing != null) {
+                return EmailReceiptProcessResult.Duplicate(existing.receiptId)
+            }
+        }
+
+        val now = timeProvider.now()
+        var savedId = 0L
+        var expenseIds = mutableListOf<Long>()
+
+        database.withTransaction {
+            val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+                .getOrDefault("EUR")
+
+            val receipt = ScannedReceipt(
+                imagePath = null,
+                rawOcrText = rawEmailBody,
+                parsedTotal = emailData.amount,
+                parsedMerchant = emailData.merchant,
+                parsedDate = emailData.date,
+                parsedItems = emailData.items,
+                parsedTaxAmount = null,
+                currency = emailData.currency ?: homeCurrency,
+                confidence = 0.7f,
+                sourceType = ReceiptSourceType.EMAIL.name,
+                documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
+                processingStatus = if (emailData.merchant != null) ReceiptProcessingStatus.PARSED.name
+                                   else ReceiptProcessingStatus.CAPTURED.name,
+                sourceFingerprint = messageId,
+                createdAt = now,
+                updatedAt = now
+            )
+            savedId = scannedReceiptDao.insert(receipt)
+
+            val emailSource = EmailReceiptSource(
+                receiptId = savedId,
+                emailSender = sender,
+                emailSubject = subject,
+                emailMessageId = messageId,
+                parsedAt = now,
+                provider = provider,
+                confidence = 1.0,
+                fingerprint = fingerprint
+            )
+            emailReceiptDao.insertOrIgnore(emailSource)
+
+            receiptEventDao.insert(ReceiptEvent(
+                receiptId = savedId,
+                sourceType = ReceiptSourceType.EMAIL.name,
+                documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
+                eventType = "RECEIPT_SAVED",
+                occurredAt = now,
+                oldStatus = null,
+                newStatus = receipt.processingStatus,
+                actor = "system:email_ingestion",
+                message = "Email receipt saved via lifecycle coordinator",
+                metadata = null,
+                errorDetails = null
+            ))
+
+            // Create expense if we have enough data
+            if (emailData.amount != null && emailData.amount > 0 &&
+                !emailData.merchant.isNullOrBlank() &&
+                emailData.date != null && emailData.date > 0
+            ) {
+                val request = CreateExpenseRequest(
+                    merchant = emailData.merchant!!,
+                    amount = emailData.amount,
+                    currency = emailData.currency ?: homeCurrency,
+                    date = emailData.date,
+                    transactionType = TransactionType.PURCHASE,
+                    source = ExpenseSource.EMAIL_RECEIPT,
+                    notes = "Imported from email: $subject",
+                    scannedReceiptId = savedId,
+                    deduplicationMode = DeduplicationMode.STANDARD
+                )
+                when (val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
+                    is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created -> {
+                        expenseIds.add(result.expenseId)
+                        receiptLinkService.linkReceiptToExpense(savedId, result.expenseId, "EMAIL_RECEIPT", source = ExpenseSource.EMAIL_RECEIPT.name)
+                    }
+                    is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.DuplicateSkipped -> {
+                        Timber.d("Email receipt %d matched existing expense %d", savedId, result.existingExpenseId)
+                        expenseIds.add(result.existingExpenseId)
+                        receiptLinkService.linkReceiptToExpense(savedId, result.existingExpenseId, "EMAIL_RECEIPT", source = ExpenseSource.EMAIL_RECEIPT.name)
+                    }
+                    is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.ValidationFailed -> {
+                        Timber.w("Email receipt %d validation failed: %s", savedId, result.errors)
+                    }
+                    else -> {}
+                }
+            }
+        }
+
+        // Post-commit side effects (best-effort)
+        val saved = scannedReceiptDao.getById(savedId)
+        if (saved != null) {
+            runCatching { sideEffectDispatcher.dispatchAfterSave(saved) }
+            for (expenseId in expenseIds) {
+                runCatching {
+                    transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
+                        expenseId, ExpenseSource.EMAIL_RECEIPT
+                    )
+                }
+            }
+        }
+
+        return EmailReceiptProcessResult.Success(receiptId = savedId, expenseIds = expenseIds)
+    }
+
     suspend fun deleteReceipt(receiptId: Long): Result<Unit> {
-        // Guard: block writes during restore maintenance mode
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             return Result.failure(IllegalStateException("Database writes blocked during restore"))
         }
 
-        // 1. Look up receipt — fail fast if not found
         val receipt = scannedReceiptDao.getById(receiptId)
             ?: return Result.failure(IllegalArgumentException("Receipt not found: $receiptId"))
 
