@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.recurring.lifecycle
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -45,6 +46,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
     private val reminderDeliveryDao: RecurringReminderDeliveryDao,
     private val lifecycleEventDao: RecurringLifecycleEventDao,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val writeBarrier: DatabaseWriteBarrier,
     private val plannedExpenseDao: PlannedExpenseDao
 ) {
     companion object {
@@ -373,11 +375,24 @@ class RecurringLifecycleCoordinator @Inject constructor(
         }
         val existing = reminderDeliveryDao.getById(deliveryId) ?: return
         val status = if (reason.contains("permission", ignoreCase = true)) "FAILED_PERMISSION" else "FAILED_TRANSIENT"
+        val now = timeProvider.now()
         reminderDeliveryDao.update(
-            existing.copy(
-                status = status
-            )
+            existing.copy(status = status)
         )
+        try {
+            lifecycleEventDao.insert(
+                RecurringLifecycleEvent(
+                    occurrenceId = existing.occurrenceId,
+                    eventType = "REMINDER_DELIVERY_FAILED",
+                    occurredAt = now,
+                    oldStatus = existing.status,
+                    newStatus = status,
+                    metadata = """{"deliveryId":$deliveryId,"reason":"$reason"}"""
+                )
+            )
+        } catch (e: Exception) {
+            Timber.w(e, "Non-critical: failed to write REMINDER_DELIVERY_FAILED event for delivery %d", deliveryId)
+        }
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.email
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -70,6 +71,7 @@ class EmailReceiptIngestionService(
     private val timeProvider: TimeProvider,
     private val coordinator: TransactionLifecycleCoordinator,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val writeBarrier: DatabaseWriteBarrier,
     private val transactionRunner: suspend (suspend () -> EmailReceiptResult) -> EmailReceiptResult
 ) {
     @Inject
@@ -85,7 +87,8 @@ class EmailReceiptIngestionService(
         timeProvider: TimeProvider,
         coordinator: TransactionLifecycleCoordinator,
         database: AppDatabase,
-        restoreMaintenanceMode: RestoreMaintenanceMode
+        restoreMaintenanceMode: RestoreMaintenanceMode,
+        writeBarrier: DatabaseWriteBarrier
     ) : this(
         receiptParser = receiptParser,
         processReceiptUseCase = processReceiptUseCase,
@@ -98,6 +101,7 @@ class EmailReceiptIngestionService(
         timeProvider = timeProvider,
         coordinator = coordinator,
         restoreMaintenanceMode = restoreMaintenanceMode,
+        writeBarrier = writeBarrier,
         transactionRunner = { block -> database.withTransaction { block() } }
     )
 
@@ -112,7 +116,8 @@ class EmailReceiptIngestionService(
         categorizationEngine: CategorizationEngine,
         timeProvider: TimeProvider,
         coordinator: TransactionLifecycleCoordinator,
-        restoreMaintenanceMode: RestoreMaintenanceMode
+        restoreMaintenanceMode: RestoreMaintenanceMode,
+        writeBarrier: DatabaseWriteBarrier
     ) : this(
         receiptParser = receiptParser,
         processReceiptUseCase = processReceiptUseCase,
@@ -125,6 +130,7 @@ class EmailReceiptIngestionService(
         timeProvider = timeProvider,
         coordinator = coordinator,
         restoreMaintenanceMode = restoreMaintenanceMode,
+        writeBarrier = writeBarrier,
         transactionRunner = { block -> block() }
     )
 
@@ -214,7 +220,8 @@ class EmailReceiptIngestionService(
                         confidence = parsedReceipt.confidence,
                         fingerprint = fingerprint
                     )
-                    emailReceiptDao.insertOrIgnore(emailSource)
+                    val sourceId = emailReceiptDao.insertOrIgnore(emailSource)
+                    if (sourceId == -1L) Timber.w("EmailReceiptSource insert conflict for receipt %d", existingScanned.id)
                     return@transactionRunner EmailReceiptResult.Duplicate(existingScanned.id)
                 }
 
@@ -263,7 +270,8 @@ class EmailReceiptIngestionService(
                     confidence = parsedReceipt.confidence,
                     fingerprint = fingerprint
                 )
-                emailReceiptDao.insertOrIgnore(emailSource)
+                val sourceId = emailReceiptDao.insertOrIgnore(emailSource)
+                if (sourceId == -1L) Timber.w("EmailReceiptSource insert conflict for receipt %d", receiptId)
 
                 // Step 8: Route email receipts through the shared receipt processing pipeline
                 val processedReceipt = processReceiptUseCase(
@@ -373,12 +381,16 @@ class EmailReceiptIngestionService(
      * Format: normalized_merchant_amount_date
      */
     private fun createFingerprint(merchant: String, amount: Double, date: Long, messageId: String = ""): String {
-        // Round amount to 2 decimal places for consistent fingerprinting
         val roundedAmount = String.format(Locale.US, "%.2f", amount)
-        // Use date bucket (5 minute window) for deduplication
-        val dateBucket = date / 300_000L // 5 minute buckets
-        val base = "${merchant.lowercase()}_${roundedAmount}_${dateBucket}"
-        return if (messageId.isNotBlank()) "${base}_${messageId}" else base
+        val dateBucket = date / 300_000L
+        // Content-only dedup fingerprint: forwarded/re-sent receipts with different
+        // message IDs still match by content (merchant + amount + date bucket)
+        return "${merchant.lowercase()}_${roundedAmount}_${dateBucket}"
+    }
+
+    private fun createSourceFingerprint(merchant: String, amount: Double, date: Long, messageId: String): String {
+        val contentFp = createFingerprint(merchant, amount, date)
+        return "${contentFp}_${messageId}"
     }
 
     /**
@@ -426,6 +438,10 @@ class EmailReceiptIngestionService(
 
         val expenseId = when (val result = coordinator.createExpense(request, SideEffectMode.DEFER)) {
             is CreateExpenseResult.Created -> result.expenseId
+            is CreateExpenseResult.DuplicateSkipped -> {
+                Timber.d("Email receipt matched existing expense %d", result.existingExpenseId)
+                result.existingExpenseId
+            }
             else -> {
                 Timber.w("Failed to create expense for email receipt: $receiptId, result=$result")
                 throw EmailReceiptExpenseCreationException("Failed to create expense for email receipt: $receiptId")

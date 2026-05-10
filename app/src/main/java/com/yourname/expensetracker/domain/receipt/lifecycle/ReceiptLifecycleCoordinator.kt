@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
@@ -87,6 +88,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val duplicateDetector: ReceiptDuplicateDetector,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val writeBarrier: DatabaseWriteBarrier,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
@@ -279,6 +281,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // P3-P1-02: Repair createdAt=0L sentinel that arrives when the OCR
             // pipeline creates a ScannedReceipt without setting a timestamp.
             val repairedCreatedAt = if (receipt.createdAt == 0L) now else receipt.createdAt
+            val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
+            val sanitizedOcrText = when (ocrStorageMode) {
+                RawStorageMode.STORE_RAW -> receipt.rawOcrText
+                RawStorageMode.STORE_REDACTED -> "[REDACTED]"
+                RawStorageMode.STORE_METADATA_ONLY -> ""
+                RawStorageMode.DO_NOT_STORE -> ""
+            }
             val updated = receipt.copy(
                 imagePath = receipt.imagePath,
                 imageHash = fileHash ?: receipt.imageHash,
@@ -287,6 +296,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 processingStatus = processingStatus,
                 textFingerprint = textFingerprint,
                 semanticFingerprint = semanticFingerprint,
+                rawOcrText = sanitizedOcrText,
                 createdAt = repairedCreatedAt,
                 updatedAt = now
             ).also { it.taxInclusive = taxInclusive }
@@ -451,23 +461,26 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             createdAt = if (receipt.createdAt == 0L) now else receipt.createdAt,
             updatedAt = now
         )
-        val id = scannedReceiptDao.insert(updated)
+        var id = 0L
+        database.withTransaction {
+            id = scannedReceiptDao.insert(updated)
 
-        receiptEventDao.insert(
-            ReceiptEvent(
-                receiptId = id,
-                sourceType = ReceiptSourceType.EMAIL.name,
-                documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
-                eventType = "RECEIPT_SAVED",
-                occurredAt = now,
-                oldStatus = null,
-                newStatus = ReceiptProcessingStatus.PARSED.name,
-                actor = "system:email_ingestion",
-                message = "Email receipt saved via lifecycle coordinator",
-                metadata = null,
-                errorDetails = null
+            receiptEventDao.insert(
+                ReceiptEvent(
+                    receiptId = id,
+                    sourceType = ReceiptSourceType.EMAIL.name,
+                    documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
+                    eventType = "RECEIPT_SAVED",
+                    occurredAt = now,
+                    oldStatus = null,
+                    newStatus = ReceiptProcessingStatus.PARSED.name,
+                    actor = "system:email_ingestion",
+                    message = "Email receipt saved via lifecycle coordinator",
+                    metadata = null,
+                    errorDetails = null
+                )
             )
-        )
+        }
 
         Timber.d("Email receipt saved via coordinator: id=%d", id)
         return id

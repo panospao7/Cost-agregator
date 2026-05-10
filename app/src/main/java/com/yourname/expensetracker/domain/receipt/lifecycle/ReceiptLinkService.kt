@@ -235,6 +235,7 @@ class ReceiptLinkService @Inject constructor(
                         if (existingExpense != null && existingExpense.categoryId == null) {
                             // C1 LIFECYCLE NOTE: This direct DAO call intentionally bypasses
                             // TransactionLifecycleCoordinator.updateCategory().
+                            // ⏭ DEFERRED_DESIGN: Proper fix requires ExpenseCategoryAssignmentPort.
                             // Cannot inject the coordinator due to circular dependency:
                             //   TransactionLifecycleCoordinator → ReceiptLinkService (via side effects)
                             //   ReceiptLinkService → TransactionLifecycleCoordinator (would create cycle)

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.transaction.lifecycle
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -52,6 +53,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
     private val sideEffectDispatcher: TransactionSideEffectDispatcher,
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val writeBarrier: DatabaseWriteBarrier,
     private val currencySettingsRepository: CurrencySettingsRepository
 ) {
     /**

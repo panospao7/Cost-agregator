@@ -262,6 +262,7 @@ class ExportOptionsViewModel @Inject constructor(
         exportJob = null
     }
 
+    @Deprecated("Use writePage which supports full ExportTransaction schema")
     private suspend fun streamGenericCsvExport(
         writer: Appendable,
         expenses: List<Expense>,
@@ -289,6 +290,7 @@ class ExportOptionsViewModel @Inject constructor(
         }
     }
 
+    @Deprecated("Use writePage which supports full ExportTransaction schema")
     private suspend fun streamJsonExport(
         writer: Appendable,
         expenses: List<Expense>,
