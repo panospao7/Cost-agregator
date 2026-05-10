@@ -6,11 +6,13 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
+import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.ExpenseGroup
 import com.yourname.expensetracker.data.database.entity.GroupExpense
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
+import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.groups.GroupValidationError
@@ -22,6 +24,7 @@ import com.yourname.expensetracker.domain.logic.CustomSplitJsonCodec
 import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
@@ -137,6 +140,7 @@ class GroupTransactionCoordinator @Inject constructor(
     private val memberDao: GroupMemberDao,
     private val groupExpenseDao: GroupExpenseDao,
     private val expenseDao: ExpenseDao,
+    private val transactionEventDao: TransactionEventDao,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : DomainCoordinator {
@@ -770,13 +774,37 @@ class GroupTransactionCoordinator @Inject constructor(
         }
 
         // Clear orphaned shared-expense flags
-        // NOTE: Intentionally NOT routed through TransactionLifecycleCoordinator.
-        // This is a group-level atomic cleanup operation (hard group delete), not a
-        // user-originated edit of individual expense ownership fields. The lifecycle
-        // coordinator is reserved for user-driven ownership changes that need audit
-        // events. ClearSharedExpenseFlags is a bulk data-integrity operation.
         linkedExpenseIds.forEach { expenseId ->
             expenseDao.clearSharedExpenseFlags(expenseId)
+        }
+
+        // P2-06: Write a single BULK_UPDATED event for the hard-delete
+        if (linkedExpenseIds.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            val metadata = org.json.JSONObject().apply {
+                put("action", "clearSharedExpenseFlags")
+                put("expenseIds", org.json.JSONArray(linkedExpenseIds))
+                put("count", linkedExpenseIds.size)
+            }.toString()
+            try {
+                transactionEventDao.insert(
+                    TransactionEvent(
+                        expenseId = null,
+                        eventType = LifecycleEventType.BULK_UPDATED.name,
+                        source = "GROUP_HARD_DELETE",
+                        actor = "system:group_transaction_coordinator",
+                        occurredAt = now,
+                        dedupeKey = null,
+                        duplicateExpenseId = null,
+                        beforeSnapshot = null,
+                        afterSnapshot = null,
+                        metadata = metadata,
+                        reason = "Group hard-delete cleared shared expense flags for ${linkedExpenseIds.size} expenses"
+                    )
+                )
+            } catch (_: Exception) {
+                // Best-effort audit event
+            }
         }
     }
 

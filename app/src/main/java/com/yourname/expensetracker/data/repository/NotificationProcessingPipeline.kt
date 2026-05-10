@@ -224,6 +224,30 @@ class NotificationProcessingPipeline @Inject constructor(
             packageName = notification.packageName
         )
 
+        // P2-12: AI parser provenance — determine whether AI fallback was used
+        val deterministicResult = parserRegistry.parse(
+            title = notification.title,
+            text = notification.text,
+            bigText = notification.bigText,
+            subText = notification.subText,
+            packageName = notification.packageName
+        )
+        val parserSource = if (deterministicResult != null) "PARSER_USED" else if (parsed != null) "AI_FALLBACK_USED" else null
+        if (parserSource != null) {
+            runCatching {
+                pipelineDiagnosticEventDao.insert(
+                    PipelineDiagnosticEvent(
+                        pipeline = "notification",
+                        stage = "parse",
+                        outcome = parserSource,
+                        packageName = notification.packageName,
+                        message = if (parserSource == "AI_FALLBACK_USED") "AI fallback used: deterministic parse failed" else "Deterministic parser succeeded",
+                        timestamp = timeProvider.now()
+                    )
+                )
+            }
+        }
+
         if (parsed == null) {
             Timber.d("Pipeline outcome: PARSER_FAILED for package=%s", notification.packageName)
             val oversizedCandidate = detectOversizedAmountCandidate(

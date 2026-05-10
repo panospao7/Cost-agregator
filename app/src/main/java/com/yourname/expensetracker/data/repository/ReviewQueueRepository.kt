@@ -624,11 +624,14 @@ class ReviewQueueRepository @Inject constructor(
         }
 
         if (outcome.shouldCheckBudgets) {
-            runPostCommitSafely(
-                action = "budget check after markAsRelevant (notificationId=$id, package=${notification.packageName})"
-            ) {
-                budgetMonitor.checkBudgets()
-            }
+            // Lifecycle side effects (dispatchPostCreationSideEffects →
+            // dispatchOnCreated) already handle budget monitoring via
+            // budgetMonitor.checkBudgets(). Only check here if lifecycle
+            // dispatch was skipped (e.g. duplicate or pendingReview paths).
+            // Currently shouldCheckBudgets is only true when createdExpenseId
+            // is non-null, so the lifecycle dispatch already covers it.
+            // This guard is kept for future scenarios where lifecycle dispatch
+            // may be skipped but budget checks are still needed.
         }
 
         if (outcome.shouldTrainAsTransaction) {

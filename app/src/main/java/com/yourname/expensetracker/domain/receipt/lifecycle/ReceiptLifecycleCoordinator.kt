@@ -176,10 +176,12 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         //    Ownership boundary: ReceiptRepository/OCR owns file persistence.
         //    The coordinator works with the imagePath from the response, not its own copy.
         return try {
-            val (receipt, parsed) = receiptRepository.processReceipt(
+            val processResult = receiptRepository.processReceipt(
                 imageUri = uri,
                 autoCreateReview = options.createReview
             )
+            val receipt = processResult.receipt
+            val parsed = processResult.parsed
 
             // RCP-14 / RCP-6: Capture taxInclusive from the parser result for
             // downstream propagation. The flag is not stored in the DB entity
@@ -358,6 +360,27 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             actor = "system:coordinator",
                             message = "OCR failed for receipt input",
                             metadata = null,
+                            errorDetails = null
+                        )
+                    )
+                }
+
+                // P2-15: Write PDF_PARTIAL event when only a subset of pages were processed
+                val pagesProcessed = processResult.pagesProcessed
+                val totalPages = processResult.totalPages
+                if (pagesProcessed != null && totalPages != null && pagesProcessed < totalPages) {
+                    receiptEventDao.insert(
+                        ReceiptEvent(
+                            receiptId = updated.id,
+                            sourceType = updated.sourceType,
+                            documentType = updated.documentType,
+                            eventType = "PDF_PARTIAL",
+                            occurredAt = now,
+                            oldStatus = null,
+                            newStatus = updated.processingStatus,
+                            actor = "system:coordinator",
+                            message = "PDF partially processed: $pagesProcessed of $totalPages pages",
+                            metadata = "{\"pagesProcessed\":$pagesProcessed,\"totalPages\":$totalPages}",
                             errorDetails = null
                         )
                     )
@@ -560,6 +583,29 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "fingerprint_duplicate", "EmailReceiptSource", existing.receiptId)
                 return EmailReceiptProcessResult.Duplicate(existing.receiptId)
             }
+        }
+
+        // P2-19: Also check via ReceiptDuplicateDetector for text/semantic fingerprint match
+        val emailTextFingerprint = if (rawEmailBody.isNotBlank()) {
+            duplicateDetector.computeTextFingerprintPublic(rawEmailBody)
+        } else null
+        val emailSemanticFingerprint = if (emailData.merchant != null && emailData.amount != null && emailData.date != null) {
+            duplicateDetector.computeSemanticFingerprintPublic(
+                emailData.merchant,
+                emailData.amount,
+                emailData.date,
+                emailData.currency
+            )
+        } else null
+        val duplicateResult = duplicateDetector.checkDuplicate(
+            imageHash = null,
+            textFingerprint = emailTextFingerprint,
+            semanticFingerprint = emailSemanticFingerprint,
+            externalSourceId = messageId.ifBlank { null }
+        )
+        if (duplicateResult.isDuplicate && duplicateResult.existingReceiptId != null) {
+            emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "duplicate_detector_${duplicateResult.matchType}", "ScannedReceipt", duplicateResult.existingReceiptId)
+            return EmailReceiptProcessResult.Duplicate(duplicateResult.existingReceiptId)
         }
 
         val now = timeProvider.now()
@@ -866,50 +912,66 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             scannedReceiptId = receiptId
         )
 
-        return when (val result = transactionLifecycleCoordinator.createExpense(request)) {
-            is CreateExpenseResult.Created -> {
-                val expenseId = result.expenseId
-                // Link receipt to the newly created expense
-                receiptLinkService.linkReceiptToExpense(
-                    receiptId = receiptId,
-                    expenseId = expenseId,
-                    linkType = "DIRECT_SAVE",
-                    source = ExpenseSource.RECEIPT_SCAN.name
-                )
+        // P3-P1-05: Wrap expense creation + receipt linking in a single
+        // database transaction to ensure atomicity — both succeed or both roll back.
+        return database.withTransaction {
+            when (val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
+                is CreateExpenseResult.Created -> {
+                    val expenseId = result.expenseId
+                    // Link receipt to the newly created expense
+                    receiptLinkService.linkReceiptToExpense(
+                        receiptId = receiptId,
+                        expenseId = expenseId,
+                        linkType = "DIRECT_SAVE",
+                        source = ExpenseSource.RECEIPT_SCAN.name
+                    )
 
-                // ── Fix 5 (MAJOR): Classifier learning (best-effort side effect) ──
-                if (finalCategoryId != null) {
-                    try {
-                        hybridClassifier.learnFromCorrection(
-                            merchantName = normalizedMerchant,
-                            correctCategoryId = finalCategoryId,
-                            amount = effectiveAmount
-                        )
-                    } catch (e: Exception) {
-                        Timber.w(e, "Classifier learning failed after expense creation from receipt %d", receiptId)
-                    }
+                    // Side effects are deferred — dispatch after commit
+                    DomainResult.Success(expenseId)
                 }
-
-                DomainResult.Success(expenseId)
+                is CreateExpenseResult.DuplicateSkipped -> {
+                    DomainResult.Duplicate
+                }
+                is CreateExpenseResult.ValidationFailed -> {
+                    DomainResult.Error(
+                        message = "Validation failed: ${result.errors.joinToString(", ")}"
+                    )
+                }
+                is CreateExpenseResult.InsertConflict -> {
+                    DomainResult.Error(
+                        message = "Insert conflict: ${result.dedupeKey}"
+                    )
+                }
+                is CreateExpenseResult.Error -> {
+                    DomainResult.Error(
+                        exception = result.exception,
+                        message = result.exception.message ?: "Unknown error"
+                    )
+                }
             }
-            is CreateExpenseResult.DuplicateSkipped -> {
-                DomainResult.Duplicate
+        }.also { outerResult ->
+            // Classifier learning (best-effort side effect, post-commit)
+            if (outerResult is DomainResult.Success && finalCategoryId != null) {
+                try {
+                    hybridClassifier.learnFromCorrection(
+                        merchantName = normalizedMerchant,
+                        correctCategoryId = finalCategoryId,
+                        amount = effectiveAmount
+                    )
+                } catch (e: Exception) {
+                    Timber.w(e, "Classifier learning failed after expense creation from receipt %d", receiptId)
+                }
             }
-            is CreateExpenseResult.ValidationFailed -> {
-                DomainResult.Error(
-                    message = "Validation failed: ${result.errors.joinToString(", ")}"
-                )
-            }
-            is CreateExpenseResult.InsertConflict -> {
-                DomainResult.Error(
-                    message = "Insert conflict: ${result.dedupeKey}"
-                )
-            }
-            is CreateExpenseResult.Error -> {
-                DomainResult.Error(
-                    exception = result.exception,
-                    message = result.exception.message ?: "Unknown error"
-                )
+            // Dispatch post-creation side effects for the created expense
+            if (outerResult is DomainResult.Success) {
+                try {
+                    transactionLifecycleCoordinator.dispatchPostCreationSideEffects(
+                        outerResult.data,
+                        ExpenseSource.RECEIPT_SCAN
+                    )
+                } catch (e: Exception) {
+                    Timber.w(e, "Post-creation side effects failed for receipt expense %d", receiptId)
+                }
             }
         }
     }

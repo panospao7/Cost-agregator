@@ -69,6 +69,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * the outer transaction commits to avoid running side effects for data
      * that may later roll back.
      *
+     * TODO (P2-10): [SideEffectMode.IMMEDIATE] inside an outer caller-managed
+     * `database.withTransaction` should be prevented by a static guard in
+     * a future release. Currently callers must remember to pass DEFER manually,
+     * which is error-prone.
+     *
      * @param request The creation request containing all expense fields and policy controls.
      * @param sideEffectMode Controls whether side effects run immediately or are deferred.
      * @return A [CreateExpenseResult] indicating the outcome (created, duplicate, error, etc.).
@@ -1245,6 +1250,26 @@ class TransactionLifecycleCoordinator @Inject constructor(
     /**
      * Deletes an expense by its ID with full lifecycle handling:
      * load → write DELETED event → delete.
+     *
+     * ## Delete Semantics
+     * - **Hard delete** is the chosen strategy. The row is permanently removed
+     *   from the `expenses` table. There is no undo or trash folder at the DB
+     *   level — callers must implement their own confirmation UI.
+     * - **Audit trail** is preserved via [TransactionEvent.beforeSnapshot]:
+     *   the full expense snapshot (amount, merchant, currency, category, etc.)
+     *   is written to the `transaction_events` table with eventType = DELETED
+     *   BEFORE the row is removed. This snapshot is the authoritative record
+     *   of what was deleted.
+     * - **Receipt/group/recurring links** are NOT cleaned up by the delete
+     *   path itself. They are managed by post-delete side effects:
+     *   [TransactionSideEffectDispatcher.dispatchOnDeleted] handles budget
+     *   re-check and anomaly clearing, while
+     *   [RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence] detaches
+     *   the expense from any recurring rule. Receipt links and group settlement
+     *   references must be handled by their respective domains.
+     * - **No soft-delete** (`deletedAt` column) is planned. The chosen approach
+     *   relies on the event audit trail for recovery and avoids the complexity
+     *   of filtering soft-deleted rows from every query.
      *
      * @param expenseId The ID of the expense to delete.
      * @param source    The origin of the deletion (e.g. "USER_ACTION", "GROUP_DELETE", "RESTORE").

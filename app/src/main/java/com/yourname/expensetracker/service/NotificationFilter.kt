@@ -52,9 +52,10 @@ object NotificationFilter {
     )
 
     private val REGEX_CURRENCY = Regex(
-        pattern = """\d\s*[€$£¥]|[€$£¥]\s*\d|\d\s*(EUR|USD|GBP|CHF)|(EUR|USD|GBP|CHF)\s*\d""",
+        pattern = """\d\s*[€$£¥]|[€$£¥]\s*\d|\d\s*(EUR|USD|GBP|CHF|PLN|RON|TRY|CAD|AUD|JPY|SEK|NOK|DKK|HUF|CZK)|(EUR|USD|GBP|CHF|PLN|RON|TRY|CAD|AUD|JPY|SEK|NOK|DKK|HUF|CZK)\s*\d""",
         options = setOf(RegexOption.IGNORE_CASE)
     )
+    private val COMBINED_CURRENCY_REGEX = REGEX_CURRENCY
     private val REGEX_AMOUNT = Regex("""\d+[.,]\d{2}""")
 
 	val FINANCIAL_KEYWORDS = setOf(
@@ -102,10 +103,16 @@ object NotificationFilter {
     fun shouldCapture(packageName: String, title: String?, text: String?, bigText: String?): Boolean {
         if (IGNORED_PACKAGES.contains(packageName)) return false
 
-        // Finance apps bypass ALL heuristics — every notification is financial.
-        // Deny keywords do NOT apply here: bank 2FA / promo filtering is handled
-        // downstream by the parser and confidence router.
-        if (FINANCE_PACKAGES.contains(packageName)) return true
+        // Hard-deny for clearly non-transactional finance notifications
+        if (FINANCE_PACKAGES.contains(packageName)) {
+            val combined = listOfNotNull(title, text, bigText).joinToString(" ").lowercase()
+            val hasTransactionSignal = combined.contains("transaction") || combined.contains("payment") ||
+                combined.contains("purchase") || combined.contains("transfer") || COMBINED_CURRENCY_REGEX.containsMatchIn(combined)
+            if (!hasTransactionSignal) {
+                return false // deny: security/promo/2FA notification
+            }
+            return true // allow: transaction-like notification
+        }
 
         val content = listOf(title, text, bigText)
             .joinToString(separator = " ") { it.orEmpty() }

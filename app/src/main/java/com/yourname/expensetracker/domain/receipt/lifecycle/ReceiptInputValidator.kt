@@ -17,8 +17,21 @@ import javax.inject.Singleton
  * 3. File size is within the specified limit.
  * 4. For image MIME types, the bitmap can be decoded successfully.
  */
-// TODO (P2-1): Add MIME fallback detection (file extension, header sniff) when
-// ContentResolver.getType() returns null for some providers.
+/**
+ * Maps file extensions to MIME types for fallback detection when
+ * ContentResolver.getType() returns null.
+ */
+private val EXTENSION_MIME_MAP = mapOf(
+    "jpg" to "image/jpeg",
+    "jpeg" to "image/jpeg",
+    "png" to "image/png",
+    "webp" to "image/webp",
+    "heic" to "image/heic",
+    "pdf" to "application/pdf",
+    "tiff" to "image/tiff",
+    "tif" to "image/tiff",
+    "bmp" to "image/bmp"
+)
 
 @Singleton
 class ReceiptInputValidator @Inject constructor(
@@ -53,12 +66,15 @@ class ReceiptInputValidator @Inject constructor(
         val errors = mutableListOf<String>()
 
         // 1. Resolve MIME type
-        val mimeType = try {
+        val contentResolverMimeType = try {
             context.contentResolver.getType(uri)
         } catch (e: Exception) {
             Timber.e(e, "Failed to resolve MIME type for %s", uri)
             null
         }
+
+        // P2-12: MIME fallback — if ContentResolver returns null, try extension-based detection
+        val mimeType = contentResolverMimeType ?: detectMimeTypeFromExtension(uri)
 
         // 2. Check URI readability
         val readable = try {
@@ -145,8 +161,24 @@ class ReceiptInputValidator @Inject constructor(
         )
     }
 
-    private companion object {
-        private const val DEFAULT_MAX_SIZE_BYTES = 50 * 1024 * 1024L // 50 MB
+    private fun detectMimeTypeFromExtension(uri: Uri): String? {
+        val path = uri.lastPathSegment ?: uri.path ?: return null
+        val extension = path.substringAfterLast('.').lowercase().takeIf { it.isNotBlank() && it != path }
+            ?: return null
+        val detected = EXTENSION_MIME_MAP[extension]
+        if (detected != null) {
+            Timber.d("MIME fallback: extension .%s → %s for %s", extension, detected, uri)
+        }
+        return detected
+    }
+
+    companion object {
+        /**
+         * P2-13: Exported constant for use in ReceiptOcrService and other consumers.
+         * Represents the default max receipt file size (50 MB).
+         */
+        const val DEFAULT_MAX_SIZE_BYTES = 50 * 1024 * 1024L // 50 MB
+
         private const val DEFAULT_CHUNK_SIZE = 8192
 
         private val SUPPORTED_MIME_TYPES = setOf(

@@ -113,6 +113,17 @@ class ReceiptRepository @Inject constructor(
     }
 
     /**
+     * Result of [processReceipt], carrying the receipt, parsed data, and
+     * PDF truncation metadata (P2-15).
+     */
+    data class ProcessReceiptResult(
+        val receipt: ScannedReceipt,
+        val parsed: ReceiptParser.ParsedReceipt,
+        val pagesProcessed: Int? = null,
+        val totalPages: Int? = null
+    )
+
+    /**
      * Process an image URI: run OCR, parse receipt, save to DB
      *
      * @param imageUri URI of the image to process
@@ -121,7 +132,7 @@ class ReceiptRepository @Inject constructor(
     suspend fun processReceipt(
         imageUri: Uri,
         autoCreateReview: Boolean = false
-    ): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
+    ): ProcessReceiptResult {
         return withContext(ioDispatcher) {
             // 0. Pre-OCR exact-hash dedup: skip expensive OCR if this exact file was already processed
             val uriHashResult = assetStore.computeUriHash(imageUri)
@@ -129,7 +140,7 @@ class ReceiptRepository @Inject constructor(
             val existingMatch = scannedReceiptDao.getByImageHash(uriHashResult.getOrThrow())
             if (existingMatch != null) {
                 Timber.d("Duplicate receipt detected pre-OCR by exact hash: existingId=${existingMatch.id}")
-                return@withContext Pair(existingMatch, ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), "EUR", emptyList(), 0f))
+                return@withContext ProcessReceiptResult(existingMatch, ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), "EUR", emptyList(), 0f))
             }
         }
 
@@ -139,14 +150,14 @@ class ReceiptRepository @Inject constructor(
             } catch (e: Exception) {
                 Timber.e(e, "OCR Failed for $imageUri")
                 // Fallback: Try to save the image using manual record logic
-                return@withContext saveManualReceiptRecord(imageUri).let { (receipt, parsed) ->
-                    val failedReceipt = receipt.copy(
+                return@withContext saveManualReceiptRecord(imageUri).let { result ->
+                    val failedReceipt = result.receipt.copy(
                         rawOcrText = sanitizeOcrBeforeInsert("Scan failed"),
                         confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK,
                         updatedAt = timeProvider.now()
                     )
                     scannedReceiptDao.update(failedReceipt)
-                    Pair(failedReceipt, parsed)
+                    ProcessReceiptResult(failedReceipt, result.parsed)
                 }
             }
 
@@ -214,7 +225,12 @@ class ReceiptRepository @Inject constructor(
                     insertedReceiptId
                 }
 
-                return@withContext Pair(receipt.copy(id = receiptId), parsed)
+                return@withContext ProcessReceiptResult(
+                    receipt.copy(id = receiptId),
+                    parsed,
+                    pagesProcessed = ocrResult.pagesProcessed,
+                    totalPages = ocrResult.totalPages
+                )
 
             } catch (e: Exception) {
                 // Parsing Logic Failed, but we HAVE the OCR text!
@@ -260,12 +276,17 @@ class ReceiptRepository @Inject constructor(
                     pendingReviewDao.insert(review)
                 }
 
-                return@withContext Pair(failedReceipt.copy(id = receiptId), ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), "EUR", emptyList(), 0f))
+                return@withContext ProcessReceiptResult(
+                    failedReceipt.copy(id = receiptId),
+                    ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), "EUR", emptyList(), 0f),
+                    pagesProcessed = ocrResult.pagesProcessed,
+                    totalPages = ocrResult.totalPages
+                )
             }
         }
     }
 
-    suspend fun saveManualReceiptRecord(imageUri: android.net.Uri): Pair<ScannedReceipt, ReceiptParser.ParsedReceipt> {
+    suspend fun saveManualReceiptRecord(imageUri: android.net.Uri): ProcessReceiptResult {
         // 1. Persist a display copy without re-running OCR recognition.
         val path = try {
             ocrService.persistImageCopy(imageUri)
@@ -288,7 +309,7 @@ class ReceiptRepository @Inject constructor(
         val receiptId = scannedReceiptDao.insert(receipt)
         require(receiptId > 0) { "Receipt insert failed (conflict): imagePath=${receipt.imagePath}" }
         
-        return Pair(
+        return ProcessReceiptResult(
             receipt.copy(id = receiptId),
             ReceiptParser.ParsedReceipt(
                 merchantName = null,

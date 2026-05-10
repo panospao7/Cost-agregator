@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
+import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator as GroupTransactionCoordinatorInterface
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import dagger.Module
@@ -43,6 +44,7 @@ object DatabaseModule {
         groupExpenseDao: GroupExpenseDao,
         expenseDao: ExpenseDao,
         transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
+        transactionEventDao: TransactionEventDao,
         @IoDispatcher ioDispatcher: CoroutineDispatcher
     ): GroupTransactionCoordinatorInterface {
         return GroupTransactionCoordinator(
@@ -52,6 +54,7 @@ object DatabaseModule {
             groupExpenseDao = groupExpenseDao,
             expenseDao = expenseDao,
             transactionLifecycleCoordinator = transactionLifecycleCoordinator,
+            transactionEventDao = transactionEventDao,
             ioDispatcher = ioDispatcher
         )
     }

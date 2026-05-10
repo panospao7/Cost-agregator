@@ -74,6 +74,23 @@ class ReceiptSideEffectDispatcher @Inject constructor(
         Timber.d("dispatchAfterSave: receiptId=%d, docType=%s, status=%s",
             receipt.id, docType, status)
 
+        // P2-20: Write RECEIVED event when a receipt enters the side-effect dispatcher
+        writeReceiptEvent(receipt, "RECEIVED", "Receipt received for side-effect dispatch",
+            oldStatus = null, newStatus = status.name)
+
+        // P2-20: Write VALIDATION_FAILED event for unsupported document types
+        if (docType == ReceiptDocumentType.UNKNOWN) {
+            writeReceiptEvent(receipt, "VALIDATION_FAILED",
+                "Unknown document type: ${receipt.documentType}",
+                oldStatus = null, newStatus = status.name)
+        }
+
+        // P2-20 (FUTURE): OCR_STARTED and PARSE_STARTED events are planned for
+        // future work. OCR starts inside ReceiptRepository.processReceipt() and
+        // parsing is owned by ReceiptParser — neither currently emits lifecycle
+        // events. When instrumentation is added, these events should be written
+        // at the point of OCR/parse initiation, not here in the dispatcher.
+
         when (docType) {
             ReceiptDocumentType.RETAIL_RECEIPT -> {
                 if (status != ReceiptProcessingStatus.OCR_FAILED &&
@@ -82,15 +99,19 @@ class ReceiptSideEffectDispatcher @Inject constructor(
                     // Warranty extraction from OCR text
                     try {
                         autoCreateWarrantyUseCase.execute(receipt.id, receipt.rawOcrText)
-                    } catch (_: Exception) {
-                        Timber.w("Warranty extraction failed for receipt %d", receipt.id)
+                    } catch (e: Exception) {
+                        Timber.w(e, "Warranty extraction failed for receipt %d", receipt.id)
+                        writeReceiptEvent(receipt, "SIDE_EFFECT_FAILED",
+                            "Warranty extraction failed", errorDetails = e.message)
                     }
 
                     // Item categorization via AI
                     try {
                         categorizeReceiptItemsUseCase(receipt.id)
-                    } catch (_: Exception) {
-                        Timber.w("Item categorization failed for receipt %d", receipt.id)
+                    } catch (e: Exception) {
+                        Timber.w(e, "Item categorization failed for receipt %d", receipt.id)
+                        writeReceiptEvent(receipt, "SIDE_EFFECT_FAILED",
+                            "Item categorization failed", errorDetails = e.message)
                     }
 
                     // P3-P1-03: Transaction matching against recent expenses — persist results
@@ -150,8 +171,10 @@ class ReceiptSideEffectDispatcher @Inject constructor(
                     // Price-protection / deal-hunting checks
                     try {
                         priceProtectionTracker.findBetterDeals(receipt)
-                    } catch (_: Exception) {
-                        Timber.w("Price protection check failed for receipt %d", receipt.id)
+                    } catch (e: Exception) {
+                        Timber.w(e, "Price protection check failed for receipt %d", receipt.id)
+                        writeReceiptEvent(receipt, "SIDE_EFFECT_FAILED",
+                            "Price protection check failed", errorDetails = e.message)
                     }
                 }
             }
@@ -161,8 +184,10 @@ class ReceiptSideEffectDispatcher @Inject constructor(
                     // Item categorization
                     try {
                         categorizeReceiptItemsUseCase(receipt.id)
-                    } catch (_: Exception) {
-                        Timber.w("Item categorization failed for email receipt %d", receipt.id)
+                    } catch (e: Exception) {
+                        Timber.w(e, "Item categorization failed for email receipt %d", receipt.id)
+                        writeReceiptEvent(receipt, "SIDE_EFFECT_FAILED",
+                            "Email receipt item categorization failed", errorDetails = e.message)
                     }
                     // Skip price protection and warranty unless content supports it
                 }
@@ -180,6 +205,39 @@ class ReceiptSideEffectDispatcher @Inject constructor(
             else -> {
                 // No effects for unknown document types.
             }
+        }
+    }
+
+    /**
+     * P2-17/P2-20: Writes a [ReceiptEvent] for side-effect tracking.
+     * Failures are best-effort — event write failures are logged but not propagated.
+     */
+    private suspend fun writeReceiptEvent(
+        receipt: ScannedReceipt,
+        eventType: String,
+        message: String,
+        oldStatus: String? = null,
+        newStatus: String? = null,
+        errorDetails: String? = null
+    ) {
+        try {
+            receiptEventDao.insert(
+                ReceiptEvent(
+                    receiptId = receipt.id,
+                    sourceType = receipt.sourceType,
+                    documentType = receipt.documentType,
+                    eventType = eventType,
+                    occurredAt = timeProvider.now(),
+                    oldStatus = oldStatus,
+                    newStatus = newStatus,
+                    actor = "system:side_effect_dispatcher",
+                    message = message,
+                    metadata = null,
+                    errorDetails = errorDetails
+                )
+            )
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to write $eventType event for receipt %d", receipt.id)
         }
     }
 }

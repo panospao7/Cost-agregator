@@ -25,6 +25,7 @@ import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.cancellation.CancellationException
@@ -36,7 +37,10 @@ data class OcrResult(
     val blocks: List<TextBlock>,
     val savedImagePath: String,
     // F1: Warranty extraction result
-    val warrantyExtractionResult: com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult? = null
+    val warrantyExtractionResult: com.yourname.expensetracker.domain.usecase.warranty.WarrantyCreationResult? = null,
+    // P2-15: PDF truncation metadata — populated when processing multi-page PDFs
+    val pagesProcessed: Int? = null,
+    val totalPages: Int? = null
 )
 
 data class TextBlock(
@@ -90,7 +94,8 @@ class ReceiptOcrService @Inject constructor(
             "image/webp",
             "image/heic"
         )
-        private const val MAX_FILE_SIZE = 20 * 1024 * 1024  // 20MB
+        // P2-13: Use exported constant from ReceiptInputValidator for consistency
+        private val MAX_FILE_SIZE = com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptInputValidator.DEFAULT_MAX_SIZE_BYTES
         private const val DEFAULT_BUFFER_SIZE = 8192
     }
 
@@ -254,12 +259,12 @@ class ReceiptOcrService @Inject constructor(
      */
     suspend fun processPdf(pdfUri: Uri): OcrResult {
         // First, try direct text extraction
-        val extractedText = extractPdfText(pdfUri)
+        val (extractedText, totalPages) = extractPdfText(pdfUri)
         
         // If we got substantial text (>100 chars), use it
         if (extractedText.length > 100) {
             Timber.d("Using direct PDF text extraction (${extractedText.length} chars)")
-            return processPdfWithTextExtraction(pdfUri, extractedText)
+            return processPdfWithTextExtraction(pdfUri, extractedText, totalPages)
         }
         
         // Otherwise, fall back to OCR
@@ -269,10 +274,12 @@ class ReceiptOcrService @Inject constructor(
     
     /**
      * Extract text directly from PDF using PDFBox (fast for digital PDFs).
+     * @return Pair of (extracted text, total page count).
      */
-    private suspend fun extractPdfText(pdfUri: Uri): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    private suspend fun extractPdfText(pdfUri: Uri): Pair<String, Int> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val tempFile = File(context.cacheDir, "temp_pdf_extract_${System.nanoTime()}.pdf")
         var document: PDDocument? = null
+        var totalPages = 0
         
         try {
             // Copy PDF to temp file
@@ -280,10 +287,11 @@ class ReceiptOcrService @Inject constructor(
                 tempFile.outputStream().use { output ->
                     input.copyTo(output)
                 }
-            } ?: return@withContext ""
+            } ?: return@withContext Pair("", 0)
             
             // Load PDF and extract text
             document = PDDocument.load(tempFile)
+            totalPages = document.numberOfPages
             val stripper = PDFTextStripper()
             
             // Limit to first 5 pages for performance
@@ -304,13 +312,13 @@ class ReceiptOcrService @Inject constructor(
             val text = stripper.getText(document)
             Timber.d("Extracted ${text.length} chars from $pageLimit pages")
             
-            return@withContext text
+            return@withContext Pair(text, totalPages)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             // MED-01 FIX: Add logging instead of silent catch
             Timber.e(e, "PDF text extraction failed for $pdfUri")
-            return@withContext ""
+            return@withContext Pair("", 0)
         } finally {
             // MED-01 FIX: Add logging to catch blocks
             try { document?.close() } catch (e: Exception) { 
@@ -323,9 +331,12 @@ class ReceiptOcrService @Inject constructor(
     /**
      * Process PDF using direct text extraction (for digital PDFs).
      */
-    private suspend fun processPdfWithTextExtraction(pdfUri: Uri, extractedText: String): OcrResult {
+    private suspend fun processPdfWithTextExtraction(pdfUri: Uri, extractedText: String, totalPages: Int): OcrResult {
         // Save first page as thumbnail for UI
         val thumbnailPath = renderPdfFirstPageThumbnail(pdfUri)
+        
+        // Limit to first 5 pages for performance (matching extractPdfText)
+        val pagesProcessed = minOf(totalPages, 5)
         
         // Create text blocks from extracted text (simple line-based approach)
         val blocks = extractedText.lines()
@@ -344,7 +355,9 @@ class ReceiptOcrService @Inject constructor(
         return OcrResult(
             fullText = extractedText,
             blocks = blocks,
-            savedImagePath = thumbnailPath
+            savedImagePath = thumbnailPath,
+            pagesProcessed = pagesProcessed,
+            totalPages = totalPages
         )
     }
     
@@ -439,6 +452,7 @@ class ReceiptOcrService @Inject constructor(
                 )
             }
 
+            val totalPages = renderer.pageCount
             val pagesToProcess = minOf(renderer.pageCount, pageLimit)
             
             var verticalOffset = 0
@@ -498,7 +512,9 @@ class ReceiptOcrService @Inject constructor(
             return OcrResult(
                 fullText = allFullText.toString().trim(),
                 blocks = allBlocks,
-                savedImagePath = savedThumbnailPath
+                savedImagePath = savedThumbnailPath,
+                pagesProcessed = pagesToProcess,
+                totalPages = totalPages
             )
             
         } catch (e: CancellationException) {
@@ -649,7 +665,8 @@ class ReceiptOcrService @Inject constructor(
         val receiptsDir = File(context.filesDir, "receipts")
         if (!receiptsDir.exists()) receiptsDir.mkdirs()
 
-        val fileName = "receipt_${System.currentTimeMillis()}.jpg"
+        // P2-14: Use UUID-based naming instead of currentTimeMillis for uniqueness
+        val fileName = "receipt_${UUID.randomUUID()}.jpg"
         val file = File(receiptsDir, fileName)
 
         FileOutputStream(file).use { out ->
