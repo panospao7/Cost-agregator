@@ -396,6 +396,41 @@ object TimePeriodUtils {
     }
 
     // ============================================================================
+    // WEEK KEY AND DAY KEY PARSING
+    // ============================================================================
+
+    /**
+     * Parses a week key of format `yyyy-Www` into the epoch-ms start of that ISO week.
+     * Returns null if the key cannot be parsed.
+     */
+    fun parseWeekKeyToStart(weekKey: String): Long? {
+        return try {
+            val parts = weekKey.split("-W")
+            if (parts.size != 2) return null
+            val year = parts[0].toIntOrNull() ?: return null
+            val weekNum = parts[1].toIntOrNull() ?: return null
+            val jan4 = java.time.LocalDate.of(year, 1, 4)
+            val weekOneStart = getStartOfWeek(jan4.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli())
+            addDays(weekOneStart, (weekNum - 1) * 7)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Parses a day key of format `yyyy-MM-dd` into the epoch-ms start of that day.
+     * Returns null if the key cannot be parsed.
+     */
+    fun parseDayKeyToStart(dayKey: String): Long? {
+        return try {
+            val date = java.time.LocalDate.parse(dayKey, java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
+            date.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // ============================================================================
     // QUARTER BOUNDARIES
     // ============================================================================
 

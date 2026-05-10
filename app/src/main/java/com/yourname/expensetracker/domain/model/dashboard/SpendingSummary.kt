@@ -17,7 +17,9 @@ data class SpendingSummary(
     val dailyHistory: List<Double>,
     val previousDailyHistory: List<Double>,
     val transactionCount: Int,
-    val currency: String = "EUR"
+    val currency: String = "EUR",
+    val isPartial: Boolean = false,
+    val warningMessage: String? = null
 ) {
     val moneyTotalSpent: MoneyAmount get() = MoneyAmount(totalSpent, CurrencyCode(currency))
 }

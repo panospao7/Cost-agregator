@@ -33,7 +33,8 @@ class TransactionSideEffectDispatcher @Inject constructor(
     private val budgetMonitor: Lazy<BudgetMonitor>,
     private val anomalyAlertOrchestrator: AnomalyAlertOrchestrator,
     private val merchantCategoryRepository: MerchantCategoryRepository,
-    private val merchantNormalizationRepository: MerchantNormalizationRepository
+    private val merchantNormalizationRepository: MerchantNormalizationRepository,
+    private val recurringLifecycleCoordinator: Lazy<com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator>
 ) {
     /**
      * Dispatches all standard post-creation side effects for the given expense.
@@ -92,6 +93,11 @@ class TransactionSideEffectDispatcher @Inject constructor(
             } catch (e: Exception) {
                 Timber.w(e, "Failed to update merchant stats for %s", expense.merchant)
             }
+        }
+
+        // 6. Recurring occurrence matching (best-effort)
+        runSafely("recurring occurrence matching for expense $expenseId") {
+            recurringLifecycleCoordinator.get().linkExpenseToOccurrence(expenseId)
         }
     }
 
@@ -157,6 +163,11 @@ class TransactionSideEffectDispatcher @Inject constructor(
         // Note: anomalyAlertOrchestrator.clearAlertForExpense() is not available;
         // if added in the future, insert anomaly clearing here.
         // No merchant pattern learning on delete — the pattern may still be valid
+
+        // Recurring occurrence unlink (best-effort)
+        runSafely("recurring occurrence unlink for expense $expenseId") {
+            recurringLifecycleCoordinator.get().unlinkExpenseFromOccurrence(expenseId)
+        }
     }
 
     /**

@@ -52,6 +52,9 @@ class RecurringLifecycleCoordinator @Inject constructor(
     companion object {
         /** Source type used for manual recurring rules. */
         const val SOURCE_TYPE_RECURRING_RULE = "RECURRING_RULE"
+
+        /** Default reminder windows applied when no explicit windows are provided and reminders are enabled. */
+        val DEFAULT_REMINDER_WINDOWS = listOf("3_DAYS_BEFORE", "DUE_DAY", "OVERDUE")
     }
 
     /**
@@ -61,7 +64,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * @param ruleId The ID of the [ManualRecurringExpense] rule.
      * @param startDate Start of the range (inclusive, epoch ms).
      * @param endDate End of the range (exclusive, epoch ms).
-     * @param reminderWindows Reminder window names to schedule.
+     * @param reminderWindows Reminder window names to schedule. If empty, defaults to [DEFAULT_REMINDER_WINDOWS].
      * @return The [MaterializationResult] from persisting.
      * @throws IllegalArgumentException if the rule is not found.
      */
@@ -71,6 +74,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
         endDate: Long,
         reminderWindows: List<String> = emptyList()
     ): MaterializationResult {
+        val resolvedWindows = if (reminderWindows.isEmpty()) DEFAULT_REMINDER_WINDOWS else reminderWindows
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.generateOccurrences")
 
         val rule = manualRecurringExpenseDao.getById(ruleId)
@@ -100,7 +104,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
         val actualExpenses = expenseDao.getExpensesBetween(startDate, endDate)
         val resolved = resolver.resolve(candidates, actualExpenses)
 
-        return materializer.materialize(resolved, reminderWindows)
+        return materializer.materialize(resolved, resolvedWindows)
     }
 
     /**

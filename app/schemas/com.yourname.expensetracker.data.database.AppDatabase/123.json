@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 123,
-    "identityHash": "f0200801ce74b884ffc20a50e7324ecc",
+    "identityHash": "2bc1d1a6f75509932399516fed775f43",
     "entities": [
       {
         "tableName": "raw_notifications",
@@ -4246,24 +4246,15 @@
             "createSql": "CREATE INDEX IF NOT EXISTS `index_budget_forecasts_isActive` ON `${TABLE_NAME}` (`isActive`)"
           },
           {
-            "name": "index_budget_forecasts_budgetId_targetPeriodStart",
+            "name": "index_budget_forecasts_budgetId_targetPeriodStart_forecastDate",
             "unique": true,
             "columnNames": [
               "budgetId",
-              "targetPeriodStart"
-            ],
-            "orders": [],
-            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_budget_forecasts_budgetId_targetPeriodStart` ON `${TABLE_NAME}` (`budgetId`, `targetPeriodStart`)"
-          },
-          {
-            "name": "index_budget_forecasts_budgetId_forecastDate",
-            "unique": true,
-            "columnNames": [
-              "budgetId",
+              "targetPeriodStart",
               "forecastDate"
             ],
             "orders": [],
-            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_budget_forecasts_budgetId_forecastDate` ON `${TABLE_NAME}` (`budgetId`, `forecastDate`)"
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_budget_forecasts_budgetId_targetPeriodStart_forecastDate` ON `${TABLE_NAME}` (`budgetId`, `targetPeriodStart`, `forecastDate`)"
           }
         ],
         "foreignKeys": [
@@ -7917,7 +7908,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f0200801ce74b884ffc20a50e7324ecc')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '2bc1d1a6f75509932399516fed775f43')"
     ]
   }
 }

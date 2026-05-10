@@ -52,7 +52,9 @@ class BudgetForecastingEngine @Inject constructor(
     /** @suppress Settings injected to resolve home currency code. */
     private val currencySettingsRepository: CurrencySettingsRepository,
     /** @suppress Converter injected to normalise budget.amount to home currency. */
-    private val currencyConverter: CurrencyConverter
+    private val currencyConverter: CurrencyConverter,
+    /** @suppress Write barrier injected to guard forecast writes during restore. */
+    private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 ) {
     private val budgetCalculator = BudgetCalculator(timeProvider)
 
@@ -72,6 +74,7 @@ class BudgetForecastingEngine @Inject constructor(
         budget: Budget,
         forecastPeriodDays: Int = 30
     ): BudgetForecast = withContext(ioDispatcher) {
+        writeBarrier.checkWritesAllowed("BudgetForecastingEngine.generateForecast")
         val now = timeProvider.now()
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
             .getOrDefault("EUR")
@@ -418,6 +421,7 @@ class BudgetForecastingEngine @Inject constructor(
         forecastId: Long,
         actualSpending: Double
     ) = withContext(ioDispatcher) {
+        writeBarrier.checkWritesAllowed("BudgetForecastingEngine.updateForecastAccuracy")
         val forecast = budgetForecastDao.getById(forecastId)
             ?: return@withContext
 

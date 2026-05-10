@@ -122,7 +122,11 @@ class DashboardContractsAdapter @Inject constructor(
             dailyHistory = summary.dailyHistory,
             previousDailyHistory = summary.previousDailyHistory,
             transactionCount = summary.transactionCount,
-            currency = summary.currency
+            currency = summary.currency,
+            isPartial = summary.isPartial,
+            warningMessage = if (summary.isPartial) {
+                summary.aggregate?.warningMessage ?: "Spending data may be incomplete due to missing exchange rates"
+            } else null
         )
         }
 

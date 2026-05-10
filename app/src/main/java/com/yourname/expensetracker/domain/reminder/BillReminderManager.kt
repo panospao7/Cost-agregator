@@ -134,7 +134,19 @@ class BillReminderManager @Inject constructor(
      * advanced one interval at a time until it reaches today. This mirrors the
      * `rollNextExpectedDateForward()` pattern in [RecurringExpenseEngine].
      * IRREGULAR frequency is skipped because it has no predictable interval.
+     *
+     * @deprecated Use [RecurringLifecycleCoordinator.linkExpenseToOccurrence] for full lifecycle:
+     *   marks the occurrence as PAID, fulfills the planned expense, suppresses reminders,
+     *   and writes lifecycle events. This legacy method only advances nextDate and does
+     *   NOT update occurrence/planned-expense/reminder state.
      */
+    @Deprecated(
+        message = "Use RecurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId) for full lifecycle tracking",
+        replaceWith = ReplaceWith(
+            "RecurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId)",
+            "com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator"
+        )
+    )
     suspend fun markBillPaid(recurringExpenseId: Long) = withContext(Dispatchers.IO) {
         val expense = recurringExpenseRepository.getById(recurringExpenseId) ?: return@withContext
 

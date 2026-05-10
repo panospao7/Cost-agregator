@@ -7,11 +7,15 @@ import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.data.database.entity.toRecurringPattern
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import java.util.*
 import javax.inject.Inject
@@ -42,7 +46,10 @@ class CashFlowCalculator @Inject constructor(
     private val recurringPatternsProvider: MergedRecurringPatternsProvider,
     private val timeProvider: TimeProvider,
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
-    private val recurringOccurrenceDao: RecurringOccurrenceDao
+    private val recurringOccurrenceDao: RecurringOccurrenceDao,
+    private val analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer,
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val currencyConverter: CurrencyConverter
 ) {
     companion object {
         private const val TAG = "CashFlowCalculator"
@@ -64,6 +71,11 @@ class CashFlowCalculator @Inject constructor(
         endDate: Date,
         startingBalance: Double = 0.0
     ): List<DailyCashFlow> {
+        val homeCurrency = try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (e: Exception) {
+            "EUR"
+        }
         val calendar = Calendar.getInstance()
         val results = mutableListOf<DailyCashFlow>()
         var runningBalance = startingBalance
@@ -202,22 +214,39 @@ class CashFlowCalculator @Inject constructor(
                 pattern.merchantName.lowercase().trim() in actualMerchants
             }
 
-            // Calculate ending balance
-            // SAFE: Single-day expenses are almost always same-currency, so raw monetary
-            // summation via effectiveAmount is valid without cross-currency conversion.
-            // Multi-currency users should normalize expenses through AnalyticsCurrencyNormalizer
-            // before calling calculateDailyCashFlow().
+            // Calculate ending balance — normalize to home currency
             var dayIncome = 0.0
             for (inc in incomeList) {
-                dayIncome += inc.effectiveAmount
+                if (inc.currency.equals(homeCurrency, ignoreCase = true)) {
+                    dayIncome += inc.effectiveAmount
+                } else {
+                    val converted = currencyConverter.convert(inc.effectiveAmount, inc.currency, homeCurrency)
+                    if (converted != null) {
+                        dayIncome += converted.convertedAmount
+                    }
+                }
             }
             
             var dayExpensesTotal = 0.0
             for (exp in expenseList) {
-                dayExpensesTotal += exp.effectiveAmount
+                if (exp.currency.equals(homeCurrency, ignoreCase = true)) {
+                    dayExpensesTotal += exp.effectiveAmount
+                } else {
+                    val converted = currencyConverter.convert(exp.effectiveAmount, exp.currency, homeCurrency)
+                    if (converted != null) {
+                        dayExpensesTotal += converted.convertedAmount
+                    }
+                }
             }
             for (recurring in deduplicatedPredicted) {
-                dayExpensesTotal += recurring.averageAmount
+                if (recurring.currency.equals(homeCurrency, ignoreCase = true)) {
+                    dayExpensesTotal += recurring.averageAmount
+                } else {
+                    val converted = currencyConverter.convert(recurring.averageAmount, recurring.currency, homeCurrency)
+                    if (converted != null) {
+                        dayExpensesTotal += converted.convertedAmount
+                    }
+                }
             }
             
             runningBalance = runningBalance + dayIncome - dayExpensesTotal
@@ -236,9 +265,10 @@ class CashFlowCalculator @Inject constructor(
                     startingBalance = runningBalance - dayIncome + dayExpensesTotal,
                     income = incomeList,
                     expenses = expenseList,
-                    predictedRecurring = predictedRecurringList,
+                    predictedRecurring = deduplicatedPredicted,
                     endingBalance = runningBalance,
-                    riskLevel = riskLevel
+                    riskLevel = riskLevel,
+                    currency = homeCurrency
                 )
             )
             

@@ -158,7 +158,9 @@ class AnalyticsInputAssembler @Inject constructor(
             dataQuality = AnalyticsDataQuality(
                 isPartial = excludedCount > 0 || result.hasWarnings,
                 excludedCount = excludedCount,
-                staleRateCount = 0, // A19: STALE_EXCHANGE_RATE not yet surfaced by normalizer
+                staleRateCount = result.warnings.count {
+                    it.type == AnalyticsConversionWarningType.STALE_EXCHANGE_RATE
+                },
                 missingRateCount = missingWarnings,
                 invalidCurrencyCount = result.severeWarnings.count {
                     it.type == AnalyticsConversionWarningType.INVALID_TRANSACTION_CURRENCY

@@ -66,12 +66,22 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                 // Already exists — load existing and update if status changed
                 val existing = occurrenceDao.getByKey(entity.occurrenceKey)
                 if (existing != null) {
-                    if (existing.status != entity.status) {
+                    if (existing.status != entity.status && existing.status !in TERMINAL_STATUSES) {
                         occurrenceDao.update(
                             entity.copy(
                                 id = existing.id,
                                 createdAt = existing.createdAt,
                                 updatedAt = now
+                            )
+                        )
+                        lifecycleEventDao.insert(
+                            RecurringLifecycleEvent(
+                                occurrenceId = existing.id,
+                                eventType = "OCCURRENCE_STATUS_CHANGED",
+                                occurredAt = now,
+                                oldStatus = existing.status,
+                                newStatus = entity.status,
+                                metadata = "{\"oldStatus\":\"${existing.status}\",\"newStatus\":\"${entity.status}\"}"
                             )
                         )
                         updated++
@@ -193,5 +203,9 @@ class RecurringOccurrenceMaterializer @Inject constructor(
             }
             else -> dueDate
         }
+    }
+
+    companion object {
+        private val TERMINAL_STATUSES = setOf("PAID", "CANCELLED", "SKIPPED", "IGNORED", "MISSED")
     }
 }

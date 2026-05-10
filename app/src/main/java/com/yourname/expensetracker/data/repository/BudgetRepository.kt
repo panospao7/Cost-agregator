@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BudgetDao
+import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.CategorySpentTotal
@@ -51,7 +54,9 @@ class BudgetRepository @Inject constructor(
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val multiCurrencyRepository: MultiCurrencyRepository,
-    private val writeBarrier: DatabaseWriteBarrier
+    private val writeBarrier: DatabaseWriteBarrier,
+    private val database: AppDatabase,
+    private val budgetForecastDao: BudgetForecastDao
 ) {
     data class DebugBudgetSnapshot(
         val budgets: List<Budget>
@@ -209,7 +214,13 @@ class BudgetRepository @Inject constructor(
             }
             var runningEffectiveLimit = baseLimit
             for (period in periods) {
-                val spentInPeriod = getAggregateSpent(budget.categoryId, period.start, period.end).displayAmount
+                val periodAggregate = getAggregateSpent(budget.categoryId, period.start, period.end)
+                val spentInPeriod = periodAggregate.displayAmount
+                budgetIsPartial = budgetIsPartial || periodAggregate.isPartial
+                if (periodAggregate.warningMessage != null) {
+                    budgetWarningMessage = listOfNotNull(budgetWarningMessage, periodAggregate.warningMessage)
+                        .distinct().joinToString(" ")
+                }
                 // BUD-12-FIXED: Use rolloverDeficitTracking flag to control whether deficits carry forward.
                 val carryover = runningEffectiveLimit - spentInPeriod
                 val effectiveCarryover = if (budget.rolloverDeficitTracking) carryover else carryover.coerceAtLeast(0.0)
@@ -373,11 +384,16 @@ class BudgetRepository @Inject constructor(
     suspend fun deleteBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Unit> {
         return try {
             writeBarrier.checkWritesAllowed("BudgetRepository.deleteBudget")
-            budgetDao.delete(budget)
+            // Delete forecasts first to avoid FK constraint violation,
+            // then delete the budget — all in a single DB transaction.
+            database.withTransaction {
+                budgetForecastDao.deleteForecastsForBudget(budget.id)
+                budgetDao.delete(budget)
+            }
             com.yourname.expensetracker.domain.model.Result.Success(Unit)
         } catch (e: Exception) {
             Timber.e(e, "Failed to delete budget ${budget.id}")
-            com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to delete budget")
+            com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to delete budget (it may have forecast history — use archive policy or contact support)")
         }
     }
 

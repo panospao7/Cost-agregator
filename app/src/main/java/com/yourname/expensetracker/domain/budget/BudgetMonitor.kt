@@ -199,30 +199,31 @@ class BudgetMonitor @Inject constructor(
 
         if (spent <= 0 || budget.amount <= 0) return
 
-        val percent = status.percentUsed
+        // Recompute percent from adjusted spent to avoid triggering alerts on gross spend
+        val effectiveLimit = status.effectiveLimit
+        val adjustedPercent = if (effectiveLimit > 0) (spent / effectiveLimit).toFloat() else 0f
 
         // BUD-3: Only update notification timestamp if the notification was
         // actually delivered (e.g. user has notifications disabled).
-        val effectiveLimit = status.effectiveLimit
 
         when {
-            percent >= 1.0f -> {
+            adjustedPercent >= 1.0f -> {
                 if (shouldNotify(budget.lastExceededNotifiedAt, now, periodStart, budget.period)) {
-                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Exceeded!", categoryName, status.percentUsed)) {
+                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Exceeded!", categoryName, adjustedPercent)) {
                         budgetRepository.updateExceededNotification(budget.id, now)
                     }
                 }
             }
-            percent >= budget.notifyAtCritical && percent < 1.0f -> {
+            adjustedPercent >= budget.notifyAtCritical && adjustedPercent < 1.0f -> {
                 if (shouldNotify(budget.lastCriticalNotifiedAt, now, periodStart, budget.period)) {
-                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Critical Budget Warning", categoryName, status.percentUsed)) {
+                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Critical Budget Warning", categoryName, adjustedPercent)) {
                         budgetRepository.updateCriticalNotification(budget.id, now)
                     }
                 }
             }
-            percent >= budget.notifyAtWarning && percent < budget.notifyAtCritical -> {
+            adjustedPercent >= budget.notifyAtWarning && adjustedPercent < budget.notifyAtCritical -> {
                 if (shouldNotify(budget.lastWarningNotifiedAt, now, periodStart, budget.period)) {
-                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Warning", categoryName, status.percentUsed)) {
+                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Warning", categoryName, adjustedPercent)) {
                         budgetRepository.updateWarningNotification(budget.id, now)
                     }
                 }

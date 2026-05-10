@@ -135,34 +135,24 @@ class TotalsAggregationEngine @Inject constructor(
      * → multiCurrencyRepository.getHomeCurrencyWeeklyTotals(monthStartMs, monthEndMs)
      * ```
      */
-    // A02 PARTIAL: This method raw-sums across potentially mixed currencies.
-    // Use MultiCurrencyRepository.getHomeCurrencyWeeklyTotals() for currency-safe aggregation,
-    // or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.
-    @Deprecated("Use MultiCurrencyRepository.getHomeCurrencyWeeklyTotals() for currency-safe weekly aggregation, or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.")
+    // A02-FIXED: Uses MultiCurrencyRepository.getHomeCurrencyWeeklyTotals() for currency-safe aggregation.
     fun getWeeklyTotals(year: Int, month: Int): Flow<List<PeriodTotal>> = reactiveFlow {
-        Timber.w("A02: getWeeklyTotals called — raw mixed-currency path. Use MultiCurrencyRepository or DailyBucketEngine.")
-        return@reactiveFlow emptyList()
         val (monthStartMs, monthEndMs) = getMonthRange(year, month)
-        val weeklyTotals = expenseRepository.getWeeklyTotalsForPeriod(monthStartMs, monthEndMs)
+        val weeklyAggregates = multiCurrencyRepository.getHomeCurrencyWeeklyTotals(monthStartMs, monthEndMs)
         val average = getAverageForPeriodType(PeriodType.WEEK, excludeCurrent = false)
 
-        // Include ALL weeks that touch this month (have at least one day in the month)
-        // This ensures no expenses are lost at month boundaries
-        val totalsByStart = weeklyTotals
-            .filter { weekly -> weekly.startDate < monthEndMs && weekly.endDate > monthStartMs }
-            .associateBy { TimePeriodUtils.getStartOfWeek(it.startDate) }
+        if (weeklyAggregates.isEmpty()) return@reactiveFlow emptyList()
 
-        generateWeekStarts(monthStartMs, monthEndMs).mapIndexed { index, weekStart ->
+        weeklyAggregates.mapIndexed { index, periodAgg ->
+            val periodKey = periodAgg.periodKey
+            val aggregate = periodAgg.aggregate
+            val weekStart = TimePeriodUtils.parseWeekKeyToStart(periodKey) ?: monthStartMs
             val weekEnd = TimePeriodUtils.addDays(weekStart, 7)
-            val weekly = totalsByStart[weekStart]
-            // Check if this is a partial week (spans month boundary)
-            val isPartialWeek = weekStart < monthStartMs || weekEnd > monthEndMs
-            
-            // DSH-2/DSH-3: Clip week boundaries to month range
+
             val clippedStart = maxOf(weekStart, monthStartMs)
             val clippedEnd = minOf(weekEnd, monthEndMs)
-            
-            // Format label: W1, W2, etc. Partial weeks show date range
+            val isPartialWeek = weekStart < monthStartMs || weekEnd > monthEndMs
+
             val weekLabel = if (isPartialWeek) {
                 val dateFormat = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
                 val startStr = dateFormat.format(toLocalDate(clippedStart))
@@ -171,18 +161,16 @@ class TotalsAggregationEngine @Inject constructor(
             } else {
                 "W${index + 1}"
             }
-            val total = weekly?.total ?: 0.0
-            
+
             PeriodTotal(
                 periodLabel = weekLabel,
-                periodKey = weekly?.weekKey ?: weekKey(weekStart),
-                totalAmount = total,
-                transactionCount = weekly?.txCount ?: 0,
+                periodKey = periodKey,
+                totalAmount = aggregate.displayAmount,
+                transactionCount = aggregate.totalTransactionCount,
                 periodType = PeriodType.WEEK,
-                // DSH-2/DSH-3: Use clipped bounds instead of raw week range
                 startDateMs = clippedStart,
                 endDateMs = clippedEnd,
-                status = getPeriodStatus(total, average)
+                status = getPeriodStatus(aggregate.displayAmount, average)
             )
         }
     }
@@ -202,13 +190,8 @@ class TotalsAggregationEngine @Inject constructor(
      * ```
      * and use [MoneyAggregate.displayAmount] / [MoneyAggregate.totalTransactionCount].
      */
-    // A02 PARTIAL: This method raw-sums across potentially mixed currencies.
-    // Use MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe aggregation,
-    // or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.
-    @Deprecated("Use MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe daily aggregation, or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.")
+    // A02-FIXED: Uses MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe aggregation.
     fun getDailyTotals(year: Int, weekOfYear: Int): Flow<List<PeriodTotal>> = reactiveFlow {
-        Timber.w("A02: getDailyTotals called — raw mixed-currency path. Use MultiCurrencyRepository or DailyBucketEngine.")
-        return@reactiveFlow emptyList()
         val (startMs, endMs) = getWeekRange(year, weekOfYear)
 
         // DSH-3: Determine the month that contains this week's Thursday
@@ -222,34 +205,49 @@ class TotalsAggregationEngine @Inject constructor(
         if (clippedStart >= clippedEnd) {
             emptyList()
         } else {
-            val dailyTotals = expenseRepository.getDailyTotalsWithDatesForPeriod(clippedStart, clippedEnd)
+            val dailyAggregates = multiCurrencyRepository.getHomeCurrencyDailyTotals(clippedStart, clippedEnd)
             val average = getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
-            buildDailyPeriodTotals(clippedStart, clippedEnd, dailyTotals, average)
+            dailyAggregates.map { periodAgg ->
+                val dayStart = TimePeriodUtils.parseDayKeyToStart(periodAgg.periodKey) ?: clippedStart
+                val dayEnd = TimePeriodUtils.getEndOfDay(dayStart)
+                val date = toLocalDate(dayStart)
+                val aggregate = periodAgg.aggregate
+                PeriodTotal(
+                    periodLabel = DAY_FORMAT.format(date),
+                    periodKey = periodAgg.periodKey,
+                    totalAmount = aggregate.displayAmount,
+                    transactionCount = aggregate.totalTransactionCount,
+                    periodType = PeriodType.DAY,
+                    startDateMs = dayStart,
+                    endDateMs = dayEnd,
+                    status = getPeriodStatus(aggregate.displayAmount, average)
+                )
+            }
         }
     }
 
-    /**
-     * Get daily totals for a specific date range.
-     * Used for drill-down to prevent duplicate days from week boundary mismatches.
-     *
-     * ## I4 Migration plan
-     * Still uses [ExpenseRepository.getDailyTotalsWithDatesForPeriod] (raw DAO doubles).
-     * Same as [getDailyTotals] — needs [MultiCurrencyRepository] to expose a
-     * `getHomeCurrencyDailyTotals()` method. Once available, replace the call and
-     * use [MoneyAggregate.displayAmount] / [MoneyAggregate.totalTransactionCount].
-     */
-    // A02 PARTIAL: This method raw-sums across potentially mixed currencies.
-    // Use MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe aggregation,
-    // or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.
-    @Deprecated("Use MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe daily aggregation, or DailyBucketEngine.buildBuckets(NormalizedAnalyticsInput, period) for exact-range buckets.")
+    // A02-FIXED: Uses MultiCurrencyRepository.getHomeCurrencyDailyTotals() for currency-safe aggregation.
     fun getDailyTotalsForRange(startMs: Long, endMs: Long): Flow<List<PeriodTotal>> = reactiveFlow {
-        Timber.w("A02: getDailyTotalsForRange called — raw mixed-currency path. Use MultiCurrencyRepository or DailyBucketEngine.")
-        return@reactiveFlow emptyList()
-        val dailyTotals = expenseRepository.getDailyTotalsWithDatesForPeriod(startMs, endMs)
+        val dailyAggregates = multiCurrencyRepository.getHomeCurrencyDailyTotals(startMs, endMs)
         val average = getAverageForPeriodType(PeriodType.DAY, excludeCurrent = false)
 
-        buildDailyPeriodTotals(startMs, endMs, dailyTotals, average)
+        dailyAggregates.map { periodAgg ->
+            val dayStart = TimePeriodUtils.parseDayKeyToStart(periodAgg.periodKey) ?: startMs
+            val dayEnd = TimePeriodUtils.getEndOfDay(dayStart)
+            val date = toLocalDate(dayStart)
+            val aggregate = periodAgg.aggregate
+            PeriodTotal(
+                periodLabel = DAY_FORMAT.format(date),
+                periodKey = periodAgg.periodKey,
+                totalAmount = aggregate.displayAmount,
+                transactionCount = aggregate.totalTransactionCount,
+                periodType = PeriodType.DAY,
+                startDateMs = dayStart,
+                endDateMs = dayEnd,
+                status = getPeriodStatus(aggregate.displayAmount, average)
+            )
+        }
     }
 
     /**
@@ -384,21 +382,19 @@ class TotalsAggregationEngine @Inject constructor(
                     }
                 }
                 PeriodType.WEEK -> {
-                    Timber.w("A02: getAverageForPeriodType(WEEK) called — raw mixed-currency path. Use MultiCurrencyRepository or DailyBucketEngine.")
-                    return@withContext 0.0
                     val startMs = TimePeriodUtils.getStartOfWeek(TimePeriodUtils.addDays(now, -56))
-                    // I4: no MCR weekly equivalent yet — keep the DAO call for now
-                    val weeks = expenseRepository.getWeeklyTotalsForPeriod(startMs, now)
+                    val weeks = multiCurrencyRepository.getHomeCurrencyWeeklyTotals(startMs, now)
                     if (excludeCurrent) {
-                        // DSH-13: Same time-based fix — exclude current incomplete week
-                        // by comparing startDate against the start of the current week.
                         val currentWeekStart = TimePeriodUtils.getStartOfWeek(now)
-                        weeks.filter { it.startDate < currentWeekStart }
-                            .map { it.total }
+                        weeks.filter { periodAgg ->
+                            val weekStart = TimePeriodUtils.parseWeekKeyToStart(periodAgg.periodKey) ?: return@filter false
+                            weekStart < currentWeekStart
+                        }
+                            .map { it.aggregate.displayAmount }
                             .average()
                             .takeIf { !it.isNaN() } ?: 0.0
                     } else {
-                        weeks.map { it.total }.average().takeIf { !it.isNaN() } ?: 0.0
+                        weeks.map { it.aggregate.displayAmount }.average().takeIf { !it.isNaN() } ?: 0.0
                     }
                 }
                 PeriodType.DAY -> {

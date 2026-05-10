@@ -155,7 +155,8 @@ data class MonthlyComparison(
 enum class AnalyticsConversionWarningType {
     INVALID_HOME_CURRENCY,
     INVALID_TRANSACTION_CURRENCY,
-    MISSING_EXCHANGE_RATE
+    MISSING_EXCHANGE_RATE,
+    STALE_EXCHANGE_RATE
 }
 
 data class AnalyticsConversionWarning(

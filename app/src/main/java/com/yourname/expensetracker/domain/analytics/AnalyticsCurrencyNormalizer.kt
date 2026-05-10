@@ -140,6 +140,17 @@ class AnalyticsCurrencyNormalizer @Inject constructor(
                         return@mapNotNull null
                     }
                     latestRateTimestamp = maxTimestamp(latestRateTimestamp, conversion.timestamp)
+                    // Detect stale rates: rate timestamp is more than 7 days older than expense date
+                    val sevenDaysMs = 7L * 24 * 60 * 60 * 1000
+                    if (conversion.timestamp > 0 && expense.date - conversion.timestamp > sevenDaysMs) {
+                        accumulateWarning(
+                            warnings = warnings,
+                            type = AnalyticsConversionWarningType.STALE_EXCHANGE_RATE,
+                            sourceCurrency = sourceCurrency.code,
+                            message = "Analytics used possibly stale exchange rates for transactions older than available rate data.",
+                            expenseId = expense.id
+                        )
+                    }
                     conversion.convertedAmount
                 }
             }

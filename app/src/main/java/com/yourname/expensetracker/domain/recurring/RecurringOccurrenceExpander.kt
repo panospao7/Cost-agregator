@@ -56,7 +56,7 @@ class RecurringOccurrenceExpander @Inject constructor() {
     /**
      * A single concrete occurrence produced by expanding a recurrence rule.
      *
-     * @property occurrenceKey Unique key for deduplication: `"$sourceId|<dayStart>|<frequencyName>"`.
+     * @property occurrenceKey Unique key for deduplication: `"$sourceType|$sourceId|<dayStart>|<frequencyName>"`.
      * @property dueDate The calendar day this occurrence is due (epoch ms, start of day).
      * @property expectedAmount The expected amount for this occurrence.
      * @property expectedCurrency The expected currency.
@@ -107,7 +107,7 @@ class RecurringOccurrenceExpander @Inject constructor() {
         while (currentDate < request.endDate) {
             // Only include occurrences that fall within the filter range
             if (currentDate >= request.startDate) {
-                val occurrenceKey = buildOccurrenceKey(request.sourceId, currentDate, request.frequency)
+                val occurrenceKey = buildOccurrenceKey(request.sourceType, request.sourceId, currentDate, request.frequency)
 
                 candidates.add(
                     OccurrenceCandidate(
@@ -138,17 +138,20 @@ class RecurringOccurrenceExpander @Inject constructor() {
     fun advanceDate(date: Long, frequency: RecurrenceFrequency): Long = advance(date, frequency)
 
     /**
-     * Builds the unique occurrence key: `"$sourceId|<dayStart>|<frequencyName>"`.
+     * Builds the unique occurrence key: `"$sourceType|$sourceId|<dayStart>|<frequencyName>"`.
      * The day start is obtained via [TimePeriodUtils.getStartOfDay].
      * Amount is intentionally excluded from the key.
+     * Source type is included to prevent collisions between different source types
+     * with the same numeric sourceId.
      */
     private fun buildOccurrenceKey(
+        sourceType: String,
         sourceId: Long,
         dueDate: Long,
         frequency: RecurrenceFrequency
     ): String {
         val dayStart = TimePeriodUtils.getStartOfDay(dueDate)
-        return "$sourceId|$dayStart|${frequency.name}"
+        return "$sourceType|$sourceId|$dayStart|${frequency.name}"
     }
 
     /**

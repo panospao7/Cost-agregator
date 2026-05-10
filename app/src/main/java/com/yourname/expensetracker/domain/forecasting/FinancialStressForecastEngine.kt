@@ -261,7 +261,7 @@ class FinancialStressForecastEngine @Inject constructor(
     /**
      * Allowed statuses for recurring occurrences that represent active obligations.
      */
-    private val ACTIVE_OCCURRENCE_STATUSES = setOf("PLANNED", "PAID")
+    private val ACTIVE_OCCURRENCE_STATUSES = setOf("PLANNED")
 
     /**
      * Statuses that represent skipped/cancelled/ignored occurrences (excluded from totals).

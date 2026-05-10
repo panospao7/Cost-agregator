@@ -80,8 +80,7 @@ import androidx.room.PrimaryKey
         Index(value = ["budgetId"]),
         Index(value = ["forecastDate"]),
         Index(value = ["isActive"]),
-        Index(value = ["budgetId", "targetPeriodStart"], unique = true),
-        Index(value = ["budgetId", "forecastDate"], unique = true)
+        Index(value = ["budgetId", "targetPeriodStart", "forecastDate"], unique = true)
     ]
 )
 data class BudgetForecast(
