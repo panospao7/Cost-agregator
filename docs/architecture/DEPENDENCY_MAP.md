@@ -356,6 +356,20 @@ AppStartupCoordinator
 | `NotificationCaptureService` | `service/NotificationCaptureService.kt` | `RestoreMaintenanceMode.isActive()` |
 | All 7 workers | Various | `RestoreMaintenanceMode` pause check |
 
+### Barriers
+
+```
+DatabaseReadBarrier                       [data/backup/DatabaseReadBarrier.kt]
+  └── Constructor: RestoreMaintenanceMode
+  └── checkReadAllowed(operation) — throws IllegalStateException during restore
+      (NORMAL and BACKUP_EXPORTING modes pass through)
+
+DatabaseWriteBarrier                      [data/backup/DatabaseWriteBarrier.kt]
+  └── Constructor: RestoreMaintenanceMode
+  └── checkWritesAllowed(operation) — throws IllegalStateException during restore
+      (delegates to RestoreMaintenanceMode.isWritesAllowed())
+```
+
 ### Workers paused during restore
 
 | Worker | File | Normal Schedule |
@@ -536,22 +550,34 @@ WorkerSpecScheduler                       [domain/workers/WorkerSpecScheduler.kt
       schedule logic. Reads WorkerSpec.DEFAULTS by worker name, handles
       version-change detection (force REPLACE when version bumps).
       Stateless Kotlin object, no DI needed.
+
+WorkerRunLogger                           [domain/workers/WorkerRunLogger.kt]
+  └── Interface + WorkerRunLoggerImpl (@Singleton @Inject). Per-run lifecycle:
+      start() returns WorkerRunHandle with success/skipped/retry/failure methods.
+      Writes BackgroundJobRun rows via BackgroundJobRunDao. Bound via WorkerModule.
+
+WorkerExecutionGuard                      [domain/workers/WorkerExecutionGuard.kt]
+  └── Structured guarded execution for workers. Checks RestoreMaintenanceMode,
+      creates WorkerRunLogger handle, wraps work in try-catch, records outcome.
+      Used by all 7 workers to replace ad-hoc per-worker logging.
 ```
 
 ### Worker → DAO Dependencies
 
 All 7 workers individually inject and check **`RestoreMaintenanceMode.isWritesAllowed()`**
 before performing write operations, ensuring workers yield during an active restore.
+Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps execution with
+**`WorkerRunLogger`** lifecycle tracking (automatically records start/success/skipped/retry/failure).
 
 | Worker | DAO Dependencies | Also Injects |
 |--------|-----------------|--------------|
-| `DailyBriefingWorker` | AiArtifactDao | RestoreMaintenanceMode |
-| `LocationBackfillWorker` | ExpenseDao | RestoreMaintenanceMode |
-| `MerchantKeyBackfillWorker` | ExpenseDao, MerchantNormalizationDao | RestoreMaintenanceMode |
-| `WarrantyExpirationWorker` | WarrantyDao | RestoreMaintenanceMode |
-| `BillReminderWorker` | RecurringOccurrenceDao, RecurringReminderDeliveryDao | RestoreMaintenanceMode |
-| `ReceiptMatchingWorker` | ScannedReceiptDao, ExpenseDao, ReceiptExpenseLinkDao | RestoreMaintenanceMode |
-| `DataRetentionWorker` | RawNotificationDao, ScannedReceiptDao, PrivacyAuditDao | RestoreMaintenanceMode |
+| `DailyBriefingWorker` | AiArtifactDao | RestoreMaintenanceMode, WorkerExecutionGuard |
+| `LocationBackfillWorker` | ExpenseDao | RestoreMaintenanceMode, WorkerExecutionGuard |
+| `MerchantKeyBackfillWorker` | ExpenseDao, MerchantNormalizationDao | RestoreMaintenanceMode, WorkerExecutionGuard |
+| `WarrantyExpirationWorker` | WarrantyDao | RestoreMaintenanceMode, WorkerExecutionGuard |
+| `BillReminderWorker` | RecurringOccurrenceDao, RecurringReminderDeliveryDao | RestoreMaintenanceMode, WorkerExecutionGuard |
+| `ReceiptMatchingWorker` | ScannedReceiptDao, ExpenseDao, ReceiptExpenseLinkDao | RestoreMaintenanceMode, WorkerExecutionGuard |
+| `DataRetentionWorker` | RawNotificationDao, ScannedReceiptDao, PrivacyAuditDao | RestoreMaintenanceMode, WorkerExecutionGuard |
 
 ---
 
@@ -564,10 +590,11 @@ before performing write operations, ensuring workers yield during an active rest
 | Module | File | Provided Types | Consumed By |
 |--------|------|---------------|-------------|
 | `DatabaseModule` | `di/DatabaseModule.kt` | `AppDatabase`, `GroupTransactionCoordinator` | All DAOs, group operations |
-| `DaoModule` | `di/DaoModule.kt` | 54 DAO singletons | All repositories |
+| `DaoModule` | `di/DaoModule.kt` | 56 DAO singletons | All repositories |
 | `DispatchersModule` | `di/DispatchersModule.kt` | `@IoDispatcher`, `@DefaultDispatcher`, `ApplicationScope` | 50+ classes |
 | `TimeModule` | `di/TimeModule.kt` | `TimeProvider` → `SystemTimeProvider` | 50+ classes |
 | `ServiceModule` | `di/ServiceModule.kt` | `Gson`, `NotificationService`, `GeocodingService`, `NearbyPoiService`, `ForegroundLocationProvider`, `NavigationTargetResolver`, `WidgetStyleRepository`, `SpeechInputGateway` | Services, geocoding, navigation |
+| `WorkerModule` | `di/WorkerModule.kt` | `WorkerRunLogger` → `WorkerRunLoggerImpl` | All 7 workers via `WorkerExecutionGuard` |
 
 #### AI Modules
 
@@ -588,9 +615,8 @@ before performing write operations, ensuring workers yield during an active rest
 | `DashboardAnomalyModule` | `di/DashboardAnomalyModule.kt` | `AnomalyAlertRepository` (domain + dashboard) | Analytics, dashboard |
 | `SavingsModule` | `di/SavingsModule.kt` | `SmartSavingsEngine`, `AutomatedSavingsRuleStateRepository`, `SavingsContributionHistoryRepository`, `AutomatedSavingsRuleEngine`, `SavingsGamificationEngine` | Savings ViewModels |
 | `SavingsRepositoryBindingsModule` | `di/SavingsRepositoryBindingsModule.kt` | `DomainSavingsGoalRepository` binding | Savings engines |
-| `GroupsModule` | `di/GroupsModule.kt` | `GroupsRepository`, `SharedExpenseDataPort`, Use cases (3) | Groups ViewModel |
-| `SubscriptionModule` | `di/SubscriptionModule.kt` | `SubscriptionManagerEngine` | Subscription ViewModel |
-| `TaxModule` | `di/TaxModule.kt` | `TaxConfiguration` → `GreeceTaxConfiguration` | Tax ViewModel |
+| `GroupsModule` | `di/GroupsModule.kt` | `GroupsRepository`, `SharedExpenseDataPort`, Use cases (3); auto-provided: `GroupLifecycleCoordinator` | Groups ViewModel |
+| `TaxModule` | `di/TaxModule.kt` | `TaxConfiguration` → `GreeceTaxConfiguration`, auto-provided: `DemoTaxRateProvider` | Tax ViewModel |
 | `ExportModule` | `di/ExportModule.kt` | `QuickBooksIIFExporter`, `XeroCSVExporter`, `FreshBooksExporter` | Export ViewModel |
 
 #### Infrastructure Modules
@@ -650,10 +676,12 @@ before performing write operations, ensuring workers yield during an active rest
 | `SubscriptionPriceHistory` | `SubscriptionPriceHistoryDao` | `SubscriptionManagementRepository` | SubscriptionVM |
 | `SubscriptionUsage` | `SubscriptionUsageDao` | `SubscriptionManagementRepository` | SubscriptionVM |
 | `EmailReceiptSource` | `EmailReceiptDao` | `EmailReceiptIngestionService` | Email receipt |
-| `ExpenseGroup` | `ExpenseGroupDao` | `GroupsRepositoryImpl` | SharedExpenseGroupsVM |
-| `GroupMember` | `GroupMemberDao` | `GroupsRepositoryImpl` | SharedExpenseGroupsVM |
-| `GroupExpense` | `GroupExpenseDao` | `GroupsRepositoryImpl` | SharedExpenseGroupsVM |
-| `GroupSettlementEntity` | `GroupSettlementDao` | `GroupLifecycleCoordinator` → recordSettlement() | SharedExpenseGroupsVM |
+| `ExpenseGroup` | `ExpenseGroupDao` | `GroupsRepositoryImpl`, `GroupBalanceCalculator` | SharedExpenseGroupsVM |
+| `GroupMember` | `GroupMemberDao` | `GroupsRepositoryImpl`, `GroupBalanceCalculator` | SharedExpenseGroupsVM |
+| `GroupExpense` | `GroupExpenseDao` | `GroupsRepositoryImpl`, `GroupBalanceCalculator` | SharedExpenseGroupsVM |
+| `GroupSettlementEntity` | `GroupSettlementDao` | `GroupLifecycleCoordinator` → recordSettlement(), `GroupBalanceCalculator` | SharedExpenseGroupsVM |
+| `GroupLifecycleEventEntity` | `GroupLifecycleEventDao` | `GroupLifecycleCoordinator` | Group lifecycle audit log |
+| `PipelineDiagnosticEvent` | `PipelineDiagnosticEventDao` | `NotificationProcessingPipeline` | Cross-pipeline diagnostics |
 | *(n/a)* | *(n/a)* | `GroupLifecycleCoordinator` → `GroupTransactionCoordinator` (domain interface), `TimeProvider`, `CurrencySettingsRepository` | Groups ViewModel |
 | `SplitTemplate` | `SplitTemplateDao` | (Direct usage) | VisualSplitVM |
 | `SplitItemAssignment` | `SplitItemAssignmentDao` | (Direct usage) | VisualSplitVM |
@@ -786,8 +814,8 @@ All Hybrid services use:
 
 ---
 
-> **Generated:** Manual analysis of 804+ source files across 3 layers (UI/Domain/Data),  
-> 28 Hilt @Module files, 39 ViewModels, 65 repositories (52 data + 13 domain interfaces), 58 DAOs, 62 entities.  
+> **Generated:** Manual analysis of 829+ source files across 3 layers (UI/Domain/Data),  
+> 27 Hilt @Module files, 38 ViewModels, 65+ repositories, 59 DAOs (56 DaoModule + 3 AiModule), 62 entities.  
 > **Next update:** Regenerate when significant architectural changes occur (new module, major refactor).
 
 ---
@@ -832,6 +860,27 @@ Handles single non-home conversion, mixed-currency conversion, and failure mappi
 Previously `identity()` was misclassified as a failure and `failed()` discarded the reason.
 
 ---
+
+## GroupBalanceCalculator Dependency Chain (2026-05-10)
+
+```
+GroupBalanceCalculator                    [domain/groups/GroupBalanceCalculator.kt]
+  │  @Singleton @Inject
+  │  Per-member net balance calculator
+  │
+  ├──► ExpenseGroupDao                   — Read group details
+  ├──► GroupMemberDao                    — Read member list
+  ├──► GroupExpenseDao                   — Read paid totals and owed shares
+  └──► GroupSettlementDao                — Read settlements paid/received
+       │
+       ▼
+  GroupMemberBalance                     — Data class: paidTotal, owedShareTotal,
+       settlementsPaid, settlementsReceived, netBalance, isSettled
+
+  Consumed by:
+  └──► GroupLifecycleCoordinator         — Balance-aware operations
+  └──► SharedExpenseGroupsViewModel      — UI display of member balances
+```
 
 ## Negotiation Dependency Chain (2026-05-09)
 

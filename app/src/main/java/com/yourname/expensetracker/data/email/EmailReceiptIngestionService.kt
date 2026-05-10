@@ -30,6 +30,9 @@ import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifec
 import com.yourname.expensetracker.domain.usecase.receipt.ProcessReceiptUseCase
 import com.yourname.expensetracker.domain.usecase.receipt.ProcessedReceipt
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
+import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -72,6 +75,7 @@ class EmailReceiptIngestionService(
     private val coordinator: TransactionLifecycleCoordinator,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
+    private val privacySettingsRepository: PrivacySettingsRepository,
     private val transactionRunner: suspend (suspend () -> EmailReceiptResult) -> EmailReceiptResult
 ) {
     @Inject
@@ -88,7 +92,8 @@ class EmailReceiptIngestionService(
         coordinator: TransactionLifecycleCoordinator,
         database: AppDatabase,
         restoreMaintenanceMode: RestoreMaintenanceMode,
-        writeBarrier: DatabaseWriteBarrier
+        writeBarrier: DatabaseWriteBarrier,
+        privacySettingsRepository: PrivacySettingsRepository
     ) : this(
         receiptParser = receiptParser,
         processReceiptUseCase = processReceiptUseCase,
@@ -102,6 +107,7 @@ class EmailReceiptIngestionService(
         coordinator = coordinator,
         restoreMaintenanceMode = restoreMaintenanceMode,
         writeBarrier = writeBarrier,
+        privacySettingsRepository = privacySettingsRepository,
         transactionRunner = { block -> database.withTransaction { block() } }
     )
 
@@ -117,7 +123,8 @@ class EmailReceiptIngestionService(
         timeProvider: TimeProvider,
         coordinator: TransactionLifecycleCoordinator,
         restoreMaintenanceMode: RestoreMaintenanceMode,
-        writeBarrier: DatabaseWriteBarrier
+        writeBarrier: DatabaseWriteBarrier,
+        privacySettingsRepository: PrivacySettingsRepository
     ) : this(
         receiptParser = receiptParser,
         processReceiptUseCase = processReceiptUseCase,
@@ -131,6 +138,7 @@ class EmailReceiptIngestionService(
         coordinator = coordinator,
         restoreMaintenanceMode = restoreMaintenanceMode,
         writeBarrier = writeBarrier,
+        privacySettingsRepository = privacySettingsRepository,
         transactionRunner = { block -> block() }
     )
 
@@ -207,14 +215,17 @@ class EmailReceiptIngestionService(
                 }
 
                 // Step 5: Also check for existing scanned receipt with same fingerprint
+                val mode = privacySettingsRepository.getSettings().rawOcrStorageMode
+                val sanitizedSender = RawContentSanitizer.sanitizeEmailSender(sender, mode) ?: ""
+                val sanitizedSubject = RawContentSanitizer.sanitizeEmailSubject(subject, mode) ?: ""
                 val existingScanned = findExistingScannedReceipt(fingerprint)
                 if (existingScanned != null) {
                     Timber.d("Matching scanned receipt found: ${existingScanned.id}")
                     // Still create email receipt source for tracking, but link to existing
                     val emailSource = EmailReceiptSource(
                         receiptId = existingScanned.id,
-                        emailSender = sender,
-                        emailSubject = subject,
+                        emailSender = sanitizedSender,
+                        emailSubject = sanitizedSubject,
                         emailMessageId = messageId.takeIf { it.isNotBlank() },
                         parsedAt = timeProvider.now(),
                         provider = provider,
@@ -242,7 +253,7 @@ class EmailReceiptIngestionService(
 
                 val scannedReceipt = ScannedReceipt(
                     imagePath = null, // No image for email receipts
-                    rawOcrText = emailBody.take(5000), // Store snippet for reference
+                    rawOcrText = RawContentSanitizer.sanitizeRawOcr(emailBody.take(5000), mode),
                     parsedTotal = parsedReceipt.amount,
                     parsedMerchant = normalizedMerchant,
                     parsedDate = parsedReceipt.date,
@@ -263,8 +274,8 @@ class EmailReceiptIngestionService(
                 // Step 7: Create email receipt source record
                 val emailSource = EmailReceiptSource(
                     receiptId = receiptId,
-                    emailSender = sender,
-                    emailSubject = subject,
+                    emailSender = sanitizedSender,
+                    emailSubject = sanitizedSubject,
                     emailMessageId = messageId.takeIf { it.isNotBlank() },
                     parsedAt = timeProvider.now(),
                     provider = provider,

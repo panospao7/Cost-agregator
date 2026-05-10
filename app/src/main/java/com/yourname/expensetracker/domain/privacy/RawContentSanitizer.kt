@@ -19,4 +19,11 @@ object RawContentSanitizer {
         RawStorageMode.STORE_REDACTED -> "[REDACTED]"
         else -> null
     }
+
+    fun sanitizedOcrReviewSnippet(raw: String, mode: RawStorageMode): String = when (mode) {
+        RawStorageMode.STORE_RAW -> raw.take(200)
+        RawStorageMode.STORE_REDACTED -> "[REDACTED]"
+        RawStorageMode.STORE_METADATA_ONLY -> "Receipt OCR captured; raw text storage disabled."
+        RawStorageMode.DO_NOT_STORE -> "Receipt OCR captured; raw text not stored."
+    }
 }

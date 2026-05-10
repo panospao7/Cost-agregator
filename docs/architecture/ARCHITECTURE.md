@@ -1592,7 +1592,7 @@ class SynthesisEngine @Inject constructor(
 
 - `DatabaseModule`: migration chain extended to **MIGRATION_67_68**.
 - `DaoModule`: feature DAOs bound for anomaly/health/sweep/subscription/stress/personality/email/budget adjustment paths.
-- `SubscriptionModule`: subscription detection + management wiring.
+- `SubscriptionModule`: **DELETED** (2026-05-09) — `SubscriptionManagerEngine` auto-provided by `@Singleton @Inject constructor`.
 - `EmptyStateModule`: contextual empty-state behavior bindings.
 - Existing `AiModule`, `SecurityModule`, `NetworkModule`, `GroupsModule` reused by F1/F9/F11/F14/F15 integration points.
 

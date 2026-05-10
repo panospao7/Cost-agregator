@@ -2,7 +2,7 @@
 
 > Complete mapping of every `NavigationDestination` to its corresponding ViewModel, screen file, and feature segment.
 >
-> *Last updated: 2026-05-07*
+> *Last updated: 2026-05-10*
 
 ---
 
@@ -134,11 +134,14 @@ App Chrome (6 tabs)
 
 | ViewModel | # Injections | Complexity |
 |-----------|-------------|------------|
-| `HomeViewModel` | 17 dependencies | 🔴 High |
+| `HomeViewModel` | 19+ dependencies | 🔴 High |
 | `TransactionsViewModel` | 8 dependencies | 🟡 Medium |
 | `ReviewViewModel` | 14+ dependencies | 🔴 High |
 | `ReceiptScanViewModel` | 18+ dependencies | 🔴 High |
 | `BudgetViewModel` | 7 dependencies | 🟡 Medium |
 | `AddExpenseViewModel` | 5 dependencies | 🟢 Low |
 | `SavingsGoalsViewModel` | 8 dependencies | 🟡 Medium |
-| Most other VMs | 3-8 dependencies | 🟢 Medium |
+| `AnalyticsViewModel` | 15+ dependencies | 🔴 High |
+| Most other VMs | 3-10 dependencies | 🟡 Medium |
+
+**Total ViewModel files:** 38 (across all shell destinations, overlays, and feature screens)

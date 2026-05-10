@@ -1,6 +1,6 @@
 # DAO ↔ Entity ↔ Repository Map
 
-> Complete mapping of all 60 DAOs to their entities and consuming repositories/services.
+> Complete mapping of all 59 DAOs (56 in DaoModule + 3 in AiModule) to their entities and consuming repositories/services.
 >
 > Last updated: 2026-05-10
 
@@ -157,7 +157,6 @@
 | `RecommendationDao` | `RecommendationEntity` | `RecommendationRepository` | AI recommendations |
 | `StressForecastSnapshotDao` | `StressForecastSnapshot` | `FinancialStressForecastEngine` | Cash flow |
 | `SourceStatsEventDao` | `SourceStatsEvent` | — | Source stats event tracking (event-based, v117+) |
-| `GroupLifecycleEventDao` | `GroupLifecycleEventEntity` | `GroupLifecycleCoordinator` | Group lifecycle audit log |
 | `PipelineDiagnosticEventDao` | `PipelineDiagnosticEvent` | `NotificationProcessingPipeline` | Cross-pipeline diagnostic tracking |
 
 ---
@@ -182,5 +181,7 @@
 | `BudgetAdjustmentDao` | **1** consumer | 🟢 LOW |
 | `AiArtifactDao` | **1** repository | 🟢 LOW |
 | `SourceStatsEventDao` | **0** direct repositories | 🟢 LOW (event-based tracking) |
-| **Total: 58 DAOs** | | |
+| `GroupLifecycleEventDao` | **1** consumer | 🟢 LOW (append-only event log) |
+| `PipelineDiagnosticEventDao` | **1** consumer | 🟢 LOW (diagnostic tracking) |
+| **Total: 59 DAOs (56 DaoModule + 3 AiModule)** | | |
 

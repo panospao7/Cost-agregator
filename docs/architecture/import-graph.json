@@ -1,6 +1,6 @@
 {
   "schema": "dependency-graph-v1",
-  "generated": "2026-05-07",
+  "generated": "2026-05-10",
   "source": "Manual analysis of ExpenseTracker codebase",
   "nodes": {
     "NotificationCaptureService": {
@@ -647,6 +647,82 @@
     "PrivacySettingsRepository": {
       "type": "repository",
       "package": "com.yourname.expensetracker.data.repository"
+    },
+    "GroupLifecycleEventEntity": {
+      "type": "entity",
+      "package": "com.yourname.expensetracker.data.database.entity"
+    },
+    "GroupLifecycleEventDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "GroupLifecycleEventEntity"
+    },
+    "PipelineDiagnosticEvent": {
+      "type": "entity",
+      "package": "com.yourname.expensetracker.data.database.entity"
+    },
+    "PipelineDiagnosticEventDao": {
+      "type": "dao",
+      "package": "com.yourname.expensetracker.data.database.dao",
+      "entity": "PipelineDiagnosticEvent"
+    },
+    "WorkerModule": {
+      "type": "di",
+      "package": "com.yourname.expensetracker.di"
+    },
+    "WorkerRunLogger": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.workers",
+      "depends_on": ["BackgroundJobRunDao", "TimeProvider"]
+    },
+    "WorkerExecutionGuard": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.workers",
+      "depends_on": ["RestoreMaintenanceMode", "WorkerRunLogger"]
+    },
+    "DatabaseReadBarrier": {
+      "type": "data",
+      "package": "com.yourname.expensetracker.data.backup",
+      "depends_on": ["RestoreMaintenanceMode"]
+    },
+    "DatabaseWriteBarrier": {
+      "type": "data",
+      "package": "com.yourname.expensetracker.data.backup",
+      "depends_on": ["RestoreMaintenanceMode"]
+    },
+    "GroupBalanceCalculator": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.groups",
+      "depends_on": ["ExpenseGroupDao", "GroupMemberDao", "GroupExpenseDao", "GroupSettlementDao"]
+    },
+    "EffectiveCloudAiPolicy": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.privacy",
+      "depends_on": ["PrivacySettingsRepository"]
+    },
+    "EffectiveCloudAiPolicyResolver": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.privacy",
+      "depends_on": ["PrivacySettingsRepository"]
+    },
+    "RawStorageMode": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.privacy"
+    },
+    "RawContentSanitizer": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.privacy",
+      "depends_on": ["RawStorageMode"]
+    },
+    "JsonExpenseImporter": {
+      "type": "util",
+      "package": "com.yourname.expensetracker.util",
+      "depends_on": ["TransactionLifecycleCoordinator"]
+    },
+    "ImportCoordinator": {
+      "type": "util",
+      "package": "com.yourname.expensetracker.util",
+      "depends_on": ["JsonExpenseImporter", "CsvExpenseImporter"]
     }
   },
   "edges": [
@@ -765,7 +841,26 @@
     { "from": "BackupEncryptionService", "to": "SecureKeyStorage", "type": "depends-on" },
     { "from": "CostbackupBundle", "to": "BackupEncryptionService", "type": "depends-on" },
     { "from": "CostbackupBundle", "to": "ExportAnonymizer", "type": "depends-on" },
-    { "from": "BackupVerifier", "to": "AppDatabase", "type": "depends-on" }
+    { "from": "BackupVerifier", "to": "AppDatabase", "type": "depends-on" },
+    { "from": "WorkerModule", "to": "WorkerRunLogger", "type": "binds" },
+    { "from": "WorkerExecutionGuard", "to": "RestoreMaintenanceMode", "type": "guard" },
+    { "from": "WorkerExecutionGuard", "to": "WorkerRunLogger", "type": "depends-on" },
+    { "from": "DatabaseReadBarrier", "to": "RestoreMaintenanceMode", "type": "guard" },
+    { "from": "DatabaseWriteBarrier", "to": "RestoreMaintenanceMode", "type": "guard" },
+    { "from": "GroupBalanceCalculator", "to": "ExpenseGroupDao", "type": "dao" },
+    { "from": "GroupBalanceCalculator", "to": "GroupMemberDao", "type": "dao" },
+    { "from": "GroupBalanceCalculator", "to": "GroupExpenseDao", "type": "dao" },
+    { "from": "GroupBalanceCalculator", "to": "GroupSettlementDao", "type": "dao" },
+    { "from": "GroupLifecycleCoordinator", "to": "GroupLifecycleEventDao", "type": "dao" },
+    { "from": "GroupLifecycleCoordinator", "to": "GroupBalanceCalculator", "type": "depends-on" },
+    { "from": "EffectiveCloudAiPolicyResolver", "to": "PrivacySettingsRepository", "type": "depends-on" },
+    { "from": "RawContentSanitizer", "to": "RawStorageMode", "type": "depends-on" },
+    { "from": "ReceiptLifecycleCoordinator", "to": "RawContentSanitizer", "type": "sanitizes" },
+    { "from": "EmailReceiptIngestionService", "to": "RawContentSanitizer", "type": "sanitizes" },
+    { "from": "NotificationProcessingPipeline", "to": "PipelineDiagnosticEventDao", "type": "dao" },
+    { "from": "ImportCoordinator", "to": "JsonExpenseImporter", "type": "delegates-to" },
+    { "from": "ImportCoordinator", "to": "CsvExpenseImporter", "type": "delegates-to" },
+    { "from": "JsonExpenseImporter", "to": "TransactionLifecycleCoordinator", "type": "delegates-to" }
   ],
   "entry_points": [
     "MainApplication",
@@ -806,7 +901,12 @@
     ["LocationPrivacyGate", "PrivacySettingsRepository"],
     ["CloudAiPrivacyGate", "PrivacySettingsRepository"],
     ["BackupPrivacyGate", "PrivacySettingsRepository"],
-    ["DatabaseBackupRepositoryImpl", "CostbackupBundle", "BackupEncryptionService", "SecureKeyStorage"]
+    ["DatabaseBackupRepositoryImpl", "CostbackupBundle", "BackupEncryptionService", "SecureKeyStorage"],
+    ["DailyBriefingWorker", "WorkerExecutionGuard", "RestoreMaintenanceMode"],
+    ["DailyBriefingWorker", "WorkerExecutionGuard", "WorkerRunLogger"],
+    ["NotificationProcessingPipeline", "PipelineDiagnosticEventDao"],
+    ["GroupLifecycleCoordinator", "GroupLifecycleEventDao"],
+    ["GroupLifecycleCoordinator", "GroupBalanceCalculator", "GroupMemberDao"]
   ],
   "impact_zones": {
     "ExpenseDao": {
@@ -899,6 +999,43 @@
         "Hybrid Dashboard Briefing (routes AI provider)",
         "Hybrid Dedupe Judge (routes AI provider)",
         "Hybrid Query Interpretation (routes AI provider)"
+      ]
+    },
+    "GroupBalanceCalculator": {
+      "impacted_flows": [
+        "Group member balance calculation",
+        "Group lifecycle balance-aware operations",
+        "Shared expense settlement display"
+      ]
+    },
+    "WorkerExecutionGuard": {
+      "impacted_flows": [
+        "All 7 background workers (restore check + logging)",
+        "Worker run lifecycle tracking"
+      ]
+    },
+    "WorkerRunLogger": {
+      "impacted_flows": [
+        "All 7 background workers (run start/success/skipped/retry/failure)",
+        "Background job diagnostics"
+      ]
+    },
+    "DatabaseReadBarrier": {
+      "impacted_flows": [
+        "All database read operations during restore",
+        "Backup export reads"
+      ]
+    },
+    "DatabaseWriteBarrier": {
+      "impacted_flows": [
+        "All database write operations during restore"
+      ]
+    },
+    "EffectiveCloudAiPolicy": {
+      "impacted_flows": [
+        "Cloud AI service pre-flight policy checks",
+        "Receipt image cloud upload gating",
+        "Bank statement cloud processing gating"
       ]
     }
   }

@@ -200,7 +200,7 @@ class ReceiptRepository @Inject constructor(
                             confidence = parsed.confidence,
                             packageName = "receipt.scan",
                             notificationTitle = "Scanned Receipt",
-                            notificationText = sanitizeOcrBeforeInsert(ocrResult.fullText).take(200),
+                            notificationText = RawContentSanitizer.sanitizedOcrReviewSnippet(ocrResult.fullText, privacySettingsRepository.getSettings().rawOcrStorageMode),
                             suggestedCategoryId = normalizedMerchant?.let {
                                 hybridClassifier.classify(it, suggestedAmount ?: 0.0).categoryId.takeIf { id -> id > 0 }
                             }

@@ -79,8 +79,9 @@ class SynthesisEngine @Inject constructor(
      *
      * The domain [PlannedExpense] now carries a `status` field. Before any
      * planned expense data is used for forecasting, expenses with status
-     * "FULFILLED" are filtered out — they have already been linked to an
-     * actual expense and would cause double-counting if included.
+     * other than "PLANNED" are filtered out — they have already been
+     * converted to actual expenses and would cause double-counting if
+     * included.
      *
      * Callers no longer need to pre-filter; this engine handles it internally.
      * The [ForecastInputAssembler.mapPlannedExpenses] also filters at the
@@ -150,11 +151,11 @@ class SynthesisEngine @Inject constructor(
         val now = timeProvider.now()
         val sanitizedPastSumDaily = sanitizePastSumDaily(pastSumDaily)
 
-        // FCST-N4-FIXED: Filter out FULFILLED planned expenses in-engine
+        // FCST-N4-FIXED: Only include PLANNED status expenses in-engine
         // to prevent double-counting regardless of caller pre-filtering.
-        val filteredPlannedExpenses = plannedExpenses.filter { it.status != "FULFILLED" }
+        val filteredPlannedExpenses = plannedExpenses.filter { it.status == "PLANNED" }
         if (filteredPlannedExpenses.size != plannedExpenses.size) {
-            Timber.d("$TAG: Filtered out ${plannedExpenses.size - filteredPlannedExpenses.size} FULFILLED planned expenses")
+            Timber.d("$TAG: Filtered out ${plannedExpenses.size - filteredPlannedExpenses.size} non-PLANNED planned expenses")
         }
         
         // Fix: Use single Calendar instance to avoid inconsistent dates if crossing midnight

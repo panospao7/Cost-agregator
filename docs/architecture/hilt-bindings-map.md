@@ -1,6 +1,9 @@
 # Hilt Module Bindings Map
 
 > Complete interface → implementation binding map for all 27 Hilt @Module files (+ 1 @EntryPoint).
+>
+> **Note:** `SubscriptionModule.kt` was deleted in 2026-05-09 refactoring — `SubscriptionManagerEngine`
+> is auto-provided by its `@Singleton @Inject constructor`. Replaced in count by `WorkerModule.kt`.
 
 ---
 
@@ -18,7 +21,7 @@ Dependencies:
 
 ### `DaoModule` — `di/DaoModule.kt`
 ```
-Provides (58 DAOs):
+Provides (56 DAOs):
   PlannedExpenseDao, SavingsGoalDao, RawNotificationDao, BlockedPackageDao,
   ExpenseDao, BudgetDao, ScannedReceiptDao, CategoryDao, MerchantCategoryDao,
   PendingReviewDao, UserCorrectionDao, SourceStatsDao, SourceStatsEventDao, RecurringExpenseDao,
@@ -36,9 +39,15 @@ Provides (58 DAOs):
   PromptStateDao, SpendingPersonalityProfileDao, StressForecastSnapshotDao,
   SavingsSweepPlanDao, SpendingChallengeDao, TransactionEventDao,
   ReceiptEventDao, ReceiptExpenseLinkDao, RecurringOccurrenceDao,
-  RecurringReminderDeliveryDao, RecurringLifecycleEventDao, PrivacyAuditDao
+  RecurringReminderDeliveryDao, RecurringLifecycleEventDao, PrivacyAuditDao,
+  GroupLifecycleEventDao, PipelineDiagnosticEventDao
 Dependencies:
   AppDatabase
+
+Additional DAOs provided via AiModule (3):
+  AiArtifactDao, AiChatSessionDao, AiChatMessageDao
+
+Total DAOs: 59 (56 + 3)
 ```
 
 ### `DispatchersModule` — `di/DispatchersModule.kt`
@@ -73,6 +82,12 @@ BroadcastReceivers:
 
 Lifecycle coordinator wiring:
   TransactionLifecycleCoordinator             → now consumes CurrencySettingsRepository for home-currency snapshot resolution
+```
+
+### `WorkerModule` — `di/WorkerModule.kt`
+```
+Binds:
+  WorkerRunLogger                             → WorkerRunLoggerImpl
 ```
 
 ### `ServiceModule` — `di/ServiceModule.kt`
@@ -219,13 +234,15 @@ Auto-provided via @Inject constructor:
 ```
 Auto-provided via @Inject constructor:
   StaticMarketRateProvider                    → @Singleton @Inject constructor (seed-data impl of MarketRateProvider, no Dagger module needed)
+  GroupLifecycleCoordinator                   → @Singleton @Inject constructor (domain interface, no Dagger cycle)
+  GroupBalanceCalculator                      → @Singleton @Inject constructor (per-member net balance calculator)
 ```
 
 Note: `MarketRateProvider` interface is consumed by `SmartBillNegotiationEngine`; `StaticMarketRateProvider` is the single `@Inject`-constructor implementation, satisfying Hilt's auto-binding rules for single-implementation interfaces.
 
 ### Analytics Engines — Auto-provided (no module needed)
 
-Both engines are `@Singleton @Inject` with empty/no-arg constructors — Hilt auto-discovers them without a `@Module`:
+All three engines are `@Singleton @Inject` with constructor-injected dependencies — Hilt auto-discovers them without a `@Module`:
 
 ```
 Auto-provided:
@@ -234,6 +251,13 @@ Auto-provided:
 ```
 
 `AnalyticsInputAssembler` is also `@Singleton @Inject` with constructor-injected dependencies (`ExpenseRepository`, `AnalyticsCurrencyNormalizer`, `CurrencySettingsRepository`, `TimeProvider`, `CategoryRepository`) — no module needed, Hilt satisfies all dependencies automatically.
+
+### Barrier Components — Auto-provided (no module needed)
+```
+Auto-provided:
+  DatabaseReadBarrier                         → @Singleton @Inject (data/backup/DatabaseReadBarrier.kt)
+  DatabaseWriteBarrier                        → @Singleton @Inject (data/backup/DatabaseWriteBarrier.kt)
+```
 
 ### `TaxModule` — `di/TaxModule.kt`
 ```
@@ -365,4 +389,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 27 Hilt @Module files · 65 repositories (52 data + 13 domain) · 58 DAOs · 62 entities
+**Stats:** 27 Hilt @Module files · 65+ repositories · 59 DAOs (56 DaoModule + 3 AiModule) · 62 entities

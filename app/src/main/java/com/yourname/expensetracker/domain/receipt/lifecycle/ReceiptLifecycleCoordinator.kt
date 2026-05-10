@@ -572,10 +572,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             )
             savedId = scannedReceiptDao.insert(receipt)
 
+            val sanitizedSender = RawContentSanitizer.sanitizeEmailSender(sender, ocrStorageMode) ?: ""
+            val sanitizedSubject = RawContentSanitizer.sanitizeEmailSubject(subject, ocrStorageMode) ?: ""
+
             val emailSource = EmailReceiptSource(
                 receiptId = savedId,
-                emailSender = sender,
-                emailSubject = subject,
+                emailSender = sanitizedSender,
+                emailSubject = sanitizedSubject,
                 emailMessageId = messageId,
                 parsedAt = now,
                 provider = provider,
