@@ -14,5 +14,6 @@ data class PrivacySettings(
     val rawOcrRetentionDays: Int = 30,
     val rawNotificationStorageMode: RawStorageMode = RawStorageMode.STORE_RAW,
     val rawOcrStorageMode: RawStorageMode = RawStorageMode.STORE_RAW,
+    val emailReceiptStorageMode: RawStorageMode = RawStorageMode.STORE_REDACTED,
     val debugDataPersistenceEnabled: Boolean = false
 )

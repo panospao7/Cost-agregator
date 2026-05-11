@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.yield
 
 data class WorkerGuardRequest(
     val workerName: String,
@@ -100,6 +101,7 @@ class WorkerExecutionGuard @Inject constructor(
      */
     suspend fun checkpoint(operation: String) {
         writeBarrier.checkWritesAllowed(operation)
+        yield()  // check for coroutine cancellation
     }
 
     private fun classifyTransient(e: Exception): Boolean {

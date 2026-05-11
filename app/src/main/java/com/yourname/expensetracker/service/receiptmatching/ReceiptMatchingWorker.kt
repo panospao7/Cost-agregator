@@ -48,6 +48,7 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                 var suggested = 0
 
                 for (receipt in unmatchedReceipts) {
+                    executionGuard.checkpoint("receipt_matching")
                     // Document-type gating: skip incompatible receipts
                     if (receipt.documentType == ReceiptDocumentType.BANK_STATEMENT.name ||
                         receipt.documentType == ReceiptDocumentType.MANUAL_PLACEHOLDER.name ||

@@ -65,6 +65,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         val DEBUG_DATA_PERSISTENCE_ENABLED = booleanPreferencesKey("debug_data_persistence_enabled")
         val RAW_NOTIFICATION_STORAGE_MODE = stringPreferencesKey("raw_notification_storage_mode")
         val RAW_OCR_STORAGE_MODE = stringPreferencesKey("raw_ocr_storage_mode")
+        val EMAIL_RECEIPT_STORAGE_MODE = stringPreferencesKey("email_receipt_storage_mode")
     }
 
     override fun observeSettings(): Flow<PrivacySettings> =
@@ -102,6 +103,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
             prefs[Keys.DEBUG_DATA_PERSISTENCE_ENABLED] = updated.debugDataPersistenceEnabled
             prefs[Keys.RAW_NOTIFICATION_STORAGE_MODE] = updated.rawNotificationStorageMode.name
             prefs[Keys.RAW_OCR_STORAGE_MODE] = updated.rawOcrStorageMode.name
+            prefs[Keys.EMAIL_RECEIPT_STORAGE_MODE] = updated.emailReceiptStorageMode.name
         }
         // P8-P1-4: Apply privacy changes immediately — cancel affected workers at runtime.
         applyPrivacyChange(old, transform(old))
@@ -145,6 +147,8 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
         rawNotificationStorageMode = this[Keys.RAW_NOTIFICATION_STORAGE_MODE]
             ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_RAW,
         rawOcrStorageMode = this[Keys.RAW_OCR_STORAGE_MODE]
-            ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_RAW
+            ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_RAW,
+        emailReceiptStorageMode = this[Keys.EMAIL_RECEIPT_STORAGE_MODE]
+            ?.let { runCatching { RawStorageMode.valueOf(it) }.getOrNull() } ?: RawStorageMode.STORE_REDACTED
     )
 }

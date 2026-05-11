@@ -20,6 +20,13 @@ object RawContentSanitizer {
         else -> null
     }
 
+    fun sanitizeEmailMessageId(messageId: String?, mode: RawStorageMode): String? = when (mode) {
+        RawStorageMode.STORE_RAW -> messageId
+        RawStorageMode.STORE_REDACTED -> "[REDACTED]"
+        RawStorageMode.STORE_METADATA_ONLY -> messageId?.hashCode()?.toString(16)?.take(12)
+        RawStorageMode.DO_NOT_STORE -> null
+    }
+
     fun sanitizedOcrReviewSnippet(raw: String, mode: RawStorageMode): String = when (mode) {
         RawStorageMode.STORE_RAW -> raw.take(200)
         RawStorageMode.STORE_REDACTED -> "[REDACTED]"

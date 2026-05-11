@@ -124,6 +124,7 @@ class DataRetentionWorker @AssistedInject constructor(
 
         // Null out the raw content columns
         for (notification in candidates) {
+            executionGuard.checkpoint("data_retention_notifications")
             dao.updateRawContentPurged(
                 id = notification.id,
                 rawContentPurgedAt = now,
@@ -155,6 +156,7 @@ class DataRetentionWorker @AssistedInject constructor(
         if (candidates.isEmpty()) return 0
 
         for (receipt in candidates) {
+            executionGuard.checkpoint("data_retention_ocr")
             dao.updateRawOcrTextPurged(
                 id = receipt.id,
                 rawOcrTextPurgedAt = now

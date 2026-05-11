@@ -42,7 +42,7 @@ class CsvExpenseImporter @Inject constructor(
     /**
      * Import expenses from raw CSV content.
      *
-     * @param csvContent  The full CSV text (may include a header row).
+     * @param csvContent  The full CSV text (may include comment lines, a header row).
      * @param onProgress  Callback invoked per row with (currentIndex, totalRows).
      * @return [ImportResult] summarizing every row outcome.
      */
@@ -51,18 +51,30 @@ class CsvExpenseImporter @Inject constructor(
         onProgress: (Int, Int) -> Unit = { _, _ -> }
     ): ImportResult = withContext(Dispatchers.IO) {
         try {
-            val lines = csvContent.lines()
-            if (lines.isEmpty()) {
+            val allLines = csvContent.lines()
+            if (allLines.isEmpty()) {
                 return@withContext ImportResult.Error("Empty CSV file")
             }
 
-            // Skip header if present
-            val dataLines = if (lines[0].contains("date", ignoreCase = true) ||
-                lines[0].contains("amount", ignoreCase = true)
-            ) {
-                lines.drop(1)
-            } else {
-                lines
+            val headerIndex = allLines.indexOfFirst { line ->
+                val t = line.trim()
+                t.isNotEmpty() && !t.startsWith("#")
+            }
+            if (headerIndex == -1) {
+                return@withContext ImportResult.Success(0, 0, 0, emptyList())
+            }
+
+            val headerParts = allLines[headerIndex].split(",").map { it.trim().lowercase() }
+            val columnIndex: Map<String, Int> = headerParts.withIndex().associate { (i, col) -> col to i }
+
+            val dataLines = allLines.drop(headerIndex + 1)
+                .filter { line ->
+                    val t = line.trim()
+                    t.isNotEmpty() && !t.startsWith("#")
+                }
+
+            if (dataLines.isEmpty()) {
+                return@withContext ImportResult.Success(0, 0, 0, emptyList())
             }
 
             var importedCount = 0
@@ -72,9 +84,7 @@ class CsvExpenseImporter @Inject constructor(
             val total = dataLines.size
 
             dataLines.forEachIndexed { index, line ->
-                if (line.isBlank()) return@forEachIndexed
-
-                val rowResult = parseAndImportLine(line)
+                val rowResult = parseAndImportLine(line, columnIndex)
                 perRowResults.add(rowResult)
 
                 when (rowResult) {
@@ -98,22 +108,28 @@ class CsvExpenseImporter @Inject constructor(
     }
 
     /**
-     * Parse a single CSV line and submit it through the lifecycle coordinator.
+     * Parse a single CSV line using a column-index map built from the header row
+     * and submit it through the lifecycle coordinator.
      *
      * @return [RowResult] indicating the outcome for this row.
      */
-    private suspend fun parseAndImportLine(line: String): RowResult {
+    private suspend fun parseAndImportLine(
+        line: String,
+        columnIndex: Map<String, Int>
+    ): RowResult {
         return try {
             val parts = parseCsvLine(line)
-            if (parts.size < 4) {
-                return RowResult.Failed("Invalid CSV row: expected at least 4 columns")
+
+            fun col(name: String): String? {
+                val idx = columnIndex[name.lowercase()] ?: return null
+                return if (idx < parts.size) parts[idx].trim().takeIf { it.isNotEmpty() } else null
             }
 
-            val dateStr = parts[0].trim()
-            val amountStr = parts[1].trim()
-            val merchant = parts[2].trim()
-            val categoryName = parts[3].trim()
-            val description = if (parts.size > 4) parts[4].trim() else ""
+            val dateStr = col("date") ?: return RowResult.Failed("Missing date column")
+            val amountStr = col("amount") ?: return RowResult.Failed("Missing amount column")
+            val merchant = col("merchant") ?: return RowResult.Failed("Missing merchant column")
+            val categoryName = col("category") ?: "Uncategorized"
+            val notesFromCol = col("notes") ?: ""
 
             // Parse date
             val date = try {
@@ -136,8 +152,9 @@ class CsvExpenseImporter @Inject constructor(
                 .toDoubleOrNull()
                 ?: return RowResult.Failed("Invalid amount: $amountStr")
 
-            // Resolve currency: use symbol from CSV, or fall back to home currency
-            val resolvedCurrency = currencyFromSymbol
+            // Resolve currency: explicit Currency column, then symbol from amount, then home fallback
+            val resolvedCurrency = col("currency")
+                ?: currencyFromSymbol
                 ?: runCatching { currencySettingsRepository.homeCurrency().first() }
                     .getOrDefault("EUR")
 
@@ -154,7 +171,7 @@ class CsvExpenseImporter @Inject constructor(
                 transactionType = TransactionType.PURCHASE,
                 source = ExpenseSource.CSV_IMPORT,
                 categoryId = categoryId,
-                notes = description.ifEmpty { null }
+                notes = notesFromCol.ifEmpty { null }
             )
 
             when (val result = coordinator.createExpense(request)) {

@@ -84,6 +84,7 @@ class LocationBackfillWorker @AssistedInject constructor(
 
             for (expense in unlocated) {
                 if (isStopped) break  // Worker was cancelled
+                executionGuard.checkpoint("location_backfill")
 
                 val merchantToken = merchantLocationRepository
                     .normalizeKey(expense.merchant)

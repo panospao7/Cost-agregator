@@ -37,21 +37,26 @@ class ImportCoordinator @Inject constructor(
 
     fun detectFormat(content: String): ImportFormat {
         val trimmed = content.trimStart()
+        val withoutBom = if (trimmed.startsWith("\uFEFF")) trimmed.drop(1) else trimmed
         return when {
-            trimmed.startsWith("{") -> {
+            withoutBom.startsWith("{") -> {
                 try {
-                    val json = org.json.JSONObject(trimmed)
+                    val json = org.json.JSONObject(withoutBom)
                     val version = json.optInt("schemaVersion", 1)
                     if (version >= 2) ImportFormat.JSON_V2 else ImportFormat.JSON_V1
                 } catch (_: Exception) {
                     ImportFormat.UNKNOWN
                 }
             }
-            trimmed.contains(",") -> {
-                val firstLine = trimmed.lines().first().lowercase()
+            withoutBom.contains(",") -> {
+                val firstDataLine = withoutBom.lines().firstOrNull { line ->
+                    val t = line.trim()
+                    t.isNotEmpty() && !t.startsWith("#")
+                } ?: return ImportFormat.UNKNOWN
+                val lower = firstDataLine.lowercase()
                 when {
-                    firstLine.contains("id") && firstLine.contains("effectiv") -> ImportFormat.CSV_FULL
-                    firstLine.contains("date") && firstLine.contains("amount") -> ImportFormat.CSV_LEGACY
+                    lower.contains("id") && lower.contains("effectiv") -> ImportFormat.CSV_FULL
+                    lower.contains("date") && lower.contains("amount") -> ImportFormat.CSV_LEGACY
                     else -> ImportFormat.CSV_LEGACY
                 }
             }

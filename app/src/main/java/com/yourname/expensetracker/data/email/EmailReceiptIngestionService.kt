@@ -20,6 +20,8 @@ import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.ReceiptSource
 import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
+import com.yourname.expensetracker.domain.receipt.EmailReceiptData
+import com.yourname.expensetracker.domain.receipt.lifecycle.EmailReceiptProcessResult
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
@@ -160,14 +162,12 @@ class EmailReceiptIngestionService(
      * @return EmailReceiptResult indicating success, duplicate, or error
      */
     /**
-     * TODO: Delegate to [ReceiptLifecycleCoordinator.processEmailReceipt]
-     * once the coordinator fully owns the email receipt ingestion lifecycle.
-     * Currently this service handles the full pipeline inline; the coordinator
-     * should become the single entry point for all receipt processing paths.
+     * Coordinator delegation is active: ReceiptLifecycleCoordinator.processEmailReceipt()
+     * is called as the primary path. The inline fallback below handles cases where the
+     * coordinator doesn't yet produce a complete result (gradual migration).
      *
-     * TODO: Confidence threshold routing — uncertain parses (confidence below
-     * a configurable threshold) should be routed to PendingReview instead of
-     * auto-creating expenses, similar to the bank statement pipeline.
+     * TODO (U6): Remove inline fallback once coordinator covers all edge cases.
+     * TODO (U6): Confidence threshold routing — uncertain parses to PendingReview.
      */
     suspend fun processEmailReceipt(
         emailBody: String,
@@ -201,6 +201,52 @@ class EmailReceiptIngestionService(
 
             val fingerprint = createFingerprint(normalizedMerchant, parsedReceipt.amount, parsedReceipt.date, messageId)
 
+            // U6: Coordinator delegation active — processEmailReceipt is the primary path.
+            // The inline fallback below runs only if the coordinator returns a non-Success
+            // result and will be removed once coordinator covers all edge cases.
+            val coordinatorEmailData = EmailReceiptData(
+                messageId = messageId,
+                from = sender,
+                subject = subject,
+                body = emailBody,
+                receivedAt = receivedAt,
+                amount = parsedReceipt.amount,
+                merchant = normalizedMerchant,
+                currency = parsedReceipt.currency,
+                date = parsedReceipt.date,
+                items = if (parsedReceipt.items.isNotEmpty()) {
+                    receiptParser.lineItemsToJson(
+                        parsedReceipt.items.map {
+                            ReceiptParser.LineItem(
+                                description = it.description,
+                                quantity = it.quantity.toDouble(),
+                                unitPrice = it.unitPrice,
+                                totalPrice = it.totalPrice
+                            )
+                        }
+                    )
+                } else null
+            )
+
+            val coordinatorResult = receiptLifecycleCoordinator.processEmailReceipt(
+                emailData = coordinatorEmailData,
+                fingerprint = fingerprint,
+                rawEmailBody = emailBody,
+                sender = sender,
+                subject = subject,
+                messageId = messageId,
+                provider = provider
+            )
+
+            if (coordinatorResult is EmailReceiptProcessResult.Success) {
+                return@processEmailReceipt EmailReceiptResult.Success(
+                    coordinatorResult.receiptId,
+                    coordinatorResult.expenseIds
+                )
+            }
+            // Fallback: coordinator path did not succeed — continue with inline flow below.
+            // This fallback is temporary until the coordinator is fully migrated (U6).
+
             val result = transactionRunner {
                 // Step 4a: If a nonblank messageId is provided, check it first before any
                 // side effects. A nonblank messageId is globally unique (UNIQUE index on
@@ -226,6 +272,7 @@ class EmailReceiptIngestionService(
 
                 // Step 5: Also check for existing scanned receipt with same fingerprint
                 val mode = privacySettingsRepository.getSettings().rawOcrStorageMode
+                val emailMode = privacySettingsRepository.getSettings().emailReceiptStorageMode
                 val sanitizedSender = RawContentSanitizer.sanitizeEmailSender(sender, mode) ?: ""
                 val sanitizedSubject = RawContentSanitizer.sanitizeEmailSubject(subject, mode) ?: ""
                 val existingScanned = findExistingScannedReceipt(fingerprint)
@@ -236,7 +283,7 @@ class EmailReceiptIngestionService(
                         receiptId = existingScanned.id,
                         emailSender = sanitizedSender,
                         emailSubject = sanitizedSubject,
-                        emailMessageId = messageId.takeIf { it.isNotBlank() },
+                        emailMessageId = RawContentSanitizer.sanitizeEmailMessageId(messageId, emailMode),
                         parsedAt = timeProvider.now(),
                         provider = provider,
                         confidence = parsedReceipt.confidence,
@@ -286,7 +333,7 @@ class EmailReceiptIngestionService(
                     receiptId = receiptId,
                     emailSender = sanitizedSender,
                     emailSubject = sanitizedSubject,
-                    emailMessageId = messageId.takeIf { it.isNotBlank() },
+                    emailMessageId = RawContentSanitizer.sanitizeEmailMessageId(messageId, emailMode),
                     parsedAt = timeProvider.now(),
                     provider = provider,
                     confidence = parsedReceipt.confidence,
@@ -506,7 +553,7 @@ class EmailReceiptIngestionService(
         return emails.map { email ->
             processEmailReceipt(
                 emailBody = email.body,
-                sender = email.sender,
+                sender = email.from,
                 subject = email.subject,
                 receivedAt = email.receivedAt,
                 messageId = email.messageId

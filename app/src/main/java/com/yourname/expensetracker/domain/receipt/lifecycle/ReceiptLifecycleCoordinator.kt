@@ -611,7 +611,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         }
 
         val now = timeProvider.now()
-        val ocrStorageMode = privacySettingsRepository.getSettings().rawOcrStorageMode
+        val settings = privacySettingsRepository.getSettings()
+        val ocrStorageMode = settings.rawOcrStorageMode
+        val emailStorageMode = settings.emailReceiptStorageMode
         val effectiveOcrText = RawContentSanitizer.sanitizeRawOcr(rawEmailBody, ocrStorageMode)
         var savedId = 0L
         var expenseIds = mutableListOf<Long>()
@@ -649,7 +651,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 receiptId = savedId,
                 emailSender = sanitizedSender,
                 emailSubject = sanitizedSubject,
-                emailMessageId = messageId,
+                emailMessageId = RawContentSanitizer.sanitizeEmailMessageId(messageId, emailStorageMode),
                 parsedAt = now,
                 provider = provider,
                 confidence = 1.0,
