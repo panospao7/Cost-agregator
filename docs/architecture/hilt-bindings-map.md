@@ -252,11 +252,13 @@ Auto-provided:
 
 `AnalyticsInputAssembler` is also `@Singleton @Inject` with constructor-injected dependencies (`ExpenseRepository`, `AnalyticsCurrencyNormalizer`, `CurrencySettingsRepository`, `TimeProvider`, `CategoryRepository`) — no module needed, Hilt satisfies all dependencies automatically.
 
-### Barrier Components — Auto-provided (no module needed)
+### Barrier & Registry Components — Auto-provided (no module needed)
 ```
 Auto-provided:
   DatabaseReadBarrier                         → @Singleton @Inject (data/backup/DatabaseReadBarrier.kt)
   DatabaseWriteBarrier                        → @Singleton @Inject (data/backup/DatabaseWriteBarrier.kt)
+  WorkerRegistry                              → Kotlin `object` (domain/workers/WorkerRegistry.kt)
+  AccountingExportPolicy                      → @Inject constructor (domain/export/AccountingExportPolicy.kt)
 ```
 
 ### `TaxModule` — `di/TaxModule.kt`

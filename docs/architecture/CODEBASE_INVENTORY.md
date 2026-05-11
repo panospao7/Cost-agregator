@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated:** 2026-05-10 (snapshot)  
-**Database Version:** 123  
+**Generated:** 2026-05-11 (snapshot)  
+**Database Version:** 124  
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -292,6 +292,9 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - StringDistanceUtils, SystemTimeProvider, TimePeriodUtils, TimeProvider
 - Hashing (`domain/common/Hashing.kt` — SHA-256 prefix utility)
 - RawNotificationFingerprint (`domain/notification/RawNotificationFingerprint.kt` — notification dedup fingerprinting)
+- WorkerRegistry (`domain/workers/WorkerRegistry.kt` — centralized worker registry, 7 entries)
+- DataQualityReport (`domain/analytics/DataQualityReport.kt` — unified data quality contract)
+- AccountingExportPolicy (`domain/export/AccountingExportPolicy.kt` — export validation policy)
 
 ### Other Features
 - BusinessExpenseReportGenerator, CarbonFootprintCalculator, CashFlowCalculator
@@ -306,7 +309,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - ComputeDashboardWidgetsUseCase, DashboardDataProvider
 
 ### Additional Domain Packages
-- **privacy/** - Privacy settings & data portability
+- **privacy/** - Privacy settings & data portability (includes PrivacyBlocked sealed interface)
 - **transaction/** - Transaction parsing & validation
 - **core/money/** - Money, currency, amount utilities (incl. MoneyAggregateBuilder)
 - **core/time/** - Time providers & period utilities
@@ -441,7 +444,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **PipelineDiagnosticEventDao** — Cross-pipeline diagnostic event tracking (table: `pipeline_diagnostic_events`)
 
 ### Migration History
-- Database Version: 123 (incremental: 120→121→122→123)
+- Database Version: 124 (incremental: 120→121→122→123→124)
 - Migration methods: current chain in `AppDatabase.kt`
 - Export schema: Enabled
 - Type converters: Defined in `converter/Converters.kt`
@@ -667,7 +670,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Room Database Persistence  
 
 ### Database
-✅ Version 123 with current migration chain (120→121→122→123)  
+✅ Version 124 with current migration chain (120→121→122→123→124)  
 ✅ Export schema enabled  
 ✅ Type converters defined
 
@@ -694,4 +697,4 @@ One DAO per entity (mostly 1-to-1 mapping)
 
 ## End of Inventory
 
-**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-05-10.**
+**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-05-11.**

@@ -1,6 +1,6 @@
 {
   "schema": "dependency-graph-v1",
-  "generated": "2026-05-10",
+  "generated": "2026-05-11",
   "source": "Manual analysis of ExpenseTracker codebase",
   "nodes": {
     "NotificationCaptureService": {
@@ -723,6 +723,21 @@
       "type": "util",
       "package": "com.yourname.expensetracker.util",
       "depends_on": ["JsonExpenseImporter", "CsvExpenseImporter"]
+    },
+    "WorkerRegistry": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.workers",
+      "depends_on": ["WorkerSpec"]
+    },
+    "PrivacyBlocked": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.privacy",
+      "depends_on": ["PrivacyCapability"]
+    },
+    "AccountingExportPolicy": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.export",
+      "depends_on": []
     }
   },
   "edges": [
@@ -860,7 +875,15 @@
     { "from": "NotificationProcessingPipeline", "to": "PipelineDiagnosticEventDao", "type": "dao" },
     { "from": "ImportCoordinator", "to": "JsonExpenseImporter", "type": "delegates-to" },
     { "from": "ImportCoordinator", "to": "CsvExpenseImporter", "type": "delegates-to" },
-    { "from": "JsonExpenseImporter", "to": "TransactionLifecycleCoordinator", "type": "delegates-to" }
+    { "from": "JsonExpenseImporter", "to": "TransactionLifecycleCoordinator", "type": "delegates-to" },
+    { "from": "WorkerRegistry", "to": "WorkerSpec", "type": "depends-on" },
+    { "from": "RestoreMaintenanceMode", "to": "WorkerRegistry", "type": "depends-on" },
+    { "from": "AppStartupCoordinator", "to": "WorkerRegistry", "type": "depends-on" },
+    { "from": "PrivacyBlocked", "to": "PrivacyCapability", "type": "depends-on" },
+    { "from": "NotificationPrivacyGate", "to": "PrivacyBlocked", "type": "produces" },
+    { "from": "LocationPrivacyGate", "to": "PrivacyBlocked", "type": "produces" },
+    { "from": "CloudAiPrivacyGate", "to": "PrivacyBlocked", "type": "produces" },
+    { "from": "BackupPrivacyGate", "to": "PrivacyBlocked", "type": "produces" }
   ],
   "entry_points": [
     "MainApplication",
@@ -1036,6 +1059,27 @@
         "Cloud AI service pre-flight policy checks",
         "Receipt image cloud upload gating",
         "Bank statement cloud processing gating"
+      ]
+    },
+    "WorkerRegistry": {
+      "impacted_flows": [
+        "All 7 background worker scheduling (startup)",
+        "Restore pause/resume lifecycle",
+        "Worker lifecycle management"
+      ]
+    },
+    "PrivacyBlocked": {
+      "impacted_flows": [
+        "All privacy gate decisions (notification, location, cloud AI, backup)",
+        "UI privacy-denied messaging",
+        "Privacy audit logging"
+      ]
+    },
+    "AccountingExportPolicy": {
+      "impacted_flows": [
+        "CSV/JSON export validation",
+        "Accounting export single-currency enforcement",
+        "Global dataset validation"
       ]
     }
   }

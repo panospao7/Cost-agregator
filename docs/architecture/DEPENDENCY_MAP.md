@@ -335,8 +335,9 @@ DatabaseBackupRepositoryImpl              [data/repository/DatabaseBackupReposit
   ├──► BackupEncryptionService            — AES-256-GCM / PBKDF2
   ├──► ExportAnonymizer                   — Strips raw OCR/notification text
   ├──► PrivacyGate.check(RAWBACKUP_EXPORT | ENCRYPTED_BACKUP)
-  ├──► RestoreJournal                     — Crash-safe 8-state journal
-  └──► RestoreMaintenanceMode             — Pauses 7 workers during restore
+  ├──► RestoreJournal                     — Crash-safe 9-state journal (added ASSETS_RESTORING)
+  └──► RestoreMaintenanceMode             — Pauses 7 workers during restore (uses WORKER_REGISTRY;
+        new BACKUP_EXPORTING mode; pauseAllWorkers()/resumeAllWorkers() via WorkerRegistry.entries)
        │
        ▼
   TransactionLifecycleCoordinator         — Restore uses SKIP_FOR_DEBUG_RESTORE dedup mode
@@ -355,6 +356,22 @@ AppStartupCoordinator
 | `AppStartupCoordinator` | `startup/AppStartupCoordinator.kt` | `RestoreJournal`, `RestoreMaintenanceMode` |
 | `NotificationCaptureService` | `service/NotificationCaptureService.kt` | `RestoreMaintenanceMode.isActive()` |
 | All 7 workers | Various | `RestoreMaintenanceMode` pause check |
+
+### AccountingExportPolicy Dependency Chain (2026-05-11)
+
+```
+AccountingExportPolicy                    [domain/export/AccountingExportPolicy.kt]
+  │  @Inject constructor (no module needed)
+  │
+  ├──► requireSingleCurrency(transactions, exportName)     — validates all rows share same currency
+  ├──► requirePurchaseTransactions(transactions, exportName) — validates all rows are purchases
+  └──► validateGlobalDataset(transactions, exportName)      → GlobalDatasetValidation
+        (rowCount, distinctCurrencies, transactionTypes, isSingleCurrency, isPurchaseOnly, errors)
+  
+  Used by:
+  └──► ExportOptionsViewModel             — Pre-export validation
+  └──► AccountingExporters                — Export pipeline validation
+```
 
 ### Barriers
 
@@ -409,9 +426,21 @@ CompositePrivacyGate                      [domain/privacy/CompositePrivacyGate.k
 
 PrivacyAuditLogger                        [domain/privacy/PrivacyAuditLogger.kt]
   │  (logs every gate check → PrivacyAuditEvent entity → PrivacyAuditDao)
+  │  (now logs PrivacyBlocked subclass type via `privacyBlockedType: String`)
   │
   ▼
 PrivacyAuditEvent → PrivacyAuditDao       [data/database/entity + dao]
+
+PrivacyBlocked                            [domain/privacy/PrivacyBlocked.kt]
+  │  Sealed interface with concrete subclasses for standardized privacy-denied
+  │  states. Returned by all 4 privacy gates instead of ad-hoc Denied(reason).
+  │
+  ├──► CloudAiDisabled
+  ├──► ReceiptImageUploadDisabled
+  ├──► ExternalGeocodingDisabled
+  ├──► NotificationCaptureDisabled
+  ├──► RawExportDisabled
+  └──► Custom(capability, reason)
 
 AtRestEncryptionService                   [data/privacy/AtRestEncryptionService.kt]
   │  (AES-256-GCM via Android Keystore for ML model data at rest)
@@ -559,7 +588,23 @@ WorkerRunLogger                           [domain/workers/WorkerRunLogger.kt]
 WorkerExecutionGuard                      [domain/workers/WorkerExecutionGuard.kt]
   └── Structured guarded execution for workers. Checks RestoreMaintenanceMode,
       creates WorkerRunLogger handle, wraps work in try-catch, records outcome.
-      Used by all 7 workers to replace ad-hoc per-worker logging.
+      Used by all 7 workers to replace ad-hoc per-worker logging. Enhanced with
+      checkpoints/yield() for cooperative cancellation during long-running work.
+
+WorkerRegistry                            [domain/workers/WorkerRegistry.kt]
+  └── Kotlin `object`. Centralized single-source-of-truth registry for all 7
+      background workers. Each `Entry` has specName (matching WorkerSpec.DEFAULTS)
+      and schedule lambda. `scheduleAll(context)` iterates entries with runCatching.
+      Replaces hardcoded worker lists in RestoreMaintenanceMode and AppStartupCoordinator.
+      
+      Registry entries:
+        location_backfill       → LocationBackfillWorker.schedule()
+        merchant_key_backfill   → MerchantKeyBackfillWorker.schedule()
+        warranty_expiration     → WarrantyExpirationWorker.schedule()
+        data_retention          → DataRetentionWorker.schedule()
+        bill_reminder_periodic  → BillReminderWorker.schedule()
+        receipt_matching        → ReceiptMatchingWorker.schedule()
+        ai_daily_briefing       → WorkerSpecScheduler.scheduleAtMidnight()
 ```
 
 ### Worker → DAO Dependencies

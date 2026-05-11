@@ -247,6 +247,7 @@ Owns the dashboard home composition and all totals aggregation logic.
 **Representative files**
 - `data/repository/DashboardRepository.kt`
 - `domain/analytics/TotalsAggregationEngine.kt`
+- `domain/analytics/DataQualityReport.kt` — Unified data quality contract (totalExpenses, conversionConfidence, warnings, etc.)
 - `domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt`
 - `ui/screens/home/HomeScreen.kt`
 - `ui/screens/home/HomeViewModel.kt`
@@ -281,6 +282,7 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `domain/workers/WorkerSpecScheduler.kt`
 - `domain/workers/WorkerRunLogger.kt` — Per-run lifecycle tracking (start/success/skipped/retry/failure)
 - `domain/workers/WorkerExecutionGuard.kt` — Structured guarded execution with restore check
+- `domain/workers/WorkerRegistry.kt` — Centralized registry for all 7 workers (specName + schedule lambda); replaces hardcoded lists
 - `di/WorkerModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl
 - `service/reminder/BillReminderWorker.kt`
 - `service/receiptmatching/ReceiptMatchingWorker.kt`
@@ -374,6 +376,7 @@ Owns export pipelines, backup/restore flows, and file packaging.
 
 **Representative files**
 - `domain/export/CsvCellSanitizer.kt` — Kotlin `object` preventing CSV formula injection (neutralizes =, +, -, @, strips tabs/newlines)
+- `domain/export/AccountingExportPolicy.kt` — Export policy validation (single-currency, purchase-only, global dataset checks)
 - `data/repository/AccountingExportRepository.kt`
 - `data/repository/DatabaseBackupRepositoryImpl.kt`
 - `data/backup/BackupVerifier.kt`
@@ -521,6 +524,7 @@ Owns encrypted key storage and security/network bindings.
 - `domain/privacy/RawStorageMode.kt` — Enum: STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE
 - `domain/privacy/RawContentSanitizer.kt` — Write-time sanitizer applying RawStorageMode to OCR/email content
 - `domain/privacy/EffectiveCloudAiPolicy.kt` — Resolves effective cloud AI policy from privacy + AI settings, used by hybrid services for pre-flight checks
+- `domain/privacy/PrivacyBlocked.kt` — Sealed interface standardizing privacy-denied states (CloudAiDisabled, ReceiptImageUploadDisabled, etc.); returned by all privacy gates
 
 ## SEGMENT 29: Debug & Diagnostics
 

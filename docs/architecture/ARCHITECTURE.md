@@ -29,7 +29,7 @@
 8. Quick Reference
 
 ## Current Project Metrics
-- Database version: v123
+- Database version: v124
 - 829+ Kotlin source files
 - 59 DAOs (56 in DaoModule + 3 in AiModule), 62 entities registered in AppDatabase
 - 38 ViewModels
@@ -47,6 +47,12 @@
 - `HybridRouter` (`domain/ai/HybridRouter.kt`) replaces duplicated cloud/on-device/fallback routing logic across 6 hybrid AI services (AID-4).
 - `AtRestEncryptionService` (`data/privacy/AtRestEncryptionService.kt`): AES-256-GCM via Android Keystore for ML model data at rest.
 - `SourceStatsEvent` entity + `SourceStatsEventDao`: event-based notification source stats tracking.
+- `WorkerRegistry` (`domain/workers/WorkerRegistry.kt`): single-source-of-truth registry for all 7 background workers; replaces hardcoded lists in `RestoreMaintenanceMode`/`AppStartupCoordinator`.
+- `PrivacyBlocked` (`domain/privacy/PrivacyBlocked.kt`): sealed interface standardizing privacy-denied states with capability-specific subclasses (CloudAiDisabled, ReceiptImageUploadDisabled, etc.).
+- `AccountingExportPolicy` (`domain/export/AccountingExportPolicy.kt`): export policy validation (single-currency, purchase-only checks, global dataset validation).
+- `DataQualityReport` (`domain/analytics/DataQualityReport.kt`): unified data class aggregating quality metrics from analytics, forecasting, currency conversion, and AI pipelines.
+- `RestoreMaintenanceMode` now supports `BACKUP_EXPORTING` mode and uses `WorkerRegistry.pauseAllWorkers()`/`resumeAllWorkers()` for centralized worker lifecycle.
+- `RestoreJournal` has new `ASSETS_RESTORING` state for crash-safe asset recovery tracking.
 - AI, location, shared-expense, split, privacy, backup-encryption, and `.costbackup` bundle backup/restore flows are first-class subsystems
 
 ### Architecture Drift Updates (2026-05-06)
@@ -84,6 +90,31 @@
 - **warnings: List<AnalyticsConversionWarning>** added to `AnalyticsDataQuality` (in addition to the legacy `conversionWarnings: List<String>`). Structured warnings carry `AnalyticsConversionWarningType` for programmatic handling.
 - **categoryNameSnapshot** (`String?`) added to `NormalizedExpense` — snapshot of the category name at normalization time, preventing drift when category names are later edited.
 - **BudgetVsActualEngine** logic extracted from `AnalyticsViewModel` — the ViewModel no longer performs inline budget-vs-actual aggregation.
+
+### Architecture Drift Updates (2026-05-11 — pipeline evaluation & closure)
+- **Database version upgraded to v124** (from v123). Migration 123→124 adds forensic/debug fields for pipeline diagnostics and data-integrity tracking.
+- **WorkerRegistry** (`domain/workers/WorkerRegistry.kt`) — `object` with typed `Entry` list (specName + schedule lambda) for all 7 background workers. `scheduleAll(context)` iterates entries with `runCatching` for resilience. Replaces hardcoded lists in `RestoreMaintenanceMode.scheduleAllWorkers()` and `AppStartupCoordinator.scheduleStartupWork()` (P7-P1-07).
+- **PrivacyBlocked** (`domain/privacy/PrivacyBlocked.kt`) — sealed interface with concrete subclasses: `CloudAiDisabled`, `ReceiptImageUploadDisabled`, `ExternalGeocodingDisabled`, `NotificationCaptureDisabled`, `RawExportDisabled`, `Custom`. All 4 privacy gates (`NotificationPrivacyGate`, `LocationPrivacyGate`, `CloudAiPrivacyGate`, `BackupPrivacyGate`) now return `PrivacyBlocked` instead of ad-hoc `Denied(reason)` strings. Provides consistent UI messaging for privacy-denied states.
+- **PrivacySettings** — added `blockCloudAi: Boolean` field for explicit cloud AI blocking independent of the `cloudAiEnabled` toggle.
+- **PrivacyAuditLogger** — now logs the specific `PrivacyBlocked` subclass (via `privacyBlockedType: String`) in audit events for richer diagnostics.
+- **AccountingExportPolicy** (`domain/export/AccountingExportPolicy.kt`) — `@Inject` class providing `requireSingleCurrency()`, `requirePurchaseTransactions()`, and `validateGlobalDataset()` returning `GlobalDatasetValidation` with rowCount, distinctCurrencies, transactionTypes, and validation errors.
+- **RestoreMaintenanceMode** — new `BACKUP_EXPORTING` mode added (allows DB reads but blocks writes during backup export). New `pauseAllWorkers()`/`resumeAllWorkers()` methods delegating to `WorkerRegistry.entries` for centralized worker lifecycle. `DatabaseReadBarrier` now also allows `BACKUP_EXPORTING` mode.
+- **RestoreJournal** — new `ASSETS_RESTORING` state added for crash-safe asset/receipt-image recovery tracking (between DB restore and full completion).
+- **DataQualityReport** (`domain/analytics/DataQualityReport.kt`) — unified data class aggregating `totalExpenses`, `expensesWithCurrency`, `expensesWithMerchant`, `expensesWithCategory`, `conversionConfidence` (0.0–1.0), and `warnings`. Factory `fromNormalization()` consumes `AnalyticsNormalizationResult`. Computed properties: `isReliable`, `qualityLabel`. Used by analytics, forecasting, and health engines as a shared quality contract.
+- **NotificationCaptureService** — refactored for privacy-gate refresh: uses `PrivacyBlocked` for denied states, improved shutdown handling, `sourceFingerprint` sanitization via `RawContentSanitizer`.
+- **EmailReceiptIngestionService** — heavy refactoring (278 lines changed): `emailMessageId` sanitization, improved lifecycle handling, privacy-gate integration.
+- **ReceiptLifecycleCoordinator** — heavy refactoring (192 lines changed): textLines extraction, delete atomic snapshot, PARSE_FAILED handling, batch review support.
+- **TransactionLifecycleCoordinator** — heavy refactoring (226 lines changed): eventLogged flag enforcement, bulk side effects, ghost duplicate cleanup, ERROR deprecation.
+- **BudgetRepository / BudgetMonitor** — period-specific budget rate conversion: budgets now use `MultiCurrencyRepository` for currency-safe per-period aggregation rather than raw-amount comparisons.
+- **MultiCurrencyRepository** — budget-aware aggregation methods added (176 lines modified): period-range-aware totals with consistent currency conversion for budget pipelines.
+- **CSV export format** — version metadata comment line added (`# ExpenseTracker Export v2, rowCount=..., from=... to=...`). `CsvExpenseImporter` updated to parse/skip the comment line.
+- **ExportOptionsViewModel** — uses CSV metadata line; enhanced export with `ExportTransaction` schema fields.
+- **Pipeline diagnostics** — `PipelineDiagnosticEvent` entity extended with forensic fields; `NotificationProcessingPipeline` and other pipelines write richer diagnostic events.
+- **WorkerExecutionGuard** — enhanced with checkpoints/yield points for cooperative cancellation during long-running worker operations (P3-P1-02).
+- **RecurringLifecycleCoordinator** — unlink reopens PLANNED occurrence; bill reminder checkpoint/snooze/dismiss TODOs; occurrence projection fixes.
+- **CashFlowCalculator** — currency-safe aggregation using `AnalyticsCurrencyNormalizer` for per-expense normalization instead of raw-amount sums.
+- **SynthesisEngine** — `require` checks hardened with `PLANNED` filter to exclude planned-but-not-realized expenses from forecast calculation.
+- **AppStartupCoordinator** — uses `WorkerRegistry.scheduleAll()` instead of hardcoded worker schedule calls.
 
 ### Architecture Drift Updates (2026-05-10 — universal gap closure & hotfix)
 - **Database version upgraded to v123** (from v120) via three incremental migrations (v120→v121→v122→v123). New tables: `group_lifecycle_events`, `pipeline_diagnostic_events`. Various column additions and index optimizations.
@@ -216,7 +247,8 @@ domain/
 │   ├── PrivacyCapability.kt    # Enum of 21 gated capabilities
 │   ├── PrivacyGate.kt          # Interface for capability evaluation
 │   ├── PrivacyDecision.kt      # Sealed: Allowed / Denied(reason)
-│   ├── PrivacySettings.kt      # Data class with 10 privacy toggles + 2 retention settings
+│   ├── PrivacyBlocked.kt       # Sealed interface: CloudAiDisabled, ReceiptImageUploadDisabled, etc.
+│   ├── PrivacySettings.kt      # Data class with 10+ privacy toggles + 2 retention settings
 │   ├── PrivacySettingsRepository.kt  # Interface for reading/writing settings
 │   ├── PrivacyAuditLogger.kt   # Logs every gate check decision
 │   ├── NotificationPrivacyGate.kt    # Guards notification capture/allowlist
@@ -261,11 +293,12 @@ domain/
 ├── diagnostics/                 # Database integrity
 ├── dto/                         # Data transfer objects
 ├── util/                        # Shared utilities
-└── workers/                     # Worker specifications, run logging, and execution guard
+└── workers/                     # Worker specifications, run logging, execution guard, and registry
     ├── WorkerSpec.kt            # Worker default specs (interval, constraints, backoff)
     ├── WorkerSpecScheduler.kt   # Centralized scheduling with version-change detection
     ├── WorkerRunLogger.kt       # Per-run lifecycle tracking (start/success/skipped/retry/failure)
-    └── WorkerExecutionGuard.kt  # Structured guarded execution wrapper
+    ├── WorkerExecutionGuard.kt  # Structured guarded execution wrapper
+    └── WorkerRegistry.kt        # Single source-of-truth for all 7 workers (specName + schedule lambda)
 ```
 
 ### Data Layer (`data/`)
@@ -299,7 +332,7 @@ data/
 │   ├── ExportAnonymizer.kt               # Strips raw text from exports
 │   └── DataRetentionWorker.kt            # WorkManager purging worker
 ├── database/
-│   ├── AppDatabase.kt          # Room database (v123) — 62 entities registered
+│   ├── AppDatabase.kt          # Room database (v124) — 62 entities registered
 │   ├── entity/                  # Room entities across finance, AI, groups, location, settings, and privacy
 │   │   ├── RecurringLifecycleEvent.kt   # Phase 5b — audit log for recurring occurrences
 │   │   ├── PrivacyAuditEvent.kt         # Phase 6 — privacy gate audit log
@@ -326,11 +359,12 @@ data/
 MainApplication
   └─ AppStartupDelegate
        └─ AppStartupCoordinator
-            ├─ checkRestoreJournal()    ← Phase 9: crash recovery before any work
-            │    └─ RestoreJournal.checkAndRecover() → RecoveryResult
-            │         (NoAction / CompleteClean / CleanedNonDestructive /
-            │          RecoveredFromSwap / CriticalRecoveryRequired)
-            ├─ AppBackgroundLifecycleObserver
+             ├─ checkRestoreJournal()    ← Phase 9: crash recovery before any work
+             │    └─ RestoreJournal.checkAndRecover() → RecoveryResult
+             │         (NoAction / CompleteClean / CleanedNonDestructive /
+             │          RecoveredFromSwap / CriticalRecoveryRequired)
+             ├─ scheduleStartupWork()    ← uses WorkerRegistry.scheduleAll()
+             ├─ AppBackgroundLifecycleObserver
             └─ WorkManager jobs
                ├─ DailyBriefingWorker         (Phase 8 — every 24h, privacy-gated)
                ├─ LocationBackfillWorker      (Phase 8 — every 12h, overwrite guard)
