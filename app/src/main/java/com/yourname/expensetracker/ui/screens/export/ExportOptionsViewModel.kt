@@ -616,6 +616,9 @@ class ExportOptionsViewModel @Inject constructor(
                 preview.append(prefix)
             }
             "csv" -> {
+                val metadataLine = "# ExpenseTracker Export v2, rowCount=$rowCount, startDate=$startDate, endDate=$endDate\n"
+                writer.append(metadataLine)
+                preview.append(metadataLine)
                 val header = "ID,Date,CreatedAt,Merchant,Amount,EffectiveAmount,Currency,TransactionType,Category,Notes,Source,PaymentMethod,OriginalCurrency,OriginalAmount,HomeCurrency,BaseAmount,BaseCurrency,ExchangeRateUsed,IsBusinessExpense,BusinessPurpose\n"
                 writer.append(header)
                 preview.append(header)
