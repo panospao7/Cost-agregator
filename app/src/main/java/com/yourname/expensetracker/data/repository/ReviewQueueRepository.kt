@@ -115,8 +115,10 @@ class ReviewQueueRepository @Inject constructor(
         return Result.Error(message = "Cannot approve review with unknown merchant. Please edit the merchant first.")
     }
 
-    // Normalize the merchant for key generation so that manually approved
-    // reviews use the same canonical form as auto-accepted expenses.
+    // TODO P2-CURRENT-006: normalizedMerchantForKeys double-normalizes when
+    // review.suggestedMerchant is already the correctedMerchant from the pipeline.
+    // This can produce a different merchantKey than the auto-accept path if
+    // normalization is not idempotent. Use the same single-normalization approach.
     val normalizedMerchantForKeys: String = merchantNormalizer.normalize(merchant).canonical.normalizedName
     val categoryId: Long? = finalCategoryId ?: review.suggestedCategoryId
 

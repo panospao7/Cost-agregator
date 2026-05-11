@@ -43,6 +43,9 @@ import javax.inject.Singleton
  *
  * @constructor Inject dependencies needed for validation, persistence, and event logging.
  */
+// TODO P2-CURRENT-007: This class uses restoreMaintenanceMode.isWritesAllowed() directly
+// instead of writeBarrier.checkWritesAllowed(). The writeBarrier is injected but unused.
+// Migrate all guards to writeBarrier for consistent error reporting and centralized control.
 @Singleton
 class TransactionLifecycleCoordinator @Inject constructor(
     private val database: AppDatabase,
@@ -89,12 +92,17 @@ class TransactionLifecycleCoordinator @Inject constructor(
     ): CreateExpenseResult {
         // Guard: block writes during restore maintenance mode
         if (!restoreMaintenanceMode.isWritesAllowed()) {
+            // P2-CURRENT-011: Diagnostic for restore-blocked create
+            Timber.w("CreateExpense blocked: restore maintenance mode active (source=%s, merchant=%s)", request.source.name, request.merchant)
             return CreateExpenseResult.Error(IllegalStateException("Database writes blocked during restore"))
         }
 
         val now = timeProvider.now()
 
         // 1. Write CREATE_ATTEMPTED event before validation
+        // TODO P2-CURRENT-012: For STRICT_EXTERNAL_ID mode, attemptDedupeKey should be
+        // "idem:${source}:${idempotencyKey}" to match the actual key used at insert time.
+        // Currently uses the standard formula which diverges from the persisted dedupeKey.
         val attemptDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
             amount = request.amount,
             merchant = request.merchant,
@@ -255,6 +263,26 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 DeduplicationMode.STRICT_EXTERNAL_ID -> {
                     val key = request.idempotencyKey ?: request.externalFingerprint
                     if (key == null) {
+                        // P2-CURRENT-010: Emit validation event for missing key
+                        runCatching {
+                            transactionEventDao.insert(
+                                TransactionEvent(
+                                    expenseId = null,
+                                    eventType = LifecycleEventType.CREATE_VALIDATION_FAILED.name,
+                                    source = request.source.name,
+                                    actor = null,
+                                    occurredAt = now,
+                                    dedupeKey = attemptDedupeKey,
+                                    duplicateExpenseId = null,
+                                    beforeSnapshot = null,
+                                    afterSnapshot = null,
+                                    metadata = JSONObject().apply {
+                                        put("errors", "STRICT_EXTERNAL_ID mode requires idempotencyKey or externalFingerprint")
+                                    }.toString(),
+                                    reason = "STRICT_EXTERNAL_ID missing key"
+                                )
+                            )
+                        }
                         return CreateExpenseResult.ValidationFailed(
                             listOf("STRICT_EXTERNAL_ID mode requires idempotencyKey or externalFingerprint")
                         )
@@ -265,6 +293,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
                 }
 
                 DeduplicationMode.BULK_IMPORT -> {
+                    // TODO P2-CURRENT-005: If a STANDARD create and a BULK_IMPORT create race
+                    // for the same logical transaction, the second one silently wins via
+                    // insertAtomic IGNORE. The losing path gets no identity (expenseId).
+                    // Consider using INSERT OR REPLACE or returning the existing ID on conflict.
                     // Run standard range-based dedup but mark result as bulk duplicate
                     val isDuplicate = expenseDao.isDuplicateCurrencyAware(
                         amount = expense.amount,
@@ -762,6 +794,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * API compatibility but are **no-ops** pending entity schema changes. When
      * any of these no-op parameters are non-null, a warning is logged via Timber.w.
      *
+     * TODO P2-CURRENT-014: businessUsePercent, taxCategory, vatEligible are semantically
+     * partial — callers believe they are persisted but they are silently dropped.
+     * Either add columns to the Expense entity or return a result indicating which
+     * fields were actually persisted vs ignored.
+     *
      * @param expenseId The ID of the expense to update.
      * @param isBusinessExpense Whether this expense is a business expense (persisted).
      * @param businessUsePercent No-op — accepted for API compatibility only.
@@ -1219,6 +1256,10 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * Moves all expenses from one category to another, writing per-expense
      * UPDATED events via [updateCategory] so that side effects are dispatched.
      *
+     * TODO P2-CURRENT-015: This is non-atomic — a crash mid-loop leaves partial
+     * reassignment. Wrap in database.withTransaction or use a single DAO UPDATE
+     * with a BULK_UPDATED event (like the merchant-key overload above).
+     *
      * @param categoryId    The source category whose expenses should be reassigned.
      * @param newCategoryId The target category to assign.
      * @param source        The source system/component that triggered the update.
@@ -1492,7 +1533,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         if (request.date > TimePeriodUtils.addDays(now, 1)) { // now + 1 day
             errors.add("Date cannot be in the future")
         }
-        // TODO: Make future-date tolerance configurable (e.g. via policy object).
+        // TODO P2-CURRENT-020: Make future-date tolerance configurable (e.g. via policy object).
         // Currently uses a hardcoded 1-day tolerance. Some users may want
         // stricter (reject any future date) or looser (allow scheduling weeks ahead).
 

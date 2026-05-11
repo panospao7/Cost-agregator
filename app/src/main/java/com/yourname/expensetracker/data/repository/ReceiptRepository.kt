@@ -115,12 +115,17 @@ class ReceiptRepository @Inject constructor(
     /**
      * Result of [processReceipt], carrying the receipt, parsed data, and
      * PDF truncation metadata (P2-15).
+     *
+     * @param ephemeralRawOcrText The original unsanitized OCR text for fingerprinting.
+     *   This is NOT persisted — it exists only for the coordinator to compute
+     *   text fingerprints before sanitization discards the raw content.
      */
     data class ProcessReceiptResult(
         val receipt: ScannedReceipt,
         val parsed: ReceiptParser.ParsedReceipt,
         val pagesProcessed: Int? = null,
-        val totalPages: Int? = null
+        val totalPages: Int? = null,
+        val ephemeralRawOcrText: String? = null
     )
 
     /**
@@ -135,6 +140,10 @@ class ReceiptRepository @Inject constructor(
     ): ProcessReceiptResult {
         return withContext(ioDispatcher) {
             // 0. Pre-OCR exact-hash dedup: skip expensive OCR if this exact file was already processed
+            // TODO P3-CURRENT-006: computeUriHash reads from content resolver while imageHash
+            // stored on receipts is computed from the persisted file. If the URI is a content://
+            // provider that transforms bytes (e.g. EXIF stripping), hashes may diverge.
+            // Consider always computing hash from the persisted file path after persistReceiptAsset.
             val uriHashResult = assetStore.computeUriHash(imageUri)
         if (uriHashResult.isSuccess) {
             val existingMatch = scannedReceiptDao.getByImageHash(uriHashResult.getOrThrow())
@@ -162,77 +171,13 @@ class ReceiptRepository @Inject constructor(
                 }
             }
 
-            try {
-                // 2. Parse the OCR text with the user's home currency as fallback
-                val homeCur = homeCurrency()
-                val parsed = receiptParser.parse(ocrResult.fullText, homeCurrency = homeCur)
-
-                // 3. Normalize merchant if found
-                val lookupResult = parsed.merchantName?.let {
-                    merchantNormalizer.normalize(it, autoCreate = true)
-                }
-                val normalizedMerchant = lookupResult?.canonical?.normalizedName
-
-                // 4. Save scanned receipt record
-                val receipt = ScannedReceipt(
-                    imagePath = ocrResult.savedImagePath,
-                    rawOcrText = sanitizeOcrBeforeInsert(ocrResult.fullText),
-                    parsedTotal = parsed.total,
-                    parsedMerchant = normalizedMerchant ?: parsed.merchantName,
-                    parsedDate = parsed.date,
-                    parsedItems = if (parsed.lineItems.isNotEmpty())
-                        receiptParser.lineItemsToJson(parsed.lineItems) else null,
-                    parsedTaxAmount = parsed.tax,
-                    currency = parsed.currency,
-                    confidence = parsed.confidence,
-                    createdAt = timeProvider.now()
-                )
-
-                val receiptId = database.withTransaction {
-                    val insertedReceiptId = scannedReceiptDao.insert(receipt)
-                    require(insertedReceiptId > 0) { "Receipt insert failed (conflict): imagePath=${receipt.imagePath}" }
-
-                    // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
-                    //
-                    //    "Unknown Merchant" is a UI-placeholder fallback when neither
-                    //    the normalizer nor the parser could extract a merchant name.
-                    //    It will be shown in the review queue and must be edited by
-                    //    the user before approval — approveReview() blocks approval
-                    //    without a user override.  This placeholder never becomes a
-                    //    real expense merchant value.
-                    if (autoCreateReview) {
-                        val suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant"
-                        val suggestedAmount = parsed.total // null when parser didn't extract a total
-                        val review = PendingReview(
-                            rawNotificationId = null,
-                            scannedReceiptId = insertedReceiptId,
-                            suggestedAmount = suggestedAmount,
-                            suggestedCurrency = parsed.currency,
-                            suggestedMerchant = suggestedMerchant,
-                            suggestedMerchantKey = MerchantKeyGenerator.generate(suggestedMerchant),
-                            suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
-                            suggestedDate = parsed.date, // Preserving the date found by parser
-                            confidence = parsed.confidence,
-                            packageName = "receipt.scan",
-                            notificationTitle = "Scanned Receipt",
-                            notificationText = RawContentSanitizer.sanitizedOcrReviewSnippet(ocrResult.fullText, privacySettingsRepository.getSettings().rawOcrStorageMode),
-                            suggestedCategoryId = normalizedMerchant?.let {
-                                hybridClassifier.classify(it, suggestedAmount ?: 0.0).categoryId.takeIf { id -> id > 0 }
-                            }
-                        )
-                        pendingReviewDao.insert(review)
-                    }
-
-                    insertedReceiptId
-                }
-
-                return@withContext ProcessReceiptResult(
-                    receipt.copy(id = receiptId),
-                    parsed,
-                    pagesProcessed = ocrResult.pagesProcessed,
-                    totalPages = ocrResult.totalPages
-                )
-
+            // 2. Parse the OCR text with the user's home currency as fallback
+            // P3-CURRENT-018: Narrow try/catch to ONLY the parse call so that
+            // DB/normalizer/classifier errors propagate as infrastructure failures
+            // rather than being misclassified as PARSE_FAILED.
+            val homeCur = homeCurrency()
+            val parsed = try {
+                receiptParser.parse(ocrResult.fullText, homeCurrency = homeCur)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 // Parsing Logic Failed, but we HAVE the OCR text!
@@ -247,7 +192,7 @@ class ReceiptRepository @Inject constructor(
                     parsedDate = null, 
                     parsedItems = null,
                     parsedTaxAmount = null, // Explicitly null for failed parse
-                    currency = homeCurrency(),
+                    currency = homeCur,
                     confidence = 0f,
                     createdAt = timeProvider.now(),
                     processingStatus = ReceiptProcessingStatus.PARSE_FAILED.name
@@ -256,21 +201,16 @@ class ReceiptRepository @Inject constructor(
                 require(receiptId > 0) { "Receipt insert failed (conflict): imagePath=${failedReceipt.imagePath}" }
                 
                 // ── Parse-failure placeholder review (never becomes real expense) ──
-                // When the parser threw an exception (e.g. malformed OCR text) we
-                // still save the OCR text for manual recovery.  The PendingReview
-                // gets sentinel values ("Parsing Failed", null suggestedAmount)
-                // that are UI placeholders only.  The user must edit these before
-                // approval; approveReview() blocks approval without overrides.
                 if (autoCreateReview) {
                     val review = PendingReview(
                         rawNotificationId = null,
                         scannedReceiptId = receiptId,
                         suggestedAmount = null,
-                        suggestedCurrency = homeCurrency(),
+                        suggestedCurrency = homeCur,
                         suggestedMerchant = "Parsing Failed",
                         suggestedMerchantKey = MerchantKeyGenerator.generate("Parsing Failed"),
                         suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
-                        suggestedCategoryId = null, // No category for failed parse
+                        suggestedCategoryId = null,
                         confidence = 0f,
                         packageName = "receipt.scan.error",
                         notificationTitle = "Parsing Failed",
@@ -283,9 +223,77 @@ class ReceiptRepository @Inject constructor(
                     failedReceipt.copy(id = receiptId),
                     ReceiptParser.ParsedReceipt(null, null, null, null, timeProvider.now(), "EUR", emptyList(), 0f),
                     pagesProcessed = ocrResult.pagesProcessed,
-                    totalPages = ocrResult.totalPages
+                    totalPages = ocrResult.totalPages,
+                    ephemeralRawOcrText = ocrResult.fullText
                 )
             }
+
+            // 3. Normalize merchant if found
+            val lookupResult = parsed.merchantName?.let {
+                merchantNormalizer.normalize(it, autoCreate = true)
+            }
+            val normalizedMerchant = lookupResult?.canonical?.normalizedName
+
+            // 4. Save scanned receipt record
+            val receipt = ScannedReceipt(
+                imagePath = ocrResult.savedImagePath,
+                rawOcrText = sanitizeOcrBeforeInsert(ocrResult.fullText),
+                parsedTotal = parsed.total,
+                parsedMerchant = normalizedMerchant ?: parsed.merchantName,
+                parsedDate = parsed.date,
+                parsedItems = if (parsed.lineItems.isNotEmpty())
+                    receiptParser.lineItemsToJson(parsed.lineItems) else null,
+                parsedTaxAmount = parsed.tax,
+                currency = parsed.currency,
+                confidence = parsed.confidence,
+                createdAt = timeProvider.now()
+            )
+
+            val receiptId = database.withTransaction {
+                val insertedReceiptId = scannedReceiptDao.insert(receipt)
+                require(insertedReceiptId > 0) { "Receipt insert failed (conflict): imagePath=${receipt.imagePath}" }
+
+                // 5. Optionally create a PendingReview (True for Batch, False for FAB Manual Scan)
+                //
+                //    "Unknown Merchant" is a UI-placeholder fallback when neither
+                //    the normalizer nor the parser could extract a merchant name.
+                //    It will be shown in the review queue and must be edited by
+                //    the user before approval — approveReview() blocks approval
+                //    without a user override.  This placeholder never becomes a
+                //    real expense merchant value.
+                if (autoCreateReview) {
+                    val suggestedMerchant = normalizedMerchant ?: parsed.merchantName ?: "Unknown Merchant"
+                    val suggestedAmount = parsed.total // null when parser didn't extract a total
+                    val review = PendingReview(
+                        rawNotificationId = null,
+                        scannedReceiptId = insertedReceiptId,
+                        suggestedAmount = suggestedAmount,
+                        suggestedCurrency = parsed.currency,
+                        suggestedMerchant = suggestedMerchant,
+                        suggestedMerchantKey = MerchantKeyGenerator.generate(suggestedMerchant),
+                        suggestedType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE.name,
+                        suggestedDate = parsed.date, // Preserving the date found by parser
+                        confidence = parsed.confidence,
+                        packageName = "receipt.scan",
+                        notificationTitle = "Scanned Receipt",
+                        notificationText = RawContentSanitizer.sanitizedOcrReviewSnippet(ocrResult.fullText, privacySettingsRepository.getSettings().rawOcrStorageMode),
+                        suggestedCategoryId = normalizedMerchant?.let {
+                            hybridClassifier.classify(it, suggestedAmount ?: 0.0).categoryId.takeIf { id -> id > 0 }
+                        }
+                    )
+                    pendingReviewDao.insert(review)
+                }
+
+                insertedReceiptId
+            }
+
+            return@withContext ProcessReceiptResult(
+                receipt.copy(id = receiptId),
+                parsed,
+                pagesProcessed = ocrResult.pagesProcessed,
+                totalPages = ocrResult.totalPages,
+                ephemeralRawOcrText = ocrResult.fullText
+            )
         }
     }
 

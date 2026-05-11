@@ -771,15 +771,17 @@ class GroupTransactionCoordinator @Inject constructor(
             // Delete group last (parent table)
             val group = groupDao.getGroupById(groupId)
             group?.let { groupDao.delete(it) }
-        }
 
-        // Clear orphaned shared-expense flags
-        linkedExpenseIds.forEach { expenseId ->
-            expenseDao.clearSharedExpenseFlags(expenseId)
+            // P2-CURRENT-008 FIX: Clear orphaned shared-expense flags inside transaction
+            linkedExpenseIds.forEach { expenseId ->
+                expenseDao.clearSharedExpenseFlags(expenseId)
+            }
         }
 
         // P2-06: Write a single BULK_UPDATED event for the hard-delete
         if (linkedExpenseIds.isNotEmpty()) {
+            // TODO P2-CURRENT-018: Replace System.currentTimeMillis() with TimeProvider.now()
+            // for testability. Requires adding TimeProvider to constructor injection.
             val now = System.currentTimeMillis()
             val metadata = org.json.JSONObject().apply {
                 put("action", "clearSharedExpenseFlags")

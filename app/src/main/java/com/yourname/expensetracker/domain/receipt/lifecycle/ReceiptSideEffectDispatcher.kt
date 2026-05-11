@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
@@ -39,6 +42,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class ReceiptSideEffectDispatcher @Inject constructor(
+    private val database: AppDatabase,
+    private val writeBarrier: DatabaseWriteBarrier,
     private val autoCreateWarrantyUseCase: AutoCreateWarrantyFromReceiptUseCase,
     private val categorizeReceiptItemsUseCase: CategorizeReceiptItemsUseCase,
     private val receiptTransactionMatcher: ReceiptTransactionMatcher,
@@ -141,30 +146,34 @@ class ReceiptSideEffectDispatcher @Inject constructor(
                             }
                             is MatchResult.Suggested -> {
                                 // Medium match: save suggestion without automatic linking
+                                // P3-CURRENT-013: Atomic update+event via transaction
+                                writeBarrier.checkWritesAllowed("ReceiptSideEffectDispatcher.suggestedMatch")
                                 val now = timeProvider.now()
-                                scannedReceiptDao.update(
-                                    receipt.copy(
-                                        suggestedExpenseId = matchResult.transaction.id,
-                                        matchStatus = MatchStatus.SUGGESTED,
-                                        matchConfidence = matchResult.score.toFloat(),
-                                        updatedAt = now
+                                database.withTransaction {
+                                    scannedReceiptDao.update(
+                                        receipt.copy(
+                                            suggestedExpenseId = matchResult.transaction.id,
+                                            matchStatus = MatchStatus.SUGGESTED,
+                                            matchConfidence = matchResult.score.toFloat(),
+                                            updatedAt = now
+                                        )
                                     )
-                                )
-                                receiptEventDao.insert(
-                                    ReceiptEvent(
-                                        receiptId = receipt.id,
-                                        sourceType = receipt.sourceType,
-                                        documentType = receipt.documentType,
-                                        eventType = "MATCH_SUGGESTED",
-                                        occurredAt = now,
-                                        oldStatus = receipt.processingStatus,
-                                        newStatus = null,
-                                        actor = "system:receipt_matcher",
-                                        message = "Suggested match to expense ${matchResult.transaction.id} (score=${"%.3f".format(matchResult.score)})",
-                                        metadata = "{\"suggestedExpenseId\":${matchResult.transaction.id},\"score\":${matchResult.score}}",
-                                        errorDetails = null
+                                    receiptEventDao.insert(
+                                        ReceiptEvent(
+                                            receiptId = receipt.id,
+                                            sourceType = receipt.sourceType,
+                                            documentType = receipt.documentType,
+                                            eventType = "MATCH_SUGGESTED",
+                                            occurredAt = now,
+                                            oldStatus = receipt.processingStatus,
+                                            newStatus = null,
+                                            actor = "system:receipt_matcher",
+                                            message = "Suggested match to expense ${matchResult.transaction.id} (score=${"%.3f".format(matchResult.score)})",
+                                            metadata = "{\"suggestedExpenseId\":${matchResult.transaction.id},\"score\":${matchResult.score}}",
+                                            errorDetails = null
+                                        )
                                     )
-                                )
+                                }
                                 Timber.d("P3-P1-03: Suggested match for receipt %d → expense %d (score=%.3f)",
                                     receipt.id, matchResult.transaction.id, matchResult.score)
                             }

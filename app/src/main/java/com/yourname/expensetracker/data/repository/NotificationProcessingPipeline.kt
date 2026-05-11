@@ -152,6 +152,8 @@ class NotificationProcessingPipeline @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
     @ApplicationScope private val applicationScope: CoroutineScope
 ) {
+    // TODO P1-CURRENT-016: ProcessingResult is dead code — replaced by NotificationPipelineOutcome.
+    // Remove in next cleanup pass.
     sealed interface ProcessingResult {
         data class Success(val packageName: String) : ProcessingResult
         data class Rejected(val packageName: String, val reason: String) : ProcessingResult
@@ -258,6 +260,9 @@ class NotificationProcessingPipeline @Inject constructor(
         )
 
         // P2-12: AI parser provenance — determine whether AI fallback was used
+        // TODO P1-CURRENT-017: parserRegistry.parse() is called a second time here just to
+        // determine provenance. This duplicates CPU work. Instead, have parseWithAiFallback()
+        // return a result that includes whether the deterministic parser succeeded.
         val deterministicResult = parserRegistry.parse(
             title = notification.title,
             text = notification.text,
@@ -891,6 +896,11 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         val eventDate = parsed.date ?: notification.timestamp
         val merchantKey = MerchantKeyGenerator.generate(correctedMerchant)
         val transactionType = parsed.type.toDbTransactionType()
+        // TODO P1-CURRENT-011: parsed.currency is the parser's best guess. When the parser
+        // falls back to a default currency (e.g. "EUR"), the isDuplicateCurrencyAware check
+        // uses that narrow currency, but existing expenses may be in a different currency.
+        // This can cause false negatives in dedup when the fallback currency doesn't match
+        // the user's actual home currency.
         // Use type-aware key so that PURCHASE vs DEPOSIT/TRANSFER rows never collide on
         // the persisted unique dedupeKey index (ISSUE-8 fix). UNKNOWN type falls back to
         // the type-blind key for backward compatibility with legacy rows.
@@ -1115,7 +1125,8 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             confidence = preDb.routingResult.adjustedConfidence,
             packageName = notification.packageName,
             notificationTitle = notification.title,
-            notificationText = notification.text ?: notification.bigText,
+            // P1-CURRENT-013 FIX: Preserve combined text for review context
+            notificationText = preDb.fullNotificationText,
             suggestedDate = preDb.eventDate,
             suggestedDirection = preDb.direction?.name,
             suggestedAccountName = preDb.accountName,

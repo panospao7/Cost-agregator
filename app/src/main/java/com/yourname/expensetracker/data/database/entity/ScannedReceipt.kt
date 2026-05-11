@@ -40,6 +40,10 @@ enum class MatchStatus {
         Index(value = ["createdAt"]),
         Index(name = "index_scanned_receipts_matchStatus", value = ["matchStatus"]),
         Index(value = ["processingStatus"])
+        // TODO P3-CURRENT-008: imageHash, textFingerprint, semanticFingerprint have no
+        // unique constraints. Duplicate receipts can be inserted if the application-level
+        // dedup check races or is bypassed. Add unique partial indexes on non-null values:
+        // Index(value = ["imageHash"], unique = true) — requires migration.
     ]
 )
 data class ScannedReceipt(

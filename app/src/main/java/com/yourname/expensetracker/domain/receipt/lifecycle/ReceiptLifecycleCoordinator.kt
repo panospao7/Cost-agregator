@@ -243,11 +243,14 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             }
 
             // ── Post-OCR text + semantic fingerprints ─────────────────────
-            val textFingerprint = if (receipt.rawOcrText.isNotBlank() &&
-                !receipt.rawOcrText.startsWith("Scan Failed") &&
-                !receipt.rawOcrText.startsWith("[OCR Failed")
+            // P3-CURRENT-003: Compute textFingerprint from the ephemeral raw OCR
+            // text BEFORE sanitization to avoid false duplicates in STORE_REDACTED mode.
+            val rawOcrForFingerprint = processResult.ephemeralRawOcrText ?: receipt.rawOcrText
+            val textFingerprint = if (rawOcrForFingerprint.isNotBlank() &&
+                !rawOcrForFingerprint.startsWith("Scan Failed") &&
+                !rawOcrForFingerprint.startsWith("[OCR Failed")
             ) {
-                duplicateDetector.computeTextFingerprintPublic(receipt.rawOcrText)
+                duplicateDetector.computeTextFingerprintPublic(rawOcrForFingerprint)
             } else null
 
             val semanticFingerprint = if (receipt.parsedMerchant != null && receipt.parsedTotal != null && receipt.parsedDate != null) {
@@ -574,11 +577,18 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         }
 
         // Check messageId dedup
+        // P3-CURRENT-010: Query using the same sanitization applied when storing,
+        // so the comparison is consistent regardless of storage mode.
+        val settings = privacySettingsRepository.getSettings()
+        val emailStorageMode = settings.emailReceiptStorageMode
         if (messageId.isNotBlank()) {
-            val existing = scannedReceiptDao.getBySourceFingerprint(messageId)
-            if (existing != null) {
-                emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "messageId_duplicate", "ScannedReceipt", existing.id)
-                return EmailReceiptProcessResult.Duplicate(existing.id)
+            val sanitizedMessageId = RawContentSanitizer.sanitizeEmailMessageId(messageId, emailStorageMode)
+            if (sanitizedMessageId != null && sanitizedMessageId != "[REDACTED]") {
+                val existing = scannedReceiptDao.getBySourceFingerprint(sanitizedMessageId)
+                if (existing != null) {
+                    emitEmailReceiptDiagnostic("dedup", "DUPLICATE", "messageId_duplicate", "ScannedReceipt", existing.id)
+                    return EmailReceiptProcessResult.Duplicate(existing.id)
+                }
             }
         }
         // Check fingerprint dedup
@@ -614,9 +624,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         }
 
         val now = timeProvider.now()
-        val settings = privacySettingsRepository.getSettings()
         val ocrStorageMode = settings.rawOcrStorageMode
-        val emailStorageMode = settings.emailReceiptStorageMode
         val effectiveOcrText = RawContentSanitizer.sanitizeRawOcr(rawEmailBody, ocrStorageMode)
         var savedId = 0L
         var expenseIds = mutableListOf<Long>()
@@ -641,6 +649,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 processingStatus = if (emailData.merchant != null) ReceiptProcessingStatus.PARSED.name
                                    else ReceiptProcessingStatus.CAPTURED.name,
                 sourceFingerprint = RawContentSanitizer.sanitizeEmailMessageId(messageId, emailStorageMode) ?: "",
+                textFingerprint = emailTextFingerprint,
+                semanticFingerprint = emailSemanticFingerprint,
                 createdAt = now,
                 updatedAt = now
             )

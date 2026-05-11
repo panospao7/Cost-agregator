@@ -151,6 +151,9 @@ class DebugViewModel @Inject constructor(
     }
 
     suspend fun undoClearAll(): Boolean {
+        // TODO P2-CURRENT-016: These two restores are not in a single transaction.
+        // If the second fails, notifications are restored but expenses are not,
+        // leaving an inconsistent state. Wrap in database.withTransaction.
         val snapshot = clearAllUndoSnapshot ?: return false
         repository.restoreDebugSnapshot(snapshot.notificationsSnapshot)
         expenseRepository.restoreDebugSnapshot(snapshot.expenseSnapshot)

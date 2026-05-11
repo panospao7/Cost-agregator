@@ -90,6 +90,10 @@ data class CreateExpenseRequest(
     val splitVisualization: String? = null,
 
     // ── Source link fields ──────────────────────────────────────────────────────
+    // TODO P2-CURRENT-013: pendingReviewId, scannedReceiptId, emailReceiptSourceId,
+    // groupId, csvImportBatchId, csvRowNumber are accepted but not persisted by the
+    // coordinator. Either persist them in TransactionEvent metadata for traceability
+    // or remove them from this request to avoid misleading callers.
     val rawNotificationId: Long? = null,
     val pendingReviewId: Long? = null,
     val scannedReceiptId: Long? = null,

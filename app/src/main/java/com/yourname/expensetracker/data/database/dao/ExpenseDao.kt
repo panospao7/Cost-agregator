@@ -17,6 +17,10 @@ import com.yourname.expensetracker.domain.location.MerchantLocationGrid
 import com.yourname.expensetracker.domain.intelligence.DuplicateDetectionPolicy
 import kotlinx.coroutines.flow.Flow
 
+// TODO P2-CURRENT-001: Mutation methods (insert, update, delete, updateCategory, etc.)
+// are public on this DAO interface. All writes should go through
+// TransactionLifecycleCoordinator. Consider wrapping this DAO in an internal
+// access-controlled adapter that only exposes read methods publicly.
 @Dao
 interface ExpenseDao {
     companion object {

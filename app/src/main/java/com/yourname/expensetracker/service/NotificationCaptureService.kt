@@ -417,6 +417,9 @@ class NotificationCaptureService : NotificationListenerService() {
 
         val now = timeProvider.now()
         val dedupeKeyRaw = sbn.key
+        // TODO P1-CURRENT-004: sbn.key is coarse — it includes package+tag+id but not content.
+        // Two different transactions reusing the same notification ID within DEDUP_WINDOW_MS
+        // would be incorrectly deduped. Consider incorporating a content hash.
         val coarseDedupeKey = dedupeKeyRaw
         val lastProcessed = processedNotifications[coarseDedupeKey]
         if (lastProcessed != null && (now - lastProcessed) < DEDUP_WINDOW_MS) {

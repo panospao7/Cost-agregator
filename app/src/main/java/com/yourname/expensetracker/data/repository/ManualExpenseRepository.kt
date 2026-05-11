@@ -157,6 +157,9 @@ class ManualExpenseRepository @Inject constructor(
                 is CreateExpenseResult.Created -> {
                     val id = coordinatorResult.expenseId
 
+                    // TODO P2-CURRENT-019: This synthetic Expense may diverge from the actual
+                    // persisted row (e.g. baseAmount, exchangeRateUsed are missing). Fetch the
+                    // real entity via expenseDao.getById(id) or have the coordinator return it.
                     // Build a synthetic Expense for downstream hooks (anomaly, recommendations)
                     insertedExpenseForHook = Expense(
                         id = id,
