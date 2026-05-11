@@ -772,7 +772,17 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     manifest.databaseVersion
                 )
 
-                // 10. Restore receipt assets if present
+                // 10. P7-P1-04: Transition to ASSETS_RESTORING so a crash during asset
+                // restore does not rollback the already-verified live DB. On recovery,
+                // ASSETS_RESTORING is treated as non-destructive — staging is cleaned,
+                // journal deleted, and normal startup proceeds (assets restored
+                // best-effort on next manual restore).
+                journalEntry = restoreJournal.transitionTo(
+                    journalEntry,
+                    RestoreJournal.JournalState.ASSETS_RESTORING
+                )
+
+                // Restore receipt assets if present
                 val receiptWarnings = if (tempDir.exists()) {
                     restoreReceiptAssets(tempDir, manifest)
                 } else {
@@ -786,7 +796,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 stagedDbShmFile.delete()
                 tempDir.deleteRecursively()
 
-                // 12. Mark complete
+                // 12. Mark complete — asset restore finished (with or without warnings)
                 restoreJournal.commitJournal(journalEntry)
 
                 // 13. Set maintenance mode to restart-required
