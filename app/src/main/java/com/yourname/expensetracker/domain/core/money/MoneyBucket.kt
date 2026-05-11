@@ -18,6 +18,10 @@ data class MoneyBucket(
     val transactionCount: Int = 0
 ) {
 
+    init {
+        require(amount.isFinite()) { "amount must be finite" }
+    }
+
     /** Format as a display string with currency symbol. */
     fun formatDisplay(): String = MoneyAmount(amount, currency).formatDisplay()
 

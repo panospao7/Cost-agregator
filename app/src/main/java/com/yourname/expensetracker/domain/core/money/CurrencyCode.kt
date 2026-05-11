@@ -16,7 +16,7 @@ value class CurrencyCode(val code: String) : Comparable<CurrencyCode> {
 
     init {
         require(code.length == 3) { "Currency code must be 3 letters: '$code'" }
-        require(code.all { it.isUpperCase() }) { "Currency code must be uppercase: '$code'" }
+        require(code.all { it in 'A'..'Z' }) { "Currency code must be uppercase ASCII: '$code'" }
         require(code.none { it.isDigit() }) { "Currency code must not contain digits: '$code'" }
     }
 
@@ -60,7 +60,7 @@ value class CurrencyCode(val code: String) : Comparable<CurrencyCode> {
             if (input.isNullOrBlank()) return null
             val upper = input.trim().uppercase()
             if (upper.length != 3) return null
-            if (!upper.all { it.isUpperCase() }) return null
+            if (!upper.all { it in 'A'..'Z' }) return null
             return try {
                 CurrencyCode(upper)
             } catch (e: IllegalArgumentException) {

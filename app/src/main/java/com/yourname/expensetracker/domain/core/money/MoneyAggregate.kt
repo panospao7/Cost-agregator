@@ -32,6 +32,10 @@ data class MoneyAggregate(
     val warningMessage: String? = null
 ) {
 
+    init {
+        require(displayAmount.isFinite()) { "displayAmount must be finite" }
+    }
+
     /** Format the display total with currency symbol. */
     fun formatDisplay(): String = MoneyAmount(displayAmount, displayCurrency).formatDisplay()
 

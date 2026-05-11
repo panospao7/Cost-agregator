@@ -576,7 +576,7 @@ class WarrantyTrackerRepository @Inject constructor(
             .getOrDefault("EUR")
         val receipt = ScannedReceipt(
             imagePath = null,
-            rawOcrText = "Manual warranty entry: $productName",
+            rawOcrText = "Manual warranty entry",
             parsedTotal = null,
             parsedMerchant = merchantName,
             parsedDate = purchaseDate,
