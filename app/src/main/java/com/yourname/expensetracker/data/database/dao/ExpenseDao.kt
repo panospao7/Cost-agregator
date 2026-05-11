@@ -267,6 +267,20 @@ interface ExpenseDao {
     @Query("SELECT SUM(${EFFECTIVE_AMOUNT_SQL}) FROM expenses WHERE ${SPENDING_TYPE_SQL} AND isNotMine = 0")
     fun getTotalSpentFlow(): Flow<Double?>
 
+    /**
+     * Cheap invalidation-only query that emits whenever the expenses table is
+     * modified (INSERT/UPDATE/DELETE). Room invalidates all table observers on
+     * any mutation, so even SELECT COUNT(*) triggers a re-emission.
+     *
+     * Used by [BudgetRepository.getBudgetStatuses] as a reactive trigger so
+     * budget statuses recompute when expenses change, without performing a
+     * deprecated raw-money aggregate query.
+     *
+     * P2-18: Replaces [getTotalSpentFlow] as the budget-status invalidation trigger.
+     */
+    @Query("SELECT COUNT(*) FROM expenses")
+    fun observeExpenseMutationClock(): Flow<Int>
+
     @Query("DELETE FROM expenses")
     suspend fun deleteAll()
 

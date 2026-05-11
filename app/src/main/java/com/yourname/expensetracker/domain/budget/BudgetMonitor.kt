@@ -1,13 +1,16 @@
 package com.yourname.expensetracker.domain.budget
 
+import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
+import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.di.IoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancelChildren
@@ -15,6 +18,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.IOException
 import java.net.SocketTimeoutException
@@ -27,7 +31,9 @@ class BudgetMonitor @Inject constructor(
     private val budgetRepository: BudgetRepository,
     private val timeProvider: TimeProvider,
     private val notificationService: NotificationService,
-    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
+    /** P2-20: Durable diagnostic ledger for budget alert decisions. */
+    private val diagnosticEventDao: PipelineDiagnosticEventDao
 ) {
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + ioDispatcher)
@@ -151,6 +157,23 @@ class BudgetMonitor @Inject constructor(
                 }
             }
             Timber.e(lastException, "checkBudgets failed after $MAX_RETRIES attempts")
+            // P2-20: Durable record of failed budget check
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    diagnosticEventDao.insert(
+                        PipelineDiagnosticEvent(
+                            pipeline = "budget_monitor",
+                            stage = "CHECK_FAILED",
+                            outcome = "ERROR",
+                            exceptionClass = lastException?.javaClass?.name,
+                            exceptionMessage = lastException?.message,
+                            timestamp = timeProvider.now()
+                        )
+                    )
+                } catch (e: Exception) {
+                    Timber.w(e, "Failed to write CHECK_FAILED diagnostic event")
+                }
+            }
         }
     }
 
@@ -190,6 +213,21 @@ class BudgetMonitor @Inject constructor(
     ) {
         currentCoroutineContext().ensureActive()
         val budget = status.budget
+
+        // P2-20: Durable diagnostic — record that a budget check started.
+        withContext(Dispatchers.IO) {
+            diagnosticEventDao.insert(
+                PipelineDiagnosticEvent(
+                    pipeline = "budget_monitor",
+                    stage = "CHECK_STARTED",
+                    outcome = "OK",
+                    entityType = "Budget",
+                    entityId = budget.id,
+                    timestamp = now
+                )
+            )
+        }
+
         // P6-P1-2: Use adjustedSpendBreakdown.effectiveSpend when available (shared-expense offset),
         // falling back to raw spentAmount.BudgetStatus.spentAmount is gross spend and does not
         // account for shared-expense reimbursements, which can trigger false threshold alerts.
@@ -203,30 +241,91 @@ class BudgetMonitor @Inject constructor(
         val effectiveLimit = status.effectiveLimit
         val adjustedPercent = if (effectiveLimit > 0) (spent / effectiveLimit).toFloat() else 0f
 
+        // P2-20: Write a diagnostic event recording the budget check attempt.
+        // Writes on Dispatchers.IO to avoid blocking the monitor coroutine.
+        withContext(Dispatchers.IO) {
+            diagnosticEventDao.insert(
+                PipelineDiagnosticEvent(
+                    pipeline = "budget_monitor",
+                    stage = "STATUS_COMPUTED",
+                    outcome = "OK",
+                    entityType = "BudgetStatus",
+                    entityId = budget.id,
+                    confidence = adjustedPercent.toDouble().coerceIn(0.0, 2.0).toFloat(),
+                    message = "spent=%.2f limit=%.2f percent=%.2f partial=%b"
+                        .format(spent, effectiveLimit, adjustedPercent, status.isPartial),
+                    timestamp = now
+                )
+            )
+        }
+
         // BUD-3: Only update notification timestamp if the notification was
         // actually delivered (e.g. user has notifications disabled).
 
         when {
             adjustedPercent >= 1.0f -> {
                 if (shouldNotify(budget.lastExceededNotifiedAt, now, periodStart, budget.period)) {
-                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Exceeded!", categoryName, adjustedPercent)) {
+                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Exceeded!", categoryName, adjustedPercent)
+                    if (delivered) {
                         budgetRepository.updateExceededNotification(budget.id, now)
                     }
+                    writeAlertDiagnostic(budget.id, "EXCEEDED", adjustedPercent, delivered, now)
+                } else {
+                    writeAlertDiagnostic(budget.id, "EXCEEDED_THROTTLED", adjustedPercent, false, now)
                 }
             }
             adjustedPercent >= budget.notifyAtCritical && adjustedPercent < 1.0f -> {
                 if (shouldNotify(budget.lastCriticalNotifiedAt, now, periodStart, budget.period)) {
-                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Critical Budget Warning", categoryName, adjustedPercent)) {
+                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Critical Budget Warning", categoryName, adjustedPercent)
+                    if (delivered) {
                         budgetRepository.updateCriticalNotification(budget.id, now)
                     }
+                    writeAlertDiagnostic(budget.id, "CRITICAL", adjustedPercent, delivered, now)
+                } else {
+                    writeAlertDiagnostic(budget.id, "CRITICAL_THROTTLED", adjustedPercent, false, now)
                 }
             }
             adjustedPercent >= budget.notifyAtWarning && adjustedPercent < budget.notifyAtCritical -> {
                 if (shouldNotify(budget.lastWarningNotifiedAt, now, periodStart, budget.period)) {
-                    if (sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Warning", categoryName, adjustedPercent)) {
+                    val delivered = sendNotification(budget.id.toInt(), budget, spent, effectiveLimit, "Budget Warning", categoryName, adjustedPercent)
+                    if (delivered) {
                         budgetRepository.updateWarningNotification(budget.id, now)
                     }
+                    writeAlertDiagnostic(budget.id, "WARNING", adjustedPercent, delivered, now)
+                } else {
+                    writeAlertDiagnostic(budget.id, "WARNING_THROTTLED", adjustedPercent, false, now)
                 }
+            }
+        }
+    }
+
+    /**
+     * P2-20: Writes a durable diagnostic event for every alert decision
+     * (sent, throttled, or failed) so budget-alert behaviour is auditable
+     * without relying on ephemeral Timber logs.
+     */
+    private fun writeAlertDiagnostic(
+        budgetId: Long,
+        stage: String,
+        percentUsed: Float,
+        delivered: Boolean,
+        now: Long
+    ) {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                diagnosticEventDao.insert(
+                    PipelineDiagnosticEvent(
+                        pipeline = "budget_monitor",
+                        stage = stage,
+                        outcome = if (delivered) "DELIVERED" else "NOT_DELIVERED",
+                        entityType = "Budget",
+                        entityId = budgetId,
+                        confidence = percentUsed.toDouble().coerceIn(0.0, 2.0).toFloat(),
+                        timestamp = now
+                    )
+                )
+            } catch (e: Exception) {
+                Timber.w(e, "Failed to write budget-monitor diagnostic event (stage=%s)", stage)
             }
         }
     }

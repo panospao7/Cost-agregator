@@ -79,18 +79,23 @@ class BudgetForecastingEngine @Inject constructor(
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
             .getOrDefault("EUR")
 
-        // P0-5: Normalize budget.amount to home currency if budget.currency differs
+        // Calculate active budget period window first — we need periodEnd for the
+        // rate-as-of lookup so the budget limit is converted at the same
+        // historical rate basis as expenses (P6-P1-06).
+        val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
+
+        // P6-P1-06: Normalize budget.amount to home currency using the period-end
+        // historical rate via convertAsOf(). Falls back to latest rate if no
+        // historical rate exists for the target period.
         val normalizedBudgetAmount = runCatching {
-            val converted = currencyConverter.convert(budget.amount, budget.currency, homeCurrency)
+            val converted = currencyConverter.convertAsOf(budget.amount, budget.currency, homeCurrency, periodEnd)
+                ?: currencyConverter.convert(budget.amount, budget.currency, homeCurrency)
             converted?.convertedAmount ?: budget.amount
         }.getOrElse {
             Timber.w("BudgetForecastingEngine: Failed to convert budget.amount=%.2f %s to %s, using raw amount",
                 budget.amount, budget.currency, homeCurrency)
             budget.amount
         }
-
-        // Calculate active budget period window and elapsed segment for spent-to-date.
-        val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
         val elapsedEnd = now.coerceAtMost(periodEnd)
         val spentToDate = getSpentAmount(budget, periodStart, elapsedEnd, homeCurrency)
         val remainingForecastDays = TimePeriodUtils.daysBetween(elapsedEnd, periodEnd).coerceAtLeast(0).toDouble()

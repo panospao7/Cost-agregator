@@ -301,10 +301,11 @@ class BudgetViewModel @Inject constructor(
     /**
      * Apply all pending autopilot recommendations.
      *
-     * BUD-21: The entire apply-all loop is now wrapped in a single database
-     * transaction so that all budget updates succeed or fail atomically.
-     * Previously, partial failures could leave some budgets updated and others
-     * not, creating an inconsistent state.
+     * BUD-21 / P2-19: The entire apply-all loop is wrapped in a single database
+     * transaction using [BudgetRepository.updateBudgetOrThrow] which propagates
+     * exceptions so Room rolls back the transaction on any per-budget failure.
+     * Previously, [updateBudget] caught exceptions internally and returned
+     * Result.Error, so the transaction committed partial updates.
      */
     fun applyAllAutopilotRecommendations() {
         viewModelScope.launch {
@@ -313,12 +314,6 @@ class BudgetViewModel @Inject constructor(
                 val recommendations = _autopilotRecommendations.value?.categoryRecommendations ?: emptyList()
                 val activeBudgets = budgetRepository.getActiveBudgets()
                 
-                // BUD-21: Wrap the entire bulk update in a database transaction
-                //
-                // TODO (P2-19): updateBudget() catches exceptions internally and returns
-                // Result.Error instead of throwing, so the transaction does NOT actually
-                // roll back on per-budget failure. Replace with a throw-on-failure variant
-                // (e.g. updateBudgetOrThrow) or use DAO-level writes within the transaction.
                 database.withTransaction {
                     for (rec in recommendations) {
                         val budget = activeBudgets.find { 
@@ -328,15 +323,12 @@ class BudgetViewModel @Inject constructor(
                         
                         if (budget != null) {
                             val updatedBudget = budget.copy(amount = rec.recommendedBudget)
-                            val result = budgetRepository.updateBudget(updatedBudget)
-                            if (result is com.yourname.expensetracker.domain.model.Result.Error) {
-                                Timber.w(result.exception, "Autopilot update failed for budget ${budget.id}")
-                            }
+                            budgetRepository.updateBudgetOrThrow(updatedBudget)
                         }
                     }
                 }
                 
-                // Clear all recommendations after applying
+                // Clear all recommendations after successful transaction
                 _autopilotRecommendations.value = BudgetAutopilotRecommendations(
                     categoryRecommendations = emptyList(),
                     totalCurrentBudget = 0.0,
@@ -345,6 +337,8 @@ class BudgetViewModel @Inject constructor(
                     confidence = 0.0,
                     generatedAt = timeProvider.now()
                 )
+            } catch (e: Exception) {
+                Timber.e(e, "Autopilot apply-all transaction failed, rolled back")
             } finally {
                 _autopilotLoading.value = false
             }

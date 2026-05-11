@@ -87,7 +87,7 @@ class BudgetRepository @Inject constructor(
     fun getBudgetStatuses(): Flow<List<BudgetStatus>> {
         // Reactive trigger from ExpenseDao: re-emits whenever the expenses table
         // is invalidated by Room (any INSERT/UPDATE/DELETE on expenses). The value
-        // (Double?) is discarded — it is used only for invalidation so that budget
+        // (Int) is discarded — it is used only for invalidation so that budget
         // statuses recompute when expenses change, not just at midnight or on
         // budget/category table changes.
         //
@@ -96,10 +96,10 @@ class BudgetRepository @Inject constructor(
         //   2. Budget or category table changes (activeBudgetsFlow / getAllFlow())
         // Expense changes were invisible until the next day boundary.
         //
-        // TODO (P2-18): getTotalSpentFlow() is a deprecated raw aggregate query used
-        // only as an invalidation trigger. Replace with a cheap invalidation-only
-        // query like `SELECT MAX(updatedAt) FROM expenses` to avoid raw-money paths.
-        val expenseInvalidationTrigger: Flow<*> = expenseDao.getTotalSpentFlow().map { }
+        // P2-18: Uses observeExpenseMutationClock() — a cheap SELECT COUNT(*)
+        // invalidation-only query — instead of the deprecated getTotalSpentFlow()
+        // which performed an unnecessary raw-money aggregate.
+        val expenseInvalidationTrigger: Flow<*> = expenseDao.observeExpenseMutationClock().map { }
         return timeBoundaryTicker.dayBoundaryTicks().flatMapLatest { _ ->
             combine(
                 budgetDao.getActiveBudgetsFlow(),
@@ -158,9 +158,15 @@ class BudgetRepository @Inject constructor(
         // Use aggregate SQL queries instead of fetching raw rows.
         // getCategorySpentInPeriod / getTotalForPeriod already filter by
         // transactionType = 'PURCHASE' AND isNotMine = 0 and use effectiveAmount.
-        val initialLimitAggregate = convertBudgetAmountToHomeCurrencyLatest(
+        //
+        // P6-P1-06: Convert the budget limit at the period-end historical rate
+        // so it matches the rate basis of expenses (converted at transaction-date
+        // rates). Falls back to latest rate if no historical rate exists, with a
+        // partial/warning marker.
+        val initialLimitAggregate = convertBudgetAmountToHomeCurrencyAsOf(
             amount = budget.amount,
-            sourceCurrency = budget.currency
+            sourceCurrency = budget.currency,
+            asOfMillis = periodEnd
         )
         val spentAggregate = getAggregateSpent(budget.categoryId, window.start, window.end)
         val spent = spentAggregate.displayAmount
@@ -307,10 +313,12 @@ class BudgetRepository @Inject constructor(
     /**
      * Converts a budget amount to home currency using the **latest** available exchange rate.
      *
-     * TODO (P6-P1-06): Historical period reports should use `convertAsOf(amount, from, to, atMillis = periodEnd)`
-     * so budget limits are converted at period-appropriate historical rates consistent with
-     * how expenses are converted. This method is intentionally named `Latest` to make the rate
-     * basis explicit — callers doing historical reporting must not use it.
+     * This method is intentionally named `Latest` to make the rate basis explicit.
+     * Callers doing historical/period reporting must use [convertBudgetAmountToHomeCurrencyAsOf]
+     * instead so budget limits are converted at period-appropriate historical rates consistent
+     * with how expenses are converted.
+     *
+     * @see convertBudgetAmountToHomeCurrencyAsOf
      */
     private suspend fun convertBudgetAmountToHomeCurrencyLatest(
         amount: Double,
@@ -333,6 +341,71 @@ class BudgetRepository @Inject constructor(
         }
 
         Timber.w("Failed to convert budget amount $amount from $sourceCurrency to $homeCurrency, using original amount")
+        return com.yourname.expensetracker.domain.core.money.MoneyAggregate.singleCurrency(
+            amount = amount,
+            currency = CurrencyCode(sourceCurrency)
+        ).copy(
+            isPartial = true,
+            warningMessage = "Budget limit could not be converted from $sourceCurrency to $homeCurrency"
+        )
+    }
+
+    /**
+     * Converts a budget amount to home currency using the exchange rate valid
+     * as of [asOfMillis] (epoch ms).
+     *
+     * This is the period-appropriate conversion for [createBudgetStatus] and
+     * historical/period reports. It uses [CurrencyConverter.convertAsOf] so
+     * budget limits are converted at the same historical rate basis as expenses
+     * (i.e. the rate closest to, but not after, the period end).
+     *
+     * Falls back to the latest rate via [convertBudgetAmountToHomeCurrencyLatest]
+     * if no historical rate is available, but marks the result as partial with a
+     * warning so consumers know the rate basis is not period-accurate.
+     *
+     * @param amount       the budget amount in its source currency
+     * @param sourceCurrency the budget's declared currency code
+     * @param asOfMillis   epoch-ms timestamp for the rate lookup (typically periodEnd)
+     * @return a [MoneyAggregate] in home currency, possibly partial if conversion failed
+     */
+    private suspend fun convertBudgetAmountToHomeCurrencyAsOf(
+        amount: Double,
+        sourceCurrency: String,
+        asOfMillis: Long
+    ): com.yourname.expensetracker.domain.core.money.MoneyAggregate {
+        val homeCurrency = resolveHomeCurrency()
+        if (sourceCurrency.equals(homeCurrency, ignoreCase = true)) {
+            return com.yourname.expensetracker.domain.core.money.MoneyAggregate.singleCurrency(
+                amount = amount,
+                currency = CurrencyCode(homeCurrency)
+            )
+        }
+
+        // Try historical rate first
+        val historical = currencyConverter.convertAsOf(amount, sourceCurrency, homeCurrency, asOfMillis)
+        if (historical != null) {
+            return com.yourname.expensetracker.domain.core.money.MoneyAggregate.singleCurrency(
+                amount = historical.convertedAmount,
+                currency = CurrencyCode(homeCurrency)
+            )
+        }
+
+        // Fall back to latest rate, but mark as partial with a warning
+        val latest = currencyConverter.convert(amount, sourceCurrency, homeCurrency)
+        if (latest != null) {
+            Timber.d("Historical rate unavailable for %s → %s as of %d; falling back to latest rate",
+                sourceCurrency, homeCurrency, asOfMillis)
+            return com.yourname.expensetracker.domain.core.money.MoneyAggregate.singleCurrency(
+                amount = latest.convertedAmount,
+                currency = CurrencyCode(homeCurrency)
+            ).copy(
+                isPartial = true,
+                warningMessage = "Budget limit converted at latest rate instead of period-end " +
+                    "historical rate (as-of $asOfMillis)"
+            )
+        }
+
+        Timber.w("Failed to convert budget amount $amount from $sourceCurrency to $homeCurrency (as of $asOfMillis), using original amount")
         return com.yourname.expensetracker.domain.core.money.MoneyAggregate.singleCurrency(
             amount = amount,
             currency = CurrencyCode(sourceCurrency)
@@ -389,6 +462,29 @@ class BudgetRepository @Inject constructor(
             Timber.e(e, "Failed to update budget ${budget.id}")
             com.yourname.expensetracker.domain.model.Result.Error(e, "Failed to update budget")
         }
+    }
+
+    /**
+     * Throwing variant of [updateBudget] for use inside transactions that must
+     * roll back on failure.
+     *
+     * P2-19: Unlike [updateBudget] which catches exceptions and returns
+     * [Result.Error], this method propagates exceptions so they are visible
+     * to Room's [androidx.room.withTransaction] and the outer transaction
+     * rolls back correctly.
+     *
+     * @throws IllegalArgumentException if budget amount is invalid
+     * @throws IllegalStateException if writes are blocked (restore mode)
+     */
+    suspend fun updateBudgetOrThrow(budget: Budget) {
+        writeBarrier.checkWritesAllowed("BudgetRepository.updateBudgetOrThrow")
+        if (budget.amount <= 0.0) throw IllegalArgumentException("Budget amount must be greater than zero")
+        val resetBudget = budget.copy(
+            lastWarningNotifiedAt = null,
+            lastCriticalNotifiedAt = null,
+            lastExceededNotifiedAt = null
+        )
+        budgetDao.updateAndEnforceActiveScope(resetBudget)
     }
 
     suspend fun deleteBudget(budget: Budget): com.yourname.expensetracker.domain.model.Result<Unit> {
