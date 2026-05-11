@@ -124,6 +124,7 @@ interface MerchantNormalizationDao {
                 normalizedKey = normalizedKey,
                 canonicalId = canonicalId,
                 isUserDefined = isUserDefined,
+                createdAt = timestamp,
                 lastUsedAt = timestamp
             ))
         }

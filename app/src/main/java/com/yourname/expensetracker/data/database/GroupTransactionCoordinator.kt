@@ -29,6 +29,7 @@ import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -144,6 +145,7 @@ class GroupTransactionCoordinator @Inject constructor(
     private val transactionEventDao: TransactionEventDao,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val writeBarrier: DatabaseWriteBarrier,
+    private val timeProvider: TimeProvider,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : DomainCoordinator {
 
@@ -245,7 +247,8 @@ class GroupTransactionCoordinator @Inject constructor(
                     groupId = groupId,
                     name = name,
                     email = email,
-                    isCurrentUser = isCurrentUser
+                    isCurrentUser = isCurrentUser,
+                    joinedAt = timeProvider.now()
                 ).let { m ->
                     // G01: currentUserGroupKey invariant — isCurrentUser=true members
                     // get currentUserGroupKey set to the owning group's primary key.

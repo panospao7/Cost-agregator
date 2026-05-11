@@ -6,6 +6,8 @@ import com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import com.yourname.expensetracker.data.database.dao.GroupSettlementDao
 import com.yourname.expensetracker.data.database.entity.GroupLifecycleEventEntity
+import com.yourname.expensetracker.data.database.AppDatabase
+import androidx.room.withTransaction
 import com.yourname.expensetracker.domain.groups.GroupBalanceCalculator
 import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.GroupSettlementEntity
@@ -71,6 +73,7 @@ class GroupLifecycleCoordinator @Inject constructor(
     private val timeProvider: TimeProvider,
     private val currencySettingsRepository: CurrencySettingsRepository,
     private val writeBarrier: DatabaseWriteBarrier,
+    private val database: AppDatabase,
     private val budgetMonitor: dagger.Lazy<com.yourname.expensetracker.domain.budget.BudgetMonitor>,
     private val sideEffectDispatcher: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
@@ -134,7 +137,9 @@ class GroupLifecycleCoordinator @Inject constructor(
         val result = groupCoordinator.createGroupWithMembers(name, description, currency, members)
         if (result is GroupCreationResult.Success) {
             // G02: Deferred side-effects and lifecycle event for GROUP_CREATED
-            emitLifecycleEvent(result.groupId, "GROUP_CREATED")
+            database.withTransaction {
+                emitLifecycleEvent(result.groupId, "GROUP_CREATED")
+            }
         }
         result
     }
@@ -185,7 +190,9 @@ class GroupLifecycleCoordinator @Inject constructor(
 
         val result = groupCoordinator.addMemberToGroup(groupId, name, email, isCurrentUser)
         if (result is Result.Success) {
-            emitLifecycleEvent(groupId, "GROUP_MEMBER_ADDED")
+            database.withTransaction {
+                emitLifecycleEvent(groupId, "GROUP_MEMBER_ADDED")
+            }
         }
         result
     }
@@ -221,19 +228,22 @@ class GroupLifecycleCoordinator @Inject constructor(
                 "Cannot remove the current user. Transfer ownership to another member first."
             ))
         }
-        // G05: Balance gate — check if member has outstanding balance
-        val balance = balanceCalculator.calculateMemberBalance(groupId, memberId)
-        if (!balance.isSettled) {
-            return@withContext Result.Error(GroupValidationError.Unknown(
-                "Cannot remove member with outstanding balance of %.2f %s (paid %.2f - owed %.2f)"
-                    .format(balance.netBalance, balance.currency, balance.paidTotal, balance.owedShareTotal)
-            ))
-        }
 
-        // Delegate removal to DAO directly
-        memberDao.delete(member)
-        emitLifecycleEvent(groupId, "GROUP_MEMBER_REMOVED")
-        Result.Success(Unit)
+        // E4-006: Wrap balance check + delete + event in transaction to prevent race
+        database.withTransaction {
+            // G05: Balance gate — check if member has outstanding balance
+            val balance = balanceCalculator.calculateMemberBalance(groupId, memberId)
+            if (!balance.isSettled) {
+                return@withTransaction Result.Error(GroupValidationError.Unknown(
+                    "Cannot remove member with outstanding balance of %.2f %s (paid %.2f - owed %.2f)"
+                        .format(balance.netBalance, balance.currency, balance.paidTotal, balance.owedShareTotal)
+                ))
+            }
+
+            memberDao.delete(member)
+            emitLifecycleEvent(groupId, "GROUP_MEMBER_REMOVED")
+            Result.Success(Unit)
+        }
     }
 
     /**
@@ -292,7 +302,9 @@ class GroupLifecycleCoordinator @Inject constructor(
 
         if (result is GroupExpenseCreationResult.Success) {
             val expenseId = result.expenseId
-            emitLifecycleEvent(groupId, "GROUP_EXPENSE_ADDED", expenseId = expenseId)
+            database.withTransaction {
+                emitLifecycleEvent(groupId, "GROUP_EXPENSE_ADDED", expenseId = expenseId)
+            }
         }
         result
     }
@@ -310,7 +322,9 @@ class GroupLifecycleCoordinator @Inject constructor(
         val group = groupDao.getGroupById(groupId) ?: return@withContext false
         val result = groupCoordinator.archiveGroup(groupId)
         if (result) {
-            emitLifecycleEvent(groupId, "GROUP_ARCHIVED")
+            database.withTransaction {
+                emitLifecycleEvent(groupId, "GROUP_ARCHIVED")
+            }
         }
         result
     }
@@ -345,7 +359,9 @@ class GroupLifecycleCoordinator @Inject constructor(
         // All user-facing deletions must go through this method which enforces archive-then-delete.
         val result = groupCoordinator.permanentlyDeleteGroup(groupId)
         if (result) {
-            emitLifecycleEvent(groupId, "GROUP_DELETED")
+            database.withTransaction {
+                emitLifecycleEvent(groupId, "GROUP_DELETED")
+            }
         }
         result
     }
@@ -414,15 +430,12 @@ class GroupLifecycleCoordinator @Inject constructor(
             notes = notes
         )
 
-        val settlementId = settlementDao.insert(settlement)
+        val settlementId = database.withTransaction {
+            val id = settlementDao.insert(settlement)
+            emitLifecycleEvent(groupId, "SETTLEMENT_RECORDED", settlementId = id)
+            id
+        }
 
-        // G04-FIXED: Settlement persistence is the balance update.
-        // Group balances are computed from GroupExpense records minus
-        // GroupSettlement records. Writing the settlement here ensures
-        // the next balance recalculation via SettlementCalculator or
-        // SharedExpenseManager reflects the net position including this settlement.
-
-        emitLifecycleEvent(groupId, "SETTLEMENT_RECORDED", settlementId = settlementId)
         settlementId
     }
 

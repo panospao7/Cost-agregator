@@ -18,7 +18,10 @@ class MerchantCategoryRepository @Inject constructor(
 
     suspend fun insert(mapping: MerchantCategory) {
         writeBarrier.checkWritesAllowed("MerchantCategoryRepository.insert")
-        dao.insert(mapping)
+        val rowId = dao.insert(mapping)
+        if (rowId <= 0L) {
+            timber.log.Timber.w("MerchantCategoryRepository: insert conflict ignored for pattern='%s'", mapping.merchantPattern)
+        }
     }
 
     suspend fun deleteAll() {

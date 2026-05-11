@@ -513,11 +513,14 @@ class CategorizationEngine @Inject constructor(
         // C04-FIXED: Central invalidation point for all category-cache consumers.
         // Call after any MerchantCategoryRepository/CategoryRepository write,
         // seed operation, or direct DAO write that changes category/merchant mappings.
-        cachedMappings = null
-        cachedPatternsSet = null
-        cachedCategoryMap = null
-        cachedCategoryNameToId = null
-        lastCacheTime = 0
+        // E3-006: Synchronized to prevent concurrent partial reads during invalidation.
+        synchronized(this) {
+            cachedMappings = null
+            cachedPatternsSet = null
+            cachedCategoryMap = null
+            cachedCategoryNameToId = null
+            lastCacheTime = 0
+        }
         Timber.d("CategorizationEngine: all caches invalidated")
     }
 
