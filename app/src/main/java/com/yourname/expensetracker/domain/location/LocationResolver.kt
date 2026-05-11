@@ -83,8 +83,8 @@ class LocationResolver @Inject constructor(
         suspend fun getDeviceLocation(): Pair<Double, Double>? {
             if (!hasLoadedDeviceLocation) {
                 val decision = privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION)
-                if (decision is PrivacyDecision.Denied) {
-                    Timber.d("Device GPS denied by privacy gate: ${decision.reason}")
+                if (decision.blocksExecution()) {
+                    Timber.d("Device GPS denied by privacy gate: ${decision.reason()}")
                     hasLoadedDeviceLocation = true
                     return null
                 }
@@ -332,13 +332,9 @@ class LocationResolver @Inject constructor(
         bounded: Boolean = false
     ): GeocodeAttempt {
         // Check privacy gate before making external geocoding API calls
-        when (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)) {
-            is PrivacyDecision.Denied -> {
-                Log.d(TAG, "EXTERNAL_GEOCODING denied by privacy gate — skipping geocoding")
-                return GeocodeAttempt.NoMatch
-            }
-            is PrivacyDecision.Allowed -> { /* proceed */ }
-            else -> { Log.d(TAG, "EXTERNAL_GEOCODING privacy check inconclusive — skipping geocoding"); return GeocodeAttempt.NoMatch }
+        when (val geoDecision = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)) {
+            PrivacyDecision.Allowed -> { /* proceed */ }
+            else -> { Log.d(TAG, "EXTERNAL_GEOCODING blocked/skipped by privacy gate: ${geoDecision.reason()} — skipping geocoding"); return GeocodeAttempt.NoMatch }
         }
         return when (val result = geocodingService.search(name, biasLat, biasLon, cityHint, bounded)) {
             is GeocodingLookupResult.Success -> result.result

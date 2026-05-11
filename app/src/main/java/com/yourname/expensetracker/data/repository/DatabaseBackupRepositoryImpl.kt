@@ -328,9 +328,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     PrivacyCapability.ENCRYPTED_BACKUP,
                     mapOf("operation" to "export")
                 )
-                if (encryptedDecision is PrivacyDecision.Denied) {
+                if (encryptedDecision.blocksExecution()) {
                     return@withContext Result.failure(
-                        Exception("Encrypted backup denied by privacy gate: ${encryptedDecision.reason}")
+                        Exception("Encrypted backup denied by privacy gate: ${encryptedDecision.reason()}")
                     )
                 }
             } else {
@@ -339,9 +339,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     PrivacyCapability.RAWBACKUP_EXPORT,
                     mapOf("operation" to "export")
                 )
-                if (rawDecision is PrivacyDecision.Denied) {
+                if (rawDecision.blocksExecution()) {
                     return@withContext Result.failure(
-                        Exception("Plaintext backup denied by privacy gate: ${rawDecision.reason}")
+                        Exception("Plaintext backup denied by privacy gate: ${rawDecision.reason()}")
                     )
                 }
             }

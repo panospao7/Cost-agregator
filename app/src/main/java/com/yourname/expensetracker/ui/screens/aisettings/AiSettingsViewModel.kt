@@ -252,9 +252,9 @@ class AiSettingsViewModel @Inject constructor(
     private suspend fun probeCloudProviderConnection(apiKey: String): String? = withContext(Dispatchers.IO) {
         // PRIVACY GATE: Check privacy gate before probing cloud provider
         val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
-        if (gateCheck is PrivacyDecision.Denied) {
-            Timber.w("AiSettingsViewModel: provider probe blocked by privacy gate: ${gateCheck.reason}")
-            return@withContext "Cloud AI is blocked by privacy settings: ${gateCheck.reason}"
+        if (gateCheck.blocksExecution()) {
+            Timber.w("AiSettingsViewModel: provider probe blocked by privacy gate: ${gateCheck.reason()}")
+            return@withContext "Cloud AI is blocked by privacy settings: ${gateCheck.reason()}"
         }
 
         val request = Request.Builder()

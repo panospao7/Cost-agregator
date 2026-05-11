@@ -622,7 +622,7 @@ class SpendingMapViewModel @Inject constructor(
         viewModelScope.launch {
             // Check app-level GPS privacy before accessing device location
             val decision = privacyGate.check(PrivacyCapability.DEVICE_GPS_LOCATION)
-            if (decision is PrivacyDecision.Denied) {
+            if (decision.blocksExecution()) {
                 Timber.d("Device GPS denied by privacy settings")
                 _state.update {
                     it.copy(snackbarMessage = "Device GPS is disabled in Privacy settings.")

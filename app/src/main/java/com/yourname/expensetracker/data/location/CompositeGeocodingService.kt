@@ -68,7 +68,7 @@ class CompositeGeocodingService @Inject constructor(
         bounded: Boolean
     ): GeocodingLookupResult {
         // P8-P1-8: Gate external geocoding via PrivacyGate
-        if (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING) is PrivacyDecision.Denied) {
+        if (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING).blocksExecution()) {
             Log.w(TAG, "search blocked by privacy gate: EXTERNAL_GEOCODING denied")
             return GeocodingLookupResult.Failure(GeocodingError.Disabled)
         }
@@ -123,7 +123,7 @@ class CompositeGeocodingService @Inject constructor(
      */
     override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingLookupResult {
         // P8-P1-8: Gate external geocoding via PrivacyGate
-        if (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING) is PrivacyDecision.Denied) {
+        if (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING).blocksExecution()) {
             Log.w(TAG, "reverseGeocode blocked by privacy gate: EXTERNAL_GEOCODING denied")
             return GeocodingLookupResult.Failure(GeocodingError.Disabled)
         }
@@ -152,7 +152,7 @@ class CompositeGeocodingService @Inject constructor(
         useGoogle: Boolean
     ): GeocodingBatchResult {
         // P8-P1-8: Gate external geocoding via PrivacyGate
-        if (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING) is PrivacyDecision.Denied) {
+        if (privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING).blocksExecution()) {
             Log.w(TAG, "searchMultiple blocked by privacy gate: EXTERNAL_GEOCODING denied")
             return GeocodingBatchResult.Failure(GeocodingError.Disabled)
         }

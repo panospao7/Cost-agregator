@@ -43,8 +43,8 @@ class CurrencyRatesRepositoryImpl @Inject constructor(
     override suspend fun refresh(homeCurrency: String): Int = withContext(ioDispatcher) {
         // PRIVACY GATE: Check privacy gate before external HTTP call
         val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
-        if (gateCheck is PrivacyDecision.Denied) {
-            Timber.w("CurrencyRatesRepository: blocked by privacy gate: ${gateCheck.reason}")
+        if (gateCheck.blocksExecution()) {
+            Timber.w("CurrencyRatesRepository: blocked by privacy gate: ${gateCheck.reason()}")
             return@withContext 0
         }
 

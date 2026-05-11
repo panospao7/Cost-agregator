@@ -86,8 +86,8 @@ class NominatimGeocodingService @Inject constructor(
         bounded: Boolean
     ): GeocodingLookupResult {
         val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
-        if (gateCheck is PrivacyDecision.Denied) {
-            Log.w(TAG, "Geocoding blocked by privacy gate: ${gateCheck.reason}")
+        if (gateCheck.blocksExecution()) {
+            Log.w(TAG, "Geocoding blocked by privacy gate: ${gateCheck.reason()}")
             return GeocodingLookupResult.Failure(GeocodingError.Disabled)
         }
         return withRateLimit {
@@ -115,8 +115,8 @@ class NominatimGeocodingService @Inject constructor(
         useGoogle: Boolean
     ): GeocodingBatchResult {
         val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
-        if (gateCheck is PrivacyDecision.Denied) {
-            Log.w(TAG, "Geocoding blocked by privacy gate: ${gateCheck.reason}")
+        if (gateCheck.blocksExecution()) {
+            Log.w(TAG, "Geocoding blocked by privacy gate: ${gateCheck.reason()}")
             return GeocodingBatchResult.Failure(GeocodingError.Disabled)
         }
         return withRateLimit {
@@ -133,8 +133,8 @@ class NominatimGeocodingService @Inject constructor(
 
     override suspend fun reverseGeocode(lat: Double, lon: Double): GeocodingLookupResult {
         val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
-        if (gateCheck is PrivacyDecision.Denied) {
-            Log.w(TAG, "Reverse geocoding blocked by privacy gate: ${gateCheck.reason}")
+        if (gateCheck.blocksExecution()) {
+            Log.w(TAG, "Reverse geocoding blocked by privacy gate: ${gateCheck.reason()}")
             return GeocodingLookupResult.Failure(GeocodingError.Disabled)
         }
         return withRateLimit {

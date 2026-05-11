@@ -45,7 +45,7 @@ class OverpassNearbyService @Inject constructor(
     ): NearbyPoiResult {
         // Check privacy gate before making Overpass API calls
         when (privacyGate.check(PrivacyCapability.OVERPASS_API)) {
-            is PrivacyDecision.Denied -> {
+            is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
                 Log.w(TAG, "OVERPASS_API denied by privacy gate — skipping Overpass query")
                 return NearbyPoiResult.Failure(GeocodingError.Disabled)
             }

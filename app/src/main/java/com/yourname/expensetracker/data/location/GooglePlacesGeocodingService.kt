@@ -57,8 +57,8 @@ class GooglePlacesGeocodingService @Inject constructor(
         bounded: Boolean
     ): GeocodingLookupResult {
         val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
-        if (gateCheck is PrivacyDecision.Denied) {
-            Log.w(TAG, "Google Places geocoding blocked by privacy gate: ${gateCheck.reason}")
+        if (gateCheck.blocksExecution()) {
+            Log.w(TAG, "Google Places geocoding blocked by privacy gate: ${gateCheck.reason()}")
             return GeocodingLookupResult.Failure(GeocodingError.Disabled)
         }
         return when (val result = searchMultiple(merchantName, biasLat, biasLon, limit = 1)) {
@@ -75,8 +75,8 @@ class GooglePlacesGeocodingService @Inject constructor(
         useGoogle: Boolean
     ): GeocodingBatchResult {
         val gateCheck = privacyGate.check(PrivacyCapability.EXTERNAL_GEOCODING)
-        if (gateCheck is PrivacyDecision.Denied) {
-            Log.w(TAG, "Google Places geocoding blocked by privacy gate: ${gateCheck.reason}")
+        if (gateCheck.blocksExecution()) {
+            Log.w(TAG, "Google Places geocoding blocked by privacy gate: ${gateCheck.reason()}")
             return GeocodingBatchResult.Failure(GeocodingError.Disabled)
         }
         if (apiKey.isBlank()) {

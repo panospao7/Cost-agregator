@@ -163,10 +163,10 @@ class ExportOptionsViewModel @Inject constructor(
                 PrivacyCapability.RAWBACKUP_EXPORT,
                 mapOf("operation" to "export")
             )
-            if (privacyDecision is PrivacyDecision.Denied) {
+            if (privacyDecision.blocksExecution()) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Export denied by privacy settings: ${privacyDecision.reason}"
+                    error = "Export denied by privacy settings: ${privacyDecision.reason()}"
                 )
                 return@launch
             }

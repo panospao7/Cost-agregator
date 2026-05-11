@@ -120,8 +120,8 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
                     // WRN-15: Future cloud fallback — when local confidence is below threshold
                     // AND cloud AI is enabled in settings, attempt cloud-based extraction here.
                     val cloudDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION)
-                    if (cloudDecision is PrivacyDecision.Denied) {
-                        Timber.tag(TAG).d("Cloud warranty extraction denied: ${cloudDecision.reason}")
+                    if (cloudDecision.blocksExecution()) {
+                        Timber.tag(TAG).d("Cloud warranty extraction denied: ${cloudDecision.reason()}")
                         return WarrantyCreationResult.Failure("Cloud AI warranty extraction disabled by privacy settings")
                     }
                     Timber.tag(TAG).d("WRN-15: Local confidence=%.1f%% below threshold=%.1f%% — cloud fallback would be attempted here if enabled", extractionData.confidence, HIGH_CONFIDENCE_THRESHOLD)
