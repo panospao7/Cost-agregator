@@ -624,8 +624,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         }
 
         val now = timeProvider.now()
-        val ocrStorageMode = settings.rawOcrStorageMode
-        val effectiveOcrText = RawContentSanitizer.sanitizeRawOcr(rawEmailBody, ocrStorageMode)
+        val effectiveOcrText = RawContentSanitizer.sanitizeRawOcr(rawEmailBody, emailStorageMode)
         var savedId = 0L
         var expenseIds = mutableListOf<Long>()
         var capturedDuplicate: EmailReceiptProcessResult.Duplicate? = null
@@ -657,8 +656,8 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             savedId = scannedReceiptDao.insert(receipt)
             require(savedId > 0) { "Email receipt insert failed (conflict): sender=$sender" }
 
-            val sanitizedSender = RawContentSanitizer.sanitizeEmailSender(sender, ocrStorageMode) ?: ""
-            val sanitizedSubject = RawContentSanitizer.sanitizeEmailSubject(subject, ocrStorageMode) ?: ""
+            val sanitizedSender = RawContentSanitizer.sanitizeEmailSender(sender, emailStorageMode) ?: ""
+            val sanitizedSubject = RawContentSanitizer.sanitizeEmailSubject(subject, emailStorageMode) ?: ""
 
             val emailSource = EmailReceiptSource(
                 receiptId = savedId,
@@ -706,7 +705,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     date = emailData.date,
                     transactionType = TransactionType.PURCHASE,
                     source = ExpenseSource.EMAIL_RECEIPT,
-                    notes = "Imported from email: $subject",
+                    notes = "Email receipt from ${provider.ifBlank { "unknown" }}",
                     scannedReceiptId = savedId,
                     deduplicationMode = DeduplicationMode.STANDARD
                 )

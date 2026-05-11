@@ -77,6 +77,19 @@ interface PlannedExpenseDao {
     """)
     suspend fun unlinkActualExpense(id: Long, updatedAt: Long): Int
 
+    @Query("DELETE FROM planned_expenses WHERE sourceRecurringRuleId = :ruleId")
+    suspend fun deleteByRecurringRuleId(ruleId: Long)
+
+    @Query("""
+        UPDATE planned_expenses
+        SET status = 'CANCELLED',
+            openSourceOccurrenceKey = NULL,
+            updatedAt = :updatedAt
+        WHERE sourceRecurringRuleId = :ruleId
+          AND status = 'PLANNED'
+    """)
+    suspend fun cancelPlannedByRecurringRuleId(ruleId: Long, updatedAt: Long): Int
+
     /**
      * P4-CURRENT-003: Fulfill a planned expense by its occurrence key.
      * Marks it as FULFILLED when the occurrence transitions to PAID.

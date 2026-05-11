@@ -93,6 +93,9 @@ interface RecurringReminderDeliveryDao {
     """)
     suspend fun recoverStaleClaimedDeliveries(staleThreshold: Long): Int
 
+    @Query("DELETE FROM recurring_reminder_deliveries WHERE occurrenceId IN (:occurrenceIds)")
+    suspend fun deleteByOccurrenceIds(occurrenceIds: List<Long>)
+
     /**
      * P4-CURRENT-003: Suppress open deliveries for an occurrence by ID.
      * Used when materializer auto-PAIDs an occurrence.

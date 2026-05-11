@@ -11,7 +11,8 @@ class ManualRecurringExpenseRepository @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
     private val dao: ManualRecurringExpenseDao,
     private val lifecycleEventDao: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao,
-    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider,
+    private val ruleLifecycleCoordinator: dagger.Lazy<com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator>
 ) {
     /**
      * Returns only active recurring expenses.
@@ -33,24 +34,20 @@ class ManualRecurringExpenseRepository @Inject constructor(
     }
 
     suspend fun setActiveStatus(id: Long, isActive: Boolean) {
+        if (!isActive) {
+            ruleLifecycleCoordinator.get().deactivateRule(id)
+            return
+        }
         writeBarrier.checkWritesAllowed("ManualRecurringExpenseRepository.setActiveStatus")
         val now = timeProvider.now()
-        val eventType = if (isActive) "RULE_ACTIVATED" else "RULE_DEACTIVATED"
         val existing = dao.getById(id)
-        writeLifecycleEvent(id, eventType, now,
-            """{"merchant":"${existing?.merchant.orEmpty()}","isActive":$isActive}""")
-        dao.setActiveStatus(id, isActive)
+        writeLifecycleEvent(id, "RULE_ACTIVATED", now,
+            """{"merchant":"${existing?.merchant.orEmpty()}","isActive":true}""")
+        dao.setActiveStatus(id, true)
     }
 
     suspend fun deleteById(id: Long) {
-        writeBarrier.checkWritesAllowed("ManualRecurringExpenseRepository.deleteById")
-        val now = timeProvider.now()
-        val existing = dao.getById(id)
-        if (existing != null) {
-            writeLifecycleEvent(id, "RULE_DELETED", now,
-                """{"merchant":"${existing.merchant}","amount":${existing.amount},"frequency":"${existing.frequency}"}""")
-        }
-        dao.deleteById(id)
+        ruleLifecycleCoordinator.get().deleteRule(id)
     }
 
     suspend fun updateNextDate(id: Long, nextDate: Long) {

@@ -267,7 +267,14 @@ class ExportOptionsViewModel @Inject constructor(
                     isLoading = false,
                     exportPreview = previewCollector.value,
                     exportPreviewTruncated = previewCollector.truncated,
-                    exportFilePath = exportFile.absolutePath,
+                    exportFilePath = if (encryptExport) {
+                        val encrypted = withContext(Dispatchers.IO) {
+                            exportDataRepository.encryptExportFile(exportFile, "default")
+                        }
+                        encrypted.absolutePath
+                    } else {
+                        exportFile.absolutePath
+                    },
                     exportSuccess = true,
                     error = null
                 )

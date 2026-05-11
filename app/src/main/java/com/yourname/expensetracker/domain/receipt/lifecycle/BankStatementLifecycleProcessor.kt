@@ -383,7 +383,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         confidence = tx.confidence,
                         packageName = "statement.import",
                         notificationTitle = "Bank Statement Transaction",
-                        notificationText = "Imported from statement: ${tx.merchant}"
+                        notificationText = "Imported from statement: ${tx.merchant}",
+                        createdAt = timeProvider.now()
                     )
 
                     pendingReviewDao.insert(review)
@@ -441,6 +442,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
             Result.success(result)
 
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "BankStatementLifecycleProcessor failed for URI: %s", uri)
             Result.failure(e)
         }

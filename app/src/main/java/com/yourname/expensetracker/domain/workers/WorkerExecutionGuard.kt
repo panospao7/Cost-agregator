@@ -44,6 +44,14 @@ class WorkerExecutionGuard @Inject constructor(
         request: WorkerGuardRequest,
         block: suspend () -> T
     ): WorkerGuardResult<T> {
+        // P9-CURRENT-001: Check write barrier BEFORE logging a run record
+        try {
+            writeBarrier.checkWritesAllowed(request.workerName)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            return WorkerGuardResult.Skipped("Write barrier denied: ${e.message}")
+        }
+
         val run = workerRunLogger.start(request.workerName)
         try {
             if (!request.allowDuringBackupExport &&
@@ -52,7 +60,6 @@ class WorkerExecutionGuard @Inject constructor(
                 run.skipped("RESTORE_BLOCKED")
                 return WorkerGuardResult.Skipped("Backup exporting")
             }
-            writeBarrier.checkWritesAllowed(request.workerName)
 
             val spec = WorkerSpec.DEFAULTS[request.workerName]
             if (spec != null && !spec.enabled) {

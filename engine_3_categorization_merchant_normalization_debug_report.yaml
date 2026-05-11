@@ -1,0 +1,540 @@
+meta:
+  repo: "panospao7/Cost-agregator"
+  commit: "4113e38f0d838a29d2d13d82a483ba573280721c"
+  engine_group: "#3 - Categorization / Merchant Normalization"
+  review_mode: "static GitHub source/debugging session; no local Gradle/device execution"
+  verdict: "IMPROVED_BUT_NOT_CLEAN"
+  summary: >
+    Categorization and merchant normalization are improved: category-name lookup is
+    normalized, merchant canonical creation timestamps are set, MerchantCategoryDao
+    insert now returns IDs, repositories use DatabaseWriteBarrier, semantic ambiguity
+    is partly surfaced, fuzzy search is prefix-filtered, and post-create merchant
+    stats update exists. However, the engine is not clean. Several tracker items are
+    only partially fixed or still TODO: alias linking still has silent same-key/same-
+    canonical no-op paths, MerchantAlias.createdAt remains unset in DAO link path,
+    cache invalidation is inconsistent, repository insert ignores DAO conflict return,
+    normalizedCanonicalName remains non-unique, source-authority learning is incomplete,
+    historical category backfill is a no-op, and decision tracing is in-memory/raw.
+
+tracker_reconciliation:
+  C01_alias_linking_conflict:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL_BUG_REMAINS"
+    notes:
+      - "MerchantNormalizer.linkAliasToCanonical checks existing canonical/searchKey and alias with same normalizedKey pointing to different canonical."
+      - "But MerchantNormalizationDao.linkAliasToCanonical still checks only rawName."
+      - "If rawName differs but normalizedKey already exists for the same canonical, DAO insert is ignored; occurrenceCount/lastUsedAt/rawName variant are not updated."
+      - "MerchantNormalizationRepository.linkAliasToCanonical remains public and returns Unit, so direct callers bypass AliasLinkResult."
+
+  C02_merchant_timestamps:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "MerchantNormalizer.createNewMerchant sets MerchantCanonical.createdAt/updatedAt."
+      - "MerchantNormalizationDao.linkAliasToCanonical creates MerchantAlias with lastUsedAt but does not set createdAt."
+      - "Direct DAO/repository insert paths can still persist createdAt=0 unless caller fills it."
+
+  C03_category_name_lookup_case_sensitive:
+    tracker_status: "FIXED"
+    actual_status: "MOSTLY_FIXED"
+    notes:
+      - "CategorizationEngine caches categoryNameToId using trim().lowercase()."
+      - "getCategoryIdByName also lowercases lookup input."
+      - "Remaining design issue: CategoryRepository.addCategory lowercases display name, so display identity and normalized key are still conflated."
+
+  C04_cache_invalidation:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL"
+    notes:
+      - "CategoryRepository.addCategory/mergeCategories/deleteCategory call categorizationEngine.invalidateCache()."
+      - "CategorizationEngine.learnMerchantCategory invalidates."
+      - "But MerchantCategoryRepository.insert/deleteAll do not invalidate."
+      - "CategoryRepository.ensureDefaultCategories inserts merchant mappings and backfills normalizedCanonicalName without invalidating CategorizationEngine."
+      - "invalidateAllCaches() is non-suspend and does not take cacheMutex."
+
+  C05_MerchantCategoryDao_insert_conflict:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "MerchantCategoryDao.insert() now returns Long and insertAll() returns List<Long>."
+      - "MerchantCategoryRepository.insert(mapping) still returns Unit and ignores -1L conflicts."
+      - "CategorizationEngine.learnMerchantCategory logs learned mapping even when insert was ignored."
+
+  C06_normalizedCanonicalName_ambiguous:
+    tracker_status: "TODO_ONLY"
+    actual_status: "OPEN"
+    notes:
+      - "MerchantCategory.normalizedCanonicalName has a non-unique index."
+      - "MerchantCategoryDao.getCategoryByNormalizedCanonical() returns a single nullable row with no ORDER BY."
+      - "DAO comments still say unique migration/policy is TODO."
+
+  C07_fuzzy_search_top_1000:
+    tracker_status: "DEFERRED"
+    actual_status: "OPEN_BY_DESIGN"
+    notes:
+      - "MerchantNormalizer BK-tree still uses repository.getTopMerchants(1000)."
+      - "Long-tail fuzzy matching remains deferred."
+
+  C08_merchant_stats_update:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL"
+    notes:
+      - "TransactionSideEffectDispatcher.dispatchOnCreated now calls incrementMerchantStats()."
+      - "dispatchOnUpdated has TODO and does not apply deltas/recompute."
+      - "dispatchOnDeleted does not decrement/recompute stats."
+      - "Stats use raw expense.amount, not effectiveAmount or currency-aware totals."
+
+  C09_autoCreate_false_placeholder:
+    tracker_status: "FIXED"
+    actual_status: "MOSTLY_FIXED"
+    notes:
+      - "createPlaceholder() now sets normalizedName=key and searchKey=key."
+      - "This fixes the old display-name placeholder issue."
+      - "Some direct repository lookup paths still use exact merchantPattern rather than the full CategorizationEngine matching logic."
+
+  C10_auto_learning_reinforces_mistakes:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL_BUG_REMAINS"
+    notes:
+      - "HybridExpenseClassifier.learnFromCorrection gates global learning if correction conflicts with an existing mapping."
+      - "TransactionSideEffectDispatcher still learns merchant pattern after every created expense with categoryId, regardless of source/confidence/review status."
+      - "MerchantCategory has confidence/timesUsed but no source, isUserDefined, lastConfirmedAt, negativeVotes, or provisional state."
+
+  C11_category_corrections_update_old_rows:
+    tracker_status: "DEFERRED"
+    actual_status: "OPEN"
+    notes:
+      - "CategoryRepository.updateExpenseCategoryBulk() is explicitly a no-op stub."
+      - "CategoryDao.mergeCategories directly updates expenses and other tables, bypassing TransactionLifecycleCoordinator events/side effects."
+
+  C12_semantic_keyword_collisions:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL"
+    notes:
+      - "SemanticKeywordMatcher.findBestMatch() now detects close competitors and returns isAmbiguous + alternatives."
+      - "CategorizationResult exposes isAmbiguous/requiresReview but not alternatives."
+      - "HybridExpenseClassifier flattens dictionary result into ClassificationResult and does not clearly preserve requiresReview."
+
+  C13_context_inference:
+    tracker_status: "DEFERRED"
+    actual_status: "OPEN"
+    notes:
+      - "CategorizationEngine.categorizeWithContext() still accepts only merchant, amount, timestamp."
+      - "No source/package/notificationText/receiptItems/location/paymentMethod/transactionType context object exists."
+
+  C14_debug_trace_persistence:
+    tracker_status: "TODO_ONLY"
+    actual_status: "OPEN_WITH_PRIVACY_RISK"
+    notes:
+      - "CategorizationEngine has an in-memory ArrayDeque ring buffer."
+      - "It stores raw merchant names."
+      - "It uses System.currentTimeMillis instead of TimeProvider."
+      - "It is not durable, not privacy-sanitized, not queryable, and not mutex-protected."
+
+positive_findings:
+  - "MerchantNormalizer.createNewMerchant sets canonical createdAt/updatedAt."
+  - "MerchantNormalizationRepository uses DatabaseWriteBarrier for canonical/alias writes."
+  - "MerchantCategoryRepository and CategoryRepository use DatabaseWriteBarrier for several writes."
+  - "Category name lookup in CategorizationEngine is now case-insensitive."
+  - "MerchantCategoryDao.insert()/insertAll() now return Room insert results."
+  - "SemanticKeywordMatcher can detect ambiguous close semantic matches."
+  - "CategorizationResult has isAmbiguous/requiresReview/confidence."
+  - "TransactionSideEffectDispatcher updates merchant canonical stats after expense creation."
+  - "HybridExpenseClassifier validates ML category IDs against active categories."
+  - "HybridExpenseClassifier avoids overriding an existing different mapping from a single correction."
+  - "MerchantNormalizer has creationMutex for canonical creation."
+  - "MerchantNormalizer fuzzy match ranking is deterministic."
+
+issues:
+  - id: "E3-CURRENT-001"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Same normalizedKey + same canonical alias path silently no-ops"
+    evidence:
+      - "MerchantNormalizer only conflicts when existing alias/canonical points to a different canonicalId."
+      - "MerchantNormalizationDao.linkAliasToCanonical checks existing alias by rawName only."
+      - "MerchantAlias.normalizedKey is unique."
+      - "If rawName='MCDONALDS' and normalizedKey='mcdonalds' already exists for canonical 1, insertAlias is ignored."
+    impact:
+      - "Alias occurrenceCount and lastUsedAt are not updated."
+      - "Alternate rawName spelling is lost."
+      - "Caller gets AliasLinkResult.Success because getAliasByNormalizedKey returns the old row."
+    fix:
+      - "Move full rawName+normalizedKey resolution into DAO/repository transaction."
+      - "If existing normalizedKey points to same canonical, update occurrenceCount/lastUsedAt and optionally append rawName variant to an alias-variant table."
+    tests:
+      - "linkAlias_sameNormalizedKey_sameCanonical_updates_existing_alias_count"
+      - "linkAlias_sameNormalizedKey_sameCanonical_does_not_report_false_success"
+
+  - id: "E3-CURRENT-002"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Public repository linkAliasToCanonical bypasses AliasLinkResult"
+    evidence:
+      - "MerchantNormalizationRepository.linkAliasToCanonical(...) returns Unit."
+      - "It delegates directly to MerchantNormalizationDao.linkAliasToCanonical()."
+      - "MerchantNormalizer.linkAliasToCanonical() is the only path returning AliasLinkResult."
+    impact:
+      - "Any caller using repository directly can reintroduce silent conflict/no-op behavior."
+    fix:
+      - "Make repository method return AliasLinkResult and own the conflict transaction."
+      - "Make DAO low-level method private/unavailable outside repository if possible."
+    tests:
+      - "repository_linkAlias_returns_conflict_or_updated_result"
+      - "no_production_call_to_dao_linkAliasToCanonical"
+
+  - id: "E3-CURRENT-003"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "MerchantAlias.createdAt remains 0 in link path"
+    evidence:
+      - "MerchantAlias entity says createdAt must be timeProvider.now(); default is 0L."
+      - "MerchantNormalizationDao.linkAliasToCanonical() creates MerchantAlias(... lastUsedAt=timestamp) but does not pass createdAt."
+    impact:
+      - "Alias timeline, retention, backup verification, and debug sorting can be wrong."
+    fix:
+      - "Pass createdAt=timestamp on new alias insert."
+      - "Add migration/backfill for existing aliases with createdAt=0."
+    tests:
+      - "linkAliasToCanonical_newAlias_sets_createdAt"
+      - "migration_backfills_alias_createdAt_zero"
+
+  - id: "E3-CURRENT-004"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "MerchantCategoryRepository ignores insert conflict results"
+    evidence:
+      - "MerchantCategoryDao.insert() returns Long."
+      - "MerchantCategoryRepository.insert(mapping) returns Unit and ignores DAO result."
+      - "CategorizationEngine.learnMerchantCategory() logs success regardless of insert outcome."
+    impact:
+      - "User corrections and auto-learning can appear successful while DB ignored the row."
+    fix:
+      - "Return LearnMerchantCategoryResult.Inserted/Updated/Conflict/Ignored."
+      - "Update existing mapping when user-confirmed correction intentionally changes category."
+    tests:
+      - "learnMerchantCategory_duplicate_reports_conflict_not_success"
+      - "user_confirmed_mapping_updates_existing_row"
+
+  - id: "E3-CURRENT-005"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Category/merchant cache invalidation is still inconsistent"
+    evidence:
+      - "MerchantCategoryRepository.insert/deleteAll do not call categorizationEngine.invalidateCache()."
+      - "CategoryRepository.ensureDefaultCategories() inserts merchantCategoryDao.insertAll() and updateNormalizedCanonicalName() without invalidating CategorizationEngine."
+      - "CategorizationEngine comments still mark C04 TODO."
+    impact:
+      - "New or changed mappings can be invisible for up to 5 minutes."
+      - "Deleted/merged categories can leave stale category maps in memory."
+    fix:
+      - "Create CategoryMappingWriter/CategoryCatalogInvalidator."
+      - "Every category and merchant-category mutation emits one invalidation event."
+      - "Remove direct DAO mutation paths from normal code."
+    tests:
+      - "seed_defaults_invalidates_categorization_cache"
+      - "merchantCategoryRepository_insert_invalidates_cache"
+      - "delete_mapping_invalidates_cache_immediately"
+
+  - id: "E3-CURRENT-006"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "invalidateAllCaches is non-suspend and not mutex-protected"
+    evidence:
+      - "CategorizationEngine.getCacheData() updates cached fields under cacheMutex."
+      - "invalidateAllCaches() mutates cached fields without cacheMutex."
+    impact:
+      - "Concurrent categorize/invalidate can observe partially-cleared cache state."
+    fix:
+      - "Make invalidateAllCaches suspend and use cacheMutex.withLock."
+      - "Or use immutable AtomicReference<CacheData>."
+    tests:
+      - "concurrent_categorize_and_invalidate_has_no_partial_cache_state"
+
+  - id: "E3-CURRENT-007"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "normalizedCanonicalName lookup remains ambiguous"
+    evidence:
+      - "MerchantCategory normalizedCanonicalName is only indexed, not unique."
+      - "DAO query returns one MerchantCategory for normalizedCanonicalName without ORDER BY."
+    impact:
+      - "Two patterns canonicalizing to same merchant can produce nondeterministic category decisions."
+    fix:
+      - "Either add unique index after migration cleanup, or return all candidates and resolve by source/confidence/timesUsed/updatedAt."
+    tests:
+      - "normalizedCanonicalName_duplicate_candidates_resolved_deterministically"
+      - "migration_enforces_unique_normalizedCanonicalName_if_policy_chosen"
+
+  - id: "E3-CURRENT-008"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Auto-learning after every created expense is still source-blind"
+    evidence:
+      - "TransactionSideEffectDispatcher.dispatchOnCreated learns merchant pattern whenever expense.categoryId != null."
+      - "It receives ExpenseSource but does not use source to decide learning authority."
+      - "MerchantCategory lacks source/provisional/confirmed metadata."
+    impact:
+      - "Auto-accepted notification, OCR, email, bank, or ML guesses can become permanent dictionary mappings."
+    fix:
+      - "Introduce CategorizationLearningPolicy."
+      - "Strong learn only from USER_CONFIRMED, REVIEW_APPROVED, and explicit manual correction."
+      - "Use provisional/weak mappings for auto sources."
+    tests:
+      - "auto_accepted_notification_does_not_strong_learn"
+      - "review_approved_expense_strong_learns"
+      - "manual_user_category_strong_learns"
+
+  - id: "E3-CURRENT-009"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Merchant stats are partial and raw-money based"
+    evidence:
+      - "dispatchOnCreated increments canonical stats using expense.amount."
+      - "dispatchOnUpdated TODO says stats on update not wired."
+      - "dispatchOnDeleted does not adjust stats."
+      - "MerchantCanonical.totalSpent is a bare Double without currency."
+    impact:
+      - "Top merchants/fuzzy ranking can drift after edits/deletes."
+      - "Multi-currency spend stats can be mixed."
+    fix:
+      - "Track occurrence count separately from spend."
+      - "Use effectiveAmount + currency buckets or recompute merchant stats from expenses."
+      - "Handle updates/deletes with delta or scheduled recomputation."
+    tests:
+      - "merchant_stats_update_after_expense_update"
+      - "merchant_stats_update_after_expense_delete"
+      - "merchant_totalSpent_not_raw_mixed_currency"
+
+  - id: "E3-CURRENT-010"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Category correction/backfill is a no-op or lifecycle-bypassing"
+    evidence:
+      - "CategoryRepository.updateExpenseCategoryBulk() logs TODO and does nothing."
+      - "CategoryDao.mergeCategories() directly updates expenses and many tables."
+    impact:
+      - "User correction may only affect future transactions."
+      - "Category merge can mutate historical expenses without TransactionEvent UPDATED or side effects."
+    fix:
+      - "Implement explicit user choice: future-only vs backfill."
+      - "Backfill via TransactionLifecycleCoordinator bulk update with event/side-effect policy."
+    tests:
+      - "always_categorize_merchant_backfills_when_user_chooses_backfill"
+      - "category_merge_writes_transaction_events_or_bulk_event"
+
+  - id: "E3-CURRENT-011"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Semantic ambiguity is flattened before downstream review routing"
+    evidence:
+      - "SemanticKeywordMatcher returns alternatives."
+      - "CategorizationResult keeps isAmbiguous but not alternatives."
+      - "HybridExpenseClassifier.classifyWithMerchantDictionary maps it to ClassificationResult without visible requiresReview."
+    impact:
+      - "Ambiguous 'market/pharmacy/mobile/netflix' cases can still be treated as normal rule matches by callers."
+    fix:
+      - "Add alternatives and requiresReview to ClassificationResult."
+      - "Route ambiguous results to PendingReview unless source is user-confirmed."
+    tests:
+      - "semantic_ambiguous_result_preserves_alternatives"
+      - "ambiguous_keyword_classification_routes_to_review"
+
+  - id: "E3-CURRENT-012"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Context inference remains too narrow"
+    evidence:
+      - "categorizeWithContext(merchant, amount, timestamp) has no source/package/receipt/location/payment context."
+      - "ContextualInferenceEngine is still limited to surname + amount/time style inference."
+    impact:
+      - "Same merchant text from bank notification, receipt, email, location, or transfer context cannot be disambiguated."
+    fix:
+      - "Add CategorizationContext with source, packageName, notificationText, receiptItems, locationCategoryHint, transactionType, paymentMethod, historical correction hints."
+    tests:
+      - "categorization_context_package_changes_ambiguous_mobile_result"
+      - "receipt_item_hint_changes_generic_market_result"
+
+  - id: "E3-CURRENT-013"
+    severity: "P1_PRIVACY"
+    status: "OPEN"
+    title: "Decision trace stores raw merchant names in memory"
+    evidence:
+      - "CategorizationEngine decisionTrace comment says it contains raw merchant names."
+      - "traceDecision() stores '$timestamp|$merchant|$category|$method'."
+    impact:
+      - "Sensitive merchant/counterparty text can be exposed through debug surfaces or memory dumps."
+    fix:
+      - "Use hashed merchant key + short redacted preview governed by privacy settings."
+      - "Prefer typed CategorizationDecisionTrace with retention policy."
+    tests:
+      - "decision_trace_does_not_store_raw_merchant_when_privacy_redacted"
+
+  - id: "E3-CURRENT-014"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Decision trace is not durable and uses wall clock"
+    evidence:
+      - "traceDecision uses System.currentTimeMillis() instead of TimeProvider."
+      - "Trace is an ArrayDeque in memory only."
+      - "No DB entity/ring buffer was found."
+    impact:
+      - "Debugging categorization decisions after restart is impossible."
+      - "Tests are nondeterministic."
+    fix:
+      - "Add CategorizationDecisionTrace table or PipelineDiagnosticEvent path."
+      - "Use TimeProvider."
+    tests:
+      - "categorization_decision_trace_uses_timeProvider"
+      - "categorization_decision_persisted_with_sanitized_fields"
+
+  - id: "E3-CURRENT-015"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "HybridExpenseClassifier swallows CancellationException"
+    evidence:
+      - "HybridExpenseClassifier.classify() catches Exception around nbClassifier.classify()."
+      - "No explicit CancellationException rethrow is visible in that catch."
+    impact:
+      - "Coroutine cancellation can be converted into fallback classification."
+    fix:
+      - "Rethrow CancellationException before fallback."
+    tests:
+      - "hybrid_classifier_cancellation_rethrows"
+
+  - id: "E3-CURRENT-016"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Raw DAO mutation surface remains public"
+    evidence:
+      - "DaoModule provides MerchantCategoryDao and MerchantNormalizationDao directly."
+      - "DAOs expose insert/update/delete methods."
+      - "No static guard was verified."
+    impact:
+      - "Future code can bypass write barrier, conflict policy, timestamp policy, cache invalidation, and learning policy."
+    fix:
+      - "Restrict production writes to repositories/coordinator."
+      - "Add static allowlist for DAO mutators."
+    tests:
+      - "categorization_dao_mutator_guard_blocks_unapproved_callers"
+
+recommended_fix_order:
+  - pr: "PR1"
+    title: "Alias + timestamp correctness"
+    include:
+      - "Repository/DAO linkAliasToCanonical returns AliasLinkResult."
+      - "Resolve by rawName and normalizedKey inside one transaction."
+      - "Update same-canonical normalizedKey hits instead of ignored insert."
+      - "Set MerchantAlias.createdAt."
+    closes:
+      - "E3-CURRENT-001"
+      - "E3-CURRENT-002"
+      - "E3-CURRENT-003"
+
+  - pr: "PR2"
+    title: "Cache and conflict contract"
+    include:
+      - "MerchantCategoryRepository returns insert/update/conflict result."
+      - "All category/merchant mapping writes invalidate CategorizationEngine."
+      - "Make invalidateAllCaches mutex-safe."
+    closes:
+      - "E3-CURRENT-004"
+      - "E3-CURRENT-005"
+      - "E3-CURRENT-006"
+
+  - pr: "PR3"
+    title: "Canonical mapping uniqueness and learning source"
+    include:
+      - "Resolve normalizedCanonicalName ambiguity."
+      - "Add mapping source/provisional/isUserDefined/lastConfirmedAt."
+      - "CategorizationLearningPolicy by source/confidence."
+    closes:
+      - "E3-CURRENT-007"
+      - "E3-CURRENT-008"
+
+  - pr: "PR4"
+    title: "Stats and backfill lifecycle"
+    include:
+      - "Merchant stats update/recompute on create/update/delete."
+      - "Currency/effectiveAmount-aware merchant stats."
+      - "Implement correction backfill through TransactionLifecycleCoordinator."
+    closes:
+      - "E3-CURRENT-009"
+      - "E3-CURRENT-010"
+
+  - pr: "PR5"
+    title: "Ambiguity/context/review routing"
+    include:
+      - "Carry semantic alternatives into ClassificationResult."
+      - "Route ambiguous matches to review."
+      - "Introduce full CategorizationContext."
+    closes:
+      - "E3-CURRENT-011"
+      - "E3-CURRENT-012"
+
+  - pr: "PR6"
+    title: "Diagnostics/privacy/guardrails"
+    include:
+      - "Persist sanitized CategorizationDecisionTrace."
+      - "Use TimeProvider and no raw merchant text."
+      - "Rethrow CancellationException."
+      - "Static guard against raw DAO writes."
+    closes:
+      - "E3-CURRENT-013"
+      - "E3-CURRENT-014"
+      - "E3-CURRENT-015"
+      - "E3-CURRENT-016"
+
+definition_of_done:
+  - "Alias linking cannot silently no-op on rawName or normalizedKey conflicts."
+  - "Every MerchantCanonical and MerchantAlias created by production paths has nonzero timestamps."
+  - "MerchantCategory insert/update reports Inserted/Updated/Conflict/Ignored."
+  - "Every category/mapping mutation invalidates all categorization caches immediately and safely."
+  - "normalizedCanonicalName lookup is unique or deterministically resolved."
+  - "Auto-learning distinguishes user-confirmed, review-approved, manual, ML, OCR, notification, email, and bank sources."
+  - "Ambiguous semantic categorization preserves alternatives and can route to review."
+  - "Merchant stats are correct after create/update/delete and are not raw mixed-currency totals."
+  - "User category corrections can optionally backfill existing expenses through lifecycle events."
+  - "Decision traces are durable, sanitized, TimeProvider-based, and privacy-governed."
+  - "No production code can call raw categorization DAO mutators outside an allowlist."
+  - "CancellationException is not swallowed by classifier/categorization paths."
+
+sources:
+  engine_tracker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/ENGINE_ISSUES_MASTER_TRACKER.md"
+  prior_report:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/debugging/categorization-merchant-normalization-debug-report.md"
+  categorization_engine:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/categorization/CategorizationEngine.kt"
+  merchant_normalizer:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ml/MerchantNormalizer.kt"
+  merchant_normalization_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt"
+  merchant_normalization_dao:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/dao/MerchantNormalizationDao.kt"
+  merchant_alias:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/entity/MerchantAlias.kt"
+  merchant_canonical:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/entity/MerchantCanonical.kt"
+  merchant_category_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/MerchantCategoryRepository.kt"
+  merchant_category_dao:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/dao/MerchantCategoryDao.kt"
+  merchant_category_entity:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/entity/MerchantCategory.kt"
+  category_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt"
+  category_dao:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/dao/CategoryDao.kt"
+  category_entity:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/entity/Category.kt"
+  hybrid_expense_classifier:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/intelligence/ml/HybridExpenseClassifier.kt"
+  transaction_side_effect_dispatcher:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt"
+  semantic_keyword_matcher:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/categorization/SemanticKeywordMatcher.kt"
+  dao_module:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/di/DaoModule.kt"
+  merchant_normalization_dao_test:
+    url: "https://github.com/panospao7/Cost-agregator/blob/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/androidTest/java/com/yourname/expensetracker/data/database/dao/MerchantNormalizationDaoTest.kt"

@@ -1,0 +1,788 @@
+meta:
+  repo: "panospao7/Cost-agregator"
+  commit: "4113e38f0d838a29d2d13d82a483ba573280721c"
+  pipeline: "9 - Workers / Background Jobs"
+  review_mode: "static GitHub source/debugging session; no local Gradle/device execution"
+  verdict: "IMPROVED_BUT_NOT_CLEAN"
+  summary: >
+    Pipeline 9 has improved materially: WorkerRunLogger, WorkerExecutionGuard,
+    WorkerRegistry, BackgroundJobRun wiring, bill reminder claim flow, and unique
+    receipt matching runOnce now exist. However it is not clean. The new worker
+    infrastructure has correctness bugs: run logging writes before the restore
+    write barrier, cancellation leaves RUNNING rows stale, worker counts are
+    always zero, DailyBriefing one-shot scheduling is likely broken by KEEP
+    semantics, restore cancellation is still best-effort, several workers lack
+    mid-run checkpoints, receipt matching can still overlap periodic/runOnce,
+    warranty sent state remains SharedPreferences-based, privacy worker
+    cancellation is hardcoded and partly wrong, and tests are stale.
+
+tracker_reconciliation:
+  P9-P1-01_BackgroundJobRun_table_unused:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL_FIXED_WITH_OBSERVABILITY_GAPS"
+    notes:
+      - "WorkerRunLogger and BackgroundJobRunDao are now wired through WorkerModule."
+      - "All reviewed core workers call WorkerExecutionGuard, which starts a BackgroundJobRun."
+      - "But rowsScanned/rowsUpdated/notificationsSent are never passed from workers, so most runs persist zero counts."
+      - "In-block no-work/skipped cases are recorded as SUCCESS, not SKIPPED_NO_WORK."
+      - "Cancellation rethrows without final status, leaving RUNNING rows."
+
+  P9-P1-02_shared_WorkerExecutionGuard:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL_FIXED_WITH_CONTRACT_BUGS"
+    notes:
+      - "WorkerExecutionGuard exists and is injected in all 7 reviewed workers."
+      - "But it starts DB logging before write-barrier checks."
+      - "requiresNotificationPermission is unused."
+      - "allowDuringBackupExport is ineffective because writeBarrier.checkWritesAllowed() still runs."
+      - "Restore-block exceptions are classified as generic failures, not restore skips."
+
+  P9-P1-03_restore_backup_cancellation_not_barrier:
+    tracker_status: "TODO_ONLY"
+    actual_status: "OPEN_PARTIAL_CHECKPOINTS"
+    notes:
+      - "Some workers call executionGuard.checkpoint() inside loops."
+      - "MerchantKeyBackfillWorker and WarrantyExpirationWorker do not checkpoint before each DB write/side effect."
+      - "RestoreMaintenanceMode.pauseAllWorkers() only calls cancelUniqueWork(), which Android docs describe as best-effort."
+      - "receipt_matching_run_once is not in WorkerSpec.DEFAULTS, so restore pause does not cancel it."
+
+  P9-P1-04_daily_briefing_one_shot_chain_breaks:
+    tracker_status: "TODO_ONLY"
+    actual_status: "OPEN_AND_LIKELY_STILL_BROKEN"
+    notes:
+      - "DailyBriefingWorker schedules next run only after full generation path."
+      - "Fresh artifact and privacy-denied paths do not schedule next."
+      - "Even success path calls scheduleDailyBriefing() while the current unique work is still RUNNING."
+      - "WorkerSpecScheduler.scheduleAtMidnight uses ExistingWorkPolicy.KEEP; Android docs say KEEP does nothing if unfinished unique work already exists."
+
+  P9-P1-05_bill_reminder_static_disabled:
+    tracker_status: "FIXED"
+    actual_status: "FIXED_IN_CODE_BUT_TEST_STALE"
+    notes:
+      - "WorkerSpec.DEFAULTS['bill_reminder_periodic'].enabled is true."
+      - "WorkerIdempotencyTest still asserts bill_reminder_periodic should be disabled, so tests are stale/failing."
+
+  P9-P1-06_bill_reminders_exactly_once:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "BillReminderWorker claims before notify."
+      - "claimDelivery() is atomic on status only."
+      - "No stale CLAIMED recovery exists."
+      - "claimDelivery() does not atomically re-check scheduledAt/snoozedUntil."
+      - "Crash after claim can permanently lose the reminder."
+
+  P9-P1-07_ReceiptMatchingWorker_runOnce_bypass:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL_FIXED"
+    notes:
+      - "runOnce() now uses enqueueUniqueWork('receipt_matching_run_once', KEEP)."
+      - "But it uses a different unique name than periodic 'receipt_matching', so manual and periodic can still overlap."
+
+  P9-P1-08_receipt_matching_outcomes_not_durable:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL"
+    notes:
+      - "Worker-level BackgroundJobRun exists."
+      - "Per-receipt outcomes are mostly not durable: skipped document type, no match, link failure, notification failure."
+      - "saveMatchSuggestion() still mutates ScannedReceipt directly without a receipt event."
+
+  P9-P1-09_warranty_sent_state_outside_DB:
+    tracker_status: "TODO_ONLY"
+    actual_status: "OPEN"
+    notes:
+      - "WarrantyExpirationWorker still uses SharedPreferences."
+      - "NotificationService.sendBudgetAlert() returns DeliveryResult but the worker ignores it."
+      - "State is not in Room backup/restore and can suppress or duplicate notifications incorrectly."
+
+  P9-P1-10_worker_registry_asymmetry:
+    tracker_status: "TODO_ONLY"
+    actual_status: "MOSTLY_FIXED_WITH_GAPS"
+    notes:
+      - "WorkerRegistry exists and AppStartupCoordinator/RestoreMaintenanceMode use it for schedule/resume."
+      - "pauseAllWorkers() still uses WorkerSpec.DEFAULTS.keys."
+      - "No parity test proves WorkerRegistry.entries == WorkerSpec.DEFAULTS.keys."
+      - "Ad-hoc unique work receipt_matching_run_once is not covered."
+
+  P9-P1-11_privacy_changes_cancel_workers:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL_BUGGY"
+    notes:
+      - "PrivacySettingsRepositoryImpl cancels some unique workers on privacy changes."
+      - "It is hardcoded, not WorkerRegistry/spec driven."
+      - "It cancels data_retention when notification capture is disabled."
+      - "It cancels merchant_key_backfill when background location is disabled, although merchant-key backfill is local."
+      - "It does not reschedule workers when privacy is re-enabled."
+
+positive_findings:
+  - "MainApplication provides HiltWorkerFactory for WorkManager."
+  - "WorkerRunLoggerImpl is bound through WorkerModule."
+  - "BackgroundJobRun is registered in AppDatabase and provided via DaoModule."
+  - "All 7 reviewed core workers inject WorkerExecutionGuard."
+  - "WorkerRegistry centralizes startup/restore-resume scheduling."
+  - "RestoreMaintenanceMode now uses WorkerRegistry.scheduleAll()."
+  - "WorkerSpec.DEFAULTS has all 7 core names."
+  - "Bill reminder spec enabled=true with version bump."
+  - "ReceiptMatchingWorker.runOnce() now uses enqueueUniqueWork instead of plain enqueue."
+  - "BillReminderWorker claims reminder delivery before notify."
+  - "DataRetentionWorker and LocationBackfillWorker use mid-loop checkpoints."
+  - "Daily briefing notification delivery path checks DeliveryResult before recording delivered engagement."
+
+issues:
+  - id: "P9-CURRENT-001"
+    severity: "P0_RESTORE_SAFETY"
+    status: "OPEN"
+    title: "WorkerExecutionGuard writes BackgroundJobRun before checking restore/write barrier"
+    evidence:
+      - "WorkerExecutionGuard.runGuarded() calls workerRunLogger.start(workerName) before checking restoreMaintenanceMode or writeBarrier."
+      - "WorkerRunLogger.start() inserts BackgroundJobRun into Room."
+      - "DatabaseWriteBarrier says all non-NORMAL restore/backup modes block writes."
+    impact:
+      - "A worker starting during RESTORE_PREPARING/STAGING/SWAPPING/VERIFYING/RESTART_REQUIRED can write to DB before the barrier is checked."
+      - "If the DB is being swapped or verified, even diagnostic writes can violate restore safety."
+    fix:
+      - "Check restore/write mode before DB logging, or write worker diagnostics to a restore-safe sidecar/log sink."
+      - "If durable skipped diagnostics are required during restore, explicitly design an allowlisted restore-safe diagnostic table/path."
+    tests:
+      - "worker_guard_does_not_insert_BackgroundJobRun_when_restore_mode_blocks_writes"
+      - "worker_guard_restore_skip_uses_restore_safe_diagnostic_only"
+
+  - id: "P9-CURRENT-002"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Restore-blocked workers are classified as FAILED, not SKIPPED_RESTORE"
+    evidence:
+      - "runGuarded() calls writeBarrier.checkWritesAllowed(request.workerName)."
+      - "DatabaseWriteBarrier throws IllegalStateException when mode is not NORMAL."
+      - "WorkerExecutionGuard catch block classifies by message and otherwise calls run.failure(...)."
+      - "Only BACKUP_EXPORTING has a special skipped branch."
+    impact:
+      - "Restore-mode worker starts can persist FAILED rows and return Result.failure instead of a clean skipped terminal state."
+      - "WorkManager may treat restore-blocked work as permanent failure."
+    fix:
+      - "Catch/write-barrier exception as WorkerErrorKind.RestoreBlocked."
+      - "Return WorkerGuardResult.Skipped('RESTORE_BLOCKED') without DB writes unless restore-safe diagnostics are allowed."
+    tests:
+      - "restore_mode_worker_returns_success_skip_not_failure"
+      - "restore_blocked_run_status_is_SKIPPED_RESTORE"
+
+  - id: "P9-CURRENT-003"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Cancellation leaves BackgroundJobRun stuck RUNNING"
+    evidence:
+      - "WorkerExecutionGuard catch block rethrows CancellationException before run.retry/failure/skipped."
+      - "BackgroundJobRunDao has getStaleRunningRuns(), but no startup recovery service was found."
+    impact:
+      - "WorkManager cancellation during restore/backup or OS process death leaves permanent RUNNING rows."
+      - "Worker observability becomes misleading exactly during maintenance events."
+    fix:
+      - "On CancellationException, mark CANCELLED if writes are safe; otherwise use restore-safe stale recovery."
+      - "Add BackgroundJobRecoveryService at startup to mark old RUNNING rows STALE_ABORTED."
+    tests:
+      - "cancelled_worker_marks_run_CANCELLED_or_stale_recovered"
+      - "startup_marks_old_RUNNING_background_job_as_STALE_ABORTED"
+
+  - id: "P9-CURRENT-004"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "DailyBriefing next-run enqueue likely no-ops because KEEP is called while current unique work is unfinished"
+    evidence:
+      - "DailyBriefingWorker calls aiWorkScheduler.scheduleDailyBriefing() before returning from doWork()."
+      - "AiWorkSchedulerImpl delegates to WorkerSpecScheduler.scheduleAtMidnight()."
+      - "scheduleAtMidnight() uses enqueueUniqueWork(workerName, ExistingWorkPolicy.KEEP, request) unless version changed."
+      - "Android WorkManager docs: KEEP does nothing if unfinished work with same unique name exists."
+    impact:
+      - "Daily briefing one-shot chain may stop after the first successful run."
+      - "The existing early-exit bug remains, and success path is also risky."
+    fix:
+      - "Use PeriodicWorkRequest for daily briefing, or schedule a distinct next-run unique name, or use APPEND_OR_REPLACE with a tested chain."
+      - "Add WorkManager integration/Robolectric test proving next work exists after doWork completes."
+    tests:
+      - "daily_briefing_success_enqueues_next_midnight_after_current_work"
+      - "daily_briefing_fresh_artifact_still_schedules_next"
+      - "daily_briefing_privacy_denied_does_not_permanently_break_chain"
+
+  - id: "P9-CURRENT-005"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "DailyBriefing schedules next only after full generation/delivery path"
+    evidence:
+      - "DailyBriefingWorker initializes shouldScheduleNext=false."
+      - "Fresh READY artifact path returns from runGuarded before shouldScheduleNext=true."
+      - "Privacy-denied path is handled by WorkerExecutionGuard before block, so shouldScheduleNext remains false."
+      - "Comment explicitly says do not reschedule on privacy guard denial."
+    impact:
+      - "Fresh artifact, temporary privacy denial, or settings-disabled day can break the one-shot chain."
+      - "User re-enabling AI later may not get a scheduled briefing until app startup resync."
+    fix:
+      - "Separate policy sync from chain continuity."
+      - "For temporary skips, schedule next run; for disabled policy, cancel via SyncProactiveBriefingWorkUseCase."
+    tests:
+      - "daily_briefing_fresh_artifact_schedules_next"
+      - "daily_briefing_privacy_denied_schedules_next_or_policy_sync_cancels_explicitly"
+
+  - id: "P9-CURRENT-006"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "BackgroundJobRun counts are always zero for successful workers"
+    evidence:
+      - "WorkerExecutionGuard.runGuarded() calls run.success() without rowsScanned/rowsUpdated/notificationsSent."
+      - "Worker blocks compute counts locally but cannot pass them to WorkerRunLogger."
+      - "WorkerRunLogger supports counts but no WorkerRunContext exists."
+    impact:
+      - "Run ledger cannot answer how many rows were scanned/updated or notifications sent."
+      - "The tracker item is only superficially fixed."
+    fix:
+      - "Change guard block to receive WorkerRunContext and return WorkerRunOutcome metrics."
+      - "Workers must set counts before finalization."
+    tests:
+      - "data_retention_success_records_purged_counts"
+      - "bill_reminder_success_records_notificationsSent"
+      - "location_backfill_success_records_resolved_failed_skipped_counts"
+
+  - id: "P9-CURRENT-007"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "No-work and domain-skip paths are logged as SUCCESS"
+    evidence:
+      - "LocationBackfillWorker returns from runGuarded when no unlocated expenses exist."
+      - "DataRetentionWorker with zero purge records exits normally."
+      - "ReceiptMatchingWorker no-match/skipped-document cases only Timber-log."
+      - "WorkerExecutionGuard always finalizes normal block completion as SUCCESS."
+    impact:
+      - "BackgroundJobRun cannot distinguish useful success from no-op/skip."
+      - "Debug UI cannot answer why a worker produced no visible changes."
+    fix:
+      - "Add WorkerRunOutcome.Success/SkippedNoWork/SkippedPolicy with metrics."
+      - "Record explicit skip/no-work reasons."
+    tests:
+      - "location_no_unlocated_rows_records_SKIPPED_NO_WORK"
+      - "receipt_matching_no_processable_receipts_records_SKIPPED_NO_WORK"
+
+  - id: "P9-CURRENT-008"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "WorkerExecutionGuard.requiresNotificationPermission is unused"
+    evidence:
+      - "WorkerGuardRequest has requiresNotificationPermission."
+      - "WorkerExecutionGuard never reads this field."
+      - "WarrantyExpirationWorker manually checks NotificationManagerCompat."
+      - "BillReminderWorker does not use guard-level notification permission."
+    impact:
+      - "Notification-capable workers have inconsistent permission behavior and run-ledger semantics."
+      - "Future worker can set requiresNotificationPermission=true and get no check."
+    fix:
+      - "Inject a NotificationPermissionChecker/NotificationDeliveryPort into WorkerExecutionGuard."
+      - "If required permission is missing, record SKIPPED_PERMISSION or FAILED_PERMISSION consistently."
+    tests:
+      - "requiresNotificationPermission_true_blocks_without_permission"
+      - "bill_reminder_permission_denied_records_standard_status"
+      - "warranty_permission_denied_records_standard_status"
+
+  - id: "P9-CURRENT-009"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "allowDuringBackupExport is ineffective"
+    evidence:
+      - "WorkerExecutionGuard has allowDuringBackupExport."
+      - "It skips only the explicit BACKUP_EXPORTING branch when true."
+      - "It then always calls writeBarrier.checkWritesAllowed(), and RestoreMaintenanceMode.isWritesAllowed() is false during BACKUP_EXPORTING."
+    impact:
+      - "No worker can actually be allowlisted for backup-export mode."
+      - "The flag is misleading and untested."
+    fix:
+      - "Make DatabaseWriteBarrier support read-only/write-safe allowlist semantics, or remove allowDuringBackupExport."
+    tests:
+      - "allowDuringBackupExport_worker_can_run_read_only_without_write_barrier_failure"
+      - "write_worker_still_blocked_during_BACKUP_EXPORTING"
+
+  - id: "P9-CURRENT-010"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Restore pause does not cancel receipt_matching_run_once"
+    evidence:
+      - "RestoreMaintenanceMode.pauseAllWorkers() cancels names from WorkerSpec.DEFAULTS.keys."
+      - "ReceiptMatchingWorker.runOnce() uses unique work name 'receipt_matching_run_once'."
+      - "That name is not in WorkerSpec.DEFAULTS."
+    impact:
+      - "Manual one-shot receipt matching can continue during restore even while periodic receipt_matching is cancelled."
+      - "If already running, it receives no cancelUniqueWork signal from maintenance mode."
+    fix:
+      - "Register all ad-hoc unique work names in WorkerRegistry, or make runOnce use the canonical receipt_matching unique work with a mode input."
+      - "pauseAllWorkers() should cancel registry entries including aliases."
+    tests:
+      - "restore_pause_cancels_receipt_matching_run_once"
+      - "all_unique_work_names_have_registry_entries"
+
+  - id: "P9-CURRENT-011"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "ReceiptMatching runOnce can still overlap the periodic worker"
+    evidence:
+      - "Periodic worker unique name is 'receipt_matching'."
+      - "runOnce unique name is 'receipt_matching_run_once'."
+      - "ScannedReceiptDao.getProcessableReceipts() has no claim/MATCHING state."
+    impact:
+      - "Manual run and periodic run can process the same receipt concurrently."
+      - "Both can suggest/link the same receipt or race through ReceiptLinkService."
+    fix:
+      - "Use same unique work name with ExistingWorkPolicy.KEEP/APPEND_OR_REPLACE, or add DB-level per-receipt claim."
+      - "Introduce matchStatus='MATCHING' or receipt_matching_claims table."
+    tests:
+      - "receipt_matching_periodic_and_runOnce_cannot_overlap"
+      - "two_receipt_matching_workers_claim_each_receipt_once"
+
+  - id: "P9-CURRENT-012"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Receipt matching per-receipt outcomes are not durable"
+    evidence:
+      - "ReceiptMatchingWorker logs skipped document type and no match via Timber only."
+      - "Auto-match link failure is only Timber.w."
+      - "saveMatchSuggestion() directly updates ScannedReceipt without ReceiptEvent."
+      - "NotificationService.sendBudgetAlert() result is ignored."
+    impact:
+      - "Cannot debug why a receipt remained unmatched or why notification did not appear."
+      - "Worker-level SUCCESS can hide per-receipt failures."
+    fix:
+      - "Write ReceiptEvent or PipelineDiagnosticEvent for SKIPPED_DOCUMENT_TYPE, NO_MATCH, SUGGESTED, AUTO_MATCH_LINKED, AUTO_MATCH_LINK_FAILED, NOTIFICATION_FAILED."
+    tests:
+      - "receipt_matching_no_match_writes_event"
+      - "receipt_matching_link_failure_writes_event"
+      - "receipt_matching_suggestion_writes_match_suggested_event"
+
+  - id: "P9-CURRENT-013"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Bill reminder CLAIMED rows can get stuck forever"
+    evidence:
+      - "BillReminderWorker TODO says stale CLAIMED reset is not implemented."
+      - "RecurringReminderDelivery has no claimedAt/attemptCount/lastError."
+      - "claimDelivery() sets status='CLAIMED' only."
+    impact:
+      - "Crash after claim but before SENT/FAILED can permanently lose a reminder."
+    fix:
+      - "Add claimedAt, attemptCount, lastError/retryAfter, or a delivery_attempt table."
+      - "Reset stale CLAIMED rows to SCHEDULED/FAILED_RETRYABLE by policy."
+    tests:
+      - "stale_CLAIMED_reminder_requeued"
+      - "crash_after_claim_does_not_permanently_lose_delivery"
+
+  - id: "P9-CURRENT-014"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Bill reminder claim does not atomically re-check due/snooze condition"
+    evidence:
+      - "getDueReminders() filters scheduledAt/snoozedUntil."
+      - "claimDelivery(id) only checks status IN ('SCHEDULED','SNOOZED')."
+    impact:
+      - "A stale due list can claim and send a reminder that was snoozed into the future after the read."
+    fix:
+      - "Change claimDelivery(id, now) to check status and due time in the same UPDATE."
+    tests:
+      - "claim_snoozed_future_delivery_returns_zero"
+      - "claim_scheduled_future_delivery_returns_zero"
+
+  - id: "P9-CURRENT-015"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "MerchantKeyBackfillWorker has no mid-run restore checkpoints"
+    evidence:
+      - "MerchantKeyBackfillWorker loops through batches and calls expenseRepository.updateMerchantKey()."
+      - "It checks isStopped but never calls executionGuard.checkpoint() inside the loop."
+    impact:
+      - "If restore/backup starts after the worker begins, it can continue mutating expenses until WorkManager cancellation takes effect."
+    fix:
+      - "Call executionGuard.checkpoint('merchant_key_backfill') before each batch and before each update."
+      - "Prefer repository write barrier on updateMerchantKey too."
+    tests:
+      - "merchant_key_backfill_stops_before_next_update_when_restore_enters"
+
+  - id: "P9-CURRENT-016"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "WarrantyExpirationWorker has no mid-run restore checkpoints and side effects are not durable"
+    evidence:
+      - "WarrantyExpirationWorker calls reconcileExpiredItems(), sends notifications, writes SharedPreferences, and cleans prefs without executionGuard.checkpoint()."
+      - "It checks restore only once at start via WorkerExecutionGuard."
+    impact:
+      - "Restore can start while warranty worker continues DB/status changes and sends notifications."
+      - "Sent state is outside DB and not recoverable."
+    fix:
+      - "Add checkpoints before reconcile, before each notification, and before sent-state writes."
+      - "Move delivery state to Room and coordinate through a warranty reminder lifecycle service."
+    tests:
+      - "warranty_worker_stops_before_reconcile_when_restore_enters"
+      - "warranty_worker_stops_before_notification_when_restore_enters"
+
+  - id: "P9-CURRENT-017"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Warranty notification state remains SharedPreferences-based and ignores delivery result"
+    evidence:
+      - "WarrantyExpirationWorker stores key '${warranty.id}:7/30' in SharedPreferences."
+      - "NotificationService.sendBudgetAlert() returns DeliveryResult."
+      - "Worker ignores the result and writes prefs immediately after the call."
+    impact:
+      - "If notification delivery fails, reminder can be suppressed anyway."
+      - "DB backup/restore does not preserve warranty notification state, so restored devices can resend."
+    fix:
+      - "Create WarrantyReminderDelivery table keyed by warrantyId + windowDays + expiryDate."
+      - "Record SENT only after DeliveryResult.DELIVERED."
+    tests:
+      - "warranty_notification_NOT_DELIVERED_does_not_mark_sent"
+      - "warranty_sent_state_survives_room_backup_restore"
+
+  - id: "P9-CURRENT-018"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Privacy change worker cancellation is hardcoded and semantically wrong"
+    evidence:
+      - "PrivacySettingsRepositoryImpl.applyPrivacyChange() hardcodes unique names."
+      - "Disabling notificationCapture cancels data_retention."
+      - "Disabling backgroundLocationBackfill cancels merchant_key_backfill."
+      - "It does not reschedule on re-enable."
+    impact:
+      - "Turning off capture can stop sensitive-data purge."
+      - "Local merchant-key repair can be disabled by unrelated location privacy setting."
+      - "Worker policy can drift from WorkerRegistry/WorkerSpec."
+    fix:
+      - "Introduce WorkerRuntimePolicyApplier using WorkerRegistry and per-worker capability metadata."
+      - "Never cancel retention because a source is disabled; enqueue purge on stricter privacy settings."
+      - "Schedule/resume when settings are re-enabled."
+    tests:
+      - "disable_notification_capture_does_not_cancel_data_retention"
+      - "disable_background_location_does_not_cancel_merchant_key_backfill"
+      - "re_enable_background_location_reschedules_location_backfill"
+
+  - id: "P9-CURRENT-019"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "WorkerIdempotencyTest is stale and should fail against current code"
+    evidence:
+      - "WorkerSpec sets bill_reminder_periodic enabled=true."
+      - "WorkerIdempotencyTest asserts bill_reminder_periodic should be disabled by default."
+      - "Test comment says merchant_key_backfill should use REPLACE, but assertion expects KEEP."
+    impact:
+      - "Unit test suite is not aligned with source."
+      - "CI may fail or, if not run, gives false confidence."
+    fix:
+      - "Update tests to current contract: bill reminder enabled by infrastructure, user settings control runtime if needed."
+      - "Add scheduler policy tests for one-shot workers."
+    tests:
+      - "worker_idempotency_tests_match_WorkerSpec_current_contract"
+      - "bill_reminder_spec_enabled_true_test"
+      - "merchant_key_backfill_one_shot_policy_explicit_test"
+
+  - id: "P9-CURRENT-020"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "MerchantKeyBackfill one-shot policy still effectively KEEP unless version changes"
+    evidence:
+      - "WorkerSpec has only ExistingPeriodicWorkPolicy existingWorkPolicy default KEEP."
+      - "WorkerSpecScheduler maps KEEP to ExistingWorkPolicy.KEEP for one-shot workers when version does not change."
+      - "WorkerSpec comment says WRK-N5 use REPLACE for one-shot workers, but no oneShotPolicy exists."
+    impact:
+      - "Manual re-backfill scheduling after completion may be skipped depending WorkManager unique-work state."
+      - "Code comments and runtime policy disagree."
+    fix:
+      - "Add explicit oneShotPolicy: ExistingWorkPolicy."
+      - "Set merchant_key_backfill oneShotPolicy=REPLACE if that is the intended contract."
+    tests:
+      - "merchant_key_backfill_uses_explicit_REPLACE_one_shot_policy"
+      - "one_shot_policy_not_inferred_from_periodic_policy"
+
+  - id: "P9-CURRENT-021"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "WorkerRegistry parity and enabled handling lack enforcement"
+    evidence:
+      - "WorkerRegistry.entries and WorkerSpec.DEFAULTS are separate lists/maps."
+      - "No test was found proving equality."
+      - "WorkerRegistry.scheduleAll() does not itself check spec.enabled; it relies on schedule functions."
+    impact:
+      - "New worker can be paused but not resumed, or resumed but not paused."
+      - "Disabled one-shot ai_daily_briefing path skips without cancelling existing scheduled work."
+    fix:
+      - "Add registry/spec parity unit test."
+      - "Centralize enabled checks and alias names in WorkerRegistry."
+    tests:
+      - "WorkerRegistry_entries_equal_WorkerSpec_DEFAULTS_keys"
+      - "WorkerRegistry_does_not_schedule_disabled_worker"
+      - "scheduleAtMidnight_disabled_cancels_existing_unique_work"
+
+  - id: "P9-CURRENT-022"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "WorkerRunLogger success stores message in errorMessage"
+    evidence:
+      - "WorkerRunLogger.success(..., message) writes errorMessage = message."
+      - "BackgroundJobRun has no successMessage/details field."
+    impact:
+      - "Successful rows can contain an errorMessage, confusing diagnostics."
+    fix:
+      - "Add message/detailsJson column or do not store success message in errorMessage."
+    tests:
+      - "successful_BackgroundJobRun_has_null_errorMessage"
+
+  - id: "P9-CURRENT-023"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "WorkerRunLogger failure can itself leave stale RUNNING rows"
+    evidence:
+      - "WorkerRunLogger.start() is outside WorkerExecutionGuard try/catch."
+      - "run.success/skipped/retry/failure are not wrapped defensively."
+    impact:
+      - "A transient DB error in logger can fail a worker before real work starts or leave RUNNING rows."
+    fix:
+      - "Make logging best-effort or isolate worker run ledger from worker business success."
+      - "If start fails, either continue without runId or return controlled retry."
+    tests:
+      - "logger_start_failure_does_not_crash_noncritical_worker_unless_policy_says_so"
+      - "logger_final_update_failure_is_recovered_by_stale_job_recovery"
+
+  - id: "P9-CURRENT-024"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Shared retry/permanent-failure classifier is too weak"
+    evidence:
+      - "WorkerExecutionGuard.classifyTransient() checks message substrings and IOException/Timeout."
+      - "LocationBackfillWorker throws RuntimeException('Some backfill resolutions failed, will retry'), which does not match transient rules."
+      - "ReceiptMatchingWorker has isPermanentReceiptMatchingFailure() helper but never uses it."
+    impact:
+      - "Retryable domain failures can become permanent FAILED."
+      - "Permanent data conflicts can retry or be hidden inconsistently."
+    fix:
+      - "Introduce WorkerErrorKind and worker-specific classifiers."
+      - "Let workers return WorkerRunOutcome.Retry(reason) without throwing stringly RuntimeException."
+    tests:
+      - "location_partial_retry_returns_Result_retry"
+      - "receipt_matching_permanent_conflict_classified_permanent"
+      - "restore_block_classified_restore_skip"
+
+  - id: "P9-CURRENT-025"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Notification delivery result model is inconsistent across workers"
+    evidence:
+      - "BillReminderWorker uses NotificationManagerCompat directly and boolean SecurityException handling."
+      - "WarrantyExpirationWorker uses NotificationService.sendBudgetAlert but ignores DeliveryResult."
+      - "ReceiptMatchingWorker uses NotificationService.sendBudgetAlert but ignores DeliveryResult."
+      - "DailyBriefing delivery path checks DeliveryResult."
+    impact:
+      - "Sent-state and diagnostics differ by worker."
+      - "Some notification failures are invisible or wrongly marked sent."
+    fix:
+      - "Use one NotificationDeliveryPort returning Delivered/BlockedPermission/Failed."
+      - "Persist result into BackgroundJobRun and feature delivery tables."
+    tests:
+      - "all_worker_notifications_use_delivery_port"
+      - "receipt_matching_notification_failure_records_diagnostic"
+      - "warranty_notification_failure_does_not_record_sent"
+
+  - id: "P9-CURRENT-026"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "DataRetentionWorker scope still incomplete and metrics invisible"
+    evidence:
+      - "DataRetentionWorker TODO says AI artifacts, chat messages, debug diagnostics, and email receipt sources are not covered."
+      - "It purges only raw notifications and scanned_receipts.rawOcrText."
+      - "WorkerRunLogger records zero rowsUpdated."
+    impact:
+      - "User may believe retention is enforced globally while sensitive records remain."
+      - "Run ledger cannot show actual purge counts."
+    fix:
+      - "Add RetentionTarget registry for AI/chat/email/debug/location."
+      - "Record per-target purge counts in BackgroundJobRun details."
+    tests:
+      - "data_retention_purges_email_sources"
+      - "data_retention_purges_ai_artifact_prompts"
+      - "data_retention_records_per_target_counts"
+
+recommended_fix_order:
+  - pr: "PR1"
+    title: "Restore-safe worker guard"
+    include:
+      - "Move write-barrier check before BackgroundJobRun insert."
+      - "Represent restore-block as SKIPPED_RESTORE, not FAILED."
+      - "Handle CancellationException with CANCELLED/stale recovery."
+      - "Make allowDuringBackupExport either real or remove it."
+    closes:
+      - "P9-CURRENT-001"
+      - "P9-CURRENT-002"
+      - "P9-CURRENT-003"
+      - "P9-CURRENT-009"
+
+  - pr: "PR2"
+    title: "Fix DailyBriefing one-shot scheduling contract"
+    include:
+      - "Do not self-enqueue with KEEP while current unique work is unfinished."
+      - "Schedule next on fresh-artifact/temporary skip or move to periodic worker."
+      - "scheduleAtMidnight disabled path cancels existing unique work."
+    closes:
+      - "P9-CURRENT-004"
+      - "P9-CURRENT-005"
+      - "P9-CURRENT-021"
+
+  - pr: "PR3"
+    title: "Worker run outcome and metrics"
+    include:
+      - "WorkerRunContext / WorkerRunOutcome with counts and skip reasons."
+      - "No-work paths recorded as SKIPPED_NO_WORK."
+      - "Success messages not stored in errorMessage."
+      - "Logger failures handled/recovered."
+    closes:
+      - "P9-CURRENT-006"
+      - "P9-CURRENT-007"
+      - "P9-CURRENT-022"
+      - "P9-CURRENT-023"
+
+  - pr: "PR4"
+    title: "Restore/backup running-worker barrier"
+    include:
+      - "Add checkpoints to MerchantKeyBackfillWorker and WarrantyExpirationWorker."
+      - "Register/cancel receipt_matching_run_once."
+      - "WorkerRegistry aliases for all unique work names."
+    closes:
+      - "P9-CURRENT-010"
+      - "P9-CURRENT-015"
+      - "P9-CURRENT-016"
+
+  - pr: "PR5"
+    title: "Receipt matching worker concurrency and events"
+    include:
+      - "Prevent periodic/runOnce overlap."
+      - "Add per-receipt claim/MATCHING state."
+      - "Write durable receipt match outcome events."
+    closes:
+      - "P9-CURRENT-011"
+      - "P9-CURRENT-012"
+
+  - pr: "PR6"
+    title: "Reminder/warranty delivery state machines"
+    include:
+      - "Bill reminder stale CLAIMED recovery and due-checked claim."
+      - "WarrantyReminderDelivery Room table."
+      - "Unified NotificationDeliveryPort."
+    closes:
+      - "P9-CURRENT-013"
+      - "P9-CURRENT-014"
+      - "P9-CURRENT-017"
+      - "P9-CURRENT-025"
+
+  - pr: "PR7"
+    title: "Privacy runtime worker policy"
+    include:
+      - "WorkerRuntimePolicyApplier based on registry/capability metadata."
+      - "Do not cancel data_retention on capture disable."
+      - "Do not cancel merchant_key_backfill on location disable."
+      - "Reschedule on re-enable."
+    closes:
+      - "P9-CURRENT-018"
+
+  - pr: "PR8"
+    title: "Tests and scheduler policy cleanup"
+    include:
+      - "Fix stale WorkerIdempotencyTest."
+      - "Add WorkerRegistry parity tests."
+      - "Add explicit oneShotPolicy."
+      - "Add shared WorkerErrorKind classifier tests."
+      - "Expand DataRetention targets."
+    closes:
+      - "P9-CURRENT-019"
+      - "P9-CURRENT-020"
+      - "P9-CURRENT-024"
+      - "P9-CURRENT-026"
+
+definition_of_done:
+  - "No worker writes BackgroundJobRun or business data before restore/write barrier approval."
+  - "Restore-blocked workers produce SKIPPED_RESTORE or restore-safe diagnostics, not FAILED."
+  - "Cancelled workers do not leave permanent RUNNING rows; startup marks stale RUNNING rows."
+  - "Daily briefing one-shot scheduling is proven by WorkManager test and cannot no-op under KEEP."
+  - "Daily briefing skip/no-work paths do not break future scheduling unless policy explicitly cancels."
+  - "Every worker final run row has accurate rowsScanned/rowsUpdated/notificationsSent and final status."
+  - "No-work paths are SKIPPED_NO_WORK, not generic SUCCESS."
+  - "WorkerRegistry covers every unique work name, including run-once aliases."
+  - "Restore pause cancels periodic and ad-hoc one-shot workers."
+  - "All long-running workers checkpoint before each DB write and external side effect."
+  - "Receipt matching periodic and manual runs cannot overlap on the same receipt."
+  - "Receipt matching writes durable per-receipt outcomes."
+  - "Bill reminders recover stale CLAIMED rows and claim only currently-due deliveries."
+  - "Warranty reminder delivery state is Room-backed and delivery-result-aware."
+  - "Privacy changes are applied through registry/capability metadata and do not cancel retention incorrectly."
+  - "WorkerSpec, WorkerRegistry, and tests agree."
+  - "One-shot workers have explicit ExistingWorkPolicy, not inferred from periodic policy."
+  - "Shared WorkerErrorKind classifier handles transient/permanent/permission/privacy/restore outcomes."
+
+sources:
+  master_tracker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/PIPELINE_ISSUES_MASTER_TRACKER.md"
+  prior_pipeline_9_report:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/new%20debugging%20session/pipeline-9-workers-background-jobs-debug-report.md"
+  worker_execution_guard:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt"
+  worker_run_logger:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt"
+  worker_registry:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRegistry.kt"
+  worker_spec:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerSpec.kt"
+  worker_spec_scheduler:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerSpecScheduler.kt"
+  background_job_run:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/entity/BackgroundJobRun.kt"
+  background_job_run_dao:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/dao/BackgroundJobRunDao.kt"
+  worker_module:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/di/WorkerModule.kt"
+  dao_module:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/di/DaoModule.kt"
+  app_database:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt"
+  database_write_barrier:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/backup/DatabaseWriteBarrier.kt"
+  restore_maintenance_mode:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/backup/RestoreMaintenanceMode.kt"
+  app_startup_coordinator:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/startup/AppStartupCoordinator.kt"
+  main_application:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/MainApplication.kt"
+  daily_briefing_worker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/ai/worker/DailyBriefingWorker.kt"
+  ai_work_scheduler_impl:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/ai/worker/AiWorkSchedulerImpl.kt"
+  sync_proactive_briefing_work:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/SyncProactiveBriefingWorkUseCase.kt"
+  delivery_briefing_notification:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/DeliverProactiveBriefingNotificationUseCase.kt"
+  location_backfill_worker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/location/LocationBackfillWorker.kt"
+  merchant_key_backfill_worker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/location/MerchantKeyBackfillWorker.kt"
+  data_retention_worker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt"
+  bill_reminder_worker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/service/reminder/BillReminderWorker.kt"
+  receipt_matching_worker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/service/receiptmatching/ReceiptMatchingWorker.kt"
+  warranty_expiration_worker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt"
+  recurring_reminder_delivery_dao:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/dao/RecurringReminderDeliveryDao.kt"
+  recurring_lifecycle_coordinator:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt"
+  receipt_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt"
+  scanned_receipt_dao:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/dao/ScannedReceiptDao.kt"
+  notification_service:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/service/NotificationService.kt"
+  privacy_settings_repository_impl:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacySettingsRepositoryImpl.kt"
+  worker_idempotency_test:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/test/java/com/yourname/expensetracker/domain/workers/WorkerIdempotencyTest.kt"
+  android_existing_work_policy_docs:
+    url: "https://developer.android.com/reference/androidx/work/ExistingWorkPolicy"
+  android_workmanager_docs:
+    url: "https://developer.android.com/reference/androidx/work/WorkManager"

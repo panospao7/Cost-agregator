@@ -35,6 +35,15 @@ interface RecurringOccurrenceDao {
     @Query("UPDATE recurring_occurrences SET status = :newStatus, updatedAt = :now WHERE id IN (:ids)")
     suspend fun updateStatus(ids: List<Long>, newStatus: String, now: Long)
 
+    @Query("DELETE FROM recurring_occurrences WHERE sourceType = :sourceType AND sourceId = :sourceId")
+    suspend fun deleteBySource(sourceType: String, sourceId: Long)
+
+    @Query("SELECT id FROM recurring_occurrences WHERE sourceType = :sourceType AND sourceId = :sourceId")
+    suspend fun getIdsBySource(sourceType: String, sourceId: Long): List<Long>
+
+    @Query("SELECT id FROM recurring_occurrences WHERE sourceType = :sourceType AND sourceId = :sourceId AND status = 'PLANNED'")
+    suspend fun getPlannedIdsBySource(sourceType: String, sourceId: Long): List<Long>
+
     /**
      * P4-CURRENT-001: Atomically claim an occurrence for expense linkage.
      * Only succeeds if the occurrence is still PLANNED and unlinked.

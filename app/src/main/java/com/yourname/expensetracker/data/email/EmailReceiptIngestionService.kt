@@ -261,6 +261,7 @@ class EmailReceiptIngestionService(
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Error processing email receipt from $sender")
             return EmailReceiptResult.ParseError("Processing error: ${e.message}")
         }
