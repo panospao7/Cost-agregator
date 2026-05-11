@@ -58,8 +58,10 @@ interface RecurringReminderDeliveryDao {
 
     /**
      * Atomically claim a reminder delivery for processing.
-     * Only succeeds if the delivery is currently SCHEDULED or SNOOZED.
+     * Only succeeds if the delivery is currently SCHEDULED or SNOOZED AND is actually due.
      * Returns 1 if the claim was successful, 0 if another worker already claimed it.
+     *
+     * P4-CURRENT-006: Added due-condition check to prevent premature claims.
      *
      * Retry policy:
      * FAILED_PERMISSION = terminal until permission changes
@@ -70,6 +72,36 @@ interface RecurringReminderDeliveryDao {
         SET status = 'CLAIMED'
         WHERE id = :id
           AND status IN ('SCHEDULED', 'SNOOZED')
+          AND (scheduledAt <= :now OR (status = 'SNOOZED' AND snoozedUntil <= :now))
     """)
-    suspend fun claimDelivery(id: Long): Int
+    suspend fun claimDelivery(id: Long, now: Long): Int
+
+    /**
+     * P4-CURRENT-005: Reset stale CLAIMED deliveries back to SCHEDULED.
+     * Called to recover deliveries that were claimed but never completed
+     * (e.g. worker crashed after claiming).
+     */
+    @Query("""
+        UPDATE recurring_reminder_deliveries
+        SET status = 'SCHEDULED'
+        WHERE status = 'CLAIMED'
+          AND id IN (
+              SELECT id FROM recurring_reminder_deliveries
+              WHERE status = 'CLAIMED'
+                AND scheduledAt <= :staleThreshold
+          )
+    """)
+    suspend fun recoverStaleClaimedDeliveries(staleThreshold: Long): Int
+
+    /**
+     * P4-CURRENT-003: Suppress open deliveries for an occurrence by ID.
+     * Used when materializer auto-PAIDs an occurrence.
+     */
+    @Query("""
+        UPDATE recurring_reminder_deliveries
+        SET status = 'CANCELLED'
+        WHERE occurrenceId = :occurrenceId
+          AND status IN ('SCHEDULED', 'SNOOZED', 'CLAIMED')
+    """)
+    suspend fun suppressByOccurrenceId(occurrenceId: Long): Int
 }

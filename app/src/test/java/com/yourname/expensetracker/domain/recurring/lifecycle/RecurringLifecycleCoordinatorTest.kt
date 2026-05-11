@@ -1,8 +1,11 @@
 package com.yourname.expensetracker.domain.recurring.lifecycle
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+import com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
 import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
@@ -38,6 +41,9 @@ class RecurringLifecycleCoordinatorTest {
     private lateinit var reminderDeliveryDao: RecurringReminderDeliveryDao
     private lateinit var lifecycleEventDao: RecurringLifecycleEventDao
     private lateinit var restoreMaintenanceMode: RestoreMaintenanceMode
+    private lateinit var database: AppDatabase
+    private lateinit var writeBarrier: DatabaseWriteBarrier
+    private lateinit var plannedExpenseDao: PlannedExpenseDao
     private lateinit var coordinator: RecurringLifecycleCoordinator
 
     private val now = 1_712_000_000_000L
@@ -56,11 +62,15 @@ class RecurringLifecycleCoordinatorTest {
         reminderDeliveryDao = mockk(relaxed = true)
         lifecycleEventDao = mockk(relaxed = true)
         restoreMaintenanceMode = mockk(relaxed = true)
+        database = mockk(relaxed = true)
+        writeBarrier = mockk(relaxed = true)
+        plannedExpenseDao = mockk(relaxed = true)
 
         every { timeProvider.now() } returns now
         every { restoreMaintenanceMode.isWritesAllowed() } returns true
 
         coordinator = RecurringLifecycleCoordinator(
+            database = database,
             expander = expander,
             resolver = resolver,
             materializer = materializer,
@@ -70,7 +80,9 @@ class RecurringLifecycleCoordinatorTest {
             manualRecurringExpenseDao = manualRecurringExpenseDao,
             reminderDeliveryDao = reminderDeliveryDao,
             lifecycleEventDao = lifecycleEventDao,
-            restoreMaintenanceMode = restoreMaintenanceMode
+            restoreMaintenanceMode = restoreMaintenanceMode,
+            writeBarrier = writeBarrier,
+            plannedExpenseDao = plannedExpenseDao
         )
     }
 

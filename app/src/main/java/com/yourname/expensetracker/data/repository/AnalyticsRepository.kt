@@ -164,6 +164,11 @@ class AnalyticsRepository @Inject constructor(
             val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault("EUR")
 
             // ── Normalized per-category totals via MultiCurrencyRepository ──
+            // TODO (P5-CURRENT-007): Category breakdown uses latest-rate via
+            // MultiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals, but the
+            // spending summary uses as-of-transaction-date rates via NormalizedAnalyticsInput.
+            // This FX basis mismatch means category percentages may not sum to the summary total.
+            // Fix: Use NormalizedAnalyticsInput for both category breakdown and summary.
             val categoryAggregates = multiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals(start, end)
             // TODO (P2-11): totalSpent sums only displayAmount, ignoring partial aggregates.
             // If a category aggregate is partial (missing exchange rates), its percentage

@@ -719,6 +719,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 if (liveDbFile.exists()) {
                     liveDbFile.renameTo(preRestoreFile)
                 }
+                // P7-CURRENT-001: Delete existing WAL/SHM sidecars before copying staged DB
+                val liveWal = File(liveDbFile.path + "-wal")
+                val liveShm = File(liveDbFile.path + "-shm")
+                liveWal.delete()
+                liveShm.delete()
                 // Copy staged → live
                 copyFile(stagedDbFile, liveDbFile)
                 if (stagedDbWalFile.exists()) copyFile(stagedDbWalFile, liveDbWalFile)
@@ -842,7 +847,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 if (!rollbackOk) {
                     // Critical: both live and safety backup may be corrupt
                     restoreJournal.failJournal(journalEntry, "Verification failed and rollback also failed")
-                    restoreMaintenanceMode.exit(forceRestartRequired = false)
+                    // P7-CURRENT-002: Keep app blocked until restart when rollback fails
+                    restoreMaintenanceMode.exit(forceRestartRequired = true)
                     tempDir.deleteRecursively()
                     return@withContext Result.failure(
                         Exception("CRITICAL: Restore failed and safety backup rollback also failed. " +

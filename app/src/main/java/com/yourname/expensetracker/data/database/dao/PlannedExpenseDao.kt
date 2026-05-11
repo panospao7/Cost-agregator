@@ -62,4 +62,32 @@ interface PlannedExpenseDao {
         WHERE id = :id
     """)
     suspend fun refreshOpenOccurrenceKey(id: Long)
+
+    /**
+     * P4-CURRENT-002: Atomically unlink an actual expense from a planned expense,
+     * resetting status to PLANNED and clearing linkedActualExpenseId (NULL, not 0).
+     */
+    @Query("""
+        UPDATE planned_expenses
+        SET status = 'PLANNED',
+            linkedActualExpenseId = NULL,
+            openSourceOccurrenceKey = sourceOccurrenceKey,
+            updatedAt = :updatedAt
+        WHERE id = :id
+    """)
+    suspend fun unlinkActualExpense(id: Long, updatedAt: Long): Int
+
+    /**
+     * P4-CURRENT-003: Fulfill a planned expense by its occurrence key.
+     * Marks it as FULFILLED when the occurrence transitions to PAID.
+     */
+    @Query("""
+        UPDATE planned_expenses
+        SET status = 'FULFILLED',
+            openSourceOccurrenceKey = NULL,
+            updatedAt = :updatedAt
+        WHERE sourceOccurrenceKey = :occurrenceKey
+          AND status = 'PLANNED'
+    """)
+    suspend fun fulfillByOccurrenceKey(occurrenceKey: String, updatedAt: Long): Int
 }

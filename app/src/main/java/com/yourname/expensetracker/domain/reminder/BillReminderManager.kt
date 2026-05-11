@@ -154,7 +154,8 @@ class BillReminderManager @Inject constructor(
         replaceWith = ReplaceWith(
             "RecurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId)",
             "com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator"
-        )
+        ),
+        level = DeprecationLevel.ERROR
     )
     suspend fun markBillPaid(recurringExpenseId: Long) = withContext(Dispatchers.IO) {
         val expense = recurringExpenseRepository.getById(recurringExpenseId) ?: return@withContext

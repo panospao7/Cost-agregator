@@ -80,6 +80,9 @@ class RecurringLifecycleCoordinator @Inject constructor(
         val rule = manualRecurringExpenseDao.getById(ruleId)
             ?: throw IllegalArgumentException("Recurring rule not found: id=$ruleId")
 
+        // P4-CURRENT-010: Inactive rules must not generate occurrences
+        if (!rule.isActive) return MaterializationResult(0, 0, 0, 0)
+
         // Use rule.nextDate as the expansion anchor. If it's before startDate,
         // advance it by the frequency until it falls within the range.
         var anchorDate = rule.nextDate
@@ -97,7 +100,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
             amount = rule.amount,
             currency = rule.currency,
             frequency = rule.frequency,
-            categoryId = null, // ManualRecurringExpense does not carry a categoryId
+            categoryId = rule.categoryId, // P4-CURRENT-014: Preserve rule category
             startDate = startDate,
             endDate = endDate,
             anchorDate = anchorDate,
@@ -161,17 +164,22 @@ class RecurringLifecycleCoordinator @Inject constructor(
         } ?: return false
 
         val now = timeProvider.now()
+        var claimed = false
         database.withTransaction {
-            occurrenceDao.update(
-                match.copy(
-                    status = "PAID",
-                    linkedExpenseId = expenseId,
-                    paidAmount = expense.amount,
-                    paidCurrency = expense.currency,
-                    paidAt = now,
-                    updatedAt = now
-                )
+            // P4-CURRENT-001: Use conditional DAO method to atomically claim the occurrence.
+            // If another thread already claimed it, claimForExpense returns 0.
+            val rows = occurrenceDao.claimForExpense(
+                occurrenceId = match.id,
+                expenseId = expenseId,
+                amount = expense.amount,
+                currency = expense.currency,
+                paidAt = now
             )
+            if (rows == 0) {
+                // Already claimed by another thread — abort without side effects
+                return@withTransaction
+            }
+            claimed = true
 
             lifecycleEventDao.insert(
                 RecurringLifecycleEvent(
@@ -191,6 +199,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
             reminderDeliveryDao.suppressOpenDeliveriesForOccurrence(match.id)
         }
+
+        if (!claimed) return false
 
         Timber.d(
             "Recurring: expense %d linked to occurrence %d (occurrenceKey=%s) — PAID, planned fulfilled, reminders suppressed",
@@ -245,13 +255,11 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 )
             )
 
-            // Reopen linked PlannedExpense if it exists: set status back to PLANNED,
-            // clear linkedActualExpenseId, and refresh the openSourceOccurrenceKey.
+            // P4-CURRENT-002: Use atomic unlinkActualExpense to avoid corrupting
+            // planned expense with linkedActualExpenseId=0.
             val planned = plannedExpenseDao.getBySourceOccurrenceKey(linked.occurrenceKey)
             if (planned != null) {
-                plannedExpenseDao.linkToActualExpense(planned.id, 0L, now)
-                plannedExpenseDao.updateStatus(planned.id, "PLANNED", now)
-                plannedExpenseDao.refreshOpenOccurrenceKey(planned.id)
+                plannedExpenseDao.unlinkActualExpense(planned.id, now)
                 // Reminder deliveries should be regenerated for the unlinked occurrence
                 // so that the user gets notified again. Currently deliveries are
                 // suppressed during linkExpenseToOccurrence, and unlink does not
@@ -333,7 +341,21 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * @return The list of pending [RecurringReminderDelivery] items, ordered by scheduledAt.
      */
     suspend fun getDueReminders(): List<RecurringReminderDelivery> {
+        // P4-CURRENT-005: Recover stale CLAIMED deliveries before querying due ones
+        recoverStaleClaimedDeliveries()
         return reminderDeliveryDao.getPendingDeliveriesForPlannedOccurrences(timeProvider.now())
+    }
+
+    /**
+     * P4-CURRENT-005: Resets CLAIMED deliveries older than [staleThresholdMs] back to SCHEDULED.
+     * Prevents deliveries from being stuck forever if a worker crashes after claiming.
+     */
+    private suspend fun recoverStaleClaimedDeliveries(staleThresholdMs: Long = 300_000) {
+        val staleThreshold = timeProvider.now() - staleThresholdMs
+        val recovered = reminderDeliveryDao.recoverStaleClaimedDeliveries(staleThreshold)
+        if (recovered > 0) {
+            Timber.d("Recovered %d stale CLAIMED reminder deliveries", recovered)
+        }
     }
 
     /**
@@ -343,7 +365,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
      */
     suspend fun claimReminderDelivery(deliveryId: Long): Boolean {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.claimReminderDelivery")
-        return reminderDeliveryDao.claimDelivery(deliveryId) > 0
+        return reminderDeliveryDao.claimDelivery(deliveryId, timeProvider.now()) > 0
     }
 
     /**

@@ -231,6 +231,11 @@ class BudgetMonitor @Inject constructor(
         // P6-P1-2: Use adjustedSpendBreakdown.effectiveSpend when available (shared-expense offset),
         // falling back to raw spentAmount.BudgetStatus.spentAmount is gross spend and does not
         // account for shared-expense reimbursements, which can trigger false threshold alerts.
+        //
+        // TODO (P6-CURRENT-002): adjustedSpendBreakdown should come from BudgetRepository
+        // (computed during createBudgetStatus) rather than only being populated by the
+        // ViewModel. Currently the monitor may see null adjustedSpendBreakdown and fall
+        // back to raw spentAmount, causing false alerts when shared-expense offsets apply.
         val spent = status.adjustedSpendBreakdown?.effectiveSpend ?: status.spentAmount
         val categoryName = status.category?.name ?: "Overall"
         val periodStart = status.periodStart

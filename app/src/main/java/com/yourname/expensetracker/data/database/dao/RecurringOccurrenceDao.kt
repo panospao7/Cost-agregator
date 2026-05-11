@@ -34,4 +34,22 @@ interface RecurringOccurrenceDao {
 
     @Query("UPDATE recurring_occurrences SET status = :newStatus, updatedAt = :now WHERE id IN (:ids)")
     suspend fun updateStatus(ids: List<Long>, newStatus: String, now: Long)
+
+    /**
+     * P4-CURRENT-001: Atomically claim an occurrence for expense linkage.
+     * Only succeeds if the occurrence is still PLANNED and unlinked.
+     * Returns the number of affected rows (1 = success, 0 = already claimed).
+     */
+    @Query("""
+        UPDATE recurring_occurrences
+        SET status = 'PAID',
+            linkedExpenseId = :expenseId,
+            paidAmount = :amount,
+            paidCurrency = :currency,
+            paidAt = :paidAt
+        WHERE id = :occurrenceId
+          AND status = 'PLANNED'
+          AND linkedExpenseId IS NULL
+    """)
+    suspend fun claimForExpense(occurrenceId: Long, expenseId: Long, amount: Double, currency: String, paidAt: Long): Int
 }

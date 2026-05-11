@@ -633,6 +633,28 @@ class MultiCurrencyRepository @Inject constructor(
         return result
     }
 
+    /**
+     * P5-CURRENT-006: **LATEST-RATE:** Get PURCHASE monthly totals in home currency.
+     *
+     * Uses the PURCHASE-filtered DAO variant [ExpenseDao.getMonthlyTotalsBetweenByCurrency]
+     * which filters by transactionType = PURCHASE. Returns list of MonthMoneyAggregate
+     * sorted by monthKey ascending.
+     */
+    suspend fun getHomeCurrencyPurchaseMonthlyTotals(
+        startDate: Long,
+        endDate: Long
+    ): List<MonthMoneyAggregate> {
+        val homeCurrency = resolveHomeCurrency()
+        val grouped = expenseDao.getMonthlyTotalsBetweenByCurrency(startDate, endDate)
+        val byMonth = grouped.groupBy { it.monthKey }
+        val result = mutableListOf<MonthMoneyAggregate>()
+        for ((monthKey, buckets) in byMonth.toSortedMap()) {
+            val aggregate = aggregateCurrencyTotalsToMoneyAggregate(buckets, homeCurrency)
+            result.add(MonthMoneyAggregate(monthKey, aggregate))
+        }
+        return result
+    }
+
     // ── Internal aggregation helpers ───────────────────────────────────────
 
     /**

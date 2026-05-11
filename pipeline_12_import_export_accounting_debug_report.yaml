@@ -1,0 +1,698 @@
+meta:
+  repo: "panospao7/Cost-agregator"
+  commit: "4113e38f0d838a29d2d13d82a483ba573280721c"
+  pipeline: "12 - Import / Export / Accounting"
+  review_mode: "static GitHub source/debugging session; no local Gradle/device execution"
+  verdict: "IMPROVED_BUT_NOT_CLEAN"
+  summary: >
+    Pipeline 12 has improved on the export side: generic CSV/JSON now stream pages,
+    CSV escaping is safer, accounting validation is attempted globally, export DTOs
+    include more audit fields, export UI has read/restore checks, and accountant PDF
+    no longer raw-sums multi-currency combined totals. However, the pipeline is not
+    clean. The largest blockers remain: no verified real app-level import/roundtrip
+    path, no true export snapshot, plaintext export remains default and encryption is
+    not wired, many fields are still dropped, receipt links are not exported, accounting
+    exporters still have semantic gaps, and there is no durable export/import ledger.
+
+tracker_reconciliation:
+  P12-P0-01_no_app_level_csv_json_import_roundtrip:
+    tracker_status: "PARTIAL"
+    actual_status: "LIKELY_OPEN_OR_UNVERIFIED"
+    notes:
+      - "Tracker claims ImportCoordinator, JsonExpenseImporter, CsvExpenseImporter exist."
+      - "In reviewed main-source directory listings, no obvious domain/import, data/import, importexport, or importing package was found."
+      - "Guessed raw paths for ImportCoordinator/CsvExpenseImporter/JsonExpenseImporter returned 404."
+      - "No ImportOptions UI, import preview, import worker, or import lifecycle was verified."
+      - "Treat as not clean until actual importer paths and tests are proven."
+
+  P12-P1-01_xero_freshbooks_csv_escaping:
+    tracker_status: "FIXED"
+    actual_status: "MOSTLY_FIXED"
+    notes:
+      - "CsvCellSanitizer now does RFC-4180 quoting for comma, quote, CR, LF."
+      - "XeroCSVExporter and FreshBooksExporter call CsvCellSanitizer.sanitize()."
+      - "Generic CSV has its own escapeCsv() with similar quoting."
+      - "QuickBooks IIF still uses a private escapeIifField() and does not use CsvCellSanitizer.sanitizeIif(), so formula hardening is inconsistent."
+
+  P12-P1-02_accounting_validation_per_page:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "ExportOptionsViewModel validates accounting formats before streaming by loading all expenses."
+      - "But validation dataset and streamed dataset are not snapshot-identical."
+      - "Concurrent writes after validation can still make the actual exported file violate single-currency/purchase-only policy."
+      - "Accounting validation materializes all expenses, defeating streaming for large accounting exports."
+
+  P12-P1-03_multi_currency_export_fields_incomplete:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "ExportTransaction now has amount/effectiveAmount/originalCurrency/originalAmount/homeCurrency/baseAmount/baseCurrency/exchangeRateUsed."
+      - "ExpenseExportMapper populates these from Expense."
+      - "But there is no conversionStatus/rateBasis/stale/missing-rate quality."
+      - "baseAmount defaults to 0.0 when missing, which can look like a real converted amount."
+      - "Accounting exporters do not export a true home amount column."
+
+  P12-P1-04_export_snapshot_consistency:
+    tracker_status: "TODO_ONLY"
+    actual_status: "OPEN"
+    notes:
+      - "DeterministicExpenseExportPager explicitly says keyset pagination is not a true atomic snapshot."
+      - "ExportDataRepository KDoc now claims stable ID-based snapshot consistency, but underlying pager contradicts it."
+      - "countBetween() is not snapshot anchored."
+
+  P12-P1-05_plaintext_privacy_gate:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL_WITH_SECURITY_GAP"
+    notes:
+      - "ExportOptionsViewModel checks PrivacyCapability.RAWBACKUP_EXPORT."
+      - "But normal expense export still writes plaintext by default."
+      - "encryptExport parameter exists but is never used."
+      - "No redacted/metadata-only export mode exists."
+      - "Using RAWBACKUP_EXPORT for expense export is semantically wrong; a dedicated EXPENSE_EXPORT capability/policy is needed."
+
+  P12-P1-06_export_silently_drops_many_fields:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL"
+    notes:
+      - "Generic CSV/JSON now include more fields than before."
+      - "Still dropped: businessCategory, businessProject, requiresReceipt in row writers; ownership/share fields; transfer fields; location fields; rawNotificationId/source links; receipt links; recurring/bank/email provenance; tags/attachments if present."
+      - "No manifest lists included/excluded fields."
+
+  P12-P1-07_receipt_links_not_represented:
+    tracker_status: "TODO_ONLY"
+    actual_status: "OPEN"
+    notes:
+      - "ExportTransaction has TODO saying receiptLinks are not exported."
+      - "ReceiptExpenseLink is not used by export flow."
+      - "Roundtrip cannot restore receipt-expense evidence links."
+
+  P12-P1-08_business_tax_fields_not_exported:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "ExportTransaction contains isBusinessExpense, businessPurpose, businessCategory, businessProject, requiresReceipt."
+      - "ExpenseExportMapper populates them."
+      - "Generic CSV/JSON writers only output isBusinessExpense and businessPurpose."
+      - "Accounting exporters do not output business/tax sidecar fields."
+
+  P12-P1-09_accountant_pdf_raw_mixed_currency_total:
+    tracker_status: "TODO_ONLY"
+    actual_status: "FIXED_FOR_COMBINED_TOTAL"
+    notes:
+      - "Current AccountantReportPdfExporter groups by currency."
+      - "When multiple currencies exist, it shows per-currency totals only and states no combined total is shown."
+      - "Remaining gap: deductible aggregate exists but export() does not surface MoneyAggregate/partial conversion warnings."
+
+  P12-P1-10_export_during_restore:
+    tracker_status: "PARTIAL"
+    actual_status: "PARTIAL"
+    notes:
+      - "ExportOptionsViewModel checks RestoreMaintenanceMode and DatabaseReadBarrier in generateExport()."
+      - "loadExpenseCount() runs without read barrier."
+      - "ExportDataRepository has no barrier, so non-UI callers can still export during restore/restart-required."
+      - "No app-wide export operation lock exists."
+
+positive_findings:
+  - "Generic CSV/JSON export is streamed page-by-page from ExportOptionsViewModel."
+  - "CSV writer includes v2 metadata line and wider schema."
+  - "CsvCellSanitizer now implements RFC-4180-style quoting."
+  - "Xero/FreshBooks exporters use CsvCellSanitizer."
+  - "AccountingExportPolicy validates single-currency and PURCHASE-only datasets."
+  - "ExportTransaction includes conversion and business/tax fields."
+  - "ExpenseExportMapper guards NaN/Infinity to prevent corrupt JSON/CSV tokens."
+  - "ExportOptionsViewModel uses temp file then rename/copy to final file."
+  - "PrivacyGate and DatabaseReadBarrier are injected into ExportOptionsViewModel."
+  - "Accountant PDF avoids raw mixed-currency combined total."
+
+issues:
+  - id: "P12-CURRENT-001"
+    severity: "P0_ROUNDTRIP_BLOCKER"
+    status: "OPEN_OR_UNVERIFIED"
+    title: "Real app-level CSV/JSON import pipeline is not verified"
+    evidence:
+      - "Tracker claims ImportCoordinator/JsonExpenseImporter/CsvExpenseImporter."
+      - "No import package appeared in reviewed domain/data directory listings."
+      - "Raw guessed importer paths returned 404."
+      - "No ImportOptionsScreen/ViewModel, import preview, import result UI, or import worker was verified."
+    impact:
+      - "Pipeline 12 still cannot prove export→fresh DB import→totals match."
+      - "CSV/JSON export remains one-way, not a roundtrip contract."
+    fix:
+      - "Add or surface ImportCoordinator, CsvExpenseImporter, JsonExpenseImporter under clear package."
+      - "Import must route rows through TransactionLifecycleCoordinator, not ExpenseDao.insert."
+      - "Add import preview, mapping, duplicate policy, unsupported-field reporting, and roundtrip tests."
+    tests:
+      - "export_json_then_import_fresh_db_preserves_totals"
+      - "export_csv_then_import_fresh_db_preserves_totals"
+      - "import_preview_reports_unsupported_columns"
+      - "import_routes_rows_through_transaction_lifecycle"
+
+  - id: "P12-CURRENT-002"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Export snapshot consistency is still not real"
+    evidence:
+      - "DeterministicExpenseExportPager says keyset pagination is not a true atomic snapshot."
+      - "Rows inserted above the cursor can appear mid-export; rows inserted behind cursor can be missed."
+      - "countBetween() is separately queried and not snapshot anchored."
+    impact:
+      - "JSON rowCount can disagree with actual rows."
+      - "Accounting validation can validate one dataset but stream another."
+      - "Roundtrip/golden export tests are nondeterministic under concurrent writes."
+    fix:
+      - "Create export_snapshot_rows(operationId, ordinal, expenseId) in one transaction."
+      - "Count and stream from the same snapshot rows."
+      - "Clean snapshot rows after completion/failure."
+    tests:
+      - "insert_during_export_not_included"
+      - "delete_during_export_does_not_change_snapshot_policy"
+      - "json_rowCount_matches_streamed_rows"
+
+  - id: "P12-CURRENT-003"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "ExportDataRepository comments falsely claim stable snapshot consistency"
+    evidence:
+      - "ExportDataRepository KDoc says pager anchors on fixed set of expense IDs."
+      - "DeterministicExpenseExportPager KDoc explicitly says keyset pagination is not a true snapshot."
+    impact:
+      - "Future agents may mark P12-P1-04 fixed incorrectly."
+      - "Audit/export semantics are misleading."
+    fix:
+      - "Update ExportDataRepository KDoc to match actual keyset semantics."
+      - "Do not call this snapshot-consistent until snapshot table exists."
+    tests:
+      - "static_grep_no_false_snapshot_consistency_claim"
+
+  - id: "P12-CURRENT-004"
+    severity: "P1_PRIVACY"
+    status: "OPEN"
+    title: "encryptExport parameter is ignored; plaintext remains default"
+    evidence:
+      - "generateExport(encryptExport: Boolean = false) documents encryption."
+      - "No call to exportDataRepository.encryptExportFile() appears in generateExport()."
+      - "ExportDataRepository comments say encryption is available but caller must wire it."
+    impact:
+      - "A caller passing encryptExport=true still gets plaintext CSV/JSON/IIF."
+      - "Expense merchant/notes/business data are stored in app-private plaintext export files."
+    fix:
+      - "If encryptExport=true, require password/key policy, call encryptExportFile(), delete plaintext, and return encrypted path."
+      - "Expose encrypted/redacted/plaintext choices in UI."
+    tests:
+      - "generateExport_encryptTrue_returns_enc_file"
+      - "generateExport_encryptTrue_deletes_plaintext"
+      - "generateExport_encryptFalse_requires_explicit_plaintext_consent"
+
+  - id: "P12-CURRENT-005"
+    severity: "P1_PRIVACY"
+    status: "OPEN"
+    title: "Expense export uses RAWBACKUP_EXPORT privacy capability"
+    evidence:
+      - "ExportOptionsViewModel calls privacyGate.check(PrivacyCapability.RAWBACKUP_EXPORT, operation=export)."
+      - "Expense CSV/JSON export is not a raw database backup."
+    impact:
+      - "Privacy policy is semantically wrong."
+      - "User may allow encrypted backup but still expect transaction exports to be redacted or separately gated."
+    fix:
+      - "Add PrivacyCapability.EXPENSE_EXPORT and ExpenseExportPrivacyMode."
+      - "Modes: FULL_PLAINTEXT, REDACT_NOTES_AND_MERCHANTS, METADATA_ONLY, ENCRYPTED."
+    tests:
+      - "expense_export_uses_EXPENSE_EXPORT_capability"
+      - "redacted_expense_export_contains_no_notes"
+      - "metadata_only_export_contains_no_merchant_names"
+
+  - id: "P12-CURRENT-006"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Accounting validation is not tied to the streamed snapshot"
+    evidence:
+      - "ExportOptionsViewModel validates accounting formats by calling getExpensesBetween()."
+      - "It then separately streams pages via getExpensesPage()."
+      - "Both use live keyset reads, not a frozen snapshot."
+    impact:
+      - "A concurrent USD/DEPOSIT row inserted after validation can enter Xero/FreshBooks/QuickBooks export."
+    fix:
+      - "Validate and stream from the same export snapshot operationId."
+      - "Or hold a read transaction/SQLite snapshot for both phases."
+    tests:
+      - "accounting_validation_and_stream_use_same_snapshot"
+      - "mixed_currency_insert_after_validation_not_exported"
+
+  - id: "P12-CURRENT-007"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Accounting validation materializes all expenses"
+    evidence:
+      - "For accounting formats, ExportOptionsViewModel calls getExpensesBetween(start,end) and maps all rows."
+      - "This defeats the streaming memory contract for large accounting exports."
+    impact:
+      - "Large Xero/QuickBooks/FreshBooks export can OOM or stall even though row streaming exists."
+    fix:
+      - "Add SQL aggregate validation: distinct currencies, distinct transaction types, row count."
+      - "Do not load full rows just to validate policy."
+    tests:
+      - "accounting_validation_uses_aggregate_queries_not_full_load"
+      - "large_accounting_export_does_not_materialize_all_rows"
+
+  - id: "P12-CURRENT-008"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Generic CSV/JSON still omit several ExportTransaction fields"
+    evidence:
+      - "ExportTransaction has businessCategory, businessProject, requiresReceipt."
+      - "Generic CSV header/writer include only IsBusinessExpense and BusinessPurpose."
+      - "JSON writer includes only isBusinessExpense and businessPurpose."
+    impact:
+      - "Business/tax data remains lossy despite DTO being extended."
+      - "Roundtrip import cannot restore full business/tax state."
+    fix:
+      - "Write every non-sensitive ExportTransaction field into JSON."
+      - "Add CSV columns for BusinessCategory, BusinessProject, RequiresReceipt."
+    tests:
+      - "json_export_includes_businessCategory_businessProject_requiresReceipt"
+      - "csv_export_includes_all_business_tax_fields"
+
+  - id: "P12-CURRENT-009"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Receipt links are explicitly not exported"
+    evidence:
+      - "ExportTransaction TODO says receipt links are not exported."
+      - "No export writer uses ReceiptExpenseLink."
+    impact:
+      - "Export/import loses receipt proof, match status, link type, and receipt evidence."
+    fix:
+      - "Add receiptLinks to JSON export."
+      - "Add receipt link sidecar CSV for CSV/accounting exports."
+      - "Import links via ReceiptLinkService."
+    tests:
+      - "json_export_includes_receipt_links"
+      - "import_recreates_receipt_expense_links"
+      - "redacted_export_includes_link_metadata_without_raw_ocr"
+
+  - id: "P12-CURRENT-010"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Accounting exporters use original amount, not effective amount"
+    evidence:
+      - "QuickBooksIIFExporter safeAmount = expense.amount."
+      - "Xero/FreshBooks amount = CurrencyFormatter.formatForExport(expense.amount)."
+      - "ExportTransaction.effectiveAmount exists but is not used by accounting exporters."
+    impact:
+      - "Shared/partial ownership/isNotMine adjustments can be ignored."
+      - "Accounting handoff may overstate user-responsible spend."
+    fix:
+      - "Define accounting policy: full transaction amount vs user-effective amount."
+      - "If user-effective accounting is intended, use effectiveAmount and export ownership fields."
+    tests:
+      - "accounting_export_uses_effectiveAmount_when_ownership_policy_user_share"
+      - "accounting_export_includes_ownership_policy_metadata"
+
+  - id: "P12-CURRENT-011"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Conversion fields lack quality/rate-basis metadata"
+    evidence:
+      - "ExportTransaction has baseAmount/baseCurrency/exchangeRateUsed."
+      - "No conversionStatus, rateBasis, rateDate, isPartial, staleRate, missingRate fields."
+      - "ExpenseExportMapper maps missing/non-finite baseAmount to 0.0."
+    impact:
+      - "0.0 converted amount can be mistaken for a valid zero."
+      - "External accountant cannot audit missing/stale FX conversions."
+    fix:
+      - "Add conversionStatus: OK, IDENTITY, MISSING_RATE, STALE_RATE, NOT_APPLICABLE."
+      - "Add rateDate/rateBasis."
+      - "Use null for missing baseAmount instead of silent 0.0."
+    tests:
+      - "missing_baseAmount_exports_conversionStatus_missing_rate"
+      - "identity_currency_exports_conversionStatus_identity"
+      - "stale_rate_exports_warning"
+
+  - id: "P12-CURRENT-012"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Home currency can be blank/unknown without export warning"
+    evidence:
+      - "ExpenseExportMapper sets homeCurrency = expense.baseCurrency."
+      - "If baseCurrency is missing/stale default, export has no quality warning."
+    impact:
+      - "Multi-currency audit rows can look complete but have invalid home-currency context."
+    fix:
+      - "Resolve/export homeCurrency with HomeCurrencyResolution."
+      - "If failed/defaulted, write export-level warning in manifest."
+    tests:
+      - "home_currency_resolution_failure_adds_export_warning"
+      - "export_rejects_blank_baseCurrency_for_converted_rows"
+
+  - id: "P12-CURRENT-013"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "No export manifest with included/excluded fields"
+    evidence:
+      - "CSV has a comment metadata line only."
+      - "JSON wrapper includes schemaVersion/exportType/generatedAt/dateRange/rowCount."
+      - "No includedFields/excludedFields/privacyMode/checksum/schema contract."
+    impact:
+      - "Silent field loss is hard to detect."
+      - "Import cannot know which fields are unavailable by design."
+    fix:
+      - "Add ExportManifest for all formats, either embedded JSON or sidecar file."
+      - "Include schemaVersion, privacyMode, includedFields, excludedFields, filters, checksum."
+    tests:
+      - "export_manifest_lists_included_and_excluded_fields"
+      - "accounting_export_writes_sidecar_manifest"
+
+  - id: "P12-CURRENT-014"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Date/time policy is system-default and not deterministic"
+    evidence:
+      - "ExportOptionsViewModel uses ZoneId.systemDefault()."
+      - "AccountingExporters use ZoneId.systemDefault()."
+      - "AccountantReportPdfExporter uses ZoneId.systemDefault()."
+      - "AccountingExporters comment says UTC for dates, but code uses system default."
+    impact:
+      - "Same DB exported in different time zones can produce different date strings."
+      - "Golden roundtrip tests can fail for near-midnight transactions."
+    fix:
+      - "Define export timezone policy: UTC for machine JSON, user/report timezone for human/accounting."
+      - "Write timezone into manifest."
+    tests:
+      - "json_export_epoch_timestamp_stable_across_timezones"
+      - "csv_export_uses_configured_export_timezone"
+      - "accounting_export_comment_matches_timezone_policy"
+
+  - id: "P12-CURRENT-015"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "QuickBooks IIF formula hardening is inconsistent"
+    evidence:
+      - "CsvCellSanitizer.sanitizeIif() exists and neutralizes formula prefixes."
+      - "QuickBooksIIFExporter uses private escapeIifField() instead."
+      - "escapeIifField() strips tabs/newlines but does not neutralize =,+,-,@."
+    impact:
+      - "IIF fields opened in spreadsheet-like tools can retain formula-leading text."
+    fix:
+      - "Use CsvCellSanitizer.sanitizeIif() for all IIF string fields."
+    tests:
+      - "quickbooks_iif_neutralizes_formula_merchant"
+      - "quickbooks_iif_neutralizes_formula_memo"
+
+  - id: "P12-CURRENT-016"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Export cancellation can leave completed file without ledger state"
+    evidence:
+      - "cancelExport() cancels Job and clears reference."
+      - "No ExportRun table exists."
+      - "Final file may already have been renamed before cancellation UI state is updated."
+    impact:
+      - "User/debugger cannot know whether a cancelled export produced a valid file."
+      - "Orphan export files can accumulate."
+    fix:
+      - "Add ExportRun ledger with STARTED, FILE_WRITTEN, COMPLETED, CANCELLED, FAILED."
+      - "On cancellation, delete temp/final unless already marked completed."
+    tests:
+      - "cancelled_export_deletes_temp_file"
+      - "cancelled_export_writes_cancelled_run"
+      - "cancel_after_rename_marks_completed_or_deletes_file_deterministically"
+
+  - id: "P12-CURRENT-017"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "No durable checksum/audit ledger for export files"
+    evidence:
+      - "ExportOptionsUiState stores exportFilePath/exportSuccess only."
+      - "No ExportRun/ExportEvent entity was found."
+      - "No checksum is written."
+    impact:
+      - "Cannot audit when/what was exported, privacy mode, row count, checksum, or failure reason."
+    fix:
+      - "Add ExportRun table with operationId, format, filters, privacyMode, rowCount, checksumSha256, status, timestamps."
+    tests:
+      - "successful_export_writes_completed_export_run"
+      - "failed_export_writes_failed_export_run"
+      - "checksum_matches_export_file_bytes"
+
+  - id: "P12-CURRENT-018"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Export file naming can collide on same millisecond"
+    evidence:
+      - "ExportDataRepository.createExportFile() names files expenses_${timestampMs}.$extension."
+      - "timeProvider.now() may repeat under fast calls/tests."
+    impact:
+      - "Two exports can target same final/temp file."
+      - "One export can overwrite another."
+    fix:
+      - "Use operationId/UUID in file name."
+      - "Keep timestamp as metadata, not uniqueness key."
+    tests:
+      - "two_exports_same_timestamp_generate_distinct_files"
+
+  - id: "P12-CURRENT-019"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "ExportOptionsViewModel loadExpenseCount lacks read barrier"
+    evidence:
+      - "generateExport() checks readBarrier."
+      - "loadExpenseCount() directly calls exportDataRepository.countExpensesBetween()."
+    impact:
+      - "Export screen can read from stale/restoring DB before user starts export."
+      - "UI count can be wrong or crash during restart-required maintenance."
+    fix:
+      - "Use DatabaseReadBarrier in loadExpenseCount() and setDateRange count refresh."
+    tests:
+      - "restore_mode_blocks_export_expense_count_load"
+      - "restart_required_blocks_export_count_refresh"
+
+  - id: "P12-CURRENT-020"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "ExportDataRepository has no barrier; only ViewModel is guarded"
+    evidence:
+      - "ExportDataRepository exposes count/getExpenses/getExpensesPage/createExportFile/encryptExportFile without read/privacy barrier."
+      - "Only ExportOptionsViewModel checks PrivacyGate/DatabaseReadBarrier."
+    impact:
+      - "Future non-UI caller can bypass restore/privacy policy."
+    fix:
+      - "Add ExportCoordinator or ExportLifecycleService as sole entry point."
+      - "Make repository low-level/internal or require caller token from guard."
+    tests:
+      - "export_repository_not_called_directly_by_ui_outside_coordinator"
+      - "export_coordinator_enforces_read_and_privacy_barriers"
+
+  - id: "P12-CURRENT-021"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Non-finite money is silently exported as zero"
+    evidence:
+      - "ExpenseExportMapper maps non-finite amount/effectiveAmount/baseAmount/exchangeRateUsed to 0.0."
+      - "No validation warning is emitted."
+    impact:
+      - "Corrupt data becomes plausible zero-dollar export rows."
+      - "Accounting totals can be understated silently."
+    fix:
+      - "Reject export or mark row invalid when money is non-finite."
+      - "Do not silently coerce to 0 unless manifest records replacement."
+    tests:
+      - "nan_amount_export_fails_or_reports_invalid_row"
+      - "infinite_baseAmount_not_silently_zeroed"
+
+  - id: "P12-CURRENT-022"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Accounting exporters do not include sidecar app metadata"
+    evidence:
+      - "Xero/FreshBooks export only accounting columns plus some currency audit fields."
+      - "QuickBooks IIF has no app metadata sidecar."
+      - "No manifest/sidecar for source, receipt links, business project, ownership, transfer details."
+    impact:
+      - "Accounting handoff loses app-specific audit context."
+    fix:
+      - "Keep accounting file strict, but write sidecar JSON/CSV with app metadata keyed by export row id/sourceExpenseId."
+    tests:
+      - "xero_export_writes_metadata_sidecar"
+      - "quickbooks_export_sidecar_contains_receipt_and_business_links"
+
+  - id: "P12-CURRENT-023"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "JSON export is manually assembled and lacks schema validation"
+    evidence:
+      - "ExportOptionsViewModel manually appends JSON object fields and commas."
+      - "No serializer/schema validation is used."
+    impact:
+      - "Adding fields can easily introduce malformed JSON/comma bugs."
+      - "Importers cannot rely on a formal schema."
+    fix:
+      - "Use kotlinx.serialization/Moshi DTO for row and manifest."
+      - "Add JSON schema/golden tests."
+    tests:
+      - "json_export_parses_with_standard_json_parser"
+      - "json_export_schema_v2_validates_all_fields"
+
+  - id: "P12-CURRENT-024"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "CSV v2 metadata comment may break strict CSV importers"
+    evidence:
+      - "Generic CSV starts with '# ExpenseTracker Export v2,...' before header."
+      - "No manifest sidecar exists."
+    impact:
+      - "External tools expecting first row as header can misread the file."
+      - "Future app importer must special-case comments."
+    fix:
+      - "Either put metadata in sidecar manifest or make comment-line behavior explicit in schema."
+    tests:
+      - "csv_importer_skips_metadata_comment"
+      - "strict_csv_export_mode_omits_comment_and_writes_sidecar_manifest"
+
+  - id: "P12-CURRENT-025"
+    severity: "P3_LOW"
+    status: "OPEN"
+    title: "Stale comments remain in export code"
+    evidence:
+      - "AccountingExporters comment says UTC date policy but code uses ZoneId.systemDefault()."
+      - "AccountantReportPdfExporter TODO says hardcoded EUR despite formatAmount(currency) using row currency."
+      - "ExportDataRepository comments say encryption planned/current inconsistently."
+    impact:
+      - "AI agents and maintainers can implement wrong behavior from stale comments."
+    fix:
+      - "Update KDoc/comments to current contracts."
+    tests:
+      - "static_grep_no_export_utc_comment_when_systemDefault_used"
+      - "static_grep_no_pdf_hardcoded_EUR_todo"
+
+recommended_fix_order:
+  - pr: "PR1"
+    title: "Truthful roundtrip baseline"
+    include:
+      - "Locate or add real ImportCoordinator/CsvExpenseImporter/JsonExpenseImporter."
+      - "Add import UI/preview/result."
+      - "Route import through TransactionLifecycleCoordinator."
+      - "Add export→fresh DB import tests."
+    closes:
+      - "P12-CURRENT-001"
+
+  - pr: "PR2"
+    title: "Snapshot-correct export operation"
+    include:
+      - "Add ExportRun and export_snapshot_rows."
+      - "Validate/count/stream from same operationId snapshot."
+      - "Fix misleading KDoc."
+    closes:
+      - "P12-CURRENT-002"
+      - "P12-CURRENT-003"
+      - "P12-CURRENT-006"
+      - "P12-CURRENT-017"
+
+  - pr: "PR3"
+    title: "Privacy/encryption export policy"
+    include:
+      - "Dedicated EXPENSE_EXPORT capability."
+      - "Wire encryptExport."
+      - "Add redacted/metadata modes."
+      - "Barrier enforcement in ExportCoordinator, not only ViewModel."
+    closes:
+      - "P12-CURRENT-004"
+      - "P12-CURRENT-005"
+      - "P12-CURRENT-019"
+      - "P12-CURRENT-020"
+
+  - pr: "PR4"
+    title: "Complete app schema and manifest"
+    include:
+      - "Export all non-sensitive Expense/ExportTransaction fields."
+      - "Receipt links."
+      - "Business/tax fields."
+      - "Included/excluded field manifest."
+      - "Sidecars for accounting formats."
+    closes:
+      - "P12-CURRENT-008"
+      - "P12-CURRENT-009"
+      - "P12-CURRENT-013"
+      - "P12-CURRENT-022"
+
+  - pr: "PR5"
+    title: "Currency/accounting semantics"
+    include:
+      - "ConversionStatus/rateBasis/rateDate/isPartial."
+      - "Null missing base amount instead of 0.0."
+      - "Define original vs effective amount policy."
+      - "Reject/report non-finite money."
+    closes:
+      - "P12-CURRENT-010"
+      - "P12-CURRENT-011"
+      - "P12-CURRENT-012"
+      - "P12-CURRENT-021"
+
+  - pr: "PR6"
+    title: "Format robustness"
+    include:
+      - "Use one CSV/IIF sanitizer everywhere."
+      - "Use JSON serializer/schema tests."
+      - "Define CSV metadata/sidecar policy."
+      - "OperationId-based filenames."
+    closes:
+      - "P12-CURRENT-015"
+      - "P12-CURRENT-018"
+      - "P12-CURRENT-023"
+      - "P12-CURRENT-024"
+
+  - pr: "PR7"
+    title: "Determinism/docs cleanup"
+    include:
+      - "Timezone policy."
+      - "Cancellation/final-file policy."
+      - "Remove stale comments."
+    closes:
+      - "P12-CURRENT-014"
+      - "P12-CURRENT-016"
+      - "P12-CURRENT-025"
+
+definition_of_done:
+  - "CSV and JSON exports can be imported into a fresh DB through a real app import lifecycle."
+  - "Roundtrip tests prove totals, categories, currencies, source, business fields, and receipt links survive."
+  - "Export uses a true snapshot: count, validation, and streamed rows share one operationId."
+  - "Plaintext export requires explicit policy; encryptExport=true actually returns encrypted file and deletes plaintext."
+  - "Expense export has its own privacy capability and redaction modes."
+  - "Export manifest lists schema version, privacy mode, timezone, filters, row count, checksum, included fields, and excluded fields."
+  - "ReceiptExpenseLink metadata is exported and imported via ReceiptLinkService."
+  - "BusinessCategory, BusinessProject, RequiresReceipt, ownership/share, transfer, location, and source-link fields are either exported or explicitly excluded in manifest."
+  - "Accounting exporters use a documented original/effective amount policy."
+  - "Conversion status/rate basis/rate date/partial warnings are exported."
+  - "No non-finite money is silently converted to zero without row-level warning."
+  - "QuickBooks IIF uses the same hardened sanitizer policy."
+  - "Export/read/privacy barriers are enforced by an ExportCoordinator, not only the ViewModel."
+  - "ExportRun ledger records STARTED/SNAPSHOT_CREATED/FILE_WRITTEN/ENCRYPTED/COMPLETED/FAILED/CANCELLED."
+  - "Machine JSON is timezone-stable and schema-validated."
+
+sources:
+  master_tracker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/PIPELINE_ISSUES_MASTER_TRACKER.md"
+  prior_pipeline_12_report:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/new%20debugging%20session/pipeline-12-import-export-accounting-debug-report.md"
+  export_options_viewmodel:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/ui/screens/export/ExportOptionsViewModel.kt"
+  export_data_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/ExportDataRepository.kt"
+  deterministic_expense_export_pager:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/DeterministicExpenseExportPager.kt"
+  csv_cell_sanitizer:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/export/CsvCellSanitizer.kt"
+  accounting_exporters:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/export/AccountingExporters.kt"
+  accounting_export_policy:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/export/AccountingExportPolicy.kt"
+  export_transaction:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/export/ExportTransaction.kt"
+  expense_export_mapper:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/export/ExpenseExportMapper.kt"
+  accountant_report_pdf_exporter:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/export/AccountantReportPdfExporter.kt"
+  domain_directory_listing:
+    url: "https://github.com/panospao7/Cost-agregator/tree/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain"
+  data_directory_listing:
+    url: "https://github.com/panospao7/Cost-agregator/tree/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data"

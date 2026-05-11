@@ -15,6 +15,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 
+@Suppress("DEPRECATION_ERROR") // Tests for legacy markBillPaid until migration complete
 class BillReminderManagerTest {
 
     private val recurringExpenseRepository = mockk<RecurringExpenseRepository>(relaxed = true)

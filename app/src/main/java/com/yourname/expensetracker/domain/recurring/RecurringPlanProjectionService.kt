@@ -38,7 +38,8 @@ import javax.inject.Singleton
 class RecurringPlanProjectionService @Inject constructor(
     private val coordinator: RecurringLifecycleCoordinator,
     private val plannedExpenseDao: PlannedExpenseDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val writeBarrier: com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 ) {
 
     /**
@@ -54,6 +55,9 @@ class RecurringPlanProjectionService @Inject constructor(
      * @return The number of newly created planned expenses.
      */
     suspend fun projectFromRule(ruleId: Long, monthsAhead: Int = 3): Int {
+        // P4-CURRENT-009: Block projections during restore maintenance
+        writeBarrier.checkWritesAllowed("RecurringPlanProjectionService.projectFromRule")
+        // TODO: Full atomicity — wrap coordinator + planned inserts in a single transaction
         val now = timeProvider.now()
         val endDate = TimePeriodUtils.addMonths(now, monthsAhead)
 

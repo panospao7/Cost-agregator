@@ -57,6 +57,7 @@ class BillRemindersViewModel @Inject constructor(
     fun markBillPaid(recurringExpenseId: Long) {
         viewModelScope.launch {
             try {
+                @Suppress("DEPRECATION_ERROR") // TODO: Migrate to RecurringLifecycleCoordinator.linkExpenseToOccurrence
                 billReminderManager.markBillPaid(recurringExpenseId)
                 loadReminders() // Refresh
             } catch (e: Exception) {

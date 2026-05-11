@@ -159,6 +159,11 @@ class BudgetRepository @Inject constructor(
         // getCategorySpentInPeriod / getTotalForPeriod already filter by
         // transactionType = 'PURCHASE' AND isNotMine = 0 and use effectiveAmount.
         //
+        // TODO (P6-CURRENT-001): Budget limit and spend use different FX bases.
+        // The limit is converted at period-end historical rate (below), but spend
+        // aggregates use latest-rate via MultiCurrencyRepository. For consistency,
+        // both should use the same rate basis (either both historical or both latest).
+        //
         // P6-P1-06: Convert the budget limit at the period-end historical rate
         // so it matches the rate basis of expenses (converted at transaction-date
         // rates). Falls back to latest rate if no historical rate exists, with a

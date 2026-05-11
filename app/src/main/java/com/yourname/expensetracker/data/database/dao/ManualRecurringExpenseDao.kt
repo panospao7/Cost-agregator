@@ -8,6 +8,11 @@ import kotlinx.coroutines.flow.Flow
  * DAO for manual recurring expenses (subscriptions, bills, etc.)
  * This is the primary DAO for all recurring expense operations.
  * RecurringExpenseDao is deprecated - use this instead.
+ *
+ * TODO (P4-CURRENT-013): Direct DAO mutation surface is public. Add a static
+ * guard or internal visibility modifier so that only RecurringLifecycleCoordinator
+ * (and tests) can call mutating methods (insert, update, delete, setActiveStatus,
+ * updateNextDate). This prevents bypassing lifecycle event tracking.
  */
 @Dao
 interface ManualRecurringExpenseDao {

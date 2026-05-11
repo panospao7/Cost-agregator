@@ -91,7 +91,8 @@ class TotalsAggregationEngine @Inject constructor(
      */
     fun getMonthlyTotals(year: Int): Flow<List<PeriodTotal>> = reactiveFlow {
         val (startMs, endMs) = getYearRange(year)
-        val monthlyTotals = multiCurrencyRepository.getHomeCurrencyMonthlyTotals(startMs, endMs)
+        // P5-CURRENT-006: Use PURCHASE-filtered monthly totals to exclude deposits/transfers
+        val monthlyTotals = multiCurrencyRepository.getHomeCurrencyPurchaseMonthlyTotals(startMs, endMs)
         val average = getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
 
         val totalsByKey = monthlyTotals.associateBy { it.monthKey }

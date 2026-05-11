@@ -13,6 +13,16 @@ import javax.inject.Inject
  * each candidate has been paid, is still planned, or should be skipped.
  *
  * Pure domain logic — no DI needed. Instantiate as a plain class.
+ *
+ * TODO (P4-CURRENT-007): Rule CRUD is not coordinator-owned. A future
+ * RecurringRuleLifecycleCoordinator should own create/update/delete of rules
+ * and ensure occurrence regeneration, reminder cleanup, and planned-expense
+ * invalidation happen atomically with rule mutations.
+ *
+ * TODO (P4-CURRENT-011): Same expense can currently pay multiple rules if
+ * merchant/amount/date match more than one rule's occurrence. A global
+ * "expense already linked" check across all rules is needed to prevent
+ * double-counting.
  */
 class OccurrenceConflictResolver @Inject constructor() {
 

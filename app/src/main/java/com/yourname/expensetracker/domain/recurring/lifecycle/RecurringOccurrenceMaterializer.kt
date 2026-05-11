@@ -31,7 +31,8 @@ class RecurringOccurrenceMaterializer @Inject constructor(
     private val occurrenceDao: RecurringOccurrenceDao,
     private val reminderDeliveryDao: RecurringReminderDeliveryDao,
     private val timeProvider: TimeProvider,
-    private val lifecycleEventDao: RecurringLifecycleEventDao
+    private val lifecycleEventDao: RecurringLifecycleEventDao,
+    private val plannedExpenseDao: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
 ) {
     data class MaterializationResult(
         val created: Int = 0,
@@ -60,7 +61,9 @@ class RecurringOccurrenceMaterializer @Inject constructor(
         for (r in resolved) {
             val entity = buildEntity(r, now)
             val insertResult = occurrenceDao.insert(entity)
-            val isPlanned = r.status == "PLANNED"
+
+            // P4-CURRENT-004: Determine the final persisted status to decide on reminders
+            var finalStatus = r.status
 
             if (insertResult == -1L) {
                 // Already exists — load existing and update if status changed
@@ -84,13 +87,29 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                                 metadata = "{\"oldStatus\":\"${existing.status}\",\"newStatus\":\"${entity.status}\"}"
                             )
                         )
+                        finalStatus = entity.status
+
+                        // P4-CURRENT-003: If materializer auto-transitions to PAID, fulfill planned and suppress reminders
+                        if (entity.status == "PAID") {
+                            plannedExpenseDao.fulfillByOccurrenceKey(entity.occurrenceKey, now)
+                            reminderDeliveryDao.suppressByOccurrenceId(existing.id)
+                        }
+
                         updated++
                     } else {
+                        finalStatus = existing.status
                         skipped++
                     }
                 }
             } else {
                 created++
+
+                // P4-CURRENT-003: If newly created as PAID, fulfill planned and suppress reminders
+                if (entity.status == "PAID") {
+                    plannedExpenseDao.fulfillByOccurrenceKey(entity.occurrenceKey, now)
+                    reminderDeliveryDao.suppressByOccurrenceId(insertResult)
+                }
+
                 // Write lifecycle event for newly created occurrence
                 lifecycleEventDao.insert(
                     RecurringLifecycleEvent(
@@ -104,8 +123,8 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                 )
             }
 
-            // Create reminder deliveries for PLANNED occurrences
-            if (isPlanned) {
+            // P4-CURRENT-004: Only create reminder deliveries when finalStatus is PLANNED
+            if (finalStatus == "PLANNED") {
                 val occurrenceId = if (insertResult != -1L) {
                     insertResult
                 } else {
@@ -117,7 +136,8 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                         reminderDeliveryDao.getByOccurrenceAndWindow(occurrenceId, window)
                     if (existingDelivery == null) {
                         val scheduledAt = computeScheduledAt(r.candidate.dueDate, window)
-                        reminderDeliveryDao.insert(
+                        // P4-CURRENT-015: Check insert return value before counting
+                        val deliveryId = reminderDeliveryDao.insert(
                             RecurringReminderDelivery(
                                 occurrenceId = occurrenceId,
                                 reminderWindow = window,
@@ -126,19 +146,21 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                                 createdAt = now
                             )
                         )
-                        remindersCreated++
+                        if (deliveryId > 0) {
+                            remindersCreated++
 
-                        // Write lifecycle event for scheduled reminder
-                        lifecycleEventDao.insert(
-                            RecurringLifecycleEvent(
-                                occurrenceId = occurrenceId,
-                                eventType = "REMINDER_SCHEDULED",
-                                occurredAt = now,
-                                oldStatus = null,
-                                newStatus = "SCHEDULED",
-                                metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
+                            // Write lifecycle event for scheduled reminder
+                            lifecycleEventDao.insert(
+                                RecurringLifecycleEvent(
+                                    occurrenceId = occurrenceId,
+                                    eventType = "REMINDER_SCHEDULED",
+                                    occurredAt = now,
+                                    oldStatus = null,
+                                    newStatus = "SCHEDULED",
+                                    metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }
