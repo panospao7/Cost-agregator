@@ -7,24 +7,13 @@ import javax.inject.Singleton
 /**
  * Privacy gate that guards cloud AI capabilities.
  *
- * Checks:
- * 1. [PrivacySettings.cloudAiEnabled] — master toggle for cloud AI features
- * 2. [PrivacySettings.receiptImageCloudEnabled] — receipt image upload to cloud
- * 3. [PrivacySettings.redactBeforeCloud] — redaction required before sending data
- *
- * Returns [PrivacyDecision.Denied] with a specific reason when the
- * corresponding setting disables the capability. Capabilities not handled
- * by this gate default to [PrivacyDecision.Allowed].
- *
- * TODO (P8-P1-02): PrivacySettings.cloudAiEnabled and AiSettings.allowCloudAi can
- * disagree. [EffectiveCloudAiPolicyResolver] exists and reconciles both, but this
- * gate still reads only PrivacySettingsRepository. Wire the resolver into this gate
- * (inject it, delegate to resolver.resolve().cloudAllowed). The privacy gate remains
- * the authoritative blocker — no security hole, but UX inconsistency persists.
+ * Delegates to [EffectiveCloudAiPolicyResolver] which reconciles both
+ * [PrivacySettings] and [AiSettings] into a single authoritative policy.
+ * This ensures cloud AI is blocked when EITHER settings system disables it.
  */
 @Singleton
 class CloudAiPrivacyGate @Inject constructor(
-    private val settingsRepository: PrivacySettingsRepository,
+    private val policyResolver: EffectiveCloudAiPolicyResolver,
     private val auditLogger: PrivacyAuditLogger
 ) : PrivacyGate {
 
@@ -32,7 +21,7 @@ class CloudAiPrivacyGate @Inject constructor(
         capability: PrivacyCapability,
         context: Map<String, String>
     ): PrivacyDecision {
-        val settings = settingsRepository.getSettings()
+        val policy = policyResolver.resolve()
 
         val decision = when (capability) {
             PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST,
@@ -40,8 +29,8 @@ class CloudAiPrivacyGate @Inject constructor(
             PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION,
             PrivacyCapability.CLOUD_AI_DAILY_BRIEFING,
             PrivacyCapability.CLOUD_AI_GENERAL -> {
-                if (!settings.cloudAiEnabled) {
-                    PrivacyDecision.Denied("Cloud AI is disabled by user setting")
+                if (!policy.cloudAllowed) {
+                    PrivacyDecision.Denied(policy.reason ?: "Cloud AI disabled")
                 } else {
                     PrivacyDecision.Allowed
                 }
@@ -49,24 +38,22 @@ class CloudAiPrivacyGate @Inject constructor(
 
             PrivacyCapability.CLOUD_AI_BANK_STATEMENT,
             PrivacyCapability.AI_BANK_STATEMENT_PARSING -> {
-                if (!settings.cloudAiEnabled) {
-                    PrivacyDecision.Denied("Cloud AI is disabled by user setting")
-                } else if (!settings.bankStatementAiEnabled) {
-                    PrivacyDecision.Denied("Bank statement AI is disabled by user setting")
+                if (!policy.cloudAllowed) {
+                    PrivacyDecision.Denied(policy.reason ?: "Cloud AI disabled")
+                } else if (!policy.bankStatementCloudAllowed) {
+                    PrivacyDecision.Denied("Bank statement AI is disabled")
                 } else {
                     PrivacyDecision.Allowed
                 }
             }
 
             PrivacyCapability.RECEIPT_IMAGE_CLOUD_UPLOAD -> {
-                if (!settings.cloudAiEnabled) {
-                    PrivacyDecision.Denied("Cloud AI is disabled by user setting")
-                } else if (!settings.receiptImageCloudEnabled) {
-                    PrivacyDecision.Denied("Receipt image cloud upload is disabled by user setting")
-                } else if (settings.redactBeforeCloud) {
-                    // When redaction is required, image upload is suppressed
-                    // because images cannot be meaningfully redacted.
-                    PrivacyDecision.Denied("Redaction is required before cloud processing — image upload suppressed")
+                if (!policy.cloudAllowed) {
+                    PrivacyDecision.Denied(policy.reason ?: "Cloud AI disabled")
+                } else if (!policy.receiptImageUploadAllowed) {
+                    PrivacyDecision.Denied("Receipt image cloud upload is disabled")
+                } else if (policy.redactBeforeCloud) {
+                    PrivacyDecision.Denied("Redaction required — image upload suppressed")
                 } else {
                     PrivacyDecision.Allowed
                 }

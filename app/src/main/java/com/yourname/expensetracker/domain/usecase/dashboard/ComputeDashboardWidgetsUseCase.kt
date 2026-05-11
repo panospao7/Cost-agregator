@@ -36,6 +36,7 @@ import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import javax.inject.Inject
@@ -231,7 +232,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     private val monthlySavingsSweepUseCase: com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase,
     private val computeMoneyRadarUseCase: ComputeMoneyRadarUseCase,
     private val stressForecastEngine: com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine,
-    private val forecastInputAssembler: ForecastInputAssembler
+    private val forecastInputAssembler: ForecastInputAssembler,
+    private val currencyConverter: com.yourname.expensetracker.domain.currency.CurrencyConverter,
+    private val currencySettingsRepository: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 ) {
 
     /**
@@ -525,13 +528,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
     }
 
-    // TODO P2-23 / P5-P1-05: computeSpendingTrend sums exp.effectiveAmount without currency normalization.
-    //  Multi-currency users will see incorrect trend data when expenses span different currencies.
-    //  FIX PATH: Inject AnalyticsCurrencyNormalizer, normalize the month's expenses before grouping
-    //  by day, then sum normalizedAmount instead of effectiveAmount. This requires adding
-    //  AnalyticsCurrencyNormalizer as a constructor dependency and making this method suspend.
-    //  DEFERRED: Requires constructor change + suspend migration; tracked for next sprint.
-    private fun computeSpendingTrend(ctx: ComputeContext): DashboardWidget.SpendingTrend {
+    // P5-P1-05: Spending trend now normalizes expenses to home currency before summing.
+    private suspend fun computeSpendingTrend(ctx: ComputeContext): DashboardWidget.SpendingTrend {
+        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
+            .getOrDefault("EUR")
         val trendSeriesCal = java.util.Calendar.getInstance()
         val trendSeries = mutableListOf<SpendingTrendSeries>()
         // DSH-N2: Deduplicate by expense ID to prevent shared/duplicate expenses
@@ -568,7 +568,13 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             val daily = DoubleArray(daysInThisMonth)
             monthExpenses.forEach { exp ->
                 val dayIdx = TimePeriodUtils.daysBetween(mStart, exp.date).coerceIn(0, daysInThisMonth - 1)
-                daily[dayIdx] += exp.effectiveAmount
+                val amount = if (exp.currency.equals(homeCurrency, ignoreCase = true)) {
+                    exp.effectiveAmount
+                } else {
+                    currencyConverter.convert(exp.effectiveAmount, exp.currency, homeCurrency)
+                        ?.convertedAmount ?: exp.effectiveAmount
+                }
+                daily[dayIdx] += amount
             }
             var running = 0.0
             val cumulative = daily.map { d -> running += d; running.toFloat() }
