@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.util.toMoney
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,7 +33,8 @@ class EnhancedSplitManager @Inject constructor(
     private val gson: Gson,
     private val timeProvider: TimeProvider,
     /** SHR-13: Required for transactional item assignment. */
-    private val database: AppDatabase
+    private val database: AppDatabase,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     
     /**
@@ -146,6 +148,7 @@ class EnhancedSplitManager @Inject constructor(
         splitType: SplitTemplate.SplitType,
         shares: List<SplitShare>
     ): Long {
+        writeBarrier.checkWritesAllowed("EnhancedSplitManager.createTemplate")
         validateTemplate(name, totalSplits, splitType, shares)
         val template = SplitTemplate(
             name = name,
@@ -217,19 +220,23 @@ class EnhancedSplitManager @Inject constructor(
     }
     
     suspend fun updateTemplate(template: SplitTemplate) {
+        writeBarrier.checkWritesAllowed("EnhancedSplitManager.updateTemplate")
         splitTemplateDao.updateTemplate(template.copy(updatedAt = timeProvider.now()))
     }
     
     suspend fun deleteTemplate(template: SplitTemplate) {
+        writeBarrier.checkWritesAllowed("EnhancedSplitManager.deleteTemplate")
         splitTemplateDao.deleteTemplate(template)
     }
     
     suspend fun setDefaultTemplate(templateId: Long) {
+        writeBarrier.checkWritesAllowed("EnhancedSplitManager.setDefaultTemplate")
         splitTemplateDao.clearDefaultTemplate()
         splitTemplateDao.setDefaultTemplate(templateId)
     }
     
     suspend fun useTemplate(templateId: Long) {
+        writeBarrier.checkWritesAllowed("EnhancedSplitManager.useTemplate")
         splitTemplateDao.incrementUseCount(templateId, timeProvider.now())
     }
     
@@ -256,6 +263,7 @@ class EnhancedSplitManager @Inject constructor(
         expenseId: Long,
         assignments: List<ItemAssignment>
     ) {
+        writeBarrier.checkWritesAllowed("EnhancedSplitManager.assignItemsToParticipants")
         database.withTransaction {
             // Clear existing assignments
             splitItemAssignmentDao.deleteAllForExpense(expenseId)
@@ -286,6 +294,7 @@ class EnhancedSplitManager @Inject constructor(
     }
     
     suspend fun markAssignmentAsPaid(assignmentId: Long) {
+        writeBarrier.checkWritesAllowed("EnhancedSplitManager.markAssignmentAsPaid")
         splitItemAssignmentDao.markAsPaid(assignmentId, timeProvider.now())
     }
     

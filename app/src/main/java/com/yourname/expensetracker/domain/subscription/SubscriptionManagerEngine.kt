@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
@@ -131,7 +132,8 @@ class SubscriptionManagerEngine @Inject constructor(
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
-    private val candidateDao: com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
+    private val candidateDao: com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     
     /**
@@ -144,6 +146,7 @@ class SubscriptionManagerEngine @Inject constructor(
      * @throws IllegalArgumentException if any validation constraint is violated.
      */
     suspend fun validateAndCreate(request: CreateSubscriptionRequest): Result<ManualRecurringExpense> {
+        writeBarrier.checkWritesAllowed("SubscriptionManagerEngine.validateAndCreate")
         require(request.amount > 0) { "Amount must be positive" }
         require(request.currency.isNotBlank() && request.currency.length == 3) { "Invalid currency" }
         require(request.merchant.isNotBlank()) { "Merchant is required" }
@@ -194,6 +197,7 @@ class SubscriptionManagerEngine @Inject constructor(
         frequency: RecurrenceFrequency,
         nextDate: Long
     ): Long {
+        writeBarrier.checkWritesAllowed("SubscriptionManagerEngine.acceptCandidate")
         val now = timeProvider.now()
         val subscription = ManualRecurringExpense(
             merchant = candidate.merchant,
@@ -276,6 +280,7 @@ class SubscriptionManagerEngine @Inject constructor(
         durationMinutes: Int? = null,
         usageType: String? = null
     ) {
+        writeBarrier.checkWritesAllowed("SubscriptionManagerEngine.recordUsage")
         val usage = SubscriptionUsage(
             subscriptionId = subscriptionId,
             usedAt = timeProvider.now(),
@@ -300,6 +305,7 @@ class SubscriptionManagerEngine @Inject constructor(
         newAmount: Double,
         reason: String? = null
     ) {
+        writeBarrier.checkWritesAllowed("SubscriptionManagerEngine.recordPriceChange")
         // Get previous price
         val previousPrice = priceHistoryDao.getLatestPrice(subscriptionId)?.amount
             ?: recurringExpenseRepository.getAll().find { it.id == subscriptionId }?.amount
