@@ -220,6 +220,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         it.taxInclusive = taxInclusive
                     }
                     if (existing != null) {
+                        // PR2: Clean up ghost row inserted by repository before duplicate detection was complete
+                        Timber.w("Ghost duplicate detected for receipt %d — cleaning up newly-inserted row (existingId=%d)", receipt.id, existing.id)
+                        scannedReceiptDao.delete(receipt)
                         Timber.i("Duplicate receipt detected by exact hash: existingId=${existing.id}")
                         return Result.success(existing)
                     }

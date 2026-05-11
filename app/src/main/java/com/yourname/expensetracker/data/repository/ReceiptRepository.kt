@@ -247,6 +247,7 @@ class ReceiptRepository @Inject constructor(
                     parsedTaxAmount = null, // Explicitly null for failed parse
                     currency = homeCurrency(),
                     confidence = 0f,
+                    createdAt = timeProvider.now(),
                     processingStatus = ReceiptProcessingStatus.PARSE_FAILED.name
                 )
                 val receiptId = scannedReceiptDao.insert(failedReceipt)
@@ -304,7 +305,8 @@ class ReceiptRepository @Inject constructor(
             parsedItems = null,
             parsedTaxAmount = null,
             currency = homeCur,
-            confidence = 0f
+            confidence = 0f,
+            createdAt = timeProvider.now()
         )
         val receiptId = scannedReceiptDao.insert(receipt)
         require(receiptId > 0) { "Receipt insert failed (conflict): imagePath=${receipt.imagePath}" }
@@ -378,8 +380,9 @@ class ReceiptRepository @Inject constructor(
      * normalisation, deduplication, event emission, and warranty auto-creation.
      */
     @Deprecated(
-        "Will be removed in v2.0. Use coordinator.createExpense() directly. " +
-            "All callers have been migrated (see WRN-N2 KDoc for list).",
+        message = "Use ReceiptLifecycleCoordinator.processEmailReceipt for atomic save+link. " +
+            "This convenience path will be removed.",
+        level = DeprecationLevel.ERROR,
         replaceWith = ReplaceWith(
             expression = "coordinator.createExpense(request)",
             imports = ["com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator"]
@@ -697,7 +700,8 @@ class ReceiptRepository @Inject constructor(
                 parsedItems = null,
                 parsedTaxAmount = null,
                 currency = parsedTransactions.firstOrNull()?.currency ?: "EUR",
-                confidence = 0.8f
+                confidence = 0.8f,
+                createdAt = timeProvider.now()
             )
             val receiptId = scannedReceiptDao.insert(receiptRecord)
             require(receiptId > 0) { "Receipt insert failed (conflict): imageHash=${receiptRecord.imageHash}" }

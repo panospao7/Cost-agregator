@@ -722,13 +722,20 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * T10-FIXED: Updates business/tax fields on an expense through the lifecycle coordinator.
-     * Side effects are deferred until after the DB transaction commits.
+     * Updates business/tax fields on an expense through the lifecycle coordinator.
      *
-     * PR-T1: Real implementation — loads expense from DB, applies field copies,
-     * persists via expenseDao.update(), and writes a UPDATED TransactionEvent.
-     * Fields that do not exist on the Expense entity (businessUsePercent, taxCategory, vatEligible)
-     * are accepted as no-op parameters for API compatibility.
+     * **Only `isBusinessExpense` and `receiptRequired` are persisted.**
+     * `businessUsePercent`, `taxCategory`, and `vatEligible` are accepted for API
+     * compatibility but are **no-ops** pending entity schema changes. When any of
+     * these no-op parameters are non-null, a warning is logged via Timber.w.
+     *
+     * @param expenseId The ID of the expense to update.
+     * @param isBusinessExpense Whether this expense is a business expense (persisted).
+     * @param businessUsePercent No-op — accepted for API compatibility only.
+     * @param taxCategory No-op — accepted for API compatibility only.
+     * @param vatEligible No-op — accepted for API compatibility only.
+     * @param receiptRequired Whether a receipt is required, mapped to `requiresReceipt` (persisted).
+     * @param source The source system/component that triggered the update.
      */
     suspend fun updateBusinessTaxFields(
         expenseId: Long,
@@ -742,6 +749,17 @@ class TransactionLifecycleCoordinator @Inject constructor(
         if (!restoreMaintenanceMode.isWritesAllowed()) {
             throw IllegalStateException("Database writes blocked during restore")
         }
+
+        if (businessUsePercent != null) {
+            Timber.w("businessUsePercent=%.2f ignored — not persisted (pending entity schema changes)", businessUsePercent)
+        }
+        if (taxCategory != null) {
+            Timber.w("taxCategory=%s ignored — not persisted (pending entity schema changes)", taxCategory)
+        }
+        if (vatEligible != null) {
+            Timber.w("vatEligible=%s ignored — not persisted (pending entity schema changes)", vatEligible)
+        }
+
         val existing = expenseDao.getById(expenseId) ?: return
         val now = timeProvider.now()
         val beforeSnapshot = expenseToSnapshot(existing)

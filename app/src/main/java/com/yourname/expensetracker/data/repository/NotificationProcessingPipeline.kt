@@ -506,6 +506,25 @@ class NotificationProcessingPipeline @Inject constructor(
                         is NotificationPipelineOutcome.Dropped -> outcome.reason
                         else -> null
                     },
+                    entityType = when (outcome) {
+                        is NotificationPipelineOutcome.AutoAccepted -> "Expense"
+                        is NotificationPipelineOutcome.NeedsReview -> "PendingReview"
+                        is NotificationPipelineOutcome.ParserFailed -> outcome.rawId?.let { "RawNotification" }
+                        is NotificationPipelineOutcome.AutoRejected -> outcome.rawId?.let { "RawNotification" }
+                        else -> null
+                    },
+                    entityId = when (outcome) {
+                        is NotificationPipelineOutcome.AutoAccepted -> outcome.expenseId
+                        is NotificationPipelineOutcome.NeedsReview -> outcome.reviewId
+                        else -> null
+                    },
+                    sourceId = when (outcome) {
+                        is NotificationPipelineOutcome.AutoAccepted -> outcome.rawId
+                        is NotificationPipelineOutcome.NeedsReview -> outcome.rawId
+                        is NotificationPipelineOutcome.ParserFailed -> outcome.rawId
+                        is NotificationPipelineOutcome.AutoRejected -> outcome.rawId
+                        else -> null
+                    },
                     timestamp = timeProvider.now()
                 )
             )

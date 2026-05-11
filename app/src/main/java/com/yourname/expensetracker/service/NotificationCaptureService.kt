@@ -585,6 +585,13 @@ class NotificationCaptureService : NotificationListenerService() {
             return
         }
 
+        // PR1: Fast privacy gate check BEFORE extracting text from extras.
+        // Avoids reading any PII from notification extras when capture is disabled.
+        if (isPrivacyDeniedFast()) {
+            Timber.d("Privacy gate denied notification capture from $packageName (pre-extraction, refresh path)")
+            return
+        }
+
         val extras = sbn.notification.extras
         val parts = NotificationTextParts.extract(extras)
 
@@ -653,6 +660,9 @@ class NotificationCaptureService : NotificationListenerService() {
         cancelRestartAlarm()
         diagnostics.recordServiceKilled()
         Timber.d("Service destroyed")
+        // Shutdown trades drain for fast foreground-service timeout compliance.
+        // Active notifications are recovered via refreshActiveNotifications().
+        // For full durability, a NotificationIntake table is planned (see implementation plan).
         // Cancel all in-flight work without blocking the main thread.
         // Previously used runBlocking { workTracker.stopAcceptingAndDrain() } which could
         // cause ForegroundServiceDidNotStopInTimeException by blocking the main thread
