@@ -20,6 +20,12 @@ import javax.inject.Inject
  * Triggered by the "Dismiss" action button on a bill reminder notification.
  * Updates the delivery's status to "DISMISSED" and records the dismissal
  * timestamp so the reminder is not shown again.
+ *
+ * TODO (P4-PR4): This receiver currently writes directly to the DAO. It should
+ * instead delegate to [RecurringLifecycleCoordinator.dismissReminder] so that
+ * all lifecycle rules (PlannedExpense re-evaluation, event audit) are enforced
+ * consistently. The direct DAO writes are retained for now to preserve
+ * backward-compatible semantics.
  */
 @AndroidEntryPoint
 class DismissReminderReceiver : BroadcastReceiver() {

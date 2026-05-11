@@ -209,12 +209,26 @@ class RecurringOccurrenceMaterializer @Inject constructor(
         /**
          * Terminal statuses that are never auto-transitioned.
          *
+         * == Downgrade Protection Policy ==
+         *
          * PAID, CANCELLED, SKIPPED, IGNORED, and MISSED are terminal
          * occurrence statuses. Once an occurrence reaches one of these
          * statuses, the materializer will never downgrade or overwrite it
          * during re-materialization — only PLANNED occurrences can be
          * auto-transitioned (e.g. to PAID when linked to an expense, or
          * to SKIPPED/MISSED when their due date passes unresolved).
+         *
+         * This is enforced by the guard at line 69 (`existing.status !in TERMINAL_STATUSES`)
+         * which skips the update if the existing row already has a terminal status.
+         * The policy prevents:
+         *  - A manually skipped occurrence from being re-materialized back to PLANNED.
+         *  - A paid occurrence from being downgraded if the linked expense is also a
+         *    valid match for a later re-run of the resolver.
+         *  - A cancelled recurrence from being silently resurrected by the expander.
+         *
+         * Status transitions are only allowed by explicit lifecycle operations
+         * (e.g. [RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence])
+         * which bypass the materializer and use their own transaction guard.
          */
         private val TERMINAL_STATUSES = setOf("PAID", "CANCELLED", "SKIPPED", "IGNORED", "MISSED")
     }

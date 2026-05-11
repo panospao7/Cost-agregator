@@ -20,6 +20,12 @@ import javax.inject.Inject
  * Triggered by the "Snooze" action button on a bill reminder notification.
  * Updates the delivery's status to "SNOOZED" and sets [snoozedUntil] to
  * 24 hours from now, so the next worker cycle will skip it.
+ *
+ * TODO (P4-PR4): This receiver currently writes directly to the DAO. It should
+ * instead delegate to [RecurringLifecycleCoordinator.snoozeReminder] so that
+ * all lifecycle rules (PlannedExpense re-opening, reminder regeneration, event
+ * audit) are enforced consistently. The direct DAO writes are retained for now
+ * to preserve backward-compatible semantics.
  */
 @AndroidEntryPoint
 class SnoozeReminderReceiver : BroadcastReceiver() {

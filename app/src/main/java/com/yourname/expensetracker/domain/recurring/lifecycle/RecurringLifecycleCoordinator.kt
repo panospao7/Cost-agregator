@@ -215,8 +215,10 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * an occurrence linked to the given expense ID.
      *
      * @param expenseId The ID of the expense being deleted.
+     * @param reason Why the expense was unlinked (e.g. "expense_deleted", "manual_unlink").
+     *               Defaults to "expense_deleted".
      */
-    suspend fun unlinkExpenseFromOccurrence(expenseId: Long) {
+    suspend fun unlinkExpenseFromOccurrence(expenseId: Long, reason: String = "expense_deleted") {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence")
 
         val now = timeProvider.now()
@@ -238,6 +240,20 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 )
             )
 
+            // Reopen linked PlannedExpense if it exists: set status back to PLANNED,
+            // clear linkedActualExpenseId, and refresh the openSourceOccurrenceKey.
+            val planned = plannedExpenseDao.getBySourceOccurrenceKey(linked.occurrenceKey)
+            if (planned != null) {
+                plannedExpenseDao.linkToActualExpense(planned.id, 0L, now)
+                plannedExpenseDao.updateStatus(planned.id, "PLANNED", now)
+                plannedExpenseDao.refreshOpenOccurrenceKey(planned.id)
+                // Reminder deliveries should be regenerated for the unlinked occurrence
+                // so that the user gets notified again. Currently deliveries are
+                // suppressed during linkExpenseToOccurrence, and unlink does not
+                // regenerate them — this is a known gap (see TODO below).
+                // TODO: regenerate reminder deliveries for the unlinked occurrence
+            }
+
             // Write lifecycle event
             lifecycleEventDao.insert(
                 RecurringLifecycleEvent(
@@ -246,7 +262,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     occurredAt = now,
                     oldStatus = "PAID",
                     newStatus = "PLANNED",
-                    metadata = """{"expenseId":$expenseId,"reason":"expense_deleted"}"""
+                    metadata = """{"expenseId":$expenseId,"reason":"$reason"}"""
                 )
             )
         }

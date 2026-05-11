@@ -58,6 +58,18 @@ data class DataQualityReport(
          * Create a report from an [AnalyticsNormalizationResult].
          * This is the primary factory method — all engines that use the normalizer
          * should pipe its output through here.
+         *
+         * == Stale-Rate Penalty Policy ==
+         *
+         * If the normalization result contains [STALE_EXCHANGE_RATE] warnings
+         * (indicating that rate data is more than 7 days older than the expense
+         * date), a penalty of **0.05 per stale-rate warning category** is applied
+         * to the base confidence score, capped at **0.15 total**. This prevents
+         * a single large batch of stale rates from tanking the confidence score
+         * while still reflecting the reliability impact.
+         *
+         * Penalty is applied *after* the loss-based confidence calculation and
+         * before the final `coerceIn(0.0, 1.0)`.
          */
         fun fromNormalization(
             normalization: AnalyticsNormalizationResult,
@@ -66,17 +78,25 @@ data class DataQualityReport(
             totalWithCategory: Int
         ): DataQualityReport {
             val lossPct = normalization.lossPercentage
-            val confidence = if (normalization.totalInputCount > 0) {
-                (1.0 - (lossPct / 100.0)).coerceIn(0.0, 1.0).toFloat()
+            val baseConfidence = if (normalization.totalInputCount > 0) {
+                1.0 - (lossPct / 100.0)
             } else {
-                0f
+                0.0
             }
+
+            // Apply stale-rate penalty: 0.05 per stale-rate warning, capped at 0.15
+            val staleRateWarnings = normalization.warnings.filter {
+                it.type == AnalyticsConversionWarningType.STALE_EXCHANGE_RATE
+            }
+            val stalePenalty = (staleRateWarnings.size * 0.05).coerceAtMost(0.15)
+            val confidence = baseConfidence.coerceIn(0.0, 1.0) - stalePenalty
+
             return DataQualityReport(
                 totalExpenses = normalization.totalInputCount,
                 expensesWithCurrency = totalWithCurrency,
                 expensesWithMerchant = totalWithMerchant,
                 expensesWithCategory = totalWithCategory,
-                conversionConfidence = confidence,
+                conversionConfidence = confidence.coerceIn(0.0, 1.0).toFloat(),
                 warnings = normalization.warnings.map { it.message }
             )
         }

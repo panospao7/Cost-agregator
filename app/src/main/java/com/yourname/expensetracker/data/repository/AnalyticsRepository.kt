@@ -169,6 +169,11 @@ class AnalyticsRepository @Inject constructor(
             // If a category aggregate is partial (missing exchange rates), its percentage
             // is calculated over only successfully converted amounts. The breakdown should
             // carry isPartial and warningMessage fields so the UI can show caveats.
+
+            // TODO (P5-PR2): Downstream consumers of category breakdown (e.g. analytics
+            // ViewModel, dashboard widgets) should also propagate isPartial and warningMessage
+            // fields from SpendingSummary so that users see data-quality warnings consistently
+            // across all surfaces. Currently these fields may be dropped at the ViewModel layer.
             val totalSpent = categoryAggregates.values.sumOf { it.displayAmount }
 
             emit(

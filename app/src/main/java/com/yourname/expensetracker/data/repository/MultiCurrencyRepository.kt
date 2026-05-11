@@ -25,6 +25,35 @@ import javax.inject.Singleton
 /**
  * Repository for multi-currency expense operations.
  * Handles currency conversion for queries and totals.
+ *
+ * == Rate-Basis Policy ==
+ *
+ * This repository uses two rate-basis strategies depending on the use case:
+ *
+ * **LATEST_AVAILABLE** — Used for current-state snapshots (e.g. current dashboard,
+ * current-period totals, category breakdowns, merchant totals). These methods
+ * call [CurrencyConverter.convertMultiple] which uses the most recent available
+ * exchange rate. This is appropriate for "right now" views where the user is
+ * looking at a live snapshot of their spending. Methods using this rate basis
+ * are marked with `**LATEST-RATE**` in their KDoc.
+ *
+ * **AS_OF_TRANSACTION_DATE** — Planned for historical period reports where the
+ * rate at the time of each transaction matters (e.g. year-over-year comparisons,
+ * period-accurate P&L). These would use [CurrencyConverter.convertAsOf] with
+ * each expense's date. A historical-rate aggregate API is planned for future
+ * (see TODOs on individual methods).
+ *
+ * == Current State ==
+ *
+ * - **Totals** (total spending, monthly/daily/weekly aggregates): use latest-rate.
+ * - **Normalized analytics** (via [AnalyticsCurrencyNormalizer]): already use
+ *   as-of-transaction-date conversion through [CurrencyConverter.convertAsOf].
+ *   See [AnalyticsRepository.getSpendingSummary] which pipelines normalized
+ *   expenses (as-of-rate) for daily history while using latest-rate aggregates
+ *   for the total display.
+ *
+ * - **Category/Merchant breakdowns**: use latest-rate. For historical accuracy,
+ *   callers should use the normalized-analytics path instead.
  */
 @Singleton
 class MultiCurrencyRepository @Inject constructor(
@@ -44,7 +73,8 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
-     * Get total expenses between dates, converted to home currency.
+     * **LATEST-RATE:** Get total expenses between dates, converted to home currency.
+     *
      * Uses type-agnostic aggregate DAO helper [ExpenseDao.getAllSpentBetweenByCurrency]
      * so that the DB does the per-currency grouping with [ExpenseDao.EFFECTIVE_AMOUNT_SQL],
      * and only the per-currency totals are converted — no uncapped row scan needed.
@@ -52,7 +82,7 @@ class MultiCurrencyRepository @Inject constructor(
      * This method is intentionally **type-agnostic** (includes all transaction types),
      * preserving pre-A.10 semantics.  Transaction-type narrowing is deferred to A.10.
      *
-     * **LATEST-RATE:** Uses current exchange rates via [CurrencyConverter.convertMultiple].
+     * Uses current exchange rates via [CurrencyConverter.convertMultiple].
      * For historical accuracy, use the per-row [CurrencyConverter.convertAsOf] approach
      * with each expense's date. A historical-rate aggregate API is planned for future
      * (TODO: getTotalExpensesInHomeCurrencyHistorical).
@@ -84,7 +114,8 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
-     * Get expenses grouped by currency.
+     * **LATEST-RATE:** Get expenses grouped by currency.
+     *
      * Uses type-agnostic aggregate DAO helper [ExpenseDao.getAllSpentBetweenByCurrency]
      * which groups by `UPPER(currency)` and sums [ExpenseDao.EFFECTIVE_AMOUNT_SQL] —
      * no uncapped row scan needed.
@@ -161,7 +192,8 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
-     * Get spending totals by category in home currency.
+     * **LATEST-RATE:** Get spending totals by category in home currency.
+     *
      * Uses type-agnostic grouped aggregate helper
      * [ExpenseDao.getAllCategoryTotalsBetweenByCurrency] which returns
      * (categoryId, currency, total) tuples — no uncapped row scan needed.
@@ -217,7 +249,8 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
-     * Get merchant totals in home currency.
+     * **LATEST-RATE:** Get merchant totals in home currency.
+     *
      * Uses type-agnostic grouped aggregate helper
      * [ExpenseDao.getAllMerchantTotalsBetweenByCurrency] which returns
      * (merchant, currency, total) tuples — no uncapped row scan needed.
@@ -274,7 +307,8 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
-     * Get monthly totals in home currency.
+     * **LATEST-RATE:** Get monthly totals in home currency.
+     *
      * Uses type-agnostic grouped aggregate helper
      * [ExpenseDao.getAllMonthlyTotalsBetweenByCurrency] which returns
      * (monthKey, currency, total) tuples — no uncapped row scan needed.
@@ -348,11 +382,12 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
-     * Get total expenses in home currency.
+     * **LATEST-RATE:** Get total expenses in home currency.
+     *
      * Reads home currency from settings automatically.
      * Returns MoneyAggregate with per-currency source buckets and conversion failures.
      *
-     * **LATEST-RATE:** Uses current exchange rates via [CurrencyConverter.convertMultiple].
+     * Uses current exchange rates via [CurrencyConverter.convertMultiple].
      * For historical accuracy, use the per-row [CurrencyConverter.convertAsOf] approach
      * with each expense's date. A historical-rate aggregate API is planned for future
      * (TODO: getHomeCurrencyTotalHistorical).
@@ -367,10 +402,11 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
-     * Get category totals in home currency.
+     * **LATEST-RATE:** Get category totals in home currency.
+     *
      * Returns map of categoryId -> MoneyAggregate.
      *
-     * **Rate basis:** Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
+     * Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
      * Callers needing historical-rate accuracy should use the per-row
      * [CurrencyConverter.convertAsOf] approach instead. For a future
      * historical-rate aggregate API, see TODO below.
@@ -393,10 +429,11 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
-     * Get merchant totals in home currency.
+     * **LATEST-RATE:** Get merchant totals in home currency.
+     *
      * Returns map of merchant -> MoneyAggregate.
      *
-     * **Rate basis:** Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
+     * Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
      * Callers needing historical-rate accuracy should use the per-row
      * [CurrencyConverter.convertAsOf] approach instead. For a future
      * historical-rate aggregate API, see TODO below.
@@ -419,10 +456,11 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
-     * Get monthly totals in home currency.
+     * **LATEST-RATE:** Get monthly totals in home currency.
+     *
      * Returns list of MonthMoneyAggregate sorted by monthKey ascending.
      *
-     * **Rate basis:** Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
+     * Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
      * Callers needing historical-rate accuracy should use the per-row
      * [CurrencyConverter.convertAsOf] approach instead. For a future
      * historical-rate aggregate API, see TODO below.
@@ -496,10 +534,11 @@ class MultiCurrencyRepository @Inject constructor(
     // ── PURCHASE-only variants ─────────────────────────────────────────────
 
     /**
-     * Get total PURCHASE spending in home currency.
+     * **LATEST-RATE:** Get total PURCHASE spending in home currency.
+     *
      * Uses the PURCHASE-filtered DAO variant.
      *
-     * **Rate basis:** Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
+     * Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
      * Callers needing historical-rate accuracy should use the per-row
      * [CurrencyConverter.convertAsOf] approach instead. For a future
      * historical-rate aggregate API, see TODO below.
@@ -517,7 +556,8 @@ class MultiCurrencyRepository @Inject constructor(
     }
 
     /**
-     * Get the DEPOSIT total in home currency for the given date range.
+     * **LATEST-RATE:** Get the DEPOSIT total in home currency for the given date range.
+     *
      * Uses the DEPOSIT-filtered DAO variant for currency-aware aggregation.
      */
     suspend fun getHomeCurrencyDepositTotal(

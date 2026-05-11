@@ -57,6 +57,13 @@ class BillReminderWorker @AssistedInject constructor(
                 for (reminder in dueReminders) {
                     if (isStopped) break
 
+                    // Checkpoint: verify writes are still allowed and this worker hasn't been cancelled
+                    executionGuard.checkpoint("bill_reminder")
+
+                    // TODO: Handle stale claims — if a delivery is CLAIMED for > 10 minutes
+                    // (likely due to a crashed/killed worker), reset it to SCHEDULED so it
+                    // can be picked up by the next worker cycle.
+
                     // Atomic claim: only one worker can claim each delivery
                     if (!coordinator.claimReminderDelivery(reminder.id)) {
                         Log.d(TAG, "Reminder ${reminder.id} already claimed by another worker, skipping")
