@@ -299,6 +299,10 @@ object BackupVerifier {
         val totalPassed = tableResults.count { it.passed }
         val totalFailed = tableResults.count { !it.passed }
 
+        // 4. Semantic integrity checks (orphan FK references)
+        val semanticErrors = verifySemanticIntegrity(db)
+        errors.addAll(semanticErrors)
+
         val overallPassed = integrityCheckOk && foreignKeyCheckOk && errors.isEmpty()
 
         return VerificationSummary(
@@ -359,6 +363,30 @@ object BackupVerifier {
     }
 
     // ── Internal helpers ──────────────────────────────────────────
+
+    private fun verifySemanticIntegrity(db: SQLiteDatabase): List<String> {
+        val errors = mutableListOf<String>()
+        val checks = listOf(
+            "SELECT COUNT(*) FROM receipt_expense_links WHERE expenseId NOT IN (SELECT id FROM expenses)"
+                to "Orphan receipt_expense_links referencing non-existent expenses",
+            "SELECT COUNT(*) FROM recurring_occurrences WHERE sourceId NOT IN (SELECT id FROM manual_recurring_expenses)"
+                to "Orphan recurring_occurrences referencing non-existent recurring expenses",
+            "SELECT COUNT(*) FROM budget_forecasts WHERE budgetId NOT IN (SELECT id FROM budgets)"
+                to "Orphan budget_forecasts referencing non-existent budgets"
+        )
+        for ((sql, description) in checks) {
+            try {
+                val cursor = db.rawQuery(sql, null)
+                val count = cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
+                if (count > 0) {
+                    errors.add("Semantic integrity: $description ($count orphan rows)")
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "Semantic integrity check skipped: $description")
+            }
+        }
+        return errors
+    }
 
     private fun countRows(db: SQLiteDatabase, tableName: String): Int {
         return try {

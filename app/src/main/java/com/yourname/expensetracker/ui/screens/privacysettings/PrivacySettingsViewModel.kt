@@ -12,13 +12,10 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
-// TODO (P8-P1-12): Add a `deniedCapabilities: List<PrivacyCapability>` field to
-// PrivacySettingsUiState so the UI can show which features are currently blocked
-// by each toggle (e.g. "Disabling cloud AI blocks: receipt assist, categorization,
-// dashboard briefing"). Compute from EffectiveCloudAiPolicyResolver + LocationPrivacyGate.
 data class PrivacySettingsUiState(
     val settings: PrivacySettings = PrivacySettings(),
-    val isSaving: Boolean = false
+    val isSaving: Boolean = false,
+    val deniedFeatures: List<String> = emptyList()
 )
 
 @HiltViewModel
@@ -32,8 +29,25 @@ class PrivacySettingsViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             repository.observeSettings().collect { settings ->
-                _uiState.value = _uiState.value.copy(settings = settings)
+                _uiState.value = _uiState.value.copy(
+                    settings = settings,
+                    deniedFeatures = computeDeniedFeatures(settings)
+                )
             }
+        }
+    }
+
+    private fun computeDeniedFeatures(settings: PrivacySettings): List<String> = buildList {
+        if (!settings.cloudAiEnabled) {
+            add("AI Receipt Assist")
+            add("Auto-categorization")
+            add("Dashboard Briefing")
+        }
+        if (!settings.externalGeocodingEnabled) {
+            add("Location enrichment")
+        }
+        if (!settings.notificationCaptureEnabled) {
+            add("Automatic expense capture")
         }
     }
 
