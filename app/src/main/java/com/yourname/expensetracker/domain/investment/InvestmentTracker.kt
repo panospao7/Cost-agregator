@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.Investment
 import com.yourname.expensetracker.data.database.entity.InvestmentTransaction
 import com.yourname.expensetracker.data.database.entity.InvestmentType
 import com.yourname.expensetracker.data.database.entity.InvestmentValue
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
@@ -62,6 +63,7 @@ class InvestmentTracker @Inject constructor(
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,
     private val currencySettingsRepository: CurrencySettingsRepository,
+    private val writeBarrier: DatabaseWriteBarrier,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
     
@@ -119,6 +121,7 @@ class InvestmentTracker @Inject constructor(
      * @throws IllegalArgumentException if any validation constraint is violated.
      */
     suspend fun addHolding(investment: Investment): Result<Long> {
+        writeBarrier.checkWritesAllowed("InvestmentTracker.addHolding")
         require(investment.quantity > 0) { "Quantity must be positive" }
         require(investment.purchasePrice > 0) { "Purchase price must be positive" }
         require(investment.currency.isNotBlank()) { "Currency is required" }
@@ -267,6 +270,7 @@ class InvestmentTracker @Inject constructor(
      * (see line 231) so the price update + value history insert are atomic.
      */
     suspend fun updatePrice(investmentId: Long, newPrice: Double) = withContext(ioDispatcher) {
+        writeBarrier.checkWritesAllowed("InvestmentTracker.updatePrice")
         val investment = investmentDao.getById(investmentId) ?: return@withContext
         val timestamp = timeProvider.now()
         

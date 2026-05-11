@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.di
 
 import android.content.Context
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.GroupTransactionCoordinator
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -45,6 +46,7 @@ object DatabaseModule {
         expenseDao: ExpenseDao,
         transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
         transactionEventDao: TransactionEventDao,
+        writeBarrier: DatabaseWriteBarrier,
         @IoDispatcher ioDispatcher: CoroutineDispatcher
     ): GroupTransactionCoordinatorInterface {
         return GroupTransactionCoordinator(
@@ -55,6 +57,7 @@ object DatabaseModule {
             expenseDao = expenseDao,
             transactionLifecycleCoordinator = transactionLifecycleCoordinator,
             transactionEventDao = transactionEventDao,
+            writeBarrier = writeBarrier,
             ioDispatcher = ioDispatcher
         )
     }

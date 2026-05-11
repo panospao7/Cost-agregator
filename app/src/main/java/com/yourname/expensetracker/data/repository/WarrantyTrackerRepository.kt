@@ -100,7 +100,9 @@ class WarrantyTrackerRepository @Inject constructor(
      * The insert is wrapped in [database.withTransaction] to ensure ACID semantics
      * when this method is part of a larger multi-table write (future-proofing).
      */
-    suspend fun addWarranty(warranty: Warranty): Long = database.withTransaction {
+    suspend fun addWarranty(warranty: Warranty): Long {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.addWarranty")
+        return database.withTransaction {
         // W18: Ensure createdAt and updatedAt are set to timeProvider.now()
         val now = timeProvider.now()
         val warrantyWithTimestamps = warranty.copy(
@@ -121,8 +123,11 @@ class WarrantyTrackerRepository @Inject constructor(
 
         warrantyId
     }
+    }
 
-    suspend fun addWarrantyIgnoreConflicts(warranty: Warranty): Long = database.withTransaction {
+    suspend fun addWarrantyIgnoreConflicts(warranty: Warranty): Long {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.addWarrantyIgnoreConflicts")
+        return database.withTransaction {
         val id = warrantyDao.insertWarrantyIgnore(warranty)
         if (id > 0L) {
             val now = timeProvider.now()
@@ -174,6 +179,7 @@ class WarrantyTrackerRepository @Inject constructor(
             }
         }
         id
+    }
     }
     
     suspend fun updateWarranty(warranty: Warranty) {
@@ -313,6 +319,7 @@ class WarrantyTrackerRepository @Inject constructor(
     }
 
     suspend fun reconcileExpiredItems(now: Long = timeProvider.now()): ExpiryReconciliationResult {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.reconcileExpiredItems")
         val expiredWarranties = warrantyDao.markExpiredWarranties(currentTime = now, updatedAt = now)
         val expiredReturnWindows = returnWindowDao.markExpiredReturnWindows(currentTime = now, updatedAt = now)
         return ExpiryReconciliationResult(
@@ -322,6 +329,7 @@ class WarrantyTrackerRepository @Inject constructor(
     }
 
     suspend fun upsertReturnWindowForReceipt(receiptId: Long, fallbackWarranty: Warranty? = null): Long? {
+        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.upsertReturnWindowForReceipt")
         val receipt = receiptRepository.get().getReceiptById(receiptId) ?: return null
         // Skip return window creation for bank statements, manual placeholders, and failed OCR receipts
         if (receipt.documentType == "BANK_STATEMENT" || receipt.documentType == "MANUAL_PLACEHOLDER" ||

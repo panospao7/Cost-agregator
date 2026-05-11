@@ -14,6 +14,7 @@ import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionEvent
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.GroupCreationResult
@@ -142,6 +143,7 @@ class GroupTransactionCoordinator @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val transactionEventDao: TransactionEventDao,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
+    private val writeBarrier: DatabaseWriteBarrier,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : DomainCoordinator {
 
@@ -171,6 +173,7 @@ class GroupTransactionCoordinator @Inject constructor(
         members: List<GroupMember>
     ): GroupCreationResult = withContext(ioDispatcher) {
         try {
+            writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.createGroupWithMembers")
             validateSingleCurrentUser(members)
 
             val group = ExpenseGroup(
@@ -214,6 +217,7 @@ class GroupTransactionCoordinator @Inject constructor(
         isCurrentUser: Boolean
     ): Result<Unit, GroupValidationError> = withContext(ioDispatcher) {
         try {
+            writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.addMemberToGroup")
             database.withTransaction {
                 // Verify group exists and is active inside the transaction
                 val group = groupDao.getById(groupId)
@@ -276,6 +280,7 @@ class GroupTransactionCoordinator @Inject constructor(
         date: Long
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
+            writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.addExpenseToGroup")
             database.withTransaction {
                 // Verify group exists and is active
                 val group = groupDao.getById(groupId)
@@ -362,6 +367,7 @@ class GroupTransactionCoordinator @Inject constructor(
         date: Long
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
+            writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.addExpenseWithLink")
             database.withTransaction {
                 // Verify group exists and is active
                 val group = groupDao.getById(groupId)
@@ -471,6 +477,7 @@ class GroupTransactionCoordinator @Inject constructor(
      */
     override suspend fun deleteGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
         try {
+            writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.deleteGroup")
             groupDao.archiveGroup(groupId)
             true
         } catch (e: Exception) {
@@ -484,6 +491,7 @@ class GroupTransactionCoordinator @Inject constructor(
      */
     override suspend fun archiveGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
         try {
+            writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.archiveGroup")
             groupDao.archiveGroup(groupId)
             true
         } catch (e: Exception) {
@@ -512,6 +520,7 @@ class GroupTransactionCoordinator @Inject constructor(
      */
     override suspend fun permanentlyDeleteGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
         try {
+            writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.permanentlyDeleteGroup")
             deleteGroupAtomic(groupId)
             true
         } catch (e: Exception) {
@@ -533,6 +542,7 @@ class GroupTransactionCoordinator @Inject constructor(
         group: ExpenseGroup,
         members: List<GroupMember>
     ): Long {
+        writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.createGroupWithMembersAtomic")
         validateSingleCurrentUser(members)
 
         return database.withTransaction {
@@ -576,6 +586,7 @@ class GroupTransactionCoordinator @Inject constructor(
         notes: String?
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
         try {
+            writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.createSystemExpenseAndLinkToGroup")
             database.withTransaction {
                 // 1. Validate group exists and is active
                 val group = groupDao.getById(groupId)
@@ -734,6 +745,7 @@ class GroupTransactionCoordinator @Inject constructor(
     suspend fun addExpenseToGroupAtomic(
         groupExpense: GroupExpense
     ): Long {
+        writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.addExpenseToGroupAtomic")
         return database.withTransaction {
             groupExpense.expenseId?.let { expenseId ->
                 if (groupExpenseDao.getGroupExpenseForExpense(expenseId) != null) {
@@ -755,6 +767,7 @@ class GroupTransactionCoordinator @Inject constructor(
      * to preserve referential integrity.
      */
     suspend fun deleteGroupAtomic(groupId: Long) {
+        writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.deleteGroupAtomic")
         // Collect linked expense IDs before deleting
         val linkedExpenseIds = groupExpenseDao.getExpensesForGroupOnce(groupId).mapNotNull { it.expenseId }
 

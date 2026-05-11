@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.GroupSettlementEntity
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
@@ -69,6 +70,7 @@ class GroupLifecycleCoordinator @Inject constructor(
     private val balanceCalculator: GroupBalanceCalculator,
     private val timeProvider: TimeProvider,
     private val currencySettingsRepository: CurrencySettingsRepository,
+    private val writeBarrier: DatabaseWriteBarrier,
     private val budgetMonitor: dagger.Lazy<com.yourname.expensetracker.domain.budget.BudgetMonitor>,
     private val sideEffectDispatcher: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
@@ -95,6 +97,7 @@ class GroupLifecycleCoordinator @Inject constructor(
         currency: String,
         members: List<GroupMember>
     ): GroupCreationResult = withContext(ioDispatcher) {
+        writeBarrier.checkWritesAllowed("GroupLifecycleCoordinator.createGroup")
         // Validate member count
         if (members.size < 2) {
             return@withContext GroupCreationResult.Error("A group must have at least 2 members")
@@ -157,6 +160,7 @@ class GroupLifecycleCoordinator @Inject constructor(
         email: String? = null,
         isCurrentUser: Boolean = false
     ): Result<Unit, GroupValidationError> = withContext(ioDispatcher) {
+        writeBarrier.checkWritesAllowed("GroupLifecycleCoordinator.addMember")
         // Verify group exists and is active
         val group = groupDao.getGroupById(groupId)
             ?: return@withContext Result.Error(GroupValidationError.InvalidGroup)
@@ -203,6 +207,7 @@ class GroupLifecycleCoordinator @Inject constructor(
         groupId: Long,
         memberId: Long
     ): Result<Unit, GroupValidationError> = withContext(ioDispatcher) {
+        writeBarrier.checkWritesAllowed("GroupLifecycleCoordinator.removeMember")
         val group = groupDao.getGroupById(groupId)
             ?: return@withContext Result.Error(GroupValidationError.InvalidGroup)
         val member = memberDao.getMemberById(memberId)
@@ -259,6 +264,7 @@ class GroupLifecycleCoordinator @Inject constructor(
         customSplitsJson: String? = null,
         date: Long = timeProvider.now()
     ): GroupExpenseCreationResult = withContext(ioDispatcher) {
+        writeBarrier.checkWritesAllowed("GroupLifecycleCoordinator.addExpense")
         val group = groupDao.getGroupById(groupId)
             ?: return@withContext GroupExpenseCreationResult.Error("Group not found")
         if (!group.isActive) {
@@ -300,6 +306,7 @@ class GroupLifecycleCoordinator @Inject constructor(
      * @return True if successful, false otherwise
      */
     suspend fun archiveGroup(groupId: Long): Boolean = withContext(ioDispatcher) {
+        writeBarrier.checkWritesAllowed("GroupLifecycleCoordinator.archiveGroup")
         val group = groupDao.getGroupById(groupId) ?: return@withContext false
         val result = groupCoordinator.archiveGroup(groupId)
         if (result) {
@@ -323,6 +330,7 @@ class GroupLifecycleCoordinator @Inject constructor(
         groupId: Long,
         confirmPermanentDelete: Boolean
     ): Boolean = withContext(ioDispatcher) {
+        writeBarrier.checkWritesAllowed("GroupLifecycleCoordinator.deleteGroupPermanently")
         // G08: Require explicit confirmation
         if (!confirmPermanentDelete) {
             return@withContext false
@@ -367,6 +375,7 @@ class GroupLifecycleCoordinator @Inject constructor(
         notes: String? = null,
         linkedExpenseId: Long? = null
     ): Long = withContext(ioDispatcher) {
+        writeBarrier.checkWritesAllowed("GroupLifecycleCoordinator.recordSettlement")
         val group = groupDao.getGroupById(groupId)
             ?: throw IllegalArgumentException("Group $groupId not found")
         if (!group.isActive) {
