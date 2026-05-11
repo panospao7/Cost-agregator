@@ -28,6 +28,7 @@ class JsonExpenseImporter @Inject constructor(
                 try {
                     val row = rows.getJSONObject(i)
                     val request = if (version >= 2) parseV2Row(row, i) else parseV1Row(row, i)
+                    @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseStandalone()
                     when (val result = coordinator.createExpense(request)) {
                         is CreateExpenseResult.Created -> { imported++; expenseIds.add(result.expenseId) }
                         is CreateExpenseResult.DuplicateSkipped -> skipped++

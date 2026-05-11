@@ -173,6 +173,7 @@ class BankApiIntegration @Inject constructor(
             for (transaction in mockTransactions) {
                 try {
                     val request = mapTransactionToExpense(transaction, connection)
+                    @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseStandalone()
                     when (val result = coordinator.createExpense(request)) {
                         is CreateExpenseResult.Created -> importedCount++
                         is CreateExpenseResult.DuplicateSkipped -> skippedCount++

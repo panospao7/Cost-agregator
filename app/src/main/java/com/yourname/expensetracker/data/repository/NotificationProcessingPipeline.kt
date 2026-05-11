@@ -999,6 +999,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             skipDeduplication = true
         )
 
+        @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
         return when (val result = coordinator.createExpense(request, SideEffectMode.DEFER)) {
             is CreateExpenseResult.Created -> {
                 val expenseId = result.expenseId

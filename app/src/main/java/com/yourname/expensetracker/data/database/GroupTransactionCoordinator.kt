@@ -636,6 +636,7 @@ class GroupTransactionCoordinator @Inject constructor(
                 // transaction commits (see .also block below). No changes needed.
                 // 3. Create system expense via TransactionLifecycleCoordinator
                 // Side effects are deferred until after this outer transaction commits
+                @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
                 val createResult = transactionLifecycleCoordinator.createExpense(
                     CreateExpenseRequest(
                         merchant = description,

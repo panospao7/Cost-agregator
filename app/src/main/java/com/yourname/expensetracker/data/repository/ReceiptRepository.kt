@@ -462,6 +462,7 @@ class ReceiptRepository @Inject constructor(
             locationSource = locationSource
         )
 
+        @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseStandalone()
         return when (val result = coordinator.createExpense(request)) {
             is CreateExpenseResult.Created -> {
                 val expenseId = result.expenseId
@@ -1046,6 +1047,7 @@ class ReceiptRepository @Inject constructor(
         "This method only updates ScannedReceipt — it does NOT create " +
         "ReceiptExpenseLink records, warranty/return-window links, item-categorization links, " +
         "or audit events.",
+        level = DeprecationLevel.ERROR,
         replaceWith = ReplaceWith(
             "receiptLinkService.linkReceiptToExpense(receiptId, expenseId, linkType = \"AUTO_MATCH\", source = \"SYSTEM\", confidence = confidence.toFloat(), matchStatus = MatchStatus.AUTO_MATCHED)"
         )
@@ -1089,6 +1091,7 @@ class ReceiptRepository @Inject constructor(
         "Use ReceiptLinkService.linkReceiptToExpense() instead. " +
             "Migrate to explicit pipeline: 1) ReceiptLinkService for receipt-expense linking, " +
             "2) ReceiptLifecycleCoordinator for full lifecycle coverage.",
+        level = DeprecationLevel.ERROR,
         replaceWith = ReplaceWith(
             "receiptLinkService.linkReceiptToExpense(receiptId, suggestedId, linkType = \"MANUAL_MATCH\")"
         )

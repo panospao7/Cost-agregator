@@ -55,6 +55,7 @@ class SpendingChallengeManager @Inject constructor(
         val oldestExpenseDate = expenseDao.getOldestExpenseDate()
         val rangeStart = oldestExpenseDate?.let(::getStartOfDay) ?: startOfDay
 
+        @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
         val spendingDays = expenseDao.getSpendingDailyTotalsBetween(rangeStart, endOfDay)
         val spendingByDay = spendingDays.associateBy { getStartOfDay(it.startDate) }
         val todaySpent = spendingByDay[startOfDay]?.total ?: 0.0
@@ -219,6 +220,7 @@ class SpendingChallengeManager @Inject constructor(
         endDate: Long,
         categoryId: Long?
     ): Double {
+        @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
         return if (categoryId == null) {
             expenseDao.getTotalSpentBetween(startDate, endDate) ?: 0.0
         } else {
@@ -229,6 +231,7 @@ class SpendingChallengeManager @Inject constructor(
     private suspend fun calculateAverageDailySpend(): Double = withContext(ioDispatcher) {
         val now = timeProvider.now()
         val thirtyDaysAgo = now - (30 * DAY_MS)
+        @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
         val total = expenseDao.getTotalSpentBetween(thirtyDaysAgo, now) ?: 0.0
         total / 30.0
     }

@@ -45,6 +45,7 @@ class BusinessExpenseRepository @Inject constructor(
      * via the canonical SPENDING_TYPE_SQL predicate.
      */
     suspend fun getTotalBusinessExpenses(startDate: Long, endDate: Long): Double {
+        @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
         return expenseDao.getTotalBusinessExpensesBetween(startDate, endDate) ?: 0.0
     }
     
@@ -54,6 +55,7 @@ class BusinessExpenseRepository @Inject constructor(
      * via the canonical SPENDING_TYPE_SQL predicate.
      */
     suspend fun getExpensesByCategory(startDate: Long, endDate: Long): List<BusinessCategoryTotal> {
+        @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
         return expenseDao.getBusinessExpensesByCategory(startDate, endDate)
     }
     
@@ -63,6 +65,7 @@ class BusinessExpenseRepository @Inject constructor(
      * via the canonical SPENDING_TYPE_SQL predicate.
      */
     suspend fun getExpensesByProject(startDate: Long, endDate: Long): List<BusinessProjectTotal> {
+        @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
         return expenseDao.getBusinessExpensesByProject(startDate, endDate)
     }
     

@@ -213,6 +213,7 @@ class LegacyDataMigrationService @Inject constructor(
                 while (cursor.moveToNext()) {
                     try {
                         val request = buildExpenseRequest(cursor, oldCategoryIdMap)
+                        @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseStandalone()
                         val outcome = transactionLifecycleCoordinator.createExpense(request)
                         when (outcome) {
                             is CreateExpenseResult.Created -> imported++

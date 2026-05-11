@@ -228,6 +228,7 @@ class BudgetAutopilotEngine @Inject constructor(
     ): HistoricalSpendSeries {
         val threeMonthsAgo = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(now, -3)
 
+        @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
         val monthlyTotals: List<MonthlySpendingTotal> = if (budget.categoryId != null) {
             expenseDao.getMonthlySpendingTotalsByCategoryBetween(
                 categoryId = budget.categoryId,

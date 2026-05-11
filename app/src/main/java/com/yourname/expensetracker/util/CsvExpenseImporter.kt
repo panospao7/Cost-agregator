@@ -174,6 +174,7 @@ class CsvExpenseImporter @Inject constructor(
                 notes = notesFromCol.ifEmpty { null }
             )
 
+            @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseStandalone()
             when (val result = coordinator.createExpense(request)) {
                 is CreateExpenseResult.Created ->
                     RowResult.Imported(result.expenseId)

@@ -84,7 +84,8 @@ class TransactionLifecycleCoordinator @Inject constructor(
     @Deprecated(
         "Prefer createExpenseStandalone() for immediate side effects or " +
         "createExpenseDbOnly() for deferred side effects. The SideEffectMode " +
-        "parameter will be removed in a future release."
+        "parameter will be removed in a future release.",
+        level = DeprecationLevel.ERROR
     )
     suspend fun createExpense(
         request: CreateExpenseRequest,
@@ -484,6 +485,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * @return A [CreateExpenseResult] indicating the outcome.
      */
     suspend fun createExpenseStandalone(request: CreateExpenseRequest): CreateExpenseResult {
+        @Suppress("DEPRECATION_ERROR") // TODO: inline createExpense logic once SideEffectMode is removed
         return createExpense(request, SideEffectMode.IMMEDIATE)
     }
 
@@ -502,6 +504,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * @return A [CreateExpenseResult] indicating the outcome.
      */
     suspend fun createExpenseDbOnly(request: CreateExpenseRequest): CreateExpenseResult {
+        @Suppress("DEPRECATION_ERROR") // TODO: inline createExpense logic once SideEffectMode is removed
         return createExpense(request, SideEffectMode.DEFER)
     }
 

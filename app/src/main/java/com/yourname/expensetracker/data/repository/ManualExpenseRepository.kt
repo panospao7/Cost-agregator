@@ -153,6 +153,7 @@ class ManualExpenseRepository @Inject constructor(
         var insertedExpenseForHook: Expense? = null
 
         val result = database.withTransaction {
+            @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
             when (val coordinatorResult = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
                 is CreateExpenseResult.Created -> {
                     val id = coordinatorResult.expenseId

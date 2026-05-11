@@ -43,6 +43,7 @@ class SharedBudgetManager @Inject constructor(
         val now = timeProvider.now()
         val (periodStart, periodEnd) = budgetCalculator.calculatePeriodRange(budget, now)
         val elapsedEnd = now.coerceAtMost(periodEnd).coerceAtLeast(periodStart)
+        @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
         val totalSpent = if (budget.categoryId != null) {
             expenseDao.getCategorySpentInPeriod(
                 categoryId = budget.categoryId,

@@ -709,6 +709,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     scannedReceiptId = savedId,
                     deduplicationMode = DeduplicationMode.STANDARD
                 )
+                @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
                 when (val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
                     is com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created -> {
                         expenseIds.add(result.expenseId)
@@ -851,6 +852,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             "5) ReceiptLinkService.linkReceiptToExpense() for receipt-expense linking, " +
             "6) HybridExpenseClassifier.learnFromCorrection() as best-effort side effect. " +
             "This method will be removed in a future release.",
+        level = DeprecationLevel.ERROR,
         replaceWith = ReplaceWith(
             expression = "transactionLifecycleCoordinator.createExpense(request) /* see migration steps above */",
             imports = ["com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator"]
@@ -933,6 +935,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
         // P3-P1-05: Wrap expense creation + receipt linking in a single
         // database transaction to ensure atomicity — both succeed or both roll back.
         return database.withTransaction {
+            @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
             when (val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
                 is CreateExpenseResult.Created -> {
                     val expenseId = result.expenseId

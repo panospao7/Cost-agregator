@@ -239,6 +239,7 @@ class ReviewQueueRepository @Inject constructor(
                 skipDeduplication = true
             )
 
+            @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
             when (val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)) {
                 is CreateExpenseResult.Created -> {
                     val id = result.expenseId
@@ -574,6 +575,7 @@ class ReviewQueueRepository @Inject constructor(
                         notes = expense.notes,
                         isManualEntry = false
                     )
+                    @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseDbOnly()
                     val result = transactionLifecycleCoordinator.createExpense(request, SideEffectMode.DEFER)
                     if (result is CreateExpenseResult.Created) {
                         val expenseId = result.expenseId

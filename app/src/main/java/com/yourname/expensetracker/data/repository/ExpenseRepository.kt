@@ -663,6 +663,7 @@ class ExpenseRepository @Inject constructor(
         }
     }
     
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     fun getTotalSpent(): Flow<Double?> = expenseDao.getTotalSpentFlow()
 
     // === Analytics Methods ===
@@ -721,12 +722,14 @@ class ExpenseRepository @Inject constructor(
     fun getExpensesBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>> =
         expenseDao.getExpensesBetweenFlowUncapped(startDate, endDate)
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getTotalForPeriod(startMs: Long, endMs: Long): Double =
         expenseDao.getTotalForPeriod(startMs, endMs)
 
     suspend fun getTransactionCountForPeriod(startMs: Long, endMs: Long): Int =
         expenseDao.getCountForPeriod(startMs, endMs)
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getCategoryTotalsForPeriod(startMs: Long, endMs: Long): List<CategoryTotal> =
         expenseDao.getCategoryTotalsForPeriod(startMs, endMs)
 
@@ -751,9 +754,11 @@ class ExpenseRepository @Inject constructor(
     suspend fun getLargestExpenseSnapshotForMerchant(merchant: String, startMs: Long, endMs: Long): ExpenseSnapshot? =
         getLargestExpenseForMerchant(merchant, startMs, endMs)?.toExpenseSnapshot()
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getDailyTotalsForPeriod(startMs: Long, endMs: Long): List<DailyTotal> =
         expenseDao.getDailyTotalsForPeriod(startMs, endMs)
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getWeeklyTotalsForPeriod(startMs: Long, endMs: Long): List<WeeklyTotal> =
         expenseDao.getWeeklyTotalsForPeriod(startMs, endMs).mapNotNull { weekly ->
             parseCanonicalWeekStart(weekly.weekKey)?.let { weekStart ->
@@ -781,12 +786,14 @@ class ExpenseRepository @Inject constructor(
     fun getDepositsBetweenFlow(startDate: Long, endDate: Long): Flow<List<Expense>> =
         expenseDao.getDepositsBetweenFlow(startDate, endDate)
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getTotalDepositsForPeriod(startMs: Long, endMs: Long): Double =
         expenseDao.getTotalDepositsForPeriod(startMs, endMs)
 
     suspend fun getMonthlyDeposits(): List<com.yourname.expensetracker.data.database.dao.MonthlyDepositTotal> =
         expenseDao.getMonthlyDeposits()
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getTotalDeposits(): Double =
         expenseDao.getTotalDeposits()
 
@@ -861,6 +868,7 @@ class ExpenseRepository @Inject constructor(
     /** Reactive flow of unlocated expenses — used by Map tab unlocated panel. */
     fun getUnlocatedExpensesFlow(limit: Int = 100) = expenseDao.getUnlocatedExpensesFlow(limit)
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to getLocatedMerchantTotalsByCurrency()
     suspend fun getLocatedMerchantTotals() = expenseDao.getLocatedMerchantTotals()
 
     suspend fun getExpensesInBoundingBox(
@@ -887,15 +895,19 @@ class ExpenseRepository @Inject constructor(
 
     // === Monthly/Weekly Totals Dashboard Methods ===
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getDailyTotalsWithDatesForPeriod(startMs: Long, endMs: Long): List<DailyTotal> =
         expenseDao.getDailyTotalsWithDatesForPeriod(startMs, endMs)
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getMonthlyTotalsForPeriod(startMs: Long, endMs: Long): List<MonthlyTotal> =
         expenseDao.getMonthlyTotalsForPeriod(startMs, endMs)
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getCategoryBreakdown(startMs: Long, endMs: Long): List<CategoryTotalResult> =
         expenseDao.getCategoryBreakdown(startMs, endMs)
 
+    @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
     suspend fun getAverageDailySpend(startMs: Long, endMs: Long): Double? =
         expenseDao.getAverageDailySpend(startMs, endMs)
 

@@ -1103,6 +1103,7 @@ class ReceiptScanViewModel @Inject constructor(
                     scannedReceiptId = request.receiptId
                 )
 
+                @Suppress("DEPRECATION_ERROR") // TODO: migrate to createExpenseStandalone()
                 val result = transactionLifecycleCoordinator.createExpense(createRequest)
 
                 when (result) {
