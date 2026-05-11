@@ -23,7 +23,8 @@ import javax.inject.Singleton
  *       → SAFETY_BACKUP_CREATED     (after safety backup created)
  *         → SWAPPING                (moving staged → live)
  *           → VERIFYING             (reopening live, checking integrity)
- *             → COMPLETE            (delete journal)
+ *             → ASSETS_RESTORING    (P7-P1-04: DB verified, assets in progress)
+ *               → COMPLETE          (assets restored, delete journal)
  *             → ROLLING_BACK        (verification failed → restore safety)
  *           → ROLLING_BACK
  *         → ROLLING_BACK
@@ -87,6 +88,8 @@ class RestoreJournal @Inject constructor(
         SAFETY_BACKUP_CREATED,
         SWAPPING,
         VERIFYING,
+        /** P7-P1-04: DB verified, receipt asset restoration in progress — crash-safe. */
+        ASSETS_RESTORING,
         ROLLING_BACK,
         COMPLETE,
         FAILED
@@ -285,7 +288,8 @@ class RestoreJournal @Inject constructor(
                 RecoveryResult.CleanedNonDestructive(entry)
             }
 
-            JournalState.SAFETY_BACKUP_CREATED -> {
+            JournalState.SAFETY_BACKUP_CREATED,
+            JournalState.ASSETS_RESTORING -> {
                 // Safety backup was created but swap didn't start.
                 // Clean up staging, keep safety backup, delete journal.
                 cleanStagingFiles(entry)

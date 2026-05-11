@@ -7,13 +7,8 @@ import androidx.lifecycle.lifecycleScope
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
-import com.yourname.expensetracker.data.location.LocationBackfillWorker
-import com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker
-import com.yourname.expensetracker.data.privacy.DataRetentionWorker
+import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
-import com.yourname.expensetracker.service.receiptmatching.ReceiptMatchingWorker
-import com.yourname.expensetracker.service.reminder.BillReminderWorker
-import com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.io.File
@@ -218,30 +213,13 @@ class AppStartupCoordinator @Inject constructor(
     /**
      * Schedules all periodic background workers at app startup.
      *
-     * ## WKR-1: WorkerSpec.DEFAULTS is the runtime source of truth (RESOLVED)
-     *
-     * Each worker's `schedule()` companion method now reads its interval,
-     * constraints, backoff policy, and enabled flag from
-     * [com.yourname.expensetracker.domain.workers.WorkerSpec.DEFAULTS].
-     * Changing a spec in `WorkerSpec.DEFAULTS` propagates to the actual
-     * scheduling without updating individual worker code.
+     * P7-P1-07: Uses [WorkerRegistry.scheduleAll] — the single source of truth
+     * for worker scheduling at both startup and post-restore resume. Previously
+     * this was a hardcoded list of 7 workers.
      */
     private fun scheduleStartupWork(application: Application) {
-        Timber.i("Startup: scheduling workers")
-        // WRK-8: Wrap each schedule() call individually so one failure
-        // does not prevent other workers from being scheduled.
-        runCatching { LocationBackfillWorker.schedule(application) }
-            .onFailure { Timber.w(it, "Failed to schedule LocationBackfillWorker") }
-        runCatching { MerchantKeyBackfillWorker.schedule(application) }
-            .onFailure { Timber.w(it, "Failed to schedule MerchantKeyBackfillWorker") }
-        runCatching { WarrantyExpirationWorker.schedule(application) }
-            .onFailure { Timber.w(it, "Failed to schedule WarrantyExpirationWorker") }
-        runCatching { DataRetentionWorker.schedule(application) }
-            .onFailure { Timber.w(it, "Failed to schedule DataRetentionWorker") }
-        runCatching { BillReminderWorker.schedule(application) }
-            .onFailure { Timber.w(it, "Failed to schedule BillReminderWorker") }
-        runCatching { ReceiptMatchingWorker.schedule(application) }
-            .onFailure { Timber.w(it, "Failed to schedule ReceiptMatchingWorker") }
+        Timber.i("Startup: scheduling workers via WorkerRegistry")
+        WorkerRegistry.scheduleAll(application)
     }
 
     private fun syncProactiveBriefingWork() {

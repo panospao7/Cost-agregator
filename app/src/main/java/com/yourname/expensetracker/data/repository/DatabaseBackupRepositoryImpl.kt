@@ -1026,6 +1026,15 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      * their data first.
      */
     override suspend fun importDatabase(sourceFile: File): Result<DatabaseImportSummary> = withContext(ioDispatcher) {
+        // P7-P0-01: Legacy .db import is debug-only. Production restores must use
+        // restoreCostBackup() which provides encrypted bundles, manifest verification,
+        // checksums, and full journaled state-machine safety.
+        if (!BuildConfig.DEBUG) {
+            return@withContext Result.failure(
+                UnsupportedOperationException("Legacy .db import is disabled in release builds. Use .costbackup restore instead.")
+            )
+        }
+
         // Enter maintenance mode first — blocks all concurrent writes during the swap
         restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
         Timber.w("Legacy import: entered maintenance mode")

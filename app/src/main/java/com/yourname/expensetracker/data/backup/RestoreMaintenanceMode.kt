@@ -3,9 +3,8 @@ package com.yourname.expensetracker.data.backup
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.work.WorkManager
-import com.yourname.expensetracker.data.ai.worker.DailyBriefingWorker
+import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import com.yourname.expensetracker.domain.workers.WorkerSpec
-import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 import javax.inject.Inject
@@ -43,12 +42,14 @@ class RestoreMaintenanceMode @Inject constructor(
     // ── State tracking ────────────────────────────────────────────
 
     /**
-     * Check whether writes should be allowed. If mode != NORMAL, writes
-     * should be blocked (except during BACKUP_EXPORTING where policy may vary).
+     * Check whether writes should be allowed.
+     *
+     * P7-P1-02/P1-03: Writes are only allowed in NORMAL mode. All other modes
+     * (including BACKUP_EXPORTING during snapshot acquisition, and all restore
+     * stages) block writes to guarantee data consistency.
      */
     fun isWritesAllowed(): Boolean {
-        val current = readMode()
-        return current == Mode.NORMAL || current == Mode.BACKUP_EXPORTING
+        return readMode() == Mode.NORMAL
     }
 
     /**
@@ -123,42 +124,13 @@ class RestoreMaintenanceMode @Inject constructor(
     /**
      * Reschedules all background workers after exiting maintenance mode.
      *
-     * BAK-NE: This ensures critical jobs resume without waiting for the next
-     * app start. Each worker's schedule() companion method reads its interval
-     * and constraints from [WorkerSpec.DEFAULTS].
-     *
-     * TODO: WorkerRegistry — Replace this hardcoded list with a WorkerRegistry
-     * that discovers and schedules all registered workers automatically.
+     * P7-P1-07: Uses [WorkerRegistry.scheduleAll] — the single source of truth
+     * for which workers exist and how they are scheduled. Previously this was a
+     * hardcoded list that could diverge from [WorkerSpec.DEFAULTS].
      */
     private fun scheduleAllWorkers() {
-        // Workers that provide a companion schedule() method are called here.
-        // Each schedule() is wrapped in runCatching to isolate failures.
-        val application = context
-        runCatching {
-            com.yourname.expensetracker.data.location.LocationBackfillWorker.schedule(application)
-        }
-        runCatching {
-            com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker.schedule(application)
-        }
-        runCatching {
-            com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker.schedule(application)
-        }
-        runCatching {
-            com.yourname.expensetracker.data.privacy.DataRetentionWorker.schedule(application)
-        }
-        runCatching {
-            com.yourname.expensetracker.service.reminder.BillReminderWorker.schedule(application)
-        }
-        runCatching {
-            com.yourname.expensetracker.service.receiptmatching.ReceiptMatchingWorker.schedule(application)
-        }
-        runCatching {
-            // ai_daily_briefing uses WorkerSpecScheduler.scheduleAtMidnight (not companion schedule())
-            WorkerSpecScheduler.scheduleAtMidnight(
-                context, "ai_daily_briefing",
-                DailyBriefingWorker::class.java
-            )
-        }
+        val application = context.applicationContext
+        WorkerRegistry.scheduleAll(application)
     }
 
     // ── Persistence ───────────────────────────────────────────────
