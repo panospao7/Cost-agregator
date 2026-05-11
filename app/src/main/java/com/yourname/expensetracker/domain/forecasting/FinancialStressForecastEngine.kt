@@ -58,7 +58,8 @@ class FinancialStressForecastEngine @Inject constructor(
     private val multiCurrencyRepository: MultiCurrencyRepository,
     private val recurringLifecycleCoordinator: RecurringLifecycleCoordinator,
     private val recurringOccurrenceDao: RecurringOccurrenceDao,
-    private val currencyConverter: CurrencyConverter
+    private val currencyConverter: CurrencyConverter,
+    private val accountBalanceProvider: AccountBalanceProvider
 ) {
     companion object {
         private const val TAG = "FinancialStressForecast"
@@ -602,39 +603,24 @@ class FinancialStressForecastEngine @Inject constructor(
     /**
      * Resolve a starting balance baseline for the forecast.
      *
-     * ## FCST-9: Account balance source
-     * Currently uses a pragmatic fallback estimate:
-     * 1. **User-configured balance** (future: read from [CurrencySettingsRepository] preference).
-     * 2. **Net cashflow estimate** — total deposits minus total PURCHASE spending over the
-     *    last 90 days, floored at 0.0.
+     * P6-P1-13: Delegates to [AccountBalanceProvider] (currently [NetCashflowBalanceProvider]).
+     * Falls back to inline 90-day net cashflow estimate if the provider fails.
      *
-     * This is an **approximation** only. It does not account for:
-     * - Opening balances carried forward from before the 90-day window.
-     * - Multi-currency accounts (raw SUM across mixed currencies is used here).
-     * - Transfers or other non-deposit/non-purchase inflows/outflows.
-     *
-     * ## I11: AccountBalanceProvider interface (planned)
-     * A proper account-balance source should be introduced via an
-     * `AccountBalanceProvider` interface with three implementations:
-     * 1. **BankConnectionBalanceProvider** — reads the current balance from a
-     *    synced bank connection ([BankConnection] entity + bank API integration).
-     * 2. **ManualBalanceProvider** — reads a user-entered balance from a preference
-     *    (e.g. "What's your current account balance?" prompt on first use).
-     * 3. **NetCashflowEstimator** — the current fallback (90-day net cashflow,
-     *    floored at 0.0) as a last resort when neither bank sync nor manual
-     *    entry is available.
-     *
-     * TODO: Create `AccountBalanceProvider` interface with a `suspend fun currentBalance(currency: String): Double?`
-     * method. Inject the selected implementation via a `@Qualifier`-annotated binding
-     * in the DI module. Use the resolved balance instead of [resolveStartingBalanceBaseline]
-     * when available.
+     * Future implementations can swap in BankConnectionBalanceProvider or
+     * ManualBalanceProvider via DI without changing this engine.
      */
     private suspend fun resolveStartingBalanceBaseline(): Double {
-        // Future: check user-configured balance from CurrencySettingsRepository
+        // P6-P1-13: Delegate to AccountBalanceProvider (currently NetCashflowBalanceProvider)
+        val homeCurrency = resolveDisplayCurrency(null)
+        val balance = runCatching { accountBalanceProvider.currentBalance(homeCurrency) }.getOrNull()
+        if (balance != null) {
+            Timber.d("FCST-9: resolveStartingBalanceBaseline via AccountBalanceProvider = %.2f", balance)
+            return balance
+        }
+
+        // Inline fallback if provider fails
         val now = timeProvider.now()
         val ninetyDaysAgo = now - 90 * TimePeriodUtils.DAY_IN_MILLIS
-
-        // Use MultiCurrencyRepository for currency-aware aggregation (replaces deprecated raw-sum DAO calls)
         val recentDeposits = runCatching {
             multiCurrencyRepository.getHomeCurrencyDepositTotal(ninetyDaysAgo, now).displayAmount
         }.getOrDefault(0.0)
@@ -642,7 +628,7 @@ class FinancialStressForecastEngine @Inject constructor(
             multiCurrencyRepository.getHomeCurrencyPurchaseTotal(ninetyDaysAgo, now).displayAmount
         }.getOrDefault(0.0)
         val netCashflow = recentDeposits - recentExpenses
-        Timber.d("FCST-9: resolveStartingBalanceBaseline — deposits=%.2f, expenses=%.2f, net=%.2f", recentDeposits, recentExpenses, netCashflow)
+        Timber.d("FCST-9: resolveStartingBalanceBaseline fallback — deposits=%.2f, expenses=%.2f, net=%.2f", recentDeposits, recentExpenses, netCashflow)
         return netCashflow.coerceAtLeast(0.0)
     }
 
@@ -718,8 +704,9 @@ class FinancialStressForecastEngine @Inject constructor(
  * - [ESTIMATED_INDEX]: Label as "Stress Index Estimate" — not a real cash balance.
  * - [NET_CASHFLOW_ESTIMATE]: Label as "Projected balance estimate based on recent cashflow".
  *
- * TODO (P6-P1-13): Implement [AccountBalanceProvider] to support
- * [USER_ENTERED_BALANCE] and [BANK_BALANCE] modes for real balance sources.
+ * P6-P1-13: [AccountBalanceProvider] interface implemented. When a
+ * BankConnectionBalanceProvider or ManualBalanceProvider is added, introduce
+ * USER_ENTERED_BALANCE and BANK_BALANCE modes here.
  */
 enum class StressForecastMode {
     /** Neutral baseline (0.0) — no balance source available. */

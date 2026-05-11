@@ -6,7 +6,9 @@ import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.forecasting.AccountBalanceProvider
 import com.yourname.expensetracker.domain.forecasting.MergedRecurringPatternsProvider
+import com.yourname.expensetracker.domain.forecasting.NetCashflowBalanceProvider
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.Module
@@ -19,6 +21,12 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object CashFlowModule {
     
+    @Provides
+    @Singleton
+    fun provideAccountBalanceProvider(
+        impl: NetCashflowBalanceProvider
+    ): AccountBalanceProvider = impl
+
     @Provides
     @Singleton
     fun provideCashFlowCalculator(

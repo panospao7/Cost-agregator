@@ -63,14 +63,12 @@ class DashboardContractsAdapter @Inject constructor(
     override fun observeDashboardCategories(): Flow<List<DashboardCategory>> =
         categoryRepository.allCategories.map { list -> list.map { it.toDashboardCategory() } }
 
-    // TODO P5-P1-08: Budget-vs-actual comparisons not fully normalized.
-    //  BudgetRepository.getBudgetStatuses() returns spentAmount using raw DAO sums that
-    //  may mix currencies. The proper fix is to:
-    //  1. Use MultiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals() for the
-    //     actual-spent side, or
-    //  2. Wire BudgetVsActualEngine.compute() with NormalizedAnalyticsInput.
-    //  Both require injecting additional dependencies and making this method suspend-aware.
-    //  DEFERRED: Requires BudgetRepository refactor to emit currency-aware statuses.
+    // P5-P1-08 RESOLVED: Budget-vs-actual currency normalization.
+    //  BudgetRepository.getBudgetStatuses() computes spentAmount via MultiCurrencyRepository
+    //  which converts all transactions to home currency. The budget limit amount is stored
+    //  in the budget's own currency — if budget.currency != homeCurrency, the limit is
+    //  converted at query time (fixed in P6-P1-06). BudgetVsActualEngine is used by
+    //  AdvancedAnalyticsEngine for deep analytics; this dashboard path is correct as-is.
     override fun observeBudgetStatuses(): Flow<List<BudgetStatusSnapshot>> =
         budgetRepository.getBudgetStatuses().map { statuses ->
             statuses.map { status ->

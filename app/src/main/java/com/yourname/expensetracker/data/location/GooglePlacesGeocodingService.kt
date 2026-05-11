@@ -36,6 +36,8 @@ import javax.inject.Singleton
  * which coincidentally aligns with Google ToS refresh requirements.
  *
  * Used as the third tier in the [CompositeGeocodingService] cascade.
+ *
+ * **Internal use only.** Do not inject directly — use [GeocodingService] interface.
  */
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 @Singleton

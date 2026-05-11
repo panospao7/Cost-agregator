@@ -50,6 +50,13 @@ object ServiceModule {
      * Binds the cascade geocoding service as the app-wide [GeocodingService].
      * - Interactive picker ([searchMultiple]): Photon → Geoapify → Google Places → Nominatim
      * - Background resolution ([search]): Nominatim only (unchanged behaviour)
+     *
+     * P8-P1-10: Privacy gate enforcement.
+     * [CompositeGeocodingService] checks [PrivacyGate] before every external call.
+     * Individual services (Photon, Geoapify, GooglePlaces, Nominatim) also check
+     * the gate internally as a defense-in-depth measure. Consumers MUST inject
+     * [GeocodingService] (this binding) — never the concrete service classes directly.
+     * The concrete classes are @Singleton/@Inject for Hilt graph construction only.
      */
     @Provides
     @Singleton

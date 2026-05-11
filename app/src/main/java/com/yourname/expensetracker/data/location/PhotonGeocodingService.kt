@@ -27,6 +27,9 @@ import javax.inject.Singleton
  * Uses OSM data with excellent fuzzy matching. Returns GeoJSON FeatureCollection.
  *
  * Used as the first tier in the [CompositeGeocodingService] cascade.
+ *
+ * **Internal use only.** Do not inject this class directly — use [GeocodingService]
+ * which routes through [CompositeGeocodingService] with privacy gate enforcement.
  */
 @Singleton
 class PhotonGeocodingService @Inject constructor(

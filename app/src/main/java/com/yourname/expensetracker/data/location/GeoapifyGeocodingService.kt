@@ -31,6 +31,8 @@ import javax.inject.Singleton
  * the key is missing/blank.
  *
  * Used as the second tier in the [CompositeGeocodingService] cascade.
+ *
+ * **Internal use only.** Do not inject directly — use [GeocodingService] interface.
  */
 // CRITICAL FIX (CRITICAL-1): Now uses SecureKeyStorage instead of BuildConfig
 @Singleton

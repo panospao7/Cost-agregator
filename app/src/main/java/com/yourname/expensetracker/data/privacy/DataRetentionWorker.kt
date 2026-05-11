@@ -1,6 +1,5 @@
-// TODO (P8-P1-5): Expand retention scope to cover AI artifacts (AiArtifactDao),
-// chat messages (AiChatMessageDao), debug diagnostics (ServiceDiagnostics),
-// and email receipt sources (EmailReceiptDao) beyond just raw OCR text.
+// P8-P1-06: Retention scope expanded to cover AI artifacts and email receipt sources.
+// Remaining gaps: chat messages (AiChatMessageDao), debug diagnostics (ServiceDiagnostics).
 
 package com.yourname.expensetracker.data.privacy
 
@@ -99,6 +98,15 @@ class DataRetentionWorker @AssistedInject constructor(
                     )
                 )
             }
+
+            // 3. Purge expired AI artifacts (TTL-based, typically 90 days)
+            val aiArtifactDao = appDatabase.aiArtifactDao()
+            aiArtifactDao.deleteExpired(now)
+
+            // 4. Purge email receipt source records older than 30 days
+            val emailRetentionCutoff = now - TimeUnit.DAYS.toMillis(30)
+            val emailReceiptDao = appDatabase.emailReceiptDao()
+            emailReceiptDao.deleteOlderThan(emailRetentionCutoff)
 
             Log.d(TAG, "Data retention worker completed: notifications=$notificationPurgeCount ocr=$ocrPurgeCount")
         }

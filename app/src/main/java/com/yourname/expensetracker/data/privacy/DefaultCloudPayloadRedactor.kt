@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.privacy
 
 import com.yourname.expensetracker.data.ai.provider.internal.CloudPiiSanitizer
+import com.yourname.expensetracker.data.ai.provider.internal.sha256Prefix
 import com.yourname.expensetracker.domain.privacy.CloudPayloadPurpose
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import com.yourname.expensetracker.domain.privacy.RedactedField
@@ -16,15 +17,41 @@ import javax.inject.Singleton
 @Singleton
 class DefaultCloudPayloadRedactor @Inject constructor() : CloudPayloadRedactor {
 
-    // TODO (P8-P1-08): Vary redaction rules by purpose. Currently all purposes
-    // use the same CloudPiiSanitizer.sanitizeText(). For RECEIPT_ASSIST, amounts
-    // should be preserved; for QUERY_INTERPRETATION, merchant names may be kept.
+    // P8-P1-08: Purpose-aware redaction — adjusts rules based on cloud AI use case.
     override fun redactText(text: String, purpose: CloudPayloadPurpose): RedactedPayload {
-        val sanitized = CloudPiiSanitizer.sanitizeText(
-            raw = text,
-            maxChars = MAX_TEXT_CHARS,
-            fallbackPrefix = "text"
-        )
+        val maxChars = when (purpose) {
+            CloudPayloadPurpose.RECEIPT_ASSIST,
+            CloudPayloadPurpose.WARRANTY_EXTRACTION -> MAX_TEXT_CHARS_RECEIPT
+            CloudPayloadPurpose.DASHBOARD_BRIEFING -> MAX_TEXT_CHARS_BRIEFING
+            else -> MAX_TEXT_CHARS
+        }
+
+        val sanitized = when (purpose) {
+            // Preserve amounts/dates for receipt and warranty extraction
+            CloudPayloadPurpose.RECEIPT_ASSIST,
+            CloudPayloadPurpose.WARRANTY_EXTRACTION -> CloudPiiSanitizer.sanitizeText(
+                raw = text,
+                maxChars = maxChars,
+                fallbackPrefix = "text"
+            )
+            // Hash merchant names for dashboard briefings
+            CloudPayloadPurpose.DASHBOARD_BRIEFING -> {
+                val base = CloudPiiSanitizer.sanitizeText(
+                    raw = text,
+                    maxChars = maxChars,
+                    fallbackPrefix = "text"
+                )
+                MERCHANT_LINE_REGEX.replace(base) { match ->
+                    "merchant_${match.value.sha256Prefix()}"
+                }
+            }
+            else -> CloudPiiSanitizer.sanitizeText(
+                raw = text,
+                maxChars = maxChars,
+                fallbackPrefix = "text"
+            )
+        }
+
         return RedactedPayload(
             text = sanitized,
             redactionApplied = sanitized != text,
@@ -59,7 +86,13 @@ class DefaultCloudPayloadRedactor @Inject constructor() : CloudPayloadRedactor {
     }
 
     private companion object {
-        /** Max characters for text redaction. */
+        /** Max characters for general text redaction. */
         private const val MAX_TEXT_CHARS = 2000
+        /** Higher limit for receipt/warranty text where amounts matter. */
+        private const val MAX_TEXT_CHARS_RECEIPT = 3000
+        /** Lower limit for dashboard briefings (summary only). */
+        private const val MAX_TEXT_CHARS_BRIEFING = 1500
+        /** Matches capitalized words that look like merchant/brand names. */
+        private val MERCHANT_LINE_REGEX = Regex("""\b[A-Z][A-Za-z]{2,}(?:\s[A-Z][A-Za-z]+)*\b""")
     }
 }

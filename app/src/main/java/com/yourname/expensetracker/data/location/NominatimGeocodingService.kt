@@ -37,6 +37,8 @@ import javax.inject.Singleton
  *
  * Nominatim usage policy: must send a unique User-Agent header.
  * See [AppConfig.Location.NOMINATIM_USER_AGENT].
+ *
+ * **Internal use only.** Do not inject directly — use [GeocodingService] interface.
  */
 @Singleton
 class NominatimGeocodingService @Inject constructor(
