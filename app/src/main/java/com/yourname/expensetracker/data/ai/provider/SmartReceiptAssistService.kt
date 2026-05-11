@@ -138,8 +138,8 @@ class SmartReceiptAssistService @Inject constructor(
             capability = PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST,
             context = mapOf("receiptId" to input.receiptId.toString())
         )
-        if (gateDecision is PrivacyDecision.Denied) {
-            Timber.d("SmartReceiptAssist: Privacy gate denied cloud AI → falling through to deterministic fallback. reason=${gateDecision.reason}")
+        if (gateDecision.blocksExecution()) {
+            Timber.d("SmartReceiptAssist: Privacy gate denied cloud AI → falling through to deterministic fallback. reason=${gateDecision.reason()}")
             // Gate only blocks cloud — we still allow on-device and deterministic fallback.
             // The route will be determined by aiCapabilityRouter below.
         }
@@ -154,8 +154,8 @@ class SmartReceiptAssistService @Inject constructor(
         // Privacy gate: if cloud AI is denied, force deterministic fallback
         if (routeDecision.route == AiRoute.CLOUD) {
             val cloudCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST)
-            if (cloudCheck is PrivacyDecision.Denied) {
-                Timber.d("SmartReceiptAssist: Cloud AI blocked by privacy gate: ${cloudCheck.reason}; falling back to deterministic")
+            if (cloudCheck.blocksExecution()) {
+                Timber.d("SmartReceiptAssist: Cloud AI blocked by privacy gate: ${cloudCheck.reason()}; falling back to deterministic")
                 val fallbackResult = noOpReceiptAssistService.suggest(input)
                 attempts.add(fallbackResult.toAttemptDetails(5, AttemptMethod.DETERMINISTIC_FALLBACK))
                 logAttemptSummary(input.receiptId, attempts)
@@ -288,8 +288,8 @@ class SmartReceiptAssistService @Inject constructor(
         if (!settings.receiptImageCloudEnabled) return false
         // Privacy gate: check if receipt image cloud upload is allowed
         val imageCheck = privacyGate.check(PrivacyCapability.RECEIPT_IMAGE_CLOUD_UPLOAD)
-        if (imageCheck is PrivacyDecision.Denied) {
-            Timber.d("SmartReceiptAssist: Cloud vision blocked by privacy gate: ${imageCheck.reason}")
+        if (imageCheck.blocksExecution()) {
+            Timber.d("SmartReceiptAssist: Cloud vision blocked by privacy gate: ${imageCheck.reason()}")
             return false
         }
         return true

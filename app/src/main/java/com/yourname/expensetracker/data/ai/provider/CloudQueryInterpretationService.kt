@@ -64,8 +64,8 @@ class CloudQueryInterpretationService @Inject constructor(
 
         // PRIVACY GATE: Check cloud AI privacy gate before proceeding
         val gateDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
-        if (gateDecision is PrivacyDecision.Denied) {
-            Timber.d("CloudQueryInterpretationService: privacy gate denied: ${gateDecision.reason}")
+        if (gateDecision.blocksExecution()) {
+            Timber.d("CloudQueryInterpretationService: privacy gate denied: ${gateDecision.reason()}")
             return unsupported("Cloud AI disabled by privacy gate")
         }
 

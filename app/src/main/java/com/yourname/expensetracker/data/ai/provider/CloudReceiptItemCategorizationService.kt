@@ -64,8 +64,8 @@ class CloudReceiptItemCategorizationService @Inject constructor(
 
         // PRIVACY GATE: Check cloud AI privacy gate before proceeding
         val gateDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_ITEM_CATEGORIZATION)
-        if (gateDecision is PrivacyDecision.Denied) {
-            Timber.d("CloudReceiptItemCategorizationService: privacy gate denied: ${gateDecision.reason}")
+        if (gateDecision.blocksExecution()) {
+            Timber.d("CloudReceiptItemCategorizationService: privacy gate denied: ${gateDecision.reason()}")
             return null
         }
 

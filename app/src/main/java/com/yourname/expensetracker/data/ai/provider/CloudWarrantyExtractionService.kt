@@ -68,8 +68,8 @@ class CloudWarrantyExtractionService @Inject constructor(
 
         // PRIVACY GATE: Check cloud AI privacy gate before proceeding
         val gateDecision = privacyGate.check(PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION)
-        if (gateDecision is PrivacyDecision.Denied) {
-            Timber.d("CloudWarrantyExtractionService: privacy gate denied: ${gateDecision.reason}")
+        if (gateDecision.blocksExecution()) {
+            Timber.d("CloudWarrantyExtractionService: privacy gate denied: ${gateDecision.reason()}")
             return@withContext null
         }
 

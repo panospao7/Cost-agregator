@@ -105,9 +105,9 @@ class CloudDashboardBriefingService @Inject constructor(
 
         // PRIVACY GATE: Check privacy gate before cloud AI call
         val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING)
-        if (gateCheck is PrivacyDecision.Denied) {
-            Timber.w("CloudDashboardBriefingService: blocked by privacy gate: ${gateCheck.reason}")
-            return AiServiceResult.Failure(AiServiceError.Disabled("Blocked by privacy gate: ${gateCheck.reason}"))
+        if (gateCheck.blocksExecution()) {
+            Timber.w("CloudDashboardBriefingService: blocked by privacy gate: ${gateCheck.reason()}")
+            return AiServiceResult.Failure(AiServiceError.Disabled("Blocked by privacy gate: ${gateCheck.reason()}"))
         }
 
         val shouldRedact = settings?.redactBeforeCloud ?: true

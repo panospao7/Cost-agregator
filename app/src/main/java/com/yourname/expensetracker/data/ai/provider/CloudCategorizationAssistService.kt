@@ -77,8 +77,8 @@ class CloudCategorizationAssistService @Inject constructor(
 
         // PRIVACY GATE: Unified cloud AI gate — checks both PrivacySettings + AiSettings
         val gateCheck = privacyGate.check(PrivacyCapability.CLOUD_AI_GENERAL)
-        if (gateCheck is PrivacyDecision.Denied) {
-            Timber.w("CloudCategorizationAssistService: blocked by privacy gate: ${gateCheck.reason}")
+        if (gateCheck.blocksExecution()) {
+            Timber.w("CloudCategorizationAssistService: blocked by privacy gate: ${gateCheck.reason()}")
             return null
         }
 

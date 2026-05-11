@@ -450,7 +450,7 @@ class NotificationCaptureService : NotificationListenerService() {
         workTracker.launch(serviceScope) {
             try {
                 when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
-                    is PrivacyDecision.Denied -> {
+                    is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
                         Timber.d("Privacy gate denied notification capture from $packageName")
                         return@launch
                     }
@@ -624,12 +624,12 @@ class NotificationCaptureService : NotificationListenerService() {
         if (isShuttingDown) return
         workTracker.launch(serviceScope) {
             when (privacyGate.check(PrivacyCapability.NOTIFICATION_CAPTURE)) {
-                is PrivacyDecision.Denied -> {
+                is PrivacyDecision.Denied, is PrivacyDecision.FailClosed -> {
                     Timber.d("Privacy gate denied notification capture from $packageName")
                     return@launch
                 }
                 is PrivacyDecision.Allowed -> { /* proceed */ }
-                else -> { /* NotApplicable/FailClosed — proceed with capture */ }
+                else -> { /* NotApplicable — proceed with capture */ }
             }
             processNotification(sbn, packageName, parts, extras)
         }

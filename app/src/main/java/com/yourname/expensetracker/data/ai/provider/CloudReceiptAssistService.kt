@@ -99,9 +99,9 @@ class CloudReceiptAssistService @Inject constructor(
             PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST
         }
         val gateDecision = privacyGate.check(capability, mapOf("receiptId" to input.receiptId.toString()))
-        if (gateDecision is PrivacyDecision.Denied) {
-            Timber.d("CloudReceiptAssistService: privacy gate denied: ${gateDecision.reason}")
-            return AiServiceResult.Failure(AiServiceError.Disabled(gateDecision.reason))
+        if (gateDecision.blocksExecution()) {
+            Timber.d("CloudReceiptAssistService: privacy gate denied: ${gateDecision.reason()}")
+            return AiServiceResult.Failure(AiServiceError.Disabled(gateDecision.reason()))
         }
 
         val settings = aiSettingsRepository.settings().first()
@@ -232,9 +232,9 @@ class CloudReceiptAssistService @Inject constructor(
             PrivacyCapability.CLOUD_AI_BANK_STATEMENT,
             mapOf("caller" to "suggestFromText")
         )
-        if (gateDecision is PrivacyDecision.Denied) {
-            Timber.d("CloudReceiptAssistService: privacy gate denied suggestFromText: ${gateDecision.reason}")
-            return AiServiceResult.Failure(AiServiceError.Disabled(gateDecision.reason))
+        if (gateDecision.blocksExecution()) {
+            Timber.d("CloudReceiptAssistService: privacy gate denied suggestFromText: ${gateDecision.reason()}")
+            return AiServiceResult.Failure(AiServiceError.Disabled(gateDecision.reason()))
         }
 
         val parts = JSONArray().put(JSONObject().put("text", prompt))
