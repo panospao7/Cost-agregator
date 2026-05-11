@@ -361,6 +361,12 @@ class ReceiptLinkService @Inject constructor(
                     updatedAt = now
                 )
 
+                // P3-CURRENT-020: Clear expenseId on receipt item categorizations
+                receiptItemCategorizationDao.clearExpenseId(
+                    receiptId = receiptId,
+                    timestamp = now
+                )
+
                 // 3. Write lifecycle event
                 val sourceType = receipt?.sourceType ?: "UNKNOWN"
                 val documentType = receipt?.documentType ?: "UNKNOWN"

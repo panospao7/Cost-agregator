@@ -120,7 +120,7 @@ class ReceiptSideEffectDispatcher @Inject constructor(
                         when (matchResult) {
                             is MatchResult.AutoMatch -> {
                                 // Strong match: auto-link receipt to matched expense
-                                receiptLinkService.linkReceiptToExpense(
+                                val linkResult = receiptLinkService.linkReceiptToExpense(
                                     receiptId = receipt.id,
                                     expenseId = matchResult.transaction.id,
                                     linkType = "AUTO_MATCH",
@@ -128,8 +128,16 @@ class ReceiptSideEffectDispatcher @Inject constructor(
                                     confidence = matchResult.score.toFloat(),
                                     matchStatus = MatchStatus.AUTO_MATCHED
                                 )
-                                Timber.d("P3-P1-03: Auto-matched receipt %d to expense %d (score=%.3f)",
-                                    receipt.id, matchResult.transaction.id, matchResult.score)
+                                if (linkResult.isFailure) {
+                                    Timber.w("P3-P1-03: Auto-match link failed for receipt %d: %s",
+                                        receipt.id, linkResult.exceptionOrNull()?.message)
+                                    writeReceiptEvent(receipt, "SIDE_EFFECT_FAILED",
+                                        "Auto-match link to expense ${matchResult.transaction.id} failed",
+                                        errorDetails = linkResult.exceptionOrNull()?.message)
+                                } else {
+                                    Timber.d("P3-P1-03: Auto-matched receipt %d to expense %d (score=%.3f)",
+                                        receipt.id, matchResult.transaction.id, matchResult.score)
+                                }
                             }
                             is MatchResult.Suggested -> {
                                 // Medium match: save suggestion without automatic linking

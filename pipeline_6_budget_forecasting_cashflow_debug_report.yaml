@@ -1,0 +1,803 @@
+meta:
+  repo: "panospao7/Cost-agregator"
+  commit: "4113e38f0d838a29d2d13d82a483ba573280721c"
+  pipeline: "6 - Budget / Forecasting / Cashflow"
+  review_mode: "static GitHub source/debugging session; no local Gradle/device execution"
+  verdict: "IMPROVED_BUT_NOT_CLEAN"
+  summary: >
+    Pipeline 6 is significantly improved versus the original tracker. Budget CRUD,
+    planned insert, forecast insert/update, budget forecast metadata, cashflow
+    conversion, planned-status filtering, and stress PAID-occurrence filtering all
+    have real fixes. However it is not clean. Remaining problems are concentrated
+    in rate-basis consistency, alert adjusted-spend propagation, raw DAO bypasses,
+    forecast confidence/quality propagation, unnormalized recurring forecast inputs,
+    read paths that create recurring rows, cashflow/stress diagnostics, and
+    contradictory budget deletion/history semantics.
+
+tracker_reconciliation:
+  P6-P1-01_budget_forecast_refresh_unique_conflict:
+    tracker_status: "FIXED"
+    actual_status: "MOSTLY_FIXED_WITH_HISTORY_CAVEATS"
+    notes:
+      - "BudgetForecast index is now budgetId + targetPeriodStart + forecastDate, not budgetId + targetPeriodStart only."
+      - "BudgetForecastDao.insert uses OnConflictStrategy.REPLACE."
+      - "insertWithDeactivation deactivates active rows for budgetId + targetPeriodStart + targetPeriodEnd before insert."
+      - "Caveat: same-millisecond forecastDate conflicts can REPLACE history; active uniqueness is app-level, not DB-level."
+
+  P6-P1-02_forecast_createdAt_wrong_currency:
+    tracker_status: "FIXED"
+    actual_status: "FIXED_FOR_ENGINE_PATH_PARTIAL_GLOBALLY"
+    notes:
+      - "BudgetForecastingEngine.generateForecast sets createdAt=now and currency=homeCurrency."
+      - "BudgetForecast still defaults to createdAt=0 and currency=EUR."
+      - "Public BudgetForecastDao.insert can still persist bad metadata from future/direct callers."
+
+  P6-P1-03_budget_forecast_planned_restore_guard:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL_FIXED"
+    notes:
+      - "BudgetRepository add/update/delete/toggle/deleteAll check DatabaseWriteBarrier."
+      - "BudgetForecastingEngine generate/update checks DatabaseWriteBarrier."
+      - "PlannedExpenseRepository add/delete checks DatabaseWriteBarrier."
+      - "Gaps remain: budget notification timestamp updates, restoreDebugSnapshot, raw DAO writes, monitor diagnostic writes."
+
+  P6-P1-04_budget_alerts_gross_percent:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL_BUG_REMAINS"
+    notes:
+      - "BudgetMonitor recomputes adjustedPercent if adjustedSpendBreakdown exists."
+      - "But BudgetMonitor reads BudgetRepository.getBudgetStatuses(), and BudgetRepository does not populate adjustedSpendBreakdown."
+      - "BudgetViewModel applies adjusted spend only for UI, not for monitor."
+      - "So alerts can still use gross repository spend."
+
+  P6-P1-05_rollover_partial_conversion:
+    tracker_status: "TODO_ONLY"
+    actual_status: "MOSTLY_FIXED"
+    notes:
+      - "Rollover loop now ORs periodAggregate.isPartial into budgetIsPartial."
+      - "It appends periodAggregate.warningMessage."
+      - "Still relies on getAggregateSpent latest-rate paths from MultiCurrencyRepository."
+
+  P6-P1-06_budget_limit_latest_rate:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL_FIXED"
+    notes:
+      - "BudgetRepository uses convertBudgetAmountToHomeCurrencyAsOf(periodEnd)."
+      - "BudgetForecastingEngine uses convertAsOf(periodEnd) then latest fallback."
+      - "But spentAggregate paths still use latest-rate MultiCurrencyRepository APIs, so limit and actuals can use different FX bases."
+      - "Forecast fallback to raw amount has no persisted warning."
+
+  P6-P1-07_forecast_data_quality_ignored:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL"
+    notes:
+      - "SynthesisEngine.synthesize(input) subtracts input.dataQuality.confidencePenalty."
+      - "FinancialForecast model does not surface conversion warnings."
+      - "BudgetForecastingEngine's own forecast confidence ignores normalizer excluded/warning counts."
+
+  P6-P1-08_planned_expenses_not_normalized:
+    tracker_status: "TODO_ONLY"
+    actual_status: "FIXED_FOR_PLANNED_ONLY"
+    notes:
+      - "ForecastInputAssembler converts planned expenses to homeCurrency and excludes failures."
+      - "RecurringPattern and ConfirmedOccurrence amounts still enter SynthesisEngine unnormalized."
+
+  P6-P1-09_cancelled_skipped_planned_in_forecast:
+    tracker_status: "FIXED"
+    actual_status: "FIXED_FOR_MAIN_FORECAST"
+    notes:
+      - "ForecastInputAssembler.mapPlannedExpenses filters status == PLANNED."
+      - "SynthesisEngine filters plannedExpenses status == PLANNED again."
+
+  P6-P1-10_recurring_occurrence_status_lost:
+    tracker_status: "TODO_ONLY"
+    actual_status: "MOSTLY_FIXED_FOR_MAIN_FORECAST"
+    notes:
+      - "ForecastInputAssembler filters occurrences to PLANNED and maps status into ConfirmedOccurrence."
+      - "But block-party occurrence path still includes PLANNED or PAID."
+
+  P6-P1-11_cashflow_raw_sums_multicurrency:
+    tracker_status: "TODO_ONLY"
+    actual_status: "MOSTLY_FIXED_WITH_QUALITY_GAPS"
+    notes:
+      - "CashFlowCalculator converts income, expenses, and recurring predictions to homeCurrency before balance math."
+      - "DailyCashFlow.currency is set."
+      - "Conversion failures are dropped with Timber only; no CashFlowDataQuality is returned."
+
+  P6-P1-12_cashflow_pre_dedup_output:
+    tracker_status: "TODO_ONLY"
+    actual_status: "FIXED"
+    notes:
+      - "DailyCashFlow.predictedRecurring now receives deduplicatedPredicted."
+
+  P6-P1-13_stress_not_real_balance_forecast:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL_DESIGN_OPEN"
+    notes:
+      - "StressForecastMode exists and output mode is NET_CASHFLOW_ESTIMATE."
+      - "But AccountBalanceProvider is still TODO; projectedBalance is still based on 90-day net cashflow estimate."
+
+  P6-P1-14_stress_counts_paid_occurrences:
+    tracker_status: "TODO_ONLY"
+    actual_status: "FIXED_WITH_STALE_COMMENTS"
+    notes:
+      - "ACTIVE_OCCURRENCE_STATUSES is now setOf('PLANNED')."
+      - "PAID branch is dead defensive code."
+      - "Comments still say PAID and PLANNED are summed."
+
+  P6-P1-15_delete_budget_with_forecasts:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL_POLICY_CHANGED"
+    notes:
+      - "BudgetRepository.deleteBudget deletes forecasts first inside a transaction, then deletes budget."
+      - "This avoids FK failure."
+      - "But it destroys forecast history while BudgetForecast FK comments say RESTRICT preserves historical forecasts."
+      - "BudgetRepository.deleteAll still does not delete forecasts first."
+
+positive_findings:
+  - "BudgetRepository uses DatabaseWriteBarrier for main budget CRUD."
+  - "BudgetForecastingEngine uses DatabaseWriteBarrier for generateForecast and updateForecastAccuracy."
+  - "PlannedExpenseRepository enforces timestamps/openSourceOccurrenceKey and checks IGNORE insert conflicts."
+  - "BudgetForecastingEngine sets createdAt and home currency on generated forecasts."
+  - "BudgetRepository suggestions use CurrencyFormatter instead of hardcoded euro."
+  - "Budget invalidation trigger uses observeExpenseMutationClock instead of raw total flow."
+  - "BudgetMonitor writes PipelineDiagnosticEvent records for CHECK_STARTED, STATUS_COMPUTED, alert outcomes, and CHECK_FAILED."
+  - "ForecastInputAssembler normalizes actual expense snapshots and planned expenses."
+  - "SynthesisEngine applies dataQuality confidence penalty."
+  - "CashFlowCalculator converts actual and recurring amounts before balance math."
+  - "CashFlowCalculator returns deduplicated predicted recurring list."
+  - "FinancialStressForecastEngine excludes PAID occurrences from active future obligations."
+
+issues:
+  - id: "P6-CURRENT-001"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Budget actual spend and budget limit use different FX rate bases"
+    evidence:
+      - "BudgetRepository converts budget limit with convertBudgetAmountToHomeCurrencyAsOf(periodEnd)."
+      - "getAggregateSpent() calls MultiCurrencyRepository.getHomeCurrencyPurchaseTotal/categoryTotals."
+      - "Those MultiCurrencyRepository paths are latest-rate aggregate paths from Pipeline 5 analysis."
+    impact:
+      - "Budget percentUsed can compare period-end converted limit to latest-rate actual spend."
+      - "Budget status can change when today’s FX changes, even for historical periods."
+    fix:
+      - "Use historical per-transaction normalized spend for budget actuals."
+      - "Expose one explicit BudgetRateBasis for limit and actuals."
+    tests:
+      - "budget_actual_spend_uses_transaction_date_rate"
+      - "budget_percent_does_not_change_when_latest_rate_changes_after_period"
+
+  - id: "P6-CURRENT-002"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "BudgetMonitor adjusted-spend fix is not connected to repository statuses"
+    evidence:
+      - "BudgetMonitor uses status.adjustedSpendBreakdown?.effectiveSpend ?: status.spentAmount."
+      - "BudgetRepository.createBudgetStatus() returns BudgetStatus without adjustedSpendBreakdown."
+      - "BudgetViewModel adds adjustedSpendBreakdown only in UI flow."
+    impact:
+      - "Budget alerts can still trigger on gross spend instead of shared/reimbursed effective spend."
+    fix:
+      - "Move adjusted-spend calculation into BudgetRepository/createBudgetStatus or add BudgetStatusProvider used by both UI and monitor."
+    tests:
+      - "budget_monitor_alert_uses_adjusted_shared_spend_from_repository"
+      - "ui_and_monitor_budget_status_have_same_effective_spend"
+
+  - id: "P6-CURRENT-003"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Budget alert notification labels can use the wrong currency"
+    evidence:
+      - "BudgetMonitor passes BudgetStatus amounts to sendNotification but not status.currency."
+      - "sendNotification default displayCurrency = budget.currency."
+      - "BudgetRepository may return budget.copy(currency = homeCurrency), but monitor uses the nested budget parameter default path and the contract is unclear."
+    impact:
+      - "Notification can display home-currency amounts with source-budget currency symbol."
+    fix:
+      - "Pass status.currency explicitly into sendNotification."
+      - "Use MoneyAmount/MoneyDisplay instead of raw Double + default currency."
+    tests:
+      - "budget_alert_uses_status_currency_not_original_budget_currency"
+
+  - id: "P6-CURRENT-004"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Budget notification timestamp updates bypass DatabaseWriteBarrier"
+    evidence:
+      - "BudgetRepository.updateExceededNotification/updateCriticalNotification/updateWarningNotification call BudgetDao directly."
+      - "No writeBarrier.checkWritesAllowed() in those methods."
+      - "BudgetMonitor can call them from background checks."
+    impact:
+      - "Budget rows can mutate during restore/maintenance."
+    fix:
+      - "Guard notification timestamp update methods with DatabaseWriteBarrier."
+      - "Optionally route through BudgetLifecycleCoordinator."
+    tests:
+      - "restore_blocks_budget_notification_timestamp_update"
+
+  - id: "P6-CURRENT-005"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Budget deleteAll and restoreDebugSnapshot can fail or corrupt policy with existing forecasts"
+    evidence:
+      - "deleteBudget() deletes forecasts first."
+      - "deleteAll() only calls budgetDao.deleteAll()."
+      - "BudgetForecast FK uses RESTRICT."
+      - "restoreDebugSnapshot() calls replaceAllAndEnforceActiveScopes without deleting/reconciling forecasts and without write barrier."
+    impact:
+      - "Delete-all or debug restore can fail after forecasts exist."
+      - "Debug restore can leave forecasts pointing to missing/changed budget semantics."
+    fix:
+      - "Define budget-history policy for deleteAll/restore."
+      - "Delete/archive forecasts transactionally or block with explicit error."
+      - "Guard restoreDebugSnapshot and make debug-only."
+    tests:
+      - "delete_all_budgets_with_forecasts_has_explicit_policy"
+      - "restore_debug_snapshot_reconciles_budget_forecasts"
+      - "restore_debug_snapshot_blocked_during_restore"
+
+  - id: "P6-CURRENT-006"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Forecast budget conversion failure silently relabels source amount as home currency"
+    evidence:
+      - "BudgetForecastingEngine convertAsOf ?: convert ?: budget.amount."
+      - "Forecast is persisted with currency = homeCurrency regardless of conversion fallback."
+      - "No BudgetForecast warning/partial field exists."
+    impact:
+      - "If budget is 100 USD and home is EUR with no rate, forecast can treat 100 USD as 100 EUR."
+      - "Risk/overspend probability becomes financially wrong with no visible warning."
+    fix:
+      - "Return MoneyAggregate/ConversionResult for normalized budget amount."
+      - "If conversion fails, mark forecast partial or fail forecast generation."
+    tests:
+      - "budget_forecast_missing_budget_rate_marks_partial_or_fails"
+      - "budget_forecast_does_not_label_raw_source_amount_as_home_currency"
+
+  - id: "P6-CURRENT-007"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "BudgetForecast direct DAO insert remains public and can persist createdAt=0/EUR"
+    evidence:
+      - "BudgetForecast defaults: currency='EUR', createdAt=0L."
+      - "BudgetForecastDao.insert is public and uses REPLACE."
+      - "Only BudgetForecastingEngine sets metadata."
+    impact:
+      - "Future callers/tests can reintroduce wrong forecast metadata."
+    fix:
+      - "Introduce ForecastLifecycleCoordinator."
+      - "Restrict raw DAO insert via static allowlist or make DAO internal to data layer."
+    tests:
+      - "forecast_dao_insert_not_called_outside_forecast_lifecycle"
+      - "forecast_lifecycle_rejects_createdAt_zero"
+
+  - id: "P6-CURRENT-008"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "BudgetForecast REPLACE can destroy historical rows on same-millisecond forecastDate"
+    evidence:
+      - "Unique index: budgetId + targetPeriodStart + forecastDate."
+      - "BudgetForecastDao.insert uses OnConflictStrategy.REPLACE."
+      - "generateForecast uses timeProvider.now() as forecastDate."
+    impact:
+      - "Concurrent/rapid repeated forecast generation in same millisecond can replace a previous row instead of preserving history."
+    fix:
+      - "Use ABORT with retry timestamp or unique generated runId."
+      - "Prefer active materialized key for active uniqueness, not REPLACE."
+    tests:
+      - "two_forecasts_same_millisecond_keep_history_or_return_conflict"
+
+  - id: "P6-CURRENT-009"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Budget deletion history policy contradicts BudgetForecast RESTRICT design"
+    evidence:
+      - "BudgetForecast entity comment says RESTRICT preserves historical forecasts."
+      - "BudgetRepository.deleteBudget deletes forecasts first, then budget."
+    impact:
+      - "Forecast accuracy/history is lost on budget delete."
+      - "Docs and actual behavior disagree."
+    fix:
+      - "Choose one policy: archive budget with history, hard-delete with forecast purge, or restrict with explicit UI."
+      - "Update entity comments and repository behavior."
+    tests:
+      - "delete_budget_policy_preserves_or_purges_forecasts_as_documented"
+
+  - id: "P6-CURRENT-010"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "BudgetForecastingEngine confidence ignores currency exclusions"
+    evidence:
+      - "getHistoricalSpendingData() logs AnalyticsCurrencyNormalizer warnings but does not carry them into HistoricalData."
+      - "calculateConfidence() uses observed months and variance only."
+      - "generateForecast() persists confidenceScore without partial/warning metadata."
+    impact:
+      - "Forecast can show high confidence even when many historical expenses were excluded due missing FX."
+    fix:
+      - "Add ForecastQuality to BudgetForecast or use ForecastDataQuality."
+      - "Reduce confidence for excluded/warning counts and persist warning metadata."
+    tests:
+      - "budget_forecast_confidence_reduced_when_historical_expenses_excluded"
+
+  - id: "P6-CURRENT-011"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "generateForecast(forecastPeriodDays) parameter is effectively ignored"
+    evidence:
+      - "generateForecast accepts forecastPeriodDays."
+      - "It calculates active budget periodStart/periodEnd."
+      - "remainingForecastDays is derived from elapsedEnd..periodEnd and passed to calculatePredictedSpending."
+    impact:
+      - "Caller requesting a 30-day forecast may get rest-of-current-budget-period forecast instead."
+      - "API semantics are misleading."
+    fix:
+      - "Either remove forecastPeriodDays or define targetPeriodEnd = now + forecastPeriodDays."
+      - "Name method generateCurrentBudgetPeriodForecast if current-period-only."
+    tests:
+      - "forecastPeriodDays_changes_target_period_when_api_claims_horizon"
+      - "current_period_forecast_api_does_not_accept_unused_horizon"
+
+  - id: "P6-CURRENT-012"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "RecurringPattern and ConfirmedOccurrence amounts are still unnormalized in SynthesisEngine"
+    evidence:
+      - "ForecastInputAssembler normalizes planned expenses only."
+      - "mergeRecurringPatterns TODO says patterns retain original currency amounts."
+      - "confirmedOccurrences map expectedAmount/expectedCurrency directly from RecurringOccurrence."
+      - "SynthesisEngine sums confirmedOccurrences.expectedAmount and recurringPatterns.averageAmount."
+    impact:
+      - "Forecast totalCommitted, totalLikely, discretionaryBudget, and projected points can mix EUR/USD/GBP."
+    fix:
+      - "Normalize recurring patterns and confirmed occurrences in ForecastInputAssembler."
+      - "SynthesisEngine should reject mixed-currency inputs."
+    tests:
+      - "recurring_pattern_USD_converted_to_home_before_synthesis"
+      - "confirmed_occurrence_USD_converted_to_home_before_synthesis"
+      - "synthesis_rejects_mixed_currency_recurring_inputs"
+
+  - id: "P6-CURRENT-013"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "SynthesisEngine public overload remains a raw mixed-currency footgun"
+    evidence:
+      - "synthesize(pastSumDaily, recurringPatterns, plannedExpenses, ...) is public."
+      - "It groups planned by currency then sums group values anyway."
+      - "It accepts recurringPatterns/confirmedOccurrences with no currency guard."
+    impact:
+      - "Any caller bypassing ForecastInputAssembler can reintroduce mixed-currency forecast math."
+    fix:
+      - "Make raw overload private/internal."
+      - "Expose only synthesize(ForecastInput) with normalized-input contract."
+    tests:
+      - "raw_synthesis_overload_not_used_in_production"
+      - "synthesis_requires_normalized_forecast_input"
+
+  - id: "P6-CURRENT-014"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Block-party calendar still includes PAID occurrences as future recurring impact"
+    evidence:
+      - "buildRecurringByDayFromOccurrences filters status == PLANNED || PAID."
+      - "Comment says canonical occurrence source is PAID + PLANNED."
+      - "Main forecast assembler filters confirmedOccurrences to PLANNED only."
+    impact:
+      - "Block-party can show already-paid bills as bill-day targets/future recurring impact."
+      - "This can double-count actual payment plus paid occurrence."
+    fix:
+      - "Use PLANNED only for future obligation calendar."
+      - "If PAID is shown, display separately as actual/fulfilled, not target."
+    tests:
+      - "block_party_excludes_paid_occurrence_from_future_recurring_target"
+      - "block_party_paid_occurrence_not_double_counted_with_actual_expense"
+
+  - id: "P6-CURRENT-015"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "FinancialForecast does not surface data-quality warnings"
+    evidence:
+      - "SynthesisEngine subtracts confidencePenalty."
+      - "ForecastDataQuality conversionWarnings are not copied into FinancialForecast."
+    impact:
+      - "UI can show lower confidence but not explain why."
+      - "AI/debug agents cannot see which transactions/rates were excluded."
+    fix:
+      - "Add qualityWarnings/isPartial/excluded counts to FinancialForecast or ForecastComponents."
+    tests:
+      - "financial_forecast_contains_currency_conversion_warnings"
+
+  - id: "P6-CURRENT-016"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "CashFlowCalculator drops conversion failures with Timber only"
+    evidence:
+      - "CashFlowCalculator increments conversionFailures and logs warning."
+      - "DailyCashFlow has no isPartial/excludedCount/warnings."
+    impact:
+      - "Cashflow balances can omit transactions/recurring bills while looking clean."
+    fix:
+      - "Add CashFlowDataQuality to DailyCashFlow or range result."
+      - "Surface excluded income/outflow counts and warnings."
+    tests:
+      - "cashflow_missing_rate_marks_day_partial"
+      - "cashflow_missing_rate_warning_visible"
+
+  - id: "P6-CURRENT-017"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Cashflow uses latest-rate conversion, not date/range rate basis"
+    evidence:
+      - "CashFlowCalculator uses currencyConverter.convert() for historical income/expenses and recurring predictions."
+      - "No convertAsOf(date) or explicit RateBasis."
+    impact:
+      - "Cashflow history/projection can shift when latest FX rates change."
+    fix:
+      - "Use convertAsOf(expense.date) for actuals."
+      - "Use explicit forecast/latest basis for future predictions."
+    tests:
+      - "cashflow_actual_expense_uses_transaction_date_rate"
+      - "cashflow_future_recurring_uses_documented_forecast_rate_basis"
+
+  - id: "P6-CURRENT-018"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Cashflow manual occurrence generation failure can silently drop bills"
+    evidence:
+      - "calculateDailyCashFlow calls generateOccurrences per rule and logs failures."
+      - "It then queries PLANNED occurrences."
+      - "Unlike stress engine, no fallback expansion is applied for failed manual rule generation."
+    impact:
+      - "A recurring bill can disappear from cashflow calendar if materialization fails."
+    fix:
+      - "Track failedRuleIds and fallback to ad-hoc expansion, or return partial result with failure diagnostic."
+    tests:
+      - "cashflow_generation_failure_falls_back_or_marks_partial"
+
+  - id: "P6-CURRENT-019"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Cashflow dedupe is merchant-only and includes income merchants"
+    evidence:
+      - "actualMerchants is built from incomeList + expenseList."
+      - "predicted recurring is removed when merchantName lowercase trim matches."
+      - "No merchantKey/amount/date tolerance is used."
+    impact:
+      - "Income from same merchant name can suppress an outflow."
+      - "Alias/case/punctuation differences can fail to dedupe."
+    fix:
+      - "Use MerchantKeyGenerator, outflow-only actuals, amount tolerance, and same-day window."
+    tests:
+      - "cashflow_income_same_merchant_does_not_suppress_recurring_outflow"
+      - "cashflow_dedup_uses_merchant_key_and_amount_tolerance"
+
+  - id: "P6-CURRENT-020"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Cashflow startingBalance is a raw Double with unenforced home-currency precondition"
+    evidence:
+      - "calculateDailyCashFlow docs say startingBalance MUST be home currency."
+      - "CashFlowCalendarState stores startingBalance: Double and homeCurrency separately."
+    impact:
+      - "User-entered balance in another currency can corrupt all projected balances."
+    fix:
+      - "Use MoneyAmount for startingBalance."
+      - "If user currency differs from home, convert or reject."
+    tests:
+      - "cashflow_starting_balance_currency_mismatch_rejected_or_converted"
+
+  - id: "P6-CURRENT-021"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Stress forecast detected-only/fallback recurring outflows are not converted"
+    evidence:
+      - "Manual occurrences are converted with currencyConverter.convert()."
+      - "expandDetectedPatterns() adds pattern.averageAmount directly."
+      - "Failed manual rule fallback also uses expandDetectedPatterns()."
+    impact:
+      - "Detected recurring bills in foreign currency are summed as displayCurrency."
+      - "Stress probability and projected balance can be materially wrong."
+    fix:
+      - "Pass displayCurrency into expandDetectedPatterns and convert every pattern amount."
+      - "Track conversion failures in StressForecastResult quality."
+    tests:
+      - "stress_detected_usd_recurring_converted_to_home_currency"
+      - "stress_failed_manual_fallback_converts_pattern_amount"
+
+  - id: "P6-CURRENT-022"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Stress forecast baseline currency can mismatch explicit displayCurrency"
+    evidence:
+      - "resolveStartingBalanceBaseline() uses MultiCurrencyRepository home-currency totals."
+      - "computeStressForecast(displayCurrency) normalizes deposits/expenses to resolvedDisplayCurrency."
+      - "If caller passes non-home displayCurrency, currentBalance remains home-currency estimate."
+    impact:
+      - "ProjectedBalance can combine home-currency starting balance with non-home income/outflows."
+    fix:
+      - "Resolve baseline in the same displayCurrency or disallow non-home displayCurrency."
+    tests:
+      - "stress_forecast_explicit_display_currency_converts_baseline"
+
+  - id: "P6-CURRENT-023"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Stress forecast is labeled better but still not a true account-balance forecast"
+    evidence:
+      - "StressForecastMode.NET_CASHFLOW_ESTIMATE exists."
+      - "AccountBalanceProvider TODO remains."
+      - "resolveStartingBalanceBaseline() uses 90-day deposits minus purchases, floored at zero."
+    impact:
+      - "If UI ignores mode, users may still interpret projectedBalance as real cash balance."
+    fix:
+      - "Implement AccountBalanceProvider or rename UI fields to stress index/net-cashflow estimate until real balance exists."
+    tests:
+      - "stress_forecast_ui_uses_mode_label"
+      - "manual_balance_provider_overrides_net_cashflow_estimate"
+
+  - id: "P6-CURRENT-024"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Forecast/cashflow/stress read paths perform recurring materialization writes"
+    evidence:
+      - "ForecastInputAssembler.assemble calls recurringLifecycleCoordinator.generateOccurrences."
+      - "CashFlowCalculator.calculateDailyCashFlow calls generateOccurrences."
+      - "FinancialStressForecastEngine.calculateRecurringOutflows calls generateOccurrences."
+    impact:
+      - "Opening a forecast/cashflow screen can mutate DB."
+      - "Restore/write-barrier failure can degrade read features."
+      - "Side effects are hidden from callers unless logged."
+    fix:
+      - "Separate materialization job from read assembly, or return explicit partial/read-side-effect result."
+      - "Add diagnostics when materialization is skipped/blocked/failed."
+    tests:
+      - "cashflow_read_does_not_write_without_materialization_policy"
+      - "forecast_materialization_blocked_by_restore_returns_partial_diagnostic"
+
+  - id: "P6-CURRENT-025"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Home currency resolution silently defaults to EUR in multiple paths"
+    evidence:
+      - "BudgetRepository.resolveHomeCurrency() returns EUR on failure."
+      - "BudgetForecastingEngine homeCurrency getOrDefault('EUR')."
+      - "ForecastInputAssembler and CashFlowCalculator also fallback to EUR."
+    impact:
+      - "Settings/DataStore failure can relabel calculations as EUR with weak warning/no user-visible error."
+    fix:
+      - "Use HomeCurrencyResolution result: Resolved, FirstRunDefault, Failed."
+      - "Propagate Failed as partial warning."
+    tests:
+      - "home_currency_settings_failure_surfaces_budget_forecast_warning"
+      - "cashflow_home_currency_failure_marks_partial"
+
+  - id: "P6-CURRENT-026"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Budget/planned/forecast lifecycle events are still missing"
+    evidence:
+      - "BudgetMonitor writes PipelineDiagnosticEvent."
+      - "BudgetRepository CRUD does not write BUDGET_CREATED/UPDATED/DELETED events."
+      - "PlannedExpenseRepository does not write PLANNED_EXPENSE_CREATED/FULFILLED events."
+      - "BudgetForecastingEngine does not write FORECAST_CREATED/ACCURACY_UPDATED events."
+    impact:
+      - "Debugging budget/planned/forecast mutations still requires DB diffs/logs."
+    fix:
+      - "Add BudgetLifecycleEvent or use PipelineDiagnosticEvent consistently for lifecycle mutations."
+    tests:
+      - "budget_create_update_delete_write_lifecycle_events"
+      - "forecast_created_writes_event"
+      - "planned_expense_created_writes_event"
+
+  - id: "P6-CURRENT-027"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "BudgetMonitor diagnostics are not exhaustive"
+    evidence:
+      - "Throttle skip in checkBudgets() logs only."
+      - "Empty status list returns without durable event."
+      - "spent <= 0 / invalid limit returns after CHECK_STARTED without STATUS_COMPUTED or NO_ALERT event."
+      - "Notification failure is only NOT_DELIVERED without permission/error reason."
+    impact:
+      - "Some 'why no alert?' cases still cannot be diagnosed from DB alone."
+    fix:
+      - "Write CHECK_SKIPPED_THROTTLE, NO_ACTIVE_BUDGETS, NO_ALERT_ZERO_SPEND, ALERT_BLOCKED_PERMISSION/FAILED."
+    tests:
+      - "budget_monitor_throttle_skip_writes_diagnostic"
+      - "budget_monitor_zero_spend_writes_no_alert_event"
+
+  - id: "P6-CURRENT-028"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Raw budget/planned/forecast DAO mutation surfaces remain public"
+    evidence:
+      - "BudgetDao exposes insert/update/delete/deleteAll/setActive/updateNotification methods."
+      - "PlannedExpenseDao exposes insert/delete/updateStatus/linkToActualExpense."
+      - "BudgetForecastDao exposes insert/update/deactivate/delete."
+      - "No static guard was verified."
+    impact:
+      - "Future code can bypass write barrier, validation, timestamps, events, and active-key policies."
+    fix:
+      - "Introduce static allowlist/Detekt rule."
+      - "Route writes through BudgetLifecycleCoordinator/ForecastLifecycleCoordinator/PlannedExpenseLifecycleCoordinator."
+    tests:
+      - "budget_pipeline_dao_mutator_guard_blocks_unapproved_callers"
+
+  - id: "P6-CURRENT-029"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Budget and planned validation is incomplete"
+    evidence:
+      - "BudgetRepository checks amount <= 0 and startDate <= 0."
+      - "NaN/infinite amount passes amount <= 0 check."
+      - "notify thresholds/currency/periodMode are not fully validated at repository boundary."
+      - "PlannedExpenseRepository does not validate amount/date/currency/status."
+    impact:
+      - "Invalid money/status rows can enter forecast and budget arithmetic."
+    fix:
+      - "Validate finite positive amounts, ISO currency, threshold ordering, period mode, planned status/date."
+    tests:
+      - "budget_rejects_nan_amount"
+      - "budget_rejects_invalid_thresholds"
+      - "planned_expense_rejects_invalid_currency_or_status"
+
+  - id: "P6-CURRENT-030"
+    severity: "P3_LOW"
+    status: "OPEN"
+    title: "Stale comments/docs remain after fixes"
+    evidence:
+      - "BudgetForecast comments still discuss old unique index budgetId + targetPeriodStart."
+      - "FinancialStressForecastEngine comments say PAID and PLANNED are summed while ACTIVE_OCCURRENCE_STATUSES is PLANNED only."
+      - "PlannedExpenseDao comment says IGNORE returns 0, repository expects -1."
+    impact:
+      - "AI agents and maintainers can make wrong changes from stale comments."
+    fix:
+      - "Update KDoc/comments after refactor."
+    tests:
+      - "static_grep_no_old_budget_forecast_unique_index_comment"
+      - "static_grep_no_stress_paid_planned_sum_comment"
+
+recommended_fix_order:
+  - pr: "PR1"
+    title: "Budget alert correctness"
+    include:
+      - "Move adjusted-spend calculation into BudgetRepository/shared provider."
+      - "Pass status.currency into notifications."
+      - "Guard notification timestamp updates."
+    closes:
+      - "P6-CURRENT-002"
+      - "P6-CURRENT-003"
+      - "P6-CURRENT-004"
+
+  - pr: "PR2"
+    title: "FX basis and forecast conversion hardening"
+    include:
+      - "Use historical actual spend basis for budget actuals."
+      - "Forecast budget conversion must fail/partial on missing rate, not relabel raw amount."
+      - "Propagate budget forecast currency-quality metadata."
+    closes:
+      - "P6-CURRENT-001"
+      - "P6-CURRENT-006"
+      - "P6-CURRENT-010"
+
+  - pr: "PR3"
+    title: "Forecast input normalization contract"
+    include:
+      - "Normalize RecurringPattern and ConfirmedOccurrence."
+      - "Make SynthesisEngine raw overload private/internal."
+      - "Surface ForecastDataQuality warnings."
+      - "Fix block-party PAID occurrence double count."
+    closes:
+      - "P6-CURRENT-012"
+      - "P6-CURRENT-013"
+      - "P6-CURRENT-014"
+      - "P6-CURRENT-015"
+
+  - pr: "PR4"
+    title: "Cashflow/stress currency quality"
+    include:
+      - "CashFlowDataQuality."
+      - "convertAsOf for actuals."
+      - "Fallback/diagnostic on occurrence generation failure."
+      - "Fix detected-only stress recurring conversion."
+      - "Normalize stress baseline to displayCurrency."
+    closes:
+      - "P6-CURRENT-016"
+      - "P6-CURRENT-017"
+      - "P6-CURRENT-018"
+      - "P6-CURRENT-021"
+      - "P6-CURRENT-022"
+
+  - pr: "PR5"
+    title: "Budget deletion/history and forecast persistence policy"
+    include:
+      - "Choose archive/restrict/delete-history policy."
+      - "Fix deleteAll/restoreDebugSnapshot with forecasts."
+      - "Remove REPLACE history footgun or add runId."
+    closes:
+      - "P6-CURRENT-005"
+      - "P6-CURRENT-008"
+      - "P6-CURRENT-009"
+
+  - pr: "PR6"
+    title: "Lifecycle boundaries and guardrails"
+    include:
+      - "Budget/Forecast/Planned lifecycle events."
+      - "DAO mutator static guard."
+      - "Validation hardening."
+      - "HomeCurrencyResolution instead of silent EUR."
+    closes:
+      - "P6-CURRENT-007"
+      - "P6-CURRENT-024"
+      - "P6-CURRENT-025"
+      - "P6-CURRENT-026"
+      - "P6-CURRENT-028"
+      - "P6-CURRENT-029"
+
+  - pr: "PR7"
+    title: "Diagnostics and docs cleanup"
+    include:
+      - "Complete BudgetMonitor event coverage."
+      - "Update stale comments/KDoc."
+    closes:
+      - "P6-CURRENT-027"
+      - "P6-CURRENT-030"
+
+definition_of_done:
+  - "Budget alerts use the same adjusted/effective spend as the UI."
+  - "Budget alert notifications format amounts with BudgetStatus.currency, not stale source currency."
+  - "All budget/planned/forecast writes, including notification timestamps and debug restore, respect DatabaseWriteBarrier."
+  - "Budget actual spend and budget limit use one documented FX basis."
+  - "Forecast generation never labels an unconverted source amount as home currency."
+  - "BudgetForecast cannot be inserted with createdAt=0 or accidental default EUR through production paths."
+  - "Budget deletion/deleteAll/restore policies explicitly handle forecast history."
+  - "Forecast confidence and output expose conversion/quality warnings."
+  - "Recurring patterns and confirmed occurrences are normalized before SynthesisEngine sums them."
+  - "SynthesisEngine has no public raw mixed-currency arithmetic entry point."
+  - "Block-party does not count PAID occurrences as future obligations."
+  - "Cashflow returns partial/warning metadata when conversion or occurrence generation fails."
+  - "Cashflow and stress convert detected/fallback recurring predictions to display currency."
+  - "Stress forecast clearly distinguishes net-cashflow estimate from real account balance until AccountBalanceProvider exists."
+  - "No production code calls raw BudgetDao/PlannedExpenseDao/BudgetForecastDao mutators outside an allowlist."
+  - "Budget/planned/forecast lifecycle events exist for create/update/delete/forecast/accuracy/fulfillment."
+  - "Home-currency resolution failure is user-visible/diagnostic, not silent EUR fallback."
+  - "Stale comments about old unique indexes, PAID stress outflows, and IGNORE return values are removed."
+
+sources:
+  master_tracker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/PIPELINE_ISSUES_MASTER_TRACKER.md"
+  pipeline_6_old_report:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/new%20debugging%20session/pipeline-6-budget-forecasting-cashflow-debug-report.md"
+  budget_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt"
+  budget_dao:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/dao/BudgetDao.kt"
+  budget_entity:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/entity/Budget.kt"
+  budget_monitor:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetMonitor.kt"
+  budget_models:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetModels.kt"
+  budget_forecasting_engine:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt"
+  budget_forecast_entity:
+    url: "https://github.com/panospao7/Cost-agregator/blob/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/entity/BudgetForecast.kt"
+  budget_forecast_dao:
+    url: "https://github.com/panospao7/Cost-agregator/blob/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/dao/BudgetForecastDao.kt"
+  planned_expense_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt"
+  planned_expense_entity:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/entity/PlannedExpense.kt"
+  planned_expense_dao:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/dao/PlannedExpenseDao.kt"
+  forecast_input_assembler:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/forecasting/ForecastInputAssembler.kt"
+  synthesis_engine:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/logic/SynthesisEngine.kt"
+  cashflow_calculator:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/cashflow/CashFlowCalculator.kt"
+  cashflow_viewmodel:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/ui/screens/cashflow/CashFlowCalendarViewModel.kt"
+  financial_stress_forecast_engine:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/forecasting/FinancialStressForecastEngine.kt"
+  budget_viewmodel:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/ui/screens/budget/BudgetViewModel.kt"

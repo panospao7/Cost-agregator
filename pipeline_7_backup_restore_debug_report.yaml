@@ -1,0 +1,705 @@
+meta:
+  repo: "panospao7/Cost-agregator"
+  commit: "4113e38f0d838a29d2d13d82a483ba573280721c"
+  pipeline: "7 - Backup / Restore / Maintenance Mode / Startup Recovery"
+  review_mode: "static GitHub source/debugging session; no local Gradle/device execution"
+  verdict: "IMPROVED_BUT_NOT_CLEAN"
+  summary: >
+    Pipeline 7 is significantly improved. Release raw export is disabled, legacy .db
+    import is release-disabled and now debug-journaled, .costbackup restore has
+    maintenance mode, safety backup, restore journal, staged migration preflight,
+    post-migration quick verification, restart-required mode, and WorkerRegistry-based
+    resume. However, it is not clean. The remaining high-risk bugs are around DB file
+    sidecars during swap, failed rollback unblocking writes, stale Room reuse after swap,
+    crash recovery not being fail-closed across the next restart, non-global write barriers,
+    incomplete backup privacy/redaction semantics, non-durable asset repair, and missing
+    semantic restore-equivalence tests.
+
+tracker_reconciliation:
+  P7-P0-01_legacy_db_import_lacks_journal_and_maintenance:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL_MOSTLY_FIXED_FOR_RELEASE"
+    notes:
+      - "importDatabase() is now disabled in release builds."
+      - "Debug import now enters RESTORE_PREPARING and creates RestoreJournal."
+      - "But debug import still uses stale injected Room after swap."
+      - "If debug import rollback fails, it exits maintenance to NORMAL."
+      - "KDoc is stale and still says no journal/maintenance."
+
+  P7-P0-02_startup_recovery_can_resume_writes_after_failed_recovery:
+    tracker_status: "FIXED"
+    actual_status: "PARTIAL_BUG_REMAINS"
+    notes:
+      - "Initial failure branch now enters RESTORE_COMPLETE_RESTART_REQUIRED and returns before worker scheduling."
+      - "But failJournal() renames active restore_journal.json to restore_journal_last_failure.json."
+      - "On the next app restart, checkAndRecover() sees NoAction and AppStartupCoordinator resets maintenance mode to NORMAL."
+      - "Safety-backup restore is considered recovered after file copy only; no integrity verification is run."
+
+  P7-P1-01_stale_injected_room_after_swap:
+    tracker_status: "TODO_ONLY"
+    actual_status: "OPEN"
+    notes:
+      - "restoreCostBackup() still uses injected database.openHelper and database.scannedReceiptDao() after replacing DB files."
+      - "Code comment explicitly says this is TODO and relies on forced restart."
+
+  P7-P1-02_maintenance_mode_not_global_write_barrier:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL"
+    notes:
+      - "DatabaseWriteBarrier and DatabaseReadBarrier exist."
+      - "RestoreMaintenanceMode.isWritesAllowed() blocks all non-NORMAL modes."
+      - "But enforcement is still caller-by-caller; no Room/DAO-level global write interceptor exists."
+      - "Several destructive backup/reset/debug paths still use RestoreMaintenanceMode directly or no barrier."
+
+  P7-P1-03_backup_creation_does_not_freeze_writes_or_use_sqlite_backup_api:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL"
+    notes:
+      - "createCostBackup() now enters BACKUP_EXPORTING and checkpoints WAL."
+      - "But snapshot is still live DB file copy, not SQLite backup API/VACUUM INTO/read transaction."
+      - "Worker cancellation is async and write blocking is cooperative."
+
+  P7-P1-04_receipt_asset_restore_not_atomic:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL"
+    notes:
+      - "ASSETS_RESTORING journal state exists."
+      - "Crash during asset restore no longer rolls back DB by design."
+      - "But asset restore is not resumable, has no durable per-asset ledger, uses stale DAO, and can leave orphan files."
+
+  P7-P1-05_restore_semantic_equivalence_not_proven:
+    tracker_status: "TODO_ONLY"
+    actual_status: "OPEN"
+    notes:
+      - "BackupVerifier KDoc still lists semantic equivalence as TODO."
+      - "Verification is still table counts, integrity, FK, and tier checks."
+
+  P7-P1-06_privacy_audit_optional:
+    tracker_status: "TODO_ONLY"
+    actual_status: "OPEN"
+    notes:
+      - "privacy_audit_events remains TIER_3_OPTIONAL."
+
+  P7-P1-07_worker_pause_resume_not_spec_driven:
+    tracker_status: "FIXED"
+    actual_status: "MOSTLY_FIXED"
+    notes:
+      - "RestoreMaintenanceMode.scheduleAllWorkers() now calls WorkerRegistry.scheduleAll()."
+      - "AppStartupCoordinator also uses WorkerRegistry."
+      - "Still needs guard test that WorkerRegistry.entries exactly match WorkerSpec.DEFAULTS and respect enabled=false."
+
+  P7-P1-08_successful_restore_blocked_but_ui_can_dismiss:
+    tracker_status: "TODO_ONLY"
+    actual_status: "PARTIAL"
+    notes:
+      - "restoreCostBackup() exits to RESTORE_COMPLETE_RESTART_REQUIRED."
+      - "dismissRestartRequired() is deprecated but still public and clears the UI flag."
+      - "No global app-shell lock was verified in this static pass."
+
+positive_findings:
+  - "Raw exportDatabase() is disabled in release builds."
+  - "Legacy importDatabase() is disabled in release builds."
+  - "Debug legacy import now uses RestoreMaintenanceMode and RestoreJournal."
+  - ".costbackup creation uses encrypted bundle with manifest, checksums, database.sqlite, optional receipt files."
+  - "CostbackupBundle.create() now streams ZIP construction/encryption instead of ByteArrayOutputStream."
+  - "CostbackupBundle.extract() streams decryption and has ZIP Slip protection."
+  - "Redacted backup path excludes receipt images."
+  - "createCostBackup() enters BACKUP_EXPORTING and exits maintenance on success/failure."
+  - "restoreCostBackup() stages DB, quick-verifies, opens with Room for migration, and re-verifies before swap."
+  - "Restore journal transition assignment preserves safetyBackupPath through SAFETY_BACKUP_CREATED → SWAPPING."
+  - "RestoreMaintenanceMode uses synchronous SharedPreferences commit()."
+  - "WorkerRegistry centralizes startup and post-maintenance worker scheduling."
+  - "DatabaseWriteBarrier and DatabaseReadBarrier exist."
+  - "BackupVerifier checks integrity, FK, required table existence, and Tier 1 exact counts."
+
+issues:
+  - id: "P7-CURRENT-001"
+    severity: "P0_CRITICAL"
+    status: "OPEN"
+    title: "restoreCostBackup() swaps main DB without deleting old live WAL/SHM sidecars"
+    evidence:
+      - "restoreCostBackup() renames live DB to .pre_restore, then copies staged DB to live."
+      - "It copies staged WAL/SHM only if staged sidecars exist."
+      - "It does not delete existing liveDbWalFile/liveDbShmFile before installing the restored DB."
+      - "importDatabase() has replaceDatabaseFiles() that deletes target WAL/SHM first, but restoreCostBackup() does not use it."
+    impact:
+      - "Old WAL/SHM sidecars can remain next to a restored main DB."
+      - "This can cause SQLite to see stale sidecar state, apply incompatible frames, or fail opening the restored DB."
+      - "A restore can pass staged verification but fail/corrupt at live open due sidecars."
+    fix:
+      - "Use the same replaceDatabaseFiles() helper for .costbackup restore."
+      - "Before copying staged DB, delete liveDbWalFile and liveDbShmFile."
+      - "If staged WAL/SHM are absent, ensure target sidecars are absent."
+      - "Check renameTo() return value and fail/rollback if live→pre_restore move fails."
+    tests:
+      - "restore_deletes_old_live_wal_shm_when_staged_has_no_sidecars"
+      - "restore_rejects_or_rolls_back_if_live_rename_fails"
+      - "restored_db_opens_with_no_stale_wal_frames"
+
+  - id: "P7-CURRENT-002"
+    severity: "P0_CRITICAL"
+    status: "OPEN"
+    title: "Failed rollback exits maintenance mode to NORMAL"
+    evidence:
+      - "In restoreCostBackup() verification-failure catch, if restoreFromSafetyBackup() fails, code calls restoreMaintenanceMode.exit(forceRestartRequired=false)."
+      - "Debug import rollback failure also exits maintenance mode to NORMAL."
+    impact:
+      - "If restore verification fails and rollback also fails, app can resume writes against unknown/corrupt DB."
+      - "This defeats fail-closed restore safety."
+    fix:
+      - "On rollback failure, enter RESTORE_COMPLETE_RESTART_REQUIRED or new RESTORE_CRITICAL_FAILURE."
+      - "Do not call exit(false)."
+      - "Preserve active journal or critical failure marker until manual intervention."
+    tests:
+      - "costbackup_rollback_failure_keeps_writes_blocked"
+      - "legacy_debug_import_rollback_failure_keeps_writes_blocked"
+      - "rollback_failure_preserves_recovery_journal"
+
+  - id: "P7-CURRENT-003"
+    severity: "P0_CRITICAL"
+    status: "OPEN"
+    title: "Startup crash recovery is not fail-closed across the next app restart"
+    evidence:
+      - "AppStartupCoordinator failure branch calls restoreJournal.failJournal(), which renames restore_journal.json to restore_journal_last_failure.json."
+      - "It then enters RESTORE_COMPLETE_RESTART_REQUIRED and returns."
+      - "On the next process start, checkAndRecover() sees no active journal and returns NoAction."
+      - "The final block resets any non-NORMAL maintenance mode to NORMAL."
+    impact:
+      - "A critical recovery failure blocks writes only for the current startup attempt."
+      - "Restarting the app can clear maintenance mode without manual recovery."
+    fix:
+      - "Introduce persistent critical failure mode separate from restart-required success."
+      - "Do not reset RESTORE_CRITICAL_FAILURE automatically."
+      - "Keep an active critical marker or make checkAndRecover() read restore_journal_last_failure.json when mode is critical."
+    tests:
+      - "startup_recovery_failure_remains_blocked_after_second_restart"
+      - "critical_failure_marker_survives_app_restart"
+      - "successful_restore_restart_required_resets_but_critical_failure_does_not"
+
+  - id: "P7-CURRENT-004"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Startup safety-backup recovery marks success without verifying restored DB"
+    evidence:
+      - "AppStartupCoordinator sets recovered=true after copying safety backup files."
+      - "No PRAGMA integrity_check, foreign_key_check, schema version check, or BackupVerifier pass is run after the copy."
+    impact:
+      - "A copied-but-corrupt safety backup can be treated as recovered."
+      - "Maintenance mode may later reset to NORMAL."
+    fix:
+      - "After copying safety backup, open SQLite read-only and run integrity_check, foreign_key_check, user_version check."
+      - "Optionally open a fresh Room instance for migration/schema verification."
+    tests:
+      - "startup_safety_restore_corrupt_backup_keeps_maintenance_mode"
+      - "startup_safety_restore_verifies_integrity_before_journal_delete"
+
+  - id: "P7-CURRENT-005"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Stale injected Room instance is still used after DB file swap"
+    evidence:
+      - "restoreCostBackup() comments explicitly say the injected database is stale after swap."
+      - "Live verification calls database.openHelper.writableDatabase and queryRoomCountsForVerification(database)."
+      - "restoreReceiptAssets() uses database.scannedReceiptDao() after swap."
+    impact:
+      - "Verification and receipt image updates can use closed/stale Room internals."
+      - "False verification, crashes, or imagePath update loss are possible."
+    fix:
+      - "Introduce RestoreDatabaseOpener and open a fresh one-shot AppDatabase after swap."
+      - "Use fresh DB for live summary and asset imagePath updates."
+      - "Do not touch injected singleton until process restart."
+    tests:
+      - "restore_live_verification_uses_fresh_room_instance"
+      - "receipt_asset_updates_use_fresh_restored_database"
+      - "injected_database_not_reopened_after_swap"
+
+  - id: "P7-CURRENT-006"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Backup snapshot is still not a guaranteed point-in-time snapshot"
+    evidence:
+      - "createCostBackup() enters BACKUP_EXPORTING and calls wal_checkpoint(TRUNCATE)."
+      - "It then copies the live DB file to tempDb."
+      - "Write blocking depends on cooperative DatabaseWriteBarrier callers."
+      - "WorkManager cancellation is async; running workers may continue after cancelUniqueWork()."
+      - "No SQLite Online Backup API, VACUUM INTO, or long read transaction snapshot is used."
+    impact:
+      - "Unbarriered foreground or worker writes can race with file copy."
+      - "Backup may be internally valid but not a clean logical snapshot."
+    fix:
+      - "Use SQLite backup API or VACUUM INTO where supported."
+      - "Or enforce a real process-wide write mutex around checkpoint+copy."
+      - "Wait for running workers/processing jobs to quiesce before copying."
+    tests:
+      - "backup_under_concurrent_write_is_point_in_time_consistent"
+      - "backup_waits_for_running_workers_or_marks_busy"
+      - "unbarriered_write_guard_fails_ci"
+
+  - id: "P7-CURRENT-007"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Restore maintenance mode is not a true global write barrier"
+    evidence:
+      - "DatabaseWriteBarrier exists but Room DAOs do not enforce it globally."
+      - "RestoreMaintenanceMode.isWritesAllowed() is caller-by-caller."
+      - "resetDatabase(), createSafetyBackup(), and some debug/destructive paths do not use DatabaseWriteBarrier."
+    impact:
+      - "Any missed repository/DAO write can mutate DB during backup/restore/restart-required state."
+    fix:
+      - "Add CI/static guard for write DAO calls outside approved coordinators."
+      - "Add a shared write mutex/barrier at lifecycle boundaries."
+      - "Audit all @Insert/@Update/@Delete callers."
+    tests:
+      - "all_repository_write_methods_blocked_in_restore_mode"
+      - "dao_mutator_guard_blocks_unapproved_write_during_restore"
+      - "restart_required_blocks_foreground_write_actions"
+
+  - id: "P7-CURRENT-008"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Receipt asset restore is not durable, atomic, or clean"
+    evidence:
+      - "restoreReceiptAssets() copies asset to destination before parsing receiptId and before checking receipt row exists."
+      - "It updates ScannedReceipt using stale injected DAO."
+      - "No transaction wraps file copy + DB update."
+      - "On missing receipt/parse failure/DB failure, copied file remains."
+    impact:
+      - "Orphan receipt files can accumulate."
+      - "Restored DB can point to missing files or files can exist without DB links."
+    fix:
+      - "Validate receiptId and receipt existence before copy."
+      - "Copy to temp, update DB with fresh Room in transaction, then atomic rename."
+      - "Delete temp/final on failure."
+    tests:
+      - "invalid_asset_filename_leaves_no_file"
+      - "missing_receipt_row_leaves_no_file"
+      - "asset_db_update_failure_deletes_copied_file"
+
+  - id: "P7-CURRENT-009"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "ASSETS_RESTORING crash recovery discards journal and does not resume repair"
+    evidence:
+      - "RestoreJournal.checkAndRecover() treats ASSETS_RESTORING like non-destructive cleanup."
+      - "It cleans staging and deletes journal."
+      - "No asset task ledger exists."
+    impact:
+      - "Crash during asset restore leaves partially restored files and imagePath updates."
+      - "No durable warning tells user/debugger that asset repair was incomplete."
+    fix:
+      - "Add DB_VERIFIED, ASSETS_RESTORING, ASSETS_RESTORED states with per-asset task records."
+      - "On startup, resume incomplete asset repair or surface durable warning."
+    tests:
+      - "crash_mid_asset_restore_resumes_remaining_assets"
+      - "asset_restore_incomplete_warning_survives_restart"
+      - "ASSETS_RESTORING_does_not_silently_delete_repair_state"
+
+  - id: "P7-CURRENT-010"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Backup privacy mode contract is inconsistent for redacted backups with images"
+    evidence:
+      - "BackupPrivacyMode.REDACT_RAW_TEXT has label 'Redacted DB (images included)' and includesReceiptImages=true."
+      - "createCostBackup() only collects receipt files when resolvedIncludeReceiptImages && !resolvedRedacted."
+      - "CostbackupBundle.buildZip() also skips receipt files when redacted=true."
+      - "Manifest options can say includeReceiptImages=true while includes.receiptImages=false."
+    impact:
+      - "A user/API selecting 'redacted DB with images included' gets no receipt images."
+      - "Backup manifest contains confusing policy signals."
+    fix:
+      - "Either rename/remove REDACT_RAW_TEXT image-included mode or allow explicitly encrypted redacted DB + images with clear PII warning."
+      - "Manifest should record requestedIncludeReceiptImages and actualIncludedReceiptImages separately."
+    tests:
+      - "redact_raw_text_mode_manifest_matches_actual_image_policy"
+      - "redacted_images_included_mode_requires_explicit_policy_or_is_removed"
+
+  - id: "P7-CURRENT-011"
+    severity: "P1_PRIVACY"
+    status: "OPEN"
+    title: "Redacted backup sanitizer only covers raw OCR and raw notifications"
+    evidence:
+      - "ExportAnonymizer TODO lists ai_artifacts, ai_chat_messages, merchant_locations, email_receipt_sources as not covered."
+      - "BackupVerifier includes these tables, meaning redacted backup can preserve them."
+    impact:
+      - "A redacted/anonymized backup can still contain AI text, chat messages, email sender/subject/body metadata, and location data."
+    fix:
+      - "Define column-level redaction policy per PII-bearing table."
+      - "Apply sanitizer before costbackup manifest counts/checksums."
+      - "Record redaction policy version in manifest."
+    tests:
+      - "redacted_backup_removes_email_receipt_source_pii"
+      - "redacted_backup_removes_ai_chat_message_text"
+      - "redacted_backup_removes_or_blurs_merchant_location_coordinates"
+
+  - id: "P7-CURRENT-012"
+    severity: "P1_PRIVACY"
+    status: "OPEN"
+    title: "privacy_audit_events are optional in restore verification"
+    evidence:
+      - "BackupVerifier.TABLE_TIERS maps privacy_audit_events to TIER_3_OPTIONAL."
+    impact:
+      - "Audit history can be absent/dropped and restore still passes."
+      - "For a privacy-sensitive app, privacy audit may be user data, not cache."
+    fix:
+      - "Choose explicit policy: preserve exactly as Tier 1, or intentionally exclude with manifest privacyAuditIncluded=false and UI warning."
+    tests:
+      - "privacy_audit_required_restore_fails_when_missing"
+      - "privacy_audit_exclusion_requires_manifest_flag"
+
+  - id: "P7-CURRENT-013"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Restore success does not prove semantic app equivalence"
+    evidence:
+      - "BackupVerifier TODO lists dashboard totals, budget calculations, receipt links, analytics aggregates, and investments as future semantic checks."
+      - "Current restore verification is row counts, integrity, FK, and required table existence."
+    impact:
+      - "Restore can pass while dashboard/analytics/budget/receipt/recurring behavior changes."
+    fix:
+      - "Add semantic snapshot manifest or golden integration test suite."
+      - "Compare dashboard monthly total, analytics category totals, budget statuses, receipt links, recurring/planned state, privacy audit count."
+    tests:
+      - "backup_restore_preserves_dashboard_totals"
+      - "backup_restore_preserves_budget_statuses"
+      - "backup_restore_preserves_receipt_links"
+      - "backup_restore_preserves_recurring_planned_actual_state"
+
+  - id: "P7-CURRENT-014"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "verifyQuick() skips Tier 1 tables missing from manifest before swap"
+    evidence:
+      - "BackupVerifier.verifyQuick() loops Tier 1 tables but continues when expectedCounts[tableName] is null."
+      - "Full verify fails missing expected counts, but that happens after swap."
+    impact:
+      - "Malformed/incomplete manifests can pass pre-swap checks and only fail after destructive swap begins."
+    fix:
+      - "Add validateManifestCompleteness() before swap."
+      - "Require all Tier 1 table counts for current format version."
+    tests:
+      - "costbackup_missing_tier1_manifest_count_fails_pre_swap"
+
+  - id: "P7-CURRENT-015"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Backup manifest table-count creation swallows count errors as zero"
+    evidence:
+      - "createCostBackup() builds tableCounts with catch { 0 } per table."
+    impact:
+      - "A table count query failure can create a misleading manifest."
+      - "Restore may later fail or compare against fake zero counts."
+    fix:
+      - "Fail backup creation if any Tier 1/Tier 2 count query fails."
+      - "Only optional tables may be absent with explicit optional marker."
+    tests:
+      - "backup_creation_fails_when_tier1_count_query_fails"
+      - "backup_manifest_does_not_silently_zero_required_table"
+
+  - id: "P7-CURRENT-016"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Backup/restore operation ledger is still mostly logs + journal"
+    evidence:
+      - "createCostBackup()/restoreCostBackup() write Timber messages like BackupOperationEvent.* but no durable entity."
+      - "No backup_restore_events or PipelineDiagnosticEvent usage was found in this path."
+    impact:
+      - "User reports still require logcat and file inspection."
+      - "Successful/wrong-password/tampered/rollback/asset-warning outcomes are not queryable."
+    fix:
+      - "Add BackupRestoreEvent table or write PipelineDiagnosticEvent with operationId/stage/outcome."
+    tests:
+      - "wrong_password_writes_restore_extract_failed_event"
+      - "restore_success_writes_restart_required_event"
+      - "rollback_failure_writes_critical_event"
+
+  - id: "P7-CURRENT-017"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Restore URI copy has no early size/header precheck"
+    evidence:
+      - "BackupRestoreViewModel.restoreBackup() copies URI to temp file before repository validation."
+      - "No max file size or COSTBACKUP header check occurs before full copy."
+    impact:
+      - "Huge/wrong files can fill cache/storage before being rejected."
+    fix:
+      - "Use ContentResolver metadata size when available."
+      - "Read and validate first 12 bytes before full copy."
+      - "Apply MAX_BACKUP_BUNDLE_BYTES."
+    tests:
+      - "restore_rejects_wrong_magic_before_full_copy"
+      - "restore_rejects_oversized_file_before_full_copy"
+
+  - id: "P7-CURRENT-018"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "WorkerRegistry symmetry lacks enforcement and may ignore enabled=false"
+    evidence:
+      - "RestoreMaintenanceMode.pauseAllWorkers() uses WorkerSpec.DEFAULTS.keys."
+      - "WorkerRegistry.scheduleAll() loops entries and calls schedule(context)."
+      - "No guard test was verified that DEFAULTS.keys == WorkerRegistry.entries.specName."
+      - "WorkerRegistry.scheduleAll() itself does not check WorkerSpec.enabled."
+    impact:
+      - "New worker can be paused but not resumed, or scheduled despite disabled spec if its schedule method does not check."
+    fix:
+      - "Add unit test comparing registry and defaults."
+      - "Centralize enabled check inside WorkerRegistry.scheduleAll()."
+    tests:
+      - "every_WorkerSpec_DEFAULTS_entry_has_WorkerRegistry_entry"
+      - "WorkerRegistry_does_not_schedule_disabled_workers"
+
+  - id: "P7-CURRENT-019"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Restart-required UX is not globally enforced in reviewed code"
+    evidence:
+      - "restoreCostBackup() enters RESTORE_COMPLETE_RESTART_REQUIRED."
+      - "BackupRestoreViewModel.dismissRestartRequired() is deprecated but still public and clears restartRequired."
+      - "No global navigation/app-shell blocking state was verified."
+    impact:
+      - "A caller/test/old UI path can hide the restore warning while writes remain blocked."
+      - "Unguarded writes can still occur through stale Room."
+    fix:
+      - "Remove dismissRestartRequired() or make it no-op."
+      - "Add AppOperationalState.RestartRequiredAfterRestore consumed by app shell."
+    tests:
+      - "dismiss_restart_required_does_not_clear_blocking_state"
+      - "after_restore_success_all_write_actions_disabled_until_process_restart"
+
+  - id: "P7-CURRENT-020"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "resetDatabase() is destructive but not journaled or maintenance-guarded"
+    evidence:
+      - "resetDatabase() creates safety backup, closes database, deletes DB/WAL/SHM."
+      - "It does not enter RestoreMaintenanceMode."
+      - "It does not create RestoreJournal."
+      - "Typed confirmation is only documented in interface KDoc, not enforced by implementation."
+    impact:
+      - "Crash during reset can leave no active DB and no recovery journal."
+      - "Concurrent writes can race reset."
+      - "Future caller can invoke without typed confirmation."
+    fix:
+      - "Move reset into a destructive maintenance coordinator with typed confirmation token."
+      - "Enter maintenance mode, journal state, safety backup, delete, verify fresh DB creation."
+    tests:
+      - "reset_enters_maintenance_mode"
+      - "reset_creates_restore_journal"
+      - "reset_requires_typed_confirmation_token"
+
+  - id: "P7-CURRENT-021"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Debug raw export path remains as interface API"
+    evidence:
+      - "exportDatabase() is still on DatabaseBackupRepository."
+      - "Release guard blocks it, but debug can still produce legacy .db/.enc without .costbackup manifest/assets."
+    impact:
+      - "Future UI/test code can accidentally depend on raw export."
+      - "Debug artifacts can contain sensitive data if plaintext path is used."
+    fix:
+      - "Move raw export to debug-only repository/source set."
+      - "Add static guard: no production UI calls exportDatabase()."
+    tests:
+      - "raw_export_not_available_in_release_interface"
+      - "production_ui_does_not_call_exportDatabase"
+
+  - id: "P7-CURRENT-022"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "RestoreJournal write is not fully crash-durable"
+    evidence:
+      - "writeJournal() writes temp file and renameTo(journalFile)."
+      - "renameTo() result is not checked."
+      - "No fsync on temp file or parent directory is visible."
+    impact:
+      - "Power loss/crash can lose or partially persist journal transitions."
+      - "Safety backup path/state may not be durable at the exact moment needed."
+    fix:
+      - "Use FileOutputStream.fd.sync() for temp file."
+      - "Check atomic rename result."
+      - "fsync parent directory where supported or use Android atomic file helper."
+    tests:
+      - "journal_write_failure_surfaces_error"
+      - "safety_backup_state_written_before_swap_is_durable"
+
+  - id: "P7-CURRENT-023"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Bundle extraction lacks decompressed-size and entry-count limits"
+    evidence:
+      - "CostbackupBundle.extract() streams ZIP entries to disk without max total decompressed bytes or max entries."
+      - "BackupRestoreViewModel also copies full URI before validation."
+    impact:
+      - "A malicious encrypted backup can fill app storage after successful password/header validation."
+    fix:
+      - "Add max total extracted bytes, max per-entry bytes, and max entry count."
+      - "Reject absolute/large path names and oversized database/assets."
+    tests:
+      - "zip_bomb_backup_rejected_before_filling_storage"
+      - "too_many_zip_entries_rejected"
+
+  - id: "P7-CURRENT-024"
+    severity: "P3_LOW"
+    status: "OPEN"
+    title: "Stale comments and docs contradict current code"
+    evidence:
+      - "importDatabase() KDoc still says legacy path has no journal and no maintenance mode, but code now has both in debug."
+      - "WorkerSpec comment still says BillReminder disabled by default while enabled=true."
+    impact:
+      - "AI agents and maintainers can make wrong assumptions."
+    fix:
+      - "Update KDoc/comments to current contracts."
+    tests:
+      - "static_grep_no_legacy_import_no_journal_comment"
+      - "static_grep_no_bill_reminder_disabled_default_comment"
+
+recommended_fix_order:
+  - pr: "PR1"
+    title: "Critical restore fail-closed and sidecar safety"
+    include:
+      - "Use replaceDatabaseFiles() for .costbackup restore."
+      - "Delete live WAL/SHM before installing restored DB."
+      - "If rollback fails, enter persistent critical failure mode, not NORMAL."
+      - "Startup recovery verifies restored safety backup before success."
+      - "Critical failure remains blocked across repeated app restarts."
+    closes:
+      - "P7-CURRENT-001"
+      - "P7-CURRENT-002"
+      - "P7-CURRENT-003"
+      - "P7-CURRENT-004"
+
+  - pr: "PR2"
+    title: "Fresh Room after swap"
+    include:
+      - "Add RestoreDatabaseOpener."
+      - "Use fresh one-shot DB for live verification and receipt asset imagePath repair."
+      - "Never reopen injected singleton after file swap."
+    closes:
+      - "P7-CURRENT-005"
+
+  - pr: "PR3"
+    title: "True backup snapshot and write quiescence"
+    include:
+      - "Use SQLite backup API / VACUUM INTO / read transaction snapshot."
+      - "Add write mutex or enforce global write barrier."
+      - "Wait for active workers/jobs to stop or return busy."
+    closes:
+      - "P7-CURRENT-006"
+      - "P7-CURRENT-007"
+
+  - pr: "PR4"
+    title: "Durable asset restore"
+    include:
+      - "Per-asset restore task ledger."
+      - "Resume ASSETS_RESTORING on startup."
+      - "Validate before copy; temp-copy + DB update + atomic rename; cleanup on failure."
+    closes:
+      - "P7-CURRENT-008"
+      - "P7-CURRENT-009"
+
+  - pr: "PR5"
+    title: "Backup privacy contract"
+    include:
+      - "Fix BackupPrivacyMode image semantics and manifest fields."
+      - "Expand ExportAnonymizer to AI/email/location/privacy-sensitive tables."
+      - "Decide privacy_audit_events preserve/exclude policy."
+    closes:
+      - "P7-CURRENT-010"
+      - "P7-CURRENT-011"
+      - "P7-CURRENT-012"
+
+  - pr: "PR6"
+    title: "Verifier hardening and semantic restore tests"
+    include:
+      - "Manifest completeness check before swap."
+      - "Fail backup creation on required table count errors."
+      - "Golden restore equivalence tests for dashboard, analytics, budget, receipts, recurring, privacy audit."
+    closes:
+      - "P7-CURRENT-013"
+      - "P7-CURRENT-014"
+      - "P7-CURRENT-015"
+
+  - pr: "PR7"
+    title: "UX, diagnostics, and import/export guardrails"
+    include:
+      - "BackupRestoreEvent/PipelineDiagnosticEvent operation ledger."
+      - "Restore URI preflight size/header check."
+      - "Global restart-required app lock."
+      - "Raw export debug-only interface."
+      - "Reset database journaled/maintenance-guarded."
+    closes:
+      - "P7-CURRENT-016"
+      - "P7-CURRENT-017"
+      - "P7-CURRENT-019"
+      - "P7-CURRENT-020"
+      - "P7-CURRENT-021"
+
+  - pr: "PR8"
+    title: "Worker registry and journal durability cleanup"
+    include:
+      - "WorkerRegistry/WorkerSpec parity tests and enabled handling."
+      - "fsync/checked atomic journal writes."
+      - "Update stale KDoc/comments."
+    closes:
+      - "P7-CURRENT-018"
+      - "P7-CURRENT-022"
+      - "P7-CURRENT-024"
+
+definition_of_done:
+  - "Restoring .costbackup deletes/replaces DB, WAL, and SHM sidecars atomically."
+  - "Any rollback failure leaves app in persistent critical-failure mode with writes blocked across restarts."
+  - "Startup recovery verifies integrity/FK/schema after safety-backup copy."
+  - "No injected/stale Room instance is used after DB file swap."
+  - "Backup creation is a real point-in-time snapshot under concurrent writes."
+  - "Restore/write barrier is enforced globally or by CI guard across all DB mutators."
+  - "Receipt asset restore is resumable, idempotent, and leaves no orphan files."
+  - "Backup privacy modes match manifest and actual included assets."
+  - "Redacted backups sanitize all PII-bearing tables according to a versioned policy."
+  - "privacy_audit_events are either preserved exactly or explicitly excluded by manifest."
+  - "Pre-swap verification fails missing Tier 1 manifest counts."
+  - "Backup creation fails if required table count collection fails."
+  - "Golden tests prove restored dashboard, analytics, budget, receipt, recurring, and audit behavior."
+  - "Restore URI is size/header-validated before full copy."
+  - "Restart-required state is globally blocking and cannot be dismissed into stale app use."
+  - "resetDatabase is journaled, guarded, and typed-confirmation enforced."
+  - "WorkerRegistry and WorkerSpec are mechanically kept in sync."
+  - "RestoreJournal writes are checked and crash-durable."
+  - "Stale comments about legacy import and worker defaults are removed."
+
+sources:
+  master_tracker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/PIPELINE_ISSUES_MASTER_TRACKER.md"
+  pipeline_7_prior_report:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/new%20debugging%20session/pipeline-7-backup-restore-debug-report.md"
+  database_backup_repository_impl:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt"
+  database_backup_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/backup/DatabaseBackupRepository.kt"
+  database_operation_results:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/backup/DatabaseOperationResults.kt"
+  backup_privacy_mode:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/backup/BackupPrivacyMode.kt"
+  backup_verifier:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/backup/BackupVerifier.kt"
+  costbackup_bundle:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/backup/CostbackupBundle.kt"
+  restore_journal:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournal.kt"
+  restore_maintenance_mode:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/backup/RestoreMaintenanceMode.kt"
+  database_write_barrier:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/backup/DatabaseWriteBarrier.kt"
+  database_read_barrier:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/backup/DatabaseReadBarrier.kt"
+  app_startup_coordinator:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/startup/AppStartupCoordinator.kt"
+  backup_restore_viewmodel:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/ui/screens/backup/BackupRestoreViewModel.kt"
+  export_anonymizer:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt"
+  backup_encryption_service:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/privacy/BackupEncryptionService.kt"
+  worker_registry:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRegistry.kt"
+  worker_spec:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerSpec.kt"

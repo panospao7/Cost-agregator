@@ -444,7 +444,7 @@ class NotificationCaptureService : NotificationListenerService() {
                 packageName,
                 parts.title,
                 parts.text,
-                parts.bigText
+                parts.combinedBody
             )) return
 
         workTracker.launch(serviceScope) {
@@ -514,64 +514,58 @@ class NotificationCaptureService : NotificationListenerService() {
 
         val settings = privacySettingsRepository.getSettings()
 
-        val rawNotification = if (settings.rawNotificationStorageMode == RawStorageMode.STORE_METADATA_ONLY) {
-            RawNotification(
+        // Processing always uses the real ephemeral text (in-memory only).
+        // Storage payload is sanitized according to user's privacy settings.
+        val processingNotification = RawNotification(
+            packageName = packageName,
+            appName = appName,
+            title = parts.title,
+            text = parts.text,
+            bigText = parts.combinedBody,
+            subText = parts.subText,
+            extrasJson = extrasJson,
+            timestamp = sbn.postTime,
+            capturedAt = timeProvider.now(),
+            dedupeFingerprint = RawNotificationFingerprint.compute(
                 packageName = packageName,
-                appName = appName,
+                title = parts.title,
+                text = parts.text,
+                bigText = parts.combinedBody,
+                timestamp = sbn.postTime
+            )
+        )
+
+        // Build the storage-safe version based on privacy mode
+        val storageNotification = when (settings.rawNotificationStorageMode) {
+            RawStorageMode.STORE_RAW -> processingNotification
+
+            RawStorageMode.STORE_METADATA_ONLY -> processingNotification.copy(
                 title = null,
                 text = null,
-                timestamp = sbn.postTime,
-                capturedAt = timeProvider.now(),
-                dedupeFingerprint = RawNotificationFingerprint.compute(
-                    packageName = packageName,
-                    title = parts.title,
-                    text = parts.text,
-                    bigText = parts.combinedBody,
-                    timestamp = sbn.postTime
-                )
+                bigText = null,
+                subText = null,
+                extrasJson = null
             )
-        } else if (settings.rawNotificationStorageMode == RawStorageMode.STORE_REDACTED) {
-            RawNotification(
-                packageName = packageName,
-                appName = appName,
+
+            RawStorageMode.STORE_REDACTED -> processingNotification.copy(
                 title = "[REDACTED]",
                 text = "[REDACTED]",
                 bigText = "[REDACTED]",
                 subText = "[REDACTED]",
-                extrasJson = """{"redacted":true}""",
-                timestamp = sbn.postTime,
-                capturedAt = timeProvider.now(),
-                dedupeFingerprint = RawNotificationFingerprint.compute(
-                    packageName = packageName,
-                    title = parts.title,
-                    text = parts.text,
-                    bigText = parts.combinedBody,
-                    timestamp = sbn.postTime
-                )
+                extrasJson = """{"redacted":true}"""
             )
-        } else {
-            RawNotification(
-                packageName = packageName,
-                appName = appName,
-                title = parts.title,
-                text = parts.text,
-                bigText = parts.combinedBody,
-                subText = parts.subText,
-                extrasJson = extrasJson,
-                timestamp = sbn.postTime,
-                capturedAt = timeProvider.now(),
-                dedupeFingerprint = RawNotificationFingerprint.compute(
-                    packageName = packageName,
-                    title = parts.title,
-                    text = parts.text,
-                    bigText = parts.combinedBody,
-                    timestamp = sbn.postTime
-                )
+
+            RawStorageMode.DO_NOT_STORE -> processingNotification.copy(
+                title = null,
+                text = null,
+                bigText = null,
+                subText = null,
+                extrasJson = null
             )
         }
 
         try {
-            repository.processAndSave(rawNotification)
+            repository.processAndSave(processingNotification, storageNotification)
             Timber.d("Processed notification from: $packageName")
         } catch (e: Exception) {
             Timber.e(e, "Failed to process notification")

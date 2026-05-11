@@ -148,6 +148,7 @@ class ReceiptRepository @Inject constructor(
             val ocrResult = try {
                 ocrService.processUri(imageUri)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 Timber.e(e, "OCR Failed for $imageUri")
                 // Fallback: Try to save the image using manual record logic
                 return@withContext saveManualReceiptRecord(imageUri).let { result ->
@@ -233,6 +234,7 @@ class ReceiptRepository @Inject constructor(
                 )
 
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 // Parsing Logic Failed, but we HAVE the OCR text!
                 // Save it so user can manually edit without losing the text.
                 Timber.e(e, "Parsing Failed for $imageUri")

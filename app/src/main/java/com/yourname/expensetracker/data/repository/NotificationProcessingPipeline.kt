@@ -177,10 +177,14 @@ class NotificationProcessingPipeline @Inject constructor(
     private val recommendationSemaphore = Semaphore(MAX_CONCURRENT_RECOMMENDATION_JOBS)
 
     suspend fun process(notification: RawNotification): NotificationPipelineOutcome {
+        return process(notification, notification)
+    }
+
+    suspend fun process(notification: RawNotification, storageNotification: RawNotification): NotificationPipelineOutcome {
         writeBarrier.checkWritesAllowed("NotificationProcessingPipeline.process")
         processMutex.withLock {
             return try {
-                val outcome = processInternal(notification, initializeClassifier = true)
+                val outcome = processInternal(notification, storageNotification, initializeClassifier = true)
                 writePipelineDiagnosticEvent(outcome, notification.packageName)
                 outcome
             } catch (e: CancellationException) {
@@ -223,7 +227,7 @@ class NotificationProcessingPipeline @Inject constructor(
         return results
     }
 
-    private suspend fun processInternal(notification: RawNotification, initializeClassifier: Boolean): NotificationPipelineOutcome {
+    private suspend fun processInternal(notification: RawNotification, storageNotification: RawNotification = notification, initializeClassifier: Boolean): NotificationPipelineOutcome {
         if (initializeClassifier) {
             classifier.initialize()
         }
@@ -288,7 +292,7 @@ class NotificationProcessingPipeline @Inject constructor(
             // Phase 2: DB transaction (DB-only mutations)
             var parserFailedOutcome: NotificationPipelineOutcome? = null
             database.withTransaction {
-                val rawId = insertRawNotificationIfNotDuplicate(notification)
+                val rawId = insertRawNotificationIfNotDuplicate(notification, storageNotification)
                 if (rawId == -1L) {
                     parserFailedOutcome = NotificationPipelineOutcome.Duplicate(notification.packageName, "Raw duplicate before parser")
                     return@withTransaction
@@ -432,7 +436,7 @@ class NotificationProcessingPipeline @Inject constructor(
 
         // Phase 2: DB transaction (DB-only mutations)
         val dbOutcome = database.withTransaction {
-            val rawId = insertRawNotificationIfNotDuplicate(notification)
+            val rawId = insertRawNotificationIfNotDuplicate(notification, storageNotification)
             if (rawId == -1L) return@withTransaction ParsedDbOutcome.RawDuplicate
 
             sourceStatsDao.insertIfNotExists(
@@ -577,7 +581,7 @@ class NotificationProcessingPipeline @Inject constructor(
         }
     }
 
-    private suspend fun insertRawNotificationIfNotDuplicate(notification: RawNotification): Long {
+    private suspend fun insertRawNotificationIfNotDuplicate(notification: RawNotification, storageNotification: RawNotification = notification): Long {
         val alreadyExists = dao.exists(
             packageName = notification.packageName,
             timestamp = notification.timestamp,
@@ -588,7 +592,10 @@ class NotificationProcessingPipeline @Inject constructor(
         if (alreadyExists) {
             return -1L
         }
-        return dao.insertOrIgnore(notification)
+        // Persist the storage-safe version (sanitized per privacy settings)
+        return dao.insertOrIgnore(storageNotification.copy(
+            dedupeFingerprint = notification.dedupeFingerprint
+        ))
     }
 
     internal data class OversizedAmountCandidate(

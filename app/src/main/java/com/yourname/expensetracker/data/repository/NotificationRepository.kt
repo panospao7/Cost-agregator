@@ -72,7 +72,15 @@ class NotificationRepository @Inject constructor(
 
     // === Core Processing Pipeline (delegated) ===
     suspend fun processAndSave(notification: RawNotification) {
-        when (val outcome = pipeline.process(notification)) {
+        processAndSave(notification, notification)
+    }
+
+    /**
+     * Process using [processingNotification] (ephemeral text for parsing) but persist
+     * [storageNotification] (sanitized per privacy settings) to the database.
+     */
+    suspend fun processAndSave(processingNotification: RawNotification, storageNotification: RawNotification) {
+        when (val outcome = pipeline.process(processingNotification, storageNotification)) {
             is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted ->
                 Timber.i("Notification auto-accepted: expenseId=%d", outcome.expenseId)
             is NotificationProcessingPipeline.NotificationPipelineOutcome.NeedsReview ->

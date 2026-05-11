@@ -97,4 +97,12 @@ interface ReceiptItemCategorizationDao {
         AND expenseId = :expenseId
     """)
     suspend fun getTotalForCategoryInExpense(expenseId: Long, categoryId: Long): Double?
+
+    @Query("""
+        UPDATE receipt_item_categorizations 
+        SET expenseId = NULL,
+            updatedAt = :timestamp
+        WHERE receiptId = :receiptId
+    """)
+    suspend fun clearExpenseId(receiptId: Long, timestamp: Long)
 }

@@ -25,6 +25,8 @@ import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
 import javax.inject.Inject
@@ -97,7 +99,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
     private val assetStore: ReceiptAssetStore,
     private val transactionValidator: ValidateBankStatementTransactionsUseCase,
     private val recurringExpenseRepository: RecurringExpenseRepository,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val privacySettingsRepository: PrivacySettingsRepository
 ) {
 
     /**
@@ -227,7 +230,10 @@ class BankStatementLifecycleProcessor @Inject constructor(
 
             val statementReceipt = ScannedReceipt(
                 imagePath = ocrResult.savedImagePath,
-                rawOcrText = ocrResult.fullText,
+                rawOcrText = RawContentSanitizer.sanitizeRawOcr(
+                    ocrResult.fullText,
+                    privacySettingsRepository.getSettings().rawOcrStorageMode
+                ),
                 parsedTotal = null, // varies per transaction
                 parsedMerchant = "Bank Statement",
                 parsedDate = timeProvider.now(),

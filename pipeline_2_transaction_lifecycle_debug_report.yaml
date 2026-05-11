@@ -1,0 +1,533 @@
+meta:
+  repo: "panospao7/Cost-agregator"
+  commit: "4113e38f0d838a29d2d13d82a483ba573280721c"
+  pipeline: "2 - Transaction Lifecycle"
+  review_mode: "static source/debugging session; no local Gradle/device execution"
+  verdict: "MOSTLY_FIXED_BUT_NOT_CLEAN"
+  summary: >
+    Pipeline 2 is one of the stronger refactors in the branch. The main create/update/delete
+    lifecycle is centralized around TransactionLifecycleCoordinator, failed-create events now
+    mostly exist, strict external-id conflict resolution is improved, and many update paths now
+    write TransactionEvent records. However, the pipeline is not clean yet. Remaining risk is
+    concentrated in raw DAO mutation exposure, stale/deprecated create APIs, weak DB-backed tests,
+    source-specific bypasses, stale delete snapshots, partial business/tax semantics, and several
+    edge-case observability/idempotency gaps.
+
+tracker_reconciliation:
+  P2-P1-01_updateBusinessTaxFields_restore_guard:
+    tracker_status: "FIXED"
+    actual_status: "FIXED_FOR_RESTORE_GUARD_PARTIAL_FOR_API_SEMANTICS"
+    evidence:
+      - "TransactionLifecycleCoordinator.updateBusinessFlags() checks restoreMaintenanceMode.isWritesAllowed()."
+      - "It writes UPDATED TransactionEvent inside database.withTransaction."
+      - "businessUsePercent, taxCategory, vatEligible are accepted but logged as no-op."
+      - "ExpenseRepository KDoc still says business/tax update is not implemented, which is stale."
+    verdict: "do not call fully clean"
+
+  P2-P1-02_failed_creates_invisible:
+    tracker_status: "FIXED"
+    actual_status: "MOSTLY_FIXED_WITH_GAPS"
+    evidence:
+      - "createExpense() writes CREATE_ATTEMPTED before validation."
+      - "Validation failures write CREATE_VALIDATION_FAILED."
+      - "Insert conflicts write CREATE_INSERT_CONFLICT."
+      - "Duplicate skips write CREATE_DUPLICATE_SKIPPED."
+    gaps:
+      - "Restore-blocked create returns Error before any durable diagnostic/event."
+      - "STRICT_EXTERNAL_ID missing key returns ValidationFailed after validation stage without CREATE_VALIDATION_FAILED."
+      - "Attempt/failure event writes are best-effort runCatching."
+    verdict: "mostly fixed, not exhaustive"
+
+  P2-P1-03_strict_external_id_insert_conflict:
+    tracker_status: "FIXED"
+    actual_status: "FIXED_FOR_STRICT_MODE"
+    evidence:
+      - "On insertAtomic conflict, strict mode calls expenseDao.findIdByDedupeKey()."
+      - "If existing row is found, returns DuplicateSkipped(existingExpenseId)."
+    gaps:
+      - "STANDARD/BULK race conflicts still return InsertConflict without existing ID."
+      - "CREATE_ATTEMPTED event uses standard dedupe key, not strict idem key."
+    verdict: "strict issue fixed; broader idempotency still partial"
+
+  P2-P1-04_debug_restore_bypass:
+    tracker_status: "FIXED"
+    actual_status: "MOSTLY_FIXED_DEBUG_ONLY"
+    evidence:
+      - "deleteAllExpenses() checks writeBarrier and BuildConfig.DEBUG."
+      - "restoreDebugSnapshot() checks writeBarrier and BuildConfig.DEBUG."
+      - "createDebugSnapshot() checks BuildConfig.DEBUG."
+    gaps:
+      - "Debug restore still bypasses TransactionLifecycleCoordinator and TransactionEvent audit."
+      - "restoreDebugSnapshot() uses insertAll(IGNORE) without checking skipped rows."
+    verdict: "acceptable if truly debug-only, not normal lifecycle clean"
+
+  P2-P1-05_public_DAO_mutation_surface:
+    tracker_status: "TODO_ONLY"
+    actual_status: "OPEN"
+    evidence:
+      - "ExpenseDao still publicly exposes insert, insertAtomic, insertAll, update, delete, deleteAll, and many column update methods."
+      - "No static guard/detekt/CI allowlist was verified."
+      - "ExpenseRepository KDoc documents intentional bypasses but enforcement is discipline-based."
+    verdict: "main remaining tracked issue"
+
+positive_findings:
+  - "TransactionLifecycleCoordinator owns core create/update/delete flow."
+  - "createExpense() now writes CREATE_ATTEMPTED / CREATE_VALIDATION_FAILED / CREATE_INSERT_CONFLICT / CREATED / CREATE_DUPLICATE_SKIPPED paths."
+  - "create/update currency snapshot uses CurrencySettingsRepository.homeCurrency() and convertAsOf()."
+  - "Strict external-id conflict can resolve to DuplicateSkipped(existingExpenseId)."
+  - "Many ExpenseRepository user-facing updates route through coordinator: category, full-row update, merchant, type, transfer, ownership, location, bulk merchant/category, delete."
+  - "Business flag update now has a restore guard and lifecycle UPDATED event."
+  - "Delete-by-ID coordinator path loads the snapshot inside the transaction."
+  - "TransactionEvent has no FK to Expense, so delete audit survives hard deletion."
+  - "TransactionEventDao now has getRecentEvents() and getEventsByType(), better than the old minimal DAO."
+  - "Group create-system-expense path uses SideEffectMode.DEFER and dispatches after outer transaction."
+
+issues:
+  - id: "P2-CURRENT-001"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Raw ExpenseDao mutation surface remains public and unguarded"
+    evidence:
+      - "ExpenseDao exposes raw @Insert/@Update/@Delete and many @Query UPDATE/DELETE methods."
+      - "No static guard was found that prevents non-coordinator callers from using them."
+    impact:
+      - "Future code can bypass validation, dedupe, TransactionEvent audit, restore/write barrier, and side effects."
+    fix:
+      - "Split DAO into read DAO, lifecycle mutation DAO, maintenance/debug DAO, or add CI static allowlist."
+      - "Fail CI when app code calls raw expense mutators outside TransactionLifecycleCoordinator and approved maintenance/debug classes."
+    tests:
+      - "lifecycleBypassGuard_fails_on_unapproved_expenseDao_update_call"
+      - "all_user_visible_expense_mutations_route_through_coordinator"
+
+  - id: "P2-CURRENT-002"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Deprecated createExpense(..., SideEffectMode) remains a footgun"
+    evidence:
+      - "createExpense() is deprecated but still public and defaults to SideEffectMode.IMMEDIATE."
+      - "Coordinator TODO says IMMEDIATE inside caller-managed transaction should be prevented later."
+    impact:
+      - "New nested transaction callers can accidentally run post-commit side effects before the outer transaction commits."
+    fix:
+      - "Make createExpense() private/internal if possible."
+      - "Expose only createExpenseStandalone() and createExpenseDbOnly()."
+      - "Add guard/static test for createExpense(... IMMEDIATE/default) inside withTransaction."
+    tests:
+      - "no_nested_withTransaction_calls_createExpense_immediate"
+      - "nested_create_requires_createExpenseDbOnly"
+
+  - id: "P2-CURRENT-003"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "ExpenseRepository.deleteExpense(id) bypasses safer coordinator delete-by-id snapshot path"
+    evidence:
+      - "Coordinator deleteExpense(expenseId) loads Expense inside database.withTransaction."
+      - "ExpenseRepository.deleteExpense(id) loads expense outside transaction, then calls deleteExpense(expense)."
+    impact:
+      - "DELETED beforeSnapshot can be stale if expense changed between repository load and coordinator transaction."
+      - "The safer TOCTOU-resistant delete path is not used by the common repository ID API."
+    fix:
+      - "Change ExpenseRepository.deleteExpense(id) to call transactionLifecycleCoordinator.deleteExpense(id)."
+      - "Deprecate or restrict coordinator deleteExpense(expense) overload."
+    tests:
+      - "delete_by_id_audit_snapshot_reflects_row_at_delete_time"
+      - "repository_delete_id_uses_coordinator_id_overload"
+
+  - id: "P2-CURRENT-004"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Update duplicate pre-check does not exclude current expense"
+    evidence:
+      - "updateExpense(), updateMerchant(), updateType() call findDuplicateIdCurrencyAware()."
+      - "DAO duplicate candidate queries do not exclude :currentExpenseId."
+    impact:
+      - "If current row is returned first, an update can miss another duplicate candidate."
+      - "Policy-level duplicates with different legacy dedupe keys can slip through."
+    fix:
+      - "Add findDuplicateIdCurrencyAwareExcludingId(..., excludedExpenseId)."
+      - "Use it in all update duplicate-prevention paths."
+    tests:
+      - "update_to_duplicate_detects_other_row_when_current_row_also_matches"
+      - "merchant_update_duplicate_check_excludes_self"
+
+  - id: "P2-CURRENT-005"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "STANDARD/BULK insert race conflicts still lose existing expense identity"
+    evidence:
+      - "insertAtomic() conflict returns insertedId <= 0."
+      - "Only STRICT_EXTERNAL_ID attempts findIdByDedupeKey()."
+      - "STANDARD/BULK return InsertConflict(dedupeKey)."
+    impact:
+      - "Concurrent duplicate creation can be classified as generic conflict instead of DuplicateSkipped(existingId)."
+      - "Callers cannot link/reconcile to existing expense."
+    fix:
+      - "On any insert conflict, try findIdByDedupeKey(), then policy-aware duplicate lookup."
+      - "Return DuplicateSkipped(existingId) when found."
+    tests:
+      - "standard_insert_race_returns_duplicate_existing_id"
+      - "bulk_insert_race_returns_duplicate_existing_id"
+
+  - id: "P2-CURRENT-006"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Review approval pre-check uses normalized merchant but coordinator persists raw merchant key"
+    evidence:
+      - "ReviewQueueRepository computes normalizedMerchantForKeys."
+      - "It builds a local Expense with merchantKey/dedupeKey based on normalized merchant."
+      - "CreateExpenseRequest passes merchant = expense.merchant, which is raw merchant."
+      - "Coordinator recomputes merchantKey/dedupeKey from request.merchant."
+      - "skipDeduplication = true prevents coordinator from re-running canonical duplicate policy."
+    impact:
+      - "Review approval can persist merchantKey/dedupeKey inconsistent with the pre-check."
+      - "Duplicate prevention and merchant grouping can drift for alias/canonical merchant cases."
+    fix:
+      - "Pass normalized merchant to CreateExpenseRequest, or add explicit canonicalMerchant/merchantKey policy."
+      - "Avoid skipDeduplication unless the coordinator receives exactly the same canonical key material as the pre-check."
+    tests:
+      - "review_approval_alias_uses_same_merchant_key_for_precheck_and_insert"
+      - "review_approval_alias_duplicate_is_detected"
+
+  - id: "P2-CURRENT-007"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Coordinator uses restoreMaintenanceMode directly instead of DatabaseWriteBarrier"
+    evidence:
+      - "TransactionLifecycleCoordinator injects DatabaseWriteBarrier but create/update/delete methods check restoreMaintenanceMode.isWritesAllowed() directly."
+      - "Manual/Review repositories call writeBarrier, but coordinator itself does not use writeBarrier.checkWritesAllowed(context)."
+    impact:
+      - "Central lifecycle does not use the standardized write-barrier contract/context."
+      - "Future barrier semantics beyond restore mode may not apply."
+    fix:
+      - "Replace direct restoreMaintenanceMode checks with writeBarrier.checkWritesAllowed('TransactionLifecycleCoordinator.method')."
+      - "Return structured Error where APIs currently return CreateExpenseResult."
+    tests:
+      - "coordinator_create_uses_databaseWriteBarrier"
+      - "coordinator_update_delete_blocked_by_writeBarrier"
+
+  - id: "P2-CURRENT-008"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Group hard-delete clears expense shared flags outside transaction/barrier"
+    evidence:
+      - "GroupTransactionCoordinator.deleteGroupAtomic() deletes group data in database.withTransaction."
+      - "Then linkedExpenseIds.forEach { expenseDao.clearSharedExpenseFlags(expenseId) } runs after that transaction."
+      - "No DatabaseWriteBarrier is injected into GroupTransactionCoordinator."
+      - "BULK_UPDATED event is written best-effort after the mutations."
+    impact:
+      - "Crash can leave group deleted but expense flags uncleared, or flags cleared with missing audit event."
+      - "Writes can occur during restore/maintenance because no write barrier is checked."
+    fix:
+      - "Move flag cleanup and audit event into one transaction or route through lifecycle/maintenance coordinator."
+      - "Inject/use DatabaseWriteBarrier."
+      - "Prefer archiveGroup() over hard-delete for normal flows."
+    tests:
+      - "group_hard_delete_flag_cleanup_is_atomic_with_audit"
+      - "group_hard_delete_blocked_during_restore"
+
+  - id: "P2-CURRENT-009"
+    severity: "P1_HIGH"
+    status: "OPEN"
+    title: "Pipeline 2 unit test appears stale/possibly compile-broken"
+    evidence:
+      - "TransactionLifecycleCoordinator constructor includes DatabaseWriteBarrier."
+      - "TransactionLifecycleCoordinatorTest constructor call does not pass writeBarrier."
+      - "Valid create test expects transactionEventDao.insert exactly once, but current create writes CREATE_ATTEMPTED plus CREATED."
+      - "Tests are mock-only and do not prove Room transaction behavior."
+    impact:
+      - "Unit tests may fail to compile or fail assertions."
+      - "Even if patched, current tests do not prove indexes, rollback, event persistence, or side-effect timing."
+    fix:
+      - "Update constructor mocks and expected event counts."
+      - "Add DB-backed Room contract tests."
+    tests:
+      - "TransactionLifecycleDbContractTest"
+      - "StrictExternalIdIdempotencyTest"
+      - "NestedTransactionPostCommitTest"
+      - "LifecycleUpdateEventParityTest"
+      - "RestoreModeLifecycleBlockTest"
+
+  - id: "P2-CURRENT-010"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "STRICT_EXTERNAL_ID missing idempotency key returns ValidationFailed without durable validation event"
+    evidence:
+      - "validate(request) does not check strict external-id key."
+      - "Later strict-mode branch returns ValidationFailed if idempotencyKey/externalFingerprint is null."
+      - "That branch does not write CREATE_VALIDATION_FAILED."
+    impact:
+      - "One failed-create class remains invisible except return value."
+    fix:
+      - "Move strict-key requirement into validate(request), or write CREATE_VALIDATION_FAILED in the strict branch."
+    tests:
+      - "strict_external_id_missing_key_writes_validation_failed_event"
+
+  - id: "P2-CURRENT-011"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Restore-blocked create/update/delete has no durable diagnostic"
+    evidence:
+      - "createExpense() returns Error before CREATE_ATTEMPTED when restoreMaintenanceMode blocks writes."
+      - "Update/delete throw/return failure before writing any event."
+    impact:
+      - "Debugging cannot distinguish restore-blocked lifecycle attempts from no attempt."
+    fix:
+      - "Write to a separate PipelineDiagnosticEvent or restore-safe diagnostic sink."
+      - "Do not write to transaction_events if database writes are intentionally blocked."
+    tests:
+      - "restore_blocked_create_writes_diagnostic_event"
+      - "restore_blocked_update_delete_writes_diagnostic_event"
+
+  - id: "P2-CURRENT-012"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "CREATE_ATTEMPTED dedupeKey is wrong/weak for strict external-id mode"
+    evidence:
+      - "Attempt event computes DuplicateDetectionPolicy.generateDedupeKeyWithType(...) before strict mode namespaces dedupeKey as idem:{source}:{key}."
+    impact:
+      - "Audit cannot correlate strict idempotent retries by the actual idempotency dedupe key."
+    fix:
+      - "Derive mode-specific dedupe key before CREATE_ATTEMPTED."
+      - "Include idempotencyKey/externalFingerprint hash in metadata."
+    tests:
+      - "strict_external_id_create_attempted_event_uses_idem_key"
+
+  - id: "P2-CURRENT-013"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "CreateExpenseRequest source-link fields are mostly unused by coordinator"
+    evidence:
+      - "CreateExpenseRequest defines pendingReviewId, scannedReceiptId, emailReceiptSourceId, groupId, csvImportBatchId, csvRowNumber."
+      - "Coordinator maps rawNotificationId into Expense, but does not put the other source-link IDs into Expense or TransactionEvent metadata."
+    impact:
+      - "TransactionEvent audit cannot directly answer which review/receipt/email/import/group produced an expense."
+      - "AI/debug agents may assume these fields are persisted because they are in the request."
+    fix:
+      - "Either persist link fields where schema supports it, or write them into TransactionEvent.metadata."
+      - "Remove unused request fields if ownership belongs only to domain-specific link tables."
+    tests:
+      - "review_approval_created_event_contains_review_id"
+      - "csv_import_created_event_contains_batch_and_row"
+      - "group_expense_created_event_contains_group_id"
+
+  - id: "P2-CURRENT-014"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Business/tax update API is still semantically partial"
+    evidence:
+      - "updateBusinessFlags() persists isBusinessExpense and receiptRequired->requiresReceipt."
+      - "businessUsePercent, taxCategory, vatEligible are accepted but ignored with Timber.w."
+      - "businessPurpose, businessCategory, businessProject update path is not exposed here."
+      - "ExpenseRepository KDoc still says business/tax update is not implemented."
+    impact:
+      - "Callers can believe tax fields were saved when they were not."
+      - "Docs/KDoc mislead future agents."
+    fix:
+      - "Rename to updateBusinessFlags() everywhere and remove no-op params, or implement schema/columns/migration for full tax fields."
+      - "Update ExpenseRepository KDoc."
+    tests:
+      - "business_flag_update_rejects_or_reports_unsupported_fields"
+      - "expenseRepository_kdoc_no_longer_says_business_update_missing"
+
+  - id: "P2-CURRENT-015"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Category-id bulk update overload is non-atomic and side-effect noisy"
+    evidence:
+      - "TransactionLifecycleCoordinator.bulkUpdateCategory(categoryId, newCategoryId) fetches expenses then loops updateCategory() one by one."
+      - "Each updateCategory writes its own event and dispatches post-update side effects."
+      - "No outer transaction wraps the whole move."
+    impact:
+      - "Bulk category correction can partially apply if one row fails."
+      - "Side effects can run N times and interleave with partial state."
+    fix:
+      - "Use one transaction plus aggregate BULK_UPDATED event and one aggregate side-effect dispatch, or explicitly document partial semantics."
+    tests:
+      - "bulk_category_by_category_is_atomic_or_reports_partial_result"
+      - "bulk_category_by_category_dispatches_one_aggregate_side_effect"
+
+  - id: "P2-CURRENT-016"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Debug restore snapshot can silently partially restore"
+    evidence:
+      - "ExpenseDao.insertAll() uses OnConflictStrategy.IGNORE."
+      - "restoreDebugSnapshot() deletes all then insertAll(snapshot.expenses), without checking skipped rows."
+    impact:
+      - "Debug restore may produce incomplete expense table if conflicts occur."
+      - "No audit event explains the snapshot restore."
+    fix:
+      - "Use REPLACE for debug snapshot restore or verify row count after insert."
+      - "Emit debug audit/diagnostic event."
+    tests:
+      - "debug_restore_snapshot_detects_ignored_insert_conflicts"
+
+  - id: "P2-CURRENT-017"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "TransactionEventDao audit ergonomics are still thin"
+    evidence:
+      - "DAO has insert, getEventsForExpense, getRecentEvents, getEventsByType."
+      - "TransactionEvent entity has indexes for source/occurredAt/eventType, but DAO lacks source/date/dedupe queries."
+    impact:
+      - "Debug screens and AI agents still need manual DB spelunking for common questions."
+    fix:
+      - "Add getEventsBySource, getEventsBetween, getEventsByDedupeKey, getFailedCreateEvents, countEventsForExpense."
+    tests:
+      - "transaction_event_dao_queries_by_source_date_dedupe"
+
+  - id: "P2-CURRENT-018"
+    severity: "P2_MEDIUM"
+    status: "OPEN"
+    title: "Group hard-delete audit uses System.currentTimeMillis instead of TimeProvider"
+    evidence:
+      - "GroupTransactionCoordinator.deleteGroupAtomic() creates BULK_UPDATED event with System.currentTimeMillis()."
+    impact:
+      - "Harder to test deterministically; inconsistent with lifecycle timestamp policy."
+    fix:
+      - "Inject TimeProvider into GroupTransactionCoordinator."
+    tests:
+      - "group_hard_delete_event_uses_timeProvider"
+
+  - id: "P2-CURRENT-019"
+    severity: "P3_LOW"
+    status: "OPEN"
+    title: "Manual expense recommendation path uses synthetic Expense instead of persisted row"
+    evidence:
+      - "ManualExpenseRepository builds insertedExpenseForHook manually after coordinator create."
+      - "Coordinator may populate baseAmount/baseCurrency/exchangeRateUsed/source/normalized ownership differently."
+    impact:
+      - "AI recommendation enrichment can miss persisted lifecycle-normalized fields."
+    fix:
+      - "After commit, load persisted Expense by ID for recommendation generation."
+    tests:
+      - "manual_recommendation_uses_persisted_expense_fields"
+
+  - id: "P2-CURRENT-020"
+    severity: "P3_LOW"
+    status: "OPEN"
+    title: "Future-date tolerance is hardcoded"
+    evidence:
+      - "validate() rejects date > now + 1 day and has TODO to make tolerance configurable."
+    impact:
+      - "Scheduled/future transaction policies are embedded in lifecycle code."
+    fix:
+      - "Move to TransactionValidationPolicy."
+    tests:
+      - "future_date_validation_policy_is_configurable"
+
+recommended_fix_order:
+  - pr: "PR1"
+    title: "Test and build safety first"
+    include:
+      - "Fix TransactionLifecycleCoordinatorTest constructor and expected event counts."
+      - "Add Room DB-backed contract tests for create/duplicate/update/delete."
+      - "Add strict external-id and insert-race tests."
+    closes:
+      - "P2-CURRENT-009"
+
+  - pr: "PR2"
+    title: "Enforce lifecycle mutation boundary"
+    include:
+      - "Add static lifecycleBypassGuard allowlist."
+      - "Split/readjust DAO mutation APIs or restrict direct injection."
+    closes:
+      - "P2-CURRENT-001"
+
+  - pr: "PR3"
+    title: "Remove side-effect footgun"
+    include:
+      - "Retire public createExpense(request, SideEffectMode)."
+      - "Require createExpenseStandalone() or createExpenseDbOnly()."
+      - "Guard nested transaction usage."
+    closes:
+      - "P2-CURRENT-002"
+
+  - pr: "PR4"
+    title: "Fix delete snapshot and update duplicate correctness"
+    include:
+      - "ExpenseRepository.deleteExpense(id) calls coordinator.deleteExpense(id)."
+      - "Add duplicate lookup excluding current expense."
+    closes:
+      - "P2-CURRENT-003"
+      - "P2-CURRENT-004"
+
+  - pr: "PR5"
+    title: "Complete idempotency/failed-create observability"
+    include:
+      - "Resolve STANDARD/BULK insert conflicts to existing ID where possible."
+      - "Log strict missing-key validation failure."
+      - "Use strict idem key in CREATE_ATTEMPTED."
+      - "Add restore-blocked diagnostic events."
+    closes:
+      - "P2-CURRENT-005"
+      - "P2-CURRENT-010"
+      - "P2-CURRENT-011"
+      - "P2-CURRENT-012"
+
+  - pr: "PR6"
+    title: "Clean source-specific seams"
+    include:
+      - "Normalize review approval merchant consistently."
+      - "Persist/source-link metadata into TransactionEvent."
+      - "Fix group hard-delete barrier/atomicity/audit."
+    closes:
+      - "P2-CURRENT-006"
+      - "P2-CURRENT-008"
+      - "P2-CURRENT-013"
+
+  - pr: "PR7"
+    title: "API truthfulness and audit ergonomics"
+    include:
+      - "Make business/tax API truthful."
+      - "Fix stale ExpenseRepository KDoc."
+      - "Expand TransactionEventDao query surface."
+    closes:
+      - "P2-CURRENT-014"
+      - "P2-CURRENT-017"
+
+definition_of_done:
+  - "No app production code can call raw ExpenseDao mutators outside approved lifecycle/maintenance allowlist."
+  - "Nested transaction callers cannot accidentally dispatch side effects before outer commit."
+  - "Every create failure class has either TransactionEvent or restore-safe diagnostic event."
+  - "Strict and standard insert conflicts return existing expense ID when resolvable."
+  - "Update duplicate checks exclude the current expense."
+  - "Repository delete-by-id uses in-transaction snapshot loading."
+  - "Review approval pre-check and coordinator insert use identical canonical merchant/dedupe inputs."
+  - "Business/tax update API persists every accepted field or rejects/returns unsupported fields."
+  - "Group hard-delete expense-flag cleanup is barrier-checked, atomic, and audited."
+  - "Room DB-backed tests prove create, duplicate, strict idempotency, update, delete, rollback, restore block, and side-effect timing."
+
+sources:
+  master_tracker:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/PIPELINE_ISSUES_MASTER_TRACKER.md"
+  old_pipeline_2_report:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/debugging/pipeline-2-transaction-lifecycle-debug-report.md"
+  new_pipeline_2_report:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/docs/analyses%20and%20debug%20master/new%20debugging%20session/pipeline-2-transaction-lifecycle-debug-report.md"
+  coordinator:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt"
+  expense_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt"
+  expense_dao:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseDao.kt"
+  transaction_event:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/entity/TransactionEvent.kt"
+  transaction_event_dao:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/dao/TransactionEventDao.kt"
+  create_expense_request:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/transaction/CreateExpenseRequest.kt"
+  create_expense_result:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/transaction/CreateExpenseResult.kt"
+  side_effect_mode:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/transaction/SideEffectMode.kt"
+  manual_expense_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/ManualExpenseRepository.kt"
+  review_queue_repository:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt"
+  group_transaction_coordinator:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt"
+  side_effect_dispatcher:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionSideEffectDispatcher.kt"
+  test_file:
+    url: "https://raw.githubusercontent.com/panospao7/Cost-agregator/4113e38f0d838a29d2d13d82a483ba573280721c/app/src/test/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinatorTest.kt"
