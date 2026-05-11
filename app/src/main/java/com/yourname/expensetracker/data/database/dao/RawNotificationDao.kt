@@ -82,6 +82,14 @@ interface RawNotificationDao {
     suspend fun getUnpurgedRawNotificationsOlderThan(cutoffMs: Long): List<RawNotification>
 
     @Query("""
+        SELECT * FROM raw_notifications
+        WHERE capturedAt < :cutoffMs
+          AND rawContentPurgedAt IS NULL
+        LIMIT :limit
+    """)
+    suspend fun getUnpurgedRawNotificationsOlderThan(cutoffMs: Long, limit: Int): List<RawNotification>
+
+    @Query("""
         UPDATE raw_notifications
         SET rawContentPurgedAt = :rawContentPurgedAt,
             title = :title,

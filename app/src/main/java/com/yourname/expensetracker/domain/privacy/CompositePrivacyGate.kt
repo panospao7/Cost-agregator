@@ -28,6 +28,7 @@ class CompositePrivacyGate(
         context: Map<String, String>
     ): PrivacyDecision {
         var finalDecision: PrivacyDecision = PrivacyDecision.Allowed
+        var anyGateHandled = false
         for (gate in gates) {
             val decision = try {
                 gate.check(capability, context)
@@ -36,19 +37,28 @@ class CompositePrivacyGate(
                 finalDecision = PrivacyDecision.FailClosed(
                     "Privacy check failed (fail-closed): ${e.message}"
                 )
+                anyGateHandled = true
                 break
             }
             when (decision) {
                 is PrivacyDecision.Denied -> {
                     finalDecision = decision
+                    anyGateHandled = true
                     break
                 }
                 is PrivacyDecision.FailClosed -> {
                     finalDecision = decision
+                    anyGateHandled = true
                     break
                 }
-                else -> { }
+                is PrivacyDecision.Allowed -> {
+                    anyGateHandled = true
+                }
+                else -> { /* NotApplicable — gate does not handle this capability */ }
             }
+        }
+        if (!anyGateHandled) {
+            Timber.w("No privacy gate handled capability %s — defaulting to Allowed (fail-open)", capability)
         }
         auditLogger.logDecision(capability, finalDecision, context)
         return finalDecision

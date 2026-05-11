@@ -16,6 +16,9 @@ import javax.inject.Singleton
 @Singleton
 class DefaultCloudPayloadRedactor @Inject constructor() : CloudPayloadRedactor {
 
+    // TODO (P8-P1-08): Vary redaction rules by purpose. Currently all purposes
+    // use the same CloudPiiSanitizer.sanitizeText(). For RECEIPT_ASSIST, amounts
+    // should be preserved; for QUERY_INTERPRETATION, merchant names may be kept.
     override fun redactText(text: String, purpose: CloudPayloadPurpose): RedactedPayload {
         val sanitized = CloudPiiSanitizer.sanitizeText(
             raw = text,

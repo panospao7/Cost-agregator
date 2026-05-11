@@ -111,6 +111,8 @@ object NotificationFilter {
             if (!hasTransactionSignal) {
                 return false // deny: security/promo/2FA notification
             }
+            // Even with transaction signal, deny if content matches hard-deny keywords (2FA, verification codes)
+            if (DENY_KEYWORDS.any { combined.contains(it) }) return false
             return true // allow: transaction-like notification
         }
 

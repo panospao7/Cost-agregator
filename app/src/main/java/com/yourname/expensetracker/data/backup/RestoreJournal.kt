@@ -122,7 +122,10 @@ class RestoreJournal @Inject constructor(
         try {
             journalFile.parentFile?.mkdirs()
             val text = entry.toJson().toString(2)
-            journalFile.writeText(text)
+            // Atomic write: write to temp file then rename (crash-safe)
+            val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp")
+            tmpFile.writeText(text)
+            tmpFile.renameTo(journalFile)
             Timber.d("Restore journal: state=%s operationId=%s", entry.state, entry.operationId)
         } catch (e: Exception) {
             Timber.e(e, "Failed to write restore journal")

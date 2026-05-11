@@ -218,7 +218,9 @@ data class AnalyticsCategoryBreakdown(
     val total: Double,
     val count: Int,
     val percentage: Float,          // 0-100
-    val displayCurrency: String
+    val displayCurrency: String,
+    val isPartial: Boolean = false,
+    val warningMessage: String? = null
 ) {
     val moneyTotal: MoneyAmount get() = MoneyAmount(total, CurrencyCode(displayCurrency))
 }

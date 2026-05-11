@@ -83,6 +83,9 @@ class ReviewQueueRepository @Inject constructor(
     suspend fun getPendingReviewWithReceiptById(reviewId: Long): PendingReviewWithReceipt? =
         pendingReviewDao.getPendingWithReceiptById(reviewId)
 
+    /** Recover reviews stuck in PROCESSING state after process death mid-approval. */
+    suspend fun recoverStuckReviews(): Int = pendingReviewDao.recoverStuckProcessing()
+
     suspend fun approveReview(
         reviewId: Long,
         finalAmount: Double? = null,

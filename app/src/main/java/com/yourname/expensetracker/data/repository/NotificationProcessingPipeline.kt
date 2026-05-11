@@ -475,12 +475,12 @@ class NotificationProcessingPipeline @Inject constructor(
 
         val outcome = when (dbOutcome) {
             is ParsedDbOutcome.AutoAccepted -> NotificationPipelineOutcome.AutoAccepted(
-                rawId = dbOutcome.insertedExpense.rawNotificationId ?: 0L,
+                rawId = dbOutcome.rawId,
                 expenseId = dbOutcome.expenseId
             )
-            ParsedDbOutcome.NeedsReviewCreated -> NotificationPipelineOutcome.NeedsReview(
-                rawId = 0L,
-                reviewId = 0L
+            is ParsedDbOutcome.NeedsReviewCreated -> NotificationPipelineOutcome.NeedsReview(
+                rawId = dbOutcome.rawId,
+                reviewId = dbOutcome.reviewId
             )
             ParsedDbOutcome.AutoRejected -> NotificationPipelineOutcome.AutoRejected(
                 rawId = null,
@@ -772,8 +772,9 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         object RawDuplicate : ParsedDbOutcome()
         object AutoRejected : ParsedDbOutcome()
         object Duplicate : ParsedDbOutcome()
-        object NeedsReviewCreated : ParsedDbOutcome()
+        data class NeedsReviewCreated(val rawId: Long, val reviewId: Long) : ParsedDbOutcome()
         data class AutoAccepted(
+            val rawId: Long,
             val expenseId: Long,
             val insertedExpense: Expense
         ) : ParsedDbOutcome()
@@ -1029,6 +1030,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 )
 
                 ParsedDbOutcome.AutoAccepted(
+                    rawId = rawId,
                     expenseId = expenseId,
                     insertedExpense = expense
                 )
@@ -1116,7 +1118,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
         Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
         sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
-        return ParsedDbOutcome.NeedsReviewCreated
+        return ParsedDbOutcome.NeedsReviewCreated(rawId = rawId, reviewId = reviewId)
     }
 
     private suspend fun runParsedPostCommitActions(
@@ -1134,7 +1136,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 }
             }
 
-            ParsedDbOutcome.NeedsReviewCreated -> {
+            is ParsedDbOutcome.NeedsReviewCreated -> {
                 runTransferAnalyticsPostCommit(
                     transactionType = preDb.transactionType,
                     direction = preDb.direction,

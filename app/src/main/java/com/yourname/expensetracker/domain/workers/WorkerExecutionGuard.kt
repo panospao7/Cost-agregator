@@ -38,7 +38,7 @@ class WorkerExecutionGuard @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val workerRunLogger: WorkerRunLogger,
-    private val privacyGate: com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
+    private val privacyGate: com.yourname.expensetracker.domain.privacy.PrivacyGate
 ) {
     suspend fun <T> runGuarded(
         request: WorkerGuardRequest,

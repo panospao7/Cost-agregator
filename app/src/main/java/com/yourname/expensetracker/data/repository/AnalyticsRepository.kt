@@ -81,9 +81,9 @@ class AnalyticsRepository @Inject constructor(
         return flow {
             val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault("EUR")
 
-            // ── Totals via MultiCurrencyRepository (currency-converted) ──────
-            val currentAggregate = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(start, end)
-            val previousAggregate = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(previousStart, previousEnd)
+            // ── Totals via MultiCurrencyRepository (historical-rate for accuracy) ──
+            val currentAggregate = multiCurrencyRepository.getHomeCurrencyPurchaseTotalHistorical(start, end)
+            val previousAggregate = multiCurrencyRepository.getHomeCurrencyPurchaseTotalHistorical(previousStart, previousEnd)
 
             val totalSpent = currentAggregate.displayAmount
             val previousTotal = previousAggregate.displayAmount
@@ -207,7 +207,9 @@ class AnalyticsRepository @Inject constructor(
                         total = aggregate.displayAmount,
                         count = aggregate.totalTransactionCount,
                         percentage = if (totalSpent > 0) (aggregate.displayAmount / totalSpent * 100).toFloat() else 0f,
-                        displayCurrency = homeCurrency
+                        displayCurrency = homeCurrency,
+                        isPartial = aggregate.isPartial,
+                        warningMessage = aggregate.warningMessage
                     )
                 }
                 .sortedByDescending { it.total }

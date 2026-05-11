@@ -88,7 +88,7 @@ class CloudReceiptItemCategorizationServiceTest {
             }
             .build()
 
-        val service = CloudReceiptItemCategorizationService(keyStorage, client, mockk<PrivacyGate>(relaxed = true))
+        val service = CloudReceiptItemCategorizationService(keyStorage, client, mockk<PrivacyGate>(relaxed = true), com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor())
 
         val input = ReceiptItemCategorizationInput(
             receiptId = 1L,
@@ -155,7 +155,8 @@ class CloudReceiptItemCategorizationServiceTest {
         val service = CloudReceiptItemCategorizationService(
             keyStorage,
             clientRespondingWithModelText(modelText),
-            mockk<PrivacyGate>(relaxed = true)
+            mockk<PrivacyGate>(relaxed = true),
+            com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
         )
 
         val result = service.categorizeItems(defaultInput(cloudCategoryOptions = emptyList()))
@@ -193,7 +194,8 @@ class CloudReceiptItemCategorizationServiceTest {
         val service = CloudReceiptItemCategorizationService(
             keyStorage,
             clientRespondingWithModelText(modelText),
-            mockk<PrivacyGate>(relaxed = true)
+            mockk<PrivacyGate>(relaxed = true),
+            com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
         )
 
         val result = service.categorizeItems(defaultInput(cloudCategoryOptions = emptyList()))

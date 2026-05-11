@@ -12,6 +12,10 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
+// TODO (P8-P1-12): Add a `deniedCapabilities: List<PrivacyCapability>` field to
+// PrivacySettingsUiState so the UI can show which features are currently blocked
+// by each toggle (e.g. "Disabling cloud AI blocks: receipt assist, categorization,
+// dashboard briefing"). Compute from EffectiveCloudAiPolicyResolver + LocationPrivacyGate.
 data class PrivacySettingsUiState(
     val settings: PrivacySettings = PrivacySettings(),
     val isSaving: Boolean = false

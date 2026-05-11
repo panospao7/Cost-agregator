@@ -226,8 +226,11 @@ class BackupRestoreViewModel @Inject constructor(
     }
 
     /**
-     * Clears the restart-required flag after the user dismisses the message.
+     * P7-P1-08: Deprecated — the restart-required banner no longer has a dismiss
+     * button. The only action is "Restart Now" which kills the process.
+     * Kept for backward compatibility with any test that references it.
      */
+    @Deprecated("P7-P1-08: UI no longer allows dismissing restart requirement")
     fun dismissRestartRequired() {
         _uiState.value = _uiState.value.copy(restartRequired = false)
     }

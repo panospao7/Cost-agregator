@@ -284,6 +284,10 @@ fun BackupRestoreScreen(
             }
 
             // ── Restart Required Banner ───────────────────────────────
+            // P7-P1-08: This banner is NOT dismissable. After a successful restore the
+            // injected Room instance is stale and writes are blocked by maintenance mode.
+            // The only safe action is to kill the process so Android relaunches with a
+            // fresh Room binding.
             if (uiState.restartRequired) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -308,16 +312,10 @@ fun BackupRestoreScreen(
                             horizontalArrangement = Arrangement.End,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            TextButton(onClick = {
-                                viewModel.dismissRestartRequired()
-                            }) {
-                                Text(stringResource(R.string.backup_restore_dismiss))
-                            }
-                            Spacer(Modifier.width(8.dp))
                             Button(onClick = {
-                                // Programmatic restart via ProcessPhoenix is not available;
-                                // inform the user to manually restart.
-                                viewModel.dismissRestartRequired()
+                                // P7-P1-08: Force-kill the process. Android will relaunch
+                                // the activity with a fresh Room instance on next user tap.
+                                Runtime.getRuntime().exit(0)
                             }) {
                                 Text(stringResource(R.string.backup_restore_restart_now))
                             }

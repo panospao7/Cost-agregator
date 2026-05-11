@@ -52,6 +52,10 @@ data class CleanTransaction(
  * - Cloud AI is only used as a fallback when on-device is unavailable and
  *   the user has explicitly enabled cloud AI in settings.
  * - All cloud requests pass through the [PrivacyGate] before sending data.
+ *
+ * RESOLVED (P8-P1-07): Redaction is handled at the service layer —
+ * [CloudReceiptAssistService.suggestFromText] checks AiSettings.redactBeforeCloud
+ * and applies [CloudPayloadRedactor.redactText] before sending to cloud.
  */
 @Singleton
 class ValidateBankStatementTransactionsUseCase @Inject constructor(

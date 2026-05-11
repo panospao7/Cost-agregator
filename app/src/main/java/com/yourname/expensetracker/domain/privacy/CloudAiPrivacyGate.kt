@@ -16,10 +16,11 @@ import javax.inject.Singleton
  * corresponding setting disables the capability. Capabilities not handled
  * by this gate default to [PrivacyDecision.Allowed].
  *
- * TODO: Use [EffectiveCloudAiPolicyResolver] to resolve the effective cloud AI
- * policy from both [PrivacySettingsRepository] and [AiSettingsRepository]
- * instead of reading privacy settings directly. This would unify the privacy
- * and AI settings layers into a single policy result.
+ * TODO (P8-P1-02): PrivacySettings.cloudAiEnabled and AiSettings.allowCloudAi can
+ * disagree. [EffectiveCloudAiPolicyResolver] exists and reconciles both, but this
+ * gate still reads only PrivacySettingsRepository. Wire the resolver into this gate
+ * (inject it, delegate to resolver.resolve().cloudAllowed). The privacy gate remains
+ * the authoritative blocker — no security hole, but UX inconsistency persists.
  */
 @Singleton
 class CloudAiPrivacyGate @Inject constructor(

@@ -219,6 +219,10 @@ class ForecastInputAssembler @Inject constructor(
             .filter { pattern -> recurringRuleSignature(pattern) !in manualRuleSignatures }
             .toList()
 
+        // TODO P2-20: Merged patterns retain their original currency amounts. SynthesisEngine
+        //  sums them raw without normalization to home currency. The proper fix requires
+        //  injecting CurrencyConverter and converting each pattern's averageAmount to home
+        //  currency here, which is tracked in the master plan as a larger refactor.
         return (deduplicatedManualPatterns + acceptedDetected).sortedByDescending { it.confidence }
     }
 

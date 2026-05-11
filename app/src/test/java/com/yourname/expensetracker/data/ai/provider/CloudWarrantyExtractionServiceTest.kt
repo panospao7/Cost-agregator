@@ -38,7 +38,8 @@ class CloudWarrantyExtractionServiceTest {
         val service = CloudWarrantyExtractionService(
             secureKeyStorage = createMockKeyStorage(apiKey = ""),
             client = OkHttpClient(),
-            privacyGate = mockk<PrivacyGate>(relaxed = true)
+            privacyGate = mockk<PrivacyGate>(relaxed = true),
+            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
         )
 
         val result = runBlocking {
@@ -81,7 +82,8 @@ class CloudWarrantyExtractionServiceTest {
         val service = CloudWarrantyExtractionService(
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
             client = client,
-            privacyGate = mockk<PrivacyGate>(relaxed = true)
+            privacyGate = mockk<PrivacyGate>(relaxed = true),
+            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
         )
 
         val result = runBlocking {
@@ -131,7 +133,8 @@ class CloudWarrantyExtractionServiceTest {
         val service = CloudWarrantyExtractionService(
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
             client = client,
-            privacyGate = mockk<PrivacyGate>(relaxed = true)
+            privacyGate = mockk<PrivacyGate>(relaxed = true),
+            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
         )
 
         val result = runBlocking {
@@ -174,7 +177,8 @@ class CloudWarrantyExtractionServiceTest {
         val service = CloudWarrantyExtractionService(
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
             client = client,
-            privacyGate = mockk<PrivacyGate>(relaxed = true)
+            privacyGate = mockk<PrivacyGate>(relaxed = true),
+            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
         )
 
         val result = runBlocking {

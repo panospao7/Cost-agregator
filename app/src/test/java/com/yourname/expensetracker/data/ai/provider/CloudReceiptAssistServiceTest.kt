@@ -223,7 +223,8 @@ class CloudReceiptAssistServiceTest {
             aiSettingsRepository = settingsRepository,
             secureKeyStorage = createMockKeyStorage(apiKey = "test-key"),
             client = client,
-            privacyGate = mockk<PrivacyGate>(relaxed = true)
+            privacyGate = mockk<PrivacyGate>(relaxed = true),
+            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
         )
 
         val result = kotlinx.coroutines.runBlocking {

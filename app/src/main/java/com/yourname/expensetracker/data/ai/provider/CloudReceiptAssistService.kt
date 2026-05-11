@@ -237,7 +237,15 @@ class CloudReceiptAssistService @Inject constructor(
             return AiServiceResult.Failure(AiServiceError.Disabled(gateDecision.reason()))
         }
 
-        val parts = JSONArray().put(JSONObject().put("text", prompt))
+        // P2-24: Apply redaction before sending to cloud if user setting requires it
+        val settings = aiSettingsRepository.settings().first()
+        val safePrompt = if (settings.redactBeforeCloud) {
+            redactor.redactText(prompt, CloudPayloadPurpose.RECEIPT_ASSIST).text
+        } else {
+            prompt
+        }
+
+        val parts = JSONArray().put(JSONObject().put("text", safePrompt))
         val requestJson = JSONObject().apply {
             put(
                 "contents",
@@ -272,35 +280,39 @@ class CloudReceiptAssistService @Inject constructor(
         return withContext(Dispatchers.IO) {
             for (attempt in 1..CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                 try {
-                    val response = client.newCall(request).execute()
-                    if (!response.isSuccessful) {
-                        val correlationId = CloudCorrelation.newCorrelationId()
-                        val errorClass = "HTTP_${response.code}"
-                        if (CloudRetryPolicy.isRetryable(response.code) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
-                            Timber.w(
-                                "CloudReceiptAssistService: suggestFromText retryable HTTP %d class=%s correlationId=%s (attempt %d/%d)",
-                                response.code, errorClass, correlationId, attempt, CloudRetryPolicy.MAX_RETRY_ATTEMPTS
-                            )
-                            // fall through to delay + retry
+                    // P2-25: Wrap response in .use{} to prevent connection leaks on retry path
+                    val outcome = client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            val correlationId = CloudCorrelation.newCorrelationId()
+                            val errorClass = "HTTP_${response.code}"
+                            if (CloudRetryPolicy.isRetryable(response.code) && attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
+                                Timber.w(
+                                    "CloudReceiptAssistService: suggestFromText retryable HTTP %d class=%s correlationId=%s (attempt %d/%d)",
+                                    response.code, errorClass, correlationId, attempt, CloudRetryPolicy.MAX_RETRY_ATTEMPTS
+                                )
+                                null // fall through to delay + retry
+                            } else {
+                                AiServiceResult.Failure(
+                                    AiServiceError.HttpError(response.code, "suggestFromText HTTP ${response.code} errorClass=$errorClass correlationId=$correlationId")
+                                )
+                            }
                         } else {
-                            return@withContext AiServiceResult.Failure(
-                                AiServiceError.HttpError(response.code, "suggestFromText HTTP ${response.code} errorClass=$errorClass correlationId=$correlationId")
-                            )
+                            val body = response.body?.string()
+                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
+                            val root = JSONObject(body)
+                            val text = root.optJSONArray("candidates")
+                                ?.optJSONObject(0)
+                                ?.optJSONObject("content")
+                                ?.optJSONArray("parts")
+                                ?.optJSONObject(0)
+                                ?.optString("text")
+                                ?.trim()
+                                ?: return@use AiServiceResult.Failure(AiServiceError.ParseError("No text in Gemini response"))
+                            AiServiceResult.Success(text)
                         }
-                    } else {
-                        val body = response.body?.string()
-                            ?: return@withContext AiServiceResult.Failure(AiServiceError.ParseError("Empty response body"))
-                        val root = JSONObject(body)
-                        val text = root.optJSONArray("candidates")
-                            ?.optJSONObject(0)
-                            ?.optJSONObject("content")
-                            ?.optJSONArray("parts")
-                            ?.optJSONObject(0)
-                            ?.optString("text")
-                            ?.trim()
-                            ?: return@withContext AiServiceResult.Failure(AiServiceError.ParseError("No text in Gemini response"))
-                        return@withContext AiServiceResult.Success(text)
                     }
+
+                    if (outcome != null) return@withContext outcome
                 } catch (e: SocketTimeoutException) {
                     if (attempt < CloudRetryPolicy.MAX_RETRY_ATTEMPTS) {
                         Timber.w(e, "CloudReceiptAssistService: suggestFromText timeout, retrying (%d/%d)", attempt, CloudRetryPolicy.MAX_RETRY_ATTEMPTS)

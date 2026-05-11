@@ -390,8 +390,14 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 }
             }
 
-            // ── Step 7: Write PROCESSING_COMPLETE lifecycle event ──────────────
-            val totalEvents = 1 + 1 // RECEIPT_SAVED + PROCESSING_COMPLETE
+            // ── Step 7: Update receipt processingStatus and write PROCESSING_COMPLETE event ──
+            val receiptToUpdate = scannedReceiptDao.getById(receiptId)
+            if (receiptToUpdate != null) {
+                scannedReceiptDao.update(receiptToUpdate.copy(
+                    processingStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
+                    updatedAt = timeProvider.now()
+                ))
+            }
             receiptEventDao.insert(
                 ReceiptEvent(
                     receiptId = receiptId,

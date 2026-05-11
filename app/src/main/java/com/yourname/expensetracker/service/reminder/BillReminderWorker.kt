@@ -145,7 +145,7 @@ class BillReminderWorker @AssistedInject constructor(
         }
         val snoozePendingIntent = PendingIntent.getBroadcast(
             applicationContext,
-            delivery.id.toInt(),
+            (delivery.id.hashCode() and 0x7FFFFFFF),
             snoozeIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -156,7 +156,7 @@ class BillReminderWorker @AssistedInject constructor(
         }
         val dismissPendingIntent = PendingIntent.getBroadcast(
             applicationContext,
-            (delivery.id + 10000).toInt(),
+            ((delivery.id.hashCode() and 0x7FFFFFFF) xor 0x40000000),
             dismissIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

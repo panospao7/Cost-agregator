@@ -164,8 +164,10 @@ class ReceiptSideEffectDispatcher @Inject constructor(
                                 // No match found — nothing to do
                             }
                         }
-                    } catch (_: Exception) {
-                        Timber.w("Transaction matching failed for receipt %d", receipt.id)
+                    } catch (e: Exception) {
+                        Timber.w(e, "Transaction matching failed for receipt %d", receipt.id)
+                        writeReceiptEvent(receipt, "SIDE_EFFECT_FAILED",
+                            "Transaction matching failed", errorDetails = e.message)
                     }
 
                     // Price-protection / deal-hunting checks

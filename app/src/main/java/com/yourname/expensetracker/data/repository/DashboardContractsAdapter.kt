@@ -63,6 +63,14 @@ class DashboardContractsAdapter @Inject constructor(
     override fun observeDashboardCategories(): Flow<List<DashboardCategory>> =
         categoryRepository.allCategories.map { list -> list.map { it.toDashboardCategory() } }
 
+    // TODO P5-P1-08: Budget-vs-actual comparisons not fully normalized.
+    //  BudgetRepository.getBudgetStatuses() returns spentAmount using raw DAO sums that
+    //  may mix currencies. The proper fix is to:
+    //  1. Use MultiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals() for the
+    //     actual-spent side, or
+    //  2. Wire BudgetVsActualEngine.compute() with NormalizedAnalyticsInput.
+    //  Both require injecting additional dependencies and making this method suspend-aware.
+    //  DEFERRED: Requires BudgetRepository refactor to emit currency-aware statuses.
     override fun observeBudgetStatuses(): Flow<List<BudgetStatusSnapshot>> =
         budgetRepository.getBudgetStatuses().map { statuses ->
             statuses.map { status ->
@@ -130,6 +138,10 @@ class DashboardContractsAdapter @Inject constructor(
         )
         }
 
+    // TODO P2-22: Known performance issue — calling .first() on a separate previous-period
+    //  Flow inside .map{} suspends on each upstream emission, creating a nested subscription.
+    //  The proper fix is to use combine() to merge both period Flows, but that risks breaking
+    //  the reactive chain and requires careful testing. Tracked for future refactor.
     override fun observeCategoryBreakdown(start: Long, end: Long): Flow<List<DashboardCategoryBreakdown>> =
         analyticsRepository.getCategoryBreakdown(start, end).map { breakdown ->
             val daysInPeriod = TimePeriodUtils.daysBetween(start, end).coerceAtLeast(1)
@@ -154,7 +166,9 @@ class DashboardContractsAdapter @Inject constructor(
                     categoryColor = item.category.color,
                     amount = item.total,
                     percentage = item.percentage.toDouble(),
-                    changeFromLastPeriod = changeFromLastPeriod
+                    changeFromLastPeriod = changeFromLastPeriod,
+                    isPartial = item.isPartial,
+                    warningMessage = item.warningMessage
                 )
             }
         }

@@ -135,6 +135,11 @@ class ReviewViewModel @Inject constructor(
     private val _inFlightExplanations = mutableSetOf<Long>()
 
     init {
+        // Recover any reviews stuck in PROCESSING state from prior process death
+        viewModelScope.launch {
+            val recovered = reviewQueueRepository.recoverStuckReviews()
+            if (recovered > 0) Timber.w("Recovered %d stuck PROCESSING reviews", recovered)
+        }
         // Load saved debug data on startup
         viewModelScope.launch {
             _debugData.value = debugDataStorage.load()

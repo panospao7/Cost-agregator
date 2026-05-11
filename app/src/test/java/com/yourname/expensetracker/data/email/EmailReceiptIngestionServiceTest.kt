@@ -66,7 +66,11 @@ class EmailReceiptIngestionServiceTest {
             merchantNormalizer = merchantNormalizer,
             categorizationEngine = categorizationEngine,
             timeProvider = timeProvider,
-            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
+            restoreMaintenanceMode = mockk(relaxed = true),
+            writeBarrier = mockk(relaxed = true),
+            privacySettingsRepository = mockk(relaxed = true),
+            transactionRunner = { block -> block() }
         )
 
         setPrivateField(service, "amazonParser", amazonParser)

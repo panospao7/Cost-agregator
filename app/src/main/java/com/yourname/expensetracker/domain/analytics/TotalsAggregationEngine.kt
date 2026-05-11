@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -611,36 +612,43 @@ class TotalsAggregationEngine @Inject constructor(
      * Re-emits whenever [ExpenseRepository.getTotalSpent] fires
      * (i.e. whenever the expenses table is invalidated by Room).
      * The [block] is executed on [ioDispatcher] and its result emitted downstream.
+     *
+     * P2-16: Replaced while(true) busy-loop with flatMapLatest. The previous
+     * pattern called `.first()` on a Room Flow inside a while-loop, which
+     * re-subscribed immediately after each emission causing an infinite busy-loop.
      */
-    private fun reactiveFlow(block: suspend () -> List<PeriodTotal>): Flow<List<PeriodTotal>> = flow {
-        while (true) {
-            // Wait for the next expense invalidation signal (also emits immediately on first collect)
-            expenseRepository.getTotalSpent().first()
-            emit(withContext(ioDispatcher) {
-                try {
-                    block()
-                } catch (e: Exception) {
-                    Timber.tag("TotalsAggregationEngine").e(e, "Reactive flow computation failed")
-                    emptyList()
-                }
-            })
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun reactiveFlow(block: suspend () -> List<PeriodTotal>): Flow<List<PeriodTotal>> =
+        expenseRepository.getTotalSpent().flatMapLatest {
+            flow {
+                emit(withContext(ioDispatcher) {
+                    try {
+                        block()
+                    } catch (e: Exception) {
+                        Timber.tag("TotalsAggregationEngine").e(e, "Reactive flow computation failed")
+                        emptyList()
+                    }
+                })
+            }
         }
-    }
 
     /**
      * DSH-10-FIXED: Wraps a one-shot category breakdown computation in a reactive Flow.
+     *
+     * P2-16: Replaced while(true) busy-loop with flatMapLatest.
      */
-    private fun reactiveCategoryBreakdownFlow(block: suspend () -> List<CategoryBreakdown>): Flow<List<CategoryBreakdown>> = flow {
-        while (true) {
-            expenseRepository.getTotalSpent().first()
-            emit(withContext(ioDispatcher) {
-                try {
-                    block()
-                } catch (e: Exception) {
-                    Timber.tag("TotalsAggregationEngine").e(e, "Reactive category breakdown flow failed")
-                    emptyList()
-                }
-            })
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun reactiveCategoryBreakdownFlow(block: suspend () -> List<CategoryBreakdown>): Flow<List<CategoryBreakdown>> =
+        expenseRepository.getTotalSpent().flatMapLatest {
+            flow {
+                emit(withContext(ioDispatcher) {
+                    try {
+                        block()
+                    } catch (e: Exception) {
+                        Timber.tag("TotalsAggregationEngine").e(e, "Reactive category breakdown flow failed")
+                        emptyList()
+                    }
+                })
+            }
         }
-    }
 }

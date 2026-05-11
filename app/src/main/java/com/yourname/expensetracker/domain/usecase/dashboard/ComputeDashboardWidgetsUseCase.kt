@@ -398,7 +398,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val totalCommitted = forecast.components?.totalCommitted ?: 0.0
         val totalLikely = forecast.components?.totalLikely ?: 0.0
         val averageDailyBurn = if (ctx.dayOfMonth > 0) ctx.monthSpent / ctx.dayOfMonth else 0.0
-        val monthlyIncome = multiCurrencyRepository.getHomeCurrencyTotal(ctx.monthStart, ctx.now).displayAmount
+        val monthlyIncome = multiCurrencyRepository.getHomeCurrencyDepositTotal(ctx.monthStart, ctx.now).displayAmount
         val totalRemaining = ctx.data.data.weather.discretionaryBudget.coerceAtLeast(0.0)
 
         val runwayDays = if (averageDailyBurn > 0 && totalRemaining > 0) {
@@ -525,6 +525,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
     }
 
+    // TODO P2-23 / P5-P1-05: computeSpendingTrend sums exp.effectiveAmount without currency normalization.
+    //  Multi-currency users will see incorrect trend data when expenses span different currencies.
+    //  FIX PATH: Inject AnalyticsCurrencyNormalizer, normalize the month's expenses before grouping
+    //  by day, then sum normalizedAmount instead of effectiveAmount. This requires adding
+    //  AnalyticsCurrencyNormalizer as a constructor dependency and making this method suspend.
+    //  DEFERRED: Requires constructor change + suspend migration; tracked for next sprint.
     private fun computeSpendingTrend(ctx: ComputeContext): DashboardWidget.SpendingTrend {
         val trendSeriesCal = java.util.Calendar.getInstance()
         val trendSeries = mutableListOf<SpendingTrendSeries>()

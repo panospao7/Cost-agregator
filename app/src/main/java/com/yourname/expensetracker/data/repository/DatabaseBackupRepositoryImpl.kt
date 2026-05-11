@@ -273,7 +273,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             db: androidx.sqlite.db.SupportSQLiteDatabase,
             tableName: String
         ): Int {
-            return readSingleIntForVerification(db.query("SELECT COUNT(*) FROM $tableName"))
+            return readSingleIntForVerification(db.query("SELECT COUNT(*) FROM \"$tableName\""))
         }
 
         private fun readSingleIntForVerification(cursor: Cursor): Int {
@@ -735,14 +735,21 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
             }
 
-            // P7-P1-9: After file swap, the existing app-wide `database` (constructor-injected val)
+            // P7-P1-01: After file swap, the existing app-wide `database` (constructor-injected val)
             // still references the old Room instance which was closed for the swap.
-            // Ideally we would reassign a fresh AppDatabase via AppDatabase.fileBuilder(context)
-            // here, but `database` is a `val` injected by Dagger so it cannot be replaced.
             // The verification below re-opens the connection via openHelper.writableDatabase
             // but any DAOs cached before the swap hold stale references.
-            // A full app restart (forceRestartRequired=true at line 741) is relied upon to
+            // A full app restart (forceRestartRequired=true) is relied upon to
             // obtain a fresh Room instance.
+            //
+            // TODO (P7-P1-01): Eliminate stale Room instance after restore:
+            //   Option A: Use a Provider<AppDatabase> or Lazy<AppDatabase> in Dagger so
+            //     the binding can be invalidated and re-created without process restart.
+            //   Option B: Use AppDatabase.fileBuilder() to create a one-shot verification
+            //     instance here (already done for staged verification), and skip
+            //     re-opening the stale `database` val entirely. The forced restart
+            //     then only serves to refresh DAO caches in ViewModels.
+            //   Until resolved, the forced process kill in P7-P1-08 ensures correctness.
 
             // 9. Verify live DB
             journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.VERIFYING)
@@ -1178,8 +1185,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Timber.d("Import verified: ${finalSummary.transactionCount} transactions, ${finalSummary.categoryCount} categories")
                 importSucceeded = true
 
-                // P7-P1-9: The injected `database` val is a stale Room instance after the
-                // file swap — a full app restart is required to obtain a fresh binding.
+                // P7-P1-01: The injected `database` val is a stale Room instance after the
+                // file swap — a full app restart (forced by P7-P1-08) is required to
+                // obtain a fresh binding. See TODO in restoreCostBackup for resolution options.
                 restoreJournal.commitJournal(journalEntry)
                 restoreMaintenanceMode.exit(forceRestartRequired = true)
 
@@ -1960,18 +1968,28 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         return newPassword
     }
 
+    /**
+     * P7-P1-03: Uses TRUNCATE mode which holds the write lock for the duration,
+     * preventing any WAL frames from being written between checkpoint and file copy.
+     * This guarantees the copied .db file is a self-contained point-in-time snapshot.
+     *
+     * TODO (P2-29): Consider using the SQLite Online Backup API
+     *   (sqlite3_backup_init/step/finish) for zero-copy hot snapshots without
+     *   needing to close or lock the database. This would eliminate the retry loop
+     *   and the brief write-blocking window.
+     */
     private suspend fun checkpointWal(): Result<Unit> {
         val maxAttempts = 3
         repeat(maxAttempts) { attempt ->
             try {
                 val busy = database.openHelper.writableDatabase
-                    .query("PRAGMA wal_checkpoint(FULL)")
+                    .query("PRAGMA wal_checkpoint(TRUNCATE)")
                     .use { cursor ->
                         if (cursor.moveToFirst()) cursor.getInt(0) else 1
                     }
 
                 if (busy == 0) {
-                    Timber.d("WAL checkpoint completed (attempt ${attempt + 1})")
+                    Timber.d("WAL checkpoint (TRUNCATE) completed (attempt ${attempt + 1})")
                     return Result.success(Unit)
                 }
 

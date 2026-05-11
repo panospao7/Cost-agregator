@@ -89,7 +89,9 @@ class CloudDedupeJudgeServiceTest {
         val service = CloudDedupeJudgeService(
             secureKeyStorage = mockKeyStorage,
             client = client,
-            privacyGate = mockk(relaxed = true)
+            aiSettingsRepository = null,
+            privacyGate = mockk(relaxed = true),
+            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
         )
 
         val result = service.judge(sampleInput())
@@ -117,7 +119,9 @@ class CloudDedupeJudgeServiceTest {
         val service = CloudDedupeJudgeService(
             secureKeyStorage = mockKeyStorage,
             client = client,
-            privacyGate = mockk(relaxed = true)
+            aiSettingsRepository = null,
+            privacyGate = mockk(relaxed = true),
+            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
         )
 
         val result = service.judge(sampleInput())
@@ -178,7 +182,9 @@ class CloudDedupeJudgeServiceTest {
         val service = CloudDedupeJudgeService(
             secureKeyStorage = mockKeyStorage,
             client = client,
-            privacyGate = mockk(relaxed = true)
+            aiSettingsRepository = null,
+            privacyGate = mockk(relaxed = true),
+            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
         )
 
         val result = service.judge(sampleInput())
@@ -225,7 +231,9 @@ class CloudDedupeJudgeServiceTest {
         val service = CloudDedupeJudgeService(
             secureKeyStorage = mockKeyStorage,
             client = client,
-            privacyGate = mockk(relaxed = true)
+            aiSettingsRepository = null,
+            privacyGate = mockk(relaxed = true),
+            redactor = com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor()
         )
 
         val result = service.judge(sampleInput())

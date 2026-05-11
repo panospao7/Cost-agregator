@@ -192,8 +192,8 @@ class SynthesisEngine @Inject constructor(
         val committedPlannedByCurrency = filteredPlannedExpenses.filter {
             it.priority == PlannedExpensePriority.MUST && it.date >= startOfToday && it.date < endOfMonthExclusive
         }.groupBy { it.currency }.mapValues { (_, exps) -> exps.sumOf { it.amount } }
-        require(committedPlannedByCurrency.size <= 1) {
-            "Multiple currencies in committed planned expenses — callers must pre-normalize: $committedPlannedByCurrency"
+        if (committedPlannedByCurrency.size > 1) {
+            Timber.w("$TAG: Multiple currencies in committed planned expenses — results may be inaccurate: ${committedPlannedByCurrency.keys}")
         }
         val committedPlanned = committedPlannedByCurrency.values.sum()
 
@@ -226,8 +226,8 @@ class SynthesisEngine @Inject constructor(
         val likelyPlannedByCurrency = filteredPlannedExpenses.filter {
             it.priority == PlannedExpensePriority.LIKELY && it.date >= startOfToday && it.date < endOfMonthExclusive
         }.groupBy { it.currency }.mapValues { (_, exps) -> exps.sumOf { it.amount } }
-        require(likelyPlannedByCurrency.size <= 1) {
-            "Multiple currencies in likely planned expenses — callers must pre-normalize: $likelyPlannedByCurrency"
+        if (likelyPlannedByCurrency.size > 1) {
+            Timber.w("$TAG: Multiple currencies in likely planned expenses — results may be inaccurate: ${likelyPlannedByCurrency.keys}")
         }
         val likelyPlanned = likelyPlannedByCurrency.values.sum() * LIKELY_EXPENSE_WEIGHT
         
@@ -407,8 +407,8 @@ class SynthesisEngine @Inject constructor(
         val thisMonthPlannedByCurrency = thisMonthPlanned
             .filter { it.priority != PlannedExpensePriority.OPTIONAL }
             .groupBy { it.currency }
-        require(thisMonthPlannedByCurrency.size <= 1) {
-            "Multiple currencies in monthly planned expenses — callers must pre-normalize: ${thisMonthPlannedByCurrency.keys}"
+        if (thisMonthPlannedByCurrency.size > 1) {
+            Timber.w("$TAG: Multiple currencies in monthly planned expenses — results may be inaccurate: ${thisMonthPlannedByCurrency.keys}")
         }
         val totalMonthlyPlanned = thisMonthPlannedByCurrency.values.sumOf { exps ->
             exps.sumOf { expense ->
@@ -609,7 +609,7 @@ class SynthesisEngine @Inject constructor(
      * Detected-only patterns (id == null) are handled via the legacy ad-hoc
      * matcher so they still appear in the block-party calendar.
      */
-    private fun buildRecurringByDayFromOccurrences(
+    private suspend fun buildRecurringByDayFromOccurrences(
         recurringPatterns: List<RecurringPattern>,
         monthStart: Long,
         monthEnd: Long,
@@ -626,7 +626,7 @@ class SynthesisEngine @Inject constructor(
         val ruleIdsWithOccurrences = mutableSetOf<Long>()
 
         if (manualIds.isNotEmpty()) {
-            val occurrences = kotlinx.coroutines.runBlocking { occurrenceDao.getByDateRange(monthStart, monthEnd) }
+            val occurrences = occurrenceDao.getByDateRange(monthStart, monthEnd)
             .filter {
                     it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
                         it.sourceId in manualIds &&

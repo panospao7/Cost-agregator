@@ -399,22 +399,21 @@ fun MainScreen(
     var showRestartRequiredDialog by remember {
         mutableStateOf(restartPrefs.getBoolean("restore_complete_restart_required", false))
     }
+    // P7-P1-08: Non-dismissable dialog. The app MUST restart after a restore
+    // because the injected Room instance is stale and maintenance mode blocks writes.
     if (showRestartRequiredDialog) {
         AlertDialog(
-            onDismissRequest = {
-                showRestartRequiredDialog = false
-                restartPrefs.edit().remove("restore_complete_restart_required").apply()
-            },
+            onDismissRequest = { /* P7-P1-08: intentionally non-dismissable */ },
             title = { Text("Restart Required") },
             text = {
-                Text("A database restore was completed. Please restart the app to ensure all data is loaded correctly.")
+                Text("A database restore was completed. The app must restart to load the restored data correctly.")
             },
             confirmButton = {
                 TextButton(onClick = {
-                    showRestartRequiredDialog = false
                     restartPrefs.edit().remove("restore_complete_restart_required").apply()
+                    Runtime.getRuntime().exit(0)
                 }) {
-                    Text("OK")
+                    Text("Restart Now")
                 }
             }
         )

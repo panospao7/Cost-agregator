@@ -17,6 +17,14 @@ import javax.inject.Singleton
  *
  * The operation is performed **in-place** on the provided file, so callers
  * must pass a **temporary copy** — never the live database file.
+ *
+ * TODO (P2-27): Expand sanitization scope to cover additional PII-bearing tables:
+ *   - `ai_artifacts` (generated text may echo user financial data)
+ *   - `ai_chat_messages` (free-form user input)
+ *   - `merchant_locations` (GPS coordinates)
+ *   - `email_receipt_sources` (email addresses)
+ *   Each table needs a column-level redaction strategy and opt-in/opt-out toggle
+ *   in PrivacySettings.
  */
 @Singleton
 class ExportAnonymizer @Inject constructor() {

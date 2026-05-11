@@ -168,7 +168,7 @@ object WorkerSpecScheduler {
         @Suppress("UNCHECKED_CAST")
         val typedClass = workerClass as Class<ListenableWorker>
 
-        val request = OneTimeWorkRequestBuilder<ListenableWorker>()
+        val request = OneTimeWorkRequest.Builder(typedClass)
             .setInitialDelay(delayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
             .setConstraints(spec.constraints)
             .setBackoffCriteria(spec.backoffPolicy, spec.backoffDelaySeconds, java.util.concurrent.TimeUnit.SECONDS)

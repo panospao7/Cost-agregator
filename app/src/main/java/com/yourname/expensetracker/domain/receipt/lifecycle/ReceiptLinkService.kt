@@ -282,8 +282,8 @@ class ReceiptLinkService @Inject constructor(
                 )
             )
 
-            // 6. Return the link
-            Result.success(link)
+            // 6. Return the link with actual DB-generated ID
+            Result.success(link.copy(id = linkId))
         }
     }
 
@@ -331,8 +331,14 @@ class ReceiptLinkService @Inject constructor(
                     val primaryLinks = remainingLinks.filter { it.isPrimary }
 
                     if (primaryLinks.isEmpty()) {
-                        // No remaining primary links — clear legacy field
-                        scannedReceiptDao.update(receipt.copy(expenseId = null, updatedAt = now))
+                        // No remaining primary links — clear legacy field and match metadata
+                        scannedReceiptDao.update(receipt.copy(
+                            expenseId = null,
+                            matchStatus = MatchStatus.UNMATCHED,
+                            matchConfidence = null,
+                            suggestedExpenseId = null,
+                            updatedAt = now
+                        ))
                     } else {
                         // Another primary link exists — point to its expenseId
                         scannedReceiptDao.update(

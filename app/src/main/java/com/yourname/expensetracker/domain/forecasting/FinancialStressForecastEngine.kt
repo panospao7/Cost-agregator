@@ -310,6 +310,9 @@ class FinancialStressForecastEngine @Inject constructor(
 
                 // P0-2: Convert amount to displayCurrency before summing
                 val amount = when (occ.status) {
+                    // NOTE (P3-06): The "PAID" branch is unreachable dead code — PAID is not in
+                    // ACTIVE_OCCURRENCE_STATUSES so it is filtered out by the guard above.
+                    // Kept for defensive safety in case ACTIVE_OCCURRENCE_STATUSES is expanded.
                     "PAID" -> occ.paidAmount ?: occ.expectedAmount
                     else -> occ.expectedAmount
                 }
@@ -640,7 +643,7 @@ class FinancialStressForecastEngine @Inject constructor(
         }.getOrDefault(0.0)
         val netCashflow = recentDeposits - recentExpenses
         Timber.d("FCST-9: resolveStartingBalanceBaseline — deposits=%.2f, expenses=%.2f, net=%.2f", recentDeposits, recentExpenses, netCashflow)
-        return netCashflow
+        return netCashflow.coerceAtLeast(0.0)
     }
 
     /**

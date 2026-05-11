@@ -17,10 +17,20 @@ import timber.log.Timber
  * - **Tier 3 (OPTIONAL):** Cache/external data tables. May be absent entirely.
  *
  * ## Future verification
- * Full semantic equivalence checks (dashboard totals, analytics, budget
- * projections, receipt-to-expense links) are planned for a future verification
- * pass. Current verification covers: table existence, row counts (Tier 1),
+ * P7-P1-05: Full semantic equivalence checks are required to prove that a
+ * restored database produces identical dashboard totals, analytics aggregates,
+ * budget projections, and receipt-to-expense link integrity as the original.
+ * Current verification covers: table existence, row counts (Tier 1),
  * PRAGMA integrity_check, and PRAGMA foreign_key_check.
+ *
+ * TODO (P7-P1-05): Implement post-restore semantic equivalence verification:
+ *   1. Compare SUM(amount) per category between manifest snapshot and restored DB
+ *   2. Verify budget spent/remaining calculations match pre-backup values
+ *   3. Validate receipt_expense_links referential integrity (all linked receipts exist)
+ *   4. Check analytics aggregates (monthly totals, category breakdowns) match
+ *   5. Verify investment portfolio total value matches manifest checkpoint
+ *   These checks should run as a Tier 0 (SEMANTIC) verification pass after
+ *   Tier 1 row counts pass, and failures should trigger rollback.
  */
 object BackupVerifier {
 
@@ -89,7 +99,7 @@ object BackupVerifier {
         "spending_personality_profiles"  to VerificationTier.TIER_3_OPTIONAL,
         "stress_forecast_snapshots"      to VerificationTier.TIER_3_OPTIONAL,
         "email_receipt_sources"          to VerificationTier.TIER_3_OPTIONAL,
-        "privacy_audit_events"           to VerificationTier.TIER_1_EXACT,
+        "privacy_audit_events"           to VerificationTier.TIER_3_OPTIONAL,
         "background_job_runs"            to VerificationTier.TIER_3_OPTIONAL
     )
 

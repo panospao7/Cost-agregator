@@ -7,5 +7,7 @@ data class DashboardCategoryBreakdown(
     val categoryColor: String,
     val amount: Double,
     val percentage: Double,
-    val changeFromLastPeriod: Double
+    val changeFromLastPeriod: Double,
+    val isPartial: Boolean = false,
+    val warningMessage: String? = null
 )

@@ -186,12 +186,13 @@ class RecurringOccurrenceMaterializer @Inject constructor(
      *
      * Supported window formats:
      * - "DUE_DAY" → scheduled at [dueDate]
-     * - "OVERDUE" → scheduled at [dueDate]
+     * - "OVERDUE" → scheduled at [dueDate] + 1 day
      * - "{N}_DAYS_BEFORE" → scheduled at [dueDate] - N days
      */
     private fun computeScheduledAt(dueDate: Long, window: String): Long {
         return when {
-            window == "DUE_DAY" || window == "OVERDUE" -> dueDate
+            window == "DUE_DAY" -> dueDate
+            window == "OVERDUE" -> TimePeriodUtils.addDays(dueDate, 1)
             window.endsWith("_DAYS_BEFORE") -> {
                 val prefix = window.removeSuffix("_DAYS_BEFORE")
                 val days = prefix.toIntOrNull()

@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import io.mockk.mockk
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
@@ -93,11 +94,12 @@ class GroupTransactionCoordinatorTest {
             mockk<TransactionSideEffectDispatcher>(relaxed = true),
             mockk<RecurringLifecycleCoordinator>(relaxed = true),
             mockk<RestoreMaintenanceMode>(relaxed = true),
+            mockk<DatabaseWriteBarrier>(relaxed = true),
             mockk<CurrencySettingsRepository>(relaxed = true)
         )
         coordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, groupExpenseDao, expenseDao,
-            transactionLifecycleCoordinator, Dispatchers.IO
+            transactionEventDao, transactionLifecycleCoordinator, Dispatchers.IO
         )
     }
 
@@ -177,7 +179,7 @@ class GroupTransactionCoordinatorTest {
 
         val mockCoordinator = GroupTransactionCoordinator(
             database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, expenseDao,
-            transactionLifecycleCoordinator, Dispatchers.IO
+            database.transactionEventDao(), transactionLifecycleCoordinator, Dispatchers.IO
         )
 
         // Act - Should throw exception

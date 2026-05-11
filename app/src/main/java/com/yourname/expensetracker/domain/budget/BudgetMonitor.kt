@@ -349,7 +349,8 @@ class BudgetMonitor @Inject constructor(
         effectiveLimit: Double,
         title: String,
         categoryName: String,
-        percentUsed: Float
+        percentUsed: Float,
+        displayCurrency: String = budget.currency
     ): Boolean {
         // Always use effectiveLimit (rollover-aware) — never fall back
         // to budget.amount which omits rollover adjustments.
@@ -358,8 +359,11 @@ class BudgetMonitor @Inject constructor(
         // accounts for rollover via effectiveLimit, rather than recomputing from
         // raw spent/limit which could diverge.
         val percent = (percentUsed * 100).toInt().coerceAtLeast(0)  // allow overspend >100%
+        // NOTE: spent/effectiveLimit are in the budget's display currency (displayCurrency).
+        // When budget currency differs from home currency, BudgetRepository should ensure
+        // amounts are converted to budget currency before reaching here (tracked as P6-P1-06).
         val currencySymbol = com.yourname.expensetracker.domain.currency.SupportedCurrency
-            .fromCode(budget.currency)?.symbol ?: budget.currency
+            .fromCode(displayCurrency)?.symbol ?: displayCurrency
         val content = String.format(
             Locale.US,
             "You've spent %s%.2f (%d%%) of your %s budget (%s%.2f).",

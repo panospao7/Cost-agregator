@@ -15,6 +15,14 @@ import javax.inject.Singleton
  * Each check returns [PrivacyDecision.Denied] with a specific reason when the
  * corresponding setting is disabled. Capabilities not handled by this gate
  * default to [PrivacyDecision.Allowed].
+ *
+ * TODO (P8-P1-10): Location gate coverage is not statically guaranteed — new
+ * geocoding call sites (e.g. in CompositeGeocodingService, OverpassNearbyService)
+ * can bypass the gate if the developer forgets to call it. Fix path: make all
+ * geocoding services require a [PrivacyDecision.Allowed] token parameter (a
+ * sealed class instance) that can only be obtained from this gate, enforcing
+ * the check at compile time. Alternatively, wrap all geocoding services behind
+ * a PrivacyAwareGeocodingService that checks the gate internally.
  */
 @Singleton
 class LocationPrivacyGate @Inject constructor(

@@ -64,7 +64,7 @@ class BudgetForecastingEngine @Inject constructor(
         const val CONFIDENCE_THRESHOLD_MEDIUM = 0.6
         private const val TREND_THRESHOLD = 0.10
         private const val MILLIS_PER_DAY = 24 * 60 * 60 * 1000.0
-        private const val DESIRED_HISTORY_MONTHS = 4.0
+        private const val DESIRED_HISTORY_MONTHS = 3.0
     }
 
     /**

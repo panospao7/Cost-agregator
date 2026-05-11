@@ -26,6 +26,9 @@ interface ScannedReceiptDao {
     @Delete
     suspend fun delete(receipt: ScannedReceipt)
 
+    @Query("DELETE FROM scanned_receipts WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
     @Query("SELECT * FROM scanned_receipts ORDER BY createdAt DESC")
     fun getAllFlow(): Flow<List<ScannedReceipt>>
 
@@ -109,6 +112,14 @@ interface ScannedReceiptDao {
           AND rawOcrTextPurgedAt IS NULL
     """)
     suspend fun getUnpurgedScannedReceiptsOlderThan(cutoffMs: Long): List<ScannedReceipt>
+
+    @Query("""
+        SELECT * FROM scanned_receipts
+        WHERE createdAt < :cutoffMs
+          AND rawOcrTextPurgedAt IS NULL
+        LIMIT :limit
+    """)
+    suspend fun getUnpurgedScannedReceiptsOlderThan(cutoffMs: Long, limit: Int): List<ScannedReceipt>
 
     @Query("""
         UPDATE scanned_receipts

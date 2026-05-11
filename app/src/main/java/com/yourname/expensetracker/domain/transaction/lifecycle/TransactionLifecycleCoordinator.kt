@@ -437,12 +437,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
      */
     suspend fun dispatchPostCreationSideEffects(expenseId: Long, source: ExpenseSource) {
         sideEffectDispatcher.dispatchOnCreated(expenseId, source)
-
-        try {
-            recurringLifecycleCoordinator.linkExpenseToOccurrence(expenseId)
-        } catch (_: Exception) {
-            Timber.w("Non-critical: failed to link expense $expenseId to recurring occurrence")
-        }
+        // Note: recurring occurrence linking is handled inside dispatchOnCreated
     }
 
     /**
@@ -1273,7 +1268,6 @@ class TransactionLifecycleCoordinator @Inject constructor(
             val affectedExpenses = expenseDao.getExpensesByMerchantKey(oldMerchantKey)
             if (affectedExpenses.isEmpty()) return@withTransaction
             affectedCount = affectedExpenses.size
-            val affectedCount = affectedExpenses.size
 
             for (expense in affectedExpenses) {
                 val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(

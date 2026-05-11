@@ -300,6 +300,9 @@ class BudgetRepository @Inject constructor(
         end: Long
     ): com.yourname.expensetracker.domain.core.money.MoneyAggregate {
         val homeCurrency = resolveHomeCurrency()
+        // TODO (P3-05): N+1 category budget query — getHomeCurrencyPurchaseCategoryTotals is called
+        // once per budget period in the rollover loop. Batch all periods into a single DAO query
+        // that returns per-category totals grouped by period to eliminate the N+1 pattern.
         return if (categoryId != null) {
             multiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals(start, end)[categoryId]
                 ?: com.yourname.expensetracker.domain.core.money.MoneyAggregate.empty(

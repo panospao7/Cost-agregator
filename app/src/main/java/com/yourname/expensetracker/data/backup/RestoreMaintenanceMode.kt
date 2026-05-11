@@ -146,7 +146,10 @@ class RestoreMaintenanceMode @Inject constructor(
     }
 
     private fun writeMode(mode: Mode) {
-        prefs.edit().putString(KEY_MAINTENANCE_MODE, mode.name).apply()
+        // Use commit() (synchronous) instead of apply() (async) to ensure
+        // mode persists to disk before any subsequent restore operations.
+        // This prevents the mode from reverting on process death.
+        prefs.edit().putString(KEY_MAINTENANCE_MODE, mode.name).commit()
     }
 
     companion object {

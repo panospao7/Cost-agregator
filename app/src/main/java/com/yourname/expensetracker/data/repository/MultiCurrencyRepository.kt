@@ -388,9 +388,7 @@ class MultiCurrencyRepository @Inject constructor(
      * Returns MoneyAggregate with per-currency source buckets and conversion failures.
      *
      * Uses current exchange rates via [CurrencyConverter.convertMultiple].
-     * For historical accuracy, use the per-row [CurrencyConverter.convertAsOf] approach
-     * with each expense's date. A historical-rate aggregate API is planned for future
-     * (TODO: getHomeCurrencyTotalHistorical).
+     * For historical accuracy, use [getHomeCurrencyPurchaseTotalHistorical] instead.
      */
     suspend fun getHomeCurrencyTotal(
         startDate: Long,
@@ -408,11 +406,7 @@ class MultiCurrencyRepository @Inject constructor(
      *
      * Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
      * Callers needing historical-rate accuracy should use the per-row
-     * [CurrencyConverter.convertAsOf] approach instead. For a future
-     * historical-rate aggregate API, see TODO below.
-     *
-     * TODO (P5-P1-01): Add `getHomeCurrencyCategoryTotalsHistorical()` that
-     * fetches per-row data and converts each row with `convertAsOf(expense.date)`.
+     * [CurrencyConverter.convertAsOf] approach instead.
      */
     suspend fun getHomeCurrencyCategoryTotals(
         startDate: Long,
@@ -435,11 +429,7 @@ class MultiCurrencyRepository @Inject constructor(
      *
      * Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
      * Callers needing historical-rate accuracy should use the per-row
-     * [CurrencyConverter.convertAsOf] approach instead. For a future
-     * historical-rate aggregate API, see TODO below.
-     *
-     * TODO (P5-P1-01): Add `getHomeCurrencyMerchantTotalsHistorical()` that
-     * fetches per-row data and converts each row with `convertAsOf(expense.date)`.
+     * [CurrencyConverter.convertAsOf] approach instead.
      */
     suspend fun getHomeCurrencyMerchantTotals(
         startDate: Long,
@@ -462,11 +452,7 @@ class MultiCurrencyRepository @Inject constructor(
      *
      * Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
      * Callers needing historical-rate accuracy should use the per-row
-     * [CurrencyConverter.convertAsOf] approach instead. For a future
-     * historical-rate aggregate API, see TODO below.
-     *
-     * TODO (P5-P1-01): Add `getHomeCurrencyMonthlyTotalsHistorical()` that
-     * fetches per-row data and converts each row with `convertAsOf(expense.date)`.
+     * [CurrencyConverter.convertAsOf] approach instead.
      */
     suspend fun getHomeCurrencyMonthlyTotals(
         startDate: Long,
@@ -534,17 +520,77 @@ class MultiCurrencyRepository @Inject constructor(
     // ── PURCHASE-only variants ─────────────────────────────────────────────
 
     /**
+     * **HISTORICAL-RATE:** Get total PURCHASE spending in home currency using
+     * the exchange rate at the period midpoint for each non-home-currency bucket.
+     *
+     * This is more accurate than [getHomeCurrencyPurchaseTotal] for period reports
+     * because it avoids applying today's rate to historical transactions.
+     *
+     * Falls back to latest-rate conversion if historical rate is unavailable.
+     */
+    suspend fun getHomeCurrencyPurchaseTotalHistorical(
+        startDate: Long,
+        endDate: Long
+    ): MoneyAggregate {
+        val homeCurrency = resolveHomeCurrency()
+        val currencyTotals = expenseDao.getTotalSpentBetweenByCurrency(startDate, endDate)
+        if (currencyTotals.isEmpty()) return MoneyAggregate.empty(CurrencyCode(homeCurrency))
+
+        val midpoint = startDate + (endDate - startDate) / 2
+        val buckets = mutableListOf<com.yourname.expensetracker.domain.core.money.MoneyBucket>()
+        val failures = mutableListOf<com.yourname.expensetracker.domain.core.money.ConversionFailure>()
+        var total = 0.0
+
+        for (ct in currencyTotals) {
+            val srcCurrency = CurrencyCode(ct.currency)
+            if (ct.currency.uppercase() == homeCurrency.uppercase()) {
+                total += ct.total
+                buckets.add(com.yourname.expensetracker.domain.core.money.MoneyBucket(srcCurrency, ct.total, ct.txCount))
+            } else {
+                val conversion = currencyConverter.convertAsOf(ct.total, ct.currency, homeCurrency, midpoint)
+                if (conversion != null) {
+                    total += conversion.convertedAmount
+                    buckets.add(com.yourname.expensetracker.domain.core.money.MoneyBucket(srcCurrency, ct.total, ct.txCount))
+                } else {
+                    // Fallback to latest rate
+                    val latestConversion = currencyConverter.convert(ct.total, ct.currency, homeCurrency)
+                    if (latestConversion != null) {
+                        total += latestConversion.convertedAmount
+                        buckets.add(com.yourname.expensetracker.domain.core.money.MoneyBucket(srcCurrency, ct.total, ct.txCount))
+                    } else {
+                        failures.add(
+                            com.yourname.expensetracker.domain.core.money.ConversionFailure(
+                                originalAmount = com.yourname.expensetracker.domain.core.money.MoneyAmount(ct.total, srcCurrency),
+                                targetCurrency = CurrencyCode(homeCurrency),
+                                reason = com.yourname.expensetracker.domain.core.money.FailureReason.MISSING_RATE,
+                                transactionCount = ct.txCount
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        return if (failures.isEmpty()) {
+            MoneyAggregate(
+                displayAmount = total,
+                displayCurrency = CurrencyCode(homeCurrency),
+                sourceBuckets = buckets,
+                conversionFailures = emptyList()
+            )
+        } else {
+            MoneyAggregate.partial(total, CurrencyCode(homeCurrency), buckets, failures)
+        }
+    }
+
+    /**
      * **LATEST-RATE:** Get total PURCHASE spending in home currency.
      *
      * Uses the PURCHASE-filtered DAO variant.
      *
      * Uses latest-rate conversion via [CurrencyConverter.convertMultiple].
-     * Callers needing historical-rate accuracy should use the per-row
-     * [CurrencyConverter.convertAsOf] approach instead. For a future
-     * historical-rate aggregate API, see TODO below.
-     *
-     * TODO (P5-P1-01): Add `getHomeCurrencyPurchaseTotalHistorical()` that
-     * fetches per-row data and converts each row with `convertAsOf(expense.date)`.
+     * Callers needing historical-rate accuracy should use
+     * [getHomeCurrencyPurchaseTotalHistorical] instead.
      */
     suspend fun getHomeCurrencyPurchaseTotal(
         startDate: Long,

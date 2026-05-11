@@ -664,6 +664,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             if (sourceId == -1L) {
                 val existing = emailReceiptDao.getByFingerprint(fingerprint)
                 if (existing != null) {
+                    scannedReceiptDao.deleteById(savedId) // Clean up orphan receipt
                     capturedDuplicate = EmailReceiptProcessResult.Duplicate(existing.receiptId)
                     return@withTransaction
                 }
@@ -927,12 +928,15 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 is CreateExpenseResult.Created -> {
                     val expenseId = result.expenseId
                     // Link receipt to the newly created expense
-                    receiptLinkService.linkReceiptToExpense(
+                    val linkResult = receiptLinkService.linkReceiptToExpense(
                         receiptId = receiptId,
                         expenseId = expenseId,
                         linkType = "DIRECT_SAVE",
                         source = ExpenseSource.RECEIPT_SCAN.name
                     )
+                    if (linkResult.isFailure) {
+                        throw IllegalStateException("Receipt-expense link failed: ${linkResult.exceptionOrNull()?.message}", linkResult.exceptionOrNull())
+                    }
 
                     // Side effects are deferred — dispatch after commit
                     DomainResult.Success(expenseId)

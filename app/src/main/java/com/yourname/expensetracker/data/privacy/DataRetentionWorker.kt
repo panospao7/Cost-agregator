@@ -111,6 +111,8 @@ class DataRetentionWorker @AssistedInject constructor(
      * [RawNotification.capturedAt] is older than [cutoff] and that have not
      * already been purged ([RawNotification.rawContentPurgedAt] IS NULL).
      *
+     * P2-28: Uses LIMIT-based pagination to avoid loading all candidates into memory.
+     *
      * @return number of rows updated
      */
     private suspend fun purgeRawNotifications(
@@ -118,32 +120,35 @@ class DataRetentionWorker @AssistedInject constructor(
         cutoff: Long,
         now: Long
     ): Int {
-        // Find candidate rows — captured before cutoff, not yet purged
-        val candidates = dao.getUnpurgedRawNotificationsOlderThan(cutoff)
-        if (candidates.isEmpty()) return 0
+        var totalPurged = 0
+        while (true) {
+            val candidates = dao.getUnpurgedRawNotificationsOlderThan(cutoff, PAGE_SIZE)
+            if (candidates.isEmpty()) break
 
-        // Null out the raw content columns
-        for (notification in candidates) {
-            executionGuard.checkpoint("data_retention_notifications")
-            dao.updateRawContentPurged(
-                id = notification.id,
-                rawContentPurgedAt = now,
-                // Clear raw fields
-                title = null,
-                text = null,
-                bigText = null,
-                subText = null,
-                extrasJson = null,
-                parseResult = null
-            )
+            for (notification in candidates) {
+                executionGuard.checkpoint("data_retention_notifications")
+                dao.updateRawContentPurged(
+                    id = notification.id,
+                    rawContentPurgedAt = now,
+                    title = null,
+                    text = null,
+                    bigText = null,
+                    subText = null,
+                    extrasJson = null,
+                    parseResult = null
+                )
+            }
+            totalPurged += candidates.size
         }
-        return candidates.size
+        return totalPurged
     }
 
     /**
      * Nulls out [ScannedReceipt.rawOcrText] for rows whose [ScannedReceipt.createdAt]
      * is older than [cutoff] and that have not already been purged
      * ([ScannedReceipt.rawOcrTextPurgedAt] IS NULL).
+     *
+     * P2-28: Uses LIMIT-based pagination to avoid loading all candidates into memory.
      *
      * @return number of rows updated
      */
@@ -152,22 +157,27 @@ class DataRetentionWorker @AssistedInject constructor(
         cutoff: Long,
         now: Long
     ): Int {
-        val candidates = dao.getUnpurgedScannedReceiptsOlderThan(cutoff)
-        if (candidates.isEmpty()) return 0
+        var totalPurged = 0
+        while (true) {
+            val candidates = dao.getUnpurgedScannedReceiptsOlderThan(cutoff, PAGE_SIZE)
+            if (candidates.isEmpty()) break
 
-        for (receipt in candidates) {
-            executionGuard.checkpoint("data_retention_ocr")
-            dao.updateRawOcrTextPurged(
-                id = receipt.id,
-                rawOcrTextPurgedAt = now
-            )
+            for (receipt in candidates) {
+                executionGuard.checkpoint("data_retention_ocr")
+                dao.updateRawOcrTextPurged(
+                    id = receipt.id,
+                    rawOcrTextPurgedAt = now
+                )
+            }
+            totalPurged += candidates.size
         }
-        return candidates.size
+        return totalPurged
     }
 
     companion object {
         const val TAG = "DataRetentionWorker"
         const val WORK_NAME = "data_retention"
+        private const val PAGE_SIZE = 100
 
         /**
          * Enqueue a daily data-retention job.

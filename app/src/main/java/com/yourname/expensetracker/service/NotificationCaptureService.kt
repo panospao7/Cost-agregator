@@ -241,7 +241,7 @@ class NotificationCaptureService : NotificationListenerService() {
      * Updated reactively from [PrivacySettingsRepository] settings flow.
      */
     @Volatile
-    private var capturePrivacyDenied = false
+    private var capturePrivacyDenied = true  // fail-closed until first settings emission confirms capture allowed
     
     // Thread-safe, bounded deduplication cache (INS-005)
     private val processedNotifications = java.util.Collections.synchronizedMap(
@@ -417,7 +417,7 @@ class NotificationCaptureService : NotificationListenerService() {
 
         val now = timeProvider.now()
         val dedupeKeyRaw = sbn.key
-        val coarseDedupeKey = "$dedupeKeyRaw:$now"
+        val coarseDedupeKey = dedupeKeyRaw
         val lastProcessed = processedNotifications[coarseDedupeKey]
         if (lastProcessed != null && (now - lastProcessed) < DEDUP_WINDOW_MS) {
             return
@@ -444,7 +444,7 @@ class NotificationCaptureService : NotificationListenerService() {
                 packageName,
                 parts.title,
                 parts.text,
-                parts.combinedBody
+                parts.bigText
             )) return
 
         workTracker.launch(serviceScope) {
@@ -473,8 +473,10 @@ class NotificationCaptureService : NotificationListenerService() {
         if (processCount.incrementAndGet() >= CACHE_CLEANUP_THRESHOLD) {
             processCount.set(0)
             val now = timeProvider.now()
-            processedNotifications.entries.removeIf { 
-                now - it.value > CACHE_MAX_AGE_MS 
+            synchronized(processedNotifications) {
+                processedNotifications.entries.removeIf { 
+                    now - it.value > CACHE_MAX_AGE_MS 
+                }
             }
         }
     }

@@ -638,4 +638,8 @@ AND LENGTH(:merchantKey) >= 8
             transactionType = transactionType
         )
     }
+
+    /** Recover reviews stuck in PROCESSING state (e.g. after process death mid-approval). */
+    @Query("UPDATE pending_reviews SET status = 'PENDING' WHERE status = 'PROCESSING'")
+    suspend fun recoverStuckProcessing(): Int
 }

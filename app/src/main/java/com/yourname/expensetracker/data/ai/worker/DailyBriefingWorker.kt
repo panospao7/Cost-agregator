@@ -60,7 +60,10 @@ class DailyBriefingWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         Timber.d("DailyBriefingWorker: starting.")
-        var shouldScheduleNext = true
+        // P2-30: Default to false — only reschedule on successful generation.
+        // When the privacy guard denies, we must NOT reschedule to avoid an
+        // infinite schedule-skip loop.
+        var shouldScheduleNext = false
 
         val guardResult = executionGuard.runGuarded(
             WorkerGuardRequest(
@@ -97,9 +100,8 @@ class DailyBriefingWorker @AssistedInject constructor(
                     notificationId = notificationId
                 )
             }
-            shouldScheduleNext = false
+            shouldScheduleNext = true
             Timber.d("DailyBriefingWorker: completed successfully.")
-            aiWorkScheduler.scheduleDailyBriefing()
         }
 
         if (shouldScheduleNext) {

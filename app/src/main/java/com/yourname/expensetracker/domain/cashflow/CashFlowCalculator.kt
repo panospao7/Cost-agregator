@@ -58,6 +58,11 @@ class CashFlowCalculator @Inject constructor(
     /**
      * Calculates daily cash flow for a given date range.
      *
+     * @param startingBalance The opening balance for the forecast period.
+     *   **MUST be denominated in the user's home currency.** Passing a balance in a
+     *   foreign currency will produce incorrect projections since all internal
+     *   calculations normalize to home currency.
+     *
      * ## FCST-3: Occurrence-driven prediction
      * This method uses [RecurringLifecycleCoordinator.generateOccurrences] (called inside
      * [getUpcomingBills]) to materialise PLANNED occurrences from manual recurring rules,
@@ -216,6 +221,7 @@ class CashFlowCalculator @Inject constructor(
 
             // Calculate ending balance — normalize to home currency
             var dayIncome = 0.0
+            var conversionFailures = 0
             for (inc in incomeList) {
                 if (inc.currency.equals(homeCurrency, ignoreCase = true)) {
                     dayIncome += inc.effectiveAmount
@@ -223,6 +229,8 @@ class CashFlowCalculator @Inject constructor(
                     val converted = currencyConverter.convert(inc.effectiveAmount, inc.currency, homeCurrency)
                     if (converted != null) {
                         dayIncome += converted.convertedAmount
+                    } else {
+                        conversionFailures++
                     }
                 }
             }
@@ -235,6 +243,8 @@ class CashFlowCalculator @Inject constructor(
                     val converted = currencyConverter.convert(exp.effectiveAmount, exp.currency, homeCurrency)
                     if (converted != null) {
                         dayExpensesTotal += converted.convertedAmount
+                    } else {
+                        conversionFailures++
                     }
                 }
             }
@@ -245,8 +255,14 @@ class CashFlowCalculator @Inject constructor(
                     val converted = currencyConverter.convert(recurring.averageAmount, recurring.currency, homeCurrency)
                     if (converted != null) {
                         dayExpensesTotal += converted.convertedAmount
+                    } else {
+                        conversionFailures++
                     }
                 }
+            }
+
+            if (conversionFailures > 0) {
+                Timber.w("$TAG: %d conversion(s) failed for day %s — those amounts were dropped from cash flow", conversionFailures, dayKey)
             }
             
             runningBalance = runningBalance + dayIncome - dayExpensesTotal

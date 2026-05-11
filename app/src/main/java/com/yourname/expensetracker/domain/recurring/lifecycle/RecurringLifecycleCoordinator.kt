@@ -83,7 +83,12 @@ class RecurringLifecycleCoordinator @Inject constructor(
         // Use rule.nextDate as the expansion anchor. If it's before startDate,
         // advance it by the frequency until it falls within the range.
         var anchorDate = rule.nextDate
+        var advanceIterations = 0
         while (anchorDate < startDate && rule.frequency != RecurrenceFrequency.IRREGULAR) {
+            if (++advanceIterations > 1000) {
+                Timber.w("Anchor advance loop exceeded 1000 iterations for ruleId=%d, breaking", ruleId)
+                break
+            }
             anchorDate = expander.advanceDate(anchorDate, rule.frequency)
         }
 
@@ -421,6 +426,9 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
     /**
      * Compares planned vs actual spending for a recurring rule over the past N months.
+     *
+     * **Note:** This method has write side-effects — it calls [generateOccurrences]
+     * internally to ensure the database is up-to-date before computing the report.
      *
      * Logic:
      * 1. Generate occurrences for the past N months via [generateOccurrences].
