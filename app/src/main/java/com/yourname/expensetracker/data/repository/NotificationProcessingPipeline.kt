@@ -65,21 +65,40 @@ import javax.inject.Singleton
  * Encapsulates the notification processing pipeline, extracted from [NotificationRepository]
  * to reduce its constructor dependency count.
  *
- * Responsibilities:
- *  - Parse raw notifications into structured transactions
- *  - Route through the confidence system
- *  - Classify merchants and transfer directions
- *  - Write the result (expense / pending review / rejected) inside a DB transaction
- *  - Trigger subscription detection after successful transaction processing
+ * ## Pipeline Flow
  *
- * ## TRN-8: Fingerprint pre-check before parse/AI fallback
- * The current pipeline performs an expensive parse + optional AI fallback
- * ([parserRegistry.parseWithAiFallback]) at line 161 **before** checking for
- * duplicates. If the notification is a duplicate, the parse effort is wasted.
- * A future optimisation should move the raw-notification duplicate check (or
- * a lightweight fingerprint check) **before** the parse call, returning early
- * when a matching raw notification already exists. The `insertRawNotificationIfNotDuplicate`
- * guard at Phase 2 is too late — the expensive work has already been done.
+ * Every raw notification entering this pipeline traverses the following stages:
+ *
+ *  1. **Fast fingerprint dedup** — checks [RawNotificationDao.exists] before any
+ *     expensive parse. Returns [NotificationPipelineOutcome.Duplicate] on hit.
+ *  2. **Parse** — calls [AppParserRegistry.parseWithAiFallback] to extract
+ *     amount / merchant / currency / date from the notification text.
+ *  3. **Parse-fallback branch** — if parsing fails, detects oversized amounts
+ *     and transaction signals to decide between NeedsReview / AutoRejected / Duplicate.
+ *  4. **Routing** — [ConfidenceRouter.route] decides the disposition:
+ *     AUTO_ACCEPT, NEEDS_REVIEW, or AUTO_REJECT.
+ *  5. **DB transaction** — writes RawNotification, SourceStats, and the
+ *     resolved outcome (Expense via coordinator, PendingReview, or rejection)
+ *     atomically inside a Room transaction.
+ *  6. **Post-commit actions** — best-effort side effects: analytics training,
+ *     recommendation enrichment, subscription detection, transfer analytics.
+ *
+ * ## Outcomes Produced
+ *
+ * The pipeline returns one of the following [NotificationPipelineOutcome] sealed types:
+ *  - [NotificationPipelineOutcome.AutoAccepted] — successfully created an Expense
+ *  - [NotificationPipelineOutcome.NeedsReview] — created a PendingReview for manual approval
+ *  - [NotificationPipelineOutcome.Duplicate] — rejected as a duplicate (fingerprint or canonical)
+ *  - [NotificationPipelineOutcome.ParserFailed] — parsing failed with no signal
+ *  - [NotificationPipelineOutcome.AutoRejected] — routing decision was AUTO_REJECT
+ *  - [NotificationPipelineOutcome.Dropped] — dropped before processing (e.g. maintenance mode)
+ *  - [NotificationPipelineOutcome.Error] — processing threw an exception
+ *
+ * Every outcome is recorded as a [PipelineDiagnosticEvent] for observability.
+ *
+ * ## TRN-8: Fingerprint pre-check before parse/AI fallback (FIXED)
+ * A fast [RawNotificationDao.exists] fingerprint check now runs **before** the
+ * expensive parse + AI fallback call. See [processInternal].
  *
  * ## AID-9: AI auto-apply audit requirement
  * When [RoutingDecision.AUTO_ACCEPT] is chosen by the confidence router, the
@@ -174,6 +193,12 @@ class NotificationProcessingPipeline @Inject constructor(
         }
     }
 
+    /**
+     * Processes a batch of raw notifications sequentially under a shared mutex.
+     * Each notification produces a [NotificationPipelineOutcome] and, critically,
+     * a [PipelineDiagnosticEvent] is written for every outcome — success, rejection,
+     * or error — so that batch processing is fully observable in the diagnostic ledger.
+     */
     suspend fun processBatch(notifications: List<RawNotification>): List<NotificationPipelineOutcome> {
         writeBarrier.checkWritesAllowed("NotificationProcessingPipeline.processBatch")
         if (notifications.isEmpty()) return emptyList()
@@ -182,12 +207,16 @@ class NotificationProcessingPipeline @Inject constructor(
             classifier.initialize()
             notifications.forEach { notification ->
                 try {
-                    results += processInternal(notification, initializeClassifier = false)
+                    val outcome = processInternal(notification, initializeClassifier = false)
+                    writePipelineDiagnosticEvent(outcome, notification.packageName)
+                    results += outcome
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     Timber.e(e, "Error processing notification in batch: ${notification.packageName}")
-                    results += NotificationPipelineOutcome.Error(notification.packageName, e)
+                    val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, e)
+                    writePipelineDiagnosticEvent(errorOutcome, notification.packageName)
+                    results += errorOutcome
                 }
             }
         }
@@ -525,7 +554,24 @@ class NotificationProcessingPipeline @Inject constructor(
                         is NotificationPipelineOutcome.AutoRejected -> outcome.rawId
                         else -> null
                     },
-                    timestamp = timeProvider.now()
+                    timestamp = timeProvider.now(),
+                    notificationKeyHash = "${packageName}_${outcome}".hashCode().toString(16),
+                    confidence = when (outcome) {
+                        is NotificationPipelineOutcome.AutoAccepted -> 0.8f
+                        is NotificationPipelineOutcome.NeedsReview -> 0.5f
+                        is NotificationPipelineOutcome.AutoRejected -> 0.0f
+                        else -> null
+                    },
+                    decisionSource = when (outcome) {
+                        is NotificationPipelineOutcome.AutoAccepted -> "classifier"
+                        is NotificationPipelineOutcome.NeedsReview -> "classifier"
+                        is NotificationPipelineOutcome.Duplicate -> "dedupe"
+                        is NotificationPipelineOutcome.ParserFailed -> "parser"
+                        is NotificationPipelineOutcome.AutoRejected -> "classifier"
+                        is NotificationPipelineOutcome.Dropped -> "privacy"
+                        is NotificationPipelineOutcome.Error -> "exception"
+                    },
+                    elapsedMs = null
                 )
             )
         }

@@ -78,6 +78,11 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * @param sideEffectMode Controls whether side effects run immediately or are deferred.
      * @return A [CreateExpenseResult] indicating the outcome (created, duplicate, error, etc.).
      */
+    @Deprecated(
+        "Prefer createExpenseStandalone() for immediate side effects or " +
+        "createExpenseDbOnly() for deferred side effects. The SideEffectMode " +
+        "parameter will be removed in a future release."
+    )
     suspend fun createExpense(
         request: CreateExpenseRequest,
         sideEffectMode: SideEffectMode = SideEffectMode.IMMEDIATE
@@ -441,6 +446,39 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * Creates an expense with full lifecycle handling and dispatches all
+     * post-creation side effects (budget recheck, recurring linking, anomaly
+     * detection) immediately after the database transaction commits.
+     *
+     * This is the preferred method for standalone create operations where
+     * no outer database transaction is being managed by the caller.
+     *
+     * @param request The creation request containing all expense fields.
+     * @return A [CreateExpenseResult] indicating the outcome.
+     */
+    suspend fun createExpenseStandalone(request: CreateExpenseRequest): CreateExpenseResult {
+        return createExpense(request, SideEffectMode.IMMEDIATE)
+    }
+
+    /**
+     * Creates an expense without dispatching any post-creation side effects.
+     *
+     * Use this when inserting inside an outer database transaction and you
+     * need to defer side effects until after the outer transaction commits.
+     * Call [dispatchPostCreationSideEffects] with the returned expense ID
+     * after the outer transaction succeeds.
+     *
+     * If the result is [CreateExpenseResult.Created], side effects MUST be
+     * dispatched manually by the caller — the coordinator will not do it.
+     *
+     * @param request The creation request containing all expense fields.
+     * @return A [CreateExpenseResult] indicating the outcome.
+     */
+    suspend fun createExpenseDbOnly(request: CreateExpenseRequest): CreateExpenseResult {
+        return createExpense(request, SideEffectMode.DEFER)
+    }
+
+    /**
      * Updates an existing expense with full lifecycle handling:
      * capture beforeSnapshot → persist (with dedupeKey recomputation if key fields changed)
      * → write UPDATED event with before/after snapshots.
@@ -722,12 +760,12 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Updates business/tax fields on an expense through the lifecycle coordinator.
+     * Updates business flags (`isBusinessExpense` and `requiresReceipt`) on an
+     * expense through the lifecycle coordinator.
      *
-     * **Only `isBusinessExpense` and `receiptRequired` are persisted.**
-     * `businessUsePercent`, `taxCategory`, and `vatEligible` are accepted for API
-     * compatibility but are **no-ops** pending entity schema changes. When any of
-     * these no-op parameters are non-null, a warning is logged via Timber.w.
+     * `businessUsePercent`, `taxCategory`, and `vatEligible` are accepted for
+     * API compatibility but are **no-ops** pending entity schema changes. When
+     * any of these no-op parameters are non-null, a warning is logged via Timber.w.
      *
      * @param expenseId The ID of the expense to update.
      * @param isBusinessExpense Whether this expense is a business expense (persisted).
@@ -737,7 +775,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * @param receiptRequired Whether a receipt is required, mapped to `requiresReceipt` (persisted).
      * @param source The source system/component that triggered the update.
      */
-    suspend fun updateBusinessTaxFields(
+    suspend fun updateBusinessFlags(
         expenseId: Long,
         isBusinessExpense: Boolean? = null,
         businessUsePercent: Double? = null,
@@ -1522,6 +1560,23 @@ class TransactionLifecycleCoordinator @Inject constructor(
      * The event includes structured metadata (JSON) with the existing expense ID, the
      * duplicate reason, and the deduplication key so that the full duplicate-resolution
      * history can be reconstructed for auditing or debugging.
+     *
+     * ## Event Insert Failure Policy
+     *
+     * For **attempt-only** events (CREATE_ATTEMPTED, CREATE_VALIDATION_FAILED,
+     * CREATE_DUPLICATE_SKIPPED, CREATE_INSERT_CONFLICT), insert failure is
+     * **best-effort** — the failure is logged and the return value is `false`,
+     * but the primary operation (expense create, duplicate skip) continues.
+     * These events are diagnostic aids and losing one does not corrupt state.
+     *
+     * For **business mutation** events (CREATED, UPDATED, DELETED), insert
+     * failure is **REQUIRED** — the insert happens inside the same
+     * `database.withTransaction` block as the primary mutation, so a failure
+     * rolls back the entire transaction. This ensures that every state-changing
+     * operation has a durable audit record.
+     *
+     * @return `true` if the event was written successfully, `false` if the
+     *         insert failed (best-effort — the caller may continue safely).
      */
     private suspend fun writeDuplicateEvent(
         expense: Expense,

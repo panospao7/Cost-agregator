@@ -77,23 +77,33 @@ enum class OwnershipFilter {
  * - updateExpenseCategoryBulk → coordinator.bulkUpdateCategory()
  * - updateExpenseMerchantBulk → coordinator.bulkUpdateMerchant()
  *
- * ### STILL BYPASSING (intentional — all backfill-worker methods):
- * - conditionallySetLocation, clearExpenseLocation — called by LocationBackfillWorker
- * - incrementBackfillAttempts — dead-letter counter for backfill retries
- * - updateMerchantKey — called by MerchantKeyBackfillWorker
- *   Each touches 1-2 columns; writing UPDATED events per row from background
- *   workers would flood transaction_events with low-value noise.
+ * ## INTENTIONALLY NOT ROUTED
  *
- * ### INTENTIONALLY NOT ROUTED (design constraints, not bugs):
- * - ReceiptLinkService.linkReceiptToExpense() RCP-30 — best-effort category
+ * These bypasses are **designed**, not bugs. Each has a clear rationale for why
+ * routing through the lifecycle coordinator is inappropriate or impossible.
+ *
+ * ### MAINTENANCE/BACKFILL WORKERS (low-value column updates)
+ * Writing `TransactionEvent.UPDATED` per row from background workers would
+ * flood `transaction_events` with noise. These workers touch 1-2 columns each:
+ * - `conditionallySetLocation` — LocationBackfillWorker (lat/lon/source/placeId)
+ * - `clearExpenseLocation` — location reset path
+ * - `incrementBackfillAttempts` — dead-letter counter for backfill retries
+ * - `updateMerchantKey` — MerchantKeyBackfillWorker (merchantKey column only)
+ *
+ * ### DESIGN CONSTRAINTS (no coordinator routing possible)
+ * - **ReceiptLinkService.linkReceiptToExpense() (RCP-30)** — best-effort category
  *   propagation inside runCatching. Cannot use coordinator.updateCategory()
  *   due to circular dependency (TransactionLifecycleCoordinator → ReceiptLinkService
  *   via side effects, so ReceiptLinkService → Coordinator would create a cycle).
- * - GroupTransactionCoordinator.clearSharedExpenseFlags — post-commit cleanup
+ * - **GroupTransactionCoordinator.clearSharedExpenseFlags** — post-commit cleanup
  *   after group deletion; not a user-initiated edit.
- * - GroupTransactionCoordinator.normalizeLinkedSystemExpense — atomic part of
+ * - **GroupTransactionCoordinator.normalizeLinkedSystemExpense** — atomic part of
  *   group expense creation transaction; lifecycle event is written by the
  *   createExpense() call in the same flow.
+ *
+ * ### DEBUG METHODS (BuildConfig.DEBUG guarded, never reachable in production)
+ * - `deleteAllExpenses()` — guarded by `BuildConfig.DEBUG`
+ * - `createDebugSnapshot()` / `restoreDebugSnapshot()` — guarded by `BuildConfig.DEBUG`
  *
  * Total: 7 remaining (all intentional/backfill).
  *
@@ -102,11 +112,12 @@ enum class OwnershipFilter {
  *   businessProject, requiresReceipt) — these fields are currently set at creation
  *   time only. When a dedicated update method is added, it MUST route through the
  *   lifecycle coordinator.
- *   TODO (T10): Add updateBusinessTaxFields(expenseId, patch, source) coordinator
+ *   TODO (T10): Add updateBusinessFlags(expenseId, patch, source) coordinator
  *               method that writes UPDATED event.
  *
  * See docs/analyses and debug master/debugging/pipeline-2-transaction-lifecycle-debug-report.md
  * for the full inventory and migration plan.
+ * See docs/expense-mutation-inventory.md for the complete classified callsite inventory.
  */
 @Singleton
 class ExpenseRepository @Inject constructor(

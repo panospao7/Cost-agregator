@@ -25,5 +25,9 @@ data class PipelineDiagnosticEvent(
     val entityId: Long? = null,
     val exceptionClass: String? = null,
     val exceptionMessage: String? = null,
-    val metadataJson: String? = null
+    val metadataJson: String? = null,
+    val notificationKeyHash: String? = null,
+    val confidence: Float? = null,
+    val decisionSource: String? = null,
+    val elapsedMs: Long? = null
 )

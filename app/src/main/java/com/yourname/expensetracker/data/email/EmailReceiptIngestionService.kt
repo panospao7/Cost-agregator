@@ -53,15 +53,23 @@ sealed class EmailReceiptResult {
 }
 
 /**
- * Service for ingesting email receipts from providers (Amazon, Uber, Apple, etc.)
- * and feeding them into the existing receipt/expense pipeline.
+ * Service for ingesting email receipts from providers (Amazon, Uber, Apple, etc.).
+ *
+ * This service is a **detector and delegate** — it does NOT create expenses
+ * or receipts directly. All mutation is delegated to [ReceiptLifecycleCoordinator].
  *
  * Flow:
- * 1. Parse email body for receipt data
- * 2. Extract merchant, amount, date, items
- * 3. Dedupe against existing receipts (merchant+amount+date fingerprint)
- * 4. Create receipt entity with source="email"
- * 5. Trigger existing receipt processing pipeline
+ * 1. Detect provider from sender/subject/body
+ * 2. Parse email body for receipt data via provider-specific parsers
+ * 3. Compute content-only dedup fingerprint (merchant+amount+date bucket)
+ * 4. Delegate to [ReceiptLifecycleCoordinator.processEmailReceipt] which
+ *    handles deduplication, receipt save, expense creation, linking, and
+ *    diagnostic events atomically
+ * 5. Dispatch post-creation side effects for any expenses created
+ *
+ * If the coordinator returns a non-Success result (Duplicate, Error), the
+ * service returns the corresponding error directly — there is NO inline
+ * fallback path.
  */
 @Singleton
 class EmailReceiptIngestionService(
@@ -152,7 +160,11 @@ class EmailReceiptIngestionService(
     private val appleParser = AppleReceiptParser()
 
     /**
-     * Process an email receipt and create expense entries.
+     * Process an email receipt through the lifecycle coordinator.
+     *
+     * This method detects the provider, parses the email body, and delegates
+     * all mutation (receipt save, expense creation, linking) to
+     * [ReceiptLifecycleCoordinator.processEmailReceipt].
      *
      * @param emailBody The raw email body text (HTML or plain text)
      * @param sender The email sender address
@@ -160,14 +172,6 @@ class EmailReceiptIngestionService(
      * @param receivedAt Timestamp when the email was received
      * @param messageId Unique message ID for deduplication
      * @return EmailReceiptResult indicating success, duplicate, or error
-     */
-    /**
-     * Coordinator delegation is active: ReceiptLifecycleCoordinator.processEmailReceipt()
-     * is called as the primary path. The inline fallback below handles cases where the
-     * coordinator doesn't yet produce a complete result (gradual migration).
-     *
-     * TODO (U6): Remove inline fallback once coordinator covers all edge cases.
-     * TODO (U6): Confidence threshold routing — uncertain parses to PendingReview.
      */
     suspend fun processEmailReceipt(
         emailBody: String,
@@ -201,9 +205,6 @@ class EmailReceiptIngestionService(
 
             val fingerprint = createFingerprint(normalizedMerchant, parsedReceipt.amount, parsedReceipt.date, messageId)
 
-            // U6: Coordinator delegation active — processEmailReceipt is the primary path.
-            // The inline fallback below runs only if the coordinator returns a non-Success
-            // result and will be removed once coordinator covers all edge cases.
             val coordinatorEmailData = EmailReceiptData(
                 messageId = messageId,
                 from = sender,
@@ -238,162 +239,27 @@ class EmailReceiptIngestionService(
                 provider = provider
             )
 
-            if (coordinatorResult is EmailReceiptProcessResult.Success) {
-                return@processEmailReceipt EmailReceiptResult.Success(
-                    coordinatorResult.receiptId,
-                    coordinatorResult.expenseIds
-                )
-            }
-            // Fallback: coordinator path did not succeed — continue with inline flow below.
-            // This fallback is temporary until the coordinator is fully migrated (U6).
-
-            val result = transactionRunner {
-                // Step 4a: If a nonblank messageId is provided, check it first before any
-                // side effects. A nonblank messageId is globally unique (UNIQUE index on
-                // emailMessageId); finding it means we have already ingested this exact
-                // email, so we can return early without touching scanned_receipts or expenses.
-                // Blank messageIds are skipped here and fall through to the fingerprint path
-                // so that the existing behaviour for providers that omit message IDs is
-                // preserved unchanged.
-                if (messageId.isNotBlank()) {
-                    val existingByMessageId = emailReceiptDao.getByMessageId(messageId)
-                    if (existingByMessageId != null) {
-                        Timber.d("Duplicate email receipt by messageId=$messageId, existing receiptId=${existingByMessageId.receiptId}")
-                        return@transactionRunner EmailReceiptResult.Duplicate(existingByMessageId.receiptId)
-                    }
-                }
-
-                // Step 4b: Create fingerprint and check for duplicates
-                val existing = emailReceiptDao.getByFingerprint(fingerprint)
-                if (existing != null) {
-                    Timber.d("Duplicate email receipt found: ${existing.id}")
-                    return@transactionRunner EmailReceiptResult.Duplicate(existing.receiptId)
-                }
-
-                // Step 5: Also check for existing scanned receipt with same fingerprint
-                val mode = privacySettingsRepository.getSettings().rawOcrStorageMode
-                val emailMode = privacySettingsRepository.getSettings().emailReceiptStorageMode
-                val sanitizedSender = RawContentSanitizer.sanitizeEmailSender(sender, mode) ?: ""
-                val sanitizedSubject = RawContentSanitizer.sanitizeEmailSubject(subject, mode) ?: ""
-                val existingScanned = findExistingScannedReceipt(fingerprint)
-                if (existingScanned != null) {
-                    Timber.d("Matching scanned receipt found: ${existingScanned.id}")
-                    // Still create email receipt source for tracking, but link to existing
-                    val emailSource = EmailReceiptSource(
-                        receiptId = existingScanned.id,
-                        emailSender = sanitizedSender,
-                        emailSubject = sanitizedSubject,
-                        emailMessageId = RawContentSanitizer.sanitizeEmailMessageId(messageId, emailMode),
-                        parsedAt = timeProvider.now(),
-                        provider = provider,
-                        confidence = parsedReceipt.confidence,
-                        fingerprint = fingerprint
-                    )
-                    val sourceId = emailReceiptDao.insertOrIgnore(emailSource)
-                    if (sourceId == -1L) Timber.w("EmailReceiptSource insert conflict for receipt %d", existingScanned.id)
-                    return@transactionRunner EmailReceiptResult.Duplicate(existingScanned.id)
-                }
-
-                // Step 6: Create scanned receipt entity (minimal, since we have structured data)
-                val receiptItemsJson = if (parsedReceipt.items.isNotEmpty()) {
-                    receiptParser.lineItemsToJson(
-                        parsedReceipt.items.map {
-                            ReceiptParser.LineItem(
-                                description = it.description,
-                                quantity = it.quantity.toDouble(),
-                                unitPrice = it.unitPrice,
-                                totalPrice = it.totalPrice
-                            )
+            when (coordinatorResult) {
+                is EmailReceiptProcessResult.Success -> {
+                    for (expenseId in coordinatorResult.expenseIds) {
+                        try {
+                            coordinator.dispatchPostCreationSideEffects(expenseId, ExpenseSource.EMAIL_RECEIPT)
+                        } catch (e: Exception) {
+                            Timber.w(e, "Non-critical: failed to dispatch post-creation side effects for expense $expenseId")
                         }
-                    )
-                } else null
-
-                val scannedReceipt = ScannedReceipt(
-                    imagePath = null, // No image for email receipts
-                    rawOcrText = RawContentSanitizer.sanitizeRawOcr(emailBody.take(5000), mode),
-                    parsedTotal = parsedReceipt.amount,
-                    parsedMerchant = normalizedMerchant,
-                    parsedDate = parsedReceipt.date,
-                    parsedItems = receiptItemsJson,
-                    parsedTaxAmount = null, // Email receipts usually don't show tax separately
-                    currency = parsedReceipt.currency,
-                    confidence = parsedReceipt.confidence.toFloat(),
-                    matchStatus = MatchStatus.UNMATCHED,
-                    sourceType = ReceiptSourceType.EMAIL.name,
-                    documentType = ReceiptDocumentType.EMAIL_RECEIPT.name
-                )
-
-                val receiptId = receiptLifecycleCoordinator.saveEmailReceipt(scannedReceipt)
-                if (receiptId <= 0) {
-                    return@transactionRunner EmailReceiptResult.ParseError("Failed to create receipt record")
-                }
-
-                // Step 7: Create email receipt source record
-                val emailSource = EmailReceiptSource(
-                    receiptId = receiptId,
-                    emailSender = sanitizedSender,
-                    emailSubject = sanitizedSubject,
-                    emailMessageId = RawContentSanitizer.sanitizeEmailMessageId(messageId, emailMode),
-                    parsedAt = timeProvider.now(),
-                    provider = provider,
-                    confidence = parsedReceipt.confidence,
-                    fingerprint = fingerprint
-                )
-                val sourceId = emailReceiptDao.insertOrIgnore(emailSource)
-                if (sourceId == -1L) {
-                    val existingByFp = emailReceiptDao.getByFingerprint(fingerprint)
-                    if (existingByFp != null) {
-                        Timber.d("EmailReceiptSource insert conflict, returning duplicate for receipt %d", existingByFp.receiptId)
-                        return@transactionRunner EmailReceiptResult.Duplicate(existingByFp.receiptId)
                     }
-                    Timber.w("EmailReceiptSource insert conflict for receipt %d", receiptId)
-                }
-
-                // Step 8: Route email receipts through the shared receipt processing pipeline
-                val processedReceipt = processReceiptUseCase(
-                    ReceiptSource.ParsedContent(
-                        rawText = emailBody,
-                        merchant = parsedReceipt.merchant,
-                        amount = parsedReceipt.amount,
-                        date = parsedReceipt.date
-                    )
-                ).getOrElse { error ->
-                    throw EmailReceiptExpenseCreationException(
-                        message = "Failed to process email receipt through receipt pipeline: $receiptId",
-                        cause = error
+                    EmailReceiptResult.Success(
+                        coordinatorResult.receiptId,
+                        coordinatorResult.expenseIds
                     )
                 }
-
-                val expenseIds = createExpenseFromReceipt(
-                    receiptId = receiptId,
-                    processedReceipt = processedReceipt,
-                    receipt = parsedReceipt,
-                    messageId = messageId
-                )
-
-                if (expenseIds.isEmpty()) {
-                    throw EmailReceiptExpenseCreationException("Failed to create expense from email receipt: $receiptId")
+                is EmailReceiptProcessResult.Duplicate -> {
+                    EmailReceiptResult.Duplicate(coordinatorResult.existingReceiptId)
                 }
-
-                Timber.i("Email receipt processed successfully: receiptId=$receiptId, expenseIds=$expenseIds, provider=$provider")
-
-                EmailReceiptResult.Success(receiptId, expenseIds)
-            }
-
-            if (result is EmailReceiptResult.Success) {
-                for (expenseId in result.expenseIds) {
-                    try {
-                        coordinator.dispatchPostCreationSideEffects(expenseId, ExpenseSource.EMAIL_RECEIPT)
-                    } catch (e: Exception) {
-                        Timber.w(e, "Non-critical: failed to dispatch post-creation side effects for expense $expenseId")
-                    }
+                is EmailReceiptProcessResult.Error -> {
+                    EmailReceiptResult.ParseError(coordinatorResult.message)
                 }
             }
-
-            result
-        } catch (e: EmailReceiptExpenseCreationException) {
-            Timber.w(e, "Failed to finalize email receipt ingestion from $sender")
-            return EmailReceiptResult.ParseError("Failed to create expense from receipt")
         } catch (e: Exception) {
             Timber.e(e, "Error processing email receipt from $sender")
             return EmailReceiptResult.ParseError("Processing error: ${e.message}")
@@ -463,85 +329,6 @@ class EmailReceiptIngestionService(
         // message IDs still match by content (merchant + amount + date bucket)
         return "${merchant.lowercase()}_${roundedAmount}_${dateBucket}"
     }
-
-    private fun createSourceFingerprint(merchant: String, amount: Double, date: Long, messageId: String): String {
-        val contentFp = createFingerprint(merchant, amount, date)
-        return "${contentFp}_${messageId}"
-    }
-
-    /**
-     * Find existing scanned receipt with matching fingerprint.
-     */
-    private suspend fun findExistingScannedReceipt(fingerprint: String): ScannedReceipt? {
-        // Get recent receipts and check fingerprint manually
-        val since = TimePeriodUtils.addDays(timeProvider.now(), -30) // Last 30 days
-        val recentReceipts = receiptLifecycleCoordinator.getRecentReceipts(since)
-        
-        return recentReceipts.find { receipt ->
-            val merchant = receipt.parsedMerchant ?: return@find false
-            val amount = receipt.parsedTotal ?: return@find false
-            val date = receipt.parsedDate ?: receipt.createdAt
-            val receiptFingerprint = createFingerprint(merchant, amount, date)
-            receiptFingerprint == fingerprint
-        }
-    }
-
-    /**
-     * Create expense record from parsed receipt data.
-     * Returns list of created expense IDs.
-     */
-    private suspend fun createExpenseFromReceipt(
-        receiptId: Long,
-        processedReceipt: ProcessedReceipt,
-        receipt: ParsedEmailReceipt,
-        messageId: String
-    ): List<Long> {
-        // Route through the transaction lifecycle coordinator so that
-        // a CREATED event is written and deduplication is handled consistently.
-        val request = CreateExpenseRequest(
-            merchant = processedReceipt.merchant,
-            amount = processedReceipt.amount,
-            currency = receipt.currency,
-            date = processedReceipt.date ?: receipt.date,
-            transactionType = TransactionType.PURCHASE,
-            source = ExpenseSource.EMAIL_RECEIPT,
-            categoryId = processedReceipt.categoryId,
-            idempotencyKey = messageId.takeUnless { it.isBlank() },
-            notes = receipt.items
-                .takeIf { it.isNotEmpty() }
-                ?.joinToString(prefix = "Email receipt: ", separator = ", ") { it.description }
-        )
-
-        val expenseId = when (val result = coordinator.createExpense(request, SideEffectMode.DEFER)) {
-            is CreateExpenseResult.Created -> result.expenseId
-            is CreateExpenseResult.DuplicateSkipped -> {
-                Timber.d("Email receipt matched existing expense %d", result.existingExpenseId)
-                result.existingExpenseId
-            }
-            else -> {
-                Timber.w("Failed to create expense for email receipt: $receiptId, result=$result")
-                throw EmailReceiptExpenseCreationException("Failed to create expense for email receipt: $receiptId")
-            }
-        }
-
-        val linkResult = receiptLinkService.linkReceiptToExpense(
-            receiptId = receiptId,
-            expenseId = expenseId,
-            linkType = "EMAIL_RECEIPT",
-            source = ExpenseSource.EMAIL_RECEIPT.name,
-            confidence = processedReceipt.categoryConfidence
-        )
-        if (linkResult.isFailure) {
-            val msg = "Email receipt link failed for receipt $receiptId → expense $expenseId: ${linkResult.exceptionOrNull()?.message}"
-            Timber.w(msg)
-            throw EmailReceiptExpenseCreationException(msg, linkResult.exceptionOrNull())
-        }
-
-        return listOf(expenseId)
-    }
-
-    private class EmailReceiptExpenseCreationException(message: String, cause: Throwable? = null) :
-        IllegalStateException(message, cause)
 
     /**
      * Batch process multiple email receipts.

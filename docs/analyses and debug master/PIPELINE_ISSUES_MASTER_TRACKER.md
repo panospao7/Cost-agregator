@@ -3,8 +3,8 @@
 > Consolidated P0/P1 issues from all 12 pipeline debug reports.
 > Each issue's **full fix strategy + implementation plan** lives in its source debug report.
 > Baseline: `71fbbf9aed221a7446f99967b49b6e9ebeb51946`
-> **Last updated: 2026-05-10 (codebase verification against HEAD ~25a74824)**
-> **Total: 8 P0 + 112 P1 = 120 pipeline issues + 10 universal contracts = 130 items (44 ✅ FIXED + 6 ⚠ PARTIAL + 79 📝 TODO ONLY + 1 ⏭ DEFERRED)**
+> **Last updated: 2026-05-11 (Pipeline 2 PR4 email coordinator refactor + tracker status refresh)**
+> **Total: 8 P0 + 112 P1 = 120 pipeline issues + 10 universal contracts = 130 items (45 ✅ FIXED + 8 ⚠ PARTIAL + 76 📝 TODO ONLY + 1 ⏭ DEFERRED)**
 
 ## Architectural Strategy (from `response (3).md`)
 
@@ -43,7 +43,7 @@ Full source: `pipeline-1-notification-debug-report.md`
 |----|-----|-------|------|-------------|--------|
 | P1-P1-01 | P1 | Processing outcomes flattened to `Success` | Bug | `processInternal()` now returns typed `NotificationPipelineOutcome` sealed interface | ✅ FIXED |
 | P1-P1-02 | P1 | No durable notification diagnostic/drop-reason ledger | Enhancement | PipelineDiagnosticEvent table exists; notification pipeline writes events via `writePipelineDiagnosticEvent()` — shared generic diagnostic entity, not notification-specific | ⚠ PARTIAL |
-| P1-P1-03 | P1 | Extraction misses `textLines` and `messages` | Bug | `NotificationTextParts.extract()` omits `textLines`/`messages` used by bank/SMS notifications | 📝 TODO ONLY |
+| P1-P1-03 | P1 | Extraction misses `textLines` and `messages` | Bug | `NotificationTextParts.extract()` omits `textLines`/`messages` used by bank/SMS notifications | ✅ FIXED |
 | P1-P1-05 | P1 | Privacy gate runs after text extraction/filter | Bug | Text extracted before privacy gate check; need cached `StateFlow<PrivacyDecision>` | 📝 TODO ONLY |
 | P1-P1-06 | P1 | Restore guard exists in service but not in pipeline | Bug | Both `NotificationProcessingPipeline` and `NotificationRepository` now have `writeBarrier.checkWritesAllowed()` guards | ✅ FIXED |
 | P1-P1-07 | P1 | Service shutdown silently loses accepted notifications | Bug | Coroutine cancelled before DB write; dedupe cache suppresses retry | 📝 TODO ONLY |
@@ -66,12 +66,12 @@ Full source: `pipeline-3-receipt-capture-ocr-email-debug-report.md`
 
 | ID | Sev | Title | Type | Fix Summary | Status |
 |----|-----|-------|------|-------------|--------|
-| P3-P0-01 | P0 | Scanned receipts saved with `createdAt = 0` | Bug | `createdAt` defaults to 0L; need to set at lifecycle boundary | 📝 TODO ONLY |
-| P3-P1-01 | P1 | Receipt save/update/event not atomic | Bug | Insert + event not in single transaction (from prior session) | ✅ FIXED |
+| P3-P0-01 | P0 | Scanned receipts saved with `createdAt = 0` | Bug | `createdAt` defaults to 0L; need to set at lifecycle boundary | ✅ FIXED | ✓ All paths now set `createdAt` at lifecycle boundary (ReceiptLifecycleCoordinator, BankStatementLifecycleProcessor) |
+| P3-P1-01 | P1 | Receipt save/update/event not atomic | Bug | Insert + event not in single transaction (from prior session) | ✅ FIXED | ✓ `processReceiptInput()` uses atomic DB transaction with ghost-state cleanup |
 | P3-P1-02 | P1 | `ReceiptLinkService` lacks restore guard | Bug | `linkReceiptToExpense()`/`unlinkReceiptFromExpense()` now guarded (from prior session) | ✅ FIXED |
 | P3-P1-03 | P1 | Matching result computed but not persisted | Bug | `findBestMatch()` result ignored; `matchStatus` stays `UNMATCHED` | 📝 TODO ONLY |
-| P3-P1-04 | P1 | Receipt-created expense + link not atomic in convenience paths | Bug | Separate steps; link failure leaves unlinked expense | 📝 TODO ONLY |
-| P3-P1-05 | P1 | Direct repository methods bypass lifecycle | Bug | `insertReceipt()`, `deleteReceipt()`, `clearAllScannedReceipts()` bypass coordinator | 📝 TODO ONLY |
+| P3-P1-04 | P1 | Receipt-created expense + link not atomic in convenience paths | Bug | Separate steps; link failure leaves unlinked expense | ⚠ PARTIAL | ⚠ EmailReceiptIngestionService inline fallback removed — coordinator is single owner. Legacy convenience paths still exist with ERROR-level deprecation. |
+| P3-P1-05 | P1 | Direct repository methods bypass lifecycle | Bug | `insertReceipt()`, `deleteReceipt()`, `clearAllScannedReceipts()` bypass coordinator | ⚠ PARTIAL | ⚠ Write barrier guards exist but some direct DAO paths remain for backfill/debug.
 | P3-P1-06 | P1 | `ScannedReceiptDao.insert()` IGNORE conflict not checked | Bug | Returns 0 on conflict; callers proceed with `receiptId = 0` | 📝 TODO ONLY |
 | P3-P1-07 | P1 | Currency fallback hardcoded EUR in OCR parse | Bug | `ReceiptParser.parse()` defaults to `"EUR"` when no explicit currency | 📝 TODO ONLY |
 | P3-P1-08 | P1 | Parse failures classified as `OCR_COMPLETED` not `PARSE_FAILED` | Bug | OCR succeeds but parsing throws; status set to wrong value | 📝 TODO ONLY |
@@ -264,9 +264,9 @@ Universal contracts extracted from the architectural strategy — each represent
 
 | Pipeline | P0 | P1 | Total | ✅ Fixed | ⚠ Partial | Remaining |
 |----------|-----|-----|-------|----------|-----------|-----------|
-| 1 — Notification | 0 | 6 | 6 | 2 | 1 | 3 |
+| 1 — Notification | 0 | 6 | 6 | 3 | 1 | 2 |
 | 2 — Transaction Lifecycle | 0 | 5 | 5 | 4 | 0 | 1 |
-| 3 — Receipt Capture | 1 | 10 | 11 | 2 | 0 | 9 |
+| 3 — Receipt Capture | 1 | 10 | 11 | 3 | 2 | 6 |
 | 4 — Recurring/Bill Reminders | 2 | 10 | 12 | 5 | 0 | 7 |
 | 5 — Currency/Dashboard | 0 | 8 | 8 | 1 | 0 | 7 |
 | 6 — Budget/Forecasting | 0 | 15 | 15 | 4 | 0 | 11 |
@@ -277,19 +277,20 @@ Universal contracts extracted from the architectural strategy — each represent
 | 11 — Email Receipt | 0 | 8 | 8 | 3 | 1 | 4 |
 | 12 — Import/Export | 1 | 10 | 11 | 4 | 2 | 5 |
 | **UNIVERSAL CONTRACTS** | **0** | **0** | **10** | **9** | **1** | **0** |
-| **TOTAL** | **8** | **112** | **130** | **43** | **6** | **81** |
+| **TOTAL** | **8** | **112** | **130** | **45** | **8** | **77** |
 
 | Status | Count |
 |--------|-------|
-| ✅ FIXED | 43 |
-| ⚠ PARTIAL | 6 |
-| 📝 TODO ONLY | 80 |
+| ✅ FIXED | 45 |
+| ⚠ PARTIAL | 8 |
+| 📝 TODO ONLY | 76 |
 | ⏭ DEFERRED | 1 |
 
-## Key Changes Since Last Update (2026-05-10 verification)
+## Key Changes Since Last Update (2026-05-11 verification)
 
 **Issues newly verified as FIXED:**
 - P1-P1-06: Both `NotificationProcessingPipeline` and `NotificationRepository` have `writeBarrier` checks
+- P3-P0-01: All receipt creation paths now set `createdAt` at lifecycle boundary (ReceiptLifecycleCoordinator, BankStatementLifecycleProcessor)
 - P4-P1-01: Atomic `claimDelivery()` sets CLAIMED state before notification dispatch
 - P4-P1-03: BillReminderWorker enabled in `WorkerSpec.DEFAULTS`
 - P6-P1-07: `SynthesisEngine` applies `dataQuality.confidencePenalty`
@@ -303,12 +304,21 @@ Universal contracts extracted from the architectural strategy — each represent
 - P12-P1-08: Business/tax fields included in `ExportTransaction` DTO
 
 **Issues newly verified as PARTIAL:**
-- P1-P1-02: `PipelineDiagnosticEvent` shared table written by notification pipeline
+- P1-P1-02: `PipelineDiagnosticEvent` shared table written by notification pipeline; `processBatch()` now writes diagnostic events per result
+- P3-P1-04: `EmailReceiptIngestionService` inline fallback removed — coordinator is single owner for email receipt ingestion. Legacy convenience paths still exist with ERROR-level deprecation.
+- P3-P1-05: Write barrier guards exist but some direct DAO paths remain for backfill/debug
 - P11-P1-04: `RawContentSanitizer` applied to email sender/subject/body at write time
 - P12-P0-01: `ImportCoordinator` + `JsonExpenseImporter` + `CsvExpenseImporter` exist with roundtrip test
 
-**Architecture-level additions:**
-- `DatabaseReadBarrier` added (limited adoption in ExportOptionsViewModel)
-- `WorkerExecutionGuard` now unified guard for all 7 workers
-- `RawStorageMode` + `RawContentSanitizer` write-time privacy for OCR/email/notifications
-- Universal contracts expanded from 8→10: U1–U10 with explicit status tracking
+**Newly completed PRs:**
+- P1-PR2: Text extraction hardened — messages now use `getParcelableArrayList<CharSequence>` (API 33+) with deprecated `getParcelableArray` fallback
+- P1-PR5: `processBatch()` now writes `PipelineDiagnosticEvent` for every outcome
+- P1-PR6: Pipeline flow KDoc added to `NotificationProcessingPipeline` class
+- P2-PR0: `docs/expense-mutation-inventory.md` created with all 29 classified callsites
+- P2-PR1: `checkLifecycleBypass` task KDoc updated with CI-enforced boundary documentation
+- P2-PR2: `createExpenseStandalone()` and `createExpenseDbOnly()` added; old `createExpense()` marked @Deprecated
+- P2-PR3: `ExpenseRepository` lifecycle KDoc enhanced with MAINTENANCE/BACKFILL/DEBUG/DESIGN bypass classifications
+- P2-PR4: `updateBusinessTaxFields` renamed to `updateBusinessFlags` with narrowed KDoc
+- P2-PR5: Event insert failure policy documented on `writeDuplicateEvent` (best-effort vs REQUIRED)
+- P3-PR4: `EmailReceiptIngestionService` inline fallback removed — coordinator is now single mutation owner
+- P3-PR5: `ReceiptMatchingWorker` checkpoint verified — `executionGuard.checkpoint("receipt_matching")` present

@@ -77,12 +77,26 @@ internal data class NotificationTextParts(
                     ?: emptyList()
             } catch (_: Exception) { emptyList() }
 
+            // Improved messaging-style extraction: try the typed API first (API 33+)
+            // which returns CharSequence objects directly, then fall back to the
+            // deprecated getParcelableArray for older API levels. Both paths cast
+            // each item to CharSequence before toString() to handle Bundle-style
+            // message objects (e.g. android.app.Notification.MessagingStyle.Message).
             val messages = try {
-                extras.getParcelableArray(android.app.Notification.EXTRA_MESSAGES)
-                    ?.mapNotNull { it?.toString()?.takeIf { s -> s.isNotBlank() } }
-                    ?: emptyList()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    extras.getParcelableArrayList(android.app.Notification.EXTRA_MESSAGES, CharSequence::class.java)
+                        ?.mapNotNull { it?.toString()?.takeIf { s -> s.isNotBlank() } }
+                        ?: emptyList()
+                } else {
+                    @Suppress("DEPRECATION")
+                    extras.getParcelableArray(android.app.Notification.EXTRA_MESSAGES)
+                        ?.mapNotNull { (it as? CharSequence)?.toString()?.takeIf { s -> s.isNotBlank() } }
+                        ?: emptyList()
+                }
             } catch (_: Exception) { emptyList() }
 
+            // Deterministic combinedBody: title/top-level fields first, then textLines,
+            // then messages. linkedSetOf preserves insertion order and deduplicates blanks.
             val uniqueParts = linkedSetOf<String>()
             listOfNotNull(title, text, bigText, subText, infoText, summaryText).forEach { uniqueParts += it }
             textLines.forEach { uniqueParts += it }
@@ -274,7 +288,7 @@ class NotificationCaptureService : NotificationListenerService() {
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to observe privacy settings, defaulting to allowed")
-                capturePrivacyDenied = false
+                capturePrivacyDenied = true  // fail-closed on observer error
             }
         }
     }

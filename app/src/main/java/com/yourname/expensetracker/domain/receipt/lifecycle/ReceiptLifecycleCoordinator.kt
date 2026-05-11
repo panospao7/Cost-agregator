@@ -640,7 +640,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 documentType = ReceiptDocumentType.EMAIL_RECEIPT.name,
                 processingStatus = if (emailData.merchant != null) ReceiptProcessingStatus.PARSED.name
                                    else ReceiptProcessingStatus.CAPTURED.name,
-                sourceFingerprint = messageId,
+                sourceFingerprint = RawContentSanitizer.sanitizeEmailMessageId(messageId, emailStorageMode) ?: "",
                 createdAt = now,
                 updatedAt = now
             )

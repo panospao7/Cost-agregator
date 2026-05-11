@@ -36,7 +36,7 @@ import javax.inject.Inject
  */
 // TODO (PR-E22): Return MoneyAggregate for deductible/income totals instead of raw Double.
 // Apply hardened CSV cell sanitizer (neutralize =+@- leading characters) per OWASP.
-// Add updateBusinessTaxFields coordinator method.
+// Add updateBusinessFlags coordinator method.
 class AccountantReportPdfExporter @Inject constructor(
     private val timeProvider: TimeProvider,
     private val currencyConverter: CurrencyConverter,

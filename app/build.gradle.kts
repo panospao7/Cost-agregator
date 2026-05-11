@@ -459,7 +459,26 @@ tasks.register("checkDirectTimeCalls") {
     }
 }
 
-// CI guard — fails build on direct ExpenseDao mutations outside allowlist.
+/**
+ * CI-enforced boundary guard.
+ *
+ * FAILS BUILD on direct ExpenseDao insert/update/delete mutations
+ * outside the lifecycle allowlist. Any new class that needs direct
+ * ExpenseDao access MUST be added to [allowlistForGuard] with a
+ * documented rationale in docs/expense-mutation-inventory.md.
+ *
+ * Allowlist (approved bypasses):
+ * - TransactionLifecycleCoordinator — the canonical mutation entry point
+ * - LocationBackfillWorker — background column backfill (1-2 cols, low-value events)
+ * - MerchantKeyBackfillWorker — background column backfill (1 col, low-value events)
+ * - GroupTransactionCoordinator — atomic group-expense creation within outer tx
+ * - DebugExpenseRepository — BuildConfig.DEBUG guarded debug methods
+ * - AppDatabase — Room infrastructure
+ * - ReceiptLinkService — circular dependency constraint (RCP-30)
+ * - ExpenseRepository — delegated to coordinator for all user paths
+ * - MultiCurrencyRepository — analytics-only read path with conversion inserts
+ * - NotificationRepository — notification capture, not expense mutation
+ */
 val srcDirForGuard = layout.projectDirectory.dir("src/main/java").asFile
 val allowlistForGuard = setOf(
     "TransactionLifecycleCoordinator", "LocationBackfillWorker", "MerchantKeyBackfillWorker",

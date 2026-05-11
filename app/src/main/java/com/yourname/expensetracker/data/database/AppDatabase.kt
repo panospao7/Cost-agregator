@@ -38,7 +38,7 @@ import com.yourname.expensetracker.data.security.BankTokenCipher
  * specifically validates that a v5 database is correctly handled by
  * [fallbackToDestructiveMigration].
  */
-const val APP_DATABASE_SCHEMA_VERSION = 123
+const val APP_DATABASE_SCHEMA_VERSION = 124
 
 @Database(
     entities = [
@@ -7678,6 +7678,15 @@ val MIGRATION_104_105 = object : androidx.room.migration.Migration(104, 105) {
             }
         }
 
+        val MIGRATION_123_124 = object : androidx.room.migration.Migration(123, 124) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN notificationKeyHash TEXT")
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN confidence REAL")
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN decisionSource TEXT")
+                database.execSQL("ALTER TABLE pipeline_diagnostic_events ADD COLUMN elapsedMs INTEGER")
+            }
+        }
+
         /**
          * Creates an in-memory [RoomDatabase.Builder] pre-configured with
          * [FRESH_INSTALL_CALLBACK] and [allowMainThreadQueries].
@@ -7836,7 +7845,8 @@ MIGRATION_91_92,
         MIGRATION_119_120,
         MIGRATION_120_121,
         MIGRATION_121_122,
-        MIGRATION_122_123
+        MIGRATION_122_123,
+        MIGRATION_123_124
     )
 }
 }
