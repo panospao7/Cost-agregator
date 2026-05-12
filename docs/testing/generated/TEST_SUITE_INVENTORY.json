@@ -1,0 +1,90 @@
+{
+  "generated": "2026-05-12",
+  "commit": "HEAD",
+  "totalFiles": 489,
+  "sourceSets": {
+    "test": 463,
+    "androidTest": 26
+  },
+  "actionCounts": {
+    "KEEP": 385,
+    "DELETE": 26,
+    "REWRITE": 17,
+    "MOVE": 5,
+    "MOVE_TO_NIGHTLY": 32,
+    "UNKNOWN": 24
+  },
+  "valueCounts": {
+    "P0_CRITICAL": 45,
+    "P1_HIGH": 155,
+    "P2_MEDIUM": 140,
+    "P3_LOW": 120,
+    "P4_NEGATIVE_VALUE": 28
+  },
+  "typeCounts": {
+    "PURE_ENGINE": 80,
+    "DAO_ROOM_CONTRACT": 25,
+    "REPOSITORY_INTEGRATION": 45,
+    "LIFECYCLE_CONTRACT": 15,
+    "MULTI_PIPELINE_SCENARIO": 12,
+    "GOLDEN": 20,
+    "MIGRATION_SCHEMA": 3,
+    "VIEWMODEL_STATE": 30,
+    "PARSER": 15,
+    "FIXTURE_INFRASTRUCTURE": 25,
+    "STRESS_PERFORMANCE": 30,
+    "TRIVIAL_MODEL": 15,
+    "SOURCE_TEXT_ASSERTION": 3,
+    "MOCK_ORCHESTRATION": 20,
+    "PRIVACY_SECURITY": 10,
+    "BACKUP_RESTORE": 5,
+    "WORKER_RUNTIME": 8,
+    "ANDROID_SMOKE": 3,
+    "COMPOSE_UI": 0,
+    "UNKNOWN": 120
+  },
+  "topDeleteCandidates": [
+    "data/database/TransactionRollbackTest.kt",
+    "domain/budget/BudgetForecastingEngineStubTest.kt",
+    "ui/screens/debug/DebugScreenTextTest.kt",
+    "ui/MainActivityDeepLinkTest.kt",
+    "ui/screens/home/HomeScreenWidgetTest.kt",
+    "ui/screens/transactions/TransactionsScreenTest.kt",
+    "scenarios/PrivacyGateEnforcementScenarioTest.kt",
+    "scenarios/SpeechInputGatewayLifecycleTest.kt",
+    "domain/intelligence/ml/FeatureExtractorTest.kt",
+    "domain/model/CategoryBreakdownTest.kt",
+    "domain/model/PeriodTotalTest.kt",
+    "domain/location/TravelDetectionEngineTest.kt",
+    "domain/config/AppConfigTest.kt",
+    "ui/screens/bank/BankConnectionsViewModelTest.kt",
+    "ui/screens/analytics/AnalyticsStateStressTest.kt"
+  ],
+  "topRewriteCandidates": [
+    "integration/CategorizationPipelineIntegrationTest.kt",
+    "integration/ExpenseCreationPipelineIntegrationTest.kt",
+    "e2e/AnalyticsPipelineTest.kt",
+    "e2e/FlowPipelineTestHarness.kt",
+    "e2e/NotificationExpenseDashboardPipelineTest.kt",
+    "e2e/ReceiptProcessingPipelineTest.kt",
+    "e2e/BudgetAlertPipelineTest.kt",
+    "e2e/GroupSettlementPipelineTest.kt",
+    "domain/util/BKTreeTest.kt",
+    "domain/categorization/AppParserRegistryTest.kt",
+    "ui/screens/home/HomeViewModelRecommendationTest.kt"
+  ],
+  "topGaps": [
+    "InvestmentDaoTest - skeleton, needs real Room-backed tests",
+    "BankApiIntegrationTest - mock-only, needs real bank sync test",
+    "AnalyticsCurrencyNormalizer - no golden test",
+    "Notification Capture - no real capture lifecycle test",
+    "AnalyticsViewModel - no real ViewModel state test"
+  ],
+  "batchDocuments": [
+    "docs/testing/generated/test-batches/batch-001.md",
+    "docs/testing/generated/test-batches/batch-002.md",
+    "docs/testing/generated/test-batches/batch-003.md",
+    "docs/testing/generated/test-batches/batch-004.md",
+    "docs/testing/generated/test-batches/batch-005.md"
+  ]
+}

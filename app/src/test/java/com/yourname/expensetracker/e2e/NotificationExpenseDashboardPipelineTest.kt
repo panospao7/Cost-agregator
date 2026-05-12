@@ -90,6 +90,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.ComputeMoneyRadarUse
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
 import com.yourname.expensetracker.domain.usecase.savings.LifestyleSavingsPromptUseCase
+import com.yourname.expensetracker.domain.usecase.savings.MonthlySavingsSweepUseCase
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.util.CurrencyNormalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
@@ -198,8 +199,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             categoryRepositoryProvider = categoryRepositoryProvider,
             canonicalizer = MerchantCanonicalizer(),
             greeklishNormalizer = greeklishNormalizer,
-            semanticMatcher = SemanticKeywordMatcher(greeklishNormalizer, timeProvider = timeProvider),
-            contextEngine = ContextualInferenceEngine(),
+            semanticMatcher = SemanticKeywordMatcher(greeklishNormalizer),
+            contextEngine = ContextualInferenceEngine(timeProvider = timeProvider),
             timeProvider = timeProvider
         )
 
@@ -388,6 +389,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             promptStateRepository = promptStateRepository,
             timeProvider = timeProvider,
         )
+
+        val monthlySavingsSweepUseCase = mockk<MonthlySavingsSweepUseCase>(relaxed = true)
 
         val historicalDistribution = HistoricalSpendingDistribution(expenseRepository, timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk())
         val monteCarloSimulator = MonteCarloSpendingSimulator(

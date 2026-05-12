@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -32,6 +33,7 @@ class ExpenseRepositoryStressTest {
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
     private val transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
     private val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+    private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
 
     private lateinit var repository: ExpenseRepository
 
@@ -53,6 +55,7 @@ class ExpenseRepositoryStressTest {
         }
 
         repository = ExpenseRepository(
+            writeBarrier,
             database,
             expenseDao,
             userCorrectionDao,
@@ -128,7 +131,7 @@ class ExpenseRepositoryStressTest {
 
     @Test
     fun `stress - updateExpenseCategoryBulk for many merchants`() = runTest {
-        coEvery { expenseDao.updateCategoryForMerchant(any(), any()) } returns Unit
+        coEvery { expenseDao.updateCategoryForMerchant(any(), any()) } returns 1
         coEvery { merchantCategoryRepository.learnPattern(any(), any()) } returns Unit
         coEvery { userCorrectionDao.insert(any()) } returns 1L
 

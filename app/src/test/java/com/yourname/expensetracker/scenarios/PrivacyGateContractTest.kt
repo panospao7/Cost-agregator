@@ -101,7 +101,8 @@ class PrivacyGateContractTest {
         val denied = PrivacyDecision.Denied("First gate blocks")
         coEvery { firstGate.check(any(), any()) } returns denied
 
-        val composite = CompositePrivacyGate(listOf(firstGate, secondGate))
+        val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
+        val composite = CompositePrivacyGate(listOf(firstGate, secondGate), auditLogger)
 
         // WHEN: checking composite gate
         val decision = composite.check(PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST)
@@ -237,7 +238,8 @@ class PrivacyGateContractTest {
         coEvery { firstGate.check(any(), any()) } returns PrivacyDecision.Allowed
         coEvery { secondGate.check(any(), any()) } returns PrivacyDecision.Allowed
 
-        val composite = CompositePrivacyGate(listOf(firstGate, secondGate))
+        val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
+        val composite = CompositePrivacyGate(listOf(firstGate, secondGate), auditLogger)
 
         // WHEN: checking composite gate
         val decision = composite.check(PrivacyCapability.NOTIFICATION_CAPTURE)

@@ -8,6 +8,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -21,6 +22,7 @@ import java.util.Calendar
  * requested-period income alignment, business-only VAT scope, and real
  * yearly income in tax summaries.
  */
+@Suppress("DEPRECATION_ERROR")
 class TaxEstimatorTest : AnalyticsEngineTestBase() {
 
     private lateinit var businessExpenseRepository: BusinessExpenseRepository
@@ -37,7 +39,6 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
             currencyConverter = mockk(relaxed = true),
             currencySettingsRepository = mockk(relaxed = true),
             taxSettings = mockk(relaxed = true),
-            writeBarrier = mockk<com.yourname.expensetracker.data.backup.DatabaseWriteBarrier>(relaxed = true),
             ioDispatcher = Dispatchers.Unconfined,
             taxRateProvider = mockk(relaxed = true)
         )

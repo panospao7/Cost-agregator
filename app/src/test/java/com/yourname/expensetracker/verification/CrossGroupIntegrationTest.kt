@@ -501,7 +501,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             analyticsCurrencyNormalizer = mockk(),
             expenseRepository = mockk(),
             currencySettingsRepository = mockk(),
-            currencyConverter = mockk()
+            currencyConverter = mockk(),
+            writeBarrier = mockk(relaxed = true)
         )
 
         val forecast = engine.generateForecast(

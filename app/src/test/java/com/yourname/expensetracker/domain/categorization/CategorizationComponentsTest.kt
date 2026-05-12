@@ -184,56 +184,56 @@ class SemanticKeywordMatcherTest {
     @Test
     fun `finds pizza keyword`() {
         val result = matcher.findBestMatch("Pizza Hut", 0.50)
-        assertNotNull(result)
-        assertEquals("Food", result!!.categoryName)
-        assertTrue(result.confidence >= 0.50)
+        assertNotNull(result.bestMatch)
+        assertEquals("Food", result.bestMatch!!.categoryName)
+        assertTrue(result.bestMatch!!.confidence >= 0.50)
     }
     
     @Test
     fun `finds coffee keyword`() {
         val result = matcher.findBestMatch("Coffee Island", 0.50)
-        assertNotNull(result)
-        assertEquals("Food", result!!.categoryName)
+        assertNotNull(result.bestMatch)
+        assertEquals("Food", result.bestMatch!!.categoryName)
     }
     
     @Test
     fun `finds supermarket keyword`() {
         val result = matcher.findBestMatch("Supermarket", 0.50)
-        assertNotNull(result)
-        assertEquals("Groceries", result!!.categoryName)
+        assertNotNull(result.bestMatch)
+        assertEquals("Groceries", result.bestMatch!!.categoryName)
     }
     
     @Test
     fun `finds transport keyword`() {
         val result = matcher.findBestMatch("Shell Gas Station", 0.50)
-        assertNotNull(result)
-        assertEquals("Transport", result!!.categoryName)
+        assertNotNull(result.bestMatch)
+        assertEquals("Transport", result.bestMatch!!.categoryName)
     }
     
     @Test
     fun `pattern matching works for pizza`() {
         val result = matcher.findBestMatch("Pizza Hood", 0.70)
-        assertNotNull(result)
-        assertEquals("Food", result!!.categoryName)
+        assertNotNull(result.bestMatch)
+        assertEquals("Food", result.bestMatch!!.categoryName)
     }
     
     @Test
     fun `pattern matching works for coffee house`() {
         val result = matcher.findBestMatch("Coffee House", 0.70)
-        assertNotNull(result)
-        assertEquals("Food", result!!.categoryName)
+        assertNotNull(result.bestMatch)
+        assertEquals("Food", result.bestMatch!!.categoryName)
     }
     
     @Test
     fun `returns null for unknown merchants with high threshold`() {
         val result = matcher.findBestMatch("RandomUnknownXYZ", 0.50)
-        assertNull(result)
+        assertNull(result.bestMatch)
     }
     
     @Test
     fun `returns null for completely unknown merchants`() {
         val result = matcher.findBestMatch("SomeUnknownXYZ123", 0.20)
-        assertNull(result)  // No keywords match, regardless of threshold
+        assertNull(result.bestMatch)  // No keywords match, regardless of threshold
     }
     
     @Test
@@ -245,14 +245,14 @@ class SemanticKeywordMatcherTest {
     @Test
     fun `matches keyword with punctuation suffix`() {
         val result = matcher.findBestMatch("Disney+ subscription", 0.20)
-        assertNotNull(result)
+        assertNotNull(result.bestMatch)
     }
 
     @Test
     fun `matches hyphenated keyword`() {
         val result = matcher.findBestMatch("e-food order", 0.20)
-        assertNotNull(result)
-        assertEquals("Food", result!!.categoryName)
+        assertNotNull(result.bestMatch)
+        assertEquals("Food", result.bestMatch!!.categoryName)
     }
 }
 
@@ -262,7 +262,7 @@ class ContextualInferenceEngineTest {
     
     @Before
     fun setup() {
-        engine = ContextualInferenceEngine()
+        engine = ContextualInferenceEngine(timeProvider = mockk(relaxed = true))
     }
     
     @Test

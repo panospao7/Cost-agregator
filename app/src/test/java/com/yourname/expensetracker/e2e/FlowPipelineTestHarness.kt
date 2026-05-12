@@ -189,6 +189,7 @@ internal fun buildPipeline(
     )
 }
 
+@Suppress("DEPRECATION_ERROR")
 private fun stubDao(expenseDao: ExpenseDao, allExpenses: List<Expense>) {
     fun inRange(start: Long, end: Long): List<Expense> = allExpenses.filter {
         it.date >= start && it.date < end

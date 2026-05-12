@@ -18,6 +18,7 @@ import org.junit.Before
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("DEPRECATION_ERROR")
 class SpendingChallengeManagerTest {
 
     private val expenseDao = mockk<ExpenseDao>()

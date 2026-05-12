@@ -95,7 +95,8 @@ class FinancialStressForecastEngineTest {
             multiCurrencyRepository = mockk(relaxed = true),
             recurringLifecycleCoordinator = mockk(relaxed = true),
             recurringOccurrenceDao = mockk(relaxed = true),
-            currencyConverter = mockk(relaxed = true)
+            currencyConverter = mockk(relaxed = true),
+            accountBalanceProvider = mockk(relaxed = true)
         )
     }
 

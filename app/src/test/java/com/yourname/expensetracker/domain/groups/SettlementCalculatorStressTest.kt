@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -19,7 +20,7 @@ class SettlementCalculatorStressTest {
     private val calculator = SettlementCalculator(currencySettingsRepository = currencySettingsRepository)
 
     @Test
-    fun `15 member alternating plus minus one completes within solver budget without fallback bug B_03`() {
+    fun `15 member alternating plus minus one completes within solver budget without fallback bug B_03`() = runTest {
         val balances = (1L..15L).associateWith { id ->
             val net = if (id % 2L == 0L) 1.0 else -1.0
             memberBalance(id, "M$id", net)
@@ -28,8 +29,8 @@ class SettlementCalculatorStressTest {
         val originalSum = balances.values.sumOf { it.netBalance }
         balances[15L] = memberBalance(15L, "M15", balances.getValue(15L).netBalance - originalSum)
 
+        val settlements = calculator.calculateSettlements(balances)
         val elapsedNs = measureNanoTime {
-            val settlements = calculator.calculateSettlements(balances)
             assertTrue(settlements.all { it.amount > 0.0 })
             assertFalse(settlements.any { it.usedGreedyFallback })
             assertApproxEquals(7.0, settlements.sumOf { it.amount }, 0.01)
@@ -39,11 +40,11 @@ class SettlementCalculatorStressTest {
     }
 
     @Test
-    fun `all zero balances return empty plan immediately`() {
+    fun `all zero balances return empty plan immediately`() = runTest {
         val balances = (1L..15L).associateWith { id -> memberBalance(id, "M$id", 0.0) }
 
+        val settlements = calculator.calculateSettlements(balances)
         val elapsedNs = measureNanoTime {
-            val settlements = calculator.calculateSettlements(balances)
             assertTrue(settlements.isEmpty())
         }
 
@@ -51,7 +52,7 @@ class SettlementCalculatorStressTest {
     }
 
     @Test
-    fun `larger balanced case still preserves settlement volume invariant`() {
+    fun `larger balanced case still preserves settlement volume invariant`() = runTest {
         val balances = mapOf(
             1L to memberBalance(1L, "A", 10.0),
             2L to memberBalance(2L, "B", 10.0),

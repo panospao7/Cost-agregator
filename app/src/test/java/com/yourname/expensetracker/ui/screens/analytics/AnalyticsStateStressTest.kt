@@ -75,9 +75,9 @@ class AnalyticsStateStressTest {
     @Test
     fun `stress - daily totals map has correct size`() {
         val dailyTotals = mapOf(
-            "Monday" to 50.0,
-            "Tuesday" to 75.0,
-            "Wednesday" to 100.0
+            1L to 50.0,
+            2L to 75.0,
+            3L to 100.0
         )
         
         val state = AnalyticsState(dailyTotals = dailyTotals)

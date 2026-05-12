@@ -239,8 +239,8 @@ class InvestmentTrackerTest {
 
         val history = tracker.getPortfolioValueHistory(days = 30)
 
-        assertThat(history.size).isEqualTo(1)
-        assertThat(history.single().totalValue).isEqualTo(170.0)
+        assertThat(history.values.size).isEqualTo(1)
+        assertThat(history.values.single().totalValue).isEqualTo(170.0)
         coVerify(exactly = 1) { investmentValueDao.getPortfolioHistoryBatch(listOf(9L, 10L), any(), any()) }
     }
 

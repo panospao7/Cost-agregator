@@ -12,7 +12,7 @@ import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
-import com.yourname.expensetracker.domain.ai.service.CloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every

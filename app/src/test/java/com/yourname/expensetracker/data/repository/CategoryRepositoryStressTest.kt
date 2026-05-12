@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
@@ -34,6 +35,7 @@ class CategoryRepositoryStressTest {
         coEvery { categorizationEngine.normalize(any()) } returns "normalized"
         
         repository = CategoryRepository(
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             database = mockk<AppDatabase>(relaxed = true),
             categoryDao = categoryDao,
             merchantCategoryDao = merchantCategoryDao,

@@ -10,6 +10,9 @@ import com.yourname.expensetracker.domain.categorization.MatchType as Categoriza
 import com.yourname.expensetracker.domain.intelligence.ml.MatchType as MerchantMatchType
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantLookupResult
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
@@ -57,7 +60,9 @@ class EmailReceiptIngestionServiceTransactionTest {
             categorizationEngine = categorizationEngine,
             timeProvider = timeProvider,
             coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            database = database
+            restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true),
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+            privacySettingsRepository = mockk<PrivacySettingsRepository>(relaxed = true)
         )
 
         every { receiptParser.lineItemsToJson(any()) } returns "[]"

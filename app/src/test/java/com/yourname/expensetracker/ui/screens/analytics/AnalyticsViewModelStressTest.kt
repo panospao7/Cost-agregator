@@ -5,6 +5,9 @@ import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.AnalyticsInputAssembler
+import com.yourname.expensetracker.domain.analytics.BudgetVsActualEngine
+import com.yourname.expensetracker.domain.analytics.DailyBucketEngine
 import com.yourname.expensetracker.domain.analytics.InsightsSnapshot
 import com.yourname.expensetracker.domain.analytics.TimePeriod
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
@@ -44,6 +47,9 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
     private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
     private lateinit var currencyConverter: CurrencyConverter
     private lateinit var currencySettingsRepository: TestCurrencySettingsRepository
+    private lateinit var analyticsInputAssembler: AnalyticsInputAssembler
+    private lateinit var budgetVsActualEngine: BudgetVsActualEngine
+    private lateinit var dailyBucketEngine: DailyBucketEngine
 
     private lateinit var viewModel: AnalyticsViewModel
 
@@ -65,6 +71,10 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
         analyticsCurrencyNormalizer = mockk(relaxed = true)
         currencyConverter = mockk(relaxed = true)
         currencySettingsRepository = TestCurrencySettingsRepository()
+
+        analyticsInputAssembler = mockk<AnalyticsInputAssembler>(relaxed = true)
+        budgetVsActualEngine = mockk<BudgetVsActualEngine>(relaxed = true)
+        dailyBucketEngine = mockk<DailyBucketEngine>(relaxed = true)
 
         every { expenseRepository.getAllExpenses() } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
@@ -95,9 +105,12 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
             comparisonRange = null
         )
         coEvery { advancedAnalyticsEngine.getCategoryAnalytics(any(), any()) } returns Pair(emptyList(), emptyList())
-        coEvery { advancedAnalyticsEngine.getMerchantAnalytics(any(), any(), any()) } returns Pair(emptyList(), emptyList())
-        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any(), any()) } returns Pair(mockk(relaxed = true), emptyList())
-        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any(), any()) } returns Pair(mockk(relaxed = true), emptyList())
+        val merchantAnalyticsResult: Pair<List<com.yourname.expensetracker.domain.analytics.EnhancedMerchantAnalytics>, List<com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning>> = Pair(emptyList(), emptyList())
+        coEvery { advancedAnalyticsEngine.getMerchantAnalytics(any<com.yourname.expensetracker.domain.analytics.NormalizedAnalyticsInput>(), any<com.yourname.expensetracker.domain.analytics.NormalizedAnalyticsInput>(), any()) } returns merchantAnalyticsResult
+        val spendingPatternResult: Pair<com.yourname.expensetracker.domain.analytics.SpendingPatternAnalysis, List<com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning>> = Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getSpendingPatterns(any(), any()) } answers { spendingPatternResult }
+        val statisticalInsightsResult: Pair<com.yourname.expensetracker.domain.analytics.StatisticalInsights, List<com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning>> = Pair(mockk(relaxed = true), emptyList())
+        coEvery { advancedAnalyticsEngine.getStatisticalInsights(any(), any()) } answers { statisticalInsightsResult }
         every { locationInsightsEngine.compute(any()) } returns emptyList()
         every { areaSpendingEngine.compute(any()) } returns emptyList()
         every { travelDetectionEngine.compute(any()) } returns com.yourname.expensetracker.domain.location.TravelInsight(
@@ -131,8 +144,11 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
             travelDetectionEngine,
             spendingPersonalityClassifier,
             timeProvider,
+            analyticsInputAssembler,
             currencyConverter,
-            currencySettingsRepository
+            currencySettingsRepository,
+            budgetVsActualEngine,
+            dailyBucketEngine
         )
     }
 
@@ -243,8 +259,11 @@ class AnalyticsViewModelStressTest : ViewModelTestUtils() {
             travelDetectionEngine,
             spendingPersonalityClassifier,
             timeProvider,
+            analyticsInputAssembler,
             currencyConverter,
-            currencySettingsRepository
+            currencySettingsRepository,
+            budgetVsActualEngine,
+            dailyBucketEngine
         )
 
         testDispatcher.scheduler.advanceTimeBy(400)

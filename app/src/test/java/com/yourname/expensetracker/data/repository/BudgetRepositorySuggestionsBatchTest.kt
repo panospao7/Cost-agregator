@@ -28,6 +28,7 @@ import org.junit.Test
 import java.util.Calendar
 import java.util.TimeZone
 
+@Suppress("DEPRECATION_ERROR")
 class BudgetRepositorySuggestionsBatchTest {
 
     private val budgetDao = mockk<BudgetDao>(relaxed = true)

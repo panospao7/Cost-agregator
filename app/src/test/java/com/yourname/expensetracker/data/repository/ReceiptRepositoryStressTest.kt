@@ -50,6 +50,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 @Ignore("Stress test: may hang in CI, run manually")
+@Suppress("DEPRECATION_ERROR")
 class ReceiptRepositoryStressTest {
 
     private val scannedReceiptDao = mockk<ScannedReceiptDao>(relaxed = true)

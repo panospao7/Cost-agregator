@@ -40,6 +40,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Calendar
 
+@Suppress("DEPRECATION_ERROR")
 class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
 
     private lateinit var expenseRepository: ExpenseRepository

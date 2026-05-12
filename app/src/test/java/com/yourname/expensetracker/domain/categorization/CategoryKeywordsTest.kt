@@ -64,6 +64,6 @@ class CategoryKeywordsTest {
 
         val bestMatch = matcher.findBestMatch("pharmacy", minConfidence = 0.5)
 
-        assertEquals("Health", bestMatch?.categoryName)
+        assertEquals("Health", bestMatch.bestMatch?.categoryName)
     }
 }

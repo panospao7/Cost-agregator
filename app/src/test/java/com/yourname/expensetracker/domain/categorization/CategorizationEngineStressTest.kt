@@ -163,7 +163,7 @@ class CategorizationEngineStressTest {
         every { canonicalizer.canonicalize(any()) } returns CanonicalResult("unknown", emptyList(), 0.0)
         every { greeklishNormalizer.getVariations(any()) } returns emptyList()
         every { greeklishNormalizer.normalize(any()) } returns "unknown"
-        every { semanticMatcher.findBestMatch(any(), any()) } returns null
+        every { semanticMatcher.findBestMatch(any(), any()) } returns SemanticKeywordMatcher.KeywordMatchResult(null, emptyList(), false)
         every { contextEngine.isLikelySurname(any()) } returns false
         
         val result = engine.categorize("completelyunknownmerchant12345")

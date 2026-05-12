@@ -2,8 +2,10 @@ package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
+import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
@@ -111,9 +113,11 @@ class NotificationProcessingPipelineReliabilityTest {
         dashboardFollowThroughEngine = dashboardFollowThroughEngine,
         recommendationRepository = recommendationRepository,
         subscriptionDetector = subscriptionDetector,
-        coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
-        transactionEventDao = mockk(relaxed = true),
-        applicationScope = applicationScope
+            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
+            transactionEventDao = mockk(relaxed = true),
+            pipelineDiagnosticEventDao = mockk<PipelineDiagnosticEventDao>(relaxed = true),
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+            applicationScope = applicationScope
     )
 
     @Before

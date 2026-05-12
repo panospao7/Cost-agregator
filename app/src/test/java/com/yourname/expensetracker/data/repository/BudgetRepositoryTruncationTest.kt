@@ -39,6 +39,7 @@ import java.util.TimeZone
  * match the aggregate total — not a truncated partial sum.  Mock verification
  * confirms that no row-level expense reads were invoked.
  */
+@Suppress("DEPRECATION_ERROR")
 class BudgetRepositoryTruncationTest {
 
     private val budgetDao = mockk<BudgetDao>(relaxed = true)
@@ -214,6 +215,9 @@ class BudgetRepositoryTruncationTest {
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
             currencyConverter, currencySettingsRepository,
             multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
+            writeBarrier = writeBarrier,
+            database = database,
+            budgetForecastDao = budgetForecastDao,
         )
 
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
@@ -394,6 +398,9 @@ class BudgetRepositoryTruncationTest {
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
             currencyConverter, currencySettingsRepository,
             multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
+            writeBarrier = writeBarrier,
+            database = database,
+            budgetForecastDao = budgetForecastDao,
         )
 
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))

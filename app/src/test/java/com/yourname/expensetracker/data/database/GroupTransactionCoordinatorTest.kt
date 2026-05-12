@@ -180,7 +180,8 @@ class GroupTransactionCoordinatorTest {
 
         val mockCoordinator = GroupTransactionCoordinator(
             database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, expenseDao,
-            database.transactionEventDao(), transactionLifecycleCoordinator, Dispatchers.IO
+            database.transactionEventDao(), transactionLifecycleCoordinator,
+            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.IO
         )
 
         // Act - Should throw exception

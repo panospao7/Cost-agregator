@@ -53,6 +53,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 @Ignore("Stress test: may hang in CI, run manually")
+@Suppress("DEPRECATION_ERROR")
 class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
 
     private lateinit var receiptRepository: ReceiptRepository
@@ -151,8 +152,8 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
         every { timeProvider.now() } returns now
 
         coEvery { receiptRepository.processReceipt(uri, autoCreateReview = false) } throws RuntimeException("OCR boom")
-        coEvery { receiptRepository.saveManualReceiptRecord(uri) } returns (
-            ScannedReceipt(
+        coEvery { receiptRepository.saveManualReceiptRecord(uri) } returns com.yourname.expensetracker.data.repository.ReceiptRepository.ProcessReceiptResult(
+            receipt = ScannedReceipt(
                 id = 42L,
                 imagePath = "/manual/path.jpg",
                 rawOcrText = "[OCR Failed or Skipped]",
@@ -163,7 +164,8 @@ class ReceiptScanViewModelStressTest : ViewModelTestUtils() {
                 parsedTaxAmount = null,
                 currency = "EUR",
                 confidence = 0f
-            ) to ReceiptParser.ParsedReceipt(
+            ),
+            parsed = ReceiptParser.ParsedReceipt(
                 merchantName = null,
                 total = null,
                 subtotal = null,

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.budget
 
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
@@ -334,6 +335,7 @@ class BudgetAutopilotEngineTest {
             expenseRepository = mockk(relaxed = true),
             currencySettingsRepository = mockk(),
             currencyConverter = mockk(relaxed = true),
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
         )
         val forecast = forecastingEngine.generateForecast(budget)
 

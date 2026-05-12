@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.categorization
 
+import io.mockk.mockk
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.Calendar
@@ -12,7 +13,7 @@ import java.util.Calendar
  */
 class ContextualInferenceEngineStressTest {
 
-    private val engine = ContextualInferenceEngine()
+    private val engine = ContextualInferenceEngine(timeProvider = mockk(relaxed = true))
 
     // ============================================================================
     // SECTION 1: AMOUNT-BASED INFERENCE

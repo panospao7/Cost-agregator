@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -37,6 +38,7 @@ class ExpenseRepositoryTruncationTest {
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
     private val transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
     private val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+    private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
 
     private lateinit var repository: ExpenseRepository
 
@@ -65,6 +67,7 @@ class ExpenseRepositoryTruncationTest {
         }
 
         repository = ExpenseRepository(
+            writeBarrier,
             database,
             expenseDao,
             userCorrectionDao,

@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MileageTrackingDao
 import com.yourname.expensetracker.data.database.entity.MileageTracking
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
 import com.yourname.expensetracker.data.repository.TaxSettingsRepository
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate

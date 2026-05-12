@@ -36,6 +36,7 @@ import java.util.TimeZone
  * uses aggregate SQL queries instead of capped row-level reads, so budget
  * correctness is independent of the number of expense rows.
  */
+@Suppress("DEPRECATION_ERROR")
 class BudgetRepositoryStressTest {
 
     private val budgetDao = mockk<BudgetDao>(relaxed = true)
@@ -424,7 +425,8 @@ class BudgetRepositoryStressTest {
         val repo = BudgetRepository(
             budgetDao, categoryDao, expenseDao, realCalc,
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
-            currencyConverter, currencySettingsRepository, multiCurrencyRepository
+            currencyConverter, currencySettingsRepository, multiCurrencyRepository,
+            writeBarrier, database, budgetForecastDao
         )
 
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))

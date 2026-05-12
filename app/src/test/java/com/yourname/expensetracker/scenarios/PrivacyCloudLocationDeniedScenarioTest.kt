@@ -96,7 +96,8 @@ class PrivacyCloudLocationDeniedScenarioTest {
 
         coEvery { firstGate.check(any(), any()) } returns denied
 
-        val composite = CompositePrivacyGate(listOf(firstGate, secondGate))
+        val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
+        val composite = CompositePrivacyGate(listOf(firstGate, secondGate), auditLogger)
 
         // WHEN: checking the composite gate
         val decision = composite.check(PrivacyCapability.DEVICE_GPS_LOCATION)

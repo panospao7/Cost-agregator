@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.database.entity.TransferDirection
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.mockk
@@ -28,7 +29,8 @@ class BankApiIntegrationTest {
     fun setUp() {
         integration = BankApiIntegration(
             timeProvider = FakeTimeProvider(),
-            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
         )
         mapMethod = BankApiIntegration::class.java.getDeclaredMethod(
             "mapTransactionToExpense",

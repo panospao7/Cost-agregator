@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.groups
 
 import com.yourname.expensetracker.assertApproxEquals
 import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -12,7 +13,7 @@ class SettlementCalculatorTest {
     private val calculator = SettlementCalculator(currencySettingsRepository = mockk())
 
     @Test
-    fun `crash test 4_6 triangle debt yields two transactions totaling 50`() {
+    fun `crash test 4_6 triangle debt yields two transactions totaling 50`() = runTest {
         val balances = mapOf(
             1L to memberBalance(1L, "A", 50.0),
             2L to memberBalance(2L, "B", -30.0),
@@ -34,7 +35,7 @@ class SettlementCalculatorTest {
     }
 
     @Test
-    fun `crash test 4_7 four member case resolves in three transactions and preserves volume`() {
+    fun `crash test 4_7 four member case resolves in three transactions and preserves volume`() = runTest {
         val balances = mapOf(
             1L to memberBalance(1L, "A", 3.0),
             2L to memberBalance(2L, "B", 6.0),
@@ -51,7 +52,7 @@ class SettlementCalculatorTest {
     }
 
     @Test
-    fun `calculateSettlementsMinAmount returns same result as primary DFS solver`() {
+    fun `calculateSettlementsMinAmount returns same result as primary DFS solver`() = runTest {
         val balances = mapOf(
             1L to memberBalance(1L, "A", 10.0),
             2L to memberBalance(2L, "B", 20.0),
@@ -119,7 +120,7 @@ class SettlementCalculatorTest {
     }
 
     @Test
-    fun `empty or all settled balances return no settlements`() {
+    fun `empty or all settled balances return no settlements`() = runTest {
         val empty = calculator.calculateSettlements(emptyMap())
         val settled = calculator.calculateSettlements(
             mapOf(

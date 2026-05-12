@@ -9,22 +9,22 @@ class SemanticKeywordMatcherStressTest {
     @Test
     fun `finds food-related semantic match`() {
         val best = matcher.findBestMatch("Coffee house payment")
-        assertNotNull(best)
-        assertEquals("Food", best?.categoryName)
+        assertNotNull(best.bestMatch)
+        assertEquals("Food", best.bestMatch?.categoryName)
     }
 
     @Test
     fun `keyword matching is case-insensitive`() {
         val a = matcher.findBestMatch("PIZZA HOUSE")
         val b = matcher.findBestMatch("pizza house")
-        assertEquals(a?.categoryName, b?.categoryName)
+        assertEquals(a.bestMatch?.categoryName, b.bestMatch?.categoryName)
     }
 
     @Test
     fun `supports greeklish-normalized text`() {
         val best = matcher.findBestMatch("kafes freddo")
-        assertNotNull(best)
-        assertTrue(best!!.confidence >= 0.5)
+        assertNotNull(best.bestMatch)
+        assertTrue(best.bestMatch!!.confidence >= 0.5)
     }
 
     @Test
@@ -37,8 +37,8 @@ class SemanticKeywordMatcherStressTest {
     @Test
     fun `multiple keyword text yields high confidence candidate`() {
         val best = matcher.findBestMatch("espresso coffee house")
-        assertNotNull(best)
-        assertTrue(best!!.confidence > 0.7)
+        assertNotNull(best.bestMatch)
+        assertTrue(best.bestMatch!!.confidence > 0.7)
     }
 
     @Test

@@ -42,6 +42,7 @@ import java.util.TimeZone
  * rollover while-loop in `getBudgetStatuses()` spin indefinitely.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("DEPRECATION_ERROR")
 class BudgetRolloverTest {
 
     private val budgetDao = mockk<BudgetDao>(relaxed = true)
@@ -368,6 +369,9 @@ class BudgetRolloverTest {
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
             currencyConverter, currencySettingsRepository,
             multiCurrencyRepository = mockk(),
+            writeBarrier = writeBarrier,
+            database = database,
+            budgetForecastDao = budgetForecastDao,
         )
 
         // Budget: anchor 2025-01-31, monthly, amount €1 000, rollover = true

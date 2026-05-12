@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.*
 import com.yourname.expensetracker.data.database.entity.*
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.alerts.AnomalyAlertOrchestrator
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import com.yourname.expensetracker.domain.intelligence.ConfidenceRouter
@@ -22,6 +23,7 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 
+@Suppress("DEPRECATION_ERROR")
 @Ignore("Stress test: may hang in CI, run manually")
 class ReviewQueueRepositoryStressTest {
 
@@ -77,6 +79,7 @@ class ReviewQueueRepositoryStressTest {
         every { timeProvider.now() } returns System.currentTimeMillis()
 
         repository = ReviewQueueRepository(
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             database = database,
             pendingReviewDao = pendingReviewDao,
             rawNotificationDao = rawNotificationDao,

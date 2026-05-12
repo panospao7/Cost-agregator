@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.analytics.TransferDirectionAnalytics
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
@@ -66,6 +67,7 @@ class AnalyticsStressTest {
         coEvery { expenseDao.getExpensesBetween(start, end) } returns expenses
 
         val repository = ExpenseRepository(
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             database = database,
             expenseDao = expenseDao,
             userCorrectionDao = mockk(relaxed = true),
