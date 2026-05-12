@@ -13,10 +13,16 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
+import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot
 import com.yourname.expensetracker.domain.cashflow.CashFlowCalculator
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -61,6 +67,23 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
         coEvery { healthScoreHistoryDao.getMostRecentBefore(any(), any()) } returns null
         coEvery { healthScoreHistoryDao.getHistoryForPeriod(any(), any()) } returns emptyList()
+
+        // Mock normalizer to pass through expenses with proper conversion
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
+            val exps = firstArg<List<com.yourname.expensetracker.data.database.entity.Expense>>()
+            val homeCurrency = secondArg<String>()
+            val snapshots = exps.map { it.toTestExpenseSnapshot() }
+            AnalyticsNormalizationResult(
+                homeCurrency = homeCurrency,
+                normalizedExpenses = snapshots.map {
+                    NormalizedExpenseSnapshot(it, it.currency, it.effectiveAmount, it.effectiveAmount)
+                },
+                includedExpenses = snapshots,
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = exps.size
+            )
+        }
 
         calculator = FinancialHealthScoreV2(
             budgetRepository = budgetRepository,
@@ -376,4 +399,35 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
     }
+
+    /**
+     * Converts a data-layer [Expense] into a domain [ExpenseSnapshot], mirroring
+     * the logic in [FinancialHealthScoreV2.toExpenseSnapshot].
+     */
+    private fun com.yourname.expensetracker.data.database.entity.Expense.toTestExpenseSnapshot(): ExpenseSnapshot =
+        ExpenseSnapshot(
+            id = id,
+            amount = effectiveAmount,
+            effectiveAmount = effectiveAmount,
+            currency = currency,
+            merchant = merchant,
+            merchantKey = merchantKey,
+            transactionType = when (transactionType) {
+                com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+                com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+                com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+                com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+                com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+            },
+            date = date,
+            categoryId = categoryId,
+            isNotMine = isNotMine,
+            transferDirection = transferDirection?.let { d ->
+                when (d) {
+                    com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+                    com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+                }
+            },
+            notes = notes
+        )
 }

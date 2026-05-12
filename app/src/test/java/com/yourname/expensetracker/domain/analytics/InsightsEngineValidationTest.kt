@@ -104,7 +104,7 @@ class InsightsEngineValidationTest {
 
         // Default mock for recurringExpenseEngine (relaxed returns emptyList for getPatternsFromSnapshots)
         coEvery { recurringExpenseEngine.getPatternsFromSnapshots(any()) } returns emptyList()
-        every { spendingPaceCalculator.calculate(any(), any(), any(), any()) } returns SpendingPace(
+        every { spendingPaceCalculator.calculate(any(), any(), any(), any(), any(), any()) } returns SpendingPace(
             currentMonthSpent = 0.0,
             daysElapsed = 0,
             daysInMonth = 30,
@@ -283,7 +283,7 @@ class InsightsEngineValidationTest {
         )
         
         // Mock spending pace calculator to return predictable result
-        every { spendingPaceCalculator.calculate(any(), any(), any(), any()) } returns SpendingPace(
+        every { spendingPaceCalculator.calculate(any(), any(), any(), any(), any(), any()) } returns SpendingPace(
             currentMonthSpent = 500.0,
             daysElapsed = 10,
             daysInMonth = 30,
@@ -318,7 +318,7 @@ class InsightsEngineValidationTest {
         )
         
         // Mock spending pace calculator with conservative estimate
-        every { spendingPaceCalculator.calculate(any(), any(), any(), any()) } returns SpendingPace(
+        every { spendingPaceCalculator.calculate(any(), any(), any(), any(), any(), any()) } returns SpendingPace(
             currentMonthSpent = 300.0,
             daysElapsed = 3,
             daysInMonth = 30,
@@ -351,7 +351,7 @@ class InsightsEngineValidationTest {
             createExpense(id = 2, amount = 600.0, date = createDate(2024, 3, 5))
         )
 
-        every { spendingPaceCalculator.calculate(any(), any(), any(), any()) } returns SpendingPace(
+        every { spendingPaceCalculator.calculate(any(), any(), any(), any(), any(), any()) } returns SpendingPace(
             currentMonthSpent = 200.0,
             daysElapsed = 10,
             daysInMonth = 30,
@@ -367,7 +367,7 @@ class InsightsEngineValidationTest {
         val snapshot = engine.generateInsights(categories, expenses, "EUR")
 
         verify(exactly = 1) {
-            spendingPaceCalculator.calculate(any(), any(), any(), expenses)
+            spendingPaceCalculator.calculate(any(), any(), any(), expenses, any(), any())
         }
         assertEquals(100.0f, snapshot.spendingPace.pacePercentage, 0.01f)
         assertEquals(PaceStatus.ON_PACE, snapshot.spendingPace.paceStatus)

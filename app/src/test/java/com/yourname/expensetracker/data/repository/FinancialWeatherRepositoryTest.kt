@@ -43,9 +43,26 @@ class FinancialWeatherRepositoryTest {
     @Before
     fun setup() {
         every { timeProvider.now() } returns 1705320000000L // Jan 15, 2024
+        val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true).also { mockNormalizer ->
+            // Pass-through normalizer so buildPastSumDaily gets real expense data
+            coEvery { mockNormalizer.normalizeSnapshots(any(), any()) } answers {
+                val expenses = firstArg<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>()
+                val homeCurrency = secondArg<String>()
+                com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult(
+                    homeCurrency = homeCurrency,
+                    normalizedExpenses = expenses.map {
+                        com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot(it, it.currency, it.effectiveAmount, it.effectiveAmount)
+                    },
+                    includedExpenses = expenses,
+                    warnings = emptyList(),
+                    latestRateTimestamp = null,
+                    totalInputCount = expenses.size
+                )
+            }
+        }
         forecastInputAssembler = ForecastInputAssembler(
             timeProvider = timeProvider,
-            analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true),
+            analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
             currencyConverter = mockk<com.yourname.expensetracker.domain.currency.CurrencyConverter>(relaxed = true),
             recurringLifecycleCoordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true),
