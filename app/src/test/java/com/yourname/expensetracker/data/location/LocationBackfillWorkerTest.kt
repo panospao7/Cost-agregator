@@ -12,6 +12,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.location.GeocodingError
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
 import io.mockk.coEvery
@@ -31,6 +32,7 @@ class LocationBackfillWorkerTest {
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var locationResolver: LocationResolver
     private lateinit var merchantLocationRepository: MerchantLocationRepository
+    private lateinit var executionGuard: WorkerExecutionGuard
 
     @Before
     fun setup() {
@@ -38,6 +40,10 @@ class LocationBackfillWorkerTest {
         expenseRepository = mockk(relaxed = true)
         locationResolver = mockk(relaxed = true)
         merchantLocationRepository = mockk(relaxed = true)
+        executionGuard = mockk()
+        coEvery { executionGuard.runGuarded(any(), any<suspend () -> Any>()) } coAnswers {
+            WorkerGuardResult.Success(secondArg<suspend () -> Any>().invoke())
+        }
     }
 
     private fun buildWorker(): LocationBackfillWorker {
@@ -54,7 +60,7 @@ class LocationBackfillWorkerTest {
                         expenseRepository,
                         locationResolver,
                         merchantLocationRepository,
-                        executionGuard = mockk<WorkerExecutionGuard>(relaxed = true)
+                        executionGuard = executionGuard
                     )
                 }
             })

@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.screens.lifestyle
 import app.cash.turbine.test
 import com.yourname.expensetracker.domain.lifestyle.LifestyleInflationDetector
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.mockk
@@ -32,7 +33,8 @@ class LifestyleInflationViewModelTest : ViewModelTestUtils() {
     override fun setup() {
         super.setup()
         coEvery { lifestyleDetector.analyzeLifestyleInflation(any()) } returns lifestyleReport()
-        viewModel = LifestyleInflationViewModel(lifestyleDetector, currencySettingsRepository = mockk())
+        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        viewModel = LifestyleInflationViewModel(lifestyleDetector, currencySettingsRepository = currencyRepo)
     }
 
     @Test

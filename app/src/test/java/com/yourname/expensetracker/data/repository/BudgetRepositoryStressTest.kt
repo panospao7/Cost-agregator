@@ -69,6 +69,7 @@ class BudgetRepositoryStressTest {
         coEvery { categoryDao.getAllFlow() } returns MutableStateFlow(emptyList())
         // A.9: aggregate-query contract — invalidation trigger + aggregate queries
         every { expenseDao.getTotalSpentFlow() } returns MutableStateFlow(0.0)
+        every { expenseDao.observeExpenseMutationClock() } returns MutableStateFlow(0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
         every { timeProvider.now() } returns System.currentTimeMillis()

@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -32,6 +33,7 @@ class ReceiptMatchingWorkerTest {
     private lateinit var receiptRepository: ReceiptRepository
     private lateinit var matcher: ReceiptTransactionMatcher
     private lateinit var notificationService: NotificationService
+    private lateinit var executionGuard: WorkerExecutionGuard
 
     @Before
     fun setup() {
@@ -39,6 +41,10 @@ class ReceiptMatchingWorkerTest {
         receiptRepository = mockk(relaxed = true)
         matcher = mockk(relaxed = true)
         notificationService = mockk(relaxed = true)
+        executionGuard = mockk()
+        coEvery { executionGuard.runGuarded(any(), any<suspend () -> Any>()) } coAnswers {
+            WorkerGuardResult.Success(secondArg<suspend () -> Any>().invoke())
+        }
     }
 
     private fun buildWorker(): ReceiptMatchingWorker {
@@ -56,7 +62,7 @@ class ReceiptMatchingWorkerTest {
                         matcher,
                         receiptLinkService = mockk(relaxed = true),
                         notificationService = notificationService,
-                        executionGuard = mockk<WorkerExecutionGuard>(relaxed = true)
+                        executionGuard = executionGuard
                     )
                 }
             })

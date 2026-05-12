@@ -206,6 +206,13 @@ abstract class AnalyticsEngineTestBase {
         io.mockk.every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(emptyList())
         io.mockk.every { expenseDao.getExpensesByTypeBetweenFlow(any(), any(), any()) } returns flowOf(emptyList())
         io.mockk.every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+
+        // Multi-currency aggregate DAO methods (used by MultiCurrencyRepository → BudgetRepository, etc.)
+        io.mockk.coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns emptyList()
+        io.mockk.coEvery { expenseDao.getAllSpentBetweenByCurrency(any(), any()) } returns emptyList()
+        io.mockk.coEvery { expenseDao.getAllCategoryTotalsBetweenByCurrency(any(), any()) } returns emptyList()
+        io.mockk.coEvery { expenseDao.getMonthlyTotalsBetweenByCurrency(any(), any()) } returns emptyList()
+        io.mockk.coEvery { expenseDao.getMerchantTotalsBetweenByCurrency(any(), any()) } returns emptyList()
     }
 
     /**

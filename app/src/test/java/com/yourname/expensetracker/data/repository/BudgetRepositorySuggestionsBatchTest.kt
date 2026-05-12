@@ -49,6 +49,7 @@ class BudgetRepositorySuggestionsBatchTest {
     @Before
     fun setup() {
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        every { expenseDao.observeExpenseMutationClock() } returns flowOf(0)
         repository = BudgetRepository(
             budgetDao = budgetDao,
             categoryDao = categoryDao,

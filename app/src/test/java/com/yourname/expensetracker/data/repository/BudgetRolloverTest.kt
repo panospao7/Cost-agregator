@@ -72,6 +72,7 @@ class BudgetRolloverTest {
 
         // A.9: Default aggregate mockk — invalidation trigger + aggregate queries
         every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+        every { expenseDao.observeExpenseMutationClock() } returns flowOf(0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")

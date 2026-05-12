@@ -48,6 +48,7 @@ class BudgetRepositoryHistoricalStatusTest {
     fun setup() {
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
+        every { expenseDao.observeExpenseMutationClock() } returns flowOf(0)
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(emptyList())
         every { categoryDao.getAllFlow() } returns flowOf(emptyList())
         coEvery { budgetDao.getActiveBudgets() } returns emptyList()

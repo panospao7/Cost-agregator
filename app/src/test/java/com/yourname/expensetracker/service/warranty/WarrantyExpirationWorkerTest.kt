@@ -13,6 +13,7 @@ import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository.Exp
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.service.NotificationService
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -33,12 +34,20 @@ class WarrantyExpirationWorkerTest {
     private lateinit var context: Context
     private lateinit var warrantyRepository: WarrantyTrackerRepository
     private lateinit var notificationService: NotificationService
+    private lateinit var executionGuard: WorkerExecutionGuard
 
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
-        warrantyRepository = mockk(relaxed = true)
+        warrantyRepository = mockk()
         notificationService = mockk(relaxed = true)
+        executionGuard = mockk()
+        coEvery { executionGuard.runGuarded(any(), any<suspend () -> Any>()) } coAnswers {
+            WorkerGuardResult.Success(secondArg<suspend () -> Any>().invoke())
+        }
+        // Default: no expired items, no expiring warranties
+        coEvery { warrantyRepository.reconcileExpiredItems(any<Long>()) } returns ExpiryReconciliationResult(0, 0)
+        coEvery { warrantyRepository.getWarrantiesExpiringSoon(any()) } returns emptyList()
     }
 
     private fun buildWorker(): WarrantyExpirationWorker {
@@ -54,7 +63,7 @@ class WarrantyExpirationWorkerTest {
                         workerParameters,
                         warrantyRepository,
                         notificationService,
-                        executionGuard = mockk<WorkerExecutionGuard>(relaxed = true),
+                        executionGuard = executionGuard,
                     )
                 }
             })

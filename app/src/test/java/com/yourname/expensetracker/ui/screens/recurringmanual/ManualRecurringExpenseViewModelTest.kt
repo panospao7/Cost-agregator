@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.repository.ManualRecurringExpenseRepository
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -34,7 +35,8 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
         super.setup()
         every { timeProvider.now() } returns fixedNow
         coEvery { recurringExpenseRepository.getAll() } returns emptyList()
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk())
+        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = currencyRepo)
     }
 
     @Test

@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -25,11 +26,16 @@ class MerchantKeyBackfillWorkerTest {
 
     private lateinit var context: Context
     private lateinit var expenseRepository: ExpenseRepository
+    private lateinit var executionGuard: WorkerExecutionGuard
 
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
         expenseRepository = mockk(relaxed = true)
+        executionGuard = mockk()
+        coEvery { executionGuard.runGuarded(any(), any<suspend () -> Any>()) } coAnswers {
+            WorkerGuardResult.Success(secondArg<suspend () -> Any>().invoke())
+        }
     }
 
     private fun buildWorker(): MerchantKeyBackfillWorker =
@@ -43,7 +49,7 @@ class MerchantKeyBackfillWorkerTest {
                     appContext,
                     workerParameters,
                     expenseRepository,
-                    executionGuard = mockk<WorkerExecutionGuard>(relaxed = true)
+                    executionGuard = executionGuard
                 )
             })
             .build()

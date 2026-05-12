@@ -22,7 +22,7 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
-        detector = LifestyleInflationDetector(expenseDao, timeProvider = mockk())
+        detector = LifestyleInflationDetector(expenseDao, timeProvider = mockk(relaxed = true))
     }
 
     @Test
