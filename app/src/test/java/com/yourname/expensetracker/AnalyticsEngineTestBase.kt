@@ -236,6 +236,9 @@ abstract class AnalyticsEngineTestBase {
         // Totals
         val totalSpent = purchasesOnly.filter { !it.isNotMine }.sumOf { it.effectiveAmount }
         io.mockk.coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns totalSpent
+        io.mockk.coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns
+            if (totalSpent > 0.0) listOf(com.yourname.expensetracker.data.database.dao.CurrencyTotal("EUR", totalSpent, purchasesOnly.filter { !it.isNotMine }.size))
+            else emptyList()
 
         // Count
         io.mockk.coEvery { expenseDao.getPurchaseCount() } returns purchasesOnly.size
@@ -263,6 +266,8 @@ abstract class AnalyticsEngineTestBase {
         io.mockk.coEvery { expenseDao.getExpensesBetween(eq(march2026Start), eq(march2026End)) } returns marchPurchases
         io.mockk.coEvery { expenseDao.getTotalSpentBetween(eq(march2026Start), eq(march2026End)) } returns
             marchPurchases.filter { !it.isNotMine }.sumOf { it.effectiveAmount }
+        io.mockk.coEvery { expenseDao.getTotalSpentBetweenByCurrency(eq(march2026Start), eq(march2026End)) } returns
+            listOf(com.yourname.expensetracker.data.database.dao.CurrencyTotal("EUR", marchPurchases.filter { !it.isNotMine }.sumOf { it.effectiveAmount }, marchPurchases.filter { !it.isNotMine }.size))
 
         // Mock February 2026 queries
         val februaryExpenses = expenses.filter { expense ->
@@ -273,6 +278,8 @@ abstract class AnalyticsEngineTestBase {
         io.mockk.coEvery { expenseDao.getExpensesBetween(eq(february2026Start), eq(february2026End)) } returns februaryPurchases
         io.mockk.coEvery { expenseDao.getTotalSpentBetween(eq(february2026Start), eq(february2026End)) } returns
             februaryPurchases.filter { !it.isNotMine }.sumOf { it.effectiveAmount }
+        io.mockk.coEvery { expenseDao.getTotalSpentBetweenByCurrency(eq(february2026Start), eq(february2026End)) } returns
+            listOf(com.yourname.expensetracker.data.database.dao.CurrencyTotal("EUR", februaryPurchases.filter { !it.isNotMine }.sumOf { it.effectiveAmount }, februaryPurchases.filter { !it.isNotMine }.size))
     }
 
     /**
@@ -285,9 +292,12 @@ abstract class AnalyticsEngineTestBase {
     @Suppress("DEPRECATION_ERROR")
     protected fun mockExpensesForPeriod(startMs: Long, endMs: Long, expenses: List<Expense>) {
         io.mockk.coEvery { expenseDao.getExpensesBetween(eq(startMs), eq(endMs)) } returns expenses
-        io.mockk.coEvery { expenseDao.getTotalSpentBetween(eq(startMs), eq(endMs)) } returns
-            expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
-                .sumOf { it.effectiveAmount }
+        val periodPurchases = expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+        val periodTotal = periodPurchases.sumOf { it.effectiveAmount }
+        io.mockk.coEvery { expenseDao.getTotalSpentBetween(eq(startMs), eq(endMs)) } returns periodTotal
+        io.mockk.coEvery { expenseDao.getTotalSpentBetweenByCurrency(eq(startMs), eq(endMs)) } returns
+            if (periodTotal > 0.0) listOf(com.yourname.expensetracker.data.database.dao.CurrencyTotal("EUR", periodTotal, periodPurchases.size))
+            else emptyList()
 
         io.mockk.every { expenseDao.getExpensesBetweenFlow(eq(startMs), eq(endMs)) } returns flowOf(expenses)
     }
