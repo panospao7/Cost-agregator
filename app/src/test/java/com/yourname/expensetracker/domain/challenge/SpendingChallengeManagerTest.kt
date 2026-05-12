@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.challenge
 
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.repository.SpendingChallengeRepository
@@ -47,6 +48,7 @@ class SpendingChallengeManagerTest {
             DailyTotal(dayEpoch = 20240401, startDate = now - DAY_MS * 2, endDate = now - DAY_MS * 2, total = 12.0, txCount = 1)
         )
         coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 90.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 90.0, 1))
 
         val status = manager.checkNoSpendStreak()
 
@@ -63,6 +65,7 @@ class SpendingChallengeManagerTest {
         val now = 1_710_000_000_000L
         every { timeProvider.now() } returns now
         coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 0.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
 
         val progress = manager.getChallengeProgress(
             SpendingChallenge(
@@ -91,6 +94,10 @@ class SpendingChallengeManagerTest {
         val now = 1_710_000_000_000L
         every { timeProvider.now() } returnsMany listOf(now, now, now + DAY_MS * 7)
         coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returnsMany listOf(40.0, 40.0)
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returnsMany listOf(
+            listOf(CurrencyTotal("EUR", 40.0, 1)),
+            listOf(CurrencyTotal("EUR", 40.0, 1))
+        )
 
         val challenge = SpendingChallenge(
             id = 2L,
@@ -123,6 +130,7 @@ class SpendingChallengeManagerTest {
         val now = 1_710_000_000_000L
         every { timeProvider.now() } returns now
         coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 120.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 120.0, 1))
         coEvery { repository.saveChallenge(any()) } answers { invocation.args[0] as SpendingChallenge }
 
         val created = manager.createChallenge(

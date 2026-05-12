@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
@@ -10,6 +11,7 @@ import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -47,7 +49,7 @@ class BudgetRepositoryStressTest {
     private val offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
     private val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
     private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
-    private val multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true)
+    private lateinit var multiCurrencyRepository: MultiCurrencyRepository
     private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
     private val database = mockk<AppDatabase>(relaxed = true)
     private val budgetForecastDao = mockk<BudgetForecastDao>(relaxed = true)
@@ -72,7 +74,22 @@ class BudgetRepositoryStressTest {
         every { expenseDao.observeExpenseMutationClock() } returns MutableStateFlow(0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
         every { timeProvider.now() } returns System.currentTimeMillis()
+
+        coEvery { currencyConverter.convertMultiple(any(), any()) } answers {
+            val amounts = firstArg<List<Pair<Double, String>>>()
+            val targetCurrency = secondArg<String>()
+            val total = amounts.sumOf { it.first }
+            MultiConversionAggregate(total = total, targetCurrency = targetCurrency, failedConversions = emptyList())
+        }
+
+        multiCurrencyRepository = MultiCurrencyRepository(
+            expenseDao = expenseDao,
+            currencyConverter = currencyConverter,
+            timeProvider = timeProvider,
+            currencySettingsRepository = currencySettingsRepository
+        )
 
         repository = BudgetRepository(
             budgetDao,
@@ -338,6 +355,7 @@ class BudgetRepositoryStressTest {
         // LIMIT 2000 would have produced only €20 000.  The aggregate returns the
         // correct total regardless of how many rows exist.
         coEvery { expenseDao.getTotalForPeriod(startOfMonth, endOfMonth) } returns 30_000.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(startOfMonth, endOfMonth) } returns listOf(CurrencyTotal("EUR", 30_000.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
 
@@ -382,6 +400,7 @@ class BudgetRepositoryStressTest {
 
         // 4 500 from 2500 rows × €1.80 each — old LIMIT 2000 would cap at €3 600.
         coEvery { expenseDao.getCategorySpentInPeriod(categoryId, startOfMonth, endOfMonth) } returns 4_500.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 4_500.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
 
@@ -438,6 +457,7 @@ class BudgetRepositoryStressTest {
         // (first period surplus = 2000 - 1800 = 200, compounding adds surplus each period).
         // For simplicity, use 1800 for every period query.
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 1_800.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 1_800.0, 1))
 
         val statuses = repo.getBudgetStatuses().first()
 
@@ -503,6 +523,7 @@ class BudgetRepositoryStressTest {
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
         every { expenseDao.getTotalSpentFlow() } returns flowOf(500.0)
         coEvery { expenseDao.getTotalForPeriod(start, end) } returns 500.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 500.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
 

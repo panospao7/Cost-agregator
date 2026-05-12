@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.budget
 
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
@@ -36,6 +37,7 @@ class BudgetTrendBoundaryTest {
         every { timeProvider.now() } returns now
         coEvery { budgetForecastDao.insert(any()) } returns 1L
         coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 0.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
 
         engine = BudgetForecastingEngine(
             expenseDao = expenseDao,

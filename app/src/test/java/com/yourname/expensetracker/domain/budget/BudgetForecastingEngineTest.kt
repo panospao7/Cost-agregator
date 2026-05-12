@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.budget
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
@@ -265,6 +266,7 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             MonthlySpendingTotal("2026-03", 200.0, 1)
         )
         coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 50.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 50.0, 1))
 
         val forecast = engine.generateForecast(budget)
 

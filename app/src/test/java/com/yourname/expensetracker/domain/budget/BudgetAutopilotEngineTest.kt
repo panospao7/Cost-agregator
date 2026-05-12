@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.budget
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.Budget
@@ -325,6 +326,7 @@ class BudgetAutopilotEngineTest {
         val budgetForecastDao = mockk<BudgetForecastDao>(relaxed = true)
         coEvery { budgetForecastDao.insertWithDeactivation(any()) } returns 1L
         coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
         val forecastingEngine = BudgetForecastingEngine(
             expenseDao = expenseDao,
             budgetRepository = budgetRepository,

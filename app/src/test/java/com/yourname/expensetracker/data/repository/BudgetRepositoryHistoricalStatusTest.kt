@@ -11,15 +11,14 @@ import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
-import io.mockk.coEvery
-import io.mockk.every
-import io.mockk.mockk
+import io.mockk.*
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
@@ -41,6 +40,7 @@ class BudgetRepositoryHistoricalStatusTest {
     private val database = mockk<AppDatabase>(relaxed = true)
     private val budgetForecastDao = mockk<BudgetForecastDao>(relaxed = true)
 
+    private lateinit var multiCurrencyRepository: MultiCurrencyRepository
     private lateinit var repository: BudgetRepository
 
     @Suppress("DEPRECATION_ERROR")
@@ -56,6 +56,20 @@ class BudgetRepositoryHistoricalStatusTest {
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
 
+        coEvery { currencyConverter.convertMultiple(any(), any()) } answers {
+            val amounts = firstArg<List<Pair<Double, String>>>()
+            val targetCurrency = secondArg<String>()
+            val total = amounts.sumOf { it.first }
+            MultiConversionAggregate(total = total, targetCurrency = targetCurrency, failedConversions = emptyList())
+        }
+
+        multiCurrencyRepository = MultiCurrencyRepository(
+            expenseDao = expenseDao,
+            currencyConverter = currencyConverter,
+            timeProvider = timeProvider,
+            currencySettingsRepository = currencySettingsRepository
+        )
+
         repository = BudgetRepository(
             budgetDao = budgetDao,
             categoryDao = categoryDao,
@@ -66,7 +80,7 @@ class BudgetRepositoryHistoricalStatusTest {
             timeBoundaryTicker = TimeBoundaryTicker(timeProvider),
             currencyConverter = currencyConverter,
             currencySettingsRepository = currencySettingsRepository,
-            multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
+            multiCurrencyRepository = multiCurrencyRepository,
             writeBarrier = writeBarrier,
             database = database,
             budgetForecastDao = budgetForecastDao,

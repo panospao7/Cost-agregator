@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
@@ -11,6 +12,7 @@ import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -54,6 +56,7 @@ class BudgetRepositoryTruncationTest {
     private val database = mockk<AppDatabase>(relaxed = true)
     private val budgetForecastDao = mockk<BudgetForecastDao>(relaxed = true)
 
+    private lateinit var multiCurrencyRepository: MultiCurrencyRepository
     private lateinit var repository: BudgetRepository
 
     @Suppress("DEPRECATION_ERROR")
@@ -64,12 +67,27 @@ class BudgetRepositoryTruncationTest {
         every { expenseDao.observeExpenseMutationClock() } returns flowOf(0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
+
+        coEvery { currencyConverter.convertMultiple(any(), any()) } answers {
+            val amounts = firstArg<List<Pair<Double, String>>>()
+            val targetCurrency = secondArg<String>()
+            val total = amounts.sumOf { it.first }
+            MultiConversionAggregate(total = total, targetCurrency = targetCurrency, failedConversions = emptyList())
+        }
+
+        multiCurrencyRepository = MultiCurrencyRepository(
+            expenseDao = expenseDao,
+            currencyConverter = currencyConverter,
+            timeProvider = timeProvider,
+            currencySettingsRepository = currencySettingsRepository
+        )
 
         repository = BudgetRepository(
             budgetDao, categoryDao, expenseDao, budgetCalculator,
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
             currencyConverter, currencySettingsRepository,
-            multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
+            multiCurrencyRepository = multiCurrencyRepository,
             writeBarrier = writeBarrier,
             database = database,
             budgetForecastDao = budgetForecastDao,
@@ -102,6 +120,7 @@ class BudgetRepositoryTruncationTest {
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
         every { expenseDao.getTotalSpentFlow() } returns flowOf(8_000.0)
         coEvery { expenseDao.getTotalForPeriod(start, end) } returns 8_000.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 8_000.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
 
@@ -139,6 +158,7 @@ class BudgetRepositoryTruncationTest {
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
         every { expenseDao.getTotalSpentFlow() } returns flowOf(25_000.0)
         coEvery { expenseDao.getTotalForPeriod(start, end) } returns 25_000.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 25_000.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
 
@@ -175,6 +195,7 @@ class BudgetRepositoryTruncationTest {
         every { expenseDao.getTotalSpentFlow() } returns flowOf(3_500.0)
         // 3 000 rows × €1.17 = €3 500 — old cap would produce €2 340
         coEvery { expenseDao.getCategorySpentInPeriod(catId, start, end) } returns 3_500.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 3_500.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
 
@@ -215,7 +236,7 @@ class BudgetRepositoryTruncationTest {
             budgetDao, categoryDao, expenseDao, realCalc,
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
             currencyConverter, currencySettingsRepository,
-            multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
+            multiCurrencyRepository = multiCurrencyRepository,
             writeBarrier = writeBarrier,
             database = database,
             budgetForecastDao = budgetForecastDao,
@@ -233,6 +254,7 @@ class BudgetRepositoryTruncationTest {
         //   Period 3: eff=5400, surplus=600, nextEff=5600
         // Active period spend = 0
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 4_800.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 4_800.0, 1))
 
         val statuses = repo.getBudgetStatuses().first()
 
@@ -262,6 +284,7 @@ class BudgetRepositoryTruncationTest {
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
         every { expenseDao.getTotalSpentFlow() } returns flowOf(8_000.0)
         coEvery { expenseDao.getTotalForPeriod(start, end) } returns 8_000.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 8_000.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
 
@@ -285,6 +308,7 @@ class BudgetRepositoryTruncationTest {
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
         every { expenseDao.getTotalSpentFlow() } returns flowOf(9_500.0)
         coEvery { expenseDao.getTotalForPeriod(start, end) } returns 9_500.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 9_500.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
 
@@ -329,6 +353,7 @@ class BudgetRepositoryTruncationTest {
         // Only the PURCHASE-only aggregate returns a value; any non-PURCHASE
         // pathway would need a different DAO call that is not stubbed.
         coEvery { expenseDao.getTotalForPeriod(start, end) } returns 500.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 500.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
 
@@ -366,6 +391,7 @@ class BudgetRepositoryTruncationTest {
         every { categoryDao.getAllFlow() } returns flowOf(listOf(category))
         every { expenseDao.getTotalSpentFlow() } returns flowOf(200.0)
         coEvery { expenseDao.getCategorySpentInPeriod(catId, start, end) } returns 200.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 200.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
 
@@ -398,7 +424,7 @@ class BudgetRepositoryTruncationTest {
             budgetDao, categoryDao, expenseDao, realCalc,
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
             currencyConverter, currencySettingsRepository,
-            multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
+            multiCurrencyRepository = multiCurrencyRepository,
             writeBarrier = writeBarrier,
             database = database,
             budgetForecastDao = budgetForecastDao,
@@ -414,6 +440,7 @@ class BudgetRepositoryTruncationTest {
         //   Period 2: eff=1200, surplus=400, nextEff=1400
         // Active period (March): spend = 0
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 800.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 800.0, 1))
 
         val statuses = repo.getBudgetStatuses().first()
 

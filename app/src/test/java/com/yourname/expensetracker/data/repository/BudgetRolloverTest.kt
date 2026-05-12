@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
@@ -11,6 +12,7 @@ import com.yourname.expensetracker.domain.budget.BudgetCalculator
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -56,6 +58,8 @@ class BudgetRolloverTest {
     private val database = mockk<AppDatabase>(relaxed = true)
     private val budgetForecastDao = mockk<BudgetForecastDao>(relaxed = true)
 
+    private lateinit var multiCurrencyRepository: MultiCurrencyRepository
+
     /** Real calculator — required so rollover window iteration terminates correctly. */
     private lateinit var budgetCalculator: BudgetCalculator
     private lateinit var budgetRepository: BudgetRepository
@@ -75,7 +79,22 @@ class BudgetRolloverTest {
         every { expenseDao.observeExpenseMutationClock() } returns flowOf(0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
         coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+
+        coEvery { currencyConverter.convertMultiple(any(), any()) } answers {
+            val amounts = firstArg<List<Pair<Double, String>>>()
+            val targetCurrency = secondArg<String>()
+            val total = amounts.sumOf { it.first }
+            MultiConversionAggregate(total = total, targetCurrency = targetCurrency, failedConversions = emptyList())
+        }
+
+        multiCurrencyRepository = MultiCurrencyRepository(
+            expenseDao = expenseDao,
+            currencyConverter = currencyConverter,
+            timeProvider = timeProvider,
+            currencySettingsRepository = currencySettingsRepository
+        )
 
         budgetRepository = BudgetRepository(
             budgetDao,
@@ -87,7 +106,7 @@ class BudgetRolloverTest {
             TimeBoundaryTicker(timeProvider),
             currencyConverter,
             currencySettingsRepository,
-            multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
+            multiCurrencyRepository = multiCurrencyRepository,
             writeBarrier = writeBarrier,
             database = database,
             budgetForecastDao = budgetForecastDao,
@@ -112,6 +131,7 @@ class BudgetRolloverTest {
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
         every { expenseDao.getTotalSpentFlow() } returns flowOf(600.0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 600.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 600.0, 1))
 
         val statuses = budgetRepository.getBudgetStatuses().first()
 
@@ -134,6 +154,7 @@ class BudgetRolloverTest {
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
         every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
 
         val statuses = budgetRepository.getBudgetStatuses().first()
 
@@ -159,6 +180,7 @@ class BudgetRolloverTest {
         // Period 3: eff=1400, surplus=600
         // Active: eff=1600
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 800.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 800.0, 1))
 
         val statuses = budgetRepository.getBudgetStatuses().first()
 
@@ -181,6 +203,7 @@ class BudgetRolloverTest {
         every { expenseDao.getTotalSpentFlow() } returns flowOf(1200.0)
         // Overspent in rollover periods → aggregate returns 1200 for historical windows
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 1200.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 1200.0, 1))
 
         val statuses = budgetRepository.getBudgetStatuses().first()
 
@@ -204,6 +227,7 @@ class BudgetRolloverTest {
 
         // Spend 500 in every window (including active)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 500.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 500.0, 1))
 
         val statuses = budgetRepository.getBudgetStatuses().first()
 
@@ -232,6 +256,7 @@ class BudgetRolloverTest {
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
         every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
 
         val statuses = budgetRepository.getBudgetStatuses().first()
 
@@ -254,6 +279,7 @@ class BudgetRolloverTest {
         every { expenseDao.getTotalSpentFlow() } returns flowOf(800.0)
         // 800 spent in each rollover period
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 800.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 800.0, 1))
 
         val statuses = budgetRepository.getBudgetStatuses().first()
 
@@ -277,6 +303,7 @@ class BudgetRolloverTest {
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
         every { expenseDao.getTotalSpentFlow() } returns flowOf(300.0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 300.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 300.0, 1))
 
         val statuses = budgetRepository.getBudgetStatuses().first()
 
@@ -305,6 +332,7 @@ class BudgetRolloverTest {
         every { expenseDao.getTotalSpentFlow() } returns flowOf(200.0)
         // Budget has categoryId=1 → getCategorySpentInPeriod is called (only category 1 expenses)
         coEvery { expenseDao.getCategorySpentInPeriod(eq(1L), any(), any()) } returns 200.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 200.0, 1))
 
         val statuses = budgetRepository.getBudgetStatuses().first()
 
@@ -327,6 +355,7 @@ class BudgetRolloverTest {
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
         every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
 
         val statuses = budgetRepository.getBudgetStatuses().first()
 
@@ -369,7 +398,7 @@ class BudgetRolloverTest {
             budgetDao, categoryDao, expenseDao, calc,
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
             currencyConverter, currencySettingsRepository,
-            multiCurrencyRepository = mockk(),
+            multiCurrencyRepository = multiCurrencyRepository,
             writeBarrier = writeBarrier,
             database = database,
             budgetForecastDao = budgetForecastDao,
@@ -397,6 +426,12 @@ class BudgetRolloverTest {
             if (start <= jan31Ms && end <= feb28Ms + 86400000L) 600.0
             else 0.0
         }
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            if (start <= jan31Ms && end <= feb28Ms + 86400000L) listOf(CurrencyTotal("EUR", 600.0, 1))
+            else listOf(CurrencyTotal("EUR", 0.0, 0))
+        }
 
         val statuses = repo.getBudgetStatuses().first()
 
@@ -421,6 +456,7 @@ class BudgetRolloverTest {
         every { categoryDao.getAllFlow() } returns flowOf(emptyList())
         every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
 
         val statuses = budgetRepository.getBudgetStatuses().first()
 

@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.budget
 
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.repository.BudgetRepository
@@ -54,6 +55,7 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseDao.getCategorySpentInPeriod(2L, startOfMonth(now), now)
         } returns 100.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 100.0, 1))
 
         val progress = manager.getSharedBudgetProgress(7L, listOf("a", "b"))
 
@@ -84,6 +86,7 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseDao.getTotalForPeriod(startOfMonth(now), now)
         } returns 40.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(startOfMonth(now), now) } returns listOf(CurrencyTotal("EUR", 40.0, 1))
 
         val progress = manager.getSharedBudgetProgress(8L, listOf("u1", "u2", "u3"))
 
@@ -125,6 +128,7 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseDao.getCategorySpentInPeriod(2L, startOfMonth(now), now)
         } returns 100.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 100.0, 1))
 
         val progress = manager.getSharedBudgetProgress(10L, listOf("a", "b"))
 
@@ -151,6 +155,7 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseDao.getCategorySpentInPeriod(2L, startOfMonth(now), now)
         } returns 100.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 100.0, 1))
 
         val progress = manager.getSharedBudgetProgress(11L, listOf("x"))
 
@@ -176,6 +181,7 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseDao.getCategorySpentInPeriod(2L, startOfMonth(now), now)
         } returns 30.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 30.0, 1))
 
         val progress = manager.getSharedBudgetProgress(12L, listOf("u1", "u2"))
 
@@ -202,6 +208,7 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseDao.getCategorySpentInPeriod(2L, startOfMonth(now), now)
         } returns 60.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 60.0, 1))
 
         val progress = manager.getSharedBudgetProgress(13L, listOf("a"))
 
@@ -227,6 +234,7 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseDao.getCategorySpentInPeriod(5L, startOfMonth(now), now)
         } returns 25000.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 25000.0, 1))
 
         val progress = manager.getSharedBudgetProgress(14L, listOf("a"))
 
@@ -253,6 +261,7 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseDao.getCategorySpentInPeriod(7L, som, now)
         } returns 150.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 150.0, 1))
 
         manager.getSharedBudgetProgress(20L, listOf("a"))
 
@@ -278,6 +287,7 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseDao.getTotalForPeriod(som, now)
         } returns 200.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(som, now) } returns listOf(CurrencyTotal("EUR", 200.0, 1))
 
         val progress = manager.getSharedBudgetProgress(21L, listOf("a", "b"))
 
@@ -307,6 +317,7 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseDao.getCategorySpentInPeriod(3L, startOfMonth(now), now)
         } returns 750.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 750.0, 1))
 
         val progress = manager.getSharedBudgetProgress(22L, listOf("x"))
 
@@ -336,6 +347,7 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseDao.getCategorySpentInPeriod(4L, expectedStart, expectedEnd)
         } returns 90.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 90.0, 1))
 
         val progress = manager.getSharedBudgetProgress(23L, listOf("alice", "bob", "carol"))
 
@@ -367,6 +379,7 @@ class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
         coEvery {
             expenseDao.getCategorySpentInPeriod(6L, monthStart, now)
         } returns 120.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 120.0, 1))
 
         val progress = manager.getSharedBudgetProgress(24L, listOf("solo"))
 
