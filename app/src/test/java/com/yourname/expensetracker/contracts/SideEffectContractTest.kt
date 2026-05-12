@@ -10,7 +10,7 @@ import java.io.File
  */
 class SideEffectContractTest {
 
-    private val mainSrc = File("app/src/main/java/com/yourname/expensetracker")
+    private val mainSrc = File("src/main/java/com/yourname/expensetracker")
     private val dispatchPattern = Regex("""dispatchOn(Created|Updated|Deleted|BulkUpdated)""")
 
     @Test

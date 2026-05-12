@@ -14,7 +14,7 @@ import java.io.File
  */
 class MoneyContractTest {
 
-    private val mainSrc = File("app/src/main/java/com/yourname/expensetracker")
+    private val mainSrc = File("src/main/java/com/yourname/expensetracker")
     private val sumPattern = Regex("""sumOf\s*\{.*effectiveAmount|sumOf\s*\{.*\.effectiveAmount|\+=\s*.*\.effectiveAmount""")
 
     @Test

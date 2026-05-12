@@ -1,0 +1,20 @@
+Step 1: data/database
+Step 2: data/repository
+Step 3: data/ai + data/email + data/location + data/privacy + data/security + data/service + data/speech + data/currency
+Step 4: domain/analytics
+Step 5: domain/budget + domain/forecasting + domain/business + domain/carbon + domain/cashflow
+Step 6: domain/categorization + domain/challenge + domain/currency + domain/core + domain/config + domain/debug + domain/dto
+Step 7: domain/groups + domain/health + domain/income + domain/intelligence + domain/investment + domain/location
+Step 8: domain/logic + domain/model + domain/naturallanguage + domain/negotiation + domain/parser
+Step 9: domain/receipt + domain/recurring + domain/savings + domain/split + domain/tax + domain/transaction
+Step 10: domain/usecase + domain/util + domain/widget + domain/workers + domain/price + domain/reminder + domain/receiptmatching + domain/engine + domain/export
+Step 11: e2e + integration + metrics + receiver + guards
+Step 12: scenarios (part 1: Backup through Money)
+Step 13: scenarios (part 2: Notification through TransactionTargeted)
+Step 14: service + workers + util
+Step 15: ui/screens (addexpense through carbon)
+Step 16: ui/screens (cashflow through groups)
+Step 17: ui/screens (home through map)
+Step 18: ui/screens (price through transactions) + ui/navigation + ui/components + ui/util
+Step 19: verification + consistency + contracts + currency
+Step 20: testfixtures + TestUtils + ui/Main* + ui/screens/analytics stress + ui/screens/receiptscan stress

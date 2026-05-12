@@ -11,7 +11,7 @@ import java.io.File
 class RecurringDeactivateContractTest {
 
     private val coordinatorFile = File(
-        "app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt"
+        "src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt"
     )
 
     @Test

@@ -10,7 +10,7 @@ import java.io.File
  */
 class PrivacyStorageContractTest {
 
-    private val mainSrc = File("app/src/main/java/com/yourname/expensetracker")
+    private val mainSrc = File("src/main/java/com/yourname/expensetracker")
 
     @Test
     fun `RawStorageMode usages use exhaustive when blocks`() {
@@ -41,7 +41,7 @@ class PrivacyStorageContractTest {
 
     @Test
     fun `NotificationCaptureService has DO_NOT_STORE branch`() {
-        val file = File("app/src/main/java/com/yourname/expensetracker/service/NotificationCaptureService.kt")
+        val file = File("src/main/java/com/yourname/expensetracker/service/NotificationCaptureService.kt")
         assertTrue("NotificationCaptureService.kt must exist", file.exists())
         val content = file.readText()
         assertTrue(
@@ -56,7 +56,7 @@ class PrivacyStorageContractTest {
 
     @Test
     fun `RawContentSanitizer returns empty for DO_NOT_STORE`() {
-        val file = File("app/src/main/java/com/yourname/expensetracker/domain/privacy/RawContentSanitizer.kt")
+        val file = File("src/main/java/com/yourname/expensetracker/domain/privacy/RawContentSanitizer.kt")
         assertTrue("RawContentSanitizer.kt must exist", file.exists())
         val content = file.readText()
         assertTrue(

@@ -10,7 +10,7 @@ import java.io.File
  */
 class LifecycleBarrierContractTest {
 
-    private val mainSrc = File("app/src/main/java/com/yourname/expensetracker")
+    private val mainSrc = File("src/main/java/com/yourname/expensetracker")
 
     @Test
     fun `all LifecycleCoordinators with transactions reference writeBarrier`() {
