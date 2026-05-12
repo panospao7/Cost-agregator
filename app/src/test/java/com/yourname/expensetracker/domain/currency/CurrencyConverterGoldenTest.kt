@@ -19,7 +19,7 @@ class CurrencyConverterGoldenTest : AnalyticsEngineTestBase() {
     override fun setUp() {
         super.setUp()
         exchangeRateStore = mockk(relaxed = true)
-        converter = CurrencyConverter(exchangeRateStore, timeProvider = mockk())
+        converter = CurrencyConverter(exchangeRateStore, timeProvider = mockk(relaxed = true))
     }
 
     @Test

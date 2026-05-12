@@ -10,7 +10,7 @@ import org.junit.Test
 class CurrencyConverterStressTest {
 
     private val exchangeRateStore = mockk<ExchangeRateStore>(relaxed = true)
-    private val converter = CurrencyConverter(exchangeRateStore, timeProvider = mockk())
+    private val converter = CurrencyConverter(exchangeRateStore, timeProvider = mockk(relaxed = true))
 
     @Test
     fun `five hundred conversions accumulated preserve total within tight tolerance`() = runTest {
