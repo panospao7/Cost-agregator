@@ -33,7 +33,17 @@ class InvestmentTrackerTest {
 
     @Before
     fun setup() {
-        tracker = InvestmentTracker(mockk(relaxed = true), investmentDao, investmentValueDao, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
+        tracker = InvestmentTracker(
+            database = mockk(relaxed = true),
+            investmentDao = investmentDao,
+            investmentValueDao = investmentValueDao,
+            investmentTransactionDao = mockk(relaxed = true),
+            timeProvider = timeProvider,
+            currencyConverter = mockk(relaxed = true),
+            currencySettingsRepository = mockk(relaxed = true),
+            writeBarrier = mockk(relaxed = true),
+            ioDispatcher = Dispatchers.Unconfined
+        )
     }
 
     // ---- All-time high/low correctness ----
@@ -229,7 +239,7 @@ class InvestmentTrackerTest {
 
         val history = tracker.getPortfolioValueHistory(days = 30)
 
-        assertThat(history).hasSize(1)
+        assertThat(history.size).isEqualTo(1)
         assertThat(history.single().totalValue).isEqualTo(170.0)
         coVerify(exactly = 1) { investmentValueDao.getPortfolioHistoryBatch(listOf(9L, 10L), any(), any()) }
     }

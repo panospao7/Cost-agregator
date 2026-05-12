@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -48,13 +49,14 @@ class GroupsRepositoryImplTest {
         }
 
         repository = GroupsRepositoryImpl(
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             database = database,
             groupDao = groupDao,
             memberDao = memberDao,
             groupExpenseDao = groupExpenseDao,
             coordinator = coordinator,
-            ioDispatcher = testDispatcher,
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
+            ioDispatcher = testDispatcher,
         )
     }
 

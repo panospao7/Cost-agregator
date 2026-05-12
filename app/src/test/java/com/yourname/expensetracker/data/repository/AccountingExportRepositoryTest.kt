@@ -63,7 +63,11 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             quickBooksExporter = QuickBooksIIFExporter(),
             xeroExporter = XeroCSVExporter(),
             freshBooksExporter = FreshBooksExporter(),
-            accountantReportPdfExporter = AccountantReportPdfExporter(timeProvider = mockk<TimeProvider>(relaxed = true)),
+            accountantReportPdfExporter = AccountantReportPdfExporter(
+                timeProvider = mockk<TimeProvider>(relaxed = true),
+                currencyConverter = mockk<com.yourname.expensetracker.domain.currency.CurrencyConverter>(relaxed = true),
+                currencySettingsRepository = mockk<com.yourname.expensetracker.domain.currency.CurrencySettingsRepository>(relaxed = true),
+            ),
             timeProvider = mockk<TimeProvider>(relaxed = true)
         )
 

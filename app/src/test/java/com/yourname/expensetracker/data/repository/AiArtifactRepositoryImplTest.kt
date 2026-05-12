@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.AiArtifactDao
 import com.yourname.expensetracker.data.database.entity.AiArtifactEntity
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.ai.model.AiArtifactStatus
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiMode
@@ -33,7 +34,7 @@ class AiArtifactRepositoryImplTest {
     @Before
     fun setup() {
         dao = mockk(relaxed = true)
-        repository = AiArtifactRepositoryImpl(dao, timeProvider = mockk<TimeProvider>(relaxed = true))
+        repository = AiArtifactRepositoryImpl(mockk<DatabaseWriteBarrier>(relaxed = true), dao, timeProvider = mockk<TimeProvider>(relaxed = true))
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

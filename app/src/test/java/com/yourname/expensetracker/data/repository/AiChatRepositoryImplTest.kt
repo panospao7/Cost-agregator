@@ -11,6 +11,8 @@ import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.ai.service.CloudPayloadRedactor
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -50,7 +52,7 @@ class AiChatRepositoryImplTest {
             transactionBlock.captured.invoke()
         }
 
-        repository = AiChatRepositoryImpl(database, sessionDao, messageDao, aiSettingsRepository, fakeTimeProvider)
+        repository = AiChatRepositoryImpl(mockk<DatabaseWriteBarrier>(relaxed = true), database, sessionDao, messageDao, aiSettingsRepository, fakeTimeProvider, mockk<CloudPayloadRedactor>(relaxed = true))
     }
 
     @After

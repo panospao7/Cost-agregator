@@ -14,6 +14,9 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import io.mockk.*
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -46,9 +49,13 @@ class BudgetRepositoryTruncationTest {
     private val offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
     private val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
     private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+    private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+    private val database = mockk<AppDatabase>(relaxed = true)
+    private val budgetForecastDao = mockk<BudgetForecastDao>(relaxed = true)
 
     private lateinit var repository: BudgetRepository
 
+    @Suppress("DEPRECATION_ERROR")
     @Before
     fun setup() {
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
@@ -61,6 +68,9 @@ class BudgetRepositoryTruncationTest {
             timeProvider, offsetEngine, TimeBoundaryTicker(timeProvider),
             currencyConverter, currencySettingsRepository,
             multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
+            writeBarrier = writeBarrier,
+            database = database,
+            budgetForecastDao = budgetForecastDao,
         )
     }
 

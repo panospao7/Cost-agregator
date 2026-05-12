@@ -3,6 +3,7 @@ package com.yourname.expensetracker.scenarios
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.APP_DATABASE_SCHEMA_VERSION
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.testfixtures.database.AppDatabaseTestFactory
 import com.yourname.expensetracker.testfixtures.dateMs
@@ -81,7 +82,7 @@ class BackupRestoreMoneyIntegrityScenarioTest {
         // AND: current schema version is at least 120
         assertTrue(
             "Schema version should be >= 120",
-            AppDatabase.APP_DATABASE_SCHEMA_VERSION >= 120
+            APP_DATABASE_SCHEMA_VERSION >= 120
         )
     }
 

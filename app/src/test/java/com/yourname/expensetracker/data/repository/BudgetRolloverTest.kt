@@ -14,6 +14,9 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
@@ -48,6 +51,9 @@ class BudgetRolloverTest {
     private val offsetEngine = mockk<SharedExpenseBudgetOffsetEngine>(relaxed = true)
     private val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
     private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+    private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+    private val database = mockk<AppDatabase>(relaxed = true)
+    private val budgetForecastDao = mockk<BudgetForecastDao>(relaxed = true)
 
     /** Real calculator — required so rollover window iteration terminates correctly. */
     private lateinit var budgetCalculator: BudgetCalculator
@@ -56,6 +62,7 @@ class BudgetRolloverTest {
     // Fixed "now" = 2026-04-10 00:00 UTC (matches today's date in env)
     private val NOW = makeUtcMs(2026, 4, 10)
 
+    @Suppress("DEPRECATION_ERROR")
     @Before
     fun setup() {
         every { timeProvider.now() } returns NOW
@@ -79,6 +86,9 @@ class BudgetRolloverTest {
             currencyConverter,
             currencySettingsRepository,
             multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true),
+            writeBarrier = writeBarrier,
+            database = database,
+            budgetForecastDao = budgetForecastDao,
         )
     }
 

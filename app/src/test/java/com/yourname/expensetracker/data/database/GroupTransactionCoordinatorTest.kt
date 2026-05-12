@@ -99,7 +99,8 @@ class GroupTransactionCoordinatorTest {
         )
         coordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, groupExpenseDao, expenseDao,
-            transactionEventDao, transactionLifecycleCoordinator, Dispatchers.IO
+            transactionEventDao, transactionLifecycleCoordinator,
+            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.IO
         )
     }
 

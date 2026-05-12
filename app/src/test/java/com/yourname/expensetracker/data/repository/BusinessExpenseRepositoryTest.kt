@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MileageTrackingDao
 import com.yourname.expensetracker.data.database.entity.MileageTracking
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -16,13 +17,15 @@ class BusinessExpenseRepositoryTest {
 
     private lateinit var expenseDao: ExpenseDao
     private lateinit var mileageDao: MileageTrackingDao
+    private lateinit var writeBarrier: DatabaseWriteBarrier
     private lateinit var repository: BusinessExpenseRepository
 
     @Before
     fun setup() {
         expenseDao = mockk(relaxed = true)
         mileageDao = mockk(relaxed = true)
-        repository = BusinessExpenseRepository(expenseDao, mileageDao)
+        writeBarrier = mockk(relaxed = true)
+        repository = BusinessExpenseRepository(writeBarrier, expenseDao, mileageDao)
     }
 
     @Test

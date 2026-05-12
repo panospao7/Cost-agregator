@@ -3,6 +3,7 @@ package com.yourname.expensetracker.scenarios
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
@@ -81,6 +82,7 @@ class TransactionTargetedUpdateSideEffectsTest {
             restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true).also {
                 every { it.isWritesAllowed() } returns true
             },
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             currencySettingsRepository = mockk(relaxed = true)
         )
     }

@@ -11,6 +11,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("DEPRECATION_ERROR")
 class DateBoundaryFlowTest : ViewModelTestUtils() {
 
     @Test

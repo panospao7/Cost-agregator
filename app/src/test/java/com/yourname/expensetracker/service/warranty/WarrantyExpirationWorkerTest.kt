@@ -7,10 +7,12 @@ import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
 import com.google.common.truth.Truth.assertThat
+import com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
 import com.yourname.expensetracker.data.database.entity.Warranty
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository.ExpiryReconciliationResult
 import com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -52,7 +54,7 @@ class WarrantyExpirationWorkerTest {
                         workerParameters,
                         warrantyRepository,
                         notificationService,
-                        restoreMaintenanceMode = mockk(),
+                        executionGuard = mockk<WorkerExecutionGuard>(relaxed = true),
                     )
                 }
             })

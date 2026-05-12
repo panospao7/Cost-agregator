@@ -105,7 +105,7 @@ class SharedExpenseTest {
     }
 
     @Test
-    fun `settlement solver finds exact global minimum transfers`() {
+    fun `settlement solver finds exact global minimum transfers`() = runTest {
         val balances = mapOf(
             1L to MemberBalance(1L, "A", paid = 0.0, shouldPay = 0.0, netBalance = -6.0, currency = "EUR"),
             2L to MemberBalance(2L, "B", paid = 0.0, shouldPay = 0.0, netBalance = -5.0, currency = "EUR"),

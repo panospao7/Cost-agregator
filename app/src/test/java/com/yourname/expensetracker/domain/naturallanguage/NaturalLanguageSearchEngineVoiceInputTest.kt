@@ -17,6 +17,7 @@ class NaturalLanguageSearchEngineVoiceInputTest {
             currencyConverter = mockk(),
             currencySettingsRepository = mockk(),
             categoryRepository = mockk(),
+            merchantNormalizationRepository = mockk(relaxed = true),
         )
 
         var receivedResult: String? = null
@@ -37,6 +38,7 @@ class NaturalLanguageSearchEngineVoiceInputTest {
             currencyConverter = mockk(),
             currencySettingsRepository = mockk(),
             categoryRepository = mockk(),
+            merchantNormalizationRepository = mockk(relaxed = true),
         )
 
         var receivedError: SpeechInputError? = null
@@ -57,6 +59,7 @@ class NaturalLanguageSearchEngineVoiceInputTest {
             currencyConverter = mockk(),
             currencySettingsRepository = mockk(),
             categoryRepository = mockk(),
+            merchantNormalizationRepository = mockk(relaxed = true),
         )
 
         engine.startVoiceInput(onResult = {})
@@ -105,6 +108,17 @@ class NaturalLanguageSearchEngineVoiceInputTest {
             categories: List<String>?,
             minAmount: Double?,
             maxAmount: Double?
+        ): List<NaturalLanguageExpense> = emptyList()
+
+        override suspend fun getExpensesBetweenFilteredKeyset(
+            startMs: Long,
+            endMs: Long,
+            categoryIds: Set<Long>?,
+            merchants: List<String>?,
+            transactionType: String?,
+            keywordSearch: String?,
+            limit: Int,
+            cursor: com.yourname.expensetracker.domain.naturallanguage.SearchCursor?
         ): List<NaturalLanguageExpense> = emptyList()
     }
 }

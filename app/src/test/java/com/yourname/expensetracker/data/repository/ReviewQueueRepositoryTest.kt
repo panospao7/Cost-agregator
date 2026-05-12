@@ -17,6 +17,7 @@ import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -58,6 +59,7 @@ class ReviewQueueRepositoryTest {
         every { timeProvider.now() } returns 1700000000000L
         
         repository = ReviewQueueRepository(
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             database = database,
             pendingReviewDao = pendingReviewDao,
             rawNotificationDao = rawNotificationDao,

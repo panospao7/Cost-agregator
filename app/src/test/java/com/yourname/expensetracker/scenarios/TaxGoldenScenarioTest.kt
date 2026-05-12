@@ -127,6 +127,7 @@ class TaxGoldenScenarioTest {
             val expenseDao: ExpenseDao = database.expenseDao()
 
             val repository = BusinessExpenseRepository(
+                writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
                 expenseDao = expenseDao,
                 mileageDao = mileageDao
             )

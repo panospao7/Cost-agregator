@@ -17,6 +17,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
+@Suppress("DEPRECATION_ERROR")
 class SharedBudgetManagerTest : AnalyticsEngineTestBase() {
 
     private lateinit var budgetRepository: BudgetRepository

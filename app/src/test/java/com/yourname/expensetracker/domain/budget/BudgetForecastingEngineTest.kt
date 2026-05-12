@@ -36,6 +36,7 @@ import java.time.temporal.ChronoUnit
  *   currency, verifying that conversion is applied and the overspend probability
  *   correctly reflects the converted amounts.
  */
+@Suppress("DEPRECATION_ERROR")
 class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
     private lateinit var budgetRepository: BudgetRepository
@@ -70,7 +71,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true),
             expenseRepository = mockk<ExpenseRepository>(relaxed = true),
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
-            currencyConverter = mockk<CurrencyConverter>(relaxed = true)
+            currencyConverter = mockk<CurrencyConverter>(relaxed = true),
+            writeBarrier = mockk(relaxed = true)
         )
     }
 

@@ -39,6 +39,7 @@ import java.time.ZoneId
  * from every output surface.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("DEPRECATION_ERROR")
 class BusinessExpenseReportGeneratorTest {
 
     private val testDispatcher = StandardTestDispatcher()
@@ -583,7 +584,7 @@ class BusinessExpenseReportGeneratorTest {
         mileageDao: com.yourname.expensetracker.data.database.dao.MileageTrackingDao =
             mockk(relaxed = true)
     ): Pair<BusinessExpenseRepository, BusinessExpenseReportGenerator> {
-        val realRepo = BusinessExpenseRepository(expenseDao, mileageDao)
+        val realRepo = BusinessExpenseRepository(mockk(relaxed = true), expenseDao, mileageDao)
         val gen = BusinessExpenseReportGenerator(realRepo, timeProvider)
         return realRepo to gen
     }

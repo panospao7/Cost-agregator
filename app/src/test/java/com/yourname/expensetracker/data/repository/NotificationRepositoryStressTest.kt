@@ -63,7 +63,8 @@ class NotificationRepositoryStressTest {
             userCorrectionDao,
             sourceStatsDao,
             classifier,
-            pipeline
+            pipeline,
+            mockk(relaxed = true)
         )
     }
 
@@ -204,7 +205,7 @@ class NotificationRepositoryStressTest {
 
     @Test
     fun `stress - processAndSave calls pipeline process`() = runTest {
-        coEvery { pipeline.process(any()) } returns ProcessingResult.Success("com.revolut.revolut")
+        coEvery { pipeline.process(any()) } returns NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted(rawId = 1L, expenseId = 1L)
         val notification = RawNotification(
             packageName = "com.revolut.revolut",
             appName = "Revolut",

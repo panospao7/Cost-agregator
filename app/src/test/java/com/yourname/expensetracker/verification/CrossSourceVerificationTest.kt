@@ -9,6 +9,7 @@ import com.yourname.expensetracker.toAnalyticsCategoryRefs
 import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.DailyTotal
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -40,6 +41,7 @@ import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
 
+@Suppress("DEPRECATION_ERROR")
 class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
 
     private val database = mockk<AppDatabase>(relaxed = true)
@@ -54,6 +56,7 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
         super.setUp()
 
         repository = ExpenseRepository(
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             database = database,
             expenseDao = expenseDao,
             userCorrectionDao = mockk(relaxed = true),

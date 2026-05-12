@@ -62,7 +62,10 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
             recurringPatternsProvider = recurringPatternsProvider,
             timeProvider = timeProvider,
             recurringLifecycleCoordinator = recurringLifecycleCoordinator,
-            recurringOccurrenceDao = recurringOccurrenceDao
+            recurringOccurrenceDao = recurringOccurrenceDao,
+            analyticsCurrencyNormalizer = mockk(relaxed = true),
+            currencySettingsRepository = mockk(relaxed = true),
+            currencyConverter = mockk(relaxed = true)
         )
     }
 

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.transaction.lifecycle
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -25,6 +26,7 @@ import org.junit.Test
  *
  * Validates the full lifecycle: validate → normalize → dedupe → insert → event logging.
  */
+@Suppress("DEPRECATION_ERROR")
 class TransactionLifecycleCoordinatorTest {
 
     private lateinit var database: AppDatabase
@@ -35,6 +37,7 @@ class TransactionLifecycleCoordinatorTest {
     private lateinit var sideEffectDispatcher: TransactionSideEffectDispatcher
     private lateinit var recurringLifecycleCoordinator: RecurringLifecycleCoordinator
     private lateinit var restoreMaintenanceMode: RestoreMaintenanceMode
+    private lateinit var writeBarrier: DatabaseWriteBarrier
     private lateinit var coordinator: TransactionLifecycleCoordinator
 
     private val now = 1_712_000_000_000L // 2024-04-01ish
@@ -49,6 +52,7 @@ class TransactionLifecycleCoordinatorTest {
         sideEffectDispatcher = mockk(relaxed = true)
         recurringLifecycleCoordinator = mockk(relaxed = true)
         restoreMaintenanceMode = mockk(relaxed = true)
+        writeBarrier = mockk(relaxed = true)
 
         every { timeProvider.now() } returns now
         // Allow writes (not in restore mode)
@@ -67,6 +71,7 @@ class TransactionLifecycleCoordinatorTest {
             sideEffectDispatcher = sideEffectDispatcher,
             recurringLifecycleCoordinator = recurringLifecycleCoordinator,
             restoreMaintenanceMode = restoreMaintenanceMode,
+            writeBarrier = writeBarrier,
             currencySettingsRepository = mockk(relaxed = true)
         )
     }

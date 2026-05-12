@@ -92,7 +92,7 @@ class GroupSettlementPipelineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `settlement calculator produces minimal transfer count for mixed balances`() {
+    fun `settlement calculator produces minimal transfer count for mixed balances`() = runTest {
         val balances = mapOf(
             1L to memberBalance(1L, "Alice", 3.0),
             2L to memberBalance(2L, "Bob", 6.0),
@@ -109,7 +109,7 @@ class GroupSettlementPipelineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `all-zero balances produce empty settlement plan`() {
+    fun `all-zero balances produce empty settlement plan`() = runTest {
         val balances = mapOf(
             1L to memberBalance(1L, "Alice", 0.0),
             2L to memberBalance(2L, "Bob", 0.0),

@@ -9,6 +9,7 @@ import androidx.work.testing.TestListenableWorkerBuilder
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -42,7 +43,7 @@ class MerchantKeyBackfillWorkerTest {
                     appContext,
                     workerParameters,
                     expenseRepository,
-                    restoreMaintenanceMode = mockk(relaxed = true)
+                    executionGuard = mockk<WorkerExecutionGuard>(relaxed = true)
                 )
             })
             .build()

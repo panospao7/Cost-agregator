@@ -2,6 +2,7 @@ package com.yourname.expensetracker.scenarios
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.Category
@@ -41,6 +42,7 @@ import org.robolectric.annotation.Config
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
+@Suppress("DEPRECATION_ERROR")
 class TransactionLifecycleCoordinatorDbContractTest {
 
     private lateinit var context: Context
@@ -76,6 +78,7 @@ class TransactionLifecycleCoordinatorDbContractTest {
             restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true).also {
                 every { it.isWritesAllowed() } returns true
             },
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             currencySettingsRepository = mockk(relaxed = true)
         )
     }
@@ -89,6 +92,7 @@ class TransactionLifecycleCoordinatorDbContractTest {
     // Test 1: createExpense inserts row and writes CREATED event
     // ─────────────────────────────────────────────────────────────────────────
 
+    @Suppress("DEPRECATION_ERROR")
     @Test
     fun `createExpense inserts row and writes CREATED event`() = runTest {
         // GIVEN: categories seeded (Food & Dining, Shopping)
@@ -137,6 +141,7 @@ class TransactionLifecycleCoordinatorDbContractTest {
     // Test 2: createExpense duplicate detected and skipped
     // ─────────────────────────────────────────────────────────────────────────
 
+    @Suppress("DEPRECATION_ERROR")
     @Test
     fun `createExpense duplicate detected and skipped`() = runTest {
         // GIVEN: an existing expense of €45.50 at SKLAVENITIS (inserted via coordinator)
@@ -190,6 +195,7 @@ class TransactionLifecycleCoordinatorDbContractTest {
     // Test 3: updateExpense updates row and writes UPDATED event
     // ─────────────────────────────────────────────────────────────────────────
 
+    @Suppress("DEPRECATION_ERROR")
     @Test
     fun `updateExpense updates row and writes UPDATED event`() = runTest {
         // GIVEN: an existing expense (created via coordinator)

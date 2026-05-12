@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.e2e
 
 import com.yourname.expensetracker.AnalyticsEngineTestBase
+import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.repository.BudgetRepository
@@ -27,7 +28,7 @@ class BudgetAlertPipelineTest : AnalyticsEngineTestBase() {
         budgetRepo = mockk(relaxed = true)
         notificationService = mockk(relaxed = true)
         budgetCalculator = BudgetCalculator(timeProvider)
-        budgetMonitor = BudgetMonitor(budgetRepo, timeProvider, notificationService, testDispatcher)
+        budgetMonitor = BudgetMonitor(budgetRepo, timeProvider, notificationService, testDispatcher, diagnosticEventDao = mockk<PipelineDiagnosticEventDao>(relaxed = true))
     }
 
     @Test

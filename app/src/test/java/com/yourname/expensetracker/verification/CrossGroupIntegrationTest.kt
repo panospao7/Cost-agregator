@@ -10,6 +10,7 @@ import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.CategoryTotalResult
 import com.yourname.expensetracker.data.database.dao.DailyTotal
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.dao.MonthlyTotal
 import com.yourname.expensetracker.data.database.dao.WeeklyTotal
@@ -85,6 +86,7 @@ import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
 
+@Suppress("DEPRECATION_ERROR")
 class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
 
     private val database = mockk<AppDatabase>(relaxed = true)
@@ -107,6 +109,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         mockCategories(categories)
 
         expenseRepository = ExpenseRepository(
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             database = database,
             expenseDao = expenseDao,
             userCorrectionDao = mockk(relaxed = true),
@@ -196,7 +199,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
 
         val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
-        val forecastInputAssembler = ForecastInputAssembler(timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk(), recurringLifecycleCoordinator = mockk(), recurringOccurrenceDao = mockk())
+        val forecastInputAssembler = ForecastInputAssembler(timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk(), currencyConverter = mockk(), recurringLifecycleCoordinator = mockk(), recurringOccurrenceDao = mockk())
         val mergedRecurringPatternsProvider = MergedRecurringPatternsProvider(
             expenseRepository = expenseRepository,
             recurringExpenseRepository = mockk(relaxed = true),
@@ -253,7 +256,9 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
             stressForecastEngine = stressForecastEngine,
-            forecastInputAssembler = mockk()
+            forecastInputAssembler = mockk(),
+            currencyConverter = mockk(relaxed = true),
+            currencySettingsRepository = mockk(relaxed = true)
         )
 
         val monthSpent = expenses.filter { it.transactionType == TransactionType.PURCHASE && it.date in ms(2026, 3, 1) until ms(2026, 4, 1) }

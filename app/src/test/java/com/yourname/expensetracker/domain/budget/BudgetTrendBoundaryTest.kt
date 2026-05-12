@@ -19,6 +19,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 
+@Suppress("DEPRECATION_ERROR")
 class BudgetTrendBoundaryTest {
 
     private val expenseDao = mockk<com.yourname.expensetracker.data.database.dao.ExpenseDao>(relaxed = true)
@@ -46,6 +47,7 @@ class BudgetTrendBoundaryTest {
             expenseRepository = mockk(relaxed = true),
             currencySettingsRepository = mockk(),
             currencyConverter = mockk(relaxed = true),
+            writeBarrier = mockk(relaxed = true),
         )
     }
 

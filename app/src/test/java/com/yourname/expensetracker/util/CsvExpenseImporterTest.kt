@@ -16,6 +16,7 @@ import org.junit.Before
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("DEPRECATION_ERROR")
 class CsvExpenseImporterTest {
 
     private val categoryDao = mockk<CategoryDao>(relaxed = true)

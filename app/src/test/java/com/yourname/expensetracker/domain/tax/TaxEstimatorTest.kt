@@ -36,7 +36,10 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
             timeProvider = timeProvider,
             currencyConverter = mockk(relaxed = true),
             currencySettingsRepository = mockk(relaxed = true),
-            ioDispatcher = Dispatchers.Unconfined
+            taxSettings = mockk(relaxed = true),
+            writeBarrier = mockk<com.yourname.expensetracker.data.backup.DatabaseWriteBarrier>(relaxed = true),
+            ioDispatcher = Dispatchers.Unconfined,
+            taxRateProvider = mockk(relaxed = true)
         )
     }
 

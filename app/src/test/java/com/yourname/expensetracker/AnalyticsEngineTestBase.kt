@@ -190,6 +190,7 @@ abstract class AnalyticsEngineTestBase {
     /**
      * Sets up default empty results for ExpenseDao queries.
      */
+    @Suppress("DEPRECATION_ERROR")
     private fun setupDefaultExpenseMocks() {
         // Default: return empty lists
         io.mockk.coEvery { expenseDao.getExpensesBetween(any(), any()) } returns emptyList()
@@ -212,6 +213,7 @@ abstract class AnalyticsEngineTestBase {
      *
      * @param expenses The expenses to return from queries
      */
+    @Suppress("DEPRECATION_ERROR")
     protected fun mockExpenses(expenses: List<Expense>) {
         val purchasesOnly = expenses.filter { it.transactionType == TransactionType.PURCHASE }
 
@@ -243,6 +245,7 @@ abstract class AnalyticsEngineTestBase {
     /**
      * Configures period-specific mockk based on expense dates.
      */
+    @Suppress("DEPRECATION_ERROR")
     private fun setupPeriodSpecificMocks(expenses: List<Expense>) {
         // Mock March 2026 queries
         val marchExpenses = expenses.filter { expense ->
@@ -272,6 +275,7 @@ abstract class AnalyticsEngineTestBase {
      * @param endMs Period end
      * @param expenses Expenses to return for this period
      */
+    @Suppress("DEPRECATION_ERROR")
     protected fun mockExpensesForPeriod(startMs: Long, endMs: Long, expenses: List<Expense>) {
         io.mockk.coEvery { expenseDao.getExpensesBetween(eq(startMs), eq(endMs)) } returns expenses
         io.mockk.coEvery { expenseDao.getTotalSpentBetween(eq(startMs), eq(endMs)) } returns

@@ -25,6 +25,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("DEPRECATION_ERROR")
 class ExportImportRoundtripTest {
 
     private val categoryDao = mockk<CategoryDao>(relaxed = true)

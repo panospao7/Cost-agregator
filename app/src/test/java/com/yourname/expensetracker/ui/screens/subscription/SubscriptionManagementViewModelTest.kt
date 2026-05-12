@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.screens.subscription
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
 import com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
+import com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
@@ -36,7 +37,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
         every { timeProvider.now() } returns fixedNow
         configureRepositoryWithSubscriptions(emptyList())
 
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mockk())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockk())
     }
 
     @Test
@@ -47,7 +48,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
                 createSubscription(id = 2L, merchant = "Spotify", amount = 10.0)
             )
         )
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mockk())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockk())
 
         advanceUntilIdle()
 
@@ -64,7 +65,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
                 createSubscription(id = 1L, merchant = "Netflix", amount = 15.0)
             )
         )
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mockk())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockk())
         advanceUntilIdle()
 
         viewModel.toggleSubscriptionStatus(1L)
@@ -94,7 +95,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
                 )
             )
         )
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mockk())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockk())
 
         advanceUntilIdle()
 
@@ -106,7 +107,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
     @Test
     fun `empty state when no subscriptions`() = runTest(testDispatcher) {
         configureRepositoryWithSubscriptions(emptyList())
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, currencySettingsRepository = mockk())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockk())
 
         advanceUntilIdle()
 

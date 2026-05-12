@@ -13,6 +13,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("DEPRECATION_ERROR")
 class EmptyDataFlowTest : ViewModelTestUtils() {
 
     @Test

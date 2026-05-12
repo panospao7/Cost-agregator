@@ -1,9 +1,12 @@
 package com.yourname.expensetracker.ui.screens.export
 
+import com.yourname.expensetracker.data.backup.DatabaseReadBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExportDataRepository
 import com.yourname.expensetracker.domain.export.AccountingExportPolicy
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
 import com.yourname.expensetracker.domain.export.XeroCSVExporter
@@ -46,7 +49,10 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
             timeProvider = timeProvider,
             xeroExporter = XeroCSVExporter(),
             quickBooksExporter = QuickBooksIIFExporter(),
-            freshBooksExporter = FreshBooksExporter()
+            freshBooksExporter = FreshBooksExporter(),
+            restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true),
+            readBarrier = mockk<DatabaseReadBarrier>(relaxed = true),
+            privacyGate = mockk<PrivacyGate>(relaxed = true)
         )
     }
 

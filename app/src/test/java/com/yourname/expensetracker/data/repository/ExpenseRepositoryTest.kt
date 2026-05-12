@@ -36,6 +36,7 @@ class ExpenseRepositoryTest {
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
     private val transferDirectionAnalytics = mockk<TransferDirectionAnalytics>(relaxed = true)
     private val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+    private val writeBarrier = mockk<com.yourname.expensetracker.data.backup.DatabaseWriteBarrier>(relaxed = true)
 
     private lateinit var repository: ExpenseRepository
 
@@ -53,6 +54,7 @@ class ExpenseRepositoryTest {
         }
 
         repository = ExpenseRepository(
+            writeBarrier,
             database,
             expenseDao,
             userCorrectionDao,

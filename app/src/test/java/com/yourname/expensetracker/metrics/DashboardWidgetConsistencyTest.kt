@@ -28,6 +28,8 @@ import com.yourname.expensetracker.domain.model.dashboard.SpendingSummary
 import com.yourname.expensetracker.domain.model.dashboard.WeatherState
 import com.yourname.expensetracker.domain.usecase.dashboard.CompiledDashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeMoneyRadarUseCase
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardWidget
@@ -129,6 +131,8 @@ class DashboardWidgetConsistencyTest {
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
             stressForecastEngine = stressForecastEngine,
             forecastInputAssembler = mockk(),
+            currencyConverter = mockk<CurrencyConverter>(relaxed = true),
+            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
         )
     }
 

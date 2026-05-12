@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.data.repository.ReceiptRepository
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import dagger.Lazy
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,7 +54,8 @@ class WarrantyTrackerRepositoryTest {
             aiCapabilityRouter = aiCapabilityRouter,
             timeProvider = timeProvider,
             currencyConverter = mockk(relaxed = true),
-            currencySettingsRepository = mockk(relaxed = true)
+            currencySettingsRepository = mockk(relaxed = true),
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
         )
 
         every { aiSettingsRepository.settings() } returns settingsFlow

@@ -3,6 +3,8 @@ package com.yourname.expensetracker.scenarios
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.domain.privacy.CloudAiPrivacyGate
 import com.yourname.expensetracker.domain.privacy.CompositePrivacyGate
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicy
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import com.yourname.expensetracker.domain.privacy.LocationPrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacyAuditLogger
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
@@ -34,12 +36,18 @@ class PrivacyCloudLocationDeniedScenarioTest {
     @Test
     fun `cloud AI denied blocks warranty extraction`() = runTest {
         // GIVEN: a CloudAiPrivacyGate with cloud AI capabilities disabled
-        val settingsRepository = mockk<PrivacySettingsRepository>()
+        val policyResolver = mockk<EffectiveCloudAiPolicyResolver>()
         val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
-        val gate = CloudAiPrivacyGate(settingsRepository, auditLogger)
+        val gate = CloudAiPrivacyGate(policyResolver, auditLogger)
 
-        // AND: cloudAiEnabled = false in settings
-        coEvery { settingsRepository.getSettings() } returns PrivacySettings(cloudAiEnabled = false)
+        // AND: cloud AI disabled in resolved policy
+        coEvery { policyResolver.resolve() } returns EffectiveCloudAiPolicy(
+            cloudAllowed = false,
+            reason = "Cloud AI is disabled",
+            redactBeforeCloud = false,
+            receiptImageUploadAllowed = false,
+            bankStatementCloudAllowed = false
+        )
 
         // WHEN: checking CLOUD_AI_WARRANTY_EXTRACTION capability
         val decision = gate.check(PrivacyCapability.CLOUD_AI_WARRANTY_EXTRACTION)

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.budget
 
+import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
@@ -34,7 +35,8 @@ class BudgetMonitorTest {
             budgetRepository = budgetRepository,
             timeProvider = timeProvider,
             notificationService = notificationService,
-            ioDispatcher = testDispatcher
+            ioDispatcher = testDispatcher,
+            diagnosticEventDao = mockk<PipelineDiagnosticEventDao>(relaxed = true)
         )
     }
 

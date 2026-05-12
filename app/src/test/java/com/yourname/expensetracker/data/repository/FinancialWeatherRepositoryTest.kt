@@ -47,6 +47,7 @@ class FinancialWeatherRepositoryTest {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true),
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
+            currencyConverter = mockk<com.yourname.expensetracker.domain.currency.CurrencyConverter>(relaxed = true),
             recurringLifecycleCoordinator = mockk<RecurringLifecycleCoordinator>(relaxed = true),
             recurringOccurrenceDao = mockk<RecurringOccurrenceDao>(relaxed = true)
         )

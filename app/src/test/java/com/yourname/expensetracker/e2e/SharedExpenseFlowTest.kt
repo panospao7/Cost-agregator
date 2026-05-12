@@ -27,6 +27,7 @@ import org.junit.Test
  *   adjusts their share of pending shared expenses.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("DEPRECATION_ERROR")
 class SharedExpenseFlowTest : ViewModelTestUtils() {
 
     @Test

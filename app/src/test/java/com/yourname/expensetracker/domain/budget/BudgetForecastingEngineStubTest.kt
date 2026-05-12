@@ -37,6 +37,7 @@ class BudgetForecastingEngineStubTest : AnalyticsEngineTestBase() {
             expenseRepository = mockk(relaxed = true),
             currencySettingsRepository = mockk(),
             currencyConverter = mockk(relaxed = true),
+            writeBarrier = mockk(relaxed = true),
         )
     }
 

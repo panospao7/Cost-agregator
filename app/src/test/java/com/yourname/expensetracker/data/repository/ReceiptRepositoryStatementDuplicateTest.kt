@@ -115,6 +115,8 @@ class ReceiptRepositoryStatementDuplicateTest {
             assetStore = mockk(relaxed = true),
             currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
             receiptLifecycleCoordinator = mockk(relaxed = true),
+            writeBarrier = mockk(relaxed = true),
+            privacySettingsRepository = mockk(relaxed = true),
         )
     }
 

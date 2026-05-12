@@ -14,6 +14,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("DEPRECATION_ERROR")
 class CategoryBreakdownFlowTest : ViewModelTestUtils() {
 
     @Test

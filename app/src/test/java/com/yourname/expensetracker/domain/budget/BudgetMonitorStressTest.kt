@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.budget
 
+import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.Category
@@ -39,7 +40,7 @@ class BudgetMonitorStressTest {
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         every { timeProvider.now() } returns System.currentTimeMillis()
-        monitor = BudgetMonitor(budgetRepository, timeProvider, notificationService, testDispatcher)
+        monitor = BudgetMonitor(budgetRepository, timeProvider, notificationService, testDispatcher, diagnosticEventDao = mockk<PipelineDiagnosticEventDao>(relaxed = true))
     }
 
     @After

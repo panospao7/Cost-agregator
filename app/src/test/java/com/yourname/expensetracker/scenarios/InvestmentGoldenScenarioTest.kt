@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.investment.InvestmentTracker
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.testfixtures.database.AppDatabaseTestFactory
@@ -70,6 +71,7 @@ class InvestmentGoldenScenarioTest {
             timeProvider = timeProvider,
             currencyConverter = currencyConverter,
             currencySettingsRepository = currencySettingsRepository,
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             ioDispatcher = Dispatchers.IO
         )
     }

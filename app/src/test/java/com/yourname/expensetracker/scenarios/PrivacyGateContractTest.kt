@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -36,13 +37,19 @@ class PrivacyGateContractTest {
     @Test
     fun `privacy gate denies disabled capability`() = runTest {
         // GIVEN: a PrivacyGate that checks if capability is allowed
-        val settingsRepository = mockk<PrivacySettingsRepository>()
+        val policyResolver = mockk<EffectiveCloudAiPolicyResolver>()
         val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
-        val gate = CloudAiPrivacyGate(settingsRepository, auditLogger)
+        val gate = CloudAiPrivacyGate(policyResolver, auditLogger)
 
         // AND: capability is set to DISALLOWED in settings
         val disabledSettings = PrivacySettings(cloudAiEnabled = false)
-        coEvery { settingsRepository.getSettings() } returns disabledSettings
+        coEvery { policyResolver.resolve() } returns com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicy(
+            cloudAllowed = false,
+            reason = "Privacy settings: cloud AI disabled",
+            redactBeforeCloud = false,
+            receiptImageUploadAllowed = false,
+            bankStatementCloudAllowed = false
+        )
 
         // WHEN: checking the gate for a cloud AI capability
         val decision = gate.check(PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST)
@@ -61,13 +68,18 @@ class PrivacyGateContractTest {
     @Test
     fun `privacy gate allows enabled capability`() = runTest {
         // GIVEN: a PrivacyGate that checks if capability is allowed
-        val settingsRepository = mockk<PrivacySettingsRepository>()
+        val policyResolver = mockk<EffectiveCloudAiPolicyResolver>()
         val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
-        val gate = CloudAiPrivacyGate(settingsRepository, auditLogger)
+        val gate = CloudAiPrivacyGate(policyResolver, auditLogger)
 
-        // AND: capability is set to ALLOWED in settings
-        val enabledSettings = PrivacySettings(cloudAiEnabled = true)
-        coEvery { settingsRepository.getSettings() } returns enabledSettings
+        // AND: capability is set to ALLOWED
+        coEvery { policyResolver.resolve() } returns com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicy(
+            cloudAllowed = true,
+            reason = null,
+            redactBeforeCloud = false,
+            receiptImageUploadAllowed = true,
+            bankStatementCloudAllowed = true
+        )
 
         // WHEN: checking the gate for a cloud AI capability
         val decision = gate.check(PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST)
@@ -178,10 +190,13 @@ class PrivacyGateContractTest {
     @Test
     fun `cloud ai gate logs every check decision`() = runTest {
         // GIVEN: a CloudAiPrivacyGate with a mocked audit logger
-        val settingsRepository = mockk<PrivacySettingsRepository>()
+        val policyResolver = mockk<EffectiveCloudAiPolicyResolver>()
         val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
-        val gate = CloudAiPrivacyGate(settingsRepository, auditLogger)
-        coEvery { settingsRepository.getSettings() } returns PrivacySettings()
+        val gate = CloudAiPrivacyGate(policyResolver, auditLogger)
+        coEvery { policyResolver.resolve() } returns com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicy(
+            cloudAllowed = false, reason = "default", redactBeforeCloud = false,
+            receiptImageUploadAllowed = false, bankStatementCloudAllowed = false
+        )
 
         // WHEN: checking the gate (capability is disabled by default)
         gate.check(PrivacyCapability.CLOUD_AI_RECEIPT_ASSIST)
@@ -199,10 +214,13 @@ class PrivacyGateContractTest {
     @Test
     fun `unrecognised capability is allowed by cloud ai gate`() = runTest {
         // GIVEN: a CloudAiPrivacyGate
-        val settingsRepository = mockk<PrivacySettingsRepository>()
+        val policyResolver = mockk<EffectiveCloudAiPolicyResolver>()
         val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
-        val gate = CloudAiPrivacyGate(settingsRepository, auditLogger)
-        coEvery { settingsRepository.getSettings() } returns PrivacySettings()
+        val gate = CloudAiPrivacyGate(policyResolver, auditLogger)
+        coEvery { policyResolver.resolve() } returns com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicy(
+            cloudAllowed = true, reason = null, redactBeforeCloud = false,
+            receiptImageUploadAllowed = true, bankStatementCloudAllowed = true
+        )
 
         // WHEN: checking a capability not handled by CloudAiPrivacyGate
         val decision = gate.check(PrivacyCapability.NOTIFICATION_CAPTURE)
@@ -233,13 +251,12 @@ class PrivacyGateContractTest {
     @Test
     fun `receipt image upload denied when redactBeforeCloud is on`() = runTest {
         // GIVEN: cloud AI enabled but redactBeforeCloud is true
-        val settingsRepository = mockk<PrivacySettingsRepository>()
+        val policyResolver = mockk<EffectiveCloudAiPolicyResolver>()
         val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
-        val gate = CloudAiPrivacyGate(settingsRepository, auditLogger)
-        coEvery { settingsRepository.getSettings() } returns PrivacySettings(
-            cloudAiEnabled = true,
-            receiptImageCloudEnabled = true,
-            redactBeforeCloud = true
+        val gate = CloudAiPrivacyGate(policyResolver, auditLogger)
+        coEvery { policyResolver.resolve() } returns com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicy(
+            cloudAllowed = true, reason = null, redactBeforeCloud = true,
+            receiptImageUploadAllowed = false, bankStatementCloudAllowed = true
         )
 
         // WHEN: checking RECEIPT_IMAGE_CLOUD_UPLOAD
@@ -254,12 +271,12 @@ class PrivacyGateContractTest {
     @Test
     fun `bank statement ai disabled denies bank capabilities`() = runTest {
         // GIVEN: cloud AI enabled but bank statement AI disabled
-        val settingsRepository = mockk<PrivacySettingsRepository>()
+        val policyResolver = mockk<EffectiveCloudAiPolicyResolver>()
         val auditLogger = mockk<PrivacyAuditLogger>(relaxed = true)
-        val gate = CloudAiPrivacyGate(settingsRepository, auditLogger)
-        coEvery { settingsRepository.getSettings() } returns PrivacySettings(
-            cloudAiEnabled = true,
-            bankStatementAiEnabled = false
+        val gate = CloudAiPrivacyGate(policyResolver, auditLogger)
+        coEvery { policyResolver.resolve() } returns com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicy(
+            cloudAllowed = true, reason = null, redactBeforeCloud = false,
+            receiptImageUploadAllowed = true, bankStatementCloudAllowed = false
         )
 
         // WHEN: checking CLOUD_AI_BANK_STATEMENT

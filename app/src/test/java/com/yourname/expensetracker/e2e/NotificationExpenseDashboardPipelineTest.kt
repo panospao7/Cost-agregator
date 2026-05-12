@@ -167,7 +167,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             MerchantCategory(merchantPattern = "lidl", categoryId = 2L)
         )
 
-        val merchantNormalizationRepository = MerchantNormalizationRepository(merchantNormalizationDao)
+        val merchantNormalizationRepository = MerchantNormalizationRepository(mockk(relaxed = true), merchantNormalizationDao)
         val greeklishNormalizer = GreeklishNormalizer()
         val merchantNormalizer = MerchantNormalizer(
             repository = merchantNormalizationRepository,
@@ -187,6 +187,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
         }
 
         val merchantCategoryRepository = MerchantCategoryRepository(
+            writeBarrier = mockk(relaxed = true),
             dao = merchantCategoryDao,
             categorizationEngineProvider = categorizationEngineProvider
         )
@@ -197,7 +198,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             categoryRepositoryProvider = categoryRepositoryProvider,
             canonicalizer = MerchantCanonicalizer(),
             greeklishNormalizer = greeklishNormalizer,
-            semanticMatcher = SemanticKeywordMatcher(greeklishNormalizer),
+            semanticMatcher = SemanticKeywordMatcher(greeklishNormalizer, timeProvider = timeProvider),
             contextEngine = ContextualInferenceEngine(),
             timeProvider = timeProvider
         )
@@ -211,6 +212,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
         )
 
         val expenseRepository = ExpenseRepository(
+            writeBarrier = mockk(relaxed = true),
             database = mockk<AppDatabase>(relaxed = true),
             expenseDao = expenseDao,
             userCorrectionDao = mockk<UserCorrectionDao>(relaxed = true),
@@ -227,7 +229,12 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
 
         val recurringExpenseEngine = RecurringExpenseEngine(
             expenseRepository = expenseRepository,
-            recurringExpenseRepository = RecurringExpenseRepository(recurringExpenseDao),
+            recurringExpenseRepository = RecurringExpenseRepository(
+                writeBarrier = mockk(relaxed = true),
+                dao = recurringExpenseDao,
+                lifecycleEventDao = mockk(relaxed = true),
+                timeProvider = timeProvider
+            ),
             timeProvider = timeProvider
         )
 
@@ -360,17 +367,20 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             timeBoundaryTicker = com.yourname.expensetracker.domain.util.TimeBoundaryTicker(timeProvider),
             currencyConverter = currencyConverter,
             currencySettingsRepository = currencySettingsRepository,
-            multiCurrencyRepository = mockk()
+            multiCurrencyRepository = mockk(),
+            writeBarrier = mockk(relaxed = true),
+            database = mockk<AppDatabase>(relaxed = true),
+            budgetForecastDao = mockk(relaxed = true)
         )
 
         val savingsGoalDao = mockk<SavingsGoalDao>(relaxed = true)
         every { savingsGoalDao.getAllGoals() } returns flowOf(emptyList())
-        val savingsGoalRepository = SavingsGoalRepository(savingsGoalDao)
+        val savingsGoalRepository = SavingsGoalRepository(mockk(relaxed = true), savingsGoalDao)
 
         val promptStateDao = mockk<PromptStateDao>(relaxed = true)
         coEvery { promptStateDao.countPromptsSince(any(), any()) } returns 0
         coEvery { promptStateDao.getPromptsSince(any(), any()) } returns emptyList()
-        val promptStateRepository = PromptStateRepository(promptStateDao, timeProvider)
+        val promptStateRepository = PromptStateRepository(mockk(relaxed = true), promptStateDao, timeProvider)
 
         val lifestyleSavingsPromptUseCase = LifestyleSavingsPromptUseCase(
             lifestyleInflationDetector = LifestyleInflationDetector(expenseDao, timeProvider = mockk()),
@@ -409,7 +419,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             multiCurrencyRepository = mockk(),
             recurringLifecycleCoordinator = mockk(),
             recurringOccurrenceDao = mockk(),
-            currencyConverter = currencyConverter
+            currencyConverter = currencyConverter,
+            accountBalanceProvider = mockk(relaxed = true)
         )
 
         val healthScoreV2 = FinancialHealthScoreV2(
@@ -433,10 +444,12 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             healthCalculator = FinancialHealthCalculator(timeProvider, analyticsCurrencyNormalizer, currencySettingsRepository),
             healthScoreV2 = healthScoreV2,
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
-            monthlySavingsSweepUseCase = mockk(),
+            monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
             stressForecastEngine = stressForecastEngine,
             forecastInputAssembler = mockk(),
+            currencyConverter = currencyConverter,
+            currencySettingsRepository = currencySettingsRepository,
         )
     }
 

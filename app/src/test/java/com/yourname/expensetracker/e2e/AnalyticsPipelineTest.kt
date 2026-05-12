@@ -8,7 +8,9 @@ import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.MerchantStats
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -52,6 +54,7 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
         coEvery { recurringExpenseDao.getAll() } returns emptyList()
 
         expenseRepository = ExpenseRepository(
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             database = mockk<AppDatabase>(relaxed = true),
             expenseDao = expenseDao,
             userCorrectionDao = mockk(relaxed = true),
@@ -62,7 +65,12 @@ class AnalyticsPipelineTest : AnalyticsEngineTestBase() {
             transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
         )
 
-        val recurringExpenseRepository = RecurringExpenseRepository(recurringExpenseDao)
+        val recurringExpenseRepository = RecurringExpenseRepository(
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+            dao = recurringExpenseDao,
+            lifecycleEventDao = mockk<RecurringLifecycleEventDao>(relaxed = true),
+            timeProvider = timeProvider
+        )
         val recurringExpenseEngine = RecurringExpenseEngine(
             expenseRepository = expenseRepository,
             recurringExpenseRepository = recurringExpenseRepository,

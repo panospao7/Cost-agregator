@@ -22,6 +22,7 @@ import org.junit.Before
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("DEPRECATION_ERROR")
 class ReceiptMatchingViewModelTest : ViewModelTestUtils() {
 
     private val receiptRepository = mockk<ReceiptRepository>(relaxed = true)

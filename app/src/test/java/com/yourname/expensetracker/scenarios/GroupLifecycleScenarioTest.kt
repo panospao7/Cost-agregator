@@ -23,6 +23,8 @@ import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycle
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -85,17 +87,25 @@ class GroupLifecycleScenarioTest {
             mockk<TransactionSideEffectDispatcher>(relaxed = true),
             mockk<RecurringLifecycleCoordinator>(relaxed = true),
             mockk<RestoreMaintenanceMode>(relaxed = true),
+            mockk<DatabaseWriteBarrier>(relaxed = true),
             currencySettingsRepository
         )
 
         groupTxCoordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, database.groupExpenseDao(), expenseDao,
-            txLifecycle, Dispatchers.IO
+            transactionEventDao, txLifecycle,
+            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.IO
         )
 
         lifecycle = GroupLifecycleCoordinator(
-            groupTxCoordinator, groupDao, memberDao, settlementDao,
-            timeProvider, currencySettingsRepository, Dispatchers.IO
+            groupTxCoordinator, groupDao, database.groupExpenseDao(), memberDao, settlementDao,
+            database.groupLifecycleEventDao(),
+            mockk(relaxed = true), // balanceCalculator
+            timeProvider, currencySettingsRepository,
+            mockk<DatabaseWriteBarrier>(relaxed = true), database,
+            mockk<dagger.Lazy<BudgetMonitor>>(relaxed = true),
+            mockk<TransactionSideEffectDispatcher>(relaxed = true),
+            Dispatchers.IO
         )
     }
 

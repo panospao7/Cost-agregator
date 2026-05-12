@@ -1,7 +1,10 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.logic.RecurrenceCalculator
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import io.mockk.coEvery
@@ -16,12 +19,18 @@ import org.junit.Test
 class RecurringExpenseRepositoryTest {
 
     private val dao = mockk<ManualRecurringExpenseDao>()
+    private val lifecycleEventDao = mockk<RecurringLifecycleEventDao>()
 
     private lateinit var repository: RecurringExpenseRepository
 
     @Before
     fun setUp() {
-        repository = RecurringExpenseRepository(dao)
+        repository = RecurringExpenseRepository(
+            mockk<DatabaseWriteBarrier>(relaxed = true),
+            dao,
+            lifecycleEventDao,
+            mockk<TimeProvider>(relaxed = true)
+        )
     }
 
     @Test

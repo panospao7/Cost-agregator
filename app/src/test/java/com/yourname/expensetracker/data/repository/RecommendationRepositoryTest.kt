@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.RecommendationDao
 import com.yourname.expensetracker.data.database.entity.RecommendationEntity
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationStatus
@@ -45,7 +46,7 @@ class RecommendationRepositoryTest {
         timeProvider = FakeTimeProvider(1_700_000_000_000L)
         val filterSerializer = TransactionFilterSerializer()
         deduplicator = RecommendationDeduplicator(filterSerializer)
-        repository = RecommendationRepository(dao, deduplicator, timeProvider, testDispatcher)
+        repository = RecommendationRepository(mockk<DatabaseWriteBarrier>(relaxed = true), dao, deduplicator, timeProvider, testDispatcher)
     }
 
     @Test

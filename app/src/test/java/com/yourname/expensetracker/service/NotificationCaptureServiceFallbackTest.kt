@@ -6,6 +6,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 import kotlinx.coroutines.test.runTest
+import com.yourname.expensetracker.service.NotificationTextParts
 
 class NotificationCaptureServiceFallbackTest {
 
@@ -72,14 +73,32 @@ class NotificationCaptureServiceFallbackTest {
     @Test
     fun `dedupe hash treats null and empty fields the same`() {
         val nullHash = computeNotificationContentHash(
-            title = null,
-            text = "Card charged 10.00 EUR",
-            effectiveBigText = null
+            NotificationTextParts(
+                title = null,
+                text = "Card charged 10.00 EUR",
+                bigText = null,
+                subText = null,
+                infoText = null,
+                summaryText = null,
+                effectiveBigText = null,
+                textLines = emptyList(),
+                messages = emptyList(),
+                combinedBody = "Card charged 10.00 EUR"
+            )
         )
         val emptyHash = computeNotificationContentHash(
-            title = "",
-            text = "Card charged 10.00 EUR",
-            effectiveBigText = ""
+            NotificationTextParts(
+                title = "",
+                text = "Card charged 10.00 EUR",
+                bigText = null,
+                subText = null,
+                infoText = null,
+                summaryText = null,
+                effectiveBigText = "",
+                textLines = emptyList(),
+                messages = emptyList(),
+                combinedBody = "Card charged 10.00 EUR"
+            )
         )
 
         assertEquals(emptyHash, nullHash)
@@ -88,14 +107,32 @@ class NotificationCaptureServiceFallbackTest {
     @Test
     fun `dedupe hash changes when content changes`() {
         val originalHash = computeNotificationContentHash(
-            title = "Bank Alert",
-            text = "Card charged 10.00 EUR",
-            effectiveBigText = null
+            NotificationTextParts(
+                title = "Bank Alert",
+                text = "Card charged 10.00 EUR",
+                bigText = null,
+                subText = null,
+                infoText = null,
+                summaryText = null,
+                effectiveBigText = null,
+                textLines = emptyList(),
+                messages = emptyList(),
+                combinedBody = "Card charged 10.00 EUR"
+            )
         )
         val updatedHash = computeNotificationContentHash(
-            title = "Bank Alert",
-            text = "Card charged 12.00 EUR",
-            effectiveBigText = null
+            NotificationTextParts(
+                title = "Bank Alert",
+                text = "Card charged 12.00 EUR",
+                bigText = null,
+                subText = null,
+                infoText = null,
+                summaryText = null,
+                effectiveBigText = null,
+                textLines = emptyList(),
+                messages = emptyList(),
+                combinedBody = "Card charged 12.00 EUR"
+            )
         )
 
         assertNotEquals(originalHash, updatedHash)

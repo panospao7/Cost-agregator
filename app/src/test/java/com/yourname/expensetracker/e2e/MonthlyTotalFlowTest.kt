@@ -14,6 +14,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("DEPRECATION_ERROR")
 class MonthlyTotalFlowTest : ViewModelTestUtils() {
 
     @Test

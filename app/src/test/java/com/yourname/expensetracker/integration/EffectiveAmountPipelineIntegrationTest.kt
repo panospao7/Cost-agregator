@@ -5,6 +5,7 @@ import com.yourname.expensetracker.TestCurrencySettingsRepository
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.testCurrencyConverter
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import com.yourname.expensetracker.data.database.entity.Category
@@ -28,6 +29,7 @@ import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
 
+@Suppress("DEPRECATION_ERROR")
 class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
 
     private val database = mockk<AppDatabase>(relaxed = true)
@@ -111,6 +113,7 @@ class EffectiveAmountPipelineIntegrationTest : AnalyticsEngineTestBase() {
         coEvery { expenseDao.getAverageDailySpend(any(), any()) } returns 0.0
 
         val repository = ExpenseRepository(
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             database = database,
             expenseDao = expenseDao,
             userCorrectionDao = mockk(relaxed = true),

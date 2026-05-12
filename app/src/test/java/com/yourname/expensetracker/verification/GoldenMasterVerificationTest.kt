@@ -20,6 +20,7 @@ import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
@@ -66,6 +67,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.abs
 
+@Suppress("DEPRECATION_ERROR")
 class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
 
     companion object {
@@ -148,6 +150,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         mockAnalyticsDaoByRange(allTransactions)
 
         repository = ExpenseRepository(
+            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
             database = database,
             expenseDao = expenseDao,
             userCorrectionDao = mockk(relaxed = true),
@@ -223,7 +226,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
             analyticsCurrencyNormalizer = mockk(),
             expenseRepository = mockk(),
             currencySettingsRepository = mockk(),
-            currencyConverter = mockk()
+            currencyConverter = mockk(),
+            writeBarrier = mockk(relaxed = true)
         )
 
         monteCarloSimulator = mockk(relaxed = true)

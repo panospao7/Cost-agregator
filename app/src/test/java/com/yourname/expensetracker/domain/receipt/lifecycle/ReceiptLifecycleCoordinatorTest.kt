@@ -86,9 +86,12 @@ class ReceiptLifecycleCoordinatorTest {
             duplicateDetector = duplicateDetector,
             currencySettingsRepository = currencySettingsRepository,
             restoreMaintenanceMode = restoreMaintenanceMode,
+            writeBarrier = mockk(relaxed = true),
             transactionLifecycleCoordinator = mockk(relaxed = true),
             merchantNormalizer = mockk(relaxed = true),
-            hybridClassifier = mockk(relaxed = true)
+            hybridClassifier = mockk(relaxed = true),
+            privacySettingsRepository = mockk(relaxed = true),
+            diagnosticEventDao = mockk(relaxed = true)
         )
     }
 
@@ -125,7 +128,7 @@ class ReceiptLifecycleCoordinatorTest {
         )
 
         coEvery { inputValidator.validate(uri) } returns validationResult
-        coEvery { receiptRepository.processReceipt(uri, false) } returns (savedReceipt to parsedReceipt)
+        coEvery { receiptRepository.processReceipt(uri, false) } returns ReceiptRepository.ProcessReceiptResult(receipt = savedReceipt, parsed = parsedReceipt)
         coEvery { scannedReceiptDao.insert(any()) } returns 1L
         coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
             isDuplicate = false, confidence = 0.0f, existingReceiptId = null, reason = null, matchType = "NONE"

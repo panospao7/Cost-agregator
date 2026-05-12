@@ -13,6 +13,7 @@ import com.yourname.expensetracker.service.receiptmatching.ReceiptMatchingWorker
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
 import com.yourname.expensetracker.domain.service.NotificationService
+import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -24,6 +25,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
+@Suppress("DEPRECATION_ERROR")
 class ReceiptMatchingWorkerTest {
 
     private lateinit var context: Context
@@ -54,13 +56,14 @@ class ReceiptMatchingWorkerTest {
                         matcher,
                         receiptLinkService = mockk(relaxed = true),
                         notificationService = notificationService,
-                        restoreMaintenanceMode = mockk(),
+                        executionGuard = mockk<WorkerExecutionGuard>(relaxed = true)
                     )
                 }
             })
             .build()
     }
 
+    @Suppress("DEPRECATION_ERROR")
     @Test
     fun `unmatched receipts matching is attempted`() = runTest {
         val receipt = sampleReceipt(id = 10L)

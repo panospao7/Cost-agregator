@@ -2,6 +2,7 @@ package com.yourname.expensetracker.e2e
 
 import com.yourname.expensetracker.TEST_CATEGORIES
 import com.yourname.expensetracker.TestCurrencySettingsRepository
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -14,8 +15,11 @@ import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.MerchantCategoryRepository
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
+import com.yourname.expensetracker.domain.analytics.AnalyticsInputAssembler
 import com.yourname.expensetracker.domain.analytics.AnomalyDetector
+import com.yourname.expensetracker.domain.analytics.BudgetVsActualEngine
 import com.yourname.expensetracker.domain.analytics.CategoryInsightEngine
+import com.yourname.expensetracker.domain.analytics.DailyBucketEngine
 import com.yourname.expensetracker.domain.analytics.DayOfWeekAnalyzer
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.MerchantInsightEngine
@@ -45,6 +49,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.test.TestDispatcher
 
+@Suppress("DEPRECATION_ERROR")
 internal data class FlowPipeline(
     val expenseDao: ExpenseDao,
     val expenseRepository: ExpenseRepository,
@@ -115,6 +120,7 @@ internal fun buildPipeline(
     )
 
     val expenseRepository = ExpenseRepository(
+        writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
         database = database,
         expenseDao = expenseDao,
         userCorrectionDao = userCorrectionDao,
@@ -165,8 +171,11 @@ internal fun buildPipeline(
         travelDetectionEngine = travelDetectionEngine,
         spendingPersonalityClassifier = spendingPersonalityClassifier,
         timeProvider = timeProvider,
+        analyticsInputAssembler = mockk<AnalyticsInputAssembler>(relaxed = true),
         currencyConverter = currencyConverter,
-        currencySettingsRepository = currencySettingsRepository
+        currencySettingsRepository = currencySettingsRepository,
+        budgetVsActualEngine = BudgetVsActualEngine(),
+        dailyBucketEngine = DailyBucketEngine()
     )
 
     return FlowPipeline(
