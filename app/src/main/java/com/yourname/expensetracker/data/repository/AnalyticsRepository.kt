@@ -81,23 +81,7 @@ class AnalyticsRepository @Inject constructor(
         return flow {
             val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault("EUR")
 
-            // ── Totals via MultiCurrencyRepository (historical-rate for accuracy) ──
-            val currentAggregate = multiCurrencyRepository.getHomeCurrencyPurchaseTotalHistorical(start, end)
-            val previousAggregate = multiCurrencyRepository.getHomeCurrencyPurchaseTotalHistorical(previousStart, previousEnd)
-
-            val totalSpent = currentAggregate.displayAmount
-            val previousTotal = previousAggregate.displayAmount
-            val transactionCount = currentAggregate.totalTransactionCount
-
-            // ── Daily history computed from normalized expenses ─────────────
-            val days = TimePeriodUtils.daysBetween(start, end).coerceAtLeast(1)
-            val prevDays = TimePeriodUtils.daysBetween(previousStart, previousEnd).coerceAtLeast(1)
-            val startOfDay = TimePeriodUtils.getStartOfDay(start)
-            val prevStartOfDay = TimePeriodUtils.getStartOfDay(previousStart)
-
-            val dailyHistory = DoubleArray(days)
-            val previousDailyHistory = DoubleArray(prevDays)
-
+            // ── Fetch and normalize expenses per-transaction-date for accuracy ──
             val currentExpenses = expenseDao.getExpensesByTypeBetween(
                 start, end, ExpenseDao.SPENDING_TYPE
             )
@@ -112,16 +96,33 @@ class AnalyticsRepository @Inject constructor(
                 previousExpenses, homeCurrency
             )
 
-            currentNormalization.includedExpenses.forEach { snapshot ->
-                val dayStart = TimePeriodUtils.getStartOfDay(snapshot.date)
+            // ── Headline totals derived from same normalized data as daily history ──
+            val totalSpent = currentNormalization.normalizedExpenses.sumOf { it.normalizedEffectiveAmount }
+            val previousTotal = previousNormalization.normalizedExpenses.sumOf { it.normalizedEffectiveAmount }
+            val transactionCount = currentNormalization.normalizedExpenses.size
+
+            val isPartial = currentNormalization.hasWarnings
+            val warningMessage = currentNormalization.warnings.firstOrNull()?.message
+
+            // ── Daily history from the same normalized expenses ─────────────
+            val days = TimePeriodUtils.daysBetween(start, end).coerceAtLeast(1)
+            val prevDays = TimePeriodUtils.daysBetween(previousStart, previousEnd).coerceAtLeast(1)
+            val startOfDay = TimePeriodUtils.getStartOfDay(start)
+            val prevStartOfDay = TimePeriodUtils.getStartOfDay(previousStart)
+
+            val dailyHistory = DoubleArray(days)
+            val previousDailyHistory = DoubleArray(prevDays)
+
+            currentNormalization.normalizedExpenses.forEach { norm ->
+                val dayStart = TimePeriodUtils.getStartOfDay(norm.snapshot.date)
                 val idx = TimePeriodUtils.daysBetween(startOfDay, dayStart)
-                if (idx in 0 until days) dailyHistory[idx] += snapshot.effectiveAmount
+                if (idx in 0 until days) dailyHistory[idx] += norm.normalizedEffectiveAmount
             }
 
-            previousNormalization.includedExpenses.forEach { snapshot ->
-                val dayStart = TimePeriodUtils.getStartOfDay(snapshot.date)
+            previousNormalization.normalizedExpenses.forEach { norm ->
+                val dayStart = TimePeriodUtils.getStartOfDay(norm.snapshot.date)
                 val idx = TimePeriodUtils.daysBetween(prevStartOfDay, dayStart)
-                if (idx in 0 until prevDays) previousDailyHistory[idx] += snapshot.effectiveAmount
+                if (idx in 0 until prevDays) previousDailyHistory[idx] += norm.normalizedEffectiveAmount
             }
 
             val changePercent = if (previousTotal > 0) {
@@ -137,8 +138,8 @@ class AnalyticsRepository @Inject constructor(
                 previousDailyHistory = previousDailyHistory.toList(),
                 transactionCount = transactionCount,
                 currency = homeCurrency,
-                aggregate = currentAggregate,
-                isPartial = currentAggregate.isPartial
+                aggregate = null,
+                isPartial = isPartial
             )
             )
         }
