@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.MerchantSuggestion
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
@@ -39,12 +40,14 @@ class AddExpenseViewModelTest : ViewModelTestUtils() {
         every { categoryRepository.allCategories } returns flowOf(emptyList())
         coEvery { expenseRepository.searchMerchants(any()) } returns emptyList()
 
+        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencyRepo.homeCurrency() } returns flowOf("EUR")
         viewModel = AddExpenseViewModel(
             manualExpenseRepository = manualExpenseRepository,
             expenseRepository = expenseRepository,
             categoryRepository = categoryRepository,
             timeProvider = timeProvider,
-            currencySettingsRepository = mockk(),
+            currencySettingsRepository = currencyRepo,
         )
     }
 

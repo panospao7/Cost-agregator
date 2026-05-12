@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.ui.screens.savings
 
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.data.repository.SavingsContributionHistoryRepository
@@ -19,6 +20,7 @@ import io.mockk.mockk
 import io.mockk.coVerify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -266,6 +268,8 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
     }
 
     private fun createViewModel(): SavingsGoalsViewModel {
+        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencyRepo.homeCurrency() } returns flowOf("EUR")
         return SavingsGoalsViewModel(
             savingsGoalRepository = savingsGoalRepository,
             savingsContributionHistoryRepository = savingsContributionHistoryRepository,
@@ -274,7 +278,7 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
             lifestyleSavingsPromptUseCase = lifestyleSavingsPromptUseCase,
             monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
             timeProvider = mockk(),
-            currencySettingsRepository = mockk(),
+            currencySettingsRepository = currencyRepo,
         )
     }
 

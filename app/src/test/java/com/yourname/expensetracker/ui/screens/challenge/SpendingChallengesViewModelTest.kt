@@ -4,12 +4,15 @@ import com.yourname.expensetracker.domain.challenge.ActiveChallengesSnapshot
 import com.yourname.expensetracker.domain.challenge.NoSpendStatus
 import com.yourname.expensetracker.domain.challenge.SpendingChallenge
 import com.yourname.expensetracker.domain.challenge.SpendingChallengeManager
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.challenge.ChallengeType
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -40,7 +43,7 @@ class SpendingChallengesViewModelTest : ViewModelTestUtils() {
             unavailableReason = null
         )
 
-        viewModel = SpendingChallengesViewModel(challengeManager, categoryRepository = mockk(), currencySettingsRepository = mockk())
+        viewModel = SpendingChallengesViewModel(challengeManager, categoryRepository = mockk(), currencySettingsRepository = mockCurrencyRepo())
         advanceUntilIdle()
 
         assertEquals(expectedChallenges, viewModel.activeChallenges.value)
@@ -55,7 +58,7 @@ class SpendingChallengesViewModelTest : ViewModelTestUtils() {
             unavailableReason = null
         )
 
-        viewModel = SpendingChallengesViewModel(challengeManager, currencySettingsRepository = mockk(), categoryRepository = mockk())
+        viewModel = SpendingChallengesViewModel(challengeManager, currencySettingsRepository = mockCurrencyRepo(), categoryRepository = mockk())
         advanceUntilIdle()
 
         assertTrue(viewModel.activeChallenges.value.isEmpty())
@@ -65,7 +68,7 @@ class SpendingChallengesViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `refresh reloads no spend status and active challenge availability`() = runTest(testDispatcher) {
-        viewModel = SpendingChallengesViewModel(challengeManager, categoryRepository = mockk(), currencySettingsRepository = mockk())
+        viewModel = SpendingChallengesViewModel(challengeManager, categoryRepository = mockk(), currencySettingsRepository = mockCurrencyRepo())
         advanceUntilIdle()
 
         val refreshedStatus = defaultNoSpendStatus().copy(currentStreakDays = 4)
@@ -84,6 +87,12 @@ class SpendingChallengesViewModelTest : ViewModelTestUtils() {
         assertTrue(viewModel.challengesAvailability.value.hasCanonicalSource)
         coVerify(atLeast = 2) { challengeManager.checkNoSpendStreak() }
         coVerify(atLeast = 2) { challengeManager.getActiveChallengesSnapshot() }
+    }
+
+    private fun mockCurrencyRepo(): CurrencySettingsRepository {
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns flowOf("EUR")
+        return repo
     }
 
     private fun defaultNoSpendStatus() = NoSpendStatus(

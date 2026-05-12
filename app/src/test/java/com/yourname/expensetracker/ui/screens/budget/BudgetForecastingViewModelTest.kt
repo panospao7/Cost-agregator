@@ -8,6 +8,7 @@ import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
 import com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
 import com.yourname.expensetracker.domain.budget.BudgetRecommendation
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationEngine
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -15,6 +16,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -38,10 +40,12 @@ class BudgetForecastingViewModelTest : ViewModelTestUtils() {
         coEvery { forecastingEngine.generateForecast(any(), any()) } returns createForecast()
         every { recommendationEngine.generateRecommendations(any(), any(), any()) } returns emptyList()
 
+        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencyRepo.homeCurrency() } returns flowOf("EUR")
         viewModel = BudgetForecastingViewModel(
             forecastingEngine = forecastingEngine,
             recommendationEngine = recommendationEngine,
-            currencySettingsRepository = mockk(),
+            currencySettingsRepository = currencyRepo,
         )
     }
 

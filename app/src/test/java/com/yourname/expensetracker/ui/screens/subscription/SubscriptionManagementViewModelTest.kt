@@ -3,6 +3,7 @@ package com.yourname.expensetracker.ui.screens.subscription
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
 import com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -37,7 +38,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
         every { timeProvider.now() } returns fixedNow
         configureRepositoryWithSubscriptions(emptyList())
 
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockk())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockCurrencyRepo())
     }
 
     @Test
@@ -48,7 +49,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
                 createSubscription(id = 2L, merchant = "Spotify", amount = 10.0)
             )
         )
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockk())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockCurrencyRepo())
 
         advanceUntilIdle()
 
@@ -65,7 +66,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
                 createSubscription(id = 1L, merchant = "Netflix", amount = 15.0)
             )
         )
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockk())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockCurrencyRepo())
         advanceUntilIdle()
 
         viewModel.toggleSubscriptionStatus(1L)
@@ -95,7 +96,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
                 )
             )
         )
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockk())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockCurrencyRepo())
 
         advanceUntilIdle()
 
@@ -107,7 +108,7 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
     @Test
     fun `empty state when no subscriptions`() = runTest(testDispatcher) {
         configureRepositoryWithSubscriptions(emptyList())
-        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockk())
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockCurrencyRepo())
 
         advanceUntilIdle()
 
@@ -117,6 +118,12 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
         assertEquals(0.0, state.totalAnnualCost, 0.0001)
         assertEquals(0, state.activeCount)
         assertFalse(state.isLoading)
+    }
+
+    private fun mockCurrencyRepo(): CurrencySettingsRepository {
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns flowOf("EUR")
+        return repo
     }
 
     private fun configureRepositoryWithSubscriptions(items: List<ManualRecurringExpense>) {

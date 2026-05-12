@@ -8,6 +8,7 @@ import com.yourname.expensetracker.domain.cashflow.CashFlowRiskLevel
 import com.yourname.expensetracker.domain.cashflow.DailyCashFlow
 import com.yourname.expensetracker.domain.model.RecurringPattern
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
@@ -17,6 +18,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertThrows
@@ -43,7 +45,7 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
         coEvery { cashFlowCalculator.calculateDailyCashFlow(any(), any(), any()) } returns createMockCashFlows()
         coEvery { cashFlowCalculator.getUpcomingBills(30) } returns emptyList()
 
-        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = mockk())
+        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = mockCurrencyRepo())
     }
 
     @Test
@@ -173,7 +175,7 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
             recurringPattern("utilities", fixedNow.time + 2 * TimePeriodUtils.DAY_IN_MILLIS)
         )
 
-        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = mockk())
+        viewModel = CashFlowCalendarViewModel(cashFlowCalculator, timeProvider, currencySettingsRepository = mockCurrencyRepo())
 
         viewModel.state.test {
             awaitItem() // initial
@@ -206,6 +208,12 @@ class CashFlowCalendarViewModelTest : ViewModelTestUtils() {
             }
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    private fun mockCurrencyRepo(): CurrencySettingsRepository {
+        val repo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { repo.homeCurrency() } returns flowOf("EUR")
+        return repo
     }
 
     private suspend fun ReceiveTurbine<CashFlowCalendarState>.awaitState(

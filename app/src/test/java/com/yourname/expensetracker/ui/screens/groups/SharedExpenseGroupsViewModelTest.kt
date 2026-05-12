@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.GroupDetailsAggregate
 import com.yourname.expensetracker.data.repository.GroupsRepository
 import com.yourname.expensetracker.data.repository.ManualExpenseRepository
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupMemberUseCase
 import com.yourname.expensetracker.domain.groups.usecase.AddGroupExpenseUseCase
@@ -21,6 +22,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -404,6 +406,8 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
     }
 
     private fun createViewModel(): SharedExpenseGroupsViewModel {
+        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencyRepo.homeCurrency() } returns flowOf("EUR")
         return SharedExpenseGroupsViewModel(
             groupsRepository = groupsRepository,
             addGroupMemberUseCase = addGroupMemberUseCase,
@@ -411,7 +415,7 @@ class SharedExpenseGroupsViewModelTest : ViewModelTestUtils() {
             deleteGroupUseCase = deleteGroupUseCase,
             manualExpenseRepository = manualExpenseRepository,
             expenseRepository = expenseRepository,
-            currencySettingsRepository = mockk(),
+            currencySettingsRepository = currencyRepo,
         )
     }
 

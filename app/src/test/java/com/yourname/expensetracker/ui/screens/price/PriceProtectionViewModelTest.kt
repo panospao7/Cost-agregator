@@ -2,6 +2,7 @@ package com.yourname.expensetracker.ui.screens.price
 
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.price.PriceProtectionTracker
 import io.mockk.*
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +34,9 @@ class PriceProtectionViewModelTest {
         coEvery { priceTracker.getPriceProtectedItems() } returns emptyList()
         every { priceTracker.monitorPriceDrops() } returns flowOf(emptyList())
         
-        viewModel = PriceProtectionViewModel(priceTracker, currencySettingsRepository = mockk(), context = mockk())
+        val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencyRepo.homeCurrency() } returns flowOf("EUR")
+        viewModel = PriceProtectionViewModel(priceTracker, currencySettingsRepository = currencyRepo, context = mockk())
     }
 
     @After

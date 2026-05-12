@@ -21,7 +21,7 @@ class AdvancedAnalyticsViewModelTest {
     private val analyticsDashboard = mockk<AdvancedAnalyticsDashboard>()
     private val homeCurrencyFlow = MutableStateFlow("EUR")
     private val rateUpdateFlow = MutableStateFlow(0L)
-    private val currencySettingsRepository = mockk<CurrencySettingsRepository>()
+    private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
     private val timeProvider = FakeTimeProvider(1_730_000_000_000L)
 
     @Test
