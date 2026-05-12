@@ -538,18 +538,22 @@ class AnalyticsViewModel @Inject constructor(
         }
 
         val advResult = advancedCache[cacheKey] ?: coroutineScope {
-            // A10 PARTIAL: Advanced analytics engine still self-normalizes budget comparisons.
-            // Upgrade path: BudgetVsActualEngine.compute() for normalized budget-vs-actual.
-            val catDeferred = async { advancedAnalyticsEngine.getCategoryAnalytics(advRange, displayCurrency = homeCurrency) }
-            // A09 PARTIAL: Advanced analytics engine still self-normalizes.
-            // Results are approximate until engine consumes NormalizedAnalyticsInput.
-            val merchDeferred = async { advancedAnalyticsEngine.getMerchantAnalytics(advRange, displayCurrency = homeCurrency, limit = 15) }
-            // A09 PARTIAL: Advanced analytics engine still self-normalizes.
-            // Results are approximate until engine consumes NormalizedAnalyticsInput.
-            val patternsDeferred = async { advancedAnalyticsEngine.getSpendingPatterns(advRange, displayCurrency = homeCurrency) }
-            // A09 PARTIAL: Advanced analytics engine still self-normalizes.
-            // Results are approximate until engine consumes NormalizedAnalyticsInput.
-            val statsDeferred = async { advancedAnalyticsEngine.getStatisticalInsights(advRange, displayCurrency = homeCurrency) }
+            // Build 12-month historical input for merchant analytics
+            val historicalStart = TimePeriodUtils.addMonths(currentStart, -12)
+            val historicalExpenses = expenseRepository.getExpensesBetween(historicalStart, currentEnd)
+                .filter { it.transactionType == TransactionType.PURCHASE }
+            val historicalInput = analyticsInputAssembler.build(
+                expenses = historicalExpenses, homeCurrency = homeCurrency,
+                period = PeriodRange(PeriodKind.CUSTOM, startInclusiveMillis = historicalStart, endExclusiveMillis = currentEnd, label = "HIST_MERCHANT_${period.name}"))
+
+            // Fetch budget snapshots for category analytics
+            val budgetSnapshots = budgetRepository.getActiveBudgetSnapshots()
+
+            val catDeferred = async { advancedAnalyticsEngine.getCategoryAnalytics(currentInput, previousInput, categories, budgetSnapshots) }
+            val merchDeferred = async { advancedAnalyticsEngine.getMerchantAnalytics(currentInput, historicalInput, limit = 15) }
+            // Spending patterns and statistical insights still use the old API (not yet migrated)
+            val patternsDeferred = async { @Suppress("DEPRECATION") advancedAnalyticsEngine.getSpendingPatterns(advRange, displayCurrency = homeCurrency) }
+            val statsDeferred = async { @Suppress("DEPRECATION") advancedAnalyticsEngine.getStatisticalInsights(advRange, displayCurrency = homeCurrency) }
             val (cats, catWarnings) = try { catDeferred.await() } catch (_: Exception) { emptyList<EnhancedCategoryAnalytics>() to emptyList() }
             val (merchs, merchWarnings) = try { merchDeferred.await() } catch (_: Exception) { emptyList<EnhancedMerchantAnalytics>() to emptyList() }
             val (patterns, patternWarnings) = try { patternsDeferred.await() } catch (_: Exception) { null to emptyList<AnalyticsConversionWarning>() }

@@ -5,6 +5,7 @@ import timber.log.Timber
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.data.repository.BudgetRepository
+import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.di.DefaultDispatcher
@@ -155,12 +156,54 @@ class AdvancedAnalyticsEngine @Inject constructor(
     // ============================================================
     // CATEGORY ANALYTICS
     // ============================================================
-    
+
+    /**
+     * New canonical overload: accepts pre-normalized [NormalizedAnalyticsInput].
+     * Normalization is done by the caller (ViewModel), ensuring all analytics cards
+     * share the same normalized data.
+     */
+    suspend fun getCategoryAnalytics(
+        input: NormalizedAnalyticsInput,
+        previousInput: NormalizedAnalyticsInput?,
+        categories: List<Category>,
+        budgets: List<BudgetSnapshot>
+    ): Pair<List<EnhancedCategoryAnalytics>, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
+        val period = AnalyticsPeriodRange(
+            period = AnalyticsPeriod.CUSTOM,
+            startMs = input.period?.startInclusiveMillis ?: 0L,
+            endMs = input.period?.endExclusiveMillis ?: 0L,
+            label = input.period?.label ?: "",
+            comparisonRange = previousInput?.period?.let {
+                AnalyticsPeriodRange(
+                    period = AnalyticsPeriod.CUSTOM,
+                    startMs = it.startInclusiveMillis,
+                    endMs = it.endExclusiveMillis,
+                    label = it.label,
+                    comparisonRange = null
+                )
+            }
+        )
+        val currentPurchases = input.includedExpenses
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .map { it.toExpenseSnapshot() }
+        val previousPurchases = previousInput?.includedExpenses
+            ?.filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            ?.map { it.toExpenseSnapshot() }
+            ?: emptyList()
+        val allWarnings = (input.dataQuality.warnings +
+            (previousInput?.dataQuality?.warnings ?: emptyList())).distinct()
+        computeCategoryAnalyticsCore(
+            currentPurchases, previousPurchases, categories, budgets, period, input.homeCurrency, allWarnings
+        )
+    }
+
     /**
      * Generates enhanced analytics for all categories within the specified period.
      */
-    // A10 PARTIAL: Budget amounts may not be normalized. Use BudgetVsActualEngine for canonical comparison.
-    @Deprecated("Use BudgetVsActualEngine.compute() for normalized budget comparison")
+    @Deprecated(
+        "Use getCategoryAnalytics(input, previousInput, categories, budgets)",
+        level = DeprecationLevel.WARNING
+    )
     suspend fun getCategoryAnalytics(period: AnalyticsPeriodRange, displayCurrency: String): Pair<List<EnhancedCategoryAnalytics>, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
         coroutineScope {
         // Fetch all required data in parallel
@@ -188,7 +231,22 @@ class AdvancedAnalyticsEngine @Inject constructor(
             .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
         val previousPurchases = previousNorm.includedExpenses
             .filter { it.transactionType == DomainTransactionType.PURCHASE && !it.isNotMine }
-        
+
+        computeCategoryAnalyticsCore(
+            currentPurchases, previousPurchases, categories, budgets, period, displayCurrency, allWarnings
+        )
+    }
+}
+
+    private fun computeCategoryAnalyticsCore(
+        currentPurchases: List<ExpenseSnapshot>,
+        previousPurchases: List<ExpenseSnapshot>,
+        categories: List<Category>,
+        budgets: List<BudgetSnapshot>,
+        period: AnalyticsPeriodRange,
+        displayCurrency: String,
+        allWarnings: List<AnalyticsConversionWarning>
+    ): Pair<List<EnhancedCategoryAnalytics>, List<AnalyticsConversionWarning>> {
         // Build lookup maps
         val categoryMap = categories.associateBy { it.id }
         val budgetMap = budgets.associateBy { it.categoryId }
@@ -201,7 +259,7 @@ class AdvancedAnalyticsEngine @Inject constructor(
         val sparklineData = buildSparklineDataByCategory(currentPurchases, period)
         
         // Build analytics for each category with spending
-        currentByCategory.mapNotNull { (categoryId, expenses) ->
+        return currentByCategory.mapNotNull { (categoryId, expenses) ->
             val category = categoryMap[categoryId] ?: return@mapNotNull null
             
             val amounts = expenses.map { it.effectiveAmount }
@@ -209,7 +267,6 @@ class AdvancedAnalyticsEngine @Inject constructor(
             val total = amounts.sum()
             
             // Previous period comparison
-            // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
             val previousTotal = previousByCategory[categoryId]?.sumOf { it.effectiveAmount }
             val changePercent = calculateChangePercent(total, previousTotal)
             
@@ -257,16 +314,47 @@ class AdvancedAnalyticsEngine @Inject constructor(
         }.sortedByDescending { it.totalSpent }
             .let { Pair(it, allWarnings) }
     }
-}
     
     // ============================================================
     // MERCHANT ANALYTICS
     // ============================================================
-    
+
+    /**
+     * New canonical overload: accepts pre-normalized [NormalizedAnalyticsInput].
+     * The [historicalInput] should cover 12 months back for price trend analysis.
+     */
+    suspend fun getMerchantAnalytics(
+        input: NormalizedAnalyticsInput,
+        historicalInput: NormalizedAnalyticsInput,
+        limit: Int = 20
+    ): Pair<List<EnhancedMerchantAnalytics>, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
+        val period = AnalyticsPeriodRange(
+            period = AnalyticsPeriod.CUSTOM,
+            startMs = input.period?.startInclusiveMillis ?: 0L,
+            endMs = input.period?.endExclusiveMillis ?: 0L,
+            label = input.period?.label ?: "",
+            comparisonRange = null
+        )
+        val currentPurchases = input.includedExpenses
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .map { it.toExpenseSnapshot() }
+        val historicalPurchases = historicalInput.includedExpenses
+            .filter { it.transactionType == "PURCHASE" && !it.isNotMine }
+            .map { it.toExpenseSnapshot() }
+        val allWarnings = (input.dataQuality.warnings + historicalInput.dataQuality.warnings).distinct()
+        computeMerchantAnalyticsCore(
+            currentPurchases, historicalPurchases, period, input.homeCurrency, limit, allWarnings
+        )
+    }
+
     /**
      * Generates enhanced analytics for top merchants within the specified period.
      * @param limit Maximum number of merchants to return
      */
+    @Deprecated(
+        "Use getMerchantAnalytics(input, historicalInput, limit)",
+        level = DeprecationLevel.WARNING
+    )
     suspend fun getMerchantAnalytics(
         period: AnalyticsPeriodRange,
         displayCurrency: String,
@@ -300,7 +388,23 @@ class AdvancedAnalyticsEngine @Inject constructor(
         }
         val historicalByMerchantKey = historicalPurchases.groupBy { it.canonicalMerchantKey() }
         
-        currentPurchases
+        computeMerchantAnalyticsCore(
+            currentPurchases, historicalPurchases, period, displayCurrency, limit, allWarnings
+        )
+    }
+}
+
+    private fun computeMerchantAnalyticsCore(
+        currentPurchases: List<ExpenseSnapshot>,
+        historicalPurchases: List<ExpenseSnapshot>,
+        period: AnalyticsPeriodRange,
+        displayCurrency: String,
+        limit: Int,
+        allWarnings: List<AnalyticsConversionWarning>
+    ): Pair<List<EnhancedMerchantAnalytics>, List<AnalyticsConversionWarning>> {
+        val historicalByMerchantKey = historicalPurchases.groupBy { it.canonicalMerchantKey() }
+
+        return currentPurchases
             .groupBy { it.canonicalMerchantKey() }
             .map { (merchantKey, transactions) ->
                 val amounts = transactions.map { it.effectiveAmount }
@@ -359,15 +463,11 @@ class AdvancedAnalyticsEngine @Inject constructor(
                         .map { it.toAnalyticsTransactionSummary() }
                 )
             }
-            // Sort by: 1) Visit frequency (more visits = higher priority)
-            //          2) Total spent (as tiebreaker)
-            // This ensures loyal regular merchants rank above one-time expensive purchases
             .sortedWith(compareByDescending<EnhancedMerchantAnalytics> { it.transactionCount }
                 .thenByDescending { it.totalSpent })
             .take(limit)
             .let { Pair(it, allWarnings) }
     }
-}
     
     // ============================================================
     // SPENDING PATTERNS
