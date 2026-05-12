@@ -53,7 +53,20 @@ class MerchantNormalizationRepository @Inject constructor(
 
     suspend fun insertAlias(alias: MerchantAlias): Long {
         writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.insertAlias")
-        return dao.insertAlias(alias)
+        val id = dao.insertAlias(alias)
+        // E3-001: If insert was ignored (alias already exists for same normalizedKey),
+        // update the existing alias's occurrenceCount and lastUsedAt.
+        if (id <= 0L) {
+            val existing = dao.getAliasByNormalizedKey(alias.normalizedKey)
+            if (existing != null) {
+                dao.updateAlias(existing.copy(
+                    occurrenceCount = existing.occurrenceCount + 1,
+                    lastUsedAt = alias.lastUsedAt
+                ))
+                return existing.id
+            }
+        }
+        return id
     }
 
     suspend fun updateAlias(alias: MerchantAlias) {
@@ -98,6 +111,8 @@ class MerchantNormalizationRepository @Inject constructor(
         return dao.deleteUnusedAliasesOlderThan(olderThan)
     }
 
+    // TODO (E3-002): linkAliasToCanonical should return AliasLinkResult (Created/Updated/Conflict)
+    // instead of Unit, so callers can distinguish new alias creation from update of existing alias.
     suspend fun linkAliasToCanonical(rawName: String, normalizedKey: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long) {
         writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.linkAliasToCanonical")
         dao.linkAliasToCanonical(rawName, normalizedKey, canonicalId, isUserDefined, timestamp)

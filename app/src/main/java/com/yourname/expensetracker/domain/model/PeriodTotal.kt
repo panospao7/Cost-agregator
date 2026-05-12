@@ -15,7 +15,11 @@ data class PeriodTotal(
     val startDateMs: Long,
     val endDateMs: Long,
     val status: PeriodStatus,
-    val dataQuality: AnalyticsDataQuality? = null
+    val dataQuality: AnalyticsDataQuality? = null,
+    /** E2-005: Propagated from MoneyAggregate.isPartial — true when conversion failures exist. */
+    val isPartial: Boolean = false,
+    /** E2-005: Propagated from MoneyAggregate.warningMessage — describes excluded transactions. */
+    val warningMessage: String? = null
 ) {
     init {
         require(periodLabel.isNotBlank()) { "periodLabel cannot be blank" }

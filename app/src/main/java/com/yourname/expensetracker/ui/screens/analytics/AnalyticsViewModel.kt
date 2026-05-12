@@ -1126,6 +1126,10 @@ class AnalyticsViewModel @Inject constructor(
         }
     }
 
+    // TODO (E2-010): Budget limit conversion currently uses the latest available rate
+    // via currencyConverter.convert(). For period-accurate budget-vs-actual comparison,
+    // the budget limit should be converted using the period-end rate (or period-average rate)
+    // to match the rate basis of the actual spending amounts.
     private suspend fun convertBudgetAmountToHomeCurrency(
         amount: Double,
         sourceCurrency: String,

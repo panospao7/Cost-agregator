@@ -475,6 +475,10 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     /**
      * Analyzes spending patterns including day-of-week distribution and detected behaviors.
+     *
+     * TODO (E2-008): Migrate to accept NormalizedAnalyticsInput instead of fetching
+     * expenses internally. This method still queries ExpenseRepository directly,
+     * creating a second data source that may diverge from the ViewModel's normalized input.
      */
     suspend fun getSpendingPatterns(period: AnalyticsPeriodRange, displayCurrency: String): Pair<SpendingPatternAnalysis, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
         coroutineScope {
@@ -583,6 +587,10 @@ class AdvancedAnalyticsEngine @Inject constructor(
     
     /**
      * Calculates statistical insights for the specified period.
+     *
+     * TODO (E2-008): Migrate to accept NormalizedAnalyticsInput instead of fetching
+     * expenses internally. This method still queries ExpenseRepository directly,
+     * creating a second data source that may diverge from the ViewModel's normalized input.
      */
     suspend fun getStatisticalInsights(period: AnalyticsPeriodRange, displayCurrency: String): Pair<StatisticalInsights, List<AnalyticsConversionWarning>> = withContext(defaultDispatcher) {
         coroutineScope {

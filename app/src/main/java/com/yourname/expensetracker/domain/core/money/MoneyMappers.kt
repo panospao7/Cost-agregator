@@ -48,9 +48,13 @@ fun ConversionResult.toConvertedMoney(originalCurrency: CurrencyCode): Converted
  *
  * The source buckets are NOT available from MultiConversionAggregate (it only
  * has the final total), so the caller should provide them if available.
+ *
+ * @param transactionCounts Optional per-bucket transaction counts. When provided,
+ *   failures will carry the correct count instead of defaulting to 0.
  */
 fun MultiConversionAggregate.toMoneyAggregate(
-    sourceBuckets: List<MoneyBucket> = emptyList()
+    sourceBuckets: List<MoneyBucket> = emptyList(),
+    transactionCounts: Map<String, Int> = emptyMap()
 ): MoneyAggregate {
     val failures = failedConversions.map { oldFailure ->
         val reason = when (oldFailure.failureType) {
@@ -60,7 +64,8 @@ fun MultiConversionAggregate.toMoneyAggregate(
         ConversionFailure(
             originalAmount = MoneyAmount(oldFailure.originalAmount, CurrencyCode(oldFailure.originalCurrency)),
             targetCurrency = CurrencyCode(targetCurrency),
-            reason = reason
+            reason = reason,
+            transactionCount = transactionCounts[oldFailure.originalCurrency.uppercase()] ?: 0
         )
     }
 
@@ -71,7 +76,12 @@ fun MultiConversionAggregate.toMoneyAggregate(
         conversionFailures = failures,
         isPartial = hasFailures,
         warningMessage = if (hasFailures) {
-            "Total excludes ${failures.size} transaction(s) due to missing exchange rates"
+            val totalFailedTx = failures.sumOf { it.transactionCount }
+            if (totalFailedTx > 0) {
+                "Total excludes $totalFailedTx transaction(s) due to missing exchange rates"
+            } else {
+                "Total excludes ${failures.size} currency bucket(s) due to missing exchange rates"
+            }
         } else null
     )
 }

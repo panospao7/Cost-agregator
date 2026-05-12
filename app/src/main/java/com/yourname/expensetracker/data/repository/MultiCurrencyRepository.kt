@@ -487,7 +487,7 @@ class MultiCurrencyRepository @Inject constructor(
         val result = mutableListOf<PeriodMoneyAggregate>()
         for ((weekStart, group) in byWeek.toSortedMap()) {
             val buckets = group.map { Pair(it.effectiveAmount, it.currency) }
-            val aggregate = MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter)
+            val aggregate = MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, transactionCounts = List(group.size) { 1 })
             result.add(PeriodMoneyAggregate(periodKey = getWeekKey(weekStart), aggregate = aggregate))
         }
         return result
@@ -511,7 +511,7 @@ class MultiCurrencyRepository @Inject constructor(
         val result = mutableListOf<PeriodMoneyAggregate>()
         for ((dayStart, group) in byDay.toSortedMap()) {
             val buckets = group.map { Pair(it.effectiveAmount, it.currency) }
-            val aggregate = MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter)
+            val aggregate = MoneyAggregateBuilder.fromBuckets(buckets, homeCurrency, currencyConverter, transactionCounts = List(group.size) { 1 })
             result.add(PeriodMoneyAggregate(periodKey = getDayKey(dayStart), aggregate = aggregate))
         }
         return result
@@ -552,11 +552,19 @@ class MultiCurrencyRepository @Inject constructor(
                     total += conversion.convertedAmount
                     buckets.add(com.yourname.expensetracker.domain.core.money.MoneyBucket(srcCurrency, ct.total, ct.txCount))
                 } else {
-                    // Fallback to latest rate
+                    // Fallback to latest rate — mark as partial since rate basis is not historical
                     val latestConversion = currencyConverter.convert(ct.total, ct.currency, homeCurrency)
                     if (latestConversion != null) {
                         total += latestConversion.convertedAmount
                         buckets.add(com.yourname.expensetracker.domain.core.money.MoneyBucket(srcCurrency, ct.total, ct.txCount))
+                        failures.add(
+                            com.yourname.expensetracker.domain.core.money.ConversionFailure(
+                                originalAmount = com.yourname.expensetracker.domain.core.money.MoneyAmount(ct.total, srcCurrency),
+                                targetCurrency = CurrencyCode(homeCurrency),
+                                reason = com.yourname.expensetracker.domain.core.money.FailureReason.RATE_STALE,
+                                transactionCount = ct.txCount
+                            )
+                        )
                     } else {
                         failures.add(
                             com.yourname.expensetracker.domain.core.money.ConversionFailure(

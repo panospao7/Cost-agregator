@@ -22,11 +22,15 @@ class MerchantCategoryRepository @Inject constructor(
         if (rowId <= 0L) {
             timber.log.Timber.w("MerchantCategoryRepository: insert conflict ignored for pattern='%s'", mapping.merchantPattern)
         }
+        // E3-005: Invalidate categorization caches after merchant-category mapping change
+        categorizationEngineProvider.get().invalidateAllCaches()
     }
 
     suspend fun deleteAll() {
         writeBarrier.checkWritesAllowed("MerchantCategoryRepository.deleteAll")
         dao.deleteAll()
+        // E3-005: Invalidate categorization caches after merchant-category mapping change
+        categorizationEngineProvider.get().invalidateAllCaches()
     }
 
     /**

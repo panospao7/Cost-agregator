@@ -164,31 +164,24 @@ class AnalyticsRepository @Inject constructor(
             val categoryMap = categories.associateBy { it.id }
             val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }.getOrDefault("EUR")
 
-            // ── Normalized per-category totals via MultiCurrencyRepository ──
-            // TODO (P5-CURRENT-007): Category breakdown uses latest-rate via
-            // MultiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals, but the
-            // spending summary uses as-of-transaction-date rates via NormalizedAnalyticsInput.
-            // This FX basis mismatch means category percentages may not sum to the summary total.
-            // Fix: Use NormalizedAnalyticsInput for both category breakdown and summary.
-            val categoryAggregates = multiCurrencyRepository.getHomeCurrencyPurchaseCategoryTotals(start, end)
-            // TODO (P2-11): totalSpent sums only displayAmount, ignoring partial aggregates.
-            // If a category aggregate is partial (missing exchange rates), its percentage
-            // is calculated over only successfully converted amounts. The breakdown should
-            // carry isPartial and warningMessage fields so the UI can show caveats.
+            // ── Normalized per-category totals via per-transaction-date conversion ──
+            // E2-004: Uses same normalization basis as spending summary (per-expense date)
+            // so category percentages sum to the headline total.
+            val expenses = expenseDao.getExpensesByTypeBetween(start, end, ExpenseDao.SPENDING_TYPE)
+            val normalization = analyticsCurrencyNormalizer.normalizeExpenses(expenses, homeCurrency)
+            val categoryAggregates = normalization.normalizedExpenses
+                .filter { !it.snapshot.isNotMine }
+                .groupBy { it.snapshot.categoryId }
+                .mapValues { (_, exps) -> exps.sumOf { it.normalizedEffectiveAmount } }
 
-            // TODO (P5-PR2): Downstream consumers of category breakdown (e.g. analytics
-            // ViewModel, dashboard widgets) should also propagate isPartial and warningMessage
-            // fields from SpendingSummary so that users see data-quality warnings consistently
-            // across all surfaces. Currently these fields may be dropped at the ViewModel layer.
-            val totalSpent = categoryAggregates.values.sumOf { it.displayAmount }
+            val totalSpent = categoryAggregates.values.sum()
 
             emit(
                 categoryAggregates
-                .mapNotNull { (categoryId, aggregate) ->
+                .mapNotNull { (categoryId, amount) ->
                     val cat = if (categoryId != null) {
                         categoryMap[categoryId]
                     } else {
-                        // Include null-category (uncategorized) expenses
                         null
                     }
                     if (categoryId != null && cat == null) return@mapNotNull null
@@ -200,7 +193,6 @@ class AnalyticsRepository @Inject constructor(
                             color = cat.color
                         )
                     } else {
-                        // Pseudo-category for uncategorized expenses
                         AnalyticsCategoryRef(
                             id = 0L,
                             name = "Uncategorized",
@@ -210,12 +202,12 @@ class AnalyticsRepository @Inject constructor(
                     }
                     AnalyticsCategoryBreakdown(
                         category = ref,
-                        total = aggregate.displayAmount,
-                        count = aggregate.totalTransactionCount,
-                        percentage = if (totalSpent > 0) (aggregate.displayAmount / totalSpent * 100).toFloat() else 0f,
+                        total = amount,
+                        count = normalization.normalizedExpenses.count { it.snapshot.categoryId == categoryId && !it.snapshot.isNotMine },
+                        percentage = if (totalSpent > 0) (amount / totalSpent * 100).toFloat() else 0f,
                         displayCurrency = homeCurrency,
-                        isPartial = aggregate.isPartial,
-                        warningMessage = aggregate.warningMessage
+                        isPartial = normalization.hasWarnings,
+                        warningMessage = normalization.warnings.firstOrNull()?.message
                     )
                 }
                 .sortedByDescending { it.total }

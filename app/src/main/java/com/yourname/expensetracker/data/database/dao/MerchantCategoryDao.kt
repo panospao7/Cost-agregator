@@ -37,6 +37,9 @@ interface MerchantCategoryDao {
     @Query("SELECT * FROM merchant_categories WHERE merchantPattern = :merchantPattern")
     suspend fun getCategoryForMerchant(merchantPattern: String): MerchantCategory?
 
+    // TODO (E3-007): This query is ambiguous when multiple rows share the same normalizedCanonicalName.
+    // Without a UNIQUE constraint, LIMIT 1 returns an arbitrary row. Add ORDER BY timesUsed DESC,
+    // updatedAt DESC to deterministically return the most relevant mapping, or enforce UNIQUE.
     // TODO (C06): Make normalizedCanonicalName unique, or return all candidates resolved by source/confidence/timesUsed.
     @Query("SELECT * FROM merchant_categories WHERE normalizedCanonicalName = :normalizedCanonicalName")
     suspend fun getCategoryByNormalizedCanonical(normalizedCanonicalName: String): MerchantCategory?

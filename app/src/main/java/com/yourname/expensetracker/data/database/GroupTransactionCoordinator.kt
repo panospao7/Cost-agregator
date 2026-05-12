@@ -322,6 +322,13 @@ class GroupTransactionCoordinator @Inject constructor(
                 }
 
                 val expenseCurrency = currency ?: group.defaultCurrency
+
+                // E4-005: Enforce single-currency group policy at low level
+                if (currency != null && currency != group.defaultCurrency) {
+                    return@withTransaction GroupExpenseCreationResult.Error(
+                        "Expense currency '$currency' does not match group currency '${group.defaultCurrency}'. Groups are single-currency."
+                    )
+                }
                 
                 // Create the group expense (without system link - expenseId is null for standalone)
                 val expense = GroupExpense(
@@ -357,6 +364,12 @@ class GroupTransactionCoordinator @Inject constructor(
      * This is the proper way to create group expenses that appear in transaction history.
      * B.4 Batch 2: Wrapped in database.withTransaction so validation + insert
      * are atomic (Risk 2).
+     *
+     * TODO (E4-003): normalizeLinkedSystemExpense() dispatches ownership-update side effects
+     * (via TransactionLifecycleCoordinator.updateOwnership) inside the outer transaction.
+     * If the transaction rolls back after side effects fire, the system is in an inconsistent
+     * state. Side effects should be deferred until after the outer transaction commits,
+     * similar to createSystemExpenseAndLinkToGroup's .also{} pattern.
      */
     override suspend fun addExpenseWithLink(
         groupId: Long,
@@ -750,6 +763,13 @@ class GroupTransactionCoordinator @Inject constructor(
     ): Long {
         writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.addExpenseToGroupAtomic")
         return database.withTransaction {
+            // E4-005: Enforce single-currency group policy at low level
+            val group = groupDao.getById(groupExpense.groupId)
+            if (group != null && groupExpense.currency != group.defaultCurrency) {
+                throw IllegalArgumentException(
+                    "Expense currency '${groupExpense.currency}' does not match group currency '${group.defaultCurrency}'. Groups are single-currency."
+                )
+            }
             groupExpense.expenseId?.let { expenseId ->
                 if (groupExpenseDao.getGroupExpenseForExpense(expenseId) != null) {
                     throw SQLiteConstraintException(LINKED_EXPENSE_ALREADY_ATTACHED_MESSAGE)

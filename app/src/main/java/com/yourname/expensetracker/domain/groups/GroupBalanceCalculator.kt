@@ -36,6 +36,10 @@ class GroupBalanceCalculator @Inject constructor(
 
         val paidTotal = expenses.filter { it.paidById == memberId }.sumOf { it.totalAmount }
         val memberCount = memberDao.getMemberCount(groupId).coerceAtLeast(1)
+        // TODO (E4-007): memberCount uses the CURRENT member count for all historical expenses.
+        // For accurate historical splits, each expense should use the member count at the time
+        // the expense was created (members may have joined/left since then). Consider storing
+        // participantCount on GroupExpense at creation time, or querying member join dates.
         // For CUSTOM splits, compute owed share from the split JSON
         val owedShareTotal = expenses.sumOf { expense ->
             when (expense.splitType) {

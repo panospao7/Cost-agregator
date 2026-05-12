@@ -172,7 +172,9 @@ class TotalsAggregationEngine @Inject constructor(
                 periodType = PeriodType.WEEK,
                 startDateMs = clippedStart,
                 endDateMs = clippedEnd,
-                status = getPeriodStatus(aggregate.displayAmount, average)
+                status = getPeriodStatus(aggregate.displayAmount, average),
+                isPartial = aggregate.isPartial,
+                warningMessage = aggregate.warningMessage
             )
         }
     }
@@ -223,7 +225,9 @@ class TotalsAggregationEngine @Inject constructor(
                     periodType = PeriodType.DAY,
                     startDateMs = dayStart,
                     endDateMs = dayEnd,
-                    status = getPeriodStatus(aggregate.displayAmount, average)
+                    status = getPeriodStatus(aggregate.displayAmount, average),
+                    isPartial = aggregate.isPartial,
+                    warningMessage = aggregate.warningMessage
                 )
             }
         }
@@ -247,7 +251,9 @@ class TotalsAggregationEngine @Inject constructor(
                 periodType = PeriodType.DAY,
                 startDateMs = dayStart,
                 endDateMs = dayEnd,
-                status = getPeriodStatus(aggregate.displayAmount, average)
+                status = getPeriodStatus(aggregate.displayAmount, average),
+                isPartial = aggregate.isPartial,
+                warningMessage = aggregate.warningMessage
             )
         }
     }
