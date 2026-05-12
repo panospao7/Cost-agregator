@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.categorization.GreeklishNormalizer
 import com.yourname.expensetracker.domain.categorization.MerchantCanonicalizer
 import com.yourname.expensetracker.domain.util.MerchantCleaner
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
@@ -29,6 +30,7 @@ class LocationResolverStressTest {
     private lateinit var merchantCleaner: MerchantCleaner
     private lateinit var canonicalizer: MerchantCanonicalizer
     private lateinit var greeklishNormalizer: GreeklishNormalizer
+    private lateinit var timeProvider: TimeProvider
     private lateinit var locationResolver: LocationResolver
 
     @Before
@@ -46,10 +48,12 @@ class LocationResolverStressTest {
         merchantCleaner = mockk(relaxed = true)
         canonicalizer = mockk(relaxed = true)
         greeklishNormalizer = mockk(relaxed = true)
+        timeProvider = mockk()
 
         every { merchantCleaner.clean(any()) } answers { firstArg() }
         every { canonicalizer.canonicalize(any()) } answers { CanonicalResult(firstArg(), emptyList(), 0.0) }
         every { greeklishNormalizer.normalize(any()) } answers { firstArg() }
+        every { timeProvider.now() } returns 1_000_000_000_000L
 
         coEvery { locationProvider.getLastKnownLocation() } returns null
         coEvery { locationCachePort.getCorrection(any(), any(), any()) } returns null
@@ -76,7 +80,7 @@ class LocationResolverStressTest {
             merchantCleaner = merchantCleaner,
             canonicalizer = canonicalizer,
             greeklishNormalizer = greeklishNormalizer,
-            timeProvider = mockk(),
+            timeProvider = timeProvider,
             privacyGate = mockk(),
         )
     }

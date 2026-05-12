@@ -81,7 +81,7 @@ class DatabaseBackupRepositoryImplTest {
 
         every { database.openHelper } returns openHelper
         every { openHelper.writableDatabase } returns supportDb
-        every { supportDb.query("PRAGMA wal_checkpoint(FULL)") } answers { checkpointCursor(busyCode = 0) }
+        every { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") } answers { checkpointCursor(busyCode = 0) }
 
         // Privacy gate defaults — allow everything by default
         coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
@@ -117,7 +117,7 @@ class DatabaseBackupRepositoryImplTest {
         assertTrue(backupFile != null)
         assertTrue(backupFile!!.exists())
         assertTrue(backupFile.length() > 0L)
-        verify(atLeast = 1) { supportDb.query("PRAGMA wal_checkpoint(FULL)") }
+        verify(atLeast = 1) { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") }
     }
 
     @Test
@@ -198,7 +198,7 @@ class DatabaseBackupRepositoryImplTest {
 
         assertTrue(result.isSuccess)
         assertTrue(result.getOrNull()?.exists() == true)
-        verify(atLeast = 1) { supportDb.query("PRAGMA wal_checkpoint(FULL)") }
+        verify(atLeast = 1) { supportDb.query("PRAGMA wal_checkpoint(TRUNCATE)") }
     }
 
     @Test
@@ -428,7 +428,7 @@ class DatabaseBackupRepositoryImplTest {
         }.exceptionOrNull()
 
         assertNotNull(error)
-        assertTrue(error?.message?.contains("reduced expenses from 128 to 127") == true)
+        assertTrue(error?.message?.contains("Verified import changed expenses from 128 to 127") == true)
     }
 
     @Test

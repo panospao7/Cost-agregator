@@ -5,6 +5,10 @@ import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.database.entity.TransferDirection
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.DomainTransferDirection
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import io.mockk.coEvery
 import io.mockk.mockk
@@ -32,6 +36,34 @@ class RecurringExpenseEngineTest {
         engine = RecurringExpenseEngine(expenseRepository, recurringExpenseRepository, timeProvider)
     }
 
+    // Helper: convert test Expense objects to ExpenseSnapshot for the new production code path.
+    private fun List<Expense>.toSnapshots(): List<ExpenseSnapshot> = map { it.toTestSnapshot() }
+
+    private fun Expense.toTestSnapshot(): ExpenseSnapshot = ExpenseSnapshot(
+        id = id,
+        amount = amount,
+        effectiveAmount = effectiveAmount,
+        currency = currency,
+        merchant = merchant,
+        merchantKey = merchantKey,
+        transactionType = when (transactionType) {
+            TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
+            TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
+            TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
+            TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
+            TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
+        },
+        date = date,
+        categoryId = categoryId,
+        isNotMine = isNotMine,
+        transferDirection = when (transferDirection) {
+            TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
+            TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
+            null -> null
+        },
+        notes = notes
+    )
+
     @Test
     fun `should detect perfect monthly subscription`() = runTest {
         val expenses = listOf(
@@ -41,7 +73,7 @@ class RecurringExpenseEngineTest {
             createExpense("Netflix", 15.0, "2026-04-01")
         )
         
-        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+        coEvery { expenseRepository.getExpenseSnapshotsSince(any()) } returns expenses.toSnapshots()
 
         // Act
         val patterns = engine.getPatterns()
@@ -64,7 +96,7 @@ class RecurringExpenseEngineTest {
             createExpense("Corp Inc", 2000.0, "2026-02-16")  // Fri + 14
         )
         
-        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+        coEvery { expenseRepository.getExpenseSnapshotsSince(any()) } returns expenses.toSnapshots()
 
         // Act
         val patterns = engine.getPatterns()
@@ -87,7 +119,7 @@ class RecurringExpenseEngineTest {
         )
         // Intervals: 1, 6, 12 -> Irregular
         
-        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+        coEvery { expenseRepository.getExpenseSnapshotsSince(any()) } returns expenses.toSnapshots()
 
         // Act
         val patterns = engine.getPatterns()
@@ -106,7 +138,7 @@ class RecurringExpenseEngineTest {
             createExpense("Electric Co", 200.0, "2026-04-01")  
         )
         
-        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+        coEvery { expenseRepository.getExpenseSnapshotsSince(any()) } returns expenses.toSnapshots()
 
         // Act
         val patterns = engine.getPatterns()
@@ -125,7 +157,7 @@ class RecurringExpenseEngineTest {
             createExpense("Gym", 50.0, "2026-03-01")
         )
         
-        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+        coEvery { expenseRepository.getExpenseSnapshotsSince(any()) } returns expenses.toSnapshots()
         
         val manualOverride = ManualRecurringExpense(
             merchant = "Gym",
@@ -154,7 +186,7 @@ class RecurringExpenseEngineTest {
             createExpense("Test", 10.0, "2026-02-01"),
             createExpense("Test", 10.0, "2026-03-01")
         )
-        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+        coEvery { expenseRepository.getExpenseSnapshotsSince(any()) } returns expenses.toSnapshots()
         
         val patterns = engine.getPatterns()
         assertTrue("Should detect with 3 occurrences", patterns.isNotEmpty())
@@ -167,7 +199,7 @@ class RecurringExpenseEngineTest {
             createExpense("Rent", 800.0, "2026-02-28"),
             createExpense("Rent", 800.0, "2026-03-31")
         )
-        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+        coEvery { expenseRepository.getExpenseSnapshotsSince(any()) } returns expenses.toSnapshots()
 
         val patterns = engine.getPatterns()
         assertEquals("Expected one recurring pattern", 1, patterns.size)
@@ -180,7 +212,7 @@ class RecurringExpenseEngineTest {
             createExpense("Test", 10.0, "2026-01-01"),
             createExpense("Test", 10.0, "2026-02-01")
         )
-        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+        coEvery { expenseRepository.getExpenseSnapshotsSince(any()) } returns expenses.toSnapshots()
         
         val patterns = engine.getPatterns()
         assertTrue("Should NOT detect with 2 occurrences", patterns.isEmpty())
@@ -193,7 +225,7 @@ class RecurringExpenseEngineTest {
             createExpense("NETFLIX", 10.0, "2026-02-01"),
             createExpense("netflix", 10.0, "2026-03-01")
         )
-        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+        coEvery { expenseRepository.getExpenseSnapshotsSince(any()) } returns expenses.toSnapshots()
         
         val patterns = engine.getPatterns()
         // If this fails, it means normalization is missing in RecurringExpenseEngine
@@ -207,7 +239,7 @@ class RecurringExpenseEngineTest {
             createExpense("Streaming", 20.0, "2026-02-01", isNotMine = true),
             createExpense("Streaming", 20.0, "2026-03-01", isNotMine = true)
         )
-        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+        coEvery { expenseRepository.getExpenseSnapshotsSince(any()) } returns expenses.toSnapshots()
 
         val patterns = engine.getPatterns()
         assertTrue("Not-mine expenses should not produce recurring patterns", patterns.isEmpty())
@@ -223,7 +255,7 @@ class RecurringExpenseEngineTest {
             nextDate = timestampOf(2026, Calendar.JANUARY, 10),
             createdAt = timestampOf(2025, Calendar.DECEMBER, 1)
         )
-        coEvery { expenseRepository.getExpensesSince(any()) } returns emptyList()
+        coEvery { expenseRepository.getExpenseSnapshotsSince(any()) } returns emptyList()
         coEvery { recurringExpenseRepository.getAll() } returns listOf(staleManual)
 
         val patterns = engine.getPatterns()
@@ -239,7 +271,7 @@ class RecurringExpenseEngineTest {
             createExpense("Water", 30.0, "2025-12-01"),
             createExpense("Water", 30.0, "2026-01-01")
         )
-        coEvery { expenseRepository.getExpensesSince(any()) } returns expenses
+        coEvery { expenseRepository.getExpenseSnapshotsSince(any()) } returns expenses.toSnapshots()
 
         val patterns = engine.getPatterns()
 

@@ -4,6 +4,10 @@ import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.dao.MonthlyTotal
 import com.yourname.expensetracker.data.database.dao.WeeklyTotal
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.MonthMoneyAggregate
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.model.PeriodStatus
 import com.yourname.expensetracker.domain.model.PeriodType
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -22,10 +26,18 @@ class TotalsAggregationEngineTest {
     private lateinit var engine: TotalsAggregationEngine
     private val expenseRepository = mockk<ExpenseRepository>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
+    private val multiCurrencyRepo = mockk<MultiCurrencyRepository>()
 
     @Before
     fun setup() {
-        engine = TotalsAggregationEngine(expenseRepository, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } returns MoneyAggregate.empty(CurrencyCode("EUR"))
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseMonthlyTotals(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns emptyMap()
+        coEvery { multiCurrencyRepo.getHomeCurrencyWeeklyTotals(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getHomeCurrencyMonthlyTotals(any(), any()) } returns emptyList()
+
+        engine = TotalsAggregationEngine(expenseRepository, timeProvider, multiCurrencyRepo, mockk(relaxed = true), Dispatchers.Unconfined)
         every { timeProvider.now() } returns System.currentTimeMillis()
     }
 

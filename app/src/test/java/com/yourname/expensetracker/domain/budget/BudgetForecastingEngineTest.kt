@@ -3,21 +3,26 @@ package com.yourname.expensetracker.domain.budget
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
-import com.yourname.expensetracker.data.database.dao.CurrencyTotal
-import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.ForecastRiskLevel
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.analytics.AnalyticsConversionWarning
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.model.DomainTransactionType
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -43,6 +48,11 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     private lateinit var budgetRepository: BudgetRepository
     private lateinit var budgetForecastDao: BudgetForecastDao
     private lateinit var engine: BudgetForecastingEngine
+    private lateinit var mockExpenseRepo: ExpenseRepository
+    private lateinit var mockCurrencyNormalizer: AnalyticsCurrencyNormalizer
+    private lateinit var mockCurrencySettingsRepo: CurrencySettingsRepository
+    private lateinit var mockConverter: CurrencyConverter
+    private lateinit var mockWriteBarrier: DatabaseWriteBarrier
 
     private val now = LocalDate.of(2026, 4, 15)
         .atStartOfDay(ZoneId.systemDefault())
@@ -57,11 +67,35 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
         every { timeProvider.now() } returns now
         coEvery { budgetForecastDao.insert(any()) } returns 1L
         coEvery { budgetForecastDao.insertWithDeactivation(any()) } returns 1L
-        coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 0.0
 
-        // Default: no monthly aggregate data
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(any(), any(), any()) } returns emptyList()
-        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns emptyList()
+        // Mock the new code path used by production BudgetForecastingEngine.
+        // The engine now goes through expenseRepository + analyticsCurrencyNormalizer
+        // instead of raw expenseDao aggregate queries.
+        mockExpenseRepo = mockk<ExpenseRepository>(relaxed = true)
+        mockCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
+        mockCurrencySettingsRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        mockConverter = mockk<CurrencyConverter>(relaxed = true)
+        mockWriteBarrier = mockk(relaxed = true)
+
+        // Default: return empty snapshots (tests override this per-scenario)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
+
+        // Pass-through normalizer: wraps input snapshots into AnalyticsNormalizationResult
+        coEvery { mockCurrencyNormalizer.normalizeSnapshots(any(), any()) } answers {
+            val expenses = firstArg<List<ExpenseSnapshot>>()
+            val homeCurrency = secondArg<String>()
+            AnalyticsNormalizationResult(
+                homeCurrency = homeCurrency,
+                normalizedExpenses = expenses.map {
+                    NormalizedExpenseSnapshot(it, it.currency, it.effectiveAmount, it.effectiveAmount)
+                },
+                includedExpenses = expenses,
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = expenses.size
+            )
+        }
+        every { mockCurrencySettingsRepo.homeCurrency() } returns flowOf("EUR")
 
         engine = BudgetForecastingEngine(
             expenseDao = expenseDao,
@@ -69,11 +103,36 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             budgetForecastDao = budgetForecastDao,
             timeProvider = timeProvider,
             ioDispatcher = Dispatchers.Unconfined,
-            analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true),
-            expenseRepository = mockk<ExpenseRepository>(relaxed = true),
-            currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true),
-            currencyConverter = mockk<CurrencyConverter>(relaxed = true),
-            writeBarrier = mockk(relaxed = true)
+            analyticsCurrencyNormalizer = mockCurrencyNormalizer,
+            expenseRepository = mockExpenseRepo,
+            currencySettingsRepository = mockCurrencySettingsRepo,
+            currencyConverter = mockConverter,
+            writeBarrier = mockWriteBarrier
+        )
+    }
+
+    // Helper: create an ExpenseSnapshot for a given month with the specified total amount.
+    // The production engine groups snapshots by month key (yyyy-MM) and sums effectiveAmount,
+    // so one snapshot per month with the expected total is sufficient.
+    private fun snapshot(monthKey: String, total: Double, categoryId: Long? = 1L): ExpenseSnapshot {
+        val parts = monthKey.split("-")
+        val date = LocalDate.of(parts[0].toInt(), parts[1].toInt(), 15)
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        return ExpenseSnapshot(
+            id = 0L,
+            amount = total,
+            effectiveAmount = total,
+            currency = "EUR",
+            merchant = "Test",
+            merchantKey = null,
+            transactionType = DomainTransactionType.PURCHASE,
+            date = date,
+            categoryId = categoryId,
+            isNotMine = false,
+            transferDirection = null,
+            notes = null
         )
     }
 
@@ -81,10 +140,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     fun `historical average stddev trend and prediction are calculated correctly`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
         // Monthly totals: Jan=100, Feb=200, Mar=300
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 1),
-            MonthlySpendingTotal("2026-02", 200.0, 1),
-            MonthlySpendingTotal("2026-03", 300.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 100.0, 1L),
+            snapshot("2026-02", 200.0, 1L),
+            snapshot("2026-03", 300.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -101,8 +160,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `single month history yields stable trend and zero stddev path`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 500.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-03", 120.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-03", 120.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget)
@@ -116,10 +175,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `all months same amount keeps stddev zero and confidence bounded`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 400.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 1),
-            MonthlySpendingTotal("2026-02", 100.0, 1),
-            MonthlySpendingTotal("2026-03", 100.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 100.0, 1L),
+            snapshot("2026-02", 100.0, 1L),
+            snapshot("2026-03", 100.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget)
@@ -133,10 +192,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `budget zero still forecasts history and is critical risk`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 0.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 1),
-            MonthlySpendingTotal("2026-02", 100.0, 1),
-            MonthlySpendingTotal("2026-03", 100.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 100.0, 1L),
+            snapshot("2026-02", 100.0, 1L),
+            snapshot("2026-03", 100.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget)
@@ -157,13 +216,13 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val budget = Budget(categoryId = 1L, amount = 2000.0, period = BudgetPeriod.MONTHLY, startDate = decemberNow)
         // 6 months of flat 100 each
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-06", 100.0, 1),
-            MonthlySpendingTotal("2026-07", 100.0, 1),
-            MonthlySpendingTotal("2026-08", 100.0, 1),
-            MonthlySpendingTotal("2026-09", 100.0, 1),
-            MonthlySpendingTotal("2026-10", 100.0, 1),
-            MonthlySpendingTotal("2026-11", 100.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-06", 100.0, 1L),
+            snapshot("2026-07", 100.0, 1L),
+            snapshot("2026-08", 100.0, 1L),
+            snapshot("2026-09", 100.0, 1L),
+            snapshot("2026-10", 100.0, 1L),
+            snapshot("2026-11", 100.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -176,9 +235,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `two month history increasing trend applies increasing multiplier`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-02", 100.0, 1),
-            MonthlySpendingTotal("2026-03", 130.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-02", 100.0, 1L),
+            snapshot("2026-03", 130.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -190,9 +249,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `two month history decreasing trend applies decreasing multiplier`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-02", 130.0, 1),
-            MonthlySpendingTotal("2026-03", 100.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-02", 130.0, 1L),
+            snapshot("2026-03", 100.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -204,9 +263,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `two month history stable trend keeps base prediction`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-02", 100.0, 1),
-            MonthlySpendingTotal("2026-03", 105.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-02", 100.0, 1L),
+            snapshot("2026-03", 105.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -226,10 +285,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
                 .toInstant()
                 .toEpochMilli()
         )
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 300.0, 1),
-            MonthlySpendingTotal("2026-02", 300.0, 1),
-            MonthlySpendingTotal("2026-03", 300.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 300.0, 1L),
+            snapshot("2026-02", 300.0, 1L),
+            snapshot("2026-03", 300.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 60)
@@ -261,12 +320,22 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
                 .toInstant()
                 .toEpochMilli()
         )
-        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-02", 50.0, 1),
-            MonthlySpendingTotal("2026-03", 200.0, 1)
+        // Provide all snapshots (historical + current period) in one call.
+        // Production code uses these for both getHistoricalSpendingData and getSpentAmount,
+        // filtering by month internally.
+        // Use a custom April snapshot with date before `now` (Apr 15) so it falls within
+        // the current period [periodStart, elapsedEnd) for spentToDate computation.
+        val aprilSnapshot = snapshot("2026-04", 50.0, null).copy(
+            date = LocalDate.of(2026, 4, 10)
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
         )
-        coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 50.0
-        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 50.0, 1))
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-02", 50.0, null),
+            snapshot("2026-03", 200.0, null),
+            aprilSnapshot
+        )
 
         val forecast = engine.generateForecast(budget)
 
@@ -288,10 +357,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
                 .toInstant()
                 .toEpochMilli()
         )
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 1),
-            MonthlySpendingTotal("2026-02", 100.0, 1),
-            MonthlySpendingTotal("2026-03", 100.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 100.0, 1L),
+            snapshot("2026-02", 100.0, 1L),
+            snapshot("2026-03", 100.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget)
@@ -324,11 +393,11 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `historical data uses effectiveAmount for shared expenses not raw amount`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        // Aggregate SQL returns effective amounts: Jan=100, Feb=80 (not raw 200), Mar=120
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 1),
-            MonthlySpendingTotal("2026-02", 80.0, 1),
-            MonthlySpendingTotal("2026-03", 120.0, 1)
+        // Effective amounts: Jan=100, Feb=80, Mar=120
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 100.0, 1L),
+            snapshot("2026-02", 80.0, 1L),
+            snapshot("2026-03", 120.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -341,11 +410,11 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `historical data uses effectiveAmount for percentage shared expenses`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        // Aggregate SQL returns effective amounts: Jan=100, Feb=50 (not raw 100), Mar=100
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 1),
-            MonthlySpendingTotal("2026-02", 50.0, 1),
-            MonthlySpendingTotal("2026-03", 100.0, 1)
+        // Effective amounts: Jan=100, Feb=50, Mar=100
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 100.0, 1L),
+            snapshot("2026-02", 50.0, 1L),
+            snapshot("2026-03", 100.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -358,11 +427,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `historical data excludes isNotMine expenses and zero fills missing months`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 500.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        // Aggregate SQL already excludes isNotMine (WHERE isNotMine = 0): Jan=60, Mar=60
-        // Missing months are now synthesized as zero-spend buckets.
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 60.0, 1),
-            MonthlySpendingTotal("2026-03", 60.0, 1)
+        // Snapshots with effective amounts: Jan=60, Mar=60 (Feb is a gap, zero-filled by engine)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 60.0, 1L),
+            snapshot("2026-03", 60.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -374,11 +442,11 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `mixed shared and isNotMine with regular expenses forecast correctly`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        // Aggregate SQL computes: Jan=100 (regular 100 + isNotMine excluded), Feb=40 (shared), Mar=100
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 1),
-            MonthlySpendingTotal("2026-02", 40.0, 1),
-            MonthlySpendingTotal("2026-03", 100.0, 1)
+        // Effective amounts: Jan=100, Feb=40, Mar=100
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 100.0, 1L),
+            snapshot("2026-02", 40.0, 1L),
+            snapshot("2026-03", 100.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -389,16 +457,16 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     }
 
     // =========================================================================
-    // Null-category budget path (uses getMonthlySpendingTotalsBetween)
+    // Null-category budget path (filtering by categoryId = null in the snapshot stream)
     // =========================================================================
 
     @Test
     fun `null category budget uses uncapped monthly aggregate without category filter`() = runTest {
         val budget = Budget(categoryId = null, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 200.0, 5),
-            MonthlySpendingTotal("2026-02", 200.0, 5),
-            MonthlySpendingTotal("2026-03", 200.0, 5)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 200.0, null),
+            snapshot("2026-02", 200.0, null),
+            snapshot("2026-03", 200.0, null)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -416,10 +484,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `sparse months are zero filled before averaging`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        // SQL returns Jan and Mar only; Feb and Apr are synthesized as zeros.
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 90.0, 1),
-            MonthlySpendingTotal("2026-03", 90.0, 1)
+        // Snapshots for Jan and Mar only; Feb and Apr are gap-filled as zeros by the engine.
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 90.0, 1L),
+            snapshot("2026-03", 90.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -431,10 +499,11 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `multi-month gaps outside returned data collapse to zero-filled lookback window`() = runTest {
         val budget = Budget(categoryId = null, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        // Returned months outside the Jan-Apr lookback do not contribute; the full lookback is zero-filled.
-        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns listOf(
-            MonthlySpendingTotal("2025-01", 120.0, 2),
-            MonthlySpendingTotal("2025-06", 120.0, 2)
+        // Snapshots outside the Jan-Apr lookback (the engine's 3-month window from threeMonthsAgo to now).
+        // Since all dates are before the lookback window, the full window is zero-filled.
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2025-01", 120.0, null),
+            snapshot("2025-06", 120.0, null)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -445,11 +514,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `contiguous observed months still include zero filled current month`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        // Contiguous month keys still get the zero-filled current-month bucket.
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 1),
-            MonthlySpendingTotal("2026-02", 100.0, 1),
-            MonthlySpendingTotal("2026-03", 100.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-01", 100.0, 1L),
+            snapshot("2026-02", 100.0, 1L),
+            snapshot("2026-03", 100.0, 1L)
         )
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
@@ -465,8 +533,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `generateForecast calls insertWithDeactivation not plain insert`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-03", 100.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-03", 100.0, 1L)
         )
 
         engine.generateForecast(budget)
@@ -478,8 +546,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     @Test
     fun `regenerating forecast for same period deactivates previous via DAO`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-03", 100.0, 1)
+        coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot("2026-03", 100.0, 1L)
         )
 
         // Generate twice for the same period

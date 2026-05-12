@@ -33,7 +33,7 @@ import java.time.ZoneId
  * Unit tests for [AccountingExportRepository].
  *
  * After the A.9 Batch 6 fix, [AccountingExportRepository] uses deterministic
- * exhaustive paging via [ExpenseRepository.getExpensesBetweenPagedForDeterministicExport]
+ * exhaustive paging via [ExpenseRepository.getExpensesBetweenForExportKeyset]
  * instead of the generic [ExpenseRepository.getExpensesBetween].  This ensures:
  * 1. Deterministic export row order (date ASC, id ASC, merchant COLLATE NOCASE ASC).
  * 2. No silent truncation — pages are fetched until exhausted.
@@ -111,6 +111,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     fun `fetchAllForExport single page - all rows returned`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
+        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
 
         val expenses = (1..100).map { i ->
             Expense(
@@ -123,9 +124,11 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             )
         }
 
+        // Production DeterministicExpenseExportPager uses keyset-based pagination
+        // First call uses null cursor (null, null)
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, 0
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, null, null
             )
         } returns expenses
 
@@ -138,8 +141,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
 
         // Only one page call should have been made (sub-page-size result terminates the loop)
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, 0
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, null, null
             )
         }
         // Verify the old uncapped getExpensesBetween is NOT called
@@ -170,19 +173,24 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             )
         }
 
-        // Page 1: rows 1..2000
+        // Production uses keyset pagination: (start, end, limit, lastDate, lastId)
+        // Page 1: rows 1..2000, cursor is null
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 0)
+            expenseRepository.getExpensesBetweenForExportKeyset(start, end, pageSize, null, null)
         } returns allExpenses.subList(0, pageSize)
 
-        // Page 2: rows 2001..4000
+        // Page 2: rows 2001..4000, cursor comes from last row of page 1 (id=2000, date=start+2000*1000)
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, allExpenses[pageSize - 1].date, allExpenses[pageSize - 1].id
+            )
         } returns allExpenses.subList(pageSize, 2 * pageSize)
 
-        // Page 3: rows 4001..4500 (partial page — terminates the loop)
+        // Page 3: rows 4001..4500, cursor comes from last row of page 2 (id=4000, date=start+4000*1000)
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 2 * pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, allExpenses[2 * pageSize - 1].date, allExpenses[2 * pageSize - 1].id
+            )
         } returns allExpenses.subList(2 * pageSize, allExpenses.size)
 
         // Exercise the real production paging loop
@@ -192,15 +200,19 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         assertEquals("First row id must be 1", 1L, result.first().id)
         assertEquals("Last row id must be 4500", 4500L, result.last().id)
 
-        // Verify all 3 page calls were made
+        // Verify all 3 page calls were made with correct cursor values
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 0)
+            expenseRepository.getExpensesBetweenForExportKeyset(start, end, pageSize, null, null)
         }
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, allExpenses[pageSize - 1].date, allExpenses[pageSize - 1].id
+            )
         }
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 2 * pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, allExpenses[2 * pageSize - 1].date, allExpenses[2 * pageSize - 1].id
+            )
         }
 
         // Verify the old uncapped path is NOT used
@@ -215,10 +227,11 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     fun `fetchAllForExport empty range returns empty list`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
+        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
 
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, 0
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, null, null
             )
         } returns emptyList()
 
@@ -229,8 +242,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
 
         // Only one page call should have been made (empty result terminates the loop)
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, 0
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, null, null
             )
         }
     }
@@ -257,14 +270,16 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             )
         }
 
-        // First page returns exactly pageSize rows
+        // First page returns exactly pageSize rows (keyset, cursor=null)
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 0)
+            expenseRepository.getExpensesBetweenForExportKeyset(start, end, pageSize, null, null)
         } returns expenses
 
-        // Second page returns empty — loop terminates
+        // Second page returns empty — loop terminates (cursor = last row of page 1)
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, expenses.last().date, expenses.last().id
+            )
         } returns emptyList()
 
         // Exercise the real production paging loop
@@ -276,10 +291,12 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
 
         // Two page calls: one full, one empty
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 0)
+            expenseRepository.getExpensesBetweenForExportKeyset(start, end, pageSize, null, null)
         }
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, expenses.last().date, expenses.last().id
+            )
         }
     }
 
@@ -314,6 +331,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     fun `export small dataset returns all records via deterministic path`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
+        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
 
         val expenses = listOf(
             Expense(id = 1L, amount = 25.0, merchant = "CoffeeShop", transactionType = TransactionType.PURCHASE, date = start + 1000, categoryId = 1L),
@@ -322,8 +340,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         )
 
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, 0
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, null, null
             )
         } returns expenses
 
@@ -365,19 +383,23 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             )
         }
 
-        // Page 1: rows 1..pageSize
+        // Page 1: rows 1..pageSize, keyset cursor = null
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 0)
+            expenseRepository.getExpensesBetweenForExportKeyset(start, end, pageSize, null, null)
         } returns allExpenses.subList(0, pageSize)
 
-        // Page 2: rows pageSize+1..2*pageSize
+        // Page 2: rows pageSize+1..2*pageSize, cursor = last row of page 1
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, allExpenses[pageSize - 1].date, allExpenses[pageSize - 1].id
+            )
         } returns allExpenses.subList(pageSize, 2 * pageSize)
 
-        // Page 3: partial page — terminates
+        // Page 3: partial page — terminates, cursor = last row of page 2
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 2 * pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, allExpenses[2 * pageSize - 1].date, allExpenses[2 * pageSize - 1].id
+            )
         } returns allExpenses.subList(2 * pageSize, totalRows)
 
         val ctx = fakeContext()
@@ -410,13 +432,17 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
 
         // ── Paging contract assertions ──
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 0)
+            expenseRepository.getExpensesBetweenForExportKeyset(start, end, pageSize, null, null)
         }
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, allExpenses[pageSize - 1].date, allExpenses[pageSize - 1].id
+            )
         }
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 2 * pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, allExpenses[2 * pageSize - 1].date, allExpenses[2 * pageSize - 1].id
+            )
         }
         coVerify(exactly = 0) { expenseRepository.getExpensesBetween(any(), any()) }
     }
@@ -444,14 +470,16 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             )
         }
 
-        // Full first page
+        // Full first page (keyset cursor = null)
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 0)
+            expenseRepository.getExpensesBetweenForExportKeyset(start, end, pageSize, null, null)
         } returns allExpenses
 
-        // Empty second page (boundary termination)
+        // Empty second page (boundary termination, cursor = last row of page 1)
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, allExpenses.last().date, allExpenses.last().id
+            )
         } returns emptyList()
 
         val ctx = fakeContext()
@@ -471,10 +499,12 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
 
         // Boundary termination: 2 page calls (full + empty)
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 0)
+            expenseRepository.getExpensesBetweenForExportKeyset(start, end, pageSize, null, null)
         }
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, allExpenses.last().date, allExpenses.last().id
+            )
         }
         coVerify(exactly = 0) { expenseRepository.getExpensesBetween(any(), any()) }
     }
@@ -483,6 +513,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     fun `exportExpenses QuickBooks IIF uses funding account on TRNS and category on SPL`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
+        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
         val expense = Expense(
             id = 1L,
             amount = 42.5,
@@ -495,11 +526,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         )
 
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start,
-                end,
-                DeterministicExpenseExportPager.EXPORT_PAGE_SIZE,
-                0
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, null, null
             )
         } returns listOf(expense)
 
@@ -527,8 +555,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         val end = ms("2026-04-01")
 
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, 0
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, DeterministicExpenseExportPager.EXPORT_PAGE_SIZE, null, null
             )
         } returns emptyList()
 
@@ -544,7 +572,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
 
         // Only one paged call — loop terminated immediately
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(any(), any(), any(), any())
+            expenseRepository.getExpensesBetweenForExportKeyset(any(), any(), any(), any(), any())
         }
         coVerify(exactly = 0) { expenseRepository.getExpensesBetween(any(), any()) }
     }
@@ -553,6 +581,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     fun `exportExpenses rejects mixed currency accounting dataset`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
+        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
         val expenses = listOf(
             Expense(
                 id = 1L,
@@ -575,11 +604,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         )
 
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start,
-                end,
-                DeterministicExpenseExportPager.EXPORT_PAGE_SIZE,
-                0
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, null, null
             )
         } returns expenses
 
@@ -594,6 +620,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     fun `exportExpenses rejects non purchase accounting dataset`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
+        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
         val expenses = listOf(
             Expense(
                 id = 1L,
@@ -606,11 +633,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         )
 
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start,
-                end,
-                DeterministicExpenseExportPager.EXPORT_PAGE_SIZE,
-                0
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, null, null
             )
         } returns expenses
 
@@ -626,6 +650,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
     fun `exportExpenses accountant report pdf writes pdf output`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
+        val pageSize = DeterministicExpenseExportPager.EXPORT_PAGE_SIZE
         val expenses = listOf(
             Expense(
                 id = 1L,
@@ -648,11 +673,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         )
 
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(
-                start,
-                end,
-                DeterministicExpenseExportPager.EXPORT_PAGE_SIZE,
-                0
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, null, null
             )
         } returns expenses
 
@@ -691,14 +713,16 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
             )
         }
 
-        // Page 1: full
+        // Page 1: full (keyset cursor = null)
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 0)
+            expenseRepository.getExpensesBetweenForExportKeyset(start, end, pageSize, null, null)
         } returns allExpenses.subList(0, pageSize)
 
-        // Page 2: 7 rows (partial — terminates)
+        // Page 2: 7 rows (partial — terminates, cursor = last row of page 1)
         coEvery {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, allExpenses[pageSize - 1].date, allExpenses[pageSize - 1].id
+            )
         } returns allExpenses.subList(pageSize, totalRows)
 
         val ctx = fakeContext()
@@ -720,10 +744,12 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
 
         // 2 page calls
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, 0)
+            expenseRepository.getExpensesBetweenForExportKeyset(start, end, pageSize, null, null)
         }
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenPagedForDeterministicExport(start, end, pageSize, pageSize)
+            expenseRepository.getExpensesBetweenForExportKeyset(
+                start, end, pageSize, allExpenses[pageSize - 1].date, allExpenses[pageSize - 1].id
+            )
         }
         coVerify(exactly = 0) { expenseRepository.getExpensesBetween(any(), any()) }
     }

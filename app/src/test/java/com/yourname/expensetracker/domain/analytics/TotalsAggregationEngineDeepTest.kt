@@ -6,6 +6,10 @@ import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.dao.MonthlyTotal
 import com.yourname.expensetracker.data.database.dao.WeeklyTotal
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.MonthMoneyAggregate
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.model.PeriodStatus
 import com.yourname.expensetracker.domain.model.PeriodType
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -27,12 +31,22 @@ class TotalsAggregationEngineDeepTest {
     private lateinit var engine: TotalsAggregationEngine
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var timeProvider: TimeProvider
+    private lateinit var multiCurrencyRepo: MultiCurrencyRepository
 
     @Before
     fun setup() {
         expenseRepository = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
-        engine = TotalsAggregationEngine(expenseRepository, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
+        multiCurrencyRepo = mockk()
+
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } returns MoneyAggregate.empty(CurrencyCode("EUR"))
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseMonthlyTotals(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns emptyMap()
+        coEvery { multiCurrencyRepo.getHomeCurrencyWeeklyTotals(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getHomeCurrencyMonthlyTotals(any(), any()) } returns emptyList()
+
+        engine = TotalsAggregationEngine(expenseRepository, timeProvider, multiCurrencyRepo, mockk(relaxed = true), Dispatchers.Unconfined)
         every { timeProvider.now() } returns dateMs(2026, 4, 15)
     }
 

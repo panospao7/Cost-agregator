@@ -364,9 +364,9 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             income("2026-02-05", 1100.0), purchase(2, "2026-02-10", 1, 650.0, merchant = "Restaurant"),
             income("2026-03-05", 1200.0), purchase(3, "2026-03-10", 1, 900.0, merchant = "Restaurant")
         )
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(lifestyleData)
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(lifestyleData)
 
-        val detector = LifestyleInflationDetector(expenseDao, timeProvider = mockk())
+        val detector = LifestyleInflationDetector(expenseDao, timeProvider)
         val report = detector.analyzeLifestyleInflation(monthsToAnalyze = 6)
 
         every { timeProvider.now() } returns ms(2026, 3, 20)
@@ -531,7 +531,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         ).first
         val dailyTotals = totalsEngine.getDailyTotalsForRange(ms(2026, 3, 1), ms(2026, 4, 1))
         val carbon = CarbonFootprintCalculator(expenseDao, timeProvider, analyticsCurrencyNormalizer = mockk(), currencySettingsRepository = mockk()).calculateCarbonFootprint(ms(2026, 3, 1), ms(2026, 4, 1))
-        val lifestyle = LifestyleInflationDetector(expenseDao, timeProvider = mockk()).analyzeLifestyleInflation(6)
+        val lifestyle = LifestyleInflationDetector(expenseDao, timeProvider).analyzeLifestyleInflation(6)
 
         val sharedManager = SharedExpenseManager(
             sharedExpenseDataPort = mockk {

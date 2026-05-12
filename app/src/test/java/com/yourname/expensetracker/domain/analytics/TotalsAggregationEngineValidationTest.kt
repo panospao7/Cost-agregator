@@ -7,6 +7,10 @@ import com.yourname.expensetracker.data.database.dao.MonthlyTotal
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.MonthMoneyAggregate
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.model.PeriodStatus
 import com.yourname.expensetracker.domain.model.PeriodType
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -40,6 +44,7 @@ class TotalsAggregationEngineValidationTest {
     private lateinit var engine: TotalsAggregationEngine
     private lateinit var expenseRepository: ExpenseRepository
     private lateinit var timeProvider: TimeProvider
+    private lateinit var multiCurrencyRepo: MultiCurrencyRepository
 
     // Helper to create timestamps for specific dates
     private fun createDate(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0): Long {
@@ -73,7 +78,16 @@ class TotalsAggregationEngineValidationTest {
     fun setup() {
         expenseRepository = mockk(relaxed = true)
         timeProvider = mockk(relaxed = true)
-        engine = TotalsAggregationEngine(expenseRepository, timeProvider, mockk(relaxed = true), mockk(relaxed = true), Dispatchers.Unconfined)
+        multiCurrencyRepo = mockk()
+
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseTotal(any(), any()) } returns MoneyAggregate.empty(CurrencyCode("EUR"))
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseMonthlyTotals(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getHomeCurrencyPurchaseCategoryTotals(any(), any()) } returns emptyMap()
+        coEvery { multiCurrencyRepo.getHomeCurrencyWeeklyTotals(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getHomeCurrencyDailyTotals(any(), any()) } returns emptyList()
+        coEvery { multiCurrencyRepo.getHomeCurrencyMonthlyTotals(any(), any()) } returns emptyList()
+
+        engine = TotalsAggregationEngine(expenseRepository, timeProvider, multiCurrencyRepo, mockk(relaxed = true), Dispatchers.Unconfined)
     }
 
     // ========== SCENARIO 1: Known Data Verification ==========

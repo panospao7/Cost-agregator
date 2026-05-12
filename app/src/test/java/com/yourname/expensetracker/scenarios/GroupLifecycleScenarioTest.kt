@@ -26,6 +26,7 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.budget.BudgetMonitor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -55,9 +56,11 @@ private val Result<*, *>.isFailure: Boolean
  * - deleteGroupPermanently — confirmation gate, hard-delete
  * - recordSettlement — currency validation, member ownership, persistence
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [Config.OLDEST_SDK])
 class GroupLifecycleScenarioTest {
+    
 
     private lateinit var database: AppDatabase
     private lateinit var groupDao: ExpenseGroupDao

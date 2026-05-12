@@ -4,13 +4,13 @@ import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
-import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
 import com.yourname.expensetracker.data.database.entity.HealthScoreHistory
-import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.model.GoalProtectionLevel
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.data.repository.SavingsGoalRepository
+import com.yourname.expensetracker.domain.savings.SavingsGoalRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
@@ -56,10 +56,10 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
 
         every { timeProvider.now() } returns now
         coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns emptyList()
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns emptyList()
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
-        coEvery { healthScoreHistoryDao.getMostRecent() } returns null
+        coEvery { healthScoreHistoryDao.getMostRecentBefore(any(), any()) } returns null
         coEvery { healthScoreHistoryDao.getHistoryForPeriod(any(), any()) } returns emptyList()
 
         calculator = FinancialHealthScoreV2(
@@ -89,9 +89,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(
             budgetStatus(amount = 1000.0, spent = 1100.0)
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
-            listOf(goal(1L, target = 3000.0, current = 900.0))
-        )
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 3000.0, current = 900.0))
 
         val result = calculator.calculateHealthScore()
 
@@ -113,11 +111,9 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             budgetStatus(amount = 5000.0, spent = 500.0)
         )
         // Savings goals total currentAmount = 1000, stabilized monthly burn on day-15 ~= 1000 => 1 month => score 16
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
-            listOf(
-                goal(1L, target = 10_000.0, current = 700.0),
-                goal(2L, target = 5_000.0, current = 300.0)
-            )
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(
+            goal(1L, target = 10_000.0, current = 700.0),
+            goal(2L, target = 5_000.0, current = 300.0)
         )
 
         val result = calculator.calculateHealthScore()
@@ -148,9 +144,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             if (start == periodStart && end == periodEnd) currentPurchases else historicalPurchases
         }
 
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
-            listOf(goal(1L, target = 5000.0, current = 900.0))
-        )
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 5000.0, current = 900.0))
 
         val result = calculator.calculateHealthScore(periodStart, periodEnd)
 
@@ -176,9 +170,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             val end = invocation.args[1] as Long
             if (start == periodStart && end == periodEnd) currentPurchases else emptyList()
         }
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
-            listOf(goal(1L, target = 5000.0, current = 1000.0))
-        )
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 5000.0, current = 1000.0))
 
         val result = calculator.calculateHealthScore(periodStart, periodEnd)
 
@@ -197,9 +189,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(
             budgetStatus(amount = 1000.0, spent = 800.0)
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
-            listOf(goal(1L, target = 5000.0, current = 1200.0))
-        )
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 5000.0, current = 1200.0))
 
         coEvery { healthScoreHistoryDao.getHistoryForPeriod(periodStart, periodEnd) } returns listOf(
             HealthScoreHistory(
@@ -230,11 +220,9 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(
             budgetStatus(amount = 1000.0, spent = 100.0)
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
-            listOf(goal(1L, target = 5000.0, current = 2000.0))
-        )
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 5000.0, current = 2000.0))
 
-        coEvery { healthScoreHistoryDao.getMostRecent() } returns HealthScoreHistory(
+        coEvery { healthScoreHistoryDao.getMostRecentBefore(any(), any()) } returns HealthScoreHistory(
             id = 1L,
             overallScore = 40,
             savingsRateScore = 40,
@@ -249,11 +237,11 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         val improving = calculator.calculateHealthScore()
         assertEquals(HealthTrend.IMPROVING, improving.trend)
 
-        coEvery { healthScoreHistoryDao.getMostRecent() } returns improving.toHistorySnapshot(overall = improving.overallScore - 3)
+        coEvery { healthScoreHistoryDao.getMostRecentBefore(any(), any()) } returns improving.toHistorySnapshot(overall = improving.overallScore - 3)
         val stable = calculator.calculateHealthScore()
         assertEquals(HealthTrend.STABLE, stable.trend)
 
-        coEvery { healthScoreHistoryDao.getMostRecent() } returns improving.toHistorySnapshot(overall = improving.overallScore + 6)
+        coEvery { healthScoreHistoryDao.getMostRecentBefore(any(), any()) } returns improving.toHistorySnapshot(overall = improving.overallScore + 6)
         val declining = calculator.calculateHealthScore()
         assertEquals(HealthTrend.DECLINING, declining.trend)
     }
@@ -274,9 +262,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
             expense(1L, 1500.0, TransactionType.DEPOSIT, now - 2 * dayMs)
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
-            listOf(goal(1L, target = 1000.0, current = 500.0))
-        )
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 1000.0, current = 500.0))
 
         val result = calculator.calculateHealthScore()
 
@@ -287,7 +273,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
     fun `calculateHealthScore edge case missing data uses neutral defaults`() = runTest {
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns emptyList()
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns emptyList()
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
 
         val result = calculator.calculateHealthScore()

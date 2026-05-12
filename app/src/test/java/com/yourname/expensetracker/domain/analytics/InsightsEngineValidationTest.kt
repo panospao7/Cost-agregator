@@ -1,9 +1,7 @@
 package com.yourname.expensetracker.domain.analytics
 
-import com.yourname.expensetracker.toAnalyticsCategoryRefs
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
-import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -85,10 +83,12 @@ class InsightsEngineValidationTest {
         timeProvider = mockk(relaxed = true)
         spendingPaceCalculator = mockk(relaxed = true)
         anomalyDetector = mockk(relaxed = true)
-        monthlyComparisonCalculator = mockk(relaxed = true)
-        categoryInsightEngine = mockk(relaxed = true)
-        merchantInsightEngine = mockk(relaxed = true)
-        dayOfWeekAnalyzer = mockk(relaxed = true)
+        // Use real implementations for stateless calculators so tests validate actual logic.
+        // Only mock engines whose behavior we need to control or have complex dependencies.
+        monthlyComparisonCalculator = MonthlyComparisonCalculator()
+        categoryInsightEngine = CategoryInsightEngine()
+        merchantInsightEngine = MerchantInsightEngine()
+        dayOfWeekAnalyzer = DayOfWeekAnalyzer()
 
         engine = InsightsEngine(
             expenseRepository = expenseRepository,
@@ -102,15 +102,8 @@ class InsightsEngineValidationTest {
             dayOfWeekAnalyzer = dayOfWeekAnalyzer
         )
 
-        // Setup default mockk
-        coEvery { expenseRepository.getTotalForPeriod(any(), any()) } returns 0.0
-        coEvery { expenseRepository.getCountForPeriod(any(), any()) } returns 0
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(any(), any()) } returns emptyList()
-        coEvery { expenseRepository.getAllMerchantStats() } returns emptyList()
-        coEvery { expenseRepository.getMerchantStats() } returns emptyList()
-        coEvery { expenseRepository.getTopMerchantsForPeriod(any(), any(), any()) } returns emptyList()
-        coEvery { expenseRepository.getLargestExpenseForPeriod(any(), any()) } returns null
-        coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
+        // Default mock for recurringExpenseEngine (relaxed returns emptyList for getPatternsFromSnapshots)
+        coEvery { recurringExpenseEngine.getPatternsFromSnapshots(any()) } returns emptyList()
         every { spendingPaceCalculator.calculate(any(), any(), any(), any()) } returns SpendingPace(
             currentMonthSpent = 0.0,
             daysElapsed = 0,
@@ -129,21 +122,19 @@ class InsightsEngineValidationTest {
     @Test
     fun `monthly comparison calculates correct percentage change`() = runTest {
         // Given: Current month total = 1200, Previous month total = 1000
-        val currentMonthStart = createDate(2024, 4, 1)
-        val currentMonthEnd = createDate(2024, 5, 1)
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = setDate(2024, 4, 1)
-        
-        coEvery { expenseRepository.getTotalForPeriod(currentMonthStart, currentMonthEnd) } returns 1200.0
-        coEvery { expenseRepository.getCountForPeriod(currentMonthStart, currentMonthEnd) } returns 12
-        coEvery { expenseRepository.getTotalForPeriod(previousMonthStart, previousMonthEnd) } returns 1000.0
-        coEvery { expenseRepository.getCountForPeriod(previousMonthStart, previousMonthEnd) } returns 10
-        
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
+        
+        // Pass actual expenses for both months so the real MonthlyComparisonCalculator can compute
+        val currentMonthStart = createDate(2024, 4, 1)
+        val previousMonthStart = createDate(2024, 3, 1)
+        val allExpenses = listOf(
+            createExpense(id = 1, amount = 1200.0, date = createDate(2024, 4, 5)),
+            createExpense(id = 2, amount = 1000.0, date = createDate(2024, 3, 10))
+        )
         
         // When: Generate insights
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
+        val snapshot = engine.generateInsights(categories, allExpenses, "EUR")
         
         // Then: Percentage change should be 20%
         assertNotNull(snapshot.monthlyComparison.changePercentage)
@@ -157,21 +148,16 @@ class InsightsEngineValidationTest {
     @Test
     fun `monthly comparison handles zero previous month`() = runTest {
         // Given: Current month has data, previous month has none
-        val currentMonthStart = createDate(2024, 4, 1)
-        val currentMonthEnd = createDate(2024, 5, 1)
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = setDate(2024, 4, 1)
-        
-        coEvery { expenseRepository.getTotalForPeriod(currentMonthStart, currentMonthEnd) } returns 1000.0
-        coEvery { expenseRepository.getCountForPeriod(currentMonthStart, currentMonthEnd) } returns 10
-        coEvery { expenseRepository.getTotalForPeriod(previousMonthStart, previousMonthEnd) } returns 0.0
-        coEvery { expenseRepository.getCountForPeriod(previousMonthStart, previousMonthEnd) } returns 0
-        
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
+        
+        // Only current month expenses, no previous month expenses
+        val allExpenses = listOf(
+            createExpense(id = 1, amount = 1000.0, date = createDate(2024, 4, 5))
+        )
         
         // When: Generate insights
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
+        val snapshot = engine.generateInsights(categories, allExpenses, "EUR")
         
         // Then: No percentage change (no previous data)
         assertNull(snapshot.monthlyComparison.changePercentage)
@@ -181,21 +167,16 @@ class InsightsEngineValidationTest {
     @Test
     fun `monthly comparison handles negative change (spending decrease)`() = runTest {
         // Given: Current month total = 800, Previous month total = 1000
-        val currentMonthStart = createDate(2024, 4, 1)
-        val currentMonthEnd = createDate(2024, 5, 1)
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = setDate(2024, 4, 1)
-        
-        coEvery { expenseRepository.getTotalForPeriod(currentMonthStart, currentMonthEnd) } returns 800.0
-        coEvery { expenseRepository.getCountForPeriod(currentMonthStart, currentMonthEnd) } returns 8
-        coEvery { expenseRepository.getTotalForPeriod(previousMonthStart, previousMonthEnd) } returns 1000.0
-        coEvery { expenseRepository.getCountForPeriod(previousMonthStart, previousMonthEnd) } returns 10
-        
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
+        
+        val allExpenses = listOf(
+            createExpense(id = 1, amount = 800.0, date = createDate(2024, 4, 5)),
+            createExpense(id = 2, amount = 1000.0, date = createDate(2024, 3, 10))
+        )
         
         // When: Generate insights
         val categories = listOf(cat(id = 1))
-        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
+        val snapshot = engine.generateInsights(categories, allExpenses, "EUR")
         
         // Then: Percentage change should be -20%
         assertNotNull(snapshot.monthlyComparison.changePercentage)
@@ -287,11 +268,6 @@ class InsightsEngineValidationTest {
     @Test
     fun `spending pace calculates correct projected total`() = runTest {
         // Given: Current month spending pace
-        val currentMonthStart = createDate(2024, 4, 1)
-        val currentMonthEnd = createDate(2024, 5, 1)
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = setDate(2024, 4, 1)
-        
         // Current month: spent 500 in first 10 days
         val currentExpenses = listOf(
             createExpense(id = 1, amount = 50.0, date = createDate(2024, 4, 1)),
@@ -305,10 +281,6 @@ class InsightsEngineValidationTest {
             createExpense(id = 9, amount = 50.0, date = createDate(2024, 4, 9)),
             createExpense(id = 10, amount = 50.0, date = createDate(2024, 4, 10))
         )
-        
-        // Previous month: total 1500
-        coEvery { expenseRepository.getTotalForPeriod(previousMonthStart, previousMonthEnd) } returns 1500.0
-        coEvery { expenseRepository.getCountForPeriod(previousMonthStart, previousMonthEnd) } returns 15
         
         // Mock spending pace calculator to return predictable result
         every { spendingPaceCalculator.calculate(any(), any(), any(), any()) } returns SpendingPace(
@@ -338,11 +310,6 @@ class InsightsEngineValidationTest {
     @Test
     fun `spending pace handles first three days conservatively`() = runTest {
         // Given: Current month, first 3 days
-        val currentMonthStart = createDate(2024, 4, 1)
-        val currentMonthEnd = createDate(2024, 5, 1)
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = setDate(2024, 4, 1)
-        
         // Current month: spent 300 in first 3 days
         val currentExpenses = listOf(
             createExpense(id = 1, amount = 100.0, date = createDate(2024, 4, 1)),
@@ -450,28 +417,14 @@ class InsightsEngineValidationTest {
     @Test
     fun `category insights calculate correct percentages`() = runTest {
         // Given: Current month with multiple categories
-        val currentMonthStart = createDate(2024, 4, 1)
-        val currentMonthEnd = createDate(2024, 5, 1)
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = setDate(2024, 4, 1)
-        
-        // Mock category totals
-        val currentCategoryTotals = listOf(
-            CategoryTotal(categoryId = 1, total = 500.0, txCount = 5),
-            CategoryTotal(categoryId = 2, total = 300.0, txCount = 3),
-            CategoryTotal(categoryId = 3, total = 200.0, txCount = 2)
-        )
-        
-        val previousCategoryTotals = listOf(
-            CategoryTotal(categoryId = 1, total = 400.0, txCount = 4),
-            CategoryTotal(categoryId = 2, total = 350.0, txCount = 4),
-            CategoryTotal(categoryId = 3, total = 250.0, txCount = 3)
-        )
-        
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(currentMonthStart, currentMonthEnd) } returns currentCategoryTotals
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(previousMonthStart, previousMonthEnd) } returns previousCategoryTotals
-        
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
+        
+        // Pass actual expenses so the real CategoryInsightEngine computes totals
+        val allExpenses = listOf(
+            createExpense(id = 1, amount = 500.0, date = createDate(2024, 4, 5), categoryId = 1),
+            createExpense(id = 2, amount = 300.0, date = createDate(2024, 4, 6), categoryId = 2),
+            createExpense(id = 3, amount = 200.0, date = createDate(2024, 4, 7), categoryId = 3)
+        )
         
         // When: Generate insights
         val categories = listOf(
@@ -480,7 +433,7 @@ class InsightsEngineValidationTest {
             cat(id = 3, name = "Entertainment", icon = "ent", color = "#0000FF")
         )
         
-        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
+        val snapshot = engine.generateInsights(categories, allExpenses, "EUR")
         
         // Then: Percentages should be calculated correctly
         val foodInsight = snapshot.categoryInsights.find { it.category.id == 1L }
@@ -503,29 +456,18 @@ class InsightsEngineValidationTest {
     @Test
     fun `category insights calculate correct change from previous`() = runTest {
         // Given: Current month with category change
-        val currentMonthStart = createDate(2024, 4, 1)
-        val currentMonthEnd = createDate(2024, 5, 1)
-        val previousMonthStart = createDate(2024, 3, 1)
-        val previousMonthEnd = setDate(2024, 4, 1)
-        
-        // Mock category totals
-        val currentCategoryTotals = listOf(
-            CategoryTotal(categoryId = 1, total = 600.0, txCount = 6) // Increased from 400
-        )
-        
-        val previousCategoryTotals = listOf(
-            CategoryTotal(categoryId = 1, total = 400.0, txCount = 4)
-        )
-        
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(currentMonthStart, currentMonthEnd) } returns currentCategoryTotals
-        coEvery { expenseRepository.getCategoryTotalsForPeriod(previousMonthStart, previousMonthEnd) } returns previousCategoryTotals
-        
         every { timeProvider.now() } returns createDate(2024, 4, 15, 12, 0)
+        
+        // Pass expenses for both months so the real CategoryInsightEngine computes change
+        val allExpenses = listOf(
+            createExpense(id = 1, amount = 600.0, date = createDate(2024, 4, 5), categoryId = 1), // current
+            createExpense(id = 2, amount = 400.0, date = createDate(2024, 3, 5), categoryId = 1)  // previous
+        )
         
         // When: Generate insights
         val categories = listOf(cat(id = 1, name = "Food", icon = "food", color = "#FF0000"))
         
-        val snapshot = engine.generateInsights(categories, emptyList(), "EUR")
+        val snapshot = engine.generateInsights(categories, allExpenses, "EUR")
         
         // Then: Change from previous should be 50% increase
         val foodInsight = snapshot.categoryInsights.find { it.category.id == 1L }
@@ -560,11 +502,6 @@ class InsightsEngineValidationTest {
     }
 
     // ========== Helper Methods ==========
-
-    // Helper function to set date (for readability)
-    private fun setDate(year: Int, month: Int, day: Int): Long {
-        return createDate(year, month, day)
-    }
 
     private fun cat(
         id: Long,

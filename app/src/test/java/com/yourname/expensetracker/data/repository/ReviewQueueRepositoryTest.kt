@@ -15,6 +15,7 @@ import com.yourname.expensetracker.domain.parser.AppParserRegistry
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.SideEffectMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
@@ -26,6 +27,7 @@ import org.junit.Before
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("DEPRECATION_ERROR")
 class ReviewQueueRepositoryTest {
 
     private val database = mockk<AppDatabase>(relaxed = true)
@@ -34,9 +36,7 @@ class ReviewQueueRepositoryTest {
     private val expenseDao = mockk<ExpenseDao>(relaxed = true)
     private val sourceStatsDao = mockk<SourceStatsDao>(relaxed = true)
     private val receiptLinkService = mockk<ReceiptLinkService>(relaxed = true)
-    private val scannedReceiptDao = mockk<ScannedReceiptDao>(relaxed = true)
     private val userCorrectionDao = mockk<UserCorrectionDao>(relaxed = true)
-    private val merchantCategoryRepository = mockk<MerchantCategoryRepository>(relaxed = true)
     private val merchantNormalizer = mockk<MerchantNormalizer>(relaxed = true)
     private val hybridClassifier = mockk<HybridExpenseClassifier>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
@@ -74,7 +74,7 @@ class ReviewQueueRepositoryTest {
             parserRegistry = parserRegistry,
             timeProvider = timeProvider,
             confidenceRouter = confidenceRouter,
-            transactionLifecycleCoordinator = transactionLifecycleCoordinator,
+            transactionLifecycleCoordinator = transactionLifecycleCoordinator
         )
     }
 
@@ -104,7 +104,7 @@ class ReviewQueueRepositoryTest {
                 PendingReviewStatus.PROCESSING
             )
         } returns 1
-        coEvery { expenseDao.insertAtomic(any()) } returns 100L
+        coEvery { transactionLifecycleCoordinator.createExpense(any(), any()) } returns CreateExpenseResult.Created(100L)
 
         // Act
         val result = repository.approveReview(reviewId)
@@ -113,7 +113,7 @@ class ReviewQueueRepositoryTest {
         assertTrue(result is Result.Success)
         assertEquals(100L, (result as Result.Success).data)
         
-        coVerify { expenseDao.insertAtomic(match { it.merchant == "Test Merchant" && it.amount == 50.0 }) }
+        coVerify { transactionLifecycleCoordinator.createExpense(match { it.merchant == "Test Merchant" && it.amount == 50.0 }, any()) }
         coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED) }
         coVerify { userCorrectionDao.insert(any()) }
         coVerify { classifier.retrainFromCorrections() }
@@ -148,10 +148,8 @@ class ReviewQueueRepositoryTest {
                 PendingReviewStatus.PROCESSING
             )
         } returns 1
-        coEvery { expenseDao.insertAtomic(any()) } returns 150L
-
-        val expenseSlot = slot<Expense>()
-        coEvery { expenseDao.insertAtomic(capture(expenseSlot)) } returns 150L
+        val requestSlot = slot<com.yourname.expensetracker.domain.transaction.CreateExpenseRequest>()
+        coEvery { transactionLifecycleCoordinator.createExpense(capture(requestSlot), any()) } returns CreateExpenseResult.Created(150L)
 
         val result = repository.approveReview(
             reviewId = reviewId,
@@ -162,13 +160,13 @@ class ReviewQueueRepositoryTest {
         )
 
         assertTrue(result is Result.Success)
-        assertEquals(TransferDirection.OUTGOING, expenseSlot.captured.transferDirection)
-        assertEquals("Emergency Fund", expenseSlot.captured.transferAccountName)
-        assertEquals(38.0, expenseSlot.captured.latitude!!, 0.0)
-        assertEquals(23.8, expenseSlot.captured.longitude!!, 0.0)
-        assertEquals("USER_MANUAL", expenseSlot.captured.locationSource)
-        assertEquals("N999", expenseSlot.captured.placeId)
-        assertEquals("Athens Center", expenseSlot.captured.resolvedAddress)
+        assertEquals(TransferDirection.OUTGOING, requestSlot.captured.transferDirection)
+        assertEquals("Emergency Fund", requestSlot.captured.transferAccountName)
+        assertEquals(38.0, requestSlot.captured.latitude!!, 0.0)
+        assertEquals(23.8, requestSlot.captured.longitude!!, 0.0)
+        assertEquals("USER_MANUAL", requestSlot.captured.locationSource)
+        assertEquals("N999", requestSlot.captured.placeId)
+        assertEquals("Athens Center", requestSlot.captured.resolvedAddress)
     }
 
     @Test
@@ -216,14 +214,14 @@ class ReviewQueueRepositoryTest {
         // Assert
         assertEquals(Result.Duplicate, result)
         coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.DUPLICATE) }
-        // insertAtomic must NOT be called when the pre-check already detected a duplicate
-        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+        // coordinator.createExpense must NOT be called when the pre-check already detected a duplicate
+        coVerify(exactly = 0) { transactionLifecycleCoordinator.createExpense(any(), any()) }
     }
 
     @Test
-    fun `approveReview falls back to Duplicate if insertAtomic races after policy check`() = runTest {
+    fun `approveReview falls back to Duplicate if createExpense races after policy check`() = runTest {
         // Arrange — simulates a race where isDuplicateCurrencyAware returned false but a
-        // concurrent transaction committed first, causing insertAtomic to return -1.
+        // concurrent transaction committed first, causing createExpense to return InsertConflict.
         val reviewId = 5L
         val pendingReview = PendingReview(
             id = reviewId,
@@ -247,10 +245,10 @@ class ReviewQueueRepositoryTest {
                 PendingReviewStatus.PROCESSING
             )
         } returns 1
-        // Pre-check says no duplicate (race window), but a post-conflict re-check sees the
-        // concurrently inserted canonical duplicate and classifies the review accordingly.
-        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returnsMany listOf(false, true)
-        coEvery { expenseDao.insertAtomic(any()) } returns -1L
+        // Pre-check says no duplicate (race window), but the coordinator detects a
+        // concurrently inserted canonical duplicate and returns InsertConflict.
+        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returns false
+        coEvery { transactionLifecycleCoordinator.createExpense(any(), any()) } returns CreateExpenseResult.InsertConflict(dedupeKey = "race-key")
 
         // Act
         val result = repository.approveReview(reviewId)
@@ -367,15 +365,15 @@ class ReviewQueueRepositoryTest {
                 dedupeKey = any()
             )
         } returns false
-        coEvery { expenseDao.insertAtomic(any()) } returns 200L
+        coEvery { transactionLifecycleCoordinator.createExpense(any(), any()) } returns CreateExpenseResult.Created(200L)
 
         val result = repository.approveReview(reviewId)
 
         assertTrue("DEPOSIT with incompatible type to existing PURCHASE must be approved, got $result",
             result is Result.Success)
         assertEquals(200L, (result as Result.Success).data)
-        // insertAtomic must be called — not short-circuited by a type-blind key check
-        coVerify { expenseDao.insertAtomic(match { it.transactionType == TransactionType.DEPOSIT }) }
+        // createExpense must be called -- not short-circuited by a type-blind key check
+        coVerify { transactionLifecycleCoordinator.createExpense(match { it.transactionType == TransactionType.DEPOSIT }, any()) }
         coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED) }
     }
 
@@ -420,7 +418,7 @@ class ReviewQueueRepositoryTest {
                 dedupeKey = any()
             )
         } returns false
-        coEvery { expenseDao.insertAtomic(any()) } returns 300L
+        coEvery { transactionLifecycleCoordinator.createExpense(any(), any()) } returns CreateExpenseResult.Created(300L)
 
         val result = repository.approveReview(reviewId)
 
@@ -438,7 +436,7 @@ class ReviewQueueRepositoryTest {
                 dedupeKey = any()
             )
         }
-        coVerify { expenseDao.insertAtomic(match { it.currency == "EUR" && it.amount == 50.0 }) }
+        coVerify { transactionLifecycleCoordinator.createExpense(match { it.currency == "EUR" && it.amount == 50.0 }, any()) }
         coVerify { pendingReviewDao.updateStatus(reviewId, PendingReviewStatus.APPROVED) }
     }
 
@@ -448,15 +446,15 @@ class ReviewQueueRepositoryTest {
      * Before the fix, approving a DEPOSIT review when a PURCHASE with the same
      * amount/merchant/date/currency already existed would generate an IDENTICAL
      * type-blind dedupeKey (e.g. "10.00_acme_<bucket>_EUR"). Even though
-     * isDuplicateCurrencyAware correctly returned false, insertAtomic would fail
+     * isDuplicateCurrencyAware correctly returned false, createExpense would detect
      * with -1 due to the unique-index collision on the persisted key.
      *
      * After the fix, the DEPOSIT generates key "10.00_acme_<bucket>_EUR_DEPOSIT"
      * (type suffix included), which is distinct from the existing PURCHASE key
-     * "10.00_acme_<bucket>_EUR_PURCHASE". insertAtomic therefore never collides
+     * "10.00_acme_<bucket>_EUR_PURCHASE". createExpense therefore never collides
      * for incompatible-type rows and the approval succeeds.
      *
-     * This test captures the Expense passed to insertAtomic and verifies that its
+     * This test captures the dedupeKey passed to isDuplicateCurrencyAware and verifies that its
      * dedupeKey includes the transaction-type suffix, proving that the persisted
      * unique index can no longer falsely block incompatible-type approvals.
      */
@@ -488,16 +486,20 @@ class ReviewQueueRepositoryTest {
             pendingReviewDao.transitionStatus(reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING)
         } returns 1
         // Policy says not a duplicate (incompatible type with existing PURCHASE)
-        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returns false
+        val dedupeKeySlot = slot<String?>()
+        coEvery {
+            expenseDao.isDuplicateCurrencyAware(
+                any(), any(), any(), any(), any(), any(), any()
+            )
+        } returns false
 
-        val insertedExpenseSlot = slot<Expense>()
-        coEvery { expenseDao.insertAtomic(capture(insertedExpenseSlot)) } returns 400L
+        coEvery { transactionLifecycleCoordinator.createExpense(any(), any()) } returns CreateExpenseResult.Created(400L)
 
         val result = repository.approveReview(reviewId)
 
         assertTrue("DEPOSIT approval must succeed, got $result", result is Result.Success)
 
-        // Verify the persisted dedupeKey is type-aware.
+        // Verify the dedupeKey passed to isDuplicateCurrencyAware is type-aware.
         // The expected key includes "_DEPOSIT" suffix so it does NOT collide with
         // the "_PURCHASE" key that a PURCHASE row for the same transaction would have.
         val expectedDepositKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
@@ -507,7 +509,7 @@ class ReviewQueueRepositoryTest {
             amount, merchant, date, currency, TransactionType.PURCHASE
         )
 
-        val actualKey = insertedExpenseSlot.captured.dedupeKey
+        val actualKey = dedupeKeySlot.captured
         assertNotNull("dedupeKey must not be null", actualKey)
         assertEquals(
             "Persisted dedupeKey must match the type-aware DEPOSIT key",
@@ -528,11 +530,11 @@ class ReviewQueueRepositoryTest {
     /**
      * Verifies that the type-aware key still acts as a race guard for same-type
      * concurrent approvals: if two PURCHASE reviews for the same transaction race,
-     * the second insertAtomic returns -1 (key collision on the PURCHASE-keyed entry)
+     * the second createExpense returns InsertConflict (key collision on the PURCHASE-keyed entry)
      * and the approval correctly returns Duplicate.
      */
     @Test
-    fun `approveReview still returns Duplicate when insertAtomic races on same-type key`() = runTest {
+    fun `approveReview still returns Duplicate when createExpense races on same-type key`() = runTest {
         val reviewId = 9L
         val pendingReview = PendingReview(
             id = reviewId,
@@ -552,15 +554,15 @@ class ReviewQueueRepositoryTest {
         coEvery {
             pendingReviewDao.transitionStatus(reviewId, PendingReviewStatus.PENDING, PendingReviewStatus.PROCESSING)
         } returns 1
-        // Policy says no duplicate before insert, then sees the canonical duplicate after the race.
-        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returnsMany listOf(false, true)
-        // insertAtomic fails because a concurrent PURCHASE for the same tx won the race
-        coEvery { expenseDao.insertAtomic(any()) } returns -1L
+        // Policy says no duplicate before insert, but the coordinator detects a conflict.
+        coEvery { expenseDao.isDuplicateCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returns false
+        // The coordinator returns InsertConflict because a concurrent PURCHASE for the same tx won the race
+        coEvery { transactionLifecycleCoordinator.createExpense(any(), any()) } returns CreateExpenseResult.InsertConflict(dedupeKey = "race-key")
 
         val result = repository.approveReview(reviewId)
 
         assertEquals(
-            "Same-type race must still return Duplicate when insertAtomic conflicts",
+            "Same-type race must still return Duplicate when createExpense detects conflict",
             Result.Duplicate,
             result
         )
@@ -596,13 +598,15 @@ class ReviewQueueRepositoryTest {
         repository.markAsRelevant(notificationId, isRelevant = true)
 
         val reviewSlot = slot<PendingReview>()
-        coVerify { pendingReviewDao.insert(capture(reviewSlot)) }
+        coVerify { pendingReviewDao.upsertByRawNotificationId(capture(reviewSlot)) }
 
         val captured = reviewSlot.captured
-        assertTrue(
-            "Fallback suggestedAmount must be > 0 to satisfy v76 CHECK constraint, was ${captured.suggestedAmount}",
-            (captured.suggestedAmount ?: 0.0) > 0
+        // SQLite CHECK constraints allow NULL (NULL comparison yields NULL, which is treated as passing).
+        // The fallback uses null for suggestedAmount as a sentinel that blocks approval until the
+        // user provides a real amount override.  See approveReview() synthetic-placeholder guard.
+        assertNull(
+            "Fallback suggestedAmount must be null (synthetic placeholder sentinel), was ${captured.suggestedAmount}",
+            captured.suggestedAmount
         )
-        assertEquals(0.01, captured.suggestedAmount ?: 0.0, 0.001)
     }
 }

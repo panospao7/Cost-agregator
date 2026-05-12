@@ -22,12 +22,12 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
     @Before
     override fun setUp() {
         super.setUp()
-        detector = LifestyleInflationDetector(expenseDao, timeProvider = mockk(relaxed = true))
+        detector = LifestyleInflationDetector(expenseDao, this.timeProvider)
     }
 
     @Test
     fun `income elasticity calculates correctly`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
             listOf(
                 income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "supermarket"),
                 income("2026-02-05", 1100.0), spend("2026-02-10", 550.0, "supermarket")
@@ -42,7 +42,7 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `lifestyle inflation detects creep`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
             listOf(
                 income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "Grocer"),
                 income("2026-02-05", 1100.0), spend("2026-02-10", 650.0, "restaurant"),
@@ -59,7 +59,7 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `hedonic adaptation detects discretionary volatility`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
             listOf(
                 income("2026-01-05", 2000.0), spend("2026-01-10", 100.0, "restaurant"),
                 income("2026-02-05", 2000.0), spend("2026-02-10", 500.0, "vacation"),
@@ -74,7 +74,7 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `spending patterns analyze monthly distribution fields`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
             listOf(
                 income("2026-03-05", 1000.0),
                 spend("2026-03-10", 300.0, "supermarket"),
@@ -93,7 +93,7 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `empty dataset returns neutral analysis`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(emptyList())
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(emptyList())
 
         val report = detector.analyzeLifestyleInflation(monthsToAnalyze = 12)
 
@@ -107,7 +107,7 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `single income change event handled`() = runTest {
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
             listOf(
                 income("2026-03-05", 3000.0),
                 spend("2026-03-10", 900.0, "supermarket")
@@ -122,7 +122,7 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
     @Test
     fun `income_elasticity_zero_and_negative_income_change`() = runTest {
         // Case A: zero income change should avoid divide-by-zero and yield neutral elasticity
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
             listOf(
                 income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "Grocer"),
                 income("2026-02-05", 1000.0), spend("2026-02-10", 550.0, "Grocer")
@@ -132,7 +132,7 @@ class LifestyleAnalysisTest : AnalyticsEngineTestBase() {
         assertApproxEquals(0.0, zeroIncomeChange.incomeElasticity, 0.0001)
 
         // Case B: negative income change with spending decrease should produce finite, stable elasticity
-        every { expenseDao.getExpensesBetweenFlow(any(), any()) } returns flowOf(
+        every { expenseDao.getExpensesBetweenFlowUncapped(any(), any()) } returns flowOf(
             listOf(
                 income("2026-01-05", 1000.0), spend("2026-01-10", 500.0, "Grocer"),
                 income("2026-02-05", 900.0), spend("2026-02-10", 450.0, "Grocer")

@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
+import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.entity.MerchantCanonical
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.PendingReview
@@ -65,6 +66,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import java.util.concurrent.atomic.AtomicInteger
 
+@Suppress("DEPRECATION_ERROR")
 class NotificationProcessingPipelineReliabilityTest {
 
     private val database = mockk<AppDatabase>(relaxed = true)
@@ -89,6 +91,10 @@ class NotificationProcessingPipelineReliabilityTest {
     private val dashboardFollowThroughEngine = mockk<DashboardFollowThroughEngine>(relaxed = true)
     private val recommendationRepository = mockk<RecommendationRepository>(relaxed = true)
     private val subscriptionDetector = mockk<NotificationSubscriptionDetector>(relaxed = true)
+    private val coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+    private val transactionEventDao = mockk<TransactionEventDao>(relaxed = true)
+    private val pipelineDiagnosticEventDao = mockk<PipelineDiagnosticEventDao>(relaxed = true)
+    private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
     private val applicationScope = TestScope(testDispatcher)
 
@@ -113,11 +119,11 @@ class NotificationProcessingPipelineReliabilityTest {
         dashboardFollowThroughEngine = dashboardFollowThroughEngine,
         recommendationRepository = recommendationRepository,
         subscriptionDetector = subscriptionDetector,
-            coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            transactionEventDao = mockk(relaxed = true),
-            pipelineDiagnosticEventDao = mockk<PipelineDiagnosticEventDao>(relaxed = true),
-            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
-            applicationScope = applicationScope
+        coordinator = coordinator,
+        transactionEventDao = transactionEventDao,
+        pipelineDiagnosticEventDao = pipelineDiagnosticEventDao,
+        writeBarrier = writeBarrier,
+        applicationScope = applicationScope
     )
 
     @Before
@@ -181,7 +187,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        assertTrue("Expected Duplicate outcome, got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.Duplicate)
         coVerify(exactly = 1) {
             rawDao.exists(
                 packageName = notification.packageName,
@@ -222,7 +228,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        assertTrue("Expected AutoRejected outcome, got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoRejected)
         coVerifyOrder {
             rawDao.exists(
                 packageName = notification.packageName,
@@ -411,18 +417,18 @@ class NotificationProcessingPipelineReliabilityTest {
                 dedupeKey = any()
             )
         } returns false
-        coEvery { expenseDao.insertAtomic(any()) } returns 456L
+        coEvery { coordinator.createExpense(any(), any()) } returns com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created(456L)
 
         val result = pipeline.process(notification)
 
-        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        assertTrue("Expected AutoAccepted outcome, got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted)
         coVerify {
-            expenseDao.insertAtomic(match {
+            coordinator.createExpense(match {
                 it.amount == 50.0 &&
                     it.currency == "EUR" &&
                     it.merchant == "Shop" &&
                     it.transactionType == TransactionType.PURCHASE
-            })
+            }, any())
         }
         coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, any()) }
     }
@@ -535,7 +541,10 @@ class NotificationProcessingPipelineReliabilityTest {
                 dedupeKey = any()
             )
         } returns false
-        coEvery { expenseDao.insertAtomic(any()) } returnsMany listOf(101L, 102L)
+        coEvery { coordinator.createExpense(any(), any()) } returnsMany listOf(
+            com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created(101L),
+            com.yourname.expensetracker.domain.transaction.CreateExpenseResult.Created(102L)
+        )
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(aiEnabled = false))
         coEvery { expenseDao.getRecentExpensesWithCategoryForMerchant(merchant, any()) } returns recentExpenses
         coEvery { subscriptionDetector.detectSubscriptions(recentExpenses) } returns listOf(detectedCandidate)
@@ -566,8 +575,8 @@ class NotificationProcessingPipelineReliabilityTest {
         val result2 = pipeline.process(notification2)
         testDispatcher.scheduler.advanceUntilIdle()
 
-        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification1.packageName), result1)
-        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification2.packageName), result2)
+        assertTrue("Expected AutoAccepted for notification1, got $result1", result1 is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted)
+        assertTrue("Expected AutoAccepted for notification2, got $result2", result2 is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoAccepted)
         coVerify(exactly = 4) { subscriptionCandidateDao.getPendingCanonicalMerchants(listOf(merchant)) }
         coVerify(exactly = 2) { subscriptionCandidateDao.insert(candidateEntity) }
     }
@@ -626,7 +635,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        assertTrue("Expected NeedsReview outcome, got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.NeedsReview)
         coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(capture(reviewSlot)) }
         assertEquals(4.08, reviewSlot.captured.suggestedAmount!!, 0.0001)
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndPending(notification.packageName, any()) }
@@ -663,7 +672,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        assertTrue("Expected AutoRejected outcome, got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoRejected)
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
         coVerify(exactly = 0) { pendingReviewDao.upsertByRawNotificationId(any()) }
     }
@@ -748,7 +757,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        assertTrue("Expected NeedsReview outcome (salvaged from AUTO_REJECT for financial package), got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.NeedsReview)
         coVerify(exactly = 1) { pendingReviewDao.upsertByRawNotificationId(any()) }
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndPending(notification.packageName, any()) }
         coVerify(exactly = 0) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
@@ -796,7 +805,7 @@ class NotificationProcessingPipelineReliabilityTest {
 
         val result = pipeline.process(notification)
 
-        assertEquals(NotificationProcessingPipeline.ProcessingResult.Success(notification.packageName), result)
+        assertTrue("Expected AutoRejected outcome, got $result", result is NotificationProcessingPipeline.NotificationPipelineOutcome.AutoRejected)
         coVerify(exactly = 1) { rawDao.markRelevance(56L, false) }
         coVerify(exactly = 1) { sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, any()) }
         coVerify(exactly = 0) { pendingReviewDao.upsertByRawNotificationId(any()) }

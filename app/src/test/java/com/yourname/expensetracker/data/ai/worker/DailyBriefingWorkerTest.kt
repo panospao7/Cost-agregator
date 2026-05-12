@@ -18,6 +18,8 @@ import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvide
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
+import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -39,6 +41,9 @@ class DailyBriefingWorkerTest {
     private lateinit var dashboardDataProvider: DashboardDataProvider
     private lateinit var analyticsRepository: DashboardAnalyticsRepository
     private lateinit var deliverProactiveBriefingNotificationUseCase: DeliverProactiveBriefingNotificationUseCase
+    private lateinit var executionGuard: com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+    private val aiArtifactRepository = mockk<com.yourname.expensetracker.domain.ai.service.AiArtifactRepository>(relaxed = true)
+    private val aiWorkScheduler = mockk<com.yourname.expensetracker.domain.ai.service.AiWorkScheduler>(relaxed = true)
     private val timeProvider: TimeProvider = object : TimeProvider { override fun now() = 1000L }
 
     @Before
@@ -48,6 +53,14 @@ class DailyBriefingWorkerTest {
         dashboardDataProvider = mockk(relaxed = true)
         analyticsRepository = mockk(relaxed = true)
         deliverProactiveBriefingNotificationUseCase = mockk(relaxed = true)
+        executionGuard = mockk(relaxed = true)
+        coEvery {
+            executionGuard.runGuarded(any<WorkerGuardRequest>(), any<suspend () -> Unit>())
+        } coAnswers {
+            val block = secondArg<suspend () -> Unit>()
+            block.invoke()
+            WorkerGuardResult.Success(Unit)
+        }
     }
 
     private fun buildWorker(): DailyBriefingWorker {
@@ -66,9 +79,9 @@ class DailyBriefingWorkerTest {
                         analyticsRepository,
                         deliverProactiveBriefingNotificationUseCase,
                         timeProvider,
-                        aiArtifactRepository = mockk(),
-                        aiWorkScheduler = mockk(),
-                        executionGuard = mockk(relaxed = true),
+                        aiArtifactRepository = aiArtifactRepository,
+                        aiWorkScheduler = aiWorkScheduler,
+                        executionGuard = executionGuard,
                     )
                 }
             })

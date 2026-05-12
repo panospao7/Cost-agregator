@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExportDataRepository
 import com.yourname.expensetracker.domain.export.AccountingExportPolicy
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.export.FreshBooksExporter
 import com.yourname.expensetracker.domain.export.QuickBooksIIFExporter
@@ -29,6 +30,9 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
 
     private lateinit var exportDataRepository: ExportDataRepository
     private lateinit var timeProvider: TimeProvider
+    private lateinit var restoreMaintenanceMode: RestoreMaintenanceMode
+    private lateinit var privacyGate: PrivacyGate
+    private lateinit var readBarrier: DatabaseReadBarrier
     private lateinit var viewModel: ExportOptionsViewModel
 
     @Before
@@ -36,8 +40,13 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
         super.setup()
         exportDataRepository = mockk(relaxed = true)
         timeProvider = mockk()
+        restoreMaintenanceMode = mockk(relaxed = true)
+        privacyGate = mockk(relaxed = true)
+        readBarrier = mockk<DatabaseReadBarrier>(relaxed = true)
 
         every { timeProvider.now() } returns 1_700_000_000_000L
+        every { restoreMaintenanceMode.isWritesAllowed() } returns true
+        coEvery { privacyGate.check(any(), any()) } returns PrivacyDecision.Allowed
         coEvery { exportDataRepository.countExpensesBetween(any(), any()) } returns 0
         coEvery { exportDataRepository.getExpensesBetweenForExport(any(), any()) } returns emptyList()
         coEvery { exportDataRepository.getCategoryNameMap() } returns emptyMap()
@@ -50,9 +59,9 @@ class ExportOptionsViewModelTest : ViewModelTestUtils() {
             xeroExporter = XeroCSVExporter(),
             quickBooksExporter = QuickBooksIIFExporter(),
             freshBooksExporter = FreshBooksExporter(),
-            restoreMaintenanceMode = mockk<RestoreMaintenanceMode>(relaxed = true),
-            readBarrier = mockk<DatabaseReadBarrier>(relaxed = true),
-            privacyGate = mockk<PrivacyGate>(relaxed = true)
+            restoreMaintenanceMode = restoreMaintenanceMode,
+            readBarrier = readBarrier,
+            privacyGate = privacyGate
         )
     }
 
