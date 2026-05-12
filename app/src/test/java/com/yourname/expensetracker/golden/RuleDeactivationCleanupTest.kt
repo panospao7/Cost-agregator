@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.PlannedExpense
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
@@ -25,7 +26,7 @@ class RuleDeactivationCleanupTest : GoldenTestBase() {
         val ruleId = seedActiveRule()
 
         // When
-        database.manualRecurringExpenseDao().setActiveStatus(ruleId, false, fixedNow)
+        database.manualRecurringExpenseDao().setActiveStatus(ruleId, false)
 
         // Then
         val rule = database.manualRecurringExpenseDao().getById(ruleId)
@@ -44,7 +45,8 @@ class RuleDeactivationCleanupTest : GoldenTestBase() {
         assertTrue(before.all { it.status == "PLANNED" })
 
         // When: cancel all PLANNED occurrences for this rule
-        database.recurringOccurrenceDao().cancelPlannedBySource("RECURRING_RULE", ruleId, fixedNow)
+        val plannedIds = database.recurringOccurrenceDao().getPlannedIdsBySource("RECURRING_RULE", ruleId)
+        database.recurringOccurrenceDao().updateStatus(plannedIds, "CANCELLED", fixedNow)
 
         // Then
         val after = database.recurringOccurrenceDao().getBySource("RECURRING_RULE", ruleId)
@@ -57,23 +59,25 @@ class RuleDeactivationCleanupTest : GoldenTestBase() {
         val occurrenceIds = seedPlannedOccurrences(ruleId, count = 2)
         seedReminders(occurrenceIds)
 
-        // Verify setup
-        val remindersBefore = occurrenceIds.flatMap {
-            database.recurringReminderDeliveryDao().getByOccurrenceId(it)
+        // Verify setup - reminders exist via getByOccurrenceAndWindow
+        occurrenceIds.forEach { occId ->
+            val reminder = database.recurringReminderDeliveryDao().getByOccurrenceAndWindow(occId, "DUE_DAY")
+            assertNotNull(reminder)
+            assertEquals("SCHEDULED", reminder!!.status)
         }
-        assertTrue(remindersBefore.isNotEmpty())
-        assertTrue(remindersBefore.all { it.status == "SCHEDULED" })
 
         // When: suppress reminders for these occurrences
+        var totalSuppressed = 0
         occurrenceIds.forEach {
-            database.recurringReminderDeliveryDao().suppressByOccurrenceId(it)
+            totalSuppressed += database.recurringReminderDeliveryDao().suppressByOccurrenceId(it)
         }
 
         // Then
-        val remindersAfter = occurrenceIds.flatMap {
-            database.recurringReminderDeliveryDao().getByOccurrenceId(it)
+        assertEquals(2, totalSuppressed)
+        occurrenceIds.forEach { occId ->
+            val reminder = database.recurringReminderDeliveryDao().getByOccurrenceAndWindow(occId, "DUE_DAY")
+            assertEquals("CANCELLED", reminder!!.status)
         }
-        assertTrue(remindersAfter.all { it.status == "CANCELLED" })
     }
 
     @Test
@@ -81,17 +85,23 @@ class RuleDeactivationCleanupTest : GoldenTestBase() {
         val ruleId = seedActiveRule()
         seedPlannedExpenses(ruleId, count = 3)
 
-        // Verify setup
-        val before = database.plannedExpenseDao().getByRecurringRuleId(ruleId)
-        assertEquals(3, before.size)
-        assertTrue(before.all { it.status == "PLANNED" })
+        // Verify setup - check each planned expense by occurrence key
+        val keys = (1..3).map { i -> "RECURRING_RULE|$ruleId|${fixedNow + 86400000L * 30 * i}|MONTHLY" }
+        keys.forEach { key ->
+            val planned = database.plannedExpenseDao().getBySourceOccurrenceKey(key)
+            assertNotNull(planned)
+            assertEquals("PLANNED", planned!!.status)
+        }
 
         // When
-        database.plannedExpenseDao().cancelPlannedByRecurringRuleId(ruleId, fixedNow)
+        val cancelled = database.plannedExpenseDao().cancelPlannedByRecurringRuleId(ruleId, fixedNow)
 
         // Then
-        val after = database.plannedExpenseDao().getByRecurringRuleId(ruleId)
-        assertTrue(after.all { it.status == "CANCELLED" })
+        assertEquals(3, cancelled)
+        keys.forEach { key ->
+            val planned = database.plannedExpenseDao().getBySourceOccurrenceKey(key)
+            assertEquals("CANCELLED", planned!!.status)
+        }
     }
 
     // ── Helpers ──
@@ -101,11 +111,10 @@ class RuleDeactivationCleanupTest : GoldenTestBase() {
             merchant = "Netflix",
             amount = 15.99,
             currency = "EUR",
-            frequency = "MONTHLY",
+            frequency = RecurrenceFrequency.MONTHLY,
             nextDate = fixedNow + 86400000 * 30,
             isActive = true,
-            createdAt = fixedNow,
-            updatedAt = fixedNow
+            createdAt = fixedNow
         )
         return database.manualRecurringExpenseDao().insert(rule)
     }
@@ -119,6 +128,8 @@ class RuleDeactivationCleanupTest : GoldenTestBase() {
                 dueDate = fixedNow + 86400000L * 30 * i,
                 expectedAmount = 15.99,
                 expectedCurrency = "EUR",
+                frequency = "MONTHLY",
+                merchant = "Netflix",
                 status = "PLANNED",
                 createdAt = fixedNow
             )
@@ -141,12 +152,13 @@ class RuleDeactivationCleanupTest : GoldenTestBase() {
     private suspend fun seedPlannedExpenses(ruleId: Long, count: Int) {
         (1..count).forEach { i ->
             val planned = PlannedExpense(
+                description = "Planned expense for rule #$ruleId",
+                amount = 15.99,
+                currency = "EUR",
+                date = fixedNow + 86400000L * 30 * i,
                 sourceRecurringRuleId = ruleId,
                 sourceOccurrenceKey = "RECURRING_RULE|$ruleId|${fixedNow + 86400000L * 30 * i}|MONTHLY",
                 openSourceOccurrenceKey = "RECURRING_RULE|$ruleId|${fixedNow + 86400000L * 30 * i}|MONTHLY",
-                expectedAmount = 15.99,
-                expectedCurrency = "EUR",
-                expectedDate = fixedNow + 86400000L * 30 * i,
                 status = "PLANNED",
                 createdAt = fixedNow,
                 updatedAt = fixedNow

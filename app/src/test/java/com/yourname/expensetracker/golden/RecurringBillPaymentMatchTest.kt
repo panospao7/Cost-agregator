@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.PlannedExpense
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
 import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
@@ -83,16 +84,17 @@ class RecurringBillPaymentMatchTest : GoldenTestBase() {
         seedReminder(occId)
 
         // Verify reminder exists
-        val before = database.recurringReminderDeliveryDao().getByOccurrenceId(occId)
-        assertEquals(1, before.size)
-        assertEquals("SCHEDULED", before[0].status)
+        val before = database.recurringReminderDeliveryDao().getByOccurrenceAndWindow(occId, "DUE_DAY")
+        assertNotNull(before)
+        assertEquals("SCHEDULED", before!!.status)
 
         // When: Suppress reminders for this occurrence
-        database.recurringReminderDeliveryDao().suppressByOccurrenceId(occId)
+        val suppressed = database.recurringReminderDeliveryDao().suppressByOccurrenceId(occId)
 
         // Then
-        val after = database.recurringReminderDeliveryDao().getByOccurrenceId(occId)
-        assertEquals("CANCELLED", after[0].status)
+        assertTrue(suppressed > 0)
+        val after = database.recurringReminderDeliveryDao().getByOccurrenceAndWindow(occId, "DUE_DAY")
+        assertEquals("CANCELLED", after!!.status)
     }
 
     // ── Helpers ──
@@ -102,11 +104,10 @@ class RecurringBillPaymentMatchTest : GoldenTestBase() {
             merchant = "Netflix",
             amount = 15.99,
             currency = "EUR",
-            frequency = "MONTHLY",
+            frequency = RecurrenceFrequency.MONTHLY,
             nextDate = fixedNow + 86400000L * 30,
             isActive = true,
-            createdAt = fixedNow,
-            updatedAt = fixedNow
+            createdAt = fixedNow
         ))
     }
 
@@ -119,18 +120,21 @@ class RecurringBillPaymentMatchTest : GoldenTestBase() {
             expectedAmount = 15.99,
             expectedCurrency = "EUR",
             status = "PLANNED",
-            createdAt = fixedNow
+            createdAt = fixedNow,
+            frequency = "MONTHLY",
+            merchant = "Netflix"
         ))
     }
 
     private suspend fun seedPlannedExpenseForOccurrence(ruleId: Long, occKey: String) {
         database.plannedExpenseDao().insertPlannedExpense(PlannedExpense(
+            description = "Netflix subscription",
+            amount = 15.99,
+            currency = "EUR",
+            date = fixedNow + 86400000L * 30,
             sourceRecurringRuleId = ruleId,
             sourceOccurrenceKey = occKey,
             openSourceOccurrenceKey = occKey,
-            expectedAmount = 15.99,
-            expectedCurrency = "EUR",
-            expectedDate = fixedNow + 86400000L * 30,
             status = "PLANNED",
             createdAt = fixedNow,
             updatedAt = fixedNow

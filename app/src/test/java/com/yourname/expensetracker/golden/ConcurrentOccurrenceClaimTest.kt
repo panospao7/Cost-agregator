@@ -2,6 +2,7 @@ package com.yourname.expensetracker.golden
 
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
+import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
@@ -21,14 +22,15 @@ class ConcurrentOccurrenceClaimTest : GoldenTestBase() {
         // Given: A PLANNED occurrence
         val ruleId = database.manualRecurringExpenseDao().insert(ManualRecurringExpense(
             merchant = "Netflix", amount = 15.99, currency = "EUR",
-            frequency = "MONTHLY", nextDate = fixedNow + 86400000L * 30,
-            isActive = true, createdAt = fixedNow, updatedAt = fixedNow
+            frequency = RecurrenceFrequency.MONTHLY, nextDate = fixedNow + 86400000L * 30,
+            isActive = true, createdAt = fixedNow
         ))
         val occId = database.recurringOccurrenceDao().insert(RecurringOccurrence(
             sourceType = "RECURRING_RULE", sourceId = ruleId,
             occurrenceKey = "key1", dueDate = fixedNow + 86400000L * 30,
             expectedAmount = 15.99, expectedCurrency = "EUR",
-            status = "PLANNED", createdAt = fixedNow
+            status = "PLANNED", createdAt = fixedNow,
+            frequency = "MONTHLY", merchant = "Netflix"
         ))
 
         // When: Two expenses try to claim the same occurrence
@@ -51,8 +53,8 @@ class ConcurrentOccurrenceClaimTest : GoldenTestBase() {
     fun `PAID occurrence cannot be claimed`() = runTest {
         val ruleId = database.manualRecurringExpenseDao().insert(ManualRecurringExpense(
             merchant = "Spotify", amount = 9.99, currency = "EUR",
-            frequency = "MONTHLY", nextDate = fixedNow + 86400000L * 30,
-            isActive = true, createdAt = fixedNow, updatedAt = fixedNow
+            frequency = RecurrenceFrequency.MONTHLY, nextDate = fixedNow + 86400000L * 30,
+            isActive = true, createdAt = fixedNow
         ))
         // Insert as already PAID
         val occId = database.recurringOccurrenceDao().insert(RecurringOccurrence(
@@ -60,7 +62,8 @@ class ConcurrentOccurrenceClaimTest : GoldenTestBase() {
             occurrenceKey = "key2", dueDate = fixedNow + 86400000L * 30,
             expectedAmount = 9.99, expectedCurrency = "EUR",
             status = "PAID", linkedExpenseId = 50L,
-            createdAt = fixedNow
+            createdAt = fixedNow,
+            frequency = "MONTHLY", merchant = "Spotify"
         ))
 
         // When: Try to claim a PAID occurrence
@@ -78,14 +81,15 @@ class ConcurrentOccurrenceClaimTest : GoldenTestBase() {
     fun `CANCELLED occurrence cannot be claimed`() = runTest {
         val ruleId = database.manualRecurringExpenseDao().insert(ManualRecurringExpense(
             merchant = "Gym", amount = 30.0, currency = "EUR",
-            frequency = "MONTHLY", nextDate = fixedNow + 86400000L * 30,
-            isActive = true, createdAt = fixedNow, updatedAt = fixedNow
+            frequency = RecurrenceFrequency.MONTHLY, nextDate = fixedNow + 86400000L * 30,
+            isActive = true, createdAt = fixedNow
         ))
         val occId = database.recurringOccurrenceDao().insert(RecurringOccurrence(
             sourceType = "RECURRING_RULE", sourceId = ruleId,
             occurrenceKey = "key3", dueDate = fixedNow + 86400000L * 30,
             expectedAmount = 30.0, expectedCurrency = "EUR",
-            status = "CANCELLED", createdAt = fixedNow
+            status = "CANCELLED", createdAt = fixedNow,
+            frequency = "MONTHLY", merchant = "Gym"
         ))
 
         // When

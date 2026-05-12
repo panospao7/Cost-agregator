@@ -29,7 +29,7 @@ class MultiCurrencyDashboardConsistencyTest : GoldenTestBase() {
         insertExpense(usdExpense)
 
         // And: USD→EUR rate = 0.91 (so $110 = €100.10)
-        database.exchangeRateDao().insert(ExchangeRate(
+        database.exchangeRateDao().insertOrUpdate(ExchangeRate(
             fromCurrency = "USD",
             toCurrency = "EUR",
             rate = 0.91,

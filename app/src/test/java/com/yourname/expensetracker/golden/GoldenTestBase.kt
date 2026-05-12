@@ -50,11 +50,9 @@ abstract class GoldenTestBase {
     }
 
     // Real write barrier backed by real maintenance mode
-    protected val restoreMaintenanceMode = RestoreMaintenanceMode(
-        mockk<android.content.SharedPreferences>(relaxed = true).also {
-            every { it.getString(any(), any()) } returns "NORMAL"
-        }
-    )
+    protected val restoreMaintenanceMode by lazy {
+        RestoreMaintenanceMode(ApplicationProvider.getApplicationContext<Context>())
+    }
     protected val writeBarrier = DatabaseWriteBarrier(restoreMaintenanceMode)
 
     @Before
@@ -100,8 +98,7 @@ abstract class GoldenTestBase {
         categoryId = categoryId,
         date = date,
         transactionType = TransactionType.PURCHASE,
-        createdAt = fixedNow,
-        updatedAt = fixedNow
+        createdAt = fixedNow
     )
 
     // ── Helper: Insert expense directly (for setup, not for testing lifecycle) ──
