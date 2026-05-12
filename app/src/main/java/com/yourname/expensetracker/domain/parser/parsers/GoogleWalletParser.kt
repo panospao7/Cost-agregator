@@ -122,7 +122,7 @@ class GoogleWalletParser @Inject constructor(
         return ParsedTransaction(
             amount = amount.first,
             currency = amount.second,
-            merchant = merchant,
+            merchant = merchant.trim(),
             type = when {
                 isTransfer -> ParsedTransactionType.TRANSFER
                 isDeposit -> ParsedTransactionType.DEPOSIT
