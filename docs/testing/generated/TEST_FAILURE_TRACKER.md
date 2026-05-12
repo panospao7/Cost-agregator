@@ -11,14 +11,16 @@
 |-------|---------|-------|------|------|------|--------|
 | 1 | contracts.* | 12 | 12 | 0 | 0 | ✅ ALL PASS |
 | 2 | money/currency | 84 | 77 | 4 | 3 | 🟡 4 assertion updates needed |
-| 3 | parsers | - | - | - | - | ⬜ Not run yet |
-| 4 | budget | - | - | - | - | ⬜ Not run yet |
-| 5 | analytics | - | - | - | - | ⬜ Not run yet |
+| 3 | parsers | 179 | 175 | 4 | 0 | 🟡 2 trim fix (done) + 2 determinism assertions |
+| 4 | budget | 106 | 74 | 32 | 0 | 🟠 Mock setup issues (18 forecast + 8 monitor + 6 other) |
+| 5 | analytics | 207 | 126 | 81 | 0 | 🟠 Intentional behavior change (totals now purchase-only) |
 | 6 | scenarios/e2e | - | - | - | - | ⬜ Not run yet |
 | 7 | repositories | - | - | - | - | ⬜ Not run yet |
 | 8 | transaction lifecycle | - | - | - | - | ⬜ Not run yet |
 | 9 | categorization/merchant | - | - | - | - | ⬜ Not run yet |
 | 10 | UI/service/other | - | - | - | - | ⬜ Not run yet |
+
+**Running total: 588 tests run, 464 pass (79%), 121 fail, 3 skip**
 
 ---
 
@@ -83,3 +85,43 @@ To get failure details after a batch:
 ```powershell
 Get-ChildItem "app/build/test-results/testDebugUnitTest" -Filter "*.xml" | ForEach-Object { [xml]$x = Get-Content $_.FullName; $x.testsuite.testcase | Where-Object { $_.failure } | ForEach-Object { "$($_.classname.Split('.')[-1]).$($_.name): $($_.failure.message.Substring(0, [Math]::Min(100, $_.failure.message.Length)))" } }
 ```
+
+
+### Batch 3: Parsers (4 failures)
+
+| Test Class | Test Name | Root Cause | Action |
+|-----------|-----------|-----------|--------|
+| GoogleWalletParserTest | keep google pay merchant purchase wording | Trailing space in merchant | ✅ FIXED (added .trim()) |
+| GoogleWalletParserTest | keep paid to merchant wording | Same | ✅ FIXED |
+| GenericTransactionParserStressTest | is deterministic across repeated parses | Confidence/date field changed | UPDATE assertion |
+| GreekBankParserStressTest | is deterministic for same notification | Same | UPDATE assertion |
+
+### Batch 4: Budget (32 failures)
+
+| Test Class | Count | Root Cause | Action |
+|-----------|-------|-----------|--------|
+| BudgetForecastingEngineTest | 18 | Mock verification failures — old call patterns don't match new code (writeBarrier, historical conversion) | REWRITE mocks |
+| BudgetMonitorStressTest | 5 | Returns 0.0 — MultiCurrencyRepository mock not providing data | ADD mock setup |
+| BudgetMonitorTest | 3 | Same pattern | ADD mock setup |
+| BudgetCalculatorGoldenTest | 2 | Assertion mismatch from period calculation change | UPDATE assertions |
+| BudgetTrendBoundaryTest | 1 | Same | UPDATE assertion |
+| SharedBudgetManagerTest | 1 | Mock setup incomplete | ADD mock |
+| BudgetCalculatorBoundaryTest | 1 | Same | UPDATE assertion |
+| BudgetAutopilotEngineTest | 1 | Deprecated DAO call returns different result | UPDATE mock |
+
+### Batch 5: Analytics (81 failures)
+
+| Test Class | Count | Root Cause | Action |
+|-----------|-------|-----------|--------|
+| TotalsAggregationEngineTest | 35 | Monthly totals now purchase-only (was type-agnostic). Tests assert old inclusive behavior. | UPDATE assertions to expect purchase-only totals |
+| TotalsAggregationEngineValidationTest | 15 | Same root cause | UPDATE assertions |
+| InsightsEngineValidationTest | 13 | Depends on totals that changed | UPDATE assertions |
+| InsightsEngineDeepTest | 4 | Same | UPDATE assertions |
+| TotalsAggregationEngineDeepTest | 4 | Same | UPDATE assertions |
+| AdvancedAnalyticsEngineDeepTest | 3 | NormalizedAnalyticsInput overload changes | UPDATE test to use new API |
+| SpendingPaceCalculatorDeepTest | 2 | Depends on changed totals | UPDATE assertions |
+| Others | 5 | Various | INVESTIGATE |
+
+**Common theme:** Most analytics failures are from our intentional E2-007/P5-006 fix (monthly totals now purchase-only). Tests need to either:
+1. Filter test data to purchases only, OR
+2. Update expected values to exclude deposits/transfers
