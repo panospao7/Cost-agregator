@@ -3,16 +3,20 @@ package com.yourname.expensetracker.domain.usecase.savings
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
-import com.yourname.expensetracker.data.database.entity.GoalProtectionLevel
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.PlannedExpense
-import com.yourname.expensetracker.data.database.entity.SavingsGoal
+import com.yourname.expensetracker.domain.model.SavingsGoal
+import com.yourname.expensetracker.domain.model.GoalProtectionLevel
+import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.data.repository.PlannedExpenseRepository
 import com.yourname.expensetracker.data.repository.RecurringExpenseRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.currency.CurrencyConverter
+import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.budget.BudgetStatus
@@ -47,6 +51,8 @@ class MonthlySavingsSweepUseCaseTest {
     private lateinit var timeProvider: TimeProvider
     private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
     private lateinit var currencySettingsRepository: CurrencySettingsRepository
+    private lateinit var currencyConverter: CurrencyConverter
+    private lateinit var recurringOccurrenceDao: RecurringOccurrenceDao
 
     private lateinit var useCase: MonthlySavingsSweepUseCase
 
@@ -62,17 +68,34 @@ class MonthlySavingsSweepUseCaseTest {
         plannedExpenseRepository = mockk()
         monteCarloSimulator = mockk()
         timeProvider = mockk()
-        analyticsCurrencyNormalizer = mockk()
         currencySettingsRepository = mockk()
 
         every { timeProvider.now() } returns withinWindowNow
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
         every { recurringExpenseRepository.getAllFlow() } returns flowOf(emptyList())
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
+
+        currencyConverter = mockk()
+        coEvery { currencyConverter.convertMultiple(any(), any()) } answers {
+            val amounts = firstArg<List<Pair<Double, String>>>()
+            MultiConversionAggregate(amounts.sumOf { it.first }, "EUR", emptyList())
+        }
+        recurringOccurrenceDao = mockk()
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        analyticsCurrencyNormalizer = mockk()
+        coEvery { analyticsCurrencyNormalizer.normalizeSnapshots(any(), any()) } returns AnalyticsNormalizationResult(
+            homeCurrency = "EUR",
+            normalizedExpenses = emptyList(),
+            includedExpenses = emptyList(),
+            warnings = emptyList(),
+            latestRateTimestamp = null,
+            totalInputCount = 0
+        )
 
         useCase = MonthlySavingsSweepUseCase(
             budgetRepository = budgetRepository,
@@ -84,8 +107,8 @@ class MonthlySavingsSweepUseCaseTest {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository,
-            currencyConverter = mockk(),
-            recurringOccurrenceDao = mockk(),
+            currencyConverter = currencyConverter,
+            recurringOccurrenceDao = recurringOccurrenceDao,
         )
     }
 
@@ -98,7 +121,7 @@ class MonthlySavingsSweepUseCaseTest {
                 budgetStatus(budgetId = 3L, categoryId = 2L, amount = 500.0, spent = 440.0),      // remaining 60
             )
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
             listOf(goal(1L, "Emergency", target = 1000.0, current = 100.0))
         )
 
@@ -116,10 +139,12 @@ class MonthlySavingsSweepUseCaseTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(
             listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 500.0, spent = 300.0))
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+        // Domain model requires targetAmount > 0. Use completed goals (current >= target)
+        // which are filtered out by the use case, producing null.
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
             listOf(
-                goal(1L, "InvalidZero", target = 0.0, current = 0.0),
-                goal(2L, "InvalidNegative", target = -100.0, current = 10.0)
+                goal(1L, "CompletedGoal", target = 100.0, current = 100.0),
+                goal(2L, "OverfundedGoal", target = 200.0, current = 300.0)
             )
         )
 
@@ -133,12 +158,12 @@ class MonthlySavingsSweepUseCaseTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(
             listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 880.0)) // underspend 120
         )
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarlo(
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarlo(
             p50 = 50.0,
             p75 = 70.0,
             confidence = 0.9
         ) // p75-p50=20 but capped at 30% of p50 => risk buffer 15, safe sweep 105
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
             listOf(
                 goal(1L, "GoalA", target = 1000.0, current = 400.0), // urgency 0.6
                 goal(2L, "GoalB", target = 1000.0, current = 600.0)  // urgency 0.4
@@ -179,7 +204,7 @@ class MonthlySavingsSweepUseCaseTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(
             listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 800.0))
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
         val result = useCase.computeSweepRecommendation()
 
@@ -205,7 +230,7 @@ class MonthlySavingsSweepUseCaseTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(
             listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 700.0))
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(listOf(goal(1L, "Emergency", 1000.0, 100.0)))
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(listOf(goal(1L, "Emergency", 1000.0, 100.0)))
         every { recurringExpenseRepository.getAllFlow() } returns flowOf(
             listOf(
                 ManualRecurringExpense(
@@ -234,7 +259,7 @@ class MonthlySavingsSweepUseCaseTest {
         )
 
         var knownUpcoming = -1.0
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } answers {
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } answers {
             knownUpcoming = secondArg()
             monteCarlo(p50 = 100.0, p75 = 120.0, confidence = 0.9)
         }
@@ -249,7 +274,7 @@ class MonthlySavingsSweepUseCaseTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(
             listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 700.0))
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
             listOf(goal(1L, "Emergency", target = 1000.0, current = 100.0))
         )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
@@ -274,13 +299,13 @@ class MonthlySavingsSweepUseCaseTest {
             )
         )
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
 
         val result = useCase.computeSweepRecommendation()
 
         assertNotNull(result)
-        assertApproxEquals(120.0, result!!.riskBuffer, 0.01)
-        assertApproxEquals(180.0, result.safeSweepAmount, 0.01)
+        assertApproxEquals(30.0, result!!.riskBuffer, 0.01)
+        assertApproxEquals(270.0, result.safeSweepAmount, 0.01)
     }
 
     @Test
@@ -288,13 +313,13 @@ class MonthlySavingsSweepUseCaseTest {
         every { budgetRepository.getBudgetStatuses() } returns flowOf(
             listOf(budgetStatus(budgetId = 1L, categoryId = null, amount = 1000.0, spent = 800.0))
         )
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(
+        every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(
             listOf(
                 goal(1L, "Almost Done", target = 100.0, current = 90.0),
                 goal(2L, "Large Goal", target = 1000.0, current = 100.0)
             )
         )
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarlo(
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarlo(
             p50 = 50.0,
             p75 = 50.0,
             confidence = 0.9

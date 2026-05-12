@@ -108,7 +108,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             if (start < now - (60L * 24 * 60 * 60 * 1000)) historicalExpenses else monthExpenses
         }
 
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarloResult(400.0)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarloResult(400.0)
 
         val goal = SavingsGoal(id = 0L, name = "Emergency", targetAmount = 5000.0, currentAmount = 1000.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now)
         val result = engine.calculateSafeToSaveAmount(goal)
@@ -151,7 +151,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             Category(id = 2L, name = "Entertainment", icon = "🎬", color = "#FF0000")
         )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns mixedExpenses
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarloResult(400.0)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarloResult(400.0)
 
         val result = engine.calculateSafeToSaveAmount(
             SavingsGoal(id = 0L, name = "Trip", targetAmount = 2000.0, currentAmount = 200.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now)
@@ -167,7 +167,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
     fun `no budgets and no spending history return zero safe amount`() = runTest {
         io.mockk.every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
 
         val result = engine.calculateSafeToSaveAmount(
             SavingsGoal(id = 0L, name = "Trip", targetAmount = 1000.0, currentAmount = 0.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now)
@@ -189,7 +189,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
             )
         )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns veryHigh
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns monteCarloResult(5000.0)
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns monteCarloResult(5000.0)
 
         val result = engine.calculateSafeToSaveAmount(
             SavingsGoal(id = 0L, name = "Car", targetAmount = 7000.0, currentAmount = 1500.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now)
@@ -206,7 +206,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         coEvery { categoryRepository.getAll() } returns emptyList()
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
 
         val goals = listOf(
             SavingsGoal(id = 1L, name = "Emergency", targetAmount = 1000.0, currentAmount = 900.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now),
@@ -228,7 +228,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         coEvery { categoryRepository.getAll() } returns emptyList()
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
 
         val goals = listOf(
             SavingsGoal(id = 1L, name = "Laptop", targetAmount = 1000.0, currentAmount = 990.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now),
@@ -253,7 +253,7 @@ class SmartSavingsEngineTest : AnalyticsEngineTestBase() {
         )
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         coEvery { categoryRepository.getAll() } returns emptyList()
-        coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
+        coEvery { monteCarloSimulator.simulate(any(), any(), any(), any(), any()) } returns null
 
         val result = engine.calculateSafeToSaveAmount(
             SavingsGoal(id = 0L, name = "Emergency", targetAmount = 5000.0, currentAmount = 1000.0, targetDate = null, protectionLevel = GoalProtectionLevel.WARNING, createdAt = now)

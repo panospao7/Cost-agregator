@@ -96,7 +96,7 @@ class FinancialWeatherRepositoryTest {
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
         every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
 
-        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+        every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         // Act
         val weatherFlow = repository.getFinancialWeather()
@@ -166,7 +166,7 @@ class FinancialWeatherRepositoryTest {
             ),
             actionableInsights = emptyList()
         )
-        every { narrativeGenerator.generate(any(), any()) } returns WeatherNarrative(
+        every { narrativeGenerator.generate(any(), any(), any()) } returns WeatherNarrative(
             state = WeatherState.RAINY,
             icon = "🌧️",
             headline = UiText.StringResource(R.string.domain_weather_headline_rainy_conditions),
@@ -196,7 +196,7 @@ class FinancialWeatherRepositoryTest {
         every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
         coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
         every { synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>()) } returns createMockForecast()
-        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+        every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         val result = repository.getFinancialWeather().first()
         assertEquals(WeatherState.CLEAR_SKIES, result.state)
@@ -234,7 +234,7 @@ class FinancialWeatherRepositoryTest {
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
         every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
-        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+        every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         repository.getFinancialWeather().first()
 
@@ -268,7 +268,7 @@ class FinancialWeatherRepositoryTest {
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
         every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
-        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+        every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         repository.getFinancialWeather().first()
 
@@ -297,7 +297,7 @@ class FinancialWeatherRepositoryTest {
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
         every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
-        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+        every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         repository.getFinancialWeather().first()
 
@@ -359,7 +359,7 @@ class FinancialWeatherRepositoryTest {
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
         every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
-        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+        every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         repository.getFinancialWeather().first()
 
@@ -409,7 +409,7 @@ class FinancialWeatherRepositoryTest {
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
         every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
-        every { narrativeGenerator.generate(any(), any()) } returns createMockNarrative()
+        every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         repository.getFinancialWeather().first()
 
