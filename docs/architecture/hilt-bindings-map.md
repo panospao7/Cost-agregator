@@ -259,6 +259,8 @@ Auto-provided:
   DatabaseWriteBarrier                        → @Singleton @Inject (data/backup/DatabaseWriteBarrier.kt)
   WorkerRegistry                              → Kotlin `object` (domain/workers/WorkerRegistry.kt)
   AccountingExportPolicy                      → @Inject constructor (domain/export/AccountingExportPolicy.kt)
+  RecurringRuleLifecycleCoordinator           → @Singleton @Inject (domain/recurring/lifecycle/)
+  NetCashflowBalanceProvider                  → @Singleton @Inject (domain/forecasting/NetCashflowBalanceProvider.kt)
 ```
 
 ### `TaxModule` — `di/TaxModule.kt`

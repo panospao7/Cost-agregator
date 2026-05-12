@@ -53,6 +53,12 @@
 - `DataQualityReport` (`domain/analytics/DataQualityReport.kt`): unified data class aggregating quality metrics from analytics, forecasting, currency conversion, and AI pipelines.
 - `RestoreMaintenanceMode` now supports `BACKUP_EXPORTING` mode and uses `WorkerRegistry.pauseAllWorkers()`/`resumeAllWorkers()` for centralized worker lifecycle.
 - `RestoreJournal` has new `ASSETS_RESTORING` state for crash-safe asset recovery tracking.
+- `RecurringRuleLifecycleCoordinator` (`domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt`): rule-level lifecycle (deactivate/delete with atomic cleanup of occurrences/reminders/planned expenses).
+- `PrivacyDecision.FailClosed` + `blocksExecution()`/`reason()`: structured fail-closed mechanism — both `Denied` and `FailClosed` block execution; 30+ callers across backup/export/geocoding/location/currency/warranty now block on `FailClosed`.
+- `AccountBalanceProvider` (`domain/forecasting/AccountBalanceProvider.kt`): interface for resolving current account balance.
+- `NetCashflowBalanceProvider` (`domain/forecasting/NetCashflowBalanceProvider.kt`): 90-day net cashflow fallback implementation of `AccountBalanceProvider`.
+- `PrivacyBlockedCard` (`ui/components/PrivacyBlockedCard.kt`): reusable Compose UI card for privacy-blocked states with lock icon.
+- New architecture docs: `ENGINE_INTERACTION_MAP.md` (engine-to-pipeline impact matrix) and `LEGAL_PATHS.md` (single allowed implementation path for each operation).
 - AI, location, shared-expense, split, privacy, backup-encryption, and `.costbackup` bundle backup/restore flows are first-class subsystems
 
 ### Architecture Drift Updates (2026-05-06)
@@ -90,6 +96,24 @@
 - **warnings: List<AnalyticsConversionWarning>** added to `AnalyticsDataQuality` (in addition to the legacy `conversionWarnings: List<String>`). Structured warnings carry `AnalyticsConversionWarningType` for programmatic handling.
 - **categoryNameSnapshot** (`String?`) added to `NormalizedExpense` — snapshot of the category name at normalization time, preventing drift when category names are later edited.
 - **BudgetVsActualEngine** logic extracted from `AnalyticsViewModel` — the ViewModel no longer performs inline budget-vs-actual aggregation.
+
+### Architecture Drift Updates (2026-05-12 — deep pipeline debugging & fail-closed propagation)
+- **RecurringRuleLifecycleCoordinator** created (`domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt`) — `@Singleton @Inject` coordinator for rule-level lifecycle mutations (deactivate, delete). Atomically deactivates recurring rules and cleans up generated occurrences, reminders, and planned expenses in a single `withTransaction` block. Guards writes via `DatabaseWriteBarrier`. Dependencies: `AppDatabase`, `writeBarrier`, `timeProvider`, `ManualRecurringExpenseDao`, `RecurringOccurrenceDao`, `RecurringReminderDeliveryDao`, `PlannedExpenseDao`, `RecurringLifecycleEventDao`.
+- **PrivacyDecision.FailClosed** added to `PrivacyDecision` sealed interface — new `FailClosed(reason)` variant alongside `Allowed`, `NotApplicable`, `Denied`. `blocksExecution()` returns `true` for both `Denied` and `FailClosed`. `reason()` returns the description for all variants. Over 30 callers across backup/export/geocoding/location/currency/warranty now use `blocksExecution()` or `reason()` instead of ad-hoc `is Denied` checks (P8-PR1 fail-closed propagation).
+- **AccountBalanceProvider** (`domain/forecasting/AccountBalanceProvider.kt`) — interface with `currentBalance(currency)` for resolving current account balance. Designed for future implementations: `BankConnectionBalanceProvider`, `ManualBalanceProvider`.
+- **NetCashflowBalanceProvider** (`domain/forecasting/NetCashflowBalanceProvider.kt`) — `@Singleton @Inject` fallback `AccountBalanceProvider`. Estimates balance from 90-day net cashflow using `MultiCurrencyRepository.getHomeCurrencyDepositTotal()` and `getHomeCurrencyPurchaseTotal()`. Used by `FinancialStressForecastEngine` for cashflow-aware stress testing.
+- **PrivacyBlockedCard** (`ui/components/PrivacyBlockedCard.kt`) — new reusable Jetpack Compose `@Composable` card displaying a lock icon, "Feature disabled" title, and the specific `PrivacyBlocked` reason string. Used by `PrivacySettingsViewModel`, `BackupRestoreScreen`, and other screens for consistent privacy-denied UI messaging.
+- **Fail-closed propagation completed** — 30+ callers across 10+ files now use `PrivacyDecision.blocksExecution()` for consistent fail-closed behavior: `DatabaseBackupRepositoryImpl`, `NotificationCaptureService`, `CompositeGeocodingService` (all 4 providers), `CloudDashboardBriefingService`, `CloudCategorizationAssistService`, `CloudDedupeJudgeService`, `CloudQueryInterpretationService`, `CloudReceiptAssistService`, `CloudReceiptItemCategorizationService`, `CloudReviewExplanationService`, `CloudWarrantyExtractionService`, `SmartReceiptAssistService`, `DailyBriefingWorker`, `DataRetentionWorker`, `LocationBackfillWorker`, `OverpassNearbyService`, `AndroidForegroundLocationProvider`.
+- **PrivacySettingsViewModel** — updated to display `PrivacyBlockedCard` for each denied capability. `AiSettingsViewModel` updated for cloud AI policy changes.
+- **DatabaseWriteBarrier** wired into `SubscriptionManagerEngine` and `EnhancedSplitManager` — both now check `checkWritesAllowed()` before performing writes (P0 restore-safety fix).
+- **DataRetentionWorker** — enhanced retention expansion: now deletes receipts matching retention period, with comprehensive diagnostic logging.
+- **ReceiptRepository** — heavy refactoring (175 lines changed): receipt lifecycle fixes, improved deduplication, textLines extraction.
+- **MultiCurrencyRepository** — enhanced with budget-aware aggregation methods (116 lines modified). `getHomeCurrencyDepositTotal()` and `getHomeCurrencyPurchaseTotal()` added for `NetCashflowBalanceProvider`.
+- **DeprecationLevel.ERROR sweep** — all deprecated DAO methods and unsafe aggregation paths escalated from WARNING to ERROR. 5 contract tests added: `LifecycleBarrierContractTest`, `MoneyContractTest`, `PrivacyStorageContractTest`, `RecurringDeactivateContractTest`, `SideEffectContractTest`.
+- **SAFE engine P1 fixes** — `CurrencyCode` ASCII validation (rejects non-ASCII), `MoneyAggregate` finite guard (rejects NaN/Infinity), warranty privacy improvements, `MoneyBucket` finite guard.
+- **New architecture documents**: `ENGINE_INTERACTION_MAP.md` (engine-to-pipeline impact matrix with risk levels) and `LEGAL_PATHS.md` (single-allowed-path architecture law for expense mutations, privacy, exports, etc.).
+- **External review fixes** (21 P0/P1 + P2/P3 items): privacy gate unification, trend normalization, budget wiring, geocoding gate fix, purpose-aware redaction, `AccountBalanceProvider` integration, `NetCashflowBalanceProvider` implementation.
+- **Leftover issues tracker** (`docs/LEFTOVER_ISSUES_PIPELINES_1_8.md`) — 55 P2/P3/enhancement items for all 8 pipelines tracked for future sprints.
 
 ### Architecture Drift Updates (2026-05-11 — pipeline evaluation & closure)
 - **Database version upgraded to v124** (from v123). Migration 123→124 adds forensic/debug fields for pipeline diagnostics and data-integrity tracking.

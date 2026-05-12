@@ -69,6 +69,8 @@ Owns the core spending forecast engine and month-end runway views.
 - `ui/components/FinancialRunwayCard.kt`
 - `ui/components/FinancialWeatherCard.kt`
 - `domain/forecasting/ForecastDataQuality.kt` — additive quality metadata for forecast inputs
+- `domain/forecasting/AccountBalanceProvider.kt` — Interface for resolving current account balance
+- `domain/forecasting/NetCashflowBalanceProvider.kt` — 90-day net cashflow fallback implementation of AccountBalanceProvider
 
 **Boundary note:** forecast inputs may come from budgets and recurring expenses, but budget ownership stays in Segment 2.
 
@@ -176,6 +178,7 @@ Owns recurring pattern detection, future recurring item planning, and the **recu
 - `domain/recurring/OccurrenceConflictResolver.kt` — Resolves candidates against actual expenses (PLANNED/PAID/SKIPPED)
 - `domain/recurring/RecurringPlanProjectionService.kt` — Materialises PlannedExpense rows from occurrences
 - `domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt` — **Primary entry point** for occurrence generation and management
+- `domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt` — Rule-level lifecycle (deactivate/delete with atomic cleanup of occurrences, reminders, planned expenses)
 - `domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt` — Persists occurrences and creates reminder deliveries
 - `data/database/entity/RecurringOccurrence.kt` — Occurrence entity (table: `recurring_occurrences`)
 - `data/database/dao/RecurringOccurrenceDao.kt` — DAO for recurring occurrences
@@ -525,6 +528,8 @@ Owns encrypted key storage and security/network bindings.
 - `domain/privacy/RawContentSanitizer.kt` — Write-time sanitizer applying RawStorageMode to OCR/email content
 - `domain/privacy/EffectiveCloudAiPolicy.kt` — Resolves effective cloud AI policy from privacy + AI settings, used by hybrid services for pre-flight checks
 - `domain/privacy/PrivacyBlocked.kt` — Sealed interface standardizing privacy-denied states (CloudAiDisabled, ReceiptImageUploadDisabled, etc.); returned by all privacy gates
+- `domain/privacy/PrivacyDecision.kt` — Now includes `FailClosed(reason)` variant; `blocksExecution()` and `reason()` methods; 30+ callers use for fail-closed propagation
+- `ui/components/PrivacyBlockedCard.kt` — Reusable Compose card for privacy-blocked state display
 
 ## SEGMENT 29: Debug & Diagnostics
 
@@ -663,7 +668,7 @@ File-to-segment mapping for all 38 segments:
 
 | # | Segment | Key pattern / issue |
 |---|---|---|
-| 1 | Forecasting & Runway | `domain/forecasting/`, `FinancialWeather` |
+| 1 | Forecasting & Runway | `domain/forecasting/`, `FinancialWeather`, `AccountBalanceProvider`, `NetCashflowBalanceProvider` |
 | 2 | Budget Management | `domain/budget/`, `BudgetScreen` |
 | 3 | Notification Capture, Parsing & Review | `domain/parser/`, `NotificationRepository`, `ReviewQueueRepository` |
 | 4 | Receipt Scanning (OCR) & Lifecycle | `domain/receipt/`, `receipt_events`, `receipt_expense_links`, OCR lifecycle |

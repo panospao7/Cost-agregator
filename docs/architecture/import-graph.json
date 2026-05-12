@@ -1,6 +1,6 @@
 {
   "schema": "dependency-graph-v1",
-  "generated": "2026-05-11",
+  "generated": "2026-05-12",
   "source": "Manual analysis of ExpenseTracker codebase",
   "nodes": {
     "NotificationCaptureService": {
@@ -738,6 +738,25 @@
       "type": "domain",
       "package": "com.yourname.expensetracker.domain.export",
       "depends_on": []
+    },
+    "RecurringRuleLifecycleCoordinator": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.recurring.lifecycle",
+      "depends_on": ["ManualRecurringExpenseDao", "RecurringOccurrenceDao", "RecurringReminderDeliveryDao", "PlannedExpenseDao", "RecurringLifecycleEventDao", "DatabaseWriteBarrier", "TimeProvider"]
+    },
+    "AccountBalanceProvider": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.forecasting"
+    },
+    "NetCashflowBalanceProvider": {
+      "type": "domain",
+      "package": "com.yourname.expensetracker.domain.forecasting",
+      "depends_on": ["MultiCurrencyRepository", "TimeProvider"]
+    },
+    "PrivacyBlockedCard": {
+      "type": "ui",
+      "package": "com.yourname.expensetracker.ui.components",
+      "depends_on": []
     }
   },
   "edges": [
@@ -883,7 +902,19 @@
     { "from": "NotificationPrivacyGate", "to": "PrivacyBlocked", "type": "produces" },
     { "from": "LocationPrivacyGate", "to": "PrivacyBlocked", "type": "produces" },
     { "from": "CloudAiPrivacyGate", "to": "PrivacyBlocked", "type": "produces" },
-    { "from": "BackupPrivacyGate", "to": "PrivacyBlocked", "type": "produces" }
+    { "from": "BackupPrivacyGate", "to": "PrivacyBlocked", "type": "produces" },
+    { "from": "RecurringRuleLifecycleCoordinator", "to": "ManualRecurringExpenseDao", "type": "dao" },
+    { "from": "RecurringRuleLifecycleCoordinator", "to": "RecurringOccurrenceDao", "type": "dao" },
+    { "from": "RecurringRuleLifecycleCoordinator", "to": "RecurringReminderDeliveryDao", "type": "dao" },
+    { "from": "RecurringRuleLifecycleCoordinator", "to": "PlannedExpenseDao", "type": "dao" },
+    { "from": "RecurringRuleLifecycleCoordinator", "to": "RecurringLifecycleEventDao", "type": "dao" },
+    { "from": "RecurringRuleLifecycleCoordinator", "to": "DatabaseWriteBarrier", "type": "guard" },
+    { "from": "RecurringRuleLifecycleCoordinator", "to": "TimeProvider", "type": "depends-on" },
+    { "from": "NetCashflowBalanceProvider", "to": "MultiCurrencyRepository", "type": "depends-on" },
+    { "from": "NetCashflowBalanceProvider", "to": "TimeProvider", "type": "depends-on" },
+    { "from": "FinancialStressForecastEngine", "to": "NetCashflowBalanceProvider", "type": "depends-on" },
+    { "from": "SubscriptionManagerEngine", "to": "DatabaseWriteBarrier", "type": "guard" },
+    { "from": "EnhancedSplitManager", "to": "DatabaseWriteBarrier", "type": "guard" }
   ],
   "entry_points": [
     "MainApplication",
@@ -1080,6 +1111,26 @@
         "CSV/JSON export validation",
         "Accounting export single-currency enforcement",
         "Global dataset validation"
+      ]
+    },
+    "RecurringRuleLifecycleCoordinator": {
+      "impacted_flows": [
+        "Recurring rule deactivation (atomic cleanup)",
+        "Recurring rule deletion",
+        "Occurrence/reminder/planned-expense lifecycle cleanup"
+      ]
+    },
+    "NetCashflowBalanceProvider": {
+      "impacted_flows": [
+        "Financial stress forecast (cashflow-aware)",
+        "Account balance resolution for forecasting"
+      ]
+    },
+    "PrivacyDecision.FailClosed": {
+      "impacted_flows": [
+        "All privacy-gated operations (30+ callers)",
+        "Fail-closed behavior for backup, geocoding, AI, notification, location",
+        "Consistent blocksExecution() semantics across all privacy checks"
       ]
     }
   }

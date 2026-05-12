@@ -357,6 +357,74 @@ AppStartupCoordinator
 | `NotificationCaptureService` | `service/NotificationCaptureService.kt` | `RestoreMaintenanceMode.isActive()` |
 | All 7 workers | Various | `RestoreMaintenanceMode` pause check |
 
+### AccountBalanceProvider Dependency Chain (2026-05-12)
+
+```
+AccountBalanceProvider                    [domain/forecasting/AccountBalanceProvider.kt]
+  │  Interface with currentBalance(currency)
+  │
+  └──► NetCashflowBalanceProvider         [domain/forecasting/NetCashflowBalanceProvider.kt]
+        │  @Singleton @Inject (fallback)
+        │
+        ├──► MultiCurrencyRepository      — getHomeCurrencyDepositTotal() + getHomeCurrencyPurchaseTotal()
+        └──► TimeProvider                 — 90-day window calculation
+             │
+             ▼
+        FinancialStressForecastEngine     — cashflow-aware stress testing
+```
+
+### RecurringRuleLifecycleCoordinator Dependency Chain (2026-05-12)
+
+```
+RecurringRuleLifecycleCoordinator          [domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt]
+  │  @Singleton @Inject
+  │  Rule-level lifecycle mutations (deactivate, delete)
+  │
+  ├──► AppDatabase                        — withTransaction for atomicity
+  ├──► DatabaseWriteBarrier               — Restore-safety gate
+  ├──► ManualRecurringExpenseDao          — Read rule definition, set isActive=false
+  ├──► RecurringOccurrenceDao             — Cancel future PLANNED occurrences
+  ├──► RecurringReminderDeliveryDao       — Suppress reminders
+  ├──► PlannedExpenseDao                  — Cancel planned expenses
+  ├──► RecurringLifecycleEventDao         — Audit log
+  └──► TimeProvider                       — Timestamps
+       │
+       ▼
+  Consumed by:
+  └──► RecurringExpensesViewModel         — Deactivate/delete UI actions
+  └──► BillReminderManager                — Rule lifecycle integration
+```
+
+### PrivacyDecision Fail-Closed Chain (2026-05-12)
+
+```
+PrivacyDecision.FailClosed(reason)         [domain/privacy/PrivacyDecision.kt]
+  │  New sealed variant alongside Allowed, Denied, NotApplicable
+  │
+  ├──► blocksExecution(): Boolean         — Returns true for Denied + FailClosed
+  └──► reason(): String                   — Returns reason for all variants (safe to call without smart-cast)
+       │
+       ▼
+  Used by 30+ callers across 10+ files:
+  ├──► DatabaseBackupRepositoryImpl
+  ├──► NotificationCaptureService
+  ├──► CompositeGeocodingService (all 4 providers)
+  ├──► CloudDashboardBriefingService
+  ├──► CloudCategorizationAssistService
+  ├──► CloudDedupeJudgeService
+  ├──► CloudQueryInterpretationService
+  ├──► CloudReceiptAssistService
+  ├──► CloudReceiptItemCategorizationService
+  ├──► CloudReviewExplanationService
+  ├──► CloudWarrantyExtractionService
+  ├──► SmartReceiptAssistService
+  ├──► DailyBriefingWorker
+  ├──► DataRetentionWorker
+  ├──► LocationBackfillWorker
+  ├──► OverpassNearbyService
+  └──► AndroidForegroundLocationProvider
+```
+
 ### AccountingExportPolicy Dependency Chain (2026-05-11)
 
 ```
