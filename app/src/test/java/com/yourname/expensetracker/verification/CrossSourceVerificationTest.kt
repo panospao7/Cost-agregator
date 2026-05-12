@@ -8,6 +8,7 @@ import com.yourname.expensetracker.testCurrencyConverter
 import com.yourname.expensetracker.toAnalyticsCategoryRefs
 import com.yourname.expensetracker.toExpenseSnapshots
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -113,7 +114,12 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
         totalsAggregationEngine = TotalsAggregationEngine(
             expenseRepository = repository,
             timeProvider = timeProvider,
-            multiCurrencyRepository = mockk(),
+            multiCurrencyRepository = MultiCurrencyRepository(
+                expenseDao = expenseDao,
+                currencyConverter = testCurrencyConverter(),
+                timeProvider = timeProvider,
+                currencySettingsRepository = TestCurrencySettingsRepository()
+            ),
             categoryRepository = mockk(),
             ioDispatcher = Dispatchers.Unconfined
         )

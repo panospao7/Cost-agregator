@@ -240,6 +240,45 @@ abstract class AnalyticsEngineTestBase {
             if (totalSpent > 0.0) listOf(com.yourname.expensetracker.data.database.dao.CurrencyTotal("EUR", totalSpent, purchasesOnly.filter { !it.isNotMine }.size))
             else emptyList()
 
+        // Multi-currency aggregation bridges
+        val nonMine = purchasesOnly.filter { !it.isNotMine }
+        // Monthly totals: group by monthKey
+        val monthlyTxCounts = mutableMapOf<String, Int>()
+        val monthlyAmounts = mutableMapOf<String, Double>()
+        for (e in nonMine) {
+            val monthKey = java.time.LocalDate.ofInstant(java.time.Instant.ofEpochMilli(e.date), java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM"))
+            monthlyAmounts.merge(monthKey, e.effectiveAmount, Double::plus)
+            monthlyTxCounts.merge(monthKey, 1, Int::plus)
+        }
+        // Daily totals: group by date
+        val dailyTxCounts = mutableMapOf<Long, Int>()
+        val dailyAmounts = mutableMapOf<Long, Double>()
+        for (e in nonMine) {
+            val dayStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(e.date)
+            dailyAmounts.merge(dayStart, e.effectiveAmount, Double::plus)
+            dailyTxCounts.merge(dayStart, 1, Int::plus)
+        }
+        io.mockk.coEvery { expenseDao.getMonthlyTotalsBetweenByCurrency(any(), any()) } answers {
+            monthlyAmounts.map { (mk, total) ->
+                com.yourname.expensetracker.data.database.dao.MonthlyCurrencyTotal(
+                    monthKey = mk, currency = "EUR", total = total,
+                    txCount = monthlyTxCounts[mk] ?: 1
+                )
+            }
+        }
+        io.mockk.coEvery { expenseDao.getAllMonthlyTotalsBetweenByCurrency(any(), any()) } answers {
+            monthlyAmounts.map { (mk, total) ->
+                com.yourname.expensetracker.data.database.dao.MonthlyCurrencyTotal(
+                    monthKey = mk, currency = "EUR", total = total,
+                    txCount = monthlyTxCounts[mk] ?: 1
+                )
+            }
+        }
+        io.mockk.coEvery { expenseDao.getAllSpentBetweenByCurrency(any(), any()) } answers {
+            if (totalSpent > 0.0) listOf(com.yourname.expensetracker.data.database.dao.CurrencyTotal("EUR", totalSpent, nonMine.size))
+            else emptyList()
+        }
+
         // Count
         io.mockk.coEvery { expenseDao.getPurchaseCount() } returns purchasesOnly.size
 

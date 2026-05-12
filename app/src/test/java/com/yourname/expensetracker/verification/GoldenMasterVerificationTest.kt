@@ -23,6 +23,7 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsDashboard
 import com.yourname.expensetracker.domain.analytics.AdvancedAnalyticsEngine
@@ -201,7 +202,12 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         totalsEngine = TotalsAggregationEngine(
             expenseRepository = repository,
             timeProvider = timeProvider,
-            multiCurrencyRepository = mockk(relaxed = true),
+            multiCurrencyRepository = MultiCurrencyRepository(
+                expenseDao = expenseDao,
+                currencyConverter = currencyConverter,
+                timeProvider = timeProvider,
+                currencySettingsRepository = currencySettingsRepository
+            ),
             categoryRepository = categoryRepository,
             ioDispatcher = Dispatchers.Unconfined
         )
