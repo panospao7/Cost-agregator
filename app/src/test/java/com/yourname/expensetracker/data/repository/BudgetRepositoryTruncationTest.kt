@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
+import com.yourname.expensetracker.data.database.dao.CategoryCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
@@ -22,6 +23,7 @@ import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import io.mockk.*
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Before
@@ -63,6 +65,7 @@ class BudgetRepositoryTruncationTest {
     @Before
     fun setup() {
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+        every { currencySettingsRepository.emergencyBuffer() } returns flowOf(500.0)
         every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
         every { expenseDao.observeExpenseMutationClock() } returns flowOf(0)
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
@@ -107,7 +110,7 @@ class BudgetRepositoryTruncationTest {
      * true total of €8 000 (representing ~800 rows).
      */
     @Test
-    fun `truncation regression - 800-row equivalent total is not capped at 500`() = runTest {
+    fun `truncation regression - 800-row equivalent total is not capped at 500`() = runTest(UnconfinedTestDispatcher()) {
         val now = makeUtcMs(2026, 3, 15)
         every { timeProvider.now() } returns now
 
@@ -145,7 +148,7 @@ class BudgetRepositoryTruncationTest {
      * status is correctly EXCEEDED.
      */
     @Test
-    fun `truncation regression - 2500-row equivalent total is not capped at 2000`() = runTest {
+    fun `truncation regression - 2500-row equivalent total is not capped at 2000`() = runTest(UnconfinedTestDispatcher()) {
         val now = makeUtcMs(2026, 3, 15)
         every { timeProvider.now() } returns now
 
@@ -178,7 +181,7 @@ class BudgetRepositoryTruncationTest {
      * would fetch all rows and filter in-memory, subject to the row cap.
      */
     @Test
-    fun `truncation regression - category budget with 3000-row equivalent uses aggregate`() = runTest {
+    fun `truncation regression - category budget with 3000-row equivalent uses aggregate`() = runTest(UnconfinedTestDispatcher()) {
         val now = makeUtcMs(2026, 3, 15)
         every { timeProvider.now() } returns now
 
@@ -193,8 +196,9 @@ class BudgetRepositoryTruncationTest {
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
         every { categoryDao.getAllFlow() } returns flowOf(listOf(category))
         every { expenseDao.getTotalSpentFlow() } returns flowOf(3_500.0)
-        // 3 000 rows × €1.17 = €3 500 — old cap would produce €2 340
-        coEvery { expenseDao.getCategorySpentInPeriod(catId, start, end) } returns 3_500.0
+        coEvery { expenseDao.getCategoryTotalsBetweenByCurrency(any(), any()) } returns listOf(
+            CategoryCurrencyTotal(categoryId = catId, currency = "EUR", total = 3_500.0, txCount = 1)
+        )
         coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 3_500.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
@@ -220,7 +224,7 @@ class BudgetRepositoryTruncationTest {
      *   3. No row-level expense reads are invoked.
      */
     @Test
-    fun `truncation regression - rollover history uses aggregate per window not capped rows`() = runTest {
+    fun `truncation regression - rollover history uses aggregate per window not capped rows`() = runTest(UnconfinedTestDispatcher()) {
         val now = makeUtcMs(2026, 4, 10)
         every { timeProvider.now() } returns now
 
@@ -260,17 +264,17 @@ class BudgetRepositoryTruncationTest {
 
         assertThat(statuses).hasSize(1)
         // Effective limit after 3 completed rollover periods = 5600
-        assertThat(statuses[0].budget.amount).isAtLeast(5_600.0)
+        assertThat(statuses[0].effectiveLimit).isAtLeast(5_600.0)
 
         // Aggregate queries called: 3 completed periods + 1 active = 4+ times
-        coVerify(atLeast = 4) { expenseDao.getTotalForPeriod(any(), any()) }
+        coVerify(atLeast = 4) { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) }
         verifyNoRowLevelReads()
     }
 
     // ── Scenario: health-status thresholds with large totals ─────────────────
 
     @Test
-    fun `truncation regression - WARNING threshold reached with large aggregate`() = runTest {
+    fun `truncation regression - WARNING threshold reached with large aggregate`() = runTest(UnconfinedTestDispatcher()) {
         val now = makeUtcMs(2026, 3, 15)
         every { timeProvider.now() } returns now
 
@@ -295,7 +299,7 @@ class BudgetRepositoryTruncationTest {
     }
 
     @Test
-    fun `truncation regression - CRITICAL threshold reached with large aggregate`() = runTest {
+    fun `truncation regression - CRITICAL threshold reached with large aggregate`() = runTest(UnconfinedTestDispatcher()) {
         val now = makeUtcMs(2026, 3, 15)
         every { timeProvider.now() } returns now
 
@@ -337,7 +341,7 @@ class BudgetRepositoryTruncationTest {
      * lack the PURCHASE filter) were invoked.
      */
     @Test
-    fun `A10 Batch3 - budget spend uses only PURCHASE-filtered aggregate queries`() = runTest {
+    fun `A10 Batch3 - budget spend uses only PURCHASE-filtered aggregate queries`() = runTest(UnconfinedTestDispatcher()) {
         val now = makeUtcMs(2026, 3, 15)
         every { timeProvider.now() } returns now
 
@@ -364,7 +368,7 @@ class BudgetRepositoryTruncationTest {
         assertThat(statuses[0].healthStatus).isEqualTo(BudgetHealthStatus.ON_TRACK)
 
         // Confirm the aggregate SQL path was used exactly once
-        coVerify(exactly = 1) { expenseDao.getTotalForPeriod(start, end) }
+        coVerify(exactly = 1) { expenseDao.getTotalSpentBetweenByCurrency(start, end) }
         verifyNoRowLevelReads()
     }
 
@@ -375,7 +379,7 @@ class BudgetRepositoryTruncationTest {
      * category spend because no alternative query path exists.
      */
     @Test
-    fun `A10 Batch3 - category budget spend uses only PURCHASE-filtered category aggregate`() = runTest {
+    fun `A10 Batch3 - category budget spend uses only PURCHASE-filtered category aggregate`() = runTest(UnconfinedTestDispatcher()) {
         val now = makeUtcMs(2026, 3, 15)
         every { timeProvider.now() } returns now
 
@@ -390,7 +394,9 @@ class BudgetRepositoryTruncationTest {
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
         every { categoryDao.getAllFlow() } returns flowOf(listOf(category))
         every { expenseDao.getTotalSpentFlow() } returns flowOf(200.0)
-        coEvery { expenseDao.getCategorySpentInPeriod(catId, start, end) } returns 200.0
+        coEvery { expenseDao.getCategoryTotalsBetweenByCurrency(any(), any()) } returns listOf(
+            CategoryCurrencyTotal(categoryId = catId, currency = "EUR", total = 200.0, txCount = 1)
+        )
         coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 200.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
@@ -401,7 +407,7 @@ class BudgetRepositoryTruncationTest {
         assertThat(statuses[0].category).isEqualTo(category)
 
         // Confirm category aggregate was used, no whole-wallet fallback
-        coVerify(exactly = 1) { expenseDao.getCategorySpentInPeriod(catId, start, end) }
+        coVerify(exactly = 1) { expenseDao.getCategoryTotalsBetweenByCurrency(any(), any()) }
         coVerify(exactly = 0) { expenseDao.getTotalForPeriod(any(), any()) }
         verifyNoRowLevelReads()
     }
@@ -412,7 +418,7 @@ class BudgetRepositoryTruncationTest {
      * cannot inflate or deflate the compounding surplus calculation.
      */
     @Test
-    fun `A10 Batch3 - rollover surplus is not affected by non-PURCHASE types`() = runTest {
+    fun `A10 Batch3 - rollover surplus is not affected by non-PURCHASE types`() = runTest(UnconfinedTestDispatcher()) {
         val now = makeUtcMs(2026, 3, 15)
         every { timeProvider.now() } returns now
 
@@ -446,10 +452,10 @@ class BudgetRepositoryTruncationTest {
 
         assertThat(statuses).hasSize(1)
         // Effective limit: 1400 (1000 base + 200 + 200 compounding surplus)
-        assertThat(statuses[0].budget.amount).isAtLeast(1_400.0)
+        assertThat(statuses[0].effectiveLimit).isAtLeast(1_400.0)
 
         // Every period query used the PURCHASE-only aggregate
-        coVerify(atLeast = 3) { expenseDao.getTotalForPeriod(any(), any()) }
+        coVerify(atLeast = 3) { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) }
         verifyNoRowLevelReads()
     }
 

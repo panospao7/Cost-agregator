@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.privacy.CloudPayloadRedactor
+import com.yourname.expensetracker.domain.privacy.RedactedPayload
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -52,7 +53,12 @@ class AiChatRepositoryImplTest {
             transactionBlock.captured.invoke()
         }
 
-        repository = AiChatRepositoryImpl(mockk<DatabaseWriteBarrier>(relaxed = true), database, sessionDao, messageDao, aiSettingsRepository, fakeTimeProvider, mockk<CloudPayloadRedactor>(relaxed = true))
+        val redactor = mockk<CloudPayloadRedactor>(relaxed = true)
+        every { redactor.redactText(any(), any()) } answers {
+            @Suppress("UNCHECKED_CAST")
+            RedactedPayload(text = firstArg() as String, redactionApplied = false, fieldsRedacted = emptySet(), payloadHash = "")
+        }
+        repository = AiChatRepositoryImpl(mockk<DatabaseWriteBarrier>(relaxed = true), database, sessionDao, messageDao, aiSettingsRepository, fakeTimeProvider, redactor)
     }
 
     @After

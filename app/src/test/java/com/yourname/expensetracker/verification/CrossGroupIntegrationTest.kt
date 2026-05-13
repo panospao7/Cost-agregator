@@ -7,8 +7,10 @@ import com.yourname.expensetracker.generateInsights
 import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.testCurrencyConverter
 import com.yourname.expensetracker.toExpenseSnapshots
+import com.yourname.expensetracker.data.database.dao.CategoryCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.CategoryTotal
 import com.yourname.expensetracker.data.database.dao.CategoryTotalResult
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
@@ -256,7 +258,9 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             monthlySavingsSweepUseCase = monthlySavingsSweepUseCase,
             computeMoneyRadarUseCase = computeMoneyRadarUseCase,
             stressForecastEngine = stressForecastEngine,
-            forecastInputAssembler = mockk(),
+            forecastInputAssembler = mockk {
+                coEvery { assemble(any(), any(), any(), any(), any(), any(), any()) } returns mockk(relaxed = true)
+            },
             currencyConverter = mockk(relaxed = true),
             currencySettingsRepository = mockk(relaxed = true)
         )
@@ -385,6 +389,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
     @Test
     fun `shared expenses counted correctly in monthly totals`() = runTest {
         val sharedExpenseDataPort = mockk<SharedExpenseDataPort>(relaxed = true)
+        coEvery { sharedExpenseDataPort.getGroupOnce(any()) } returns mockk(relaxed = true)
         val manager = SharedExpenseManager(sharedExpenseDataPort, timeProvider, currencySettingsRepository = mockk(), ioDispatcher = Dispatchers.Unconfined)
 
         coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns listOf(
@@ -537,6 +542,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             sharedExpenseDataPort = mockk {
                 coEvery { getGroupMembersOnce(any()) } returns emptyList<SharedExpenseMember>()
                 coEvery { getGroupExpensesOnce(any()) } returns emptyList<SharedGroupExpense>()
+                coEvery { getGroupOnce(any()) } returns mockk(relaxed = true)
             },
             timeProvider = timeProvider,
             currencySettingsRepository = mockk(),
@@ -797,6 +803,29 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         every { expenseDao.getTotalSpentFlow() } returns flowOf(
             expenses.filter { it.transactionType == TransactionType.PURCHASE }.sumOf { it.effectiveAmount }
         )
+        every { expenseDao.observeExpenseMutationClock() } returns flowOf(0)
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(
+            CurrencyTotal("EUR", 
+                expenses.filter { it.transactionType == TransactionType.PURCHASE && !it.isNotMine }
+                    .sumOf { it.effectiveAmount }, 1)
+        )
+        coEvery { expenseDao.getCategoryTotalsBetweenByCurrency(any(), any()) } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            purchasesMine(start, end)
+                .filter { it.categoryId != null }
+                .groupBy { it.categoryId!! }
+                .flatMap { (catId, rows) ->
+                    rows.groupBy { it.currency.ifEmpty { "EUR" } }.map { (currency, currRows) ->
+                        CategoryCurrencyTotal(
+                            categoryId = catId,
+                            currency = currency,
+                            total = currRows.sumOf { it.effectiveAmount },
+                            txCount = currRows.size
+                        )
+                    }
+                }
+        }
         coEvery { expenseDao.getMerchantStats() } returns emptyList()
         coEvery { expenseDao.getAllMerchantStats() } returns emptyList()
         coEvery { expenseDao.getTopMerchantsForPeriod(any(), any(), any()) } returns emptyList()

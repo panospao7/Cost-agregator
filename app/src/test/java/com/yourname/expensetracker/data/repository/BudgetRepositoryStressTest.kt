@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.BudgetDao
+import com.yourname.expensetracker.data.database.dao.CategoryCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -23,6 +24,7 @@ import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
@@ -113,7 +115,7 @@ class BudgetRepositoryStressTest {
     // ============================================================================
 
     @Test
-    fun `stress - addBudget with zero amount fails`() = runTest {
+    fun `stress - addBudget with zero amount fails`() = runTest(UnconfinedTestDispatcher()) {
         val budget = Budget(
             id = 0,
             categoryId = null,
@@ -131,7 +133,7 @@ class BudgetRepositoryStressTest {
     }
 
     @Test
-    fun `stress - addBudget with negative amount fails`() = runTest {
+    fun `stress - addBudget with negative amount fails`() = runTest(UnconfinedTestDispatcher()) {
         val budget = Budget(
             id = 0,
             categoryId = null,
@@ -149,7 +151,7 @@ class BudgetRepositoryStressTest {
     }
 
     @Test
-    fun `stress - addBudget with zero startDate fails`() = runTest {
+    fun `stress - addBudget with zero startDate fails`() = runTest(UnconfinedTestDispatcher()) {
         val budget = Budget(
             id = 0,
             categoryId = null,
@@ -167,7 +169,7 @@ class BudgetRepositoryStressTest {
     }
 
     @Test
-    fun `stress - addBudget with negative startDate fails`() = runTest {
+    fun `stress - addBudget with negative startDate fails`() = runTest(UnconfinedTestDispatcher()) {
         val budget = Budget(
             id = 0,
             categoryId = null,
@@ -185,7 +187,7 @@ class BudgetRepositoryStressTest {
     }
 
     @Test
-    fun `stress - addBudget with valid data succeeds`() = runTest {
+    fun `stress - addBudget with valid data succeeds`() = runTest(UnconfinedTestDispatcher()) {
         val budget = Budget(
             id = 0,
             categoryId = 1,
@@ -207,7 +209,7 @@ class BudgetRepositoryStressTest {
     // ============================================================================
 
     @Test
-    fun `stress - updateBudget with zero amount fails`() = runTest {
+    fun `stress - updateBudget with zero amount fails`() = runTest(UnconfinedTestDispatcher()) {
         val budget = Budget(
             id = 1,
             categoryId = null,
@@ -225,7 +227,7 @@ class BudgetRepositoryStressTest {
     }
 
     @Test
-    fun `stress - updateBudget with negative amount fails`() = runTest {
+    fun `stress - updateBudget with negative amount fails`() = runTest(UnconfinedTestDispatcher()) {
         val budget = Budget(
             id = 1,
             categoryId = null,
@@ -247,7 +249,7 @@ class BudgetRepositoryStressTest {
     // ============================================================================
 
     @Test
-    fun `stress - add many budgets`() = runTest {
+    fun `stress - add many budgets`() = runTest(UnconfinedTestDispatcher()) {
         repeat(50) { i ->
             val budget = Budget(
                 id = 0,
@@ -265,7 +267,7 @@ class BudgetRepositoryStressTest {
     }
 
     @Test
-    fun `stress - toggle many budgets`() = runTest {
+    fun `stress - toggle many budgets`() = runTest(UnconfinedTestDispatcher()) {
         repeat(50) { i ->
             repository.toggleBudget(i.toLong() + 1, i % 2 == 0)
         }
@@ -276,7 +278,7 @@ class BudgetRepositoryStressTest {
     // ============================================================================
 
     @Test
-    fun `stress - very large budget amount`() = runTest {
+    fun `stress - very large budget amount`() = runTest(UnconfinedTestDispatcher()) {
         val budget = Budget(
             id = 0,
             categoryId = null,
@@ -294,7 +296,7 @@ class BudgetRepositoryStressTest {
     }
 
     @Test
-    fun `stress - very small budget amount`() = runTest {
+    fun `stress - very small budget amount`() = runTest(UnconfinedTestDispatcher()) {
         val budget = Budget(
             id = 0,
             categoryId = null,
@@ -327,7 +329,7 @@ class BudgetRepositoryStressTest {
      * returns the correct sum regardless of row count.
      */
     @Test
-    fun `large history - whole-wallet budget uses aggregate query not capped rows`() = runTest {
+    fun `large history - whole-wallet budget uses aggregate query not capped rows`() = runTest(UnconfinedTestDispatcher()) {
         val now = makeUtcMs(2026, 4, 10)
         every { timeProvider.now() } returns now
 
@@ -372,7 +374,7 @@ class BudgetRepositoryStressTest {
      * Proves getCategorySpentInPeriod is used (not a capped row scan + filter).
      */
     @Test
-    fun `large history - category budget uses aggregate query not capped rows`() = runTest {
+    fun `large history - category budget uses aggregate query not capped rows`() = runTest(UnconfinedTestDispatcher()) {
         val now = makeUtcMs(2026, 4, 10)
         every { timeProvider.now() } returns now
 
@@ -399,7 +401,9 @@ class BudgetRepositoryStressTest {
         every { expenseDao.getTotalSpentFlow() } returns flowOf(4_500.0)
 
         // 4 500 from 2500 rows × €1.80 each — old LIMIT 2000 would cap at €3 600.
-        coEvery { expenseDao.getCategorySpentInPeriod(categoryId, startOfMonth, endOfMonth) } returns 4_500.0
+        coEvery { expenseDao.getCategoryTotalsBetweenByCurrency(any(), any()) } returns listOf(
+            CategoryCurrencyTotal(categoryId = categoryId, currency = "EUR", total = 4_500.0, txCount = 1)
+        )
         coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 4_500.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
@@ -418,7 +422,7 @@ class BudgetRepositoryStressTest {
      * aggregate queries for every historical window.
      */
     @Test
-    fun `large history - rollover across 12 periods uses aggregate queries per window`() = runTest {
+    fun `large history - rollover across 12 periods uses aggregate queries per window`() = runTest(UnconfinedTestDispatcher()) {
         // Budget: anchor Jan 1 2025, monthly, €2 000, rollover = true
         // "Now" = Jan 10 2026 → 12 completed periods (Jan→Dec 2025), active = Jan 2026
         val now = makeUtcMs(2026, 1, 10)
@@ -486,14 +490,14 @@ class BudgetRepositoryStressTest {
         // Period 11: eff=4000, surplus=2200, next eff=2000+2200=4200
         // Period 12: eff=4200, surplus=2400, next eff=2000+2400=4400
         val expectedEffectiveLimit = 4_400.0
-        assertEquals(expectedEffectiveLimit, statuses[0].budget.amount, 0.01)
+        assertEquals(expectedEffectiveLimit, statuses[0].effectiveLimit, 0.01)
 
         // Active period spend = 1800 (from aggregate)
         assertEquals(1_800.0, statuses[0].spentAmount, 0.001)
         assertEquals(expectedEffectiveLimit - 1_800.0, statuses[0].remainingAmount, 0.01)
 
         // Verify aggregate queries were called — not row-level reads
-        coVerify(atLeast = 13) { expenseDao.getTotalForPeriod(any(), any()) }
+        coVerify(atLeast = 13) { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) }
         // Ensure no row-level reads were made
         coVerify(exactly = 0) { expenseDao.getExpensesBetween(any(), any(), any(), any()) }
         coVerify(exactly = 0) { expenseDao.getExpensesBetweenUncapped(any(), any()) }
@@ -504,7 +508,7 @@ class BudgetRepositoryStressTest {
      * the combine block to re-run — not direct expense-row observation.
      */
     @Test
-    fun `aggregate contract - getTotalSpentFlow is used as invalidation trigger`() = runTest {
+    fun `aggregate contract - getTotalSpentFlow is used as invalidation trigger`() = runTest(UnconfinedTestDispatcher()) {
         val now = makeUtcMs(2026, 4, 10)
         every { timeProvider.now() } returns now
 
@@ -522,14 +526,13 @@ class BudgetRepositoryStressTest {
         every { budgetDao.getActiveBudgetsFlow() } returns flowOf(listOf(budget))
         every { categoryDao.getAllFlow() } returns flowOf(emptyList<Category>())
         every { expenseDao.getTotalSpentFlow() } returns flowOf(500.0)
-        coEvery { expenseDao.getTotalForPeriod(start, end) } returns 500.0
         coEvery { expenseDao.getTotalSpentBetweenByCurrency(start, end) } returns listOf(CurrencyTotal("EUR", 500.0, 1))
 
         val statuses = repository.getBudgetStatuses().first()
 
         assertEquals(500.0, statuses[0].spentAmount, 0.001)
-        // Confirm aggregate trigger was observed
-        verify(atLeast = 1) { expenseDao.getTotalSpentFlow() }
+        // Confirm aggregate invalidation trigger was observed
+        verify(atLeast = 1) { expenseDao.observeExpenseMutationClock() }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

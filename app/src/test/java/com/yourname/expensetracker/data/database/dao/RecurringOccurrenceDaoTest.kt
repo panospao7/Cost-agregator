@@ -142,9 +142,9 @@ class RecurringOccurrenceDaoTest {
 
     @Test
     fun `getByDateRange returns occurrences within range`() = runTest {
-        dao.insert(createOccurrence(dueDate = FIXED_NOW))
-        dao.insert(createOccurrence(dueDate = FIXED_NOW + 86_400_000L)) // next day
-        dao.insert(createOccurrence(dueDate = FIXED_NOW + 172_800_000L)) // two days later
+        dao.insert(createOccurrence(dueDate = FIXED_NOW, occurrenceKey = "getByDateRange_key1"))
+        dao.insert(createOccurrence(dueDate = FIXED_NOW + 86_400_000L, occurrenceKey = "getByDateRange_key2")) // next day
+        dao.insert(createOccurrence(dueDate = FIXED_NOW + 172_800_000L, occurrenceKey = "getByDateRange_key3")) // two days later
 
         val results = dao.getByDateRange(FIXED_NOW, FIXED_NOW + 100_000_000L)
 
@@ -153,8 +153,8 @@ class RecurringOccurrenceDaoTest {
 
     @Test
     fun `getByDateRange excludes out-of-range occurrences`() = runTest {
-        dao.insert(createOccurrence(dueDate = FIXED_NOW))
-        dao.insert(createOccurrence(dueDate = FIXED_NOW + 999_999_999L))
+        dao.insert(createOccurrence(dueDate = FIXED_NOW, occurrenceKey = "exclude_key1"))
+        dao.insert(createOccurrence(dueDate = FIXED_NOW + 999_999_999L, occurrenceKey = "exclude_key2"))
 
         val results = dao.getByDateRange(FIXED_NOW, FIXED_NOW + 500_000_000L)
 
@@ -163,9 +163,9 @@ class RecurringOccurrenceDaoTest {
 
     @Test
     fun `getByStatus returns occurrences with matching status`() = runTest {
-        dao.insert(createOccurrence(status = "PLANNED"))
-        dao.insert(createOccurrence(status = "PAID"))
-        dao.insert(createOccurrence(status = "PLANNED"))
+        dao.insert(createOccurrence(status = "PLANNED", occurrenceKey = "status_planned1"))
+        dao.insert(createOccurrence(status = "PAID", occurrenceKey = "status_paid1"))
+        dao.insert(createOccurrence(status = "PLANNED", occurrenceKey = "status_planned2"))
 
         val planned = dao.getByStatus("PLANNED")
         assertEquals(2, planned.size)
@@ -176,7 +176,7 @@ class RecurringOccurrenceDaoTest {
 
     @Test
     fun `update status from PLANNED to PAID`() = runTest {
-        val id = dao.insert(createOccurrence(status = "PLANNED"))
+        val id = dao.insert(createOccurrence(status = "PLANNED", occurrenceKey = "update_status_key1"))
 
         dao.updateStatus(listOf(id), "PAID", FIXED_NOW + 1000)
 
@@ -188,8 +188,8 @@ class RecurringOccurrenceDaoTest {
 
     @Test
     fun `update only targets specified ids`() = runTest {
-        val id1 = dao.insert(createOccurrence(status = "PLANNED"))
-        val id2 = dao.insert(createOccurrence(status = "PLANNED"))
+        val id1 = dao.insert(createOccurrence(status = "PLANNED", occurrenceKey = "update_target_key1"))
+        val id2 = dao.insert(createOccurrence(status = "PLANNED", occurrenceKey = "update_target_key2"))
 
         dao.updateStatus(listOf(id1), "PAID", FIXED_NOW)
 
@@ -213,9 +213,9 @@ class RecurringOccurrenceDaoTest {
 
     @Test
     fun `ordering by dueDate asc for getBySource`() = runTest {
-        dao.insert(createOccurrence(sourceId = 1L, dueDate = FIXED_NOW + 2000))
-        dao.insert(createOccurrence(sourceId = 1L, dueDate = FIXED_NOW))
-        dao.insert(createOccurrence(sourceId = 1L, dueDate = FIXED_NOW + 1000))
+        dao.insert(createOccurrence(sourceId = 1L, dueDate = FIXED_NOW + 2000, occurrenceKey = "order_key1"))
+        dao.insert(createOccurrence(sourceId = 1L, dueDate = FIXED_NOW, occurrenceKey = "order_key2"))
+        dao.insert(createOccurrence(sourceId = 1L, dueDate = FIXED_NOW + 1000, occurrenceKey = "order_key3"))
 
         val results = dao.getBySource("RECURRING_RULE", 1L)
 
@@ -226,7 +226,7 @@ class RecurringOccurrenceDaoTest {
 
     @Test
     fun `update occurrence entity via update`() = runTest {
-        val id = dao.insert(createOccurrence(merchant = "Netflix", status = "PLANNED"))
+        val id = dao.insert(createOccurrence(merchant = "Netflix", status = "PLANNED", occurrenceKey = "update_entity_key"))
 
         val loaded = dao.getById(id)!!
         val updated = loaded.copy(merchant = "Netflix Premium", updatedAt = FIXED_NOW + 5000)

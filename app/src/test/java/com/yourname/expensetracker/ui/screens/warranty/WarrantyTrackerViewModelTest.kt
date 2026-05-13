@@ -75,7 +75,7 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
             Unit
         }
 
-        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk())
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
     }
 
     @Test
@@ -84,7 +84,7 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
         val w2 = warranty(id = 2L, product = "Headphones", warrantyEndDate = FIXED_NOW + 90 * DAY_MS)
         warrantiesFlow.value = listOf(w1, w2)
 
-        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk())
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
         advanceUntilIdle()
 
         viewModel.state.test {
@@ -99,7 +99,7 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
     @Test
     fun `add warranty updates list`() = runTest(testDispatcher) {
         warrantiesFlow.value = emptyList()
-        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk())
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
         advanceUntilIdle()
 
         viewModel.state.test {
@@ -134,7 +134,7 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
         val later = warranty(id = 12L, product = "TV", warrantyEndDate = FIXED_NOW + 120 * DAY_MS)
         warrantiesFlow.value = listOf(expiring, later)
 
-        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk())
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
         advanceUntilIdle()
 
         viewModel.state.test {
@@ -153,7 +153,7 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
         val w2 = warranty(id = 22L, product = "Keyboard", warrantyEndDate = FIXED_NOW + 40 * DAY_MS)
         warrantiesFlow.value = listOf(w1, w2)
 
-        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk())
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
         advanceUntilIdle()
 
         viewModel.state.test {
@@ -190,7 +190,7 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
         ).copy(autoDetected = false)
 
         warrantiesFlow.value = listOf(autoWarranty, manualWarranty)
-        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk())
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
         advanceUntilIdle()
 
         viewModel.filterByAutoDetected()
@@ -228,7 +228,7 @@ class WarrantyTrackerViewModelTest : ViewModelTestUtils() {
         ).copy(autoDetected = true, needsReview = true)
 
         warrantiesFlow.value = listOf(activeAuto, expiredManual, reviewAuto)
-        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk())
+        viewModel = WarrantyTrackerViewModel(warrantyRepository, timeProvider = mockk(relaxed = true))
         advanceUntilIdle()
 
         viewModel.filterByStatus(WarrantyStatus.EXPIRED)

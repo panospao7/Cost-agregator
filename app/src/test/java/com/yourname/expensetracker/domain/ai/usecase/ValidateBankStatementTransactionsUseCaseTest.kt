@@ -42,9 +42,9 @@ class ValidateBankStatementTransactionsUseCaseTest {
 
     @Before
     fun setup() {
-        smartReceiptAssist = mockk()
-        onDeviceReceiptAssist = mockk()
-        privacyGate = mockk()
+        smartReceiptAssist = mockk(relaxed = true)
+        onDeviceReceiptAssist = mockk(relaxed = true)
+        privacyGate = mockk(relaxed = true)
         useCase = ValidateBankStatementTransactionsUseCase(
             smartReceiptAssist = smartReceiptAssist,
             onDeviceReceiptAssist = onDeviceReceiptAssist,

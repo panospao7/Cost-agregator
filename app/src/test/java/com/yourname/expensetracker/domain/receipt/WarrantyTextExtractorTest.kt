@@ -43,11 +43,14 @@ class WarrantyTextExtractorTest {
         assertEquals(30, result.returnWindowDays)
         assertApproxEquals(1.0, result.confidence, 0.01)
 
+        // Half-open semantics: warrantyEndDate is exclusive (start of next day).
+        // Use display date (endDate - 1 day) for day-level comparisons.
         val purchaseCal = Calendar.getInstance().apply { timeInMillis = result.purchaseDate!! }
-        val endCal = Calendar.getInstance().apply { timeInMillis = result.warrantyEndDate!! }
-        assertEquals(purchaseCal.get(Calendar.YEAR) + 2, endCal.get(Calendar.YEAR))
-        assertEquals(purchaseCal.get(Calendar.MONTH), endCal.get(Calendar.MONTH))
-        assertEquals(purchaseCal.get(Calendar.DAY_OF_MONTH), endCal.get(Calendar.DAY_OF_MONTH))
+        val displayEndMs = result.warrantyEndDate!! - com.yourname.expensetracker.domain.util.TimePeriodUtils.DAY_IN_MILLIS
+        val displayEndCal = Calendar.getInstance().apply { timeInMillis = displayEndMs }
+        assertEquals(purchaseCal.get(Calendar.YEAR) + 2, displayEndCal.get(Calendar.YEAR))
+        assertEquals(purchaseCal.get(Calendar.MONTH), displayEndCal.get(Calendar.MONTH))
+        assertEquals(purchaseCal.get(Calendar.DAY_OF_MONTH), displayEndCal.get(Calendar.DAY_OF_MONTH))
     }
 
     @Test
@@ -215,10 +218,11 @@ class WarrantyTextExtractorTest {
             """.trimIndent()
         )
 
+        // Half-open semantics: getEndOfDay returns start of next day
         val endCal = Calendar.getInstance().apply { timeInMillis = result.warrantyEndDate!! }
         assertEquals(2024, endCal.get(Calendar.YEAR))
-        assertEquals(Calendar.FEBRUARY, endCal.get(Calendar.MONTH))
-        assertEquals(29, endCal.get(Calendar.DAY_OF_MONTH))
+        assertEquals(Calendar.MARCH, endCal.get(Calendar.MONTH))
+        assertEquals(1, endCal.get(Calendar.DAY_OF_MONTH))
     }
 
     @Test

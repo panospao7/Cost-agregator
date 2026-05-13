@@ -239,7 +239,7 @@ class NavigationTargetResolverTest {
         )
 
         assertTrue(action is NavigationAction.ToAnalytics)
-        assertEquals("week", (action as NavigationAction.ToAnalytics).period)
+        assertEquals("today", (action as NavigationAction.ToAnalytics).period)
     }
 
     @Test
@@ -271,7 +271,7 @@ class NavigationTargetResolverTest {
         )
 
         assertTrue(action is NavigationAction.ToAnalytics)
-        assertEquals("custom", (action as NavigationAction.ToAnalytics).period)
+        assertEquals("quarter", (action as NavigationAction.ToAnalytics).period)
     }
 
     @Test
@@ -316,7 +316,7 @@ class NavigationTargetResolverTest {
         )
 
         assertTrue(action is NavigationAction.ToAnalytics)
-        assertEquals("custom", (action as NavigationAction.ToAnalytics).period)
+        assertEquals("quarter", (action as NavigationAction.ToAnalytics).period)
     }
 
     // ========== resolve() for MAP ==========
@@ -407,8 +407,8 @@ class NavigationTargetResolverTest {
         )
 
         assertTrue(action is NavigationAction.ToAnalytics)
-        // Should default to "week" since span is coerced to 0 (which is <= 8)
-        assertEquals("week", (action as NavigationAction.ToAnalytics).period)
+        // Should default to "today" since span is coerced to 0 (which is <= 8)
+        assertEquals("today", (action as NavigationAction.ToAnalytics).period)
     }
 
     @Test

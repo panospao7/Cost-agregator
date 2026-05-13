@@ -59,7 +59,7 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
         assertTrue(result is WarrantyCreationResult.Success)
         val success = result as WarrantyCreationResult.Success
         assertEquals(777L, success.warrantyId)
-        assertTrue(success.confidence >= 70.0)
+        assertTrue(success.confidence >= 0.70)
 
         assertEquals(receiptId, insertedWarrantySlot.captured.receiptId)
         assertEquals(true, insertedWarrantySlot.captured.autoDetected)
@@ -85,8 +85,8 @@ class AutoCreateWarrantyFromReceiptUseCaseTest {
 
         assertTrue(result is WarrantyCreationResult.LowConfidence)
         val low = result as WarrantyCreationResult.LowConfidence
-        assertTrue(low.extractedData.confidence >= 40.0)
-        assertTrue(low.extractedData.confidence < 70.0)
+        assertTrue(low.extractedData.confidence >= 0.40)
+        assertTrue(low.extractedData.confidence < 0.70)
 
         assertEquals(true, draftSlot.captured.needsReview)
         assertEquals(WarrantyStatus.PENDING_REVIEW, draftSlot.captured.status)

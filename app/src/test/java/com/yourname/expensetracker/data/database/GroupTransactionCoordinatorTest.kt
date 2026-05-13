@@ -79,6 +79,7 @@ class GroupTransactionCoordinatorTest {
     private lateinit var coordinator: GroupTransactionCoordinator
     private lateinit var transactionLifecycleCoordinator: TransactionLifecycleCoordinator
     private val timeProvider = mockk<com.yourname.expensetracker.domain.util.TimeProvider>(relaxed = true)
+    private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
     private val testDispatcher: TestDispatcher = StandardTestDispatcher()
 
     @Before
@@ -88,25 +89,29 @@ class GroupTransactionCoordinatorTest {
             ApplicationProvider.getApplicationContext()
         ).build()
         every { timeProvider.now() } returns TEST_DATE
+        every { writeBarrier.checkWritesAllowed(any()) } returns Unit
 
         groupDao = database.expenseGroupDao()
         memberDao = database.groupMemberDao()
         groupExpenseDao = database.groupExpenseDao()
         expenseDao = database.expenseDao()
         val transactionEventDao = database.transactionEventDao()
+        val restoreMode = mockk<RestoreMaintenanceMode>(relaxed = true)
+        every { restoreMode.isWritesAllowed() } returns true
+        val tlcWriteBarrier = DatabaseWriteBarrier(restoreMode)
         transactionLifecycleCoordinator = TransactionLifecycleCoordinator(
             database, expenseDao, transactionEventDao, timeProvider,
             mockk<CurrencyConverter>(relaxed = true),
             mockk<TransactionSideEffectDispatcher>(relaxed = true),
             mockk<RecurringLifecycleCoordinator>(relaxed = true),
-            mockk<RestoreMaintenanceMode>(relaxed = true),
-            mockk<DatabaseWriteBarrier>(relaxed = true),
+            restoreMode,
+            tlcWriteBarrier,
             mockk<CurrencySettingsRepository>(relaxed = true)
         )
         coordinator = GroupTransactionCoordinator(
             database, groupDao, memberDao, groupExpenseDao, expenseDao,
             transactionEventDao, transactionLifecycleCoordinator,
-            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.Unconfined
+            writeBarrier, timeProvider, Dispatchers.Unconfined
         )
     }
 

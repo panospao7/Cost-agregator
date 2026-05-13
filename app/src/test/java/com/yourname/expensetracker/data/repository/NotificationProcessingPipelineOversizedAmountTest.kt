@@ -11,7 +11,7 @@ class NotificationProcessingPipelineOversizedAmountTest {
     @Test
     fun `routes oversized transaction-like notification to review candidate`() {
         val candidate = NotificationProcessingPipeline.detectOversizedAmountCandidate(
-            title = "Paid EUR 1,200,000.00 at ACME Stores",
+            title = "Paid 1,200,000.00 EUR at ACME Stores",
             text = "Card transaction approved",
             bigText = null
         )

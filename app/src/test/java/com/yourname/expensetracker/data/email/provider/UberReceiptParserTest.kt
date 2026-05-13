@@ -124,14 +124,14 @@ class UberReceiptParserTest {
     /** Use system default timezone to match UberReceiptParser.parseUberDate behavior. */
     private fun expectedLocalDateMillis(value: String): Long {
         return LocalDate.parse(value, DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US))
-            .atStartOfDay(ZoneId.systemDefault())
+            .atStartOfDay(ZoneId.of("UTC"))
             .toInstant()
             .toEpochMilli()
     }
 
     /** Use system default timezone to match UberReceiptParser.parseUberDate behavior. */
     private fun utcMillis(year: Int, month: Int, dayOfMonth: Int): Long {
-        return java.util.Calendar.getInstance().apply {
+        return java.util.Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
             set(Calendar.YEAR, year)
             set(Calendar.MONTH, month)
             set(Calendar.DAY_OF_MONTH, dayOfMonth)

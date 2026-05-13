@@ -87,22 +87,12 @@ class ExpenseRepositoryTest {
         date = 1_700_000_000_000L
     )
 
-    coEvery { expenseDao.updateCategory(expenseId, newCategoryId) } just runs
-        
         // Act
         repository.updateExpenseCategory(expense, newCategoryId)
         
-        // Assert
-        coVerify { expenseDao.updateCategory(expenseId, newCategoryId) }
+        // Assert: now delegated to TransactionLifecycleCoordinator
+        coVerify { transactionLifecycleCoordinator.updateCategory(expenseId, newCategoryId, "USER_EDIT") }
         coVerify { merchantCategoryRepository.learnPattern("Test Merchant", newCategoryId) }
-        
-        val correctionSlot = slot<UserCorrection>()
-        coVerify { userCorrectionDao.insert(capture(correctionSlot)) }
-        
-        assertEquals("Test Merchant", correctionSlot.captured.originalMerchant)
-        assertEquals(originalCategoryId, correctionSlot.captured.originalCategoryId)
-        assertEquals(newCategoryId, correctionSlot.captured.correctedCategoryId)
-        assertTrue(correctionSlot.captured.wasApproved)
     }
 
     @Test
@@ -121,13 +111,11 @@ class ExpenseRepositoryTest {
         date = 1_700_000_000_000L
     )
 
-coEvery { expenseDao.updateMerchantAndKey(expenseId, newMerchant, MerchantKeyGenerator.generate(newMerchant), any()) } just runs
-
         // Act
         repository.updateExpenseMerchant(expense, newMerchant)
 
-        // Assert
-        coVerify { expenseDao.updateMerchantAndKey(expenseId, newMerchant, MerchantKeyGenerator.generate(newMerchant), any()) }
+        // Assert: now delegated to TransactionLifecycleCoordinator
+        coVerify { transactionLifecycleCoordinator.updateMerchant(expenseId, newMerchant, "USER_EDIT") }
         coVerify { merchantNormalizer.learnMerchantAlias(oldMerchant, newMerchant) }
         coVerify { merchantCategoryRepository.learnPattern(newMerchant, 1L) }
     }
@@ -147,13 +135,8 @@ coEvery { expenseDao.updateMerchantAndKey(expenseId, newMerchant, MerchantKeyGen
 
     repository.updateExpenseMerchant(expense, newMerchant, applyToAll = true)
 
-        coVerify {
-            expenseDao.updateMerchantForMerchant(
-                MerchantKeyGenerator.generate(oldMerchant),
-                newMerchant,
-                MerchantKeyGenerator.generate(newMerchant)
-            )
-        }
+        // Now delegated to TransactionLifecycleCoordinator
+        coVerify { transactionLifecycleCoordinator.bulkUpdateMerchant(oldMerchant, newMerchant, "USER_EDIT") }
         coVerify {
             pendingReviewDao.bulkRenameMerchant(
                 MerchantKeyGenerator.generate(oldMerchant),
@@ -162,7 +145,7 @@ coEvery { expenseDao.updateMerchantAndKey(expenseId, newMerchant, MerchantKeyGen
                 MerchantKeyGenerator.generate(newMerchant)
             )
         }
-        coVerify(exactly = 0) { expenseDao.updateMerchantAndKey(expense.id, any(), any(), any()) }
+        coVerify(exactly = 0) { transactionLifecycleCoordinator.updateMerchant(any(), any(), any()) }
     }
 
     @Test

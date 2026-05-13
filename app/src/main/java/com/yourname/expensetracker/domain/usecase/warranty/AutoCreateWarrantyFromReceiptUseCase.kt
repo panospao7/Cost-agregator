@@ -59,8 +59,8 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
     private val privacyGate: PrivacyGate
 ) {
     companion object {
-        private const val HIGH_CONFIDENCE_THRESHOLD = 70.0
-        private const val MINIMUM_CONFIDENCE_THRESHOLD = 40.0
+        private const val HIGH_CONFIDENCE_THRESHOLD = 0.70
+        private const val MINIMUM_CONFIDENCE_THRESHOLD = 0.40
         private const val TAG = "AutoCreateWarranty"
     }
 

@@ -426,8 +426,8 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         // Spot-check first and last data rows contain the expected merchant
         assertTrue("First data row must reference Vendor1", lines[1].contains("Vendor1"))
         assertTrue("Last data row must reference Vendor$totalRows", lines.last().contains("Vendor$totalRows"))
-        // Verify every expense id appears exactly once as the Xero CSV reference column
-        val referenceIds = lines.drop(1).map { it.substringAfterLast(",").trim().toLong() }
+        // Verify every expense id appears exactly once as the Xero CSV reference column (6th field, index 5)
+        val referenceIds = lines.drop(1).map { it.split(",")[5].trim().toLong() }
         assertEquals("Every expense id must appear exactly once", totalRows, referenceIds.toSet().size)
         assertEquals("Ids must be 1..totalRows", (1L..totalRows).toSet(), referenceIds.toSet())
 
@@ -569,7 +569,7 @@ class AccountingExportRepositoryTest : AnalyticsEngineTestBase() {
         assertNotNull("Header-only export must still produce a file", result.filePath)
         val exportedFile = File(result.filePath!!)
         assertTrue("Header-only export file must exist", exportedFile.exists())
-        assertEquals(listOf("date,description,amount,category,vendor"), exportedFile.readLines())
+        assertEquals(listOf("date,description,amount,currency,category,vendor,originalCurrency,homeCurrency,conversionRate,originalAmount"), exportedFile.readLines())
 
         // Only one paged call — loop terminated immediately
         coVerify(exactly = 1) {

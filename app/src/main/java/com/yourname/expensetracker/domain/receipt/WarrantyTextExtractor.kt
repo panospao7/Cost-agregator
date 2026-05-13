@@ -294,7 +294,7 @@ class WarrantyTextExtractor {
             val matcher = pattern.matcher(text)
             if (matcher.find()) {
                 val product = matcher.group(1)?.trim()
-                if (!product.isNullOrEmpty() && product.length > 3) {
+                if (!product.isNullOrEmpty() && product.length > 3 && !isLikelyNotProduct(product)) {
                     return cleanProductName(product)
                 }
             }
@@ -376,9 +376,10 @@ class WarrantyTextExtractor {
         // Look for merchant patterns — these are the structured, preferred path
         val merchantPatterns = listOf(
             // "Merchant: Amazon" or "Store: Walmart"
-            Pattern.compile("(?:MERCHANT|STORE|SHOP|SELLER|VENDOR)[:\\s]+([^\\n]{2,30})", Pattern.CASE_INSENSITIVE),
+            // Group 1 captures the merchant name (after the colon)
+            Pattern.compile("(?:^|\\b)(?:MERCHANT|STORE|SHOP|SELLER|VENDOR)\\s*:\\s*([^\\n]{2,30})", Pattern.CASE_INSENSITIVE),
             // "From: Amazon"
-            Pattern.compile("(?:FROM|BUY\\s+FROM)[:\\s]+([^\\n]{2,30})", Pattern.CASE_INSENSITIVE)
+            Pattern.compile("(?:FROM|BUY\\s+FROM)\\s*:\\s*([^\\n]{2,30})", Pattern.CASE_INSENSITIVE)
         )
         
         for (pattern in merchantPatterns) {

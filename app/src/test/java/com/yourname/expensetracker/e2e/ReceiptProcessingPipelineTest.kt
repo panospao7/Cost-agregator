@@ -83,13 +83,13 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     fun `ocr text parsed and categorized correctly`() = runTest {
         // Arrange
         val ocrText = "Lidl\nTotal: €45.30\n05.03.2026"
-        coEvery { ocrService.processImage(Uri.parse("file:///test.jpg")) } returns createOcrResult(ocrText)
+        coEvery { ocrService.processImage(any()) } returns createOcrResult(ocrText)
         coEvery { merchantCategoryRepository.getAll() } returns listOf(
             MerchantCategory(merchantPattern = "lidl", categoryId = 2L)
         )
 
         // Act
-        val ocrResult = ocrService.processImage(Uri.parse("file:///test.jpg"))
+        val ocrResult = ocrService.processImage(Uri.EMPTY)
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorizeWithContext(
             merchant = parsed.merchantName ?: "",
@@ -110,11 +110,11 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     @Test
     fun `ocr failure handled gracefully`() = runTest {
         // Arrange
-        coEvery { ocrService.processImage(Uri.parse("file:///broken.jpg")) } throws IllegalStateException("OCR failed")
+        coEvery { ocrService.processImage(any()) } throws IllegalStateException("OCR failed")
 
         // Act
         val parsed = runCatching {
-            val ocrResult = ocrService.processImage(Uri.parse("file:///broken.jpg"))
+            val ocrResult = ocrService.processImage(Uri.EMPTY)
             receiptParser.parse(ocrResult.fullText)
         }.getOrNull()
 
@@ -126,13 +126,13 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     fun `greek text normalization parses and categorizes correctly`() = runTest {
         // Arrange
         val ocrText = "Σκλαβενίτης\nΣΥΝΟΛΟ 12,40\n05.03.2026"
-        coEvery { ocrService.processImage(Uri.parse("file:///greek.jpg")) } returns createOcrResult(ocrText)
+        coEvery { ocrService.processImage(any()) } returns createOcrResult(ocrText)
         coEvery { merchantCategoryRepository.getAll() } returns listOf(
             MerchantCategory(merchantPattern = "sklavenitis", categoryId = 2L)
         )
 
         // Act
-        val ocrResult = ocrService.processImage(Uri.parse("file:///greek.jpg"))
+        val ocrResult = ocrService.processImage(Uri.EMPTY)
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorize(parsed.merchantName ?: "")
 
@@ -151,11 +151,11 @@ class ReceiptProcessingPipelineTest : AnalyticsEngineTestBase() {
     fun `unknown merchant categorized as Uncategorized`() = runTest {
         // Arrange
         val ocrText = "QWERTYZX\nTOTAL 19.99\n05.03.2026"
-        coEvery { ocrService.processImage(Uri.parse("file:///unknown.jpg")) } returns createOcrResult(ocrText)
+        coEvery { ocrService.processImage(any()) } returns createOcrResult(ocrText)
         coEvery { merchantCategoryRepository.getAll() } returns emptyList()
 
         // Act
-        val ocrResult = ocrService.processImage(Uri.parse("file:///unknown.jpg"))
+        val ocrResult = ocrService.processImage(Uri.EMPTY)
         val parsed = receiptParser.parse(ocrResult.fullText)
         val categorization = categorizationEngine.categorize(parsed.merchantName ?: "")
         val finalCategoryName = categorization.categoryName ?: "Uncategorized"

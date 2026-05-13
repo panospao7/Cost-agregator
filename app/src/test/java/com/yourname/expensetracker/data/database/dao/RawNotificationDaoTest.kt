@@ -96,9 +96,9 @@ class RawNotificationDaoTest {
 
     @Test
     fun `query by package name returns matching notifications`() = runTest {
-        dao.insert(createNotification(packageName = "com.example.bank"))
-        dao.insert(createNotification(packageName = "com.example.shop"))
-        dao.insert(createNotification(packageName = "com.example.bank"))
+        dao.insert(createNotification(packageName = "com.example.bank", timestamp = FIXED_NOW, title = "Bank Alert", text = "Spent $50"))
+        dao.insert(createNotification(packageName = "com.example.shop", timestamp = FIXED_NOW + 1, title = "Shop Alert", text = "Order shipped"))
+        dao.insert(createNotification(packageName = "com.example.bank", timestamp = FIXED_NOW + 2, title = "Bank Alert 2", text = "Deposit received"))
 
         val bankNotifications = dao.getAll().filter { it.packageName == "com.example.bank" }
 
@@ -154,11 +154,17 @@ class RawNotificationDaoTest {
     fun `insert multiple notifications and verify ordering by capturedAt DESC`() = runTest {
         val early = createNotification(
             packageName = "com.example.app",
+            timestamp = FIXED_NOW,
+            title = "Early",
+            text = "First notification",
             capturedAt = FIXED_NOW,
             dedupeFingerprint = "fp_early"
         )
         val late = createNotification(
             packageName = "com.example.app",
+            timestamp = FIXED_NOW + 5000,
+            title = "Late",
+            text = "Second notification",
             capturedAt = FIXED_NOW + 5000,
             dedupeFingerprint = "fp_late"
         )
@@ -213,7 +219,7 @@ class RawNotificationDaoTest {
 
     @Test
     fun `markRelevance sets isRelevant flag`() = runTest {
-        val id = dao.insert(createNotification())
+        val id = dao.insert(createNotification(dedupeFingerprint = "mark_rel_fp"))
         dao.markRelevance(id, true)
 
         val loaded = dao.getById(id)
@@ -229,8 +235,8 @@ class RawNotificationDaoTest {
 
     @Test
     fun `deleteAll removes all notifications`() = runTest {
-        dao.insert(createNotification(dedupeFingerprint = "fp_a"))
-        dao.insert(createNotification(dedupeFingerprint = "fp_b"))
+        dao.insert(createNotification(dedupeFingerprint = "fp_a", title = "A", text = "Notification A"))
+        dao.insert(createNotification(dedupeFingerprint = "fp_b", title = "B", text = "Notification B"))
 
         dao.deleteAll()
 

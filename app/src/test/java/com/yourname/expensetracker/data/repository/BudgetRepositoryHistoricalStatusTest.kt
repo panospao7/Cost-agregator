@@ -3,6 +3,8 @@ package com.yourname.expensetracker.data.repository
 import com.google.common.truth.Truth.assertThat
 import com.yourname.expensetracker.data.database.dao.BudgetDao
 import com.yourname.expensetracker.data.database.dao.CategoryDao
+import com.yourname.expensetracker.data.database.dao.CategoryCurrencyTotal
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
@@ -20,6 +22,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
 import io.mockk.*
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
@@ -54,7 +57,8 @@ class BudgetRepositoryHistoricalStatusTest {
         coEvery { budgetDao.getActiveBudgets() } returns emptyList()
         coEvery { categoryDao.getAll() } returns emptyList()
         coEvery { expenseDao.getTotalForPeriod(any(), any()) } returns 0.0
-        coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
+        coEvery { expenseDao.getCategoryTotalsBetweenByCurrency(any(), any()) } returns emptyList()
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
 
         coEvery { currencyConverter.convertMultiple(any(), any()) } answers {
             val amounts = firstArg<List<Pair<Double, String>>>()
@@ -89,7 +93,7 @@ class BudgetRepositoryHistoricalStatusTest {
 
     @Suppress("DEPRECATION_ERROR")
     @Test
-    fun `getBudgetStatusesAt uses explicit evaluation time instead of current time`() = runTest {
+    fun `getBudgetStatusesAt uses explicit evaluation time instead of current time`() = runTest(UnconfinedTestDispatcher()) {
         val budget = budget(amount = 1_000.0, categoryId = null)
         val historicalEvaluation = utcMs(2026, Calendar.FEBRUARY, 15)
         val currentNow = utcMs(2026, Calendar.APRIL, 15)
@@ -116,7 +120,7 @@ class BudgetRepositoryHistoricalStatusTest {
 
     @Suppress("DEPRECATION_ERROR")
     @Test
-    fun `getBudgetStatusesAt shares same derivation for category budgets`() = runTest {
+    fun `getBudgetStatusesAt shares same derivation for category budgets`() = runTest(UnconfinedTestDispatcher()) {
         val category = Category(id = 7L, name = "Food", icon = "icon", color = "#FFFFFF", isDefault = false)
         val budget = budget(amount = 400.0, categoryId = category.id)
         val evaluationTime = utcMs(2026, Calendar.JANUARY, 20)
@@ -126,7 +130,7 @@ class BudgetRepositoryHistoricalStatusTest {
         coEvery { budgetDao.getActiveBudgets() } returns listOf(budget)
         coEvery { categoryDao.getAll() } returns listOf(category)
         every { budgetCalculator.calculatePeriodRange(budget, evaluationTime) } returns (start to end)
-        coEvery { expenseDao.getCategorySpentInPeriod(category.id, start, end) } returns 100.0
+        coEvery { expenseDao.getCategoryTotalsBetweenByCurrency(any(), any()) } returns listOf(CategoryCurrencyTotal(categoryId = category.id, currency = "EUR", total = 100.0, txCount = 1))
 
         val statuses = repository.getBudgetStatusesAt(evaluationTime)
 

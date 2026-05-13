@@ -12,6 +12,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -36,6 +37,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
         every { timeProvider.now() } returns fixedNow
         coEvery { recurringExpenseRepository.getAll() } returns emptyList()
         val currencyRepo = mockk<CurrencySettingsRepository>(relaxed = true)
+        every { currencyRepo.homeCurrency() } returns flowOf("EUR")
         viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = currencyRepo)
     }
 
@@ -61,7 +63,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
         )
         coEvery { recurringExpenseRepository.getAll() } returns expenses
 
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk())
+        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk(relaxed = true))
         advanceUntilIdle()
 
         viewModel.uiState.test {
@@ -89,7 +91,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
         coEvery { recurringExpenseRepository.getAll() } returnsMany listOf(emptyList(), listOf(added))
         coEvery { recurringExpenseRepository.insert(any()) } returns 10L
 
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk())
+        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk(relaxed = true))
         advanceUntilIdle()
 
         viewModel.uiState.test {
@@ -135,7 +137,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
             listOf(inactiveExpense)
         )
 
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk())
+        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk(relaxed = true))
         advanceUntilIdle()
 
         viewModel.uiState.test {
@@ -182,7 +184,7 @@ class ManualRecurringExpenseViewModelTest : ViewModelTestUtils() {
             listOf(remaining)
         )
 
-        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk())
+        viewModel = ManualRecurringExpenseViewModel(recurringExpenseRepository, timeProvider, currencySettingsRepository = mockk(relaxed = true))
         advanceUntilIdle()
 
         viewModel.uiState.test {

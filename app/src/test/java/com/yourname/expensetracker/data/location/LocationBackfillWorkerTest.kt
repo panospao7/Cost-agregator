@@ -17,7 +17,9 @@ import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.just
 import io.mockk.mockk
+import io.mockk.runs
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -40,10 +42,11 @@ class LocationBackfillWorkerTest {
         expenseRepository = mockk(relaxed = true)
         locationResolver = mockk(relaxed = true)
         merchantLocationRepository = mockk(relaxed = true)
-        executionGuard = mockk()
+        executionGuard = mockk(relaxed = true)
         coEvery { executionGuard.runGuarded(any(), any<suspend () -> Any>()) } coAnswers {
             WorkerGuardResult.Success(secondArg<suspend () -> Any>().invoke())
         }
+        coEvery { executionGuard.checkpoint(any()) } returns Unit
     }
 
     private fun buildWorker(): LocationBackfillWorker {

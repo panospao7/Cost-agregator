@@ -13,6 +13,9 @@ import com.yourname.expensetracker.data.repository.SavingsGoalRepository
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
+import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.toExpenseSnapshot
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
@@ -51,6 +54,19 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
         val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
         val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
+
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
+            val expenses = arg<List<Expense>>(0)
+            val snapshots = expenses.map { it.toExpenseSnapshot() }
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = snapshots,
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = expenses.size
+            )
+        }
 
         every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
         every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
